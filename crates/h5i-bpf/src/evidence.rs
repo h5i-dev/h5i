@@ -1,20 +1,19 @@
 //! What the kernel lane puts in a receipt.
 //!
-//! These types are the *contract* between the detector and everything that
-//! reads it — the receipt, the console, the export report, `h5i box detect
-//! show`. They live here rather than in `h5i-core` so the rules engine can
-//! produce them directly, and they are plain serde types with no eBPF in
-//! them, so a build with `load` off still reads and renders a receipt written
-//! by a build that had it on.
+//! These types are the *contract* between the detector and everything that reads
+//! it: the receipt, the console, the export report, `h5i box detect show`. They
+//! live here rather than in `h5i-core` so the rules engine can produce them
+//! directly, and they are plain serde types with no eBPF in them, so a build with
+//! `load` off still reads and renders a receipt written by a build that had it
+//! on.
 //!
-//! The shape follows one rule, and it is the same rule the rest of h5i's
-//! evidence follows: **never let an absence render as a clean result.** A run
-//! the detector could not watch carries [`RuntimeEvidence::unavailable`] with
-//! the reason; a run it watched incompletely carries
-//! [`Coverage::Partial`] with the reason; a run that dropped events carries
-//! [`RuntimeEvidence::events_lost`]. An empty `detections` list on its own
-//! never means "clean" — it means "clean *for what was collected*", and the
-//! other fields are what say how much that was.
+//! The shape follows the same rule the rest of h5i's evidence follows: never let
+//! an absence render as a clean result. A run the detector could not watch
+//! carries [`RuntimeEvidence::unavailable`] with the reason; a run it watched
+//! incompletely carries [`Coverage::Partial`] with the reason; a run that dropped
+//! events carries [`RuntimeEvidence::events_lost`]. An empty `detections` list on
+//! its own never means "clean". It means "clean *for what was collected*", and
+//! the other fields are what say how much that was.
 
 use serde::{Deserialize, Serialize};
 
@@ -130,12 +129,12 @@ pub struct RuntimeEvidence {
     #[serde(default)]
     pub events_seen: u64,
     /// Events the kernel dropped for want of ring-buffer space, plus any the
-    /// userspace channel shed. Nonzero means the detections are a **lower
-    /// bound**, and every renderer says so.
+    /// userspace channel shed. Nonzero means the detections are a lower
+    /// bound, and every renderer says so.
     #[serde(default)]
     pub events_lost: u64,
-    /// Events the probe discarded in the kernel because no rule wanted them —
-    /// almost entirely read-only `openat`. Recorded because it is the number
+    /// Events the probe discarded in the kernel because no rule wanted them.
+    /// Almost entirely read-only `openat`. Recorded because it is the number
     /// that says whether the in-kernel filter is doing its job.
     #[serde(default)]
     pub events_filtered: u64,

@@ -1,4 +1,4 @@
-// Cargo build script — keeps the box console's React bundle (`web/dist/`)
+// Cargo build script. Keeps the box console's React bundle (`web/dist/`)
 // present and fresh before `rust-embed` reads it.
 //
 // It does nothing at all unless the `web` feature is on: a
@@ -11,7 +11,7 @@
 // Set `H5I_SKIP_WEB_BUILD=1` to opt out with the feature still on (a developer
 // machine running `npm run dev`, or a CI job that builds the frontend itself).
 //
-// `cargo:rerun-if-changed` lines tell cargo to re-run *this script* — they do
+// `cargo:rerun-if-changed` lines tell cargo to re-run *this script*. They do
 // not by themselves run npm. The freshness check in `main` decides that.
 
 use std::path::{Path, PathBuf};
@@ -26,8 +26,8 @@ fn main() {
 
     // This crate lives at `crates/h5i-core`; the frontend project is at the
     // workspace root's `web/`, two levels up. `rust-embed` in this crate reads
-    // `../../web/dist/`, and this script — which runs before the crate compiles
-    // — is what makes that directory exist.
+    // `../../web/dist/`, and this script, which runs before the crate compiles,
+    // is what makes that directory exist.
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let web = manifest.join("../../web");
 
@@ -40,7 +40,7 @@ fn main() {
     }
 
     if !web.exists() {
-        // No frontend in this checkout (a slim source export) — still
+        // No frontend in this checkout (a slim source export). Still
         // materialize the stub, or rust-embed's derive fails to compile.
         ensure_stub_dist(&web);
         return;
@@ -65,7 +65,7 @@ fn main() {
     if !web.join("node_modules").exists() {
         // `ci`, not `install`, whenever a lockfile is committed: `npm install`
         // rewrites package-lock.json, so an ordinary `cargo build` could edit a
-        // tracked file as a side effect — and on a machine whose npm records
+        // tracked file as a side effect, and on a machine whose npm records
         // only its own platform's optional binaries, the rewrite it leaves
         // behind is one that fails on every other platform's CI runner. `ci`
         // installs exactly the lockfile and never writes it.
@@ -80,7 +80,7 @@ fn main() {
 
 /// `#[derive(RustEmbed)]` fails to compile when its folder is missing, so every
 /// path that skips the npm build must still leave a `web/dist/` behind. The
-/// stub is written only when no bundle exists — a real one is never touched.
+/// stub is written only when no bundle exists. A real one is never touched.
 fn ensure_stub_dist(web: &Path) {
     let dist = web.join("dist");
     if let Err(e) = std::fs::create_dir_all(&dist) {

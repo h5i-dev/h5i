@@ -1,26 +1,25 @@
-//! The filesystem-authority validator (ROADMAP.md §P2). Given the shipped
+//! The filesystem-authority validator (design-policy.md §P2). Given the shipped
 //! plan's grant lists and the measured world, it re-derives the authority the
 //! plan installs and checks it is a subset of what the declared policy
-//! authorized — translation validation on the resolver's output, catching a
+//! authorized. Translation validation on the resolver's output, catching a
 //! `compute_effective` bug the way translation validation catches a compiler
-//! bug. A worktree path that resolves out through a planted symlink is
-//! reported as a boundary signal beside the verdict.
-//!
+//! bug. A worktree path that resolves out through a planted symlink is reported
+//! as a boundary signal beside the verdict.
 //! Pure and cross-platform apart from [`symlink_escapes`], which measures the
 //! host. Fully opt-in: see [`enforce_enabled`].
 
-/// Whether the filesystem-authority validator runs at all. **Fully opt-in**:
-/// unset means the validator never executes — no computation, no host
-/// measurement, no manifest field, no gate — so default behavior is exactly as
+/// Whether the filesystem-authority validator runs at all. *Fully opt-in*:
+/// unset means the validator never executes (no computation, no host
+/// measurement, no manifest field, no gate) so default behavior is exactly as
 /// before this code existed. Set `H5I_FS_AUTHORITY_ENFORCE=1` to compute the
 /// verdict at box create and run, record it, and fail closed on a violation
-/// (ROADMAP.md §P2: earn trust before it gates by default).
+/// (design-policy.md §P2: earn trust before it gates by default).
 pub fn enforce_enabled() -> bool {
     std::env::var_os("H5I_FS_AUTHORITY_ENFORCE").is_some_and(|v| v == "1")
 }
 
 /// The per-run verdict on a shipped effective config, one boolean per claim
-/// (ROADMAP.md §P2). Recorded in the box manifest and rendered in
+/// (design-policy.md §P2). Recorded in the box manifest and rendered in
 /// `box status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AuthorityVerdict {
@@ -34,8 +33,8 @@ pub struct AuthorityVerdict {
     /// bind are writable by design and not constrained here.)
     pub cache_readonly: bool,
     /// No effective grant, and no bind source or mountpoint beneath the
-    /// worktree, resolves out through a planted symlink on the host. `None` when
-    /// the host was not measured (non-Linux, or measurement skipped).
+    /// worktree, resolves out through a planted symlink on the host. `None`
+    /// when the host was not measured (non-Linux, or measurement skipped).
     pub symlink_clean: Option<bool>,
 }
 
@@ -53,7 +52,7 @@ fn subset(sub: &[String], sup: &[String]) -> bool {
     sub.iter().all(|s| sup.contains(s))
 }
 
-/// **The per-run translation validator** (ROADMAP.md §P2): re-check the
+/// The per-run translation validator (design-policy.md §P2): re-check the
 /// shipped effective grants against the declared policy, independently of the
 /// resolver that produced them.
 ///
@@ -86,12 +85,11 @@ pub fn validate_grants(
 
 /// Which of `paths`, resolved on the host, escape the managed worktree through
 /// a symlink? A path at or above `work` is the user's declared choice and is
-/// not second-guessed; a path **beneath** `work` whose canonical form leaves
-/// `work` is the planted-symlink escape (§P3) — the previous run's agent
-/// redirected a worktree path out. Callers pass the landlock grants and the
+/// not second-guessed; a path *beneath* `work` whose canonical form leaves
+/// `work` is the planted-symlink escape (§P3), the previous run's agent
+/// redirecting a worktree path out. Callers pass the landlock grants and the
 /// bind sources/mountpoints; paths outside the worktree (h5i's managed cache
 /// and home-state dirs) are ignored by construction. Returns the offenders.
-///
 /// Linux/Unix only (it canonicalizes on the host); the caller records `Some`
 /// only where it ran.
 #[cfg(unix)]
@@ -136,7 +134,7 @@ mod tests {
 
     #[test]
     fn validate_grants_rejects_undeclared_write() {
-        // A write grant the policy never declared writable — a compute bug.
+        // A write grant the policy never declared writable. A compute bug.
         let v = validate_grants(
             &[],
             &["/work".to_string()],
@@ -174,7 +172,8 @@ mod tests {
         let s = |p: &std::path::Path| p.to_string_lossy().into_owned();
         // The worktree itself and a real subdir do not escape.
         assert!(symlink_escapes(&work, &[s(&work), s(&good)]).is_empty());
-        // The escaping symlink is flagged; a path outside the worktree is ignored.
+        // The escaping symlink is flagged; a path outside the worktree is
+        // ignored.
         assert_eq!(symlink_escapes(&work, &[s(&evil), s(&outside)]), vec![s(&evil)]);
     }
 }

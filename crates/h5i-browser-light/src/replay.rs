@@ -2,14 +2,13 @@
 //!
 //! The action log ([`crate::receipt::ActionLog`]) is an *audit* record: every
 //! verb before and after it runs, failures included. This holds only the steps
-//! that **worked**, in a form that means the same thing later.
+//! that *worked*, in a form that means the same thing later.
 //!
 //! A `@ref` is an ordinal into the reading that minted it, which makes it safe
 //! but not durable: replay it against a page with one more link near the top and
-//! `@e5` is a different element. So a recorded step carries the **verified
-//! selector** the snapshot minted beside the ref, which is why the action verbs
-//! take a `selector` as well as a `ref`. **Refs are for reading, selectors are
-//! for acting.**
+//! `@e5` is a different element. So a recorded step carries the verified selector
+//! the snapshot minted beside the ref, which is why the action verbs take a
+//! `selector` as well as a `ref`. Refs are for reading, selectors are for acting.
 //!
 //! Both reference engines settle on a wall clock, so replaying their recordings
 //! is a re-run with different timing. This engine settles on a virtual clock, so
@@ -18,10 +17,10 @@
 //! diffed.
 //!
 //! Not recorded: reads, which change nothing; steps that failed, which belong in
-//! the audit log; steps whose handle cannot survive, dropped and **counted** so
-//! a short script is visibly short rather than quietly wrong; and credential
-//! values, since a `type` that used `$H5I_SECRET_*` records the placeholder and
-//! a recording is a file.
+//! the audit log; steps whose handle cannot survive, dropped and *counted* so a
+//! short script is visibly short rather than quietly wrong; and credential
+//! values, since a `type` that used `$H5I_SECRET_*` records the placeholder and a
+//! recording is a file.
 
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +40,7 @@ pub struct Step {
     /// Where to go, for `navigate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// What to type — the placeholder, never a resolved credential.
+    /// What to type. The placeholder, never a resolved credential.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     /// How far to scroll.
@@ -61,7 +60,7 @@ pub struct Step {
     pub key: Option<String>,
     /// What the element was called when this was recorded.
     ///
-    /// Never used to resolve anything — the selector does that. It is here so a
+    /// Never used to resolve anything. The selector does that. It is here so a
     /// script is readable by a person, and so a replay that lands on the wrong
     /// element has something to say about it beyond a selector string.
     #[serde(default, skip_serializing_if = "Option::is_none")]

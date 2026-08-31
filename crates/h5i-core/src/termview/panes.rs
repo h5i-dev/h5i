@@ -1,16 +1,16 @@
 //! Developer mode: the page is not the only thing worth looking at.
 //!
-//! The viewer shows a rendered page, which is the least informative pane for
-//! the person supervising a coding agent. What they actually need is the page
-//! *and* what it said: the console errors, the page's own exceptions, and what
-//! the box has been reaching for. Those already arrive on the stream — until
-//! now `ConsoleError` and `PageError` were parsed with their text and then
-//! thrown away, leaving only a counter on the status line.
+//! The viewer shows a rendered page, which is the least informative pane for the
+//! person supervising a coding agent. What they need is the page *and* what it
+//! said: the console errors, the page's own exceptions, and what the box has been
+//! reaching for. Those already arrive on the stream; until now `ConsoleError` and
+//! `PageError` were parsed with their text and then thrown away, leaving only a
+//! counter on the status line.
 //!
 //! Everything here is pure: [`layout`] turns a terminal size into regions and
-//! [`render_pane`] turns lines into padded rows. `App` stays the thin thing
-//! that positions them and writes, which is what makes any of this testable —
-//! `App` itself writes straight to stdout and has no seam.
+//! [`render_pane`] turns lines into padded rows. `App` stays the thin thing that
+//! positions them and writes, which is what makes any of this testable: `App`
+//! itself writes straight to stdout and has no seam.
 
 use crate::redact::sanitize_display;
 

@@ -1,16 +1,16 @@
-//! The sans-io agent loop: a state machine that never performs I/O.
-//! Every effect (model call, tool run) is returned to the host as data;
-//! the host performs it and feeds the result back via `handle`.
+//! The sans-io agent loop: a state machine that never performs I/O. Every effect
+//! (model call, tool run) is returned to the host as data; the host performs it
+//! and feeds the result back via `handle`.
 //!
-//! Loop shape follows mini-swe-agent's DefaultAgent (query -> execute actions
+//! Loop shape follows mini-swe-agent's DefaultAgent (query, then execute actions
 //! until an exit condition, ref: src/minisweagent/agents/default.py) with the
 //! Model and Environment implementations moved across the wasm boundary, and
-//! hax's structural termination rule: the run ends when the model stops
-//! calling tools (ref: hax src/agent_loop.h).
+//! hax's structural termination rule: the run ends when the model stops calling
+//! tools (ref: hax src/agent_loop.h).
 //!
 //! Wire-level model interface: OpenAI chat-completions with native tool_calls.
-//! The guest builds the full request body; the host does POST(bytes)->bytes
-//! and reports only the HTTP status alongside the raw body.
+//! The guest builds the full request body; the host does POST(bytes)->bytes and
+//! reports only the HTTP status alongside the raw body.
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -232,8 +232,8 @@ impl Agent {
     }
 
     /// Dispatch buffered calls one at a time. Invalid calls (undeclared name,
-    /// mangled arguments) are answered guest-side with an error tool result —
-    /// recoverable, like hax's unknown-tool error output (src/agent_tool.h)
+    /// mangled arguments) are answered guest-side with an error tool result.
+    /// Recoverable, like hax's unknown-tool error output (src/agent_tool.h)
     /// and mini's FormatError feedback loop. `fresh_turn` is true right after
     /// an assistant reply so the format-error counter is updated once per turn.
     fn dispatch_next(&mut self, fresh_turn: bool) -> Effect {
@@ -721,7 +721,7 @@ mod tests {
     #[test]
     fn call_id_mismatch_is_fatal() {
         // A misrouting host is a protocol violation, not model confusion
-        // (thread post 12) — never fed back into model history.
+        // (thread post 12). Never fed back into model history.
         let (mut agent, _) = start();
         let _ = agent.handle(envelope("", &[("c1", "read_file", r#"{"path":"a"}"#)]));
         let effect = agent.handle(Event::ToolFinished {

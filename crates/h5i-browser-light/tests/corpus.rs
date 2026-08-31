@@ -1,18 +1,17 @@
 //! The corpus, as a gate CI can actually run.
 //!
 //! `corpus/run.py` points this engine at real sites and is the instrument that
-//! finds new work — but it needs the network, the sites change under it, and a
+//! finds new work, but it needs the network, the sites change under it, and a
 //! run takes minutes. What it finds, once fixed, belongs here: the same
-//! *patterns* against local fixtures, so a regression is caught by `cargo test`
-//! rather than by a manual run somebody remembers to do.
+//! *patterns* against local fixtures, so a regression is caught by `cargo test`.
 //!
 //! Every fixture below is here because the network corpus found it, and the
 //! comment on each says which finding it stands for. The two assertions that
 //! matter are the ones the corpus itself reports on:
 //!
-//!   1. the page asks for **nothing** this engine lacks, and
-//!   2. no console error is **anonymous** — every one names either a request
-//!      that was refused or the script that threw.
+//!   1. the page asks for *nothing* this engine lacks, and
+//!   2. no console error is *anonymous*: every one names either a request that
+//!      was refused or the script that threw.
 //!
 //! An empty ask list beside an unattributable error is the failure mode this
 //! whole apparatus exists to prevent (roadmap-history.md §B8.3).
@@ -42,7 +41,7 @@ fn read(html: &str) -> Reading {
 
     // `PageFactory::from_html` already runs the page's scripts when the options
     // ask for them. Running them again here ran every fixture twice, which is
-    // harmless for a script that only assigns — and wrong for one that appends,
+    // harmless for a script that only assigns, and wrong for one that appends,
     // which is how this was found.
     let _ = broker;
     let page = factory.from_html(html, &base);
@@ -101,7 +100,7 @@ impl Reading {
     }
 }
 
-/// Cloning a `<template>` — the pattern behind fifteen module failures across
+/// Cloning a `<template>`: the pattern behind fifteen module failures across
 /// the application corpus, every one reading `cannot convert 'null' or
 /// 'undefined' to object` and naming nothing.
 #[test]
@@ -148,7 +147,7 @@ fn a_component_library_upgrades_markup_that_was_already_there() {
     reading.assert_shows("badge: ready");
 }
 
-/// Client-side routing and local state — what an application does that a
+/// Client-side routing and local state. What an application does that a
 /// document never does, and what the document corpus therefore never asked for.
 #[test]
 fn an_application_routes_and_stores_without_asking_for_anything() {
@@ -270,7 +269,7 @@ fn a_broken_page_reports_errors_that_name_their_source() {
          <script>alsoUndeclared.go()</script></body></html>",
     );
 
-    // The page is still readable — one broken script does not make a page
+    // The page is still readable. One broken script does not make a page
     // unreadable, and the agent needs the half that worked.
     reading.assert_shows("readable");
     assert!(
@@ -292,7 +291,7 @@ fn a_broken_page_reports_errors_that_name_their_source() {
 }
 
 /// The engine must always come back. Boa exposes no wall-clock interrupt, so a
-/// bounded loop is the only backstop there is — and a page that trips it should
+/// bounded loop is the only backstop there is, and a page that trips it should
 /// still render what it managed, with the reason on the record.
 #[test]
 fn a_runaway_loop_is_stopped_and_reported_rather_than_hanging() {
@@ -314,7 +313,7 @@ fn a_runaway_loop_is_stopped_and_reported_rather_than_hanging() {
 }
 
 /// Deep recursion is bounded too, and the bound is high enough that a real
-/// bundle's initialisation does not trip it — Next.js's did at Boa's default.
+/// bundle's initialisation does not trip it. Next.js's did at Boa's default.
 #[test]
 fn recursion_is_bounded_well_above_what_a_real_bundle_needs() {
     let reading = read(
@@ -353,7 +352,7 @@ fn markup_can_be_parsed_out_of_a_string_without_running_it() {
 
 /// A page logging its own failures must produce something an agent can act on.
 /// `JSON.stringify` renders an Error as `{}` because none of its properties are
-/// enumerable — remix.run filled the console with 1487 lines saying exactly
+/// enumerable. Remix.run filled the console with 1487 lines saying exactly
 /// that, and the message, the one useful part, was what got thrown away.
 #[test]
 fn a_logged_error_says_what_it_was() {
@@ -379,7 +378,7 @@ fn a_logged_error_says_what_it_was() {
 }
 
 /// A page with no script must not pay for a script realm. Building one costs
-/// about 15 ms — 114 KiB of prelude parsed and evaluated — and a page with
+/// about 15 ms, 114 KiB of prelude parsed and evaluated, and a page with
 /// nothing to run was paying all of it for a realm never asked a question.
 #[test]
 fn a_page_with_no_script_is_still_settled_and_says_why() {
@@ -403,7 +402,7 @@ fn an_empty_page_distinguishes_no_script_from_script_disabled() {
 
 /// A page this engine's *parser* cannot read must still say so, by name.
 ///
-/// This construct is valid JavaScript and Boa rejects it — see ROADMAP.md
+/// This construct is valid JavaScript and Boa rejects it. See ROADMAP.md
 /// §8.11. Minified bundles that keep `/*! @license */` comments between
 /// declarators produce it, which is how lit.dev fails. Nothing here can fix
 /// that; what this pins is that the failure is *attributed* rather than silent,
@@ -436,7 +435,7 @@ fn a_script_the_parser_cannot_read_is_named_and_does_not_take_the_page_with_it()
 
 /// Server-rendered markup, hydrated. Preact and React both separate adjacent
 /// text with `<!-- -->` when they render on the server, so a comment the
-/// *parser* produced has to be a comment — it was coming back as an empty text
+/// *parser* produced has to be a comment. It was coming back as an empty text
 /// node, and a hydrator that sees text where it expects a comment decides the
 /// markup does not match and renders the page a second time beside the first.
 #[test]
@@ -457,7 +456,7 @@ fn a_comment_from_the_parser_is_a_comment() {
 /// A parsed document always has a head, even for a fragment of markup with
 /// none. Returning null was enough to take preactjs.com's markup component down
 /// with a null dereference, and the page then re-rendered everything it had
-/// already server-rendered — 178 lines of readable page became 31.
+/// already server-rendered. 178 lines of readable page became 31.
 #[test]
 fn a_parsed_document_has_the_parts_a_real_one_has() {
     let reading = read(
@@ -500,7 +499,7 @@ fn walking_up_from_an_element_reaches_the_document() {
 /// Inserting a node that already has a parent must *move* it, not lose it.
 ///
 /// The DOM defines insertion as removing from the old parent first, and this
-/// engine was skipping that step — the tree underneath drops a node inserted
+/// engine was skipping that step. The tree underneath drops a node inserted
 /// while still parented, so every reorder deleted one. That is the operation a
 /// keyed diff is built out of, and it is why preactjs.com rendered its shell
 /// and its sidebar and then nothing where the article should be.
@@ -523,7 +522,7 @@ fn moving_a_node_moves_it_rather_than_losing_it() {
     );
 
     reading.assert_clean("moving nodes");
-    // built, C to front, C back to the end, first replaced — three children
+    // built, C to front, C back to the end, first replaced. Three children
     // throughout, because a move is a move.
     reading.assert_shows("ABC CAB ABC DBC");
 }
@@ -532,8 +531,8 @@ fn moving_a_node_moves_it_rather_than_losing_it() {
 ///
 /// Flattened: this engine has one tree, so shadow content lands in the host and
 /// is therefore *readable*, which is the half that decides whether an agent can
-/// use the page. Encapsulation is not enforced — `document.querySelector`
-/// reaches inside here and would not in a browser — and that trade is stated in
+/// use the page. Encapsulation is not enforced, `document.querySelector`
+/// reaches inside here and would not in a browser, and that trade is stated in
 /// `ShadowRoot` rather than discovered.
 #[test]
 fn a_component_that_renders_into_a_shadow_root_is_readable() {
@@ -565,7 +564,7 @@ fn a_component_that_renders_into_a_shadow_root_is_readable() {
     reading.assert_shows("mode=open host=true type=11");
 }
 
-/// A closed root answers null, because the component asked for that — the
+/// A closed root answers null, because the component asked for that. The
 /// flattening already leaks more than a browser would.
 #[test]
 fn a_closed_shadow_root_is_not_handed_out() {
@@ -590,8 +589,8 @@ fn a_closed_shadow_root_is_not_handed_out() {
 }
 
 /// Text nodes must be writable. Every reactive UI updates text by assigning
-/// `.data` or `.nodeValue` on the node it already holds — it is the single most
-/// common mutation there is — and this engine was silently dropping all of it,
+/// `.data` or `.nodeValue` on the node it already holds, it is the single most
+/// common mutation there is, and this engine was silently dropping all of it,
 /// because writing to a text node took the path meant for elements: clear the
 /// children (a text node has none) and append a new text child (meaningless).
 #[test]
@@ -635,7 +634,7 @@ fn writing_to_an_element_still_replaces_its_subtree() {
 
 /// Reading markup back out must not lose what was in it. A sanitizer or a
 /// template library reads `innerHTML` and re-parses it, and preact and React
-/// separate adjacent text with `<!-- -->` when rendering on the server — so
+/// separate adjacent text with `<!-- -->` when rendering on the server, so
 /// dropping comments quietly removed the markers hydration depends on.
 #[test]
 fn serialising_markup_keeps_comments_and_escapes_what_it_must() {
@@ -704,13 +703,12 @@ fn the_platform_error_type_can_be_constructed() {
 
 /// A panic in the layout engine must not end the process.
 ///
-/// Blitz panics on the GNU bash manual — one megabyte of single-page HTML —
-/// with `attempt to subtract with overflow` deep in layout construction. A
-/// panic is the one outcome an agent cannot act on: not a thin page, not an
-/// error it can read, but a dead process and no answer. This pins the *shape*
-/// of the guard with a page that lays out normally; the real page is in the
-/// structures corpus, where it now returns 500 lines and a note saying the
-/// layout stage failed.
+/// Blitz panics on the GNU bash manual, one megabyte of single-page HTML, with
+/// `attempt to subtract with overflow` deep in layout construction. A panic is
+/// the one outcome an agent cannot act on: not a thin page, not an error it can
+/// read, but a dead process and no answer. This pins the *shape* of the guard
+/// with a page that lays out normally; the real page is in the structures
+/// corpus.
 #[test]
 fn layout_runs_behind_a_guard_that_reports_rather_than_aborts() {
     // Deeply nested and wide, which is the shape that provokes layout edge
@@ -736,7 +734,7 @@ fn layout_runs_behind_a_guard_that_reports_rather_than_aborts() {
 
 /// `document.write`, emulated where it can be. A browser inserts at the
 /// parser's position; this engine parses first and runs scripts after, so
-/// "the parser's position" is the script doing the writing — which is the same
+/// "the parser's position" is the script doing the writing, which is the same
 /// place for the one deliberate use, an inline script emitting markup in situ.
 #[test]
 fn document_write_puts_markup_where_the_script_is() {
@@ -802,7 +800,7 @@ fn a_constructed_stylesheet_can_be_adopted() {
 
 // ── driving a page, not just reading one ─────────────────────────────────────
 //
-// Every corpus above loads a page and reads it. None of them clicks anything —
+// Every corpus above loads a page and reads it. None of them clicks anything,
 // and an agent's loop is read, act, read the difference, so two thirds of the
 // product went unmeasured. These drive the page and assert on what the *delta*
 // reports, because a change nobody can see is the same as no change.
@@ -1008,7 +1006,7 @@ fn a_router_click_moves_both_the_view_and_the_address() {
 ///
 /// Two reasons, and the second is the serious one: the outline claims to be an
 /// account of what a page *shows*, and invisible text is the classic vehicle for
-/// instructions aimed at whatever is reading it — which is the threat the
+/// instructions aimed at whatever is reading it, which is the threat the
 /// untrusted-content fence exists for, and which text a human never encounters
 /// walks straight around.
 #[test]
@@ -1041,7 +1039,7 @@ fn hidden_content_is_not_in_the_reading() {
 
 /// `visibility: hidden` is deliberately *kept*. That content still occupies its
 /// space, is routinely toggled by script, and is a shape off-screen
-/// accessibility text sometimes takes — filtering it would risk deleting page
+/// accessibility text sometimes takes. Filtering it would risk deleting page
 /// content to fix a smaller problem than `display: none` poses.
 #[test]
 fn visibility_hidden_is_deliberately_still_read() {

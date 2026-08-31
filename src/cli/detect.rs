@@ -1,14 +1,14 @@
-//! `h5i box detect` — the runtime-detection lane, from the outside.
+//! `h5i box detect`: the runtime-detection lane, from the outside.
 //!
 //! Three verbs, each answering a question a reviewer actually asks:
 //!
-//! * `probe` — *can this machine watch a box at all?* And when it cannot, the
+//! * `probe`: *can this machine watch a box at all?* And when it cannot, the
 //!   command that would change that. A security feature that reports
 //!   "unavailable" and stops is a security feature nobody turns on.
-//! * `rules` — *what does it look for?* The catalogue is data, not code paths,
-//!   so it can be read without reading Rust — and so the answer to "would it
+//! * `rules` (*what does it look for?* The catalogue is data, not code paths,
+//!   so it can be read without reading Rust) and so the answer to "would it
 //!   have caught X" is checkable rather than assumed.
-//! * `show` — *what did it see in this box?* Folded across the box's receipts,
+//! * `show`: *what did it see in this box?* Folded across the box's receipts,
 //!   worst first.
 //!
 //! Every one of them is read-only. Nothing here loads a program, attaches

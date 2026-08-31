@@ -1,23 +1,19 @@
 # Contributing to h5i
 
-Thanks for helping improve h5i. The project is a Rust CLI that gives a coding
-agent a disposable, confined development box: the agent, the workspace, the
-shell, the toolchain, the dev server and the browser all run inside one
-security boundary, and the work leaves as a reviewable patch plus a receipt of
-what ran.
+Thanks for helping improve h5i. It is a Rust CLI that gives a coding agent a
+disposable, confined development box: the agent, the workspace, the shell, the
+toolchain, the dev server and the browser all run inside one security boundary,
+and the work leaves as a reviewable patch plus a receipt of what ran.
 
 That framing is the whole scope. h5i used to be a much broader provenance tool,
-and `ROADMAP.md` is the authority on what was cut and what is still in. Read it
-before proposing a feature: an idea that records what an agent did, rather than
-containing what it can do, is probably out of scope on purpose.
+and `ROADMAP.md` is the authority on what was cut. Read it before proposing a
+feature: an idea that records what an agent did, rather than containing what it
+can do, is probably out of scope on purpose.
 
-This guide covers setting up a checkout, making changes that fit, testing them,
-and getting them reviewed.
-
-## Project Shape
+## Project shape
 
 A Cargo workspace. The `h5i` binary is at the repository root (so
-`cargo install --path .` does the obvious thing), and the libraries are under
+`cargo install --path .` does the obvious thing) and the libraries are under
 `crates/`:
 
 - `src/main.rs`, `src/cli/`: the clap command tree and its handlers. `box` is
@@ -38,34 +34,29 @@ A Cargo workspace. The `h5i` binary is at the repository root (so
 - `tests/`: integration coverage that drives real repositories and real boxes.
 - `docs/`, `MANUAL.md`, `README.md`, `ROADMAP.md`: user-facing documentation.
 
-The dependency order is `h5i-error <- h5i-sandbox <- h5i-core <- the binary`,
-and it is one-way. When in doubt, prefer the existing module boundary over
-adding a new abstraction.
+Dependencies run one way: `h5i-error <- h5i-sandbox <- h5i-core <- the binary`.
+When in doubt, prefer the existing module boundary over a new abstraction.
 
-## Development Requirements
+## Development requirements
 
-Install:
+Install a stable Rust toolchain with `clippy`, plus Git. Node.js 20 and npm are
+needed only if you touch `web/` or the release asset build path.
 
-- A stable Rust toolchain, with `clippy`.
-- Git.
-- Node.js 20 and npm, if you touch `web/` or the release asset build path.
-
-Optional, and only needed to exercise the tiers that use them: rootless
+Optional, and only to exercise the tiers that use them: rootless
 [Podman](https://podman.io/) for `isolation=container`, and
 [microsandbox](https://microsandbox.dev) (`msb`) for `isolation=microvm`.
 
-Some tests perform real Git operations, so libgit2 needs an author and a
-committer. Configure a local Git identity before running the full suite:
+Some tests do real Git operations, so libgit2 needs an author and a committer:
 
 ```bash
 git config --global user.name "Your Name"
 git config --global user.email "you@example.com"
 ```
 
-If you would rather not change global Git config, set the equivalent local
-config in the test repository environment you use.
+Local config in your test repository works too if you would rather leave global
+Git config alone.
 
-## First Build
+## First build
 
 From the repository root:
 
@@ -74,17 +65,17 @@ cargo build --workspace --all-targets
 cargo test --workspace
 ```
 
-The default feature set includes the `h5i ui` console, which makes
-`crates/h5i-core/build.rs` build the web bundle and therefore need Node. Two
-ways to avoid that:
+The default feature set includes the `h5i ui` console, so
+`crates/h5i-core/build.rs` builds the web bundle and needs Node. Two ways
+around that:
 
 ```bash
 cargo build --no-default-features            # no console, no Node
 H5I_SKIP_WEB_BUILD=1 cargo build             # console code, stubbed bundle
 ```
 
-CI runs, all with `--locked` because `Cargo.lock` is committed and the release
-build uses it:
+CI runs these, all with `--locked` because `Cargo.lock` is committed and the
+release build uses it:
 
 ```bash
 cargo clippy --locked --workspace --all-targets -- -D warnings
@@ -93,22 +84,21 @@ cargo test   --locked --workspace
 H5I_SKIP_WEB_BUILD=1 cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
 ```
 
-**Pass `--workspace` to clippy.** Without it, only the root `h5i` package is
-linted and every crate under `crates/` is skipped, which is exactly where most
-of the code lives.
+Pass `--workspace` to clippy. Without it only the root `h5i` package is linted
+and every crate under `crates/` is skipped, which is where most of the code
+lives.
 
-Rustfmt is not currently enforced by CI because the repository is not yet
-fmt-clean. Do not submit broad formatting-only churn unless the change is
-explicitly about formatting cleanup.
+CI does not enforce rustfmt, because the repository is not fmt-clean. Do not
+submit broad formatting-only churn unless the change is about formatting.
 
-If you are on a memory-constrained machine, note that the test binaries are
-what blow up, not the library: build them single-job with debug info off rather
-than letting cargo pick a parallelism your RAM cannot hold.
+On a memory-constrained machine, the test binaries are what blow up, not the
+library. Build them single-job with debug info off rather than letting cargo
+pick a parallelism your RAM cannot hold.
 
-## Using h5i While Developing h5i
+## Using h5i while developing h5i
 
-This repository dogfoods h5i. For agent-assisted work, do it in a box rather
-than in your checkout:
+This repository dogfoods h5i. Do agent-assisted work in a box, not in your
+checkout:
 
 ```bash
 h5i box create <name> --profile agent-claude
@@ -117,25 +107,23 @@ h5i box diff <name>             # what the agent changed
 h5i box export <name>           # a patch plus the receipt
 ```
 
-`h5i box log` and `h5i box inspect` show what actually ran and what pressed on
-a boundary. Running h5i's own suite inside a box works, with caveats: the
-cargo caches are mounted read-only, there is a memory cap, and the tests that
-create nested boxes need to be skipped.
+`h5i box log` and `h5i box inspect` show what ran and what pressed on a
+boundary. h5i's own suite runs inside a box with caveats: the cargo caches are
+mounted read-only, there is a memory cap, and the tests that create nested
+boxes need to be skipped.
 
-## Coding Guidelines
+## Coding guidelines
 
 Keep changes focused. Policy resolution, the tier backends and the evidence
-path are shared by every workflow, so small, well-scoped patches are easier to
-review and safer to release.
+path are shared by every workflow, so small patches are easier to review and
+safer to release.
 
-General expectations:
-
-- **Fail closed.** For policy, isolation, credentials and the export gate,
+- Fail closed. For policy, isolation, credentials and the export gate,
   ambiguity is a refusal. A tier that cannot enforce what was asked must say so
   and stop, never downgrade quietly.
-- **Never claim a boundary you did not enforce.** This is the product's central
-  promise and it is also a documentation rule: if a guarantee holds at some
-  tiers or on one platform, the code and the docs both have to say which.
+- Never claim a boundary you did not enforce. This is the product's central
+  promise and a documentation rule too: if a guarantee holds only at some tiers
+  or on one platform, the code and the docs both have to say which.
 - Distinguish host-observed evidence from box-claimed evidence, and keep that
   distinction visible wherever either is displayed.
 - Preserve existing CLI behavior unless the change intentionally migrates it,
@@ -147,14 +135,14 @@ General expectations:
 - Treat everything that comes out of a box as untrusted: command output,
   receipts, file paths, branch names, browser page content, and any manifest or
   policy read back from a worktree.
-- Add comments only where they clarify a non-obvious invariant or a security
-  boundary. The existing code comments explain *why*, at length, in the places
-  where the reason is not recoverable from the code. Match that.
+- Comment only where it clarifies a non-obvious invariant or a security
+  boundary. Existing comments explain *why*, in the places where the reason is
+  not recoverable from the code. Match that.
 
 For CLI changes, update the command definition, the implementation, the tests
 and the documentation together.
 
-## Security-Sensitive Changes
+## Security-sensitive changes
 
 Read `SECURITY.md` before changing:
 
@@ -163,16 +151,16 @@ Read `SECURITY.md` before changing:
 - The egress proxy, the credential-injecting auth proxy, or the secrets broker.
 - Browser control mediation and the browser's own egress path.
 - Secret scanning, redaction, or receipt contents.
-- The export and apply gate, which is what decides that box output may touch
-  your repository.
+- The export and apply gate, which decides that box output may touch your
+  repository.
 - Console binding, routing, the session token, or anything that would let a
   route do more than GET.
 - Install scripts, release workflows, or dependency and TLS behavior.
 
-Security-sensitive changes need tests for the refusal and malformed-input
-paths, not only successful operation. A bypass that turns a denied policy into
-a permitted operation is a security bug. If a platform cannot enforce a
-requested guarantee, the implementation must say so explicitly and refuse.
+These changes need tests for the refusal and malformed-input paths, not only
+for successful operation. A bypass that turns a denied policy into a permitted
+operation is a security bug. If a platform cannot enforce a requested guarantee,
+the implementation must say so and refuse.
 
 ## Tests
 
@@ -191,37 +179,40 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 `unshare` is refused by the seccomp deny-list, that a host process's
 `/proc/<pid>/environ` is unreachable from the box's PID namespace, that
 Landlock is what denied a write. It is Linux-only by design. CI on macOS runs
-`--lib` only, and the Seatbelt backend is covered by unit tests in the
-`seatbelt` module.
+`--lib` only, and unit tests in the `seatbelt` module cover that backend.
 
 Kernel-tier results depend on the host. Landlock, user namespaces and seccomp
-being *present* does not mean a confined exec *works*, since a hardened
-container or an AppArmor policy can still refuse it. Verify functionally
-(`h5i box probe`, and the exec self-test behind it) rather than by reading
-capability bits.
+being *present* does not mean a confined exec *works*: a hardened container or
+an AppArmor policy can still refuse it. Verify functionally (`h5i box probe`,
+and the exec self-test behind it) rather than by reading capability bits.
 
 Tests should avoid real network dependencies and real credentials. Use
 temporary directories, fake remotes, fake tokens and deterministic fixtures.
 
 ## Documentation
 
-Update documentation in the same change when behavior changes.
+Update documentation in the same change as the behavior.
 
 - `README.md`: overview, install, and the shortest path to a working box.
 - `MANUAL.md`: the complete command, policy, receipt and limits reference. Its
-  **Limits** section is a security document in prose. If your change moves a
+  Limits section is a security document in prose. If your change moves a
   boundary, it changes there too.
-- `ROADMAP.md`: scope. What is in, what was cut, and why.
+- `ROADMAP.md`: scope. What is in, what was cut, and why. Short on purpose; it
+  is meant to be read in one sitting.
+- `docs/design-*.md`: the design behind each part, one file per part
+  (`design-browser.md`, `design-policy.md`, `design-runner.md`,
+  `design-detect.md`). Live code cites their section numbers, so a section that
+  moves needs its citations moved with it.
 - `docs/`: website content, guides, features and static assets.
   `docs/content-style-guide.md` governs voice and structure there.
 - `SECURITY.md`: security model, reporting, and sensitive areas.
 - `CONTRIBUTING.md`: this file.
 
-**The manuals are generated and CI diffs them.** `docs/man/man1/h5i.1` comes
-from the clap tree, rendered by `examples/gen_man.rs`, and
-`docs/manual/index.html` comes from `MANUAL.md`. A CLI flag change or a
-`MANUAL.md` edit that lands without regenerating both fails the `docs` job.
-Regenerate on Linux with the pinned generator and commit the result:
+The manuals are generated and CI diffs them. `docs/man/man1/h5i.1` comes from
+the clap tree, rendered by `examples/gen_man.rs`, and `docs/manual/index.html`
+comes from `MANUAL.md`. A CLI flag change or a `MANUAL.md` edit that lands
+without regenerating both fails the `docs` job. Regenerate on Linux with the
+pinned generator and commit the result:
 
 ```bash
 ./scripts/gen_man.sh
@@ -233,13 +224,12 @@ The man page lives under `docs/` and nowhere else, because `docs/` is published
 verbatim: the site serves that exact file at `https://h5i.dev/man/man1/h5i.1`,
 which is how a reader installs it now that there is no `h5i man` subcommand.
 Read it locally with `MANPATH=$PWD/docs/man man h5i`. (`install.sh` is the one
-file that does keep two copies, and only because it has to answer at exactly
-`/install.sh`.)
+file that keeps two copies, because it has to answer at exactly `/install.sh`.)
 
-Do not include real tokens, private logs, private prompts, or private
-repository names in docs, screenshots, fixtures, or examples.
+Keep real tokens, private logs, private prompts and private repository names
+out of docs, screenshots, fixtures and examples.
 
-## The Console (`web/`)
+## The console (`web/`)
 
 `web/` is the box console served by `h5i ui`. It is optional at the Rust
 feature level (`--no-default-features` drops it, and with it the build script's
@@ -258,12 +248,12 @@ receipts, and the difference between host-observed and box-claimed evidence is
 shown, not averaged away. Keep it that way: a number that looks like a verdict
 but is not one is worse than no number.
 
-**Regenerating `package-lock.json` needs npm 10 or newer.** Rollup ships its
-native code as per-platform optional packages, and npm 9 records only the ones
+Regenerating `package-lock.json` needs npm 10 or newer. Rollup ships its native
+code as per-platform optional packages, and npm 9 records only the ones
 matching the machine it ran on. A lockfile regenerated from scratch on an arm64
-laptop installs fine there and then fails on an x64 CI runner with a
+laptop installs fine there, then fails on an x64 CI runner with a
 `Cannot find module @rollup/rollup-linux-x64-gnu` stack trace that names
-nothing useful. If you need to rebuild it:
+nothing useful. To rebuild it:
 
 ```bash
 cd web && rm -rf node_modules package-lock.json && npx npm@10 install
@@ -274,12 +264,12 @@ instruction if the lockfile is missing a platform. Installing from a correct
 lockfile is safe with any npm version, and the build script uses `npm ci`, so
 an ordinary `cargo build` never rewrites the committed file.
 
-Avoid turning the console into a remotely exposed service without an explicit
+Do not turn the console into a remotely exposed service without an explicit
 security design and review. Today it binds loopback only, every route is a GET,
 and access needs a per-session token that is never written to disk. See the
 module docs in `crates/h5i-core/src/server.rs`.
 
-## Commit and Pull Request Guidance
+## Commits and pull requests
 
 Good commits are narrow and explain the behavior change. Keep unrelated cleanup
 out of feature and bug-fix commits.
@@ -295,11 +285,10 @@ Before opening a pull request:
 - Call out security-sensitive areas and any residual risk.
 - Include screenshots or short recordings for visible console changes.
 
-Pull requests should explain what changed, why, how it was tested, and any
-compatibility impact on CLI output, on the box manifest and receipt formats, or
-on release artifacts.
+Say what changed, why, how it was tested, and what it breaks: CLI output, the
+box manifest and receipt formats, or release artifacts.
 
-## Review Standards
+## Review standards
 
 Review prioritizes correctness, safety and maintainability over patch size.
 Expect reviewers to ask about:
@@ -313,9 +302,9 @@ Expect reviewers to ask about:
 - Whether tests prove the refusal path, not just the happy path.
 
 If a change intentionally leaves a limitation, document it where a future
-maintainer will see it, and in `MANUAL.md`'s **Limits** if a user would.
+maintainer will see it, and in `MANUAL.md`'s Limits section if a user would.
 
-## Release Notes
+## Release notes
 
 Maintainers preparing releases should call out:
 
@@ -326,7 +315,7 @@ Maintainers preparing releases should call out:
 - Platform support changes.
 - Known limitations.
 
-Release artifacts are built by GitHub Actions for `x86_64-unknown-linux-musl`,
+GitHub Actions builds release artifacts for `x86_64-unknown-linux-musl`,
 `aarch64-unknown-linux-musl`, `aarch64-apple-darwin` and
 `x86_64-pc-windows-msvc`. The `cross-check` job in `test.yaml` compile-checks
 that same matrix on every PR, so cross-target breakage surfaces before a tag is

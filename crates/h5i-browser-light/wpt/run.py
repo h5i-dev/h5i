@@ -93,8 +93,8 @@ MARKER = serve.MARKER
 MAX_FAILURES = int(os.environ.get("WPT_MAX_FAILURES", "5"))
 
 # testharness.js status codes.
-SUBTEST_STATUS = {0: "PASS", 1: "FAIL", 2: "TIMEOUT", 3: "NOTRUN", 4: "PRECONDITION_FAILED"}
-HARNESS_STATUS = {0: "OK", 1: "ERROR", 2: "TIMEOUT", 3: "PRECONDITION_FAILED"}
+SUBTEST_STATUS = {0: "PASS", 1: "FAIL", 2: "TIMEOUT", 3: "NOTRUN", 4:
+"PRECONDITION_FAILED"} HARNESS_STATUS = {0: "OK", 1: "ERROR", 2: "TIMEOUT", 3: "PRECONDITION_FAILED"}
 
 
 def find_tests(root: Path, dirs, limit=None):
@@ -189,8 +189,8 @@ def capped(command, megabytes):
 def panic_reason(stderr: bytes, returncode: int) -> str:
     """The line that says what went wrong, not the line that says how to find out.
 
-    Taking the *last* line of stderr recorded "note: run with `RUST_BACKTRACE=1`"
-    for 139 of 140 crashes — the one line guaranteed to be useless. A Rust panic
+    Taking the *last* line of stderr recorded "note: run with
+    `RUST_BACKTRACE=1`" for 139 of 140 crashes — the one line guaranteed to be useless. A Rust panic
     puts the location on the `panicked at` line and the message on the next, so
     both are kept, and a non-panic exit says what it actually was.
     """
@@ -208,8 +208,8 @@ def panic_reason(stderr: bytes, returncode: int) -> str:
 def run_one(args):
     """Run one test file. Returns a dict that always names its own outcome.
 
-    One process per file, and ROADMAP §B19.3 proposed changing that. It was
-    built, measured, and reverted; the measurement is worth more than the
+    One process per file, and roadmap-history.md §B19.3 proposed changing that.
+    It was built, measured, and reverted; the measurement is worth more than the
     feature would have been.
 
     The idea was that `open` takes several URLs in one invocation, so batching
@@ -341,10 +341,10 @@ def _score(rel, payload, elapsed):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--wpt", default=os.environ.get("WPT_ROOT", os.path.expanduser("~/Dev/wpt")))
-    parser.add_argument("--dirs", nargs="*", default=["dom"])
-    parser.add_argument("--all", action="store_true", help="every directory")
-    parser.add_argument("--jobs", type=int, default=8)
+    parser.add_argument("--wpt", default=os.environ.get("WPT_ROOT",
+    os.path.expanduser("~/Dev/wpt"))) parser.add_argument("--dirs", nargs="*",
+    default=["dom"]) parser.add_argument("--all", action="store_true", help="every
+    directory") parser.add_argument("--jobs", type=int, default=8)
     # A margin over the slowest legitimate file, not a workaround for slowness.
     # This was briefly raised to 120 because `html/dom`'s reflection files took
     # forty seconds — which turned out to be testharness rendering one DOM row
@@ -408,8 +408,8 @@ def main():
         grants = []
 
     print(f"{len(tests)} testharness files, {opts.jobs} jobs | skipped: "
-          f"{generated} generated endpoints, {unscoreable} files that load no testharness",
-          flush=True)
+          f"{generated} generated endpoints, {unscoreable} files that load no
+          testharness", flush=True)
 
     results = []
     started = time.monotonic()
@@ -420,8 +420,8 @@ def main():
             for i, result in enumerate(pool.map(run_one, work), 1):
                 results.append(result)
                 if i % 50 == 0 or i == len(tests):
-                    passed = sum(r.get("subtests", {}).get("PASS", 0) for r in results)
-                    rate = i / (time.monotonic() - started)
+                    passed = sum(r.get("subtests", {}).get("PASS", 0) for r in
+                    results) rate = i / (time.monotonic() - started)
                     print(f"  {i}/{len(tests)}  {passed} subtests passing  {rate:.1f} files/s",
                           flush=True)
     finally:
@@ -437,8 +437,8 @@ def main():
             if not opts.keep_overlay:
                 wptserve_backend.restore(root)
 
-    summary = summarise(results, generated, unscoreable, time.monotonic() - started)
-    report(summary, results)
+    summary = summarise(results, generated, unscoreable, time.monotonic() -
+    started) report(summary, results)
     if opts.out:
         Path(opts.out).parent.mkdir(parents=True, exist_ok=True)
         Path(opts.out).write_text(json.dumps(
@@ -455,8 +455,8 @@ def summarise(results, generated, unscoreable, elapsed):
             subtests[label] = subtests.get(label, 0) + n
         for api, n in r.get("unsupported", {}).items():
             unsupported[api] = unsupported.get(api, 0) + n
-    measured = sum(outcomes.get(k, 0) for k in ("ok", "harness_error", "harness_timeout"))
-    return {
+    measured = sum(outcomes.get(k, 0) for k in ("ok", "harness_error",
+    "harness_timeout")) return {
         "files": len(results),
         "files_measured": measured,
         "files_unmeasured": len(results) - measured,
@@ -475,8 +475,8 @@ def report(summary, results):
     passing = summary["subtests_passing"]
     total = summary["subtests_total"]
     pct = (100.0 * passing / total) if total else 0.0
-    print(f"\n{'=' * 62}\nsubtests passing: {passing} of {total} scored ({pct:.1f}%)")
-    print(f"files: {summary['files']}  measured {summary['files_measured']}  "
+    print(f"\n{'=' * 62}\nsubtests passing: {passing} of {total} scored
+    ({pct:.1f}%)") print(f"files: {summary['files']}  measured {summary['files_measured']}  "
           f"unmeasured {summary['files_unmeasured']}")
     print(f"\noutcomes:")
     for name, n in sorted(summary["outcomes"].items(), key=lambda kv: -kv[1]):
@@ -495,8 +495,8 @@ def report(summary, results):
 
     stuck = [r for r in results if r["outcome"] == "no_report"]
     if stuck:
-        print(f"\n{len(stuck)} files where the harness never reported. Top errors:")
-        tally = {}
+        print(f"\n{len(stuck)} files where the harness never reported. Top
+        errors:") tally = {}
         for r in stuck:
             key = re.sub(r"\d+", "N", (r.get("detail") or "(silent)"))[:120]
             tally[key] = tally.get(key, 0) + 1

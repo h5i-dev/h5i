@@ -14,8 +14,8 @@
 //! the closing marker into its own `og:title`.
 //!
 //! This does not *validate*. A page claiming `"@type": "Product"` with no price
-//! is reported as it stands, because this is a reading of what the page said.
-//! Nor does it merge the formats: `json_ld`, `open_graph` and `meta` stay apart,
+//! is reported as it stands, because this is a reading of what the page said. Nor
+//! does it merge the formats: `json_ld`, `open_graph` and `meta` stay apart,
 //! because a page that disagrees with itself between two of them is telling an
 //! agent something.
 
@@ -222,7 +222,7 @@ fn cap(mut value: String) -> String {
 ///
 /// The fence in [`crate::snapshot::Snapshot::render`] rests on no page-derived
 /// value spanning a line. JSON-LD is page-derived and arbitrarily nested, so
-/// the collapse has to reach every leaf — a forged fence marker inside
+/// the collapse has to reach every leaf. A forged fence marker inside
 /// `{"description": "…"}` is exactly as effective as one in a heading.
 fn fence_json(value: serde_json::Value) -> serde_json::Value {
     match value {

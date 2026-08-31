@@ -2,9 +2,9 @@
 //!
 //! [`super::modules::resolve`] refuses a bare specifier, because a loader that
 //! rewrites `import "lodash"` to `https://esm.sh/lodash` has turned one line of
-//! page script into a request to a third party **the engine chose**. An import
-//! map is different: **the page declares the mapping**, so `esm.sh` appears in a
-//! receipt because the document said so in markup the parser already read.
+//! page script into a request to a third party the engine chose. An import map is
+//! different: the page declares the mapping, so `esm.sh` appears in a receipt
+//! because the document said so in markup the parser already read.
 //!
 //! The refusal keeps its target. A bare specifier with no map is still an error
 //! naming what would have to exist; with a map it is a URL the page wrote down,
@@ -17,11 +17,11 @@
 //! both under the specification's two-kind rule: a key ending in `/` is a prefix
 //! over subtrees, any other key matches exactly, longest key wins.
 //!
-//! Absent on purpose: `integrity`, which would mean checking a digest this
-//! engine does not compute anywhere, named here rather than ignored quietly;
-//! multiple maps, where the first wins and later ones are errors per spec; and
-//! partial application, since a malformed map is dropped whole with a console
-//! line rather than leaving a page that resolves some imports and not others.
+//! Absent on purpose: `integrity`, which would mean checking a digest this engine
+//! does not compute anywhere, named here rather than ignored quietly; multiple
+//! maps, where the first wins and later ones are errors per spec; and partial
+//! application, since a malformed map is dropped whole with a console line rather
+//! than leaving a page that resolves some imports and not others.
 
 use std::collections::BTreeMap;
 

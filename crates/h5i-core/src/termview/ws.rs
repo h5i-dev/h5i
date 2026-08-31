@@ -1,21 +1,20 @@
 //! A WebSocket client, cut down to what a viewer needs.
 //!
 //! The box's stream server is a WebSocket server, so reaching it means being a
-//! WebSocket client — there is no way around the protocol. What there *is* a way
-//! around is taking a full async stack for it: this viewer opens exactly one
-//! connection, to one server, over a socket the host already holds, and never
-//! negotiates an extension or a subprotocol. That is a few hundred lines of
-//! RFC 6455 rather than a dependency, and it keeps the code between an untrusted
-//! box and the host's terminal small enough to read in one sitting.
+//! WebSocket client. What there *is* a way around is taking a full async stack
+//! for it: this viewer opens exactly one connection, to one server, over a
+//! socket the host already holds, and never negotiates an extension or a
+//! subprotocol. That is a few hundred lines of RFC 6455 rather than a
+//! dependency, and it keeps the code between an untrusted box and the host's
+//! terminal small enough to read in one sitting.
 //!
 //! Everything the box sends is untrusted input. The reader therefore treats
 //! every length as hostile until it is under a cap, refuses reserved opcodes,
 //! and never lets a fragmented message grow without bound.
 //!
-//! What is deliberately *not* implemented: `permessage-deflate` (never
-//! negotiated, so never received), and server-to-client masking (RFC 6455
-//! forbids it, and a masked server frame is a protocol violation we reject
-//! rather than accommodate).
+//! Deliberately *not* implemented: `permessage-deflate`, never negotiated so
+//! never received, and server-to-client masking, which RFC 6455 forbids and
+//! which we reject rather than accommodate.
 
 use std::io::{Read, Write};
 
@@ -80,7 +79,7 @@ pub fn request(host: &str, path: &str, key: &str) -> String {
 /// Verifying the accept hash is not ceremony. It is the one thing that proves
 /// the bytes now on this socket come from something that understood a WebSocket
 /// handshake, rather than from an HTTP server that answered `200` and is about
-/// to hand us a page — which is precisely the failure that would otherwise show
+/// to hand us a page, which is precisely the failure that would otherwise show
 /// up as garbled frames much later, in a decoder.
 pub fn verify_response(head: &str, key: &str) -> Result<(), H5iError> {
     let mut lines = head.split("\r\n");
@@ -519,7 +518,7 @@ mod tests {
     fn the_client_completes_a_real_handshake_and_talks_both_ways() {
         // The unit tests above check each half against a fixture. This one runs
         // the whole exchange over a socket, which is the only way to catch the
-        // wiring faults that live between them — a key that is generated but
+        // wiring faults that live between them. A key that is generated but
         // not the one sent, a header block that swallows the first frame byte,
         // a client frame the far side cannot unmask.
         use std::net::{TcpListener, TcpStream};
@@ -559,7 +558,7 @@ mod tests {
             // And one the client sends back. [`Reader`] cannot be used here:
             // it is a *client* reader and refuses a masked frame, which is
             // exactly what a conforming client must send. So the frame is
-            // unmasked by hand, which is also the check that matters — that a
+            // unmasked by hand, which is also the check that matters. That a
             // real server can recover what we wrote.
             let mut head = [0u8; 2];
             sock.read_exact(&mut head).unwrap();

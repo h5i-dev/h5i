@@ -3,24 +3,23 @@
 //! A session is the unit an agent talks to: one page state, one cookie jar, one
 //! request log, one policy. Nothing else about it is agent-facing.
 //!
-//! The opaque id (`br_7k2xqa`) is in the record, `--json` and receipts, because
-//! a durable reference must survive a rename, and is never typed. [`resolve`]
-//! has three layers, most to least explicit: `--session <name>`,
+//! The opaque id (`br_7k2xqa`) is in the record, `--json` and receipts, because a
+//! durable reference must survive a rename, and is never typed. [`resolve`] has
+//! three layers, most to least explicit: `--session <name>`,
 //! `$H5I_BROWSER_SESSION`, and the default session `open` set.
 //!
-//! **The registry is host-owned, always**, including for a session whose engine
-//! runs in a box. The engine's control file is enough to *reach* a session but
-//! not to *name* one, and letting the box own the record for boxed sessions
-//! splits every lookup in two.
+//! The registry is host-owned, always, including for a session whose engine runs
+//! in a box. The engine's control file is enough to *reach* a session but not to
+//! *name* one, and letting the box own the record for boxed sessions splits every
+//! lookup in two.
 //!
-//! **Not under a git repository.** Every other noun here is about a repository
-//! and a browser is not, so this lives in the user's state directory ([`root`]);
-//! `h5i browser open` in an empty directory has to work.
+//! Not under a git repository. Every other noun here is about a repository and a
+//! browser is not, so this lives in the user's state directory ([`root`]).
 //!
-//! **Ids are never reused.** Closing writes the ending into the record rather
-//! than deleting it, which keeps [`Session::state`] answerable and lets
-//! [`new_id`] reject any candidate whose directory exists. A stale id gets "this
-//! session ended, here is how", never a different session wearing its name.
+//! Ids are never reused. Closing writes the ending into the record rather than
+//! deleting it, which keeps [`Session::state`] answerable and lets [`new_id`]
+//! reject any candidate whose directory exists. A stale id gets "this session
+//! ended, here is how", never a different session wearing its name.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -65,21 +64,20 @@ pub const ACTIONS_FILE: &str = "actions.jsonl";
 
 /// Outside programs h5i ran on this session's behalf, one JSON object per line.
 ///
-/// **Written by h5i, not by the engine**, and that is the whole reason it is a
+/// Written by h5i, not by the engine, and that is the whole reason it is a
 /// separate file rather than a row in the action log. A helper is a second
 /// program with its own network, so the engine's log cannot account for it and
 /// must not appear to: mixing the two would turn "a request that is not in
 /// `requests` did not happen" from a claim the engine can keep into one it
-/// cannot. Host-observed, so an auditor gets the stronger evidence grade on the
-/// one lane the engine cannot see.
+/// cannot.
 pub const HELPERS_FILE: &str = "helpers.jsonl";
 
 /// The session's cookie jar, mirrored by the engine and read by `--restore`.
 ///
-/// The one file in a session directory that is **credential material**, and the
+/// The one file in a session directory that is *credential material*, and the
 /// only one h5i copies from a session to its successor. It is written `0600`,
 /// no verb returns what is in it, and it exists so a login a human performed
-/// once does not have to be performed again on every session — which is what
+/// once does not have to be performed again on every session, which is what
 /// `--restore` promised before there was anything to restore (roadmap-history.md §B19.6).
 pub const COOKIES_FILE: &str = "cookies.json";
 
@@ -243,13 +241,12 @@ impl State {
 
 /// How a verb reaches the engine.
 ///
-/// Two, because neither works everywhere. A loopback port is the simple case
-/// and needs no path short enough to be a socket address. A Unix socket is the
-/// only thing that works **anywhere a network namespace is in play**: a box's
-/// netns may have no usable loopback at all (`net.mode = deny` leaves nothing
-/// to dial), and every `h5i box run` gets a fresh one, so a port bound in one
-/// is unreachable from the next. A path survives both, because the box's
-/// filesystem is one filesystem across every run in it.
+/// Two, because neither works everywhere. A loopback port is the simple case and
+/// needs no path short enough to be a socket address. A Unix socket is the only
+/// thing that works anywhere a network namespace is in play: a box's netns may
+/// have no usable loopback at all, and every `h5i box run` gets a fresh one, so
+/// a port bound in one is unreachable from the next. A path survives both,
+/// because the box's filesystem is one filesystem across every run in it.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Channel {
@@ -276,18 +273,18 @@ pub struct Control {
     /// Which of the two channels [`Control::file`] names.
     #[serde(default)]
     pub channel: Channel,
-    /// Where the engine listens, **as the engine sees it**.
+    /// Where the engine listens, as the engine sees it.
     ///
     /// Two different things behind one field, because a caller only ever hands
     /// it straight back to the engine. For a host session it is the file the
     /// engine wrote its control port into, inside the session directory. For a
-    /// boxed one it is a Unix socket in the box's own `/tmp` — a path rather
+    /// boxed one it is a Unix socket in the box's own `/tmp`. A path rather
     /// than a port, because each `h5i box run` gets its own network namespace
     /// and a port bound in one is unreachable from the next.
     pub file: Option<PathBuf>,
-    /// The same file **as this machine sees it**, when this machine can see it
+    /// The same file as this machine sees it, when this machine can see it
     /// at all. `None` on an image-backed tier, whose `/tmp` lives in the image
-    /// and is not on the host's filesystem — there, liveness is not knowable
+    /// and is not on the host's filesystem. There, liveness is not knowable
     /// from outside and [`Session::probe`] says so by not guessing.
     pub witness: Option<PathBuf>,
     /// The process h5i spawned. On the host that is the engine; for a boxed
@@ -314,7 +311,7 @@ pub struct Session {
     pub engine: Engine,
     pub placement: Placement,
     pub lane: Lane,
-    /// The URL this session was last **told to open**: the one `open` was given,
+    /// The URL this session was last told to open: the one `open` was given,
     /// whether it made the session or navigated it.
     ///
     /// Deliberately not "the current URL". That is page state: a redirect, a
@@ -332,15 +329,13 @@ pub struct Session {
     /// identity declared.
     ///
     /// Two fields rather than one for the reason the policy has a digest and a
-    /// name: the name is what someone typed and can be reused, the digest is
-    /// what was actually presented and cannot. A session opened with a hand
-    /// written identity file names a path that may have been edited since, so
-    /// the digest is the half an audit can rely on — two sessions with the same
-    /// one showed the same browser to the same server.
+    /// name: the name is what someone typed and can be reused, the digest is what
+    /// was actually presented and cannot. A session opened with a hand-written
+    /// identity file names a path that may have been edited since, so the digest
+    /// is the half an audit can rely on.
     ///
-    /// `#[serde(default)]` on both, so a record written before identities
-    /// existed still reads. An empty digest is "not recorded", which is what
-    /// those sessions are, rather than a claim that they presented nothing.
+    /// `#[serde(default)]` on both, so a record written before identities existed
+    /// still reads. An empty digest is "not recorded".
     #[serde(default)]
     pub identity: String,
     #[serde(default)]
@@ -360,20 +355,19 @@ pub struct Session {
     /// can be confined; a boxed one is confined by its box.
     #[serde(default)]
     pub confinement: crate::browser_sandbox::Confinement,
-    /// The box **h5i itself was running inside** when this session was opened,
-    /// if any.
+    /// The box h5i itself was running inside when this session was opened, if
+    /// any.
     ///
-    /// Different from `placement`, and the difference is who is describing
-    /// what. `Placement::Box` means h5i, from outside, put the session in a box
-    /// it can see the policy of and carries every verb into. This means h5i was
+    /// Different from `placement`, and the difference is who is describing what.
+    /// `Placement::Box` means h5i, from outside, put the session in a box it can
+    /// see the policy of and carries every verb into. This means h5i was
     /// *already* in a box and opened a session beside itself.
     ///
-    /// Mechanically the second is a host session: same namespace, same
-    /// loopback, same registry, and the verbs go straight to the engine. What
-    /// it is not is uncontained, and a record that said "no containment beyond
-    /// the engine" there would be understating what is true. So the box is
-    /// named — and nothing more is claimed about it, because from inside, the
-    /// policy is sealed and h5i cannot read what its own boundary enforces.
+    /// Mechanically the second is a host session: same namespace, same loopback,
+    /// same registry, and the verbs go straight to the engine. What it is not is
+    /// uncontained, and a record saying "no containment beyond the engine" there
+    /// would understate what is true. So the box is named and nothing more is
+    /// claimed about it, because from inside the policy is sealed.
     #[serde(default)]
     pub enclosing_box: Option<String>,
     pub control: Control,
@@ -382,13 +376,13 @@ pub struct Session {
     pub logs: Logs,
 }
 
-/// The engine's two logs, **as this machine sees them**.
+/// The engine's two logs, as this machine sees them.
 ///
 /// Recorded at start rather than derived at read time, for the reason
 /// [`Control::witness`] exists: a boxed session's logs live in the box's
 /// `/tmp`, and re-deriving that path later means re-deriving a mapping that has
 /// since been rewritten. `None` means this machine cannot read that log at all,
-/// which an audit reports as **unavailable** rather than as an empty list. An
+/// which an audit reports as *unavailable* rather than as an empty list. An
 /// empty list looks like a quiet session; unavailable looks like what it is.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
 pub struct Logs {
@@ -424,16 +418,14 @@ impl Session {
 
     /// The lane a placement can honestly claim.
     ///
-    /// **Being in a box is not enough.** A box whose policy lets the engine
-    /// reach the whole host network has nothing at its boundary to corroborate
-    /// what the engine says it fetched, so its lane is still the engine's own
-    /// account. What earns `HostObserved` is enforcement outside the engine:
-    /// an egress allowlist the box applies at its boundary, or a net mode that
-    /// lets nothing out at all.
+    /// Being in a box is not enough. A box whose policy lets the engine reach the
+    /// whole host network has nothing at its boundary to corroborate what the
+    /// engine says it fetched, so its lane is still the engine's own account. What
+    /// earns `HostObserved` is enforcement outside the engine: an egress allowlist
+    /// the box applies at its boundary, or a net mode that lets nothing out.
     ///
-    /// Getting this wrong in the generous direction is the one error this
-    /// product cannot afford — it is exactly the box-claimed row rendered as
-    /// host-observed that the lane split exists to prevent.
+    /// Getting this wrong in the generous direction is the one error this product
+    /// cannot afford.
     pub fn lane_for(placement: &Placement, boundary_enforced: bool) -> Lane {
         match placement {
             Placement::Host => Lane::EngineClaimed,
@@ -444,19 +436,18 @@ impl Session {
 
     /// Is the engine still there?
     ///
-    /// Three answers, not two, and the third is the point: **unknown**.
+    /// Three answers, not two, and the third is the point: *unknown*.
     ///
-    /// The pid answers whenever h5i spawned something — for a boxed session
-    /// that is the `box run` carrying the engine, which dies with it. Failing
-    /// that, the control file as this machine sees it answers. Failing *that*,
-    /// on a tier whose `/tmp` is inside an image, nothing here can tell, and
-    /// this returns `true` rather than inventing a death: the verb about to be
-    /// sent will find out for certain, and reporting a live session dead is the
-    /// worse of the two errors.
+    /// The pid answers whenever h5i spawned something. For a boxed session that is
+    /// the `box run` carrying the engine, which dies with it. Failing that, the
+    /// control file as this machine sees it answers. Failing *that*, on a tier
+    /// whose `/tmp` is inside an image, nothing here can tell, and this returns
+    /// `true` rather than inventing a death: the verb about to be sent will find
+    /// out for certain, and reporting a live session dead is the worse error.
     ///
-    /// Deliberately not a network probe. A status listing that opened a socket
-    /// per row would make `h5i browser list` a thing that touches every session
-    /// it prints.
+    /// Deliberately not a network probe. A status listing that opened a socket per
+    /// row would make `h5i browser list` a thing that touches every session it
+    /// prints.
     pub fn probe(&self) -> bool {
         if !self.state.is_live() {
             return false;
@@ -485,7 +476,7 @@ pub fn root() -> Result<PathBuf, H5iError> {
     // host's path over a sealed overlay: `~/.local/state` is not writable, and a
     // session that cannot write its registry cannot start at all. What *is*
     // writable is the box's own `/tmp`, which is private to the box and lives
-    // exactly as long as it does — which is also how long its sessions can.
+    // exactly as long as it does, which is also how long its sessions can.
     //
     // `temp_dir` rather than a literal `/tmp`, because it follows the redirect
     // the box was given rather than assuming what it was.
@@ -521,16 +512,16 @@ pub fn sessions_dir(root: &Path) -> Result<PathBuf, H5iError> {
 
 /// `create_dir_all`, but the directories this crate makes are the owner's.
 ///
-/// A session directory holds the control socket, the cookie jar, the request
-/// log and the action log — the channel that *is* authority over the session,
-/// and a complete account of what the agent did with it. `create_dir_all`
-/// leaves the mode to the umask, which is 0755 on a default one, and the
-/// directory is not somewhere private: inside a box the browser state root is
-/// the box's own `/tmp`, which the `agent` profile shares with the host.
+/// A session directory holds the control socket, the cookie jar, the request log
+/// and the action log: the channel that *is* authority over the session, and a
+/// complete account of what the agent did with it. `create_dir_all` leaves the
+/// mode to the umask, which is 0755 on a default one, and the directory is not
+/// somewhere private: inside a box the browser state root is the box's own
+/// `/tmp`, which the `agent` profile shares with the host.
 ///
 /// The mode is set at creation rather than chmod'd afterwards, so there is no
 /// window in which the directory exists and is readable. Existing directories
-/// are left alone: a mode somebody chose is not this function's to overwrite.
+/// are left alone.
 fn create_private_dir_all(dir: &Path) -> Result<(), H5iError> {
     #[cfg(unix)]
     {
@@ -677,10 +668,9 @@ pub fn set_default(root: &Path, id: &str) -> Result<(), H5iError> {
 /// Clear the default if it points at this session.
 ///
 /// Used for one case only: the pointer names a record that is *gone*. A pointer
-/// to a session that merely **ended** is deliberately kept, because following it
+/// to a session that merely *ended* is deliberately kept, because following it
 /// is what lets the next bare verb say "the session you were on was closed"
-/// instead of "no session is open". The first tells an agent what happened; the
-/// second reads like it never had one.
+/// instead of "no session is open".
 ///
 /// Conditional on the id, because closing a named session must not disturb a
 /// default someone else is using.
@@ -704,7 +694,7 @@ pub fn find_by_name(root: &Path, name: &str) -> Option<Session> {
 /// opaque id for the case where something already recorded one. With neither,
 /// the default pointer answers.
 ///
-/// There is deliberately **no** "if only one session is live, use it" rule. It
+/// There is deliberately *no* "if only one session is live, use it" rule. It
 /// reads as helpful and is the same hazard as a moving default: an agent that
 /// opened one session, had it end, and opened another under a different name
 /// would find its next verb quietly landing somewhere it never asked for.
@@ -929,10 +919,10 @@ pub fn expire_due(root: &Path) -> Result<usize, H5iError> {
 
 /// Where a named artifact goes.
 ///
-/// **The host names the file.** The engine, and anything the page persuaded it
+/// The host names the file. The engine, and anything the page persuaded it
 /// to do, chooses only the bytes. `name` is reduced to a single path component
 /// of a known-safe alphabet before it is joined, so a session cannot write
-/// through `..`, through a symlink it planted, or onto a dotfile — the same
+/// through `..`, through a symlink it planted, or onto a dotfile. The same
 /// rule the runner import applies to a tree that came home from a machine we
 /// assume is broken ([`crate::quarantine`]).
 pub fn artifact_path(root: &Path, id: &str, name: &str) -> PathBuf {
@@ -980,22 +970,21 @@ const MAX_DEPTH: usize = 64;
 
 /// Make a session's answer safe to print and safe to hand to a model.
 ///
-/// **Everything a session returns is attacker-influenced.** The page chose the
+/// Everything a session returns is attacker-influenced. The page chose the
 /// title, the link text, the error message and the URL; the engine only carried
 /// them. That is true whether or not there is a box, so this runs on every
 /// answer rather than only on the boxed ones.
 ///
 /// Three things are removed, each for a different reason:
 ///
-/// * **Escape sequences.** `ESC` in a relayed string is a page rewriting the
-///   terminal it is printed to — moving the cursor over the line above, hiding
-///   what it just did, or repainting a prompt. Nothing a browser has to say
-///   needs `ESC`, so it never survives.
-/// * **Other control characters.** They corrupt the transcript a human reads
-///   back, and `\r` alone is enough to overwrite a line. Tab and newline stay,
-///   because a page's text legitimately contains them.
-/// * **Size.** Capped per string, per array and by depth, with the truncation
-///   *stated in the value* rather than performed quietly — a silently shortened
+/// * Escape sequences. `ESC` in a relayed string is a page rewriting the
+///   terminal it is printed to: moving the cursor over the line above, hiding
+///   what it just did, repainting a prompt. Nothing a browser has to say needs
+///   `ESC`.
+/// * Other control characters. They corrupt the transcript a human reads back,
+///   and `\r` alone is enough to overwrite a line. Tab and newline stay.
+/// * Size. Capped per string, per array and by depth, with the truncation
+///   *stated in the value* rather than performed quietly. A silently shortened
 ///   answer is one an agent will reason about as if it were complete.
 pub fn scrub(value: &mut serde_json::Value) {
     scrub_at(value, 0);
@@ -1080,7 +1069,7 @@ pub struct ControlEvent {
 /// journal could not be written, since the point of `take` is that a person
 /// wants the pointer *now*.
 ///
-/// That makes this the one log here that is **not** fail-closed, and the audit
+/// That makes this the one log here that is *not* fail-closed, and the audit
 /// says so rather than presenting it beside two logs that are.
 pub fn journal_control(dir: &Path, holder: &str, note: Option<&str>) {
     let event = ControlEvent {
@@ -1174,22 +1163,20 @@ pub struct Audit {
 ///
 /// A page that loads a thousand subresources must not make one session's audit
 /// unreadable, and a cap that dropped silently would report a quiet session
-/// where there was a loud one — so the count comes back in [`Audit::dropped`].
+/// where there was a loud one, so the count comes back in [`Audit::dropped`].
 const AUDIT_CAPACITY: usize = 5000;
 
 /// Assemble the whole record of a session: what the agent asked for, what the
 /// engine decided, who was driving, and how it ended.
 ///
-/// The merge reuses [`crate::browser_events`], which is the same machinery the
-/// console renders from. That is deliberate and it is the point: two surfaces
-/// that each assemble their own view of one session are two surfaces that can
-/// disagree, and a disagreement between them is unfalsifiable for whoever is
-/// trying to review the session.
+/// The merge reuses [`crate::browser_events`], the same machinery the console
+/// renders from. That is the point: two surfaces that each assemble their own
+/// view of one session are two surfaces that can disagree, and a disagreement
+/// between them is unfalsifiable for whoever is trying to review the session.
 ///
-/// **The lanes are not merged.** The action and request logs are the engine's
-/// own account; the handovers and the lifecycle are h5i's, written from
-/// outside. Every row carries which, because a claim rendered as an observation
-/// is the one error this product cannot afford.
+/// The lanes are not merged. The action and request logs are the engine's own
+/// account; the handovers and the lifecycle are h5i's, written from outside.
+/// Every row carries which.
 pub fn audit(root: &Path, session: &Session) -> Audit {
     use crate::browser_events as ev;
 
@@ -1202,15 +1189,15 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
     // Straight off the session directory rather than out of `session.logs`: the
     // helper log is h5i's own, written beside the session by whoever ran the
     // helper, and it exists for sessions opened before this file did.
+    //
     // Not-found and unreadable are different facts and `Availability::of`
-    // collapses them, because `read_to_string(...).ok()` gives `None` for both.
-    // A session that never ran a helper must read as `Empty` — nothing of this
-    // kind happened — and a log this machine could not open must read as
-    // `Unavailable`, which is the one an auditor has to see. The path is the
-    // only thing that tells them apart.
+    // collapses them, because `read_to_string(...).ok()` gives `None` for both. A
+    // session that never ran a helper must read as `Empty`, and a log this
+    // machine could not open must read as `Unavailable`, which is the one an
+    // auditor has to see.
     let helpers_path = dir.join(HELPERS_FILE);
     // The *reason* the read failed, not `exists()`. `exists()` answers false
-    // for any metadata error — an unreadable session directory, a stale mount —
+    // for any metadata error (an unreadable session directory, a stale mount)
     // so a log h5i could not open would have been reported as one that never
     // existed, which is the misreport this distinction is here to prevent, in
     // the failure mode most likely to cause it.
@@ -1319,7 +1306,7 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
                 // Not there: no helper ever ran for this session.
                 (None, true) => Availability::Empty,
                 // There, or unknowable. Either way h5i could not read it, and
-                // nothing can be concluded from its silence — which is exactly
+                // nothing can be concluded from its silence, which is exactly
                 // what `Unavailable` says.
                 (None, false) => Availability::Unavailable,
             },
@@ -1337,13 +1324,13 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HelperRow {
     /// RFC3339, from h5i's clock. Unlike the engine's stamps, this one is the
-    /// clock the reader is on, and [`record_helper`] sets it — what a caller
+    /// clock the reader is on, and [`record_helper`] sets it. What a caller
     /// puts here is ignored.
     pub at: String,
     /// The program, as h5i names the lane: `yt-dlp`.
     pub name: String,
     /// What was actually executed. h5i built it, so it is a fact and not a
-    /// claim — and it carries no credential, because this lane is not given
+    /// claim, and it carries no credential, because this lane is not given
     /// one.
     pub argv: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1369,16 +1356,15 @@ pub fn record_helper(root: &Path, id: &str, row: &HelperRow) -> Result<(), H5iEr
 /// The helper log for the runs that belong to no session.
 ///
 /// `h5i browser transcript --via yt-dlp --url …` names its own media and
-/// renders no page, so it needs no session — and a run with no session has no
+/// renders no page, so it needs no session, and a run with no session has no
 /// session directory to be recorded in. Without somewhere else to write, this
 /// lane's promise that *every* run is recorded would hold only for the runs
-/// that happened to have a session open, which is the kind of gap that is
-/// discovered by someone auditing a run that is not there.
+/// that happened to have a session open.
 ///
 /// At the root of the browser state directory, beside `sessions/`, because that
 /// is the scope of what it records. [`crate::browser_session::audit`] never
-/// reads it: a session's timeline must not carry runs that were not part of
-/// that session. `h5i browser audit --no-session` is what renders it.
+/// reads it: a session's timeline must not carry runs that were not part of that
+/// session.
 pub const SESSIONLESS_HELPERS_FILE: &str = "helpers.jsonl";
 
 /// Append one row for a run that had no session. See
@@ -1421,7 +1407,7 @@ pub fn sessionless_helpers(root: &Path) -> Result<Vec<HelperRow>, H5iError> {
 ///
 /// Stamped here rather than by the caller. The audit interleaves these with the
 /// engine's rows on time alone, so a second clock reading taken in another
-/// module is a second clock the timeline can be wrong about — and this is the
+/// module is a second clock the timeline can be wrong about, and this is the
 /// one lane whose whole value is being h5i's own observation.
 fn append_helper(path: &Path, row: &HelperRow) -> Result<(), H5iError> {
     use std::io::Write;
@@ -1465,13 +1451,12 @@ impl Row {
 
     /// A row from one of the engine's logs.
     ///
-    /// It sorts on the engine's own claim, because that is the only clock that
-    /// can order the two engine logs against each other. What it is *stamped*
-    /// with is `read_at`, the moment h5i read the file, because `observed_at`
-    /// means "when h5i saw this" everywhere else in this module and an audit
-    /// must not be the one place it quietly means something else. A row with no
-    /// claim at all falls back to the session's start, which puts it at the top
-    /// rather than pretending to a position it cannot support.
+    /// It sorts on the engine's own claim, because that is the only clock that can
+    /// order the two engine logs against each other. What it is *stamped* with is
+    /// `read_at`, the moment h5i read the file, because `observed_at` means "when
+    /// h5i saw this" everywhere else in this module. A row with no claim at all
+    /// falls back to the session's start, which puts it at the top rather than
+    /// pretending to a position it cannot support.
     fn engine(started_at: &str, read_at: &str, draft: crate::browser_events::Draft) -> Row {
         let order = draft
             .claimed_at
@@ -1500,7 +1485,7 @@ fn micros(at: &str) -> i64 {
 /// Microseconds because these stamps have to interleave with the engine's, and
 /// the engine writes a whole agent loop inside one second. At second precision
 /// every host row lands on the `.000000` boundary and sorts ahead of engine
-/// rows it actually followed — a timeline that is arithmetically correct and
+/// rows it actually followed. A timeline that is arithmetically correct and
 /// tells the wrong story, which is worse than one that is obviously broken.
 fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
@@ -1766,7 +1751,7 @@ mod tests {
     }
 
     /// A session with both engine logs, a handover between two verbs, and an
-    /// ending. The point of the test is the **order**: grouped by source is not
+    /// ending. The point of the test is the *order*: grouped by source is not
     /// a timeline, and "a human was driving between these two verbs" is the
     /// question an audit exists to answer.
     #[test]
@@ -1888,9 +1873,9 @@ mod tests {
     }
 
     /// A session opened from inside a box is mechanically a host session and is
-    /// **not** uncontained. Saying "no containment beyond the engine" there
+    /// *not* uncontained. Saying "no containment beyond the engine" there
     /// would understate what is true, which is the same class of error as
-    /// overstating it — just in the direction that happens to be safe.
+    /// overstating it. Just in the direction that happens to be safe.
     #[test]
     fn a_session_opened_from_inside_a_box_names_the_box_it_is_in() {
         let mut inside = session("br_inside", Placement::Host);
@@ -1912,8 +1897,8 @@ mod tests {
 
     /// The channel is recorded rather than re-derived. A verb that guessed the
     /// address would be a second place that has to agree with the first, and
-    /// the two failures it produces — a port nothing is listening on, a socket
-    /// path that is not there — both look like a session that is not running.
+    /// the two failures it produces (a port nothing is listening on, a socket
+    /// path that is not there) both look like a session that is not running.
     #[test]
     fn the_channel_travels_with_the_record() {
         assert_eq!(Channel::Port.flag(), "--control-file");

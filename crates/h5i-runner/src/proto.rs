@@ -1,26 +1,19 @@
 //! What the frames mean.
-//!
 //! [`crate::wire`] moves bodies; this module says what a type code is and what
 //! its payload deserialises to. The split is deliberate: an unknown type code
 //! is a framing success and a meaning failure, and only the second one ends the
 //! session.
-//!
 //! Two rules run through everything here.
-//!
-//! **`HELLO` is static, `PROBE` is dynamic, and neither does the other's job**
-//! (ROADMAP.md R5). The handshake carries what cannot change while a worker
-//! binary sits on disk — the protocol version, the h5i version, the
-//! architecture. Everything that drifts between one minute and the next — how
-//! much memory is free, whether podman is installed today, which tiers actually
-//! verify — belongs to [`Capabilities`] and arrives only in answer to a
-//! `PROBE`. A field in the wrong one of those two is a field that goes stale in
-//! a cache and lies later.
-//!
-//! **Identity never rides in a frame.** `runner_id` is computed on the client
-//! from the host key SSH verified against the pinned `known_hosts`
+//! `HELLO` is static, `PROBE` is dynamic, and neither does the other's job
+//! (design-runner.md R5). The handshake carries what cannot change while a
+//! worker binary sits on disk: the protocol version, the h5i version, the
+//! architecture. Everything that drifts between one minute and the next belongs
+//! to [`Capabilities`] and arrives only in answer to a `PROBE`. A field in the
+//! wrong one of those two goes stale in a cache and lies later.
+//! Identity never rides in a frame. `runner_id` is computed on the client from
+//! the host key SSH verified against the pinned `known_hosts`
 //! ([`crate::identity`]). [`HelloAck::runner_id_echo`] exists so a mismatch can
-//! be *noticed*, and is never the source of the value: what a peer asserts
-//! about itself is exactly what pinning exists to make irrelevant.
+//! be *noticed*, and is never the source of the value.
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -321,7 +314,7 @@ pub struct HelloAck {
     /// client needs before it can decide whether an image will run at all.
     pub arch: String,
     /// `linux`, and refused as anything else: a runner is a Linux machine
-    /// (ROADMAP.md R1).
+    /// (design-runner.md R1).
     pub os: String,
     /// The worker's opinion of its own identity, for detecting a mismatch.
     /// Never the source of `runner_id`; see the module note.
@@ -355,12 +348,12 @@ pub struct Capabilities {
     pub kvm: bool,
     /// Box state survives a disconnect and a reboot. False for a read-only OS
     /// with a tmpfs workspace, where a reboot is an early-expired lease
-    /// (ROADMAP.md R11).
+    /// (design-runner.md R11).
     pub persistent_boxes: bool,
     /// The runner reaches the internet itself, so image pulls and package
     /// installs can leave through its own allowlist proxy. False is the
     /// cable-only appliance, which needs brokered egress and is not an MVP
-    /// topology (ROADMAP.md R12).
+    /// topology (design-runner.md R12).
     pub own_egress: bool,
     /// What the worker could not determine, in its own words. Advisory text for
     /// an operator: a probe that silently reports `false` for something it
@@ -371,14 +364,13 @@ pub struct Capabilities {
 
 impl Capabilities {
     /// Make a peer-supplied report safe to store and print, or refuse it.
-    ///
     /// R13.1's exit criterion asks for hostile capability values to be clamped
-    /// or refused and *never stored*, which is this function. The distinction
-    /// it draws: a number that is merely implausible gets clamped, because a
-    /// runner with a broken `/proc` should still be usable; a value that would
-    /// change a *decision* — an isolation tier this h5i does not have a name
-    /// for, an OS that is not Linux — is refused, because storing it would mean
-    /// a later create consults a capability list that means nothing.
+    /// or refused and *never stored*. The distinction it draws: a number that
+    /// is merely implausible gets clamped, because a runner with a broken
+    /// `/proc` should still be usable; a value that would change a *decision*,
+    /// an isolation tier this h5i does not have a name for or an OS that is not
+    /// Linux, is refused, because storing it would mean a later create consults
+    /// a capability list that means nothing.
     pub fn sanitized(mut self) -> Result<Self, ProtoError> {
         self.arch = clean_field("arch", &self.arch)?;
         self.os = clean_field("os", &self.os)?;
@@ -477,9 +469,8 @@ pub struct ResourceLimits {
 }
 
 /// How long the box lives without being touched.
-///
-/// There is no daemon on the runner to watch a clock (ROADMAP.md R11), so a
-/// lease is a fact on disk that any later invocation can evaluate. `ttl_secs`
+/// There is no daemon on the runner to watch a clock (design-runner.md R11), so
+/// a lease is a fact on disk that any later invocation can evaluate. `ttl_secs`
 /// is refreshed by any RPC that touches the box; `hard_ttl_secs` is measured
 /// from creation and is not.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -502,7 +493,7 @@ impl Default for LeaseSpec {
 #[serde(rename_all = "kebab-case")]
 pub enum SourceKind {
     /// A `git bundle` follows as `DATA` frames. The bundle *is* the base
-    /// identity — verifiable on receipt — which is why R7 chose it over a tar.
+    /// identity, verifiable on receipt, which is why R7 chose it over a tar.
     GitBundle,
     /// Nothing follows. An empty box, for a `--new` source.
     Empty,
@@ -526,19 +517,19 @@ pub struct SourceSpec {
 /// Make a box.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateRequest {
-    /// The box's name on the runner. Becomes a directory, so it is path-checked.
+    /// The box's name on the runner. Becomes a directory, so it is
+    /// path-checked.
     pub box_id: String,
     /// This attempt's id. The worker builds under `creating/<operation_id>` and
     /// renames into `live/<box_id>`, so a crash leaves a directory that names
     /// the attempt rather than a half-built box wearing the real name.
     pub operation_id: String,
     /// A digest over everything in this request that decides what gets built.
-    ///
-    /// The idempotency key (ROADMAP.md R7): re-sending a create whose digest
-    /// matches an existing box returns that box, so a lost `CREATE_RESULT`
-    /// costs a retry rather than a duplicate. A *different* digest under the
-    /// same `box_id` is refused, because it asks for a different box under a
-    /// name that is taken.
+    /// The idempotency key (design-runner.md R7): re-sending a create whose
+    /// digest matches an existing box returns that box, so a lost
+    /// `CREATE_RESULT` costs a retry rather than a duplicate. A *different*
+    /// digest under the same `box_id` is refused, because it asks for a
+    /// different box under a name that is taken.
     pub request_digest: String,
     /// The tier this box wants. Refused when the runner does not advertise it
     /// (R1), never quietly downgraded.
@@ -551,7 +542,7 @@ pub struct CreateRequest {
     pub lease: LeaseSpec,
     /// Digest of the resolved policy. The worker echoes it in
     /// [`CreateResult::policy_digest`] and the host refuses to mark the box
-    /// live unless it matches — which turns "the worker silently enforced an
+    /// live unless it matches, which turns "the worker silently enforced an
     /// older policy" from a possibility into a detected fault.
     pub policy_digest: String,
     /// The resolved policy itself, opaque to this protocol.
@@ -607,7 +598,7 @@ impl CreateResult {
     /// Make a worker's answer safe to store and print.
     ///
     /// The runner is the machine this design agreed might be compromised, so
-    /// everything it says about itself is peer data — the same category as a
+    /// everything it says about itself is peer data. The same category as a
     /// manifest pulled from someone else's clone, and handled the same way.
     /// Without this, a `workspace` path full of escape sequences reaches a
     /// terminal and a `box_id` of unbounded length reaches a receipt.
@@ -630,7 +621,7 @@ impl ExecStarted {
     ///
     /// `timeout_secs` is clamped for a sharper reason: the client arms its own
     /// watchdog from it, so an unclamped `u64::MAX` is a peer choosing how long
-    /// we wait — which is to say, forever. A number a peer supplies is never a
+    /// we wait, which is to say, forever. A number a peer supplies is never a
     /// clock; it is a claim about a clock, and it is bounded by ours.
     pub fn sanitized(mut self) -> Result<Self, ProtoError> {
         self.cwd = clean_field("working directory", &self.cwd)?;
@@ -643,7 +634,7 @@ impl ExportResult {
     pub fn sanitized(self) -> Result<Self, ProtoError> {
         check_id("box id", &self.box_id)?;
         // These two are compared against what actually arrives, so a bad value
-        // fails that comparison rather than being trusted — but they are also
+        // fails that comparison rather than being trusted, but they are also
         // displayed, and an object id that is not one is worth refusing where
         // it is cheap.
         check_hex("tip commit", &self.tip_commit, 40, 64)?;
@@ -765,8 +756,9 @@ pub struct GcRequest {
 pub struct GcResult {
     pub reaped: Vec<String>,
     /// Boxes a sweep decided to keep despite an expired lease, with the reason.
-    /// A silent skip would read as "there was nothing to do" (ROADMAP.md R11:
-    /// an un-reaped live box beats an unrecoverable dead one, but not silently).
+    /// A silent skip would read as "there was nothing to do" (design-runner.md
+    /// R11: an un-reaped live box beats an unrecoverable dead one, but not
+    /// silently).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kept: Vec<String>,
 }
@@ -906,7 +898,7 @@ pub struct ExitMsg {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_rss_kb: Option<i64>,
     /// What the runner's egress proxy saw. Observed outside the box by an h5i
-    /// we authenticated — the `runner-observed` lane (ROADMAP.md R10).
+    /// we authenticated. The `runner-observed` lane (design-runner.md R10).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress: Option<serde_json::Value>,
     /// True when output was cut at [`MAX_EXEC_OUTPUT`]. Said rather than
@@ -934,9 +926,9 @@ impl ExportRequest {
 
 /// What the box has become, and how to get it.
 ///
-/// The bundle is **thin**: it carries `base..tip` and needs the base, which
+/// The bundle is *thin*: it carries `base..tip` and needs the base, which
 /// this side already has because it sent it. That keeps an export proportional
-/// to the work done rather than to the repository's history — the create
+/// to the work done rather than to the repository's history. The create
 /// direction cannot do the same, because the far side starts with nothing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportResult {
@@ -957,14 +949,12 @@ pub struct ExportResult {
 impl ExitMsg {
     /// The one reply that had no cleaning, and it carries the egress summary
     /// straight into a receipt.
-    ///
     /// `EgressSummary.hosts[].host` is an arbitrary string from a machine the
     /// threat model says may be compromised, and the producer-side cap on how
-    /// many there are is a producer-side cap — it binds the honest worker and
-    /// not the other kind. Nothing renders those strings today, which is why
-    /// this is consistency rather than a hole; a receipt is a durable record,
-    /// and what goes into one should be bounded when it is written rather than
-    /// when somebody later decides to print it.
+    /// many there are binds the honest worker and not the other kind. Nothing
+    /// renders those strings today, which is why this is consistency rather
+    /// than a hole; a receipt is a durable record, and what goes into one
+    /// should be bounded when it is written.
     pub fn sanitized(mut self) -> Result<Self, ProtoError> {
         if let Some(egress) = self.egress.take() {
             let text = serde_json::to_string(&egress).unwrap_or_default();
@@ -1011,7 +1001,7 @@ impl ErrorMsg {
         let tail = tail.into();
         let mut start = tail.len().saturating_sub(MAX_LOG_TAIL);
         // Slicing a `String` at a byte offset panics unless it is a character
-        // boundary, and this offset is arithmetic on a length — a log whose
+        // boundary, and this offset is arithmetic on a length. A log whose
         // 16 KiB mark lands mid-character would take the process down. Walk
         // forward to the next boundary instead: losing up to three bytes off
         // the front of a log tail costs nothing.
@@ -1039,8 +1029,8 @@ impl ErrorMsg {
 /// One function so the pair cannot drift: a digest computed over anything but
 /// the value actually sent is a check that passes while meaning nothing. The
 /// worker recomputes the same digest from what arrives, and only three fields
-/// of a `ResolvedPolicy` serialise — none of them a host path — so the two
-/// sides have to agree (ROADMAP.md R7).
+/// of a `ResolvedPolicy` serialise, none of them a host path, so the two
+/// sides have to agree (design-runner.md R7).
 pub fn policy_fields(
     policy: &h5i_sandbox::sandbox_policy::ResolvedPolicy,
 ) -> Result<(serde_json::Value, String), ProtoError> {
@@ -1208,7 +1198,7 @@ fn truncate(s: &str, max: usize) -> String {
 ///
 /// No negotiation: the lower version governs. A worker too old to meet
 /// [`MIN_PROTOCOL_VERSION`] fails here, at the handshake, with the numbers in
-/// the message — not later, in the middle of a create, as a mysterious unknown
+/// the message, not later, in the middle of a create, as a mysterious unknown
 /// frame.
 pub fn agreed_protocol(ours: u16, theirs: u16) -> Result<u16, ProtoError> {
     let agreed = ours.min(theirs);
@@ -1384,7 +1374,7 @@ mod tests {
     fn a_log_tail_cut_mid_character_does_not_panic() {
         // The cut is arithmetic on a byte length, so a log whose boundary lands
         // inside a multi-byte character would panic the process that built the
-        // message — on the worker, while reporting somebody else's error.
+        // message. On the worker, while reporting somebody else's error.
         for pad in 0..8 {
             let long = "x".repeat(MAX_LOG_TAIL + pad) + "日本語のエラー";
             let e = ErrorMsg::new(ErrorCode::Internal, "boom").with_log_tail(long);
@@ -1400,8 +1390,8 @@ mod tests {
 
     #[test]
     fn a_log_tail_keeps_its_end_and_is_bounded() {
-        // The tail is what matters — the failure is at the end of the log, not
-        // the start — and it is the one peer-supplied string allowed to be big.
+        // The tail is what matters (the failure is at the end of the log, not
+        // the start) and it is the one peer-supplied string allowed to be big.
         let long = "x".repeat(MAX_LOG_TAIL * 2) + "THE ACTUAL FAILURE";
         let e = ErrorMsg::new(ErrorCode::Internal, "create failed").with_log_tail(long);
         let tail = e.log_tail.as_deref().unwrap();
@@ -1613,7 +1603,7 @@ mod tests {
 
     #[test]
     fn a_hostile_runners_answers_are_refused_before_they_are_stored() {
-        // Everything a runner says about itself is peer data — the same
+        // Everything a runner says about itself is peer data. The same
         // category as a manifest pulled from someone else's clone. These are
         // the fields that reach a receipt and a terminal.
         let good = CreateResult {

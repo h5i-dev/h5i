@@ -119,7 +119,7 @@ fn write_escaped(s: &str, out: &mut String) {
 }
 
 /// Recursion cap: the parser is recursive, and a model (or a hostile
-/// endpoint) can send thousands of open brackets — without a cap that is a
+/// endpoint) can send thousands of open brackets, without a cap that is a
 /// stack overflow, which in wasm is an unrecoverable trap.
 const MAX_DEPTH: u32 = 128;
 

@@ -1,7 +1,7 @@
-//! `h5i box share` — letting one other person try the web app in a box.
+//! `h5i box share`: letting one other person try the web app in a box.
 //!
-//! Everything else h5i does is about what leaves a box. This is the one path
-//! that lets something in.
+//! Everything else h5i does is about what leaves a box. This is the one path that
+//! lets something in.
 //!
 //! ```text
 //!   their browser
@@ -24,17 +24,17 @@
 //! [`session`] is the grant table on disk, outside every path a box can write.
 //! [`dialer`] is the single fork into the box's namespaces, pinned to one port.
 //! [`owner`] answers the macOS question. [`gate`] and [`http_front`] read the
-//! credential off a request and keep it from travelling upstream. [`bridge`]
-//! does authorization, accounting and the ingress receipt, under the [`p2p`] and
-//! [`tunnel`] transports, with [`pump`] moving and counting bytes. [`run`]
-//! starts, describes and ends a share; [`join`] is the other machine.
+//! credential off a request and keep it from travelling upstream. [`bridge`] does
+//! authorization, accounting and the ingress receipt, under the [`p2p`] and
+//! [`tunnel`] transports, with [`pump`] moving and counting bytes. [`run`] starts,
+//! describes and ends a share; [`join`] is the other machine.
 //!
-//! Four properties: the box's port is never published, and on macOS that
-//! promises this route reaches the box's own server rather than that nothing
-//! else on the machine can. Authorization is per connection from disk, so a
-//! revoke lands on the next one and a watchdog drops the rest. The credential
-//! never reaches the box, which is agent-written code we are showing someone.
-//! And being shared is recorded, so the export says which artifact this is.
+//! Four properties: the box's port is never published, and on macOS that promises
+//! this route reaches the box's own server rather than that nothing else on the
+//! machine can. Authorization is per connection from disk, so a revoke lands on
+//! the next one and a watchdog drops the rest. The credential never reaches the
+//! box, which is agent-written code we are showing someone. And being shared is
+//! recorded, so the export says which artifact this is.
 
 pub mod bridge;
 // Random heads for the two parsers. Tests only: it exists to be run, not
@@ -44,8 +44,8 @@ pub mod dialer;
 mod fuzz;
 pub mod gate;
 pub mod http_front;
-// Whose port is this? The macOS half of "the only route in goes to the box" —
-// on Linux a namespace makes it true by construction, and here it is
+// Whose port is this? The macOS half of "the only route in goes to the box".
+// On Linux a namespace makes it true by construction, and here it is
 // established by observation. The rule it applies is pure and compiled
 // everywhere; the questions it asks Darwin are not.
 pub mod owner;

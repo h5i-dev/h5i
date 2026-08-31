@@ -1,19 +1,16 @@
 //! How the frames get there.
-//!
 //! A [`Transport`] is a *factory*, not a connection: `connect()` opens one
-//! [`Channel`] and one channel carries one RPC (ROADMAP.md R4). That is the
-//! whole reason this protocol needs no request ids, no channel numbers and no
-//! multiplexer — concurrency is several channels, and over SSH those are
+//! [`Channel`] and one channel carries one RPC (design-runner.md R4). That is
+//! the whole reason this protocol needs no request ids, no channel numbers and
+//! no multiplexer. Concurrency is several channels, and over SSH those are
 //! several sessions on one TCP connection, multiplexed by OpenSSH's
 //! ControlMaster in battle-tested C rather than by us.
-//!
 //! Both implementations are the same mechanism: spawn a child, speak frames on
 //! its stdin and stdout, read its stderr for diagnosis. [`SshTransport`] puts
 //! `ssh` in front of the worker; [`ChildProcessTransport`] runs the worker
-//! directly, which is what makes the whole protocol testable in CI with no sshd
-//! anywhere. Because the difference is only argv, the argv is built by pure
-//! functions that a test can read without spawning anything — the same
-//! discipline `container::build_run_argv` follows.
+//! directly, which makes the whole protocol testable in CI with no sshd.
+//! Because the difference is only argv, the argv is built by pure functions a
+//! test can read without spawning anything.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -112,7 +109,7 @@ impl std::fmt::Debug for Channel {
 }
 
 impl Channel {
-    /// Take the two halves, so a caller can read and write at once — from two
+    /// Take the two halves, so a caller can read and write at once. From two
     /// threads, when a later milestone streams an exec. Returns `None` on a
     /// second call.
     pub fn take_io(&mut self) -> Option<(ChildStdout, ChildStdin)> {
@@ -147,8 +144,8 @@ impl Channel {
     /// Close the channel: stop the clock, let the peer see end of input, and
     /// collect its exit status.
     ///
-    /// Dropping the write half is what ends the exchange — the worker reads
-    /// until EOF — so this must happen before the wait, or the wait is a
+    /// Dropping the write half is what ends the exchange, the worker reads
+    /// until EOF, so this must happen before the wait, or the wait is a
     /// deadlock waiting for a peer that is waiting for us.
     pub fn finish(mut self) -> Result<(), TransportError> {
         if let Some(w) = self.watchdog.take() {
@@ -199,13 +196,12 @@ impl Channel {
     }
 
     /// Start a new clock for the next phase of this exchange.
-    ///
     /// This is what makes the handshake clock and the request clock genuinely
-    /// separate rather than nominally so (ROADMAP.md R5): a channel opens under
-    /// a short deadline covering connect and handshake, and the caller re-arms
-    /// for the longer request once the peer has proved it is there. A phase
-    /// that has already timed out cannot be re-armed — the child is dead and
-    /// pretending otherwise would only move the error somewhere less clear.
+    /// separate rather than nominally so (design-runner.md R5): a channel opens
+    /// under a short deadline covering connect and handshake, and the caller
+    /// re-arms for the longer request once the peer has proved it is there. A
+    /// phase that has already timed out cannot be re-armed, the child being
+    /// dead.
     pub fn rearm(&mut self, after: Duration) {
         if self.timed_out.load(Ordering::SeqCst) {
             return;
@@ -290,20 +286,16 @@ impl Channel {
 }
 
 /// Kills a channel's child if the exchange outlives its deadline.
-///
 /// The clock has to live somewhere, and a pipe has no read timeout. Killing the
 /// child turns "the peer stopped talking" into an ordinary end of stream, which
-/// every reader above already handles — so the deadline needs no special case
-/// anywhere else, only [`Channel::timed_out`] to explain it afterwards.
-///
-/// **It kills the child, not a process group.** A reader unblocks when the last
+/// every reader above already handles, so the deadline needs no special case
+/// anywhere else.
+/// It kills the child, not a process group. A reader unblocks when the last
 /// holder of the write end of the pipe closes it, so if the child had left a
 /// grandchild holding that end, the read would keep blocking past the kill.
-/// Both transports here are single-process by construction — `ssh` is one
-/// process locally, and the worker is one `h5i` — so the kill is sufficient. A
-/// transport that ever spawns a shell wrapper would need the child in its own
-/// process group and a group-wide signal; a test that wraps one in `sh` must
-/// `exec` so no wrapper survives to hold the pipe.
+/// Both transports here are single-process by construction, so the kill is
+/// sufficient. A transport that ever spawns a shell wrapper would need the
+/// child in its own process group.
 struct Watchdog {
     disarm: mpsc::Sender<()>,
 }
@@ -331,7 +323,7 @@ impl Watchdog {
 
 /// How long an exchange may take before the watchdog ends it.
 ///
-/// Three clocks, never one (ROADMAP.md R5): this is the outer one. The
+/// Three clocks, never one (design-runner.md R5): this is the outer one. The
 /// handshake clock and the idle clock live in [`crate::client`], where there is
 /// something to be idle *about*.
 #[derive(Debug, Clone, Copy)]
@@ -339,8 +331,8 @@ pub struct Deadlines {
     /// Connect plus handshake: the peer proving it is there and speaks this
     /// protocol. Short, because everything it covers is either fast or broken.
     pub handshake: Duration,
-    /// One request and its answer, once the peer has proved it is there. Re-armed
-    /// by [`Channel::rearm`] after the handshake lands.
+    /// One request and its answer, once the peer has proved it is there.
+    /// Re-armed by [`Channel::rearm`] after the handshake lands.
     pub control: Duration,
 }
 
@@ -392,7 +384,7 @@ impl SshTransport {
 
     /// The whole argv, as a pure function of the configuration.
     ///
-    /// Every option here is load-bearing, and none of it comes from the user's
+    /// Every option here matters, and none of it comes from the user's
     /// `~/.ssh/config`, because a runner's security property must not depend on
     /// a file this code did not write.
     ///
@@ -403,27 +395,23 @@ impl SshTransport {
     /// host-key files, and a `~/.ssh/config` setting it alongside a
     /// `ProxyCommand` sent every RPC to another machine with
     /// `StrictHostKeyChecking=yes` and the pinned `UserKnownHostsFile` both
-    /// still in force — while `runner list` went on showing the honestly paired
-    /// fingerprint. That breaks the attestation, not merely the transport:
-    /// `runner_id` is what a manifest and a receipt record. `Match exec` and
-    /// `LocalCommand` in the same file are local execution at parse time.
+    /// still in force, while `runner list` went on showing the honestly paired
+    /// fingerprint. That breaks the attestation, not merely the transport: `runner_id` is what a manifest and a receipt record.
     ///
     /// The cost is real and worth naming: a user's `ProxyJump` for this host is
-    /// not picked up either. A runner that needs one should carry it in its own
-    /// record rather than in a file anything else can edit.
+    /// not picked up either. A runner that needs one should carry it in its own record.
     ///
-    /// - `BatchMode=yes` — never prompt. A prompt on a non-interactive channel
-    ///   is a hang, and a password prompt would mean the pair key is not being
-    ///   used at all.
-    /// - `IdentitiesOnly=yes` with `IdentityFile` — offer the pair key and
-    ///   nothing else, so the agent cannot substitute a key with wider rights.
-    /// - `UserKnownHostsFile` + `StrictHostKeyChecking=yes` — the runner
-    ///   authenticates to us with the key pinned at pair time. This is the half
-    ///   of mutual authentication that the pair key does not provide.
-    /// - `ControlMaster`/`ControlPersist` — session-per-RPC is only cheap
-    ///   because these make the second session free.
-    /// - `ServerAlive*` — a dead link becomes an error rather than a channel
-    ///   that never ends.
+    /// - `BatchMode=yes`: never prompt. A prompt on a non-interactive channel is a
+    ///   hang, and a password prompt would mean the pair key is not being used.
+    /// - `IdentitiesOnly=yes` with `IdentityFile`: offer the pair key and nothing
+    ///   else, so the agent cannot substitute a key with wider rights.
+    /// - `UserKnownHostsFile` plus `StrictHostKeyChecking=yes`: the runner
+    ///   authenticates to us with the key pinned at pair time, the half of mutual
+    ///   authentication the pair key does not provide.
+    /// - `ControlMaster`/`ControlPersist`: session-per-RPC is only cheap because
+    ///   these make the second session free.
+    /// - `ServerAlive*`: a dead link becomes an error rather than a channel that
+    ///   never ends.
     pub fn argv(&self) -> Vec<String> {
         let mut a: Vec<String> = vec!["ssh".into()];
         // No configuration file, at all. See the note above.
@@ -479,8 +467,8 @@ impl Transport for SshTransport {
 
 /// Run the worker as a child of this process.
 ///
-/// The point of this transport is that every failure mode of the protocol —
-/// oversized frames, truncation, an unknown type, a peer that stops answering —
+/// The point of this transport is that every failure mode of the protocol
+/// (oversized frames, truncation, an unknown type, a peer that stops answering)
 /// can be exercised in CI on a machine with no sshd, no second host and no
 /// network. It is also how a developer drives a worker under a debugger.
 #[derive(Debug, Clone)]
@@ -677,7 +665,7 @@ mod tests {
         let t = ChildProcessTransport {
             program: PathBuf::from("/bin/sh"),
             // `exec`, so no shell survives to hold the pipe's write end open
-            // past the kill — see the note on `Watchdog`.
+            // past the kill. See the note on `Watchdog`.
             args: vec!["-c".into(), "exec sleep 120".into()],
             env: vec![],
             deadlines: Deadlines {

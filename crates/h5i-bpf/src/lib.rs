@@ -1,29 +1,27 @@
-//! h5i-bpf — runtime detection: a kernel-observed evidence lane.
+//! h5i-bpf. Runtime detection: a kernel-observed evidence lane.
 //!
-//! Every other lane sits at the **boundary** of a box (h5i as parent, the
-//! CONNECT proxy, the runner's channel) or **inside** it (the tee shim, the
-//! browser), so both are defeated by work below the outermost command and by a
-//! box that declines to cooperate. This lane is neither: the kernel reports
-//! `execve`, `connect` and `openat` whether or not the box wanted them reported.
+//! Every other lane sits at the *boundary* of a box (h5i as parent, the CONNECT
+//! proxy, the runner's channel) or *inside* it (the tee shim, the browser), so
+//! both are defeated by work below the outermost command and by a box that
+//! declines to cooperate. This lane is neither: the kernel reports `execve`,
+//! `connect` and `openat` whether or not the box wanted them reported.
 //!
-//! ROADMAP D1 to D14 carry the design and the limits. Three belong here:
+//! design-detect.md D1 to D14 carry the design and limits. Three belong here:
 //!
-//! * **It cannot deny anything.** No `bpf_send_signal`, no
-//!   `bpf_override_return`, no LSM programs. Denial belongs to the mechanisms
-//!   that fail closed by construction, and a second thing that sometimes blocks
-//!   would blur a sharp boundary.
-//! * **It reads no kernel structure.** Syscall tracepoint arguments and stable
+//! * It cannot deny anything. No `bpf_send_signal`, no `bpf_override_return`, no
+//!   LSM programs. Denial belongs to the mechanisms that fail closed by
+//!   construction.
+//! * It reads no kernel structure. Syscall tracepoint arguments and stable
 //!   helpers only, so no CO-RE, no BTF, and one object that loads on every
 //!   kernel from 5.8 up.
-//! * **It never renders an absence as a clean result.** A run it could not watch
+//! * It never renders an absence as a clean result. A run it could not watch
 //!   carries [`RuntimeEvidence::unavailable`] with the reason; an incomplete one
 //!   carries [`Coverage::Partial`]; a lossy one carries the drop count.
 //!
 //! [`probe`] asks what the host can do, [`event`] is the wire format, [`rules`]
-//! is the pure signature engine and the only part that knows what a credential
-//! is, [`evidence`] is what lands in a receipt, [`scope`] decides which events
-//! belong to a box, and `session` (Linux, `load` feature) is the only module
-//! that touches a kernel.
+//! is the pure signature engine, [`evidence`] is what lands in a receipt,
+//! [`scope`] decides which events belong to a box, and `session` (Linux, `load`
+//! feature) is the only module that touches a kernel.
 //!
 //! ```no_run
 //! use h5i_bpf::{DetectConfig, Watch, scope::Tier, rules::RuleContext};
@@ -118,14 +116,14 @@ impl DetectConfig {
     }
 }
 
-/// The absolute prefixes the kernel filter should let through, derived from
-/// the rules' own vocabulary.
+/// The absolute prefixes the kernel filter should let through, derived from the
+/// rules' own vocabulary.
 ///
-/// Bounded by [`event::MAX_PREFIX`], and ordered by value so that a truncation
-/// drops the least important entry rather than an arbitrary one.
+/// Bounded by [`event::MAX_PREFIX`], and ordered by value so a truncation drops
+/// the least important entry rather than an arbitrary one.
 ///
-/// `home` and `control_dir` are the box's paths, not the host's — a box has
-/// its own home, and a filter built from the host's would match nothing.
+/// `home` and `control_dir` are the box's paths, not the host's: a box has its
+/// own home, and a filter built from the host's would match nothing.
 pub fn kernel_prefixes(home: &str, control_dir: &str) -> Vec<String> {
     // Most valuable first, because the tail is what a truncation drops.
     let mut out = Vec::new();
@@ -164,7 +162,7 @@ pub fn kernel_prefixes(home: &str, control_dir: &str) -> Vec<String> {
 ///
 /// One type for both outcomes on purpose. A caller that had to handle "started
 /// a session" and "could not start a session" differently would eventually
-/// handle the second one by logging it, and the receipt would carry nothing —
+/// handle the second one by logging it, and the receipt would carry nothing,
 /// which is the failure mode this lane is a correction for.
 pub struct Watch(WatchInner);
 

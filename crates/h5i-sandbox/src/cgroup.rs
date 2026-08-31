@@ -9,28 +9,27 @@
 //!
 //! The rlimit the process tier falls back to for `mem` (`RLIMIT_DATA`) caps the
 //! writable data segment, not resident memory, and is per-process, not per-tree.
-//! (It is deliberately *not* `RLIMIT_AS`: capping virtual address space breaks
-//! runtimes that reserve huge PROT_NONE regions — V8/Node, Go, the JVM,
-//! sanitizers — see the note in sandbox.rs's resource-caps block.) cgroup v2
-//! `memory.max` / `pids.max` are the production-grade controls: a hierarchical,
-//! whole-subtree limit plus accurate `memory.peak` / `cpu.stat` accounting.
+//! It is deliberately *not* `RLIMIT_AS`: capping virtual address space breaks
+//! runtimes that reserve huge PROT_NONE regions (V8/Node, Go, the JVM,
+//! sanitizers). cgroup v2 `memory.max` and `pids.max` are the production-grade
+//! controls: a hierarchical, whole-subtree limit plus accurate `memory.peak` and
+//! `cpu.stat` accounting.
 //!
 //! ## Rootless reality (honest)
 //!
-//! Creating a cgroup as a non-root user requires the kernel to have **delegated**
+//! Creating a cgroup as a non-root user requires the kernel to have *delegated*
 //! a writable subtree to the session (a systemd user manager with
-//! `Delegate=yes`). Many hosts — notably WSL2 and most CI — run h5i in a
-//! root-owned cgroup (`/init.scope`) with no delegation, so cgroup management is
-//! simply **unavailable** there. [`probe`] detects this by actually attempting a
-//! create + controller-enable + remove; when it fails we fall back to the
-//! existing rlimit path and say so. We never silently pretend a limit is
-//! enforced.
+//! `Delegate=yes`). Many hosts, notably WSL2 and most CI, run h5i in a
+//! root-owned cgroup with no delegation, so cgroup management is simply
+//! *unavailable* there. [`probe`] detects this by actually attempting a create,
+//! controller-enable and remove; when it fails we fall back to the rlimit path
+//! and say so. We never silently pretend a limit is enforced.
 //!
 //! ## The "no internal processes" rule
 //!
-//! cgroup v2 forbids a (non-root) cgroup from both holding processes *and*
+//! cgroup v2 forbids a non-root cgroup from both holding processes *and*
 //! enabling controllers for its children. So we never manage limits on h5i's own
-//! cgroup; instead we create a fresh **parent** under the delegated root, enable
+//! cgroup; instead we create a fresh *parent* under the delegated root, enable
 //! `+memory +pids` in *its* `subtree_control`, and put each run in a leaf child
 //! of that parent. h5i's own process is never moved.
 
@@ -45,7 +44,7 @@ pub struct CgroupCaps {
     /// Controllers available in the delegated subtree (subset of
     /// cpu/memory/pids/io/...). Empty when nothing is delegated.
     pub controllers: Vec<String>,
-    /// True iff we actually created+enabled+removed a probe cgroup — the only
+    /// True iff we actually created+enabled+removed a probe cgroup. The only
     /// honest signal that limits will be enforced. `false` ⇒ fall back.
     ///
     /// Driven by `memory.max`, because that is the write [`try_make_usable`]
@@ -54,14 +53,12 @@ pub struct CgroupCaps {
     pub usable: bool,
     /// Whether `pids.max` is genuinely writable in a run cgroup.
     ///
-    /// Separate from [`Self::usable`] because delegation is **per controller**:
-    /// a systemd unit with `Delegate=memory` hands out one and not the other,
-    /// and `cgroup.subtree_control` accepts `+memory +pids` partially. The
-    /// probe used to prove `memory.max` alone and every caller then treated one
-    /// boolean as the answer for both caps — so on such a host a profile's
-    /// `procs` limit was silently not applied while `box status` printed it
-    /// unmarked. SECURITY.md: "Resource caps that a platform cannot hold must
-    /// be reported as unenforced rather than listed as applied."
+    /// Separate from [`Self::usable`] because delegation is *per controller*: a
+    /// systemd unit with `Delegate=memory` hands out one and not the other, and
+    /// `cgroup.subtree_control` accepts `+memory +pids` partially. The probe used
+    /// to prove `memory.max` alone and every caller then treated one boolean as
+    /// the answer for both caps, so on such a host a profile's `procs` limit was
+    /// silently not applied while `box status` printed it unmarked.
     pub procs_enforceable: bool,
     /// The delegated parent under which run cgroups are created (when usable).
     #[cfg(target_os = "linux")]
@@ -123,12 +120,12 @@ fn self_cgroup() -> Option<PathBuf> {
     Some(PathBuf::from(CG_ROOT).join(rel.trim_start_matches('/')))
 }
 
-/// The systemd **user-manager** cgroup for the current uid, where systemd
+/// The systemd *user-manager* cgroup for the current uid, where systemd
 /// delegates `cpu/memory/pids` to the unprivileged user (the standard rootless
-/// path — `man systemd.resource-control`, "Delegate"). h5i can create + limit
+/// path: `man systemd.resource-control`, "Delegate"). h5i can create + limit
 /// child cgroups *under* this even when its own process sits elsewhere (e.g.
 /// parked in a root-owned `/init.scope`), because management only needs write
-/// access to the directory, not residency in it — the same thing rootless
+/// access to the directory, not residency in it. The same thing rootless
 /// crun/runc do in cgroupfs mode.
 #[cfg(target_os = "linux")]
 fn user_service_cgroup() -> Option<PathBuf> {
@@ -225,11 +222,11 @@ struct Proven {
 }
 
 /// Best-effort: create `parent`, enable `+memory +pids` in its subtree_control,
-/// create a leaf, and remove the leaf — proving we can manage run cgroups.
+/// create a leaf, and remove the leaf. Proving we can manage run cgroups.
 ///
 /// Both limits are written, not just one. Delegation is per controller, so
 /// `Delegate=memory` without `pids` leaves `memory.max` writable and `pids.max`
-/// absent — and proving only the first made `usable` the answer to a question it
+/// absent, and proving only the first made `usable` the answer to a question it
 /// had not asked.
 #[cfg(target_os = "linux")]
 fn try_make_usable(parent: &Path) -> std::io::Result<Proven> {
@@ -240,7 +237,7 @@ fn try_make_usable(parent: &Path) -> std::io::Result<Proven> {
     let _ = std::fs::write(parent.join("cgroup.subtree_control"), "+memory +pids");
     let leaf = parent.join("probe-leaf");
     std::fs::create_dir_all(&leaf)?;
-    // Each must be genuinely writable for its cap to mean anything — require
+    // Each must be genuinely writable for its cap to mean anything. Require
     // the write itself to succeed, not merely that the file exists.
     let proven = Proven {
         mem: std::fs::write(leaf.join("memory.max"), "max").is_ok(),
@@ -287,14 +284,14 @@ impl ScopedCgroup {
             // `pids` still gets its memory cap, and `limit_support` reports the
             // process cap as unenforced so `box status` marks it rather than
             // claiming it. That is the same answer macOS already gets, and it
-            // is the documented one — refusing the run here would take a
+            // is the documented one. Refusing the run here would take a
             // working memory limit away over a cap the platform cannot hold.
             let _ = std::fs::write(path.join("pids.max"), p.to_string());
         }
         Ok(ScopedCgroup { path })
     }
 
-    /// Path of this cgroup's `cgroup.procs` — the child writes its own pid here
+    /// Path of this cgroup's `cgroup.procs`: the child writes its own pid here
     /// in `pre_exec` to join the cgroup before it allocates anything.
     pub fn procs_path(&self) -> PathBuf {
         self.path.join("cgroup.procs")
@@ -336,17 +333,17 @@ pub fn probe() -> CgroupCaps {
 mod tests {
     use super::*;
 
-    /// cgroup delegation is **per controller**, so one probe result is not the
+    /// cgroup delegation is *per controller*, so one probe result is not the
     /// answer for both caps. `Delegate=memory` without `pids` is a real systemd
     /// configuration: `memory.max` is writable, `pids.max` is not, and the
-    /// probe proved only the first — so `limit_support` reported the process
+    /// probe proved only the first, so `limit_support` reported the process
     /// cap as enforced and `box status` printed it unmarked on a host that had
     /// silently not applied it. SECURITY.md: a cap the platform cannot hold is
     /// reported as unenforced rather than listed as applied.
     #[test]
     fn the_two_caps_are_reported_separately_because_delegation_is_separate() {
-        // On a host with no cgroup2 at all — every macOS one, and this is what
-        // the non-Linux stub answers — neither is claimed.
+        // On a host with no cgroup2 at all (every macOS one, and this is what
+        // the non-Linux stub answers) neither is claimed.
         let caps = probe();
         if !caps.usable {
             assert!(
@@ -400,7 +397,7 @@ mod tests {
     }
 
     /// Live, capability-gated: where the host actually delegates cgroups (a
-    /// systemd user session), exercise the full ScopedCgroup lifecycle — create
+    /// systemd user session), exercise the full ScopedCgroup lifecycle. Create
     /// under the discovered base, apply limits, join a process, read accounting,
     /// and clean up on drop. Skips cleanly where delegation is unavailable.
     #[cfg(target_os = "linux")]
@@ -413,14 +410,14 @@ mod tests {
         }
         let parent = caps.parent.expect("usable ⇒ parent");
         // 256 MiB memory cap, 64 pids. NOTE: we never move the test process into
-        // this cgroup — a tight memory.max on the multi-hundred-MB test harness
+        // this cgroup. A tight memory.max on the multi-hundred-MB test harness
         // would OOM-kill it. We validate that the limits are *written* and the
         // accounting files are *readable* on an empty run cgroup, which proves
         // the rootless create/limit/account/cleanup path end to end.
         let cg = match ScopedCgroup::create(&parent, 999_999, Some(256 << 20), Some(64)) {
             Ok(c) => c,
             Err(e) => {
-                // Delegation probed OK but creation raced/failed — don't fail
+                // Delegation probed OK but creation raced/failed. Don't fail
                 // the suite on a transient host condition.
                 eprintln!("skipping: ScopedCgroup::create failed: {e}");
                 return;
@@ -432,7 +429,7 @@ mod tests {
         let pids = std::fs::read_to_string(cg.path.join("pids.max")).unwrap_or_default();
         assert_eq!(pids.trim(), "64");
         // Accounting is readable (an empty cgroup reports 0, but the file must
-        // exist — that's what the run path reads after a real run).
+        // exist: that's what the run path reads after a real run).
         let usage = cg.usage();
         assert!(usage.mem_peak_bytes.is_some(), "memory.peak must be readable in the run cgroup");
         assert!(usage.cpu_usec.is_some(), "cpu.stat must be readable in the run cgroup");

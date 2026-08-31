@@ -1,18 +1,17 @@
 //! Starting, describing and ending a share.
 //!
-//! The order of operations here is load bearing, and one step in particular:
-//! **the dialer is forked before the async runtime exists.** Forking a process
-//! that already has a thread pool inherits one thread plus whatever locks the
-//! others were holding — the allocator's among them — and the child deadlocks
-//! somewhere with no stack to look at. So the one fork a share does happens
-//! while this process is still single-threaded, and everything async comes
-//! after it.
+//! The order of operations here matters, and one step in particular: the dialer
+//! is forked before the async runtime exists. Forking a process that already has
+//! a thread pool inherits one thread plus whatever locks the others were
+//! holding, the allocator's among them, and the child deadlocks somewhere with
+//! no stack to look at. So the one fork a share does happens while this process
+//! is still single-threaded, and everything async comes after it.
 //!
 //! Ending a share is the other thing this module is careful about. It is a
-//! foreground command that people stop with Ctrl-C, so a receipt written only
-//! on the clean path would be missing from every session anybody actually ran.
-//! Three things end a share and all three write the receipt: the interrupt,
-//! `h5i box share stop` from another terminal, and the last grant expiring.
+//! foreground command that people stop with Ctrl-C, so a receipt written only on
+//! the clean path would be missing from every session anybody actually ran.
+//! Three things end a share and all three write the receipt: the interrupt, `h5i
+//! box share stop` from another terminal, and the last grant expiring.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -49,7 +48,7 @@ pub struct Request {
     pub box_name: String,
     /// The pid that identifies the box, which means different things on the
     /// two platforms because they bound a box differently: on Linux, a pid
-    /// living **inside** the box's namespaces; on macOS, the box's **session**
+    /// living *inside* the box's namespaces; on macOS, the box's *session*
     /// process, whose descendants are the box.
     pub box_pid: u32,
     /// The port to share, inside the box.
@@ -78,7 +77,7 @@ pub struct Started {
 /// Start sharing, and serve until stopped.
 pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iError> {
     // An early, friendly refusal so `share` fails before forking a helper and
-    // dialling a network. It is **not** the check that matters — `session::claim`
+    // dialling a network. It is *not* the check that matters: `session::claim`
     // re-does it under the lock, because between here and there is a window two
     // starts could both walk through.
     if let Some(existing) = session::read(&req.env_dir)
@@ -95,7 +94,7 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
     // route, rather than re-read off the box process: `spawn` returns after its
     // helper has entered the namespace, and if the box process exited in that
     // window the read returned `None` while the helper held the namespace
-    // fine — and `box_went_away` read `None` as "nothing to compare" and
+    // fine, and `box_went_away` read `None` as "nothing to compare" and
     // skipped restart detection for the whole share. See
     // `Dialer::pinned_route`.
     let Some(pinned_route) = dialer.pinned_route() else {
@@ -116,19 +115,17 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
     // a port that is not up yet.
     let warning = match dialer.connect() {
         Ok(_) => None,
-        // Refused, not warned — the two conditions where starting would be
-        // worse than failing, taken together because the answer to both is to
-        // stop rather than print an invite.
+        // Refused, not warned. The two conditions where starting would be worse
+        // than failing, taken together because the answer to both is to stop
+        // rather than print an invite.
         //
-        // *No loopback* (Linux): the box's namespace has none, so nothing
-        // inside it can reach itself and no ticket minted here will ever move a
-        // byte — the share would start, print an invite, and leave both people
-        // reading messages about a dev server that is running fine. `process`
-        // with a profile that denies egress is exactly this shape, and it is a
-        // configuration the docs used to recommend.
+        // *No loopback* (Linux): the box's namespace has none, so nothing inside it
+        // can reach itself and no ticket minted here will ever move a byte. The
+        // share would start, print an invite, and leave both people reading
+        // messages about a dev server that is running fine.
         //
-        // *Not the box* (macOS): something is listening, and it is not this
-        // box's. Starting here would publish a process nobody offered to share.
+        // *Not the box* (macOS): something is listening, and it is not this box's.
+        // Starting here would publish a process nobody offered to share.
         Err(e) if e.fatal() => {
             let loopback = e.no_loopback();
             // The inner error's own text, not its `Display`: wrapping one
@@ -139,7 +136,7 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
             if !loopback {
                 // A port held by something that is not the box (macOS). The
                 // dialer's message already names what holds it and what to do;
-                // the namespace advice below would be wrong here — there is no
+                // the namespace advice below would be wrong here. There is no
                 // profile that changes who owns a host port.
                 return Err(H5iError::Metadata(said));
             }
@@ -153,16 +150,14 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
         }
         // The reason is carried through rather than assumed. "Nothing is
         // listening yet" is the overwhelmingly common cause and the only one
-        // worth advice, but it is not the only way this fails — the helper can
+        // worth advice, but it is not the only way this fails: the helper can
         // have failed to enter the namespace, or the channel can have been
-        // retired — and telling somebody to start their dev server when the
-        // dev server is not the problem is an afternoon spent in the wrong
-        // place.
-        // Using the classifier, not assuming. `DialError` knows which of the
-        // two this is, and this is the only place a person sees the answer
-        // *while* the share is running — the receipt, which they read
-        // afterwards, was the half that got fixed. Telling somebody to start a
-        // dev server that is already running is the whole defect.
+        // retired, and telling somebody to start their dev server when the dev
+        // server is not the problem is an afternoon spent in the wrong place.
+        //
+        // Using the classifier, not assuming. `DialError` knows which of the two
+        // this is, and this is the only place a person sees the answer *while* the
+        // share is running.
         Err(e) if e.nothing_listening() => Some(format!(
             "nothing is listening on port {} inside the box yet — peers will get an error \
              until the dev server starts",
@@ -184,7 +179,7 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
         .block_on(async move { serve_async(req, dialer, warning, pinned_route, announce).await });
     // Not a plain drop. `open_upstream` runs under `spawn_blocking`, blocking
     // tasks are never cancelled, and the dialer's reply is bounded only by
-    // `CONNECT_TIMEOUT` — so a dev server that accepts nothing meant this
+    // `CONNECT_TIMEOUT`, so a dev server that accepts nothing meant this
     // command sat there for ten more seconds after printing everything it had
     // to say, which is an operator's whole experience of a hang.
     runtime.shutdown_timeout(Duration::from_millis(200));
@@ -198,12 +193,12 @@ async fn serve_async(
     pinned_netns: String,
     announce: impl FnOnce(&Started),
 ) -> Result<(), H5iError> {
-    // **The box is claimed before the network is touched.**
+    // The box is claimed before the network is touched.
     //
     // Setup used to come first, on the reasoning that it is the step most
     // likely to fail and that failing before anything was written kept a dead
     // `share.json` off disk. What it also kept off disk was any sign that a
-    // share was starting at all — for the forty-five seconds `--tunnel` may
+    // share was starting at all, for the forty-five seconds `--tunnel` may
     // spend waiting for a URL. In that window `share stop` and `stop --force`
     // both reported success and did nothing, `rm`/`rebase`/`abort`/`export`
     // saw an unshared box and proceeded, and the start then announced a public
@@ -212,8 +207,7 @@ async fn serve_async(
     // not recoverable at all.
     //
     // The record starts with no endpoint and no grants, which is what
-    // `starting` means: claimed, admitting nobody, and about to be one thing or
-    // the other.
+    // `starting` means.
     let mut sess = ShareSession::new(&req.env_id, req.port, req.transport, "", chrono::Utc::now());
     sess.starting = true;
     match session::claim(&req.env_dir, &sess, &req.box_name) {
@@ -323,7 +317,7 @@ async fn serve_async(
     // The `bool` is "a signal has already been delivered", and it decides who
     // owns the *next* one. On this branch `interrupted()` has armed the
     // hard-exit watcher, so a second Ctrl-C exits without a receipt, as
-    // promised — and the teardown below must not also race for it.
+    // promised, and the teardown below must not also race for it.
     let (outcome, already_signalled) = tokio::select! {
         r = started.serve(bridge.clone(), req.direct_only) => (r, false),
         _ = interrupted(&req.env_dir, &claimed_at) => (Ok(()), true),
@@ -339,15 +333,14 @@ async fn serve_async(
 
     // Say so on disk before doing any of it. `is_live` is `kill(pid, 0)`, and
     // this process is about to spend several seconds writing a receipt while
-    // still very much alive — so `share grant` in that window minted a ticket,
-    // printed the one copy of its secret, and then watched this function delete
-    // the table it went into.
+    // still very much alive, so `share grant` in that window minted a ticket,
+    // printed the one copy of its secret, and then watched this function
+    // delete the table it went into.
+    //
     // Reported when it fails, not swallowed. This write is the only thing
     // stopping a `grant` in another process from minting a capability into a
-    // table this function is about to delete, and it fails for exactly the case
-    // it exists for — a `share.lock` held past the retry window. The operator
-    // is the only one who can act on that, and the peer holding the doomed
-    // ticket cannot.
+    // table this function is about to delete, and it fails for exactly the
+    // case it exists for: a `share.lock` held past the retry window.
     if let Err(e) = session::begin_winding_up(&req.env_dir, &bridge.claimed().started_at) {
         eprintln!(
             "share: could not mark this share as shutting down ({e}). If `h5i box share grant` \
@@ -359,20 +352,17 @@ async fn serve_async(
     //
     // This is a select and not an unconditional `arm_second_signal` for a
     // reason that cost a round to learn. Arming the hard-exit watcher here
-    // meant that on the three exits where no signal had been delivered yet —
-    // `share stop` from another terminal, the box going away, the transport
-    // ending — the operator's **first** Ctrl-C hit a watcher built for their
+    // meant that on the three exits where no signal had been delivered yet
+    // (`share stop` from another terminal, the box going away, the transport
+    // ending) the operator's *first* Ctrl-C hit a watcher built for their
     // second: it printed "interrupted again", threw the receipt away and
     // exited. Pressing Ctrl-C once to get a prompt back destroyed the one
-    // artifact this whole feature exists to produce, and told them they had
-    // done it twice.
+    // artifact this whole feature exists to produce.
     //
-    // What an interrupt during the teardown should mean is "stop waiting", not
-    // "stop recording". So it skips the grace and the quiesce — losing the
-    // closing bytes of whatever was still mid-copy, which is the trade the
-    // operator just asked for — and still writes the receipt. Only a *second*
-    // one, armed by `interrupted()` on the path where a first has actually been
-    // delivered, exits without it.
+    // What an interrupt during the teardown should mean is "stop waiting",
+    // not "stop recording". So it skips the grace and the quiesce, losing the
+    // closing bytes of whatever was mid-copy, and still writes the receipt.
+    // Only a *second* one exits without it.
     let waited = if already_signalled {
         // The hard-exit watcher is armed and owns the next signal. Racing it
         // here would make a second Ctrl-C do one of two different things
@@ -400,7 +390,7 @@ async fn serve_async(
         // call this used to make was worse than redundant: both arms of the
         // `select!` above can become ready in the same poll and the pick is
         // random, so a run whose quiesce *had* completed could still land here
-        // and unmark it — a receipt calling itself partial when it had waited.
+        // and unmark it. A receipt calling itself partial when it had waited.
     }
     // Every path out writes the receipt and takes the session file with it, so
     // `share ls` describes what is running rather than what once ran.
@@ -421,7 +411,7 @@ async fn serve_async(
 async fn teardown(bridge: &Arc<Bridge>, started: &mut Setup) {
     // Announced, so a test can wait for the window rather than guess at it.
     // The end-to-end check for "a first Ctrl-C during the teardown" slept 0.4s
-    // after `share stop` and signalled — but the serving process only learns
+    // after `share stop` and signalled, but the serving process only learns
     // about a stop by polling at `STOP_POLL`, so at 0.4s it was still in the
     // main select and the signal landed on the ordinary Ctrl-C path. The check
     // passed, for a byte-for-byte repeat of the test above it.
@@ -429,7 +419,7 @@ async fn teardown(bridge: &Arc<Bridge>, started: &mut Setup) {
     // Tell the connections first, tear the transport down second. `iroh`'s
     // `Endpoint::close` closes every connection with code `0` and an empty
     // reason, so a connection that wanted to close with an explanation has to
-    // have done it before that runs — otherwise the joiner is told "closed by
+    // have done it before that runs. Otherwise the joiner is told "closed by
     // peer: 0" for a ticket that simply expired.
     bridge.begin_shutdown();
     tokio::time::sleep(SHUTDOWN_GRACE).await;
@@ -439,7 +429,7 @@ async fn teardown(bridge: &Arc<Bridge>, started: &mut Setup) {
     // does not join them, and they are detached tasks. Writing the receipt
     // straight afterwards is a race that a fast network usually wins and a slow
     // one usually loses, and what it loses is the bytes and closing times of
-    // every peer still mid-copy — the half of a share a reviewer most wants.
+    // every peer still mid-copy. The half of a share a reviewer most wants.
     started.shutdown().await;
     bridge.quiesce(QUIESCE).await;
 }
@@ -448,7 +438,7 @@ async fn teardown(bridge: &Arc<Bridge>, started: &mut Setup) {
 ///
 /// `SIGTERM` as well as Ctrl-C, because closing the terminal, a `kill`, or a
 /// process supervisor tidying up are all ordinary ways a foreground command
-/// ends — and handling only the interrupt means the ingress receipt is lost in
+/// ends, and handling only the interrupt means the ingress receipt is lost in
 /// exactly those cases, which are the ones nobody planned for.
 async fn interrupted(env_dir: &std::path::Path, started_at: &str) {
     #[cfg(unix)]
@@ -480,8 +470,8 @@ async fn interrupted(env_dir: &std::path::Path, started_at: &str) {
 /// Make a second interrupt end the process, rather than doing nothing.
 ///
 /// Handling a signal means the default disposition is gone for the rest of this
-/// process's life, so after the first Ctrl-C a second one — and a plain
-/// `kill` — would be swallowed. The orderly shutdown that follows is bounded
+/// process's life, so after the first Ctrl-C a second one, and a plain
+/// `kill`, would be swallowed. The orderly shutdown that follows is bounded
 /// (the endpoint's close, the drain, the quiesce) but it is not instant, and an
 /// operator pressing Ctrl-C twice is asking for it to stop now. They lose the
 /// receipt, which is the trade they just made.
@@ -490,7 +480,7 @@ fn arm_second_signal(env_dir: &std::path::Path, started_at: &str) {
     let started_at = started_at.to_string();
     // Armed at most once. The normal shutdown path calls this too, so on a
     // Ctrl-C both calls happen and a second watcher would race the first to
-    // `exit(130)` — harmless, but it also means two handlers for one signal.
+    // `exit(130)`: harmless, but it also means two handlers for one signal.
     static ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if ARMED.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
@@ -520,14 +510,14 @@ fn arm_second_signal(env_dir: &std::path::Path, started_at: &str) {
         // made by this exit rather than chosen by them.
         //
         // Unlocked, because the lock this would wait on is most likely held by
-        // this process's own orderly shutdown — the one being abandoned — and
+        // this process's own orderly shutdown, the one being abandoned, and
         // five seconds of retrying is not what "stop now" means.
         session::clear_now(&env_dir, &started_at);
         std::process::exit(130);
     });
 }
 
-/// Resolves when the grant table stops admitting anyone — `share stop` from
+/// Resolves when the grant table stops admitting anyone: `share stop` from
 /// another terminal, a revoke of the last grant, or simple expiry.
 async fn stopped_elsewhere(bridge: Arc<Bridge>) -> String {
     loop {
@@ -542,23 +532,19 @@ async fn stopped_elsewhere(bridge: Arc<Bridge>) -> String {
 ///
 /// This is not tidiness. The dialer's helper lives *inside* the box's network
 /// namespace, so it keeps that namespace alive after every other process in it
-/// has gone — and loopback inside it still exists, so connections are refused
+/// has gone, and loopback inside it still exists, so connections are refused
 /// rather than failing in a way anybody would notice. Left alone, a share whose
 /// box died answers `502` forever, and a box restarted afterwards gets a *new*
-/// namespace that this share will never reach. So the share ends, and says why.
-/// Is the box this share was pinned to still the box that is there?
+/// namespace that this share will never reach.
 ///
-/// Asked once, after transport setup and before anything is announced. Setup
-/// can take forty-five seconds for a tunnel and is not instant for P2P either,
-/// and everything it depends on can go away inside that: the writer session
-/// that made this a box at all can exit, and a replacement can start with a
-/// namespace of its own that this share's dialer is not in.
+/// Is the box this share was pinned to still the box that is there? Asked once,
+/// after transport setup and before anything is announced. Setup can take
+/// forty-five seconds for a tunnel, and everything it depends on can go away
+/// inside that: the writer session that made this a box at all can exit, and a
+/// replacement can start with a namespace of its own.
 ///
-/// Neither failed naturally. The dialer's helper holds the old namespace open,
-/// so it stays perfectly dialable — into a box nobody is using. Without this
-/// check the share printed a successful invite and only `box_went_away`
-/// noticed, on its three-second poll, by which point the person on the other
-/// end had already been handed a link.
+/// Neither failed naturally, because the dialer's helper holds the old namespace
+/// open, so it stays perfectly dialable into a box nobody is using.
 fn still_ours(req: &Request, claimed_at: &str, pinned: &str) -> Result<(), H5iError> {
     let writers = h5i_core::env::live_sessions(&req.env_dir)
         .iter()
@@ -593,7 +579,7 @@ async fn box_went_away(env_dir: PathBuf, pinned: String) -> String {
     loop {
         tokio::time::sleep(BOX_POLL).await;
         // Only *writers* count. A read-only observer is a session, and it kept
-        // this loop quiet after the box's real session had gone — so somebody
+        // this loop quiet after the box's real session had gone, so somebody
         // could `h5i box abort` a box, be told it was aborted, and have a
         // public tunnel URL keep pointing at it for the rest of the ticket's
         // life while `share ls` reported it healthy. An observer holds a
@@ -606,19 +592,17 @@ async fn box_went_away(env_dir: PathBuf, pinned: String) -> String {
                     (start a session and share again)"
                 .to_string();
         }
-        // "Is there *any* session" was the whole test, and it is not the
-        // question. Every session of a box gets a brand-new network namespace,
-        // and the dialer is pinned to the one that existed at startup — so a
-        // person who exits their shell and starts another, or who has a
-        // read-only observer attached while they restart, leaves this loop
-        // quiet and the share pinned to a namespace nothing is in. `share ls`
-        // reported it healthy; the visitor was told to ask the sharer to start
-        // a dev server that was already running; and the fix — restart the
-        // share — was undiscoverable from either terminal.
-        // And a box with no *writer* has no namespace to compare against, which
-        // is not "nothing to check" but "the thing we were pinned to is gone" —
-        // the very case this comparison was added for. The `if let` skipped it
-        // silently.
+        // "Is there *any* session" was the whole test, and it is not the question.
+        // Every session of a box gets a brand-new network namespace, and the dialer
+        // is pinned to the one that existed at startup, so a person who exits their
+        // shell and starts another leaves this loop quiet and the share pinned to a
+        // namespace nothing is in. `share ls` reported it healthy, the visitor was
+        // told to start a dev server that was already running, and the fix was
+        // undiscoverable from either terminal.
+        //
+        // And a box with no *writer* has no namespace to compare against, which is
+        // not "nothing to check" but "the thing we were pinned to is gone", the very
+        // case this comparison was added for. The `if let` skipped it silently.
         {
             let now = current_route(&env_dir);
             if now.as_deref() != Some(pinned.as_str()) {
@@ -626,7 +610,7 @@ async fn box_went_away(env_dir: PathBuf, pinned: String) -> String {
                 // have this failure: on Linux the restarted box has a new
                 // namespace this share cannot enter, and on macOS it is a new
                 // process tree, so the dialer would attribute the port to a
-                // box that no longer exists — and refuse every connection.
+                // box that no longer exists, and refuse every connection.
                 return "the box restarted, so this share is pinned to a box that is no longer \
                         there. Nothing it serves can reach the box any more — start a fresh \
                         share."
@@ -639,14 +623,12 @@ async fn box_went_away(env_dir: PathBuf, pinned: String) -> String {
 /// What the dialer is pinned to, named so it can be compared later.
 ///
 /// The two platforms pin different things, because they identify a box
-/// differently — and both change when a box restarts, which is the event this
-/// exists to notice.
+/// differently, and both change when a box restarts:
 ///
-/// * **Linux**: the network namespace. `/proc/<pid>/ns/net` reads as
+/// * *Linux*: the network namespace. `/proc/<pid>/ns/net` reads as
 ///   `net:[4026536311]`, and that number is new for every session.
-/// * **macOS**: the session process itself. There is no namespace to name, and
-///   the dialer's whole notion of "the box" is the tree under that pid — so a
-///   new session is a new tree, and the old pin is a box that no longer exists.
+/// * *macOS*: the session process itself. There is no namespace to name, and
+///   the dialer's whole notion of "the box" is the tree under that pid.
 fn pinned_route(box_pid: u32) -> Option<String> {
     #[cfg(target_os = "linux")]
     {
@@ -820,7 +802,7 @@ impl Setup {
 
 /// Mint another ticket for a share that is already running.
 ///
-/// One ticket admits one peer, so this is how a second person is added — and it
+/// One ticket admits one peer, so this is how a second person is added, and it
 /// is why revocation can be per person rather than all or nothing.
 pub fn grant(
     env_dir: &std::path::Path,
@@ -830,17 +812,14 @@ pub fn grant(
     // Everything about the grant is decided *inside* the closure, which runs
     // with `share.lock` held. Two things were wrong with deciding them first.
     //
-    // **The lifetime started too early.** `session::update` spends up to five
-    // seconds acquiring the lock (a hundred retries at 50 ms), and the CLI
-    // accepts `--expire 1s`. A contended or preempted lock holder could
-    // therefore make a grant expire before it was ever appended: the command
-    // still succeeded and printed an already-dead invite. The comment on
-    // `Minted` says the requested duration should be usable after handoff.
+    // The lifetime started too early. `session::update` spends up to five
+    // seconds acquiring the lock, and the CLI accepts `--expire 1s`, so a
+    // contended lock holder could make a grant expire before it was ever
+    // appended: the command still succeeded and printed an already-dead invite.
     //
-    // **The id was chosen without looking at the table.** Eight hex characters
-    // is thirty-two bits, and `revoke` finds the first matching row — see
-    // `session::mint_grant_unlike` for what a collision costs. Under the lock,
-    // "no existing grant uses this id" stays true through the write.
+    // The id was chosen without looking at the table. Eight hex characters is
+    // thirty-two bits, and `revoke` finds the first matching row. See
+    // `session::mint_grant_unlike` for what a collision costs.
     let minted = std::cell::RefCell::new(None);
     let sess = session::update(env_dir, |s| {
         if !session::is_live(s) {
@@ -863,15 +842,14 @@ pub fn grant(
         // the share it belongs to could never expire on its own.
         if s.transport == Transport::P2p {
             // The addressing a ticket needs is the running endpoint's, and the
-            // session file records only its id. Re-deriving it here would be a
-            // second source of truth for something that must match exactly, so
-            // this verb is honest about what it cannot do alone.
-            // Naming the procedure that works, rather than one that does not.
-            // "Start a second share" was the advice, and starting a second
-            // share is refused because this one is running — so the two
-            // messages pointed at each other and somebody wanting a second
-            // viewer could alternate between them forever without learning
-            // that the answer is to stop and restart.
+            // session file records only its id. Re-deriving it here would be a second
+            // source of truth for something that must match exactly.
+            //
+            // Naming the procedure that works, rather than one that does not. "Start
+            // a second share" was the advice, and starting a second share is refused
+            // because this one is running, so the two messages pointed at each other
+            // and somebody wanting a second viewer could alternate between them
+            // forever.
             return Err(H5iError::Metadata(
                 "a peer-to-peer share carries one ticket: a second one would need the running \
                  endpoint's addressing, and only the serving process has that. To add \
@@ -885,13 +863,12 @@ pub fn grant(
         let now = chrono::Utc::now();
         // …by *this* process's clock, which is not the one that will judge it.
         // The serving process floors every expiry decision against elapsed
-        // monotonic time (`Bridge::now`), precisely so a backward wall-clock
-        // step cannot extend a live ticket. This process has no monotonic
-        // reference to the share's start and cannot reproduce that floor — so
-        // after a one-hour backward correction, a grant minted here for an
-        // hour has an expiry the bridge already considers past, and it is
-        // refused on its first use while the CLI and `share status` both show
-        // an hour remaining.
+        // monotonic time (`Bridge::now`), precisely so a backward wall-clock step
+        // cannot extend a live ticket. This process has no monotonic reference to
+        // the share's start and cannot reproduce that floor, so after a one-hour
+        // backward correction, a grant minted here for an hour has an expiry the
+        // bridge already considers past, and it is refused on its first use while
+        // `share status` shows an hour remaining.
         //
         // The disagreement is detectable from the record alone: a share cannot
         // have started after now. Refused rather than guessed at, because the
@@ -927,7 +904,7 @@ pub fn grant(
 /// `expires_at` is here because the CLI was computing its own: it re-parsed
 /// `--expire`, added it to a fresh `Utc::now()`, and printed that. The grant in
 /// the table is anchored at the `now` above, and `session::update` then waits
-/// for the lock — up to five seconds of retries. Measured with a three-second
+/// for the lock. Up to five seconds of retries. Measured with a three-second
 /// hold, the terminal said `expires in 1m` for a grant that `share status`
 /// showed with 58 seconds left. Two clocks for one fact is one clock too many.
 #[derive(Debug)]
@@ -971,14 +948,13 @@ pub enum Stopped {
     /// A live process was told to wind up; it writes its receipt and exits.
     Serving,
     /// The share had claimed the box and its transport was not up yet, so it
-    /// abandons the start instead of tearing one down. No receipt: there was
-    /// no session to write one about.
+    /// abandons the start instead of tearing one down. No receipt: there was no
+    /// session to write one about.
     ///
     /// Without this state the window was invisible. `--tunnel` waits up to
-    /// forty-five seconds for a URL and nothing was on disk during it, so
-    /// `stop` and `stop --force` both answered "not being shared", printed a
-    /// success and returned 0 — and the start then went on to announce a
-    /// public endpoint.
+    /// forty-five seconds for a URL and nothing was on disk during it, so `stop`
+    /// and `stop --force` both answered "not being shared", printed a success and
+    /// returned 0, and the start then announced a public endpoint.
     Starting,
     /// The record was a leftover from a process that is gone, and was removed.
     /// Without this there was no way out of that state at all: `status` told
@@ -999,7 +975,7 @@ pub fn stop(env_dir: &std::path::Path) -> Result<Stopped, H5iError> {
     // telling the operator it will "write its receipt and exit" would be
     // describing a teardown that never happens.
     let starting = session::read(env_dir).is_some_and(|s| s.starting);
-    // One lock hold for the whole decision — see `session::stop`.
+    // One lock hold for the whole decision. See `session::stop`.
     Ok(if session::stop(env_dir)? {
         if starting {
             Stopped::Starting
@@ -1039,7 +1015,7 @@ mod tests {
     /// Nothing was written until after `Setup::start`, which for `--tunnel`
     /// waits up to forty-five seconds for a URL. Throughout that window both
     /// `stop` and `stop --force` saw no record, printed "not being shared" and
-    /// returned 0 — and the start then completed and began admitting visitors.
+    /// returned 0, and the start then completed and began admitting visitors.
     /// An operator could explicitly revoke access and have public access begin
     /// afterwards, with no error from the command meant to prevent it.
     #[test]
@@ -1182,7 +1158,7 @@ mod tests {
     fn a_refused_grant_leaves_no_trace_in_the_table() {
         // The bug this pins: minting first and refusing afterwards wrote a
         // grant whose secret was printed nowhere. Nobody could use it, and it
-        // still counted as live — so the share could never expire on its own.
+        // still counted as live, so the share could never expire on its own.
         let dir = tempfile::tempdir().expect("tempdir");
         let mut s = ShareSession::new(
             "env/a/demo",
@@ -1226,17 +1202,16 @@ mod tests {
 
     #[tokio::test]
     async fn interrupting_the_teardown_skips_the_waiting_and_keeps_the_receipt() {
-        // The regression this exists for: arming the hard-exit watcher after
-        // the select meant that on the three exits where no signal had been
-        // delivered yet — `share stop` elsewhere, the box going away, the
-        // transport ending — the operator's *first* Ctrl-C hit a watcher built
-        // for their second. It printed "interrupted again", threw the receipt
-        // away and exited. One press, to get a prompt back, destroyed the one
-        // artifact the feature exists to produce.
+        // The regression this exists for: arming the hard-exit watcher after the
+        // select meant that on the three exits where no signal had been delivered
+        // yet the operator's *first* Ctrl-C hit a watcher built for their second.
+        // It printed "interrupted again", threw the receipt away and exited. One
+        // press, to get a prompt back, destroyed the one artifact the feature
+        // exists to produce.
         //
-        // What replaced it is a `select!` whose other branch abandons the
-        // teardown mid-flight. So the claim to pin is that abandoning it
-        // mid-flight still leaves a bridge that can write its receipt.
+        // What replaced it is a `select!` whose other branch abandons the teardown
+        // mid-flight, so the claim to pin is that abandoning it mid-flight still
+        // leaves a bridge that can write its receipt.
         let dir = tempfile::tempdir().expect("tempdir");
         let bridge = std::sync::Arc::new(crate::bridge::Bridge::new(
             dir.path().to_path_buf(),
@@ -1318,7 +1293,7 @@ mod tests {
     fn stopping_a_share_shuts_the_door_on_a_racing_grant() {
         // `stop` revokes every grant and lets the serving process notice by
         // polling. A `grant` landing in that gap did not just mint a ticket
-        // about to be deleted — it added a *live* grant, which is the very
+        // about to be deleted. It added a *live* grant, which is the very
         // condition the serving process polls for, so the share it was racing
         // could come back from the dead.
         let dir = tempfile::tempdir().expect("tempdir");

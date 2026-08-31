@@ -1,25 +1,25 @@
 //! Making untrusted strings safe to show.
 //!
 //! [`sanitize_display`] and [`sanitize_block`] neutralise terminal control
-//! sequences at the boundary where box-written or externally-fetched data
-//! reaches a host-side surface. The other half of that defense — scrubbing
-//! secrets out of anything about to be *stored* — is `h5i_core::secrets`,
-//! applied by `h5i_core::receipt::append` before anything is written, and it
-//! needs more than an error crate should carry.
+//! sequences at the boundary where box-written or externally-fetched data reaches
+//! a host-side surface. The other half of that defense, scrubbing secrets out of
+//! anything about to be *stored*, is `h5i_core::secrets`, applied by
+//! `h5i_core::receipt::append` before anything is written, and it needs more than
+//! an error crate should carry.
 //!
-//! These are re-exported as `h5i_core::redact`, where they used to live. They
-//! sit here so that `h5i-sandbox`, which is below `h5i-core`, can reach them:
-//! a sanitiser only some of the workspace can call is one some of the
-//! workspace will skip, and it did.
+//! These are re-exported as `h5i_core::redact`, where they used to live. They sit
+//! here so that `h5i-sandbox`, which is below `h5i-core`, can reach them: a
+//! sanitiser only some of the workspace can call is one some of the workspace
+//! will skip, and it did.
 
 /// Make an untrusted string safe to print to a terminal.
 ///
 /// Manifest ids, slugs and spool records can be written inside a box or pulled
-/// from another clone, so they are untrusted input. A hostile value could
-/// embed ANSI/OSC escape sequences (cursor moves, colour resets, clickable
-/// hyperlinks) or newlines to spoof a status line. We drop control characters
-/// entirely (neutralising the `ESC` that begins every escape sequence) and
-/// fold tab/newline/CR into single spaces. Storage keeps the exact bytes; only
+/// from another clone, so they are untrusted input. A hostile value could embed
+/// ANSI/OSC escape sequences (cursor moves, colour resets, clickable hyperlinks)
+/// or newlines to spoof a status line. We drop control characters entirely
+/// (neutralising the `ESC` that begins every escape sequence) and fold
+/// tab/newline/CR into single spaces. Storage keeps the exact bytes; only
 /// rendering is sanitised.
 pub fn sanitize_display(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -37,15 +37,15 @@ pub fn sanitize_display(s: &str) -> String {
 /// [`sanitize_display`] for text that is *meant* to have lines.
 ///
 /// The single-line form folds `\n` into a space, which is right for a slug or a
-/// status line and destroys a captured command's output — so a payload that
-/// needed sanitising was left unsanitised instead, because the only tool
-/// available would have run it all together. This sanitises each line and keeps
-/// the breaks, so a recorded log stays a log while the escape sequences that
-/// would rewrite the lines *around* it are gone.
+/// status line and destroys a captured command's output, so a payload that needed
+/// sanitising was left unsanitised instead, because the only tool available would
+/// have run it all together. This sanitises each line and keeps the breaks, so a
+/// recorded log stays a log while the escape sequences that would rewrite the
+/// lines *around* it are gone.
 ///
 /// A `\r` inside a line still becomes a space: carriage-return-to-column-zero is
-/// how a single line overwrites what was printed before it, which is the same
-/// spoof as an escape sequence with none of the escape.
+/// how a single line overwrites what was printed before it, the same spoof as an
+/// escape sequence with none of the escape.
 pub fn sanitize_block(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for (i, line) in s.split('\n').enumerate() {
@@ -59,19 +59,19 @@ pub fn sanitize_block(s: &str) -> String {
 
 /// Bidirectional formatting characters, which reorder the text *around* them.
 ///
-/// These are not control characters — `char::is_control` is false for every one
-/// of them — so the pass above lets them through, and they are the sharpest
-/// remaining tool for spoofing a rendered string. `http://evil.com/` followed
-/// by an override and a reversed string displays as some other host entirely,
-/// with no escape sequence involved anywhere. That matters most in the terminal
-/// viewer's status line, whose entire claim is that the origin it shows is the
-/// origin you are looking at, but a receipt or a report is just as misleading
-/// when it is read.
+/// These are not control characters (`char::is_control` is false for every one of
+/// them) so the pass above lets them through, and they are the sharpest remaining
+/// tool for spoofing a rendered string. `http://evil.com/` followed by an
+/// override and a reversed string displays as some other host entirely, with no
+/// escape sequence involved anywhere. That matters most in the terminal viewer's
+/// status line, whose entire claim is that the origin it shows is the origin you
+/// are looking at, but a receipt or a report is just as misleading when it is
+/// read.
 ///
-/// Only the overrides, embeddings and isolates are dropped. The zero-width
-/// joiner and non-joiner (`U+200C`, `U+200D`) are deliberately kept: they are
-/// in the same Unicode category but they carry no reordering power, and they
-/// are what holds a multi-part emoji together in ordinary text.
+/// Only the overrides, embeddings and isolates are dropped. The zero-width joiner
+/// and non-joiner (`U+200C`, `U+200D`) are deliberately kept: they are in the
+/// same Unicode category but carry no reordering power, and they are what holds a
+/// multi-part emoji together in ordinary text.
 fn is_bidi_control(c: char) -> bool {
     matches!(c,
         '\u{200E}' | '\u{200F}'          // LRM, RLM
@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn a_block_keeps_its_lines_and_loses_its_escapes() {
         // The single-line form folds `\n` into a space, which makes a captured
-        // log unreadable — so a payload that needed sanitising was printed raw
+        // log unreadable, so a payload that needed sanitising was printed raw
         // instead. This keeps the shape and drops the sequences.
         let log = "building\n\u{1b}[2Jerror: \u{1b}[31mfailed\u{1b}[0m\ndone";
         let safe = sanitize_block(log);

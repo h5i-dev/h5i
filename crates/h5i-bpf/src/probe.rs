@@ -1,6 +1,6 @@
 //! What this host can actually do, asked rather than assumed.
 //!
-//! Every field here is measured — the kernel version off `osrelease`, the
+//! Every field here is measured: the kernel version off `osrelease`, the
 //! capabilities off this process's own `CapEff` mask, the object off whether
 //! the build script produced one. Nothing is inferred from "it is Linux, so
 //! presumably".
@@ -8,28 +8,28 @@
 //! The [`BpfCaps::fix`] field is the part that earns its keep. A detector that
 //! reports "unavailable" and stops is a detector people disable; one that says
 //! *which* capability is missing and prints the command that grants it is one
-//! they turn on. h5i does not run that command — it does not escalate its own
-//! privileges (ROADMAP.md D12) — it just stops making the user work out what
-//! the refusal meant.
-//
-// Most of this module describes a Linux facility, so on every other target the
-// helpers below are reached by nothing and read as dead code. Allowed
-// module-wide rather than cfg-gated one function at a time, which is the shape
-// `h5i-sandbox`'s `cgroup.rs` already settled on for the same reason: the
-// alternative is a cfg attribute on each helper *and* on each of its tests,
-// and it breaks on the cross-check job rather than here, where nobody can
-// compile a Darwin target to find out.
+//! they turn on. h5i does not run that command and does not escalate its own
+//! privileges (design-detect.md D12), it just stops making the user work out
+//! what the refusal meant.
+//!
+//! Most of this module describes a Linux facility, so on every other target the
+//! helpers below are reached by nothing and read as dead code. Allowed
+//! module-wide rather than cfg-gated one function at a time, the shape
+//! `h5i-sandbox`'s `cgroup.rs` already settled on for the same reason: the
+//! alternative is a cfg attribute on each helper *and* on each of its tests,
+//! and it breaks on the cross-check job rather than here, where nobody can
+//! compile a Darwin target to find out.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use serde::{Deserialize, Serialize};
 
 /// The kernel this collector needs, and why: `BPF_MAP_TYPE_RINGBUF` landed in
-/// 5.8. Older kernels get a refusal, never a silent fall back to perf buffers
-/// — a quieter, lossier transport that would make the numbers in a receipt
+/// 5.8. Older kernels get a refusal, never a silent fall back to perf buffers.
+/// A quieter, lossier transport that would make the numbers in a receipt
 /// mean something different without saying so.
 pub const MIN_KERNEL: (u32, u32) = (5, 8);
 
-/// `CAP_PERFMON`, `CAP_BPF` — the two the loader needs on a modern kernel.
+/// `CAP_PERFMON`, `CAP_BPF`: the two the loader needs on a modern kernel.
 /// `CAP_SYS_ADMIN` subsumes both and is what a root process has.
 const CAP_SYS_ADMIN: u32 = 21;
 const CAP_PERFMON: u32 = 38;
@@ -51,9 +51,9 @@ pub struct BpfCaps {
     pub cap_bpf: bool,
     /// `CAP_PERFMON` (or `CAP_SYS_ADMIN`) is in this process's effective set.
     pub cap_perfmon: bool,
-    /// `/sys/kernel/btf/vmlinux` exists. **Not** required — this probe is
-    /// CO-RE-free (ROADMAP.md D5) — and reported because its absence is the
-    /// first thing anyone familiar with other eBPF tools will ask about.
+    /// `/sys/kernel/btf/vmlinux` exists. *Not* required, this probe is
+    /// CO-RE-free (design-detect.md D5), and reported because its absence is
+    /// the first thing anyone familiar with other eBPF tools will ask about.
     pub kernel_btf: bool,
     /// `/sys/kernel/tracing/events` is readable, so tracepoint `format` files
     /// can be parsed and the probe's assumed field offsets verified rather
@@ -92,7 +92,7 @@ pub const fn has_object() -> bool {
 }
 
 /// Ask the host. Cheap: three small file reads, no privileged syscall, no
-/// process spawn — so it is safe to call from a status path.
+/// process spawn, so it is safe to call from a status path.
 pub fn probe() -> BpfCaps {
     #[cfg(target_os = "linux")]
     {
@@ -198,7 +198,7 @@ fn parse_kernel(s: &str) -> Option<(u32, u32)> {
 /// raw syscall with a versioned struct, and this is a diagnostic: the cost of
 /// getting the struct subtly wrong is worse than the cost of parsing a hex
 /// number. Returns `(cap_bpf, cap_perfmon)`, with `CAP_SYS_ADMIN` counting for
-/// both — which is what makes running as root work.
+/// both, which is what makes running as root work.
 #[cfg(target_os = "linux")]
 fn effective_caps() -> (bool, bool) {
     let Ok(status) = std::fs::read_to_string("/proc/self/status") else {

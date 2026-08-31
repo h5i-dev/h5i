@@ -7,34 +7,34 @@
 //! sharer → joiner   status                            (1 byte)
 //! ```
 //!
-//! The magic has a second spelling, `H5IP`, which means "I am only checking
-//! this ticket". Same size, same version, same secret; what differs is what the
-//! sharer does with it. A `H5IS` greeting ends with a socket into the box; a
-//! `H5IP` one is answered from the grant table alone and touches nothing. That
-//! distinction is why it is a separate frame rather than a convention: without
-//! it the check cost a connection to the dev server, a slot out of the share's
-//! 64, and — if that dev server did not close on end-of-input — a pump parked
-//! for the life of the joiner, holding the slot.
+//! The magic has a second spelling, `H5IP`, meaning "I am only checking this
+//! ticket". Same size, same version, same secret; what differs is what the sharer
+//! does with it. A `H5IS` greeting ends with a socket into the box; a `H5IP` one
+//! is answered from the grant table alone and touches nothing. That distinction
+//! is why it is a separate frame rather than a convention: without it the check
+//! cost a connection to the dev server, a slot out of the share's 64, and, if
+//! that dev server did not close on end-of-input, a pump parked for the life of
+//! the joiner, holding the slot.
 //!
 //! Fixed size on purpose. A length prefix is a number an attacker chooses, and
-//! this frame is the very first thing an unauthenticated peer sends — the
-//! cheapest way not to have a length-handling bug is not to have a length. The
-//! QUIC stream underneath is already encrypted and authenticated by iroh, so
-//! this frame is not protecting the secret in transit; it is deciding whether
-//! this peer gets a socket into the box.
+//! this frame is the first thing an unauthenticated peer sends. The cheapest way
+//! not to have a length-handling bug is not to have a length. The QUIC stream
+//! underneath is already encrypted and authenticated by iroh, so this frame is
+//! not protecting the secret in transit; it decides whether this peer gets a
+//! socket into the box.
 //!
 //! It lives in its own module, free of the P2P dependency, so the format can be
 //! tested in a build that has no iroh in it at all.
 
 /// Application-layer protocol negotiation. Both ends must agree on this exact
-/// string or QUIC drops the connection before either speaks, which is a free
-//  first filter against anything that wandered onto the endpoint.
+/// string or QUIC drops the connection before either speaks, a free first
+/// filter against anything that wandered onto the endpoint.
 /// Bumped when the greeting changed. The `H5IP` spelling below is a frame an
-/// older sharer reads as junk and answers `REPLY_DENIED` to — which the joiner
-/// would render as "the sharer refused this ticket … ask for a new one", and
-/// the new ticket would fail identically, forever. ALPN is the one place where
-/// two versions can fail to agree *before* either says anything, so a skew ends
-/// as a connection that will not open rather than as advice nobody can act on.
+/// older sharer reads as junk and answers `REPLY_DENIED` to, which the joiner
+/// would render as "the sharer refused this ticket … ask for a new one", and the
+/// new ticket would fail identically, forever. ALPN is the one place where two
+/// versions can fail to agree *before* either says anything, so a skew ends as a
+/// connection that will not open rather than as advice nobody can act on.
 pub const ALPN: &[u8] = b"h5i/share/2";
 
 const MAGIC: &[u8; 4] = b"H5IS";
@@ -60,11 +60,11 @@ pub const HELLO_LEN: usize = MAGIC.len() + 1 + SECRET_HEX;
 /// The sharer's one-byte answer.
 pub const REPLY_OK: u8 = 0;
 /// One value for every refusal. The peer learns that it was not let in and
-/// nothing about why — unknown, expired and revoked are the sharer's business.
+/// nothing about why. Unknown, expired and revoked are the sharer's business.
 pub const REPLY_DENIED: u8 = 1;
 /// The ticket was fine; the share is already carrying as many connections as it
 /// will. Separate from [`REPLY_DENIED`] because the two call for opposite
-/// reactions — try again, versus ask for a new ticket — and telling a peer to
+/// reactions (try again, versus ask for a new ticket) and telling a peer to
 /// go and get a fresh ticket when the real answer is "wait a moment" is the
 /// kind of error message that wastes two people's afternoon.
 pub const REPLY_BUSY: u8 = 2;
@@ -73,7 +73,7 @@ pub const REPLY_BUSY: u8 = 2;
 /// sharer's problem to fix, and a peer told "your ticket was refused" will go
 /// and ask for a new one that works no better.
 pub const REPLY_UNREACHABLE: u8 = 3;
-/// The ticket was fine and h5i itself could not reach the box — the dialer is
+/// The ticket was fine and h5i itself could not reach the box. The dialer is
 /// gone, retired, or the namespace has no loopback. Distinct from
 /// [`REPLY_UNREACHABLE`] for the third time in the same argument: that one is a
 /// sentence about the sharer's dev server, and this is a sentence about h5i.
@@ -82,12 +82,12 @@ pub const REPLY_UNREACHABLE: u8 = 3;
 /// dev server" while the sharer's terminal said the dialer had died.
 pub const REPLY_ROUTE_BROKEN: u8 = 4;
 /// The share has ended. The ticket was never weighed, because there is no
-/// longer a grant table to weigh it against — `share stop` removes it, and a
+/// longer a grant table to weigh it against: `share stop` removes it, and a
 /// connection can arrive in the moment between that and the process exiting.
 /// Folded into [`REPLY_DENIED`] it told the visitor their invite had been
 /// revoked, which is a sentence about a decision somebody made about *them*.
 pub const REPLY_SHARE_OVER: u8 = 5;
-/// The sharer could not read its own grant table — full disk, no descriptors,
+/// The sharer could not read its own grant table. Full disk, no descriptors,
 /// a file it cannot parse. The one refusal that is nobody's ticket's fault and
 /// that a fresh ticket will not fix; as [`REPLY_DENIED`] it sent the visitor
 /// back to ask for a new invite that would fail in exactly the same way.
@@ -117,7 +117,7 @@ fn encode(secret: &str, intent: Intent) -> Option<[u8; HELLO_LEN]> {
     Some(buf)
 }
 
-/// Read a greeting. `None` for anything that is not one — which is the only
+/// Read a greeting. `None` for anything that is not one, which is the only
 /// answer a caller needs, since every rejection here ends the stream.
 pub fn decode_hello(buf: &[u8; HELLO_LEN]) -> Option<(Intent, String)> {
     let intent = if &buf[..4] == MAGIC {

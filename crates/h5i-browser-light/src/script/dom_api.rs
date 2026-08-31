@@ -1,20 +1,20 @@
 //! The native primitives, and nothing above them.
 //!
-//! Every function here takes and returns node **ids** and strings. There is no
+//! Every function here takes and returns node *ids* and strings. There is no
 //! `Element` type on this side, because there is no second tree: `prelude.js`
 //! builds the DOM object model on top of these, so a JS object that names a node
 //! is a wrapper around a number and the Blitz document stays the only truth.
 //!
 //! Two rules hold throughout.
 //!
-//! **Borrow, act, release.** Each primitive takes its `RefCell` borrow, does its
+//! Borrow, act, release. Each primitive takes its `RefCell` borrow, does its
 //! work, and drops it before returning to JavaScript. Blitz mutations never call
 //! back into script, so nothing can re-enter while a borrow is held.
 //!
-//! **Never invent a node.** A primitive handed an id that is gone returns
-//! `null`, and the prelude turns that into the same thing a browser would. An id
-//! that silently resolved to the wrong node would corrupt the snapshot, the
-//! paint and the agent's model at once.
+//! Never invent a node. A primitive handed an id that is gone returns `null`,
+//! and the prelude turns that into the same thing a browser would. An id that
+//! silently resolved to the wrong node would corrupt the snapshot, the paint and
+//! the agent's model at once.
 
 use boa_engine::{js_string, Context, JsArgs, JsError, JsResult, JsValue, NativeFunction};
 
@@ -49,24 +49,23 @@ const DOCUMENT_NODE_ID: usize = 0;
 ///
 /// This used to be `to_number(...)? as usize`, and that cast is why a text node
 /// could be the document. Rust's float-to-integer cast saturates: `NaN as usize`
-/// is **0**, and so is every negative number — and node 0 is the document. So
-/// any argument that was not a number at all became a valid id for the most
+/// is *0*, and so is every negative number, and node 0 is the document. So any
+/// argument that was not a number at all became a valid id for the most
 /// consequential node in the tree, silently.
 ///
 /// `new Text("x")` produced exactly that (see the prelude's `FROM_ID`), and
 /// appending the result made the document its own descendant, which hung layout
-/// for as long as anyone let it. That particular door is shut on both sides now;
-/// this is the rule underneath it, so the next bad id is an error rather than a
-/// different node.
+/// for as long as anyone let it. That door is shut on both sides now; this is
+/// the rule underneath it.
 ///
 /// The one non-numeric argument that is *not* a mistake is `undefined`, which is
-/// what `document._id` reads as. It means the document, it has always meant the
-/// document, and it says so here rather than arriving through a NaN.
-/// What a primitive says when it is handed something that is not an id.
+/// what `document._id` reads as, and it says so here rather than arriving
+/// through a NaN.
 ///
-/// Named as ours rather than as the page's: nothing a page writes reaches here
-/// directly, so an id that is not a number is this engine having lost track of
-/// one of its own nodes.
+/// What a primitive says when handed something that is not an id. Named as ours
+/// rather than as the page's: nothing a page writes reaches here directly, so an
+/// id that is not a number is this engine having lost track of one of its own
+/// nodes.
 fn bad_node_id(saw: &str) -> JsError {
     JsError::from_opaque(
         js_string!(format!(
@@ -83,7 +82,7 @@ fn arg_id(args: &[JsValue], index: usize, _context: &mut Context) -> JsResult<us
         return Ok(DOCUMENT_NODE_ID);
     }
     // A *number*, not something a number can be made of. JavaScript's coercion
-    // is happy to turn `[]` and `""` into 0, and 0 is the document — so a rule
+    // is happy to turn `[]` and `""` into 0, and 0 is the document, so a rule
     // written in terms of `to_number` would leave the same hole in a narrower
     // shape. Every id this side ever sees came from `this._id`, which is a
     // number or it is nothing.
@@ -268,14 +267,14 @@ fn query_all(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
 ///
 /// Two paths, and the reason is a real limitation rather than an optimisation.
 /// Stylo's `query_selector` is fast because it consults the document's id and
-/// class caches — which contain only *attached* nodes, and which report "handled,
+/// class caches, which contain only *attached* nodes and report "handled,
 /// nothing found" rather than falling through. So a detached subtree came back
 /// empty: every cloned `<template>` before it is inserted, which is exactly when
 /// a framework searches one. Clone, query, fill, append is how a row is made.
 ///
-/// So: the whole document goes through stylo's fast path, and anything scoped to
-/// a node is walked here and matched one element at a time. The walk is bounded
-/// by the subtree, which is the part a scoped query was always going to touch.
+/// So the whole document goes through stylo's fast path, and anything scoped to
+/// a node is walked here and matched one element at a time, bounded by the
+/// subtree a scoped query was always going to touch.
 pub(crate) fn matches_within(
     doc: &blitz_dom::BaseDocument,
     scope: usize,
@@ -347,37 +346,29 @@ fn get_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
 
 /// The qualified name an attribute lookup should actually use.
 ///
-/// **DOM §4.9's rule, and the bug it was found by.** `getAttribute`,
+/// DOM §4.9's rule, and the bug it was found by. `getAttribute`,
 /// `hasAttribute`, `setAttribute` and `removeAttribute` all begin the same way:
 /// *if this element is in the HTML namespace and its node document is an HTML
 /// document, lowercase the qualified name.* Not doing it makes
-/// `getAttribute("accessKey")` answer `null` for an attribute the very next
-/// call to `getAttribute("accesskey")` returns — which is exactly what this
-/// engine did.
+/// `getAttribute("accessKey")` answer `null` for an attribute the very next call
+/// to `getAttribute("accesskey")` returns.
 ///
-/// It is worth being precise about how much that cost, because the size is the
-/// argument for a *class* fix rather than a third patch. WPT's reflection
-/// harness passes the **IDL** name straight through to `setAttribute` and
-/// `getAttribute` (`html/dom/reflection.js`: `domName = idlName`), so every
-/// camelCase reflected attribute — `accessKey` on every element, `tabIndex`,
-/// `readOnly`, `maxLength`, `dateTime`, `useMap`, `cellPadding` and the rest —
-/// failed on every element in every one of the eleven `reflection-*.html`
-/// files. Together those files held about 15,000 unpassed subtests, the
-/// largest single cluster in the suite, and it was one missing `.to_lowercase()`
-/// on the read path.
+/// The size is the argument for a *class* fix rather than a third patch. WPT's
+/// reflection harness passes the *IDL* name straight through to `setAttribute`
+/// and `getAttribute`, so every camelCase reflected attribute failed on every
+/// element in every one of the eleven `reflection-*.html` files: about 15,000
+/// unpassed subtests, the largest single cluster in the suite, from one missing
+/// `.to_lowercase()` on the read path.
 ///
-/// **Namespace-conditional, and that is not pedantry.** The HTML parser
+/// Namespace-conditional, and that is not pedantry. The HTML parser
 /// case-corrects SVG attributes to their canonical camelCase, so an `<svg>`
 /// really does hold an attribute named `viewBox`, and lowercasing there would
-/// break `getAttribute("viewBox")` — trading one silent wrong answer for
-/// another. `set_attr` and `remove_attr` lowercased *unconditionally*, which
-/// was the same bug pointing the other way: `svg.setAttribute("viewBox", …)`
-/// stored `viewbox` and rendered nothing. Both are fixed here, in one place,
-/// because `guard_mutation` records what happens when a defect like this is
-/// fixed three times at three call sites instead.
+/// break `getAttribute("viewBox")`. `set_attr` and `remove_attr` lowercased
+/// *unconditionally*, the same bug pointing the other way.
+///
 /// Borrowed rather than owned: an attribute name arrives lowercase from nearly
-/// every caller, and lowercasing a string that is already lowercase to compare
-/// it against one more was an allocation per attribute read.
+/// every caller, and lowercasing a string that is already lowercase was an
+/// allocation per attribute read.
 fn attr_name_for<'a>(
     doc: &blitz_dom::BaseDocument,
     id: usize,
@@ -483,8 +474,8 @@ fn get_value(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     // `null`, not `""`, when there is no editor at all.
     //
     // Blitz builds editor state only for a control it has laid out, so a
-    // detached `<input>` — and a `<textarea>`, whose value is its text content
-    // — have none. Answering `""` for both cases made "this field is empty"
+    // detached `<input>` (and a `<textarea>`, whose value is its text content)
+    // have none. Answering `""` for both cases made "this field is empty"
     // and "I cannot see this field" the same answer, and the prelude could not
     // tell which it had. It now falls back to the markup for the second.
     Ok(match text {
@@ -527,7 +518,7 @@ fn create_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
 /// A real comment node, because a marker that is secretly a text node shows up
 /// in `textContent` and in the outline an agent reads.
 ///
-/// Template libraries anchor themselves to comments — an empty list leaves
+/// Template libraries anchor themselves to comments. An empty list leaves
 /// behind `<!--list-->` and the library finds its place again by it.
 fn create_comment(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let text = arg_string(args, 0, context)?;
@@ -548,7 +539,7 @@ fn create_comment(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
 /// `scrollTop`/`scrollHeight` and their siblings, in one call.
 ///
 /// Six values rather than six bindings because a page asking for one almost
-/// always asks for the next in the same expression — `el.scrollTop + el.clientHeight
+/// always asks for the next in the same expression: `el.scrollTop + el.clientHeight
 /// >= el.scrollHeight` is how every "am I at the bottom" check is written.
 fn scroll_metrics(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
@@ -598,7 +589,7 @@ fn scroll_metrics(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     Ok(array.into())
 }
 
-/// `documentElement` and `body` both stand for the page — pages read scroll
+/// `documentElement` and `body` both stand for the page. Pages read scroll
 /// position off whichever one they were taught.
 fn is_document_scroller(doc: &blitz_dom::BaseDocument, id: usize) -> bool {
     if id == doc.root_element().id {
@@ -613,7 +604,7 @@ fn is_document_scroller(doc: &blitz_dom::BaseDocument, id: usize) -> bool {
 /// How tall the document actually is.
 ///
 /// `size.height` alone reads as one screen for a page whose root box simply
-/// grew past the viewport — the same trap `Page::max_scroll_y` documents, and
+/// grew past the viewport. The same trap `Page::max_scroll_y` documents, and
 /// the reason a naive `scrollHeight` reported a 4000px page as unscrollable.
 fn document_height(doc: &blitz_dom::BaseDocument) -> f64 {
     let layout = &doc.root_element().final_layout;
@@ -650,20 +641,19 @@ fn set_scroll_top(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
 
 /// Would putting `child` inside `parent` make the tree cyclic?
 ///
-/// DOM §4.2.3 forbids it — a node cannot contain itself or its own ancestor —
-/// and the prelude checks it for the nodes it can see. This is the same check
-/// where nothing can get past it, because the consequence is not a wrong answer
-/// but a **hang**: blitz walks the tree for layout, and a cycle means it walks
-/// for ever, at 100% of a core, past every deadline this engine has. Those
-/// deadlines guard the script realm; there is no script running while layout
-/// walks, so none of them fire.
+/// DOM §4.2.3 forbids it, and the prelude checks it for the nodes it can see.
+/// This is the same check where nothing can get past it, because the consequence
+/// is not a wrong answer but a *hang*: blitz walks the tree for layout, and a
+/// cycle means it walks for ever, at 100% of a core, past every deadline this
+/// engine has, since those guard the script realm and no script is running while
+/// layout walks.
 ///
-/// Reachable from ordinary page code, which is what makes it this file's
-/// problem rather than the prelude's: `new Text("x")` used to hand back a
-/// wrapper whose id was the string `"x"`, and the conversion below turns
-/// anything non-numeric into 0 — the document itself. Appending *that* to a
-/// div spliced the whole document under one of its own descendants. One line in
-/// a WPT file left six engines spinning on this machine for seven hours.
+/// Reachable from ordinary page code, which is what makes it this file's problem
+/// rather than the prelude's: `new Text("x")` used to hand back a wrapper whose
+/// id was the string `"x"`, and the conversion below turns anything non-numeric
+/// into 0, the document. Appending *that* to a div spliced the whole document
+/// under one of its own descendants. One line in a WPT file left six engines
+/// spinning on this machine for seven hours.
 fn would_cycle(doc: &blitz_dom::BaseDocument, parent: usize, child: usize) -> bool {
     let mut at = Some(parent);
     while let Some(id) = at {
@@ -744,8 +734,8 @@ fn remove_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     let host = host(context)?;
     // `Mutator::remove_node` indexes the node arena unchecked, so a stale id
     // panics rather than returning. Removing a node that is already gone is an
-    // ordinary thing for a page to do — it is what every "remove it if it is
-    // still there" teardown looks like — and it must be a quiet no-op, not a
+    // ordinary thing for a page to do, it is what every "remove it if it is
+    // still there" teardown looks like, and it must be a quiet no-op, not a
     // panic caught into a false success.
     if host.dom.borrow().get_node(id).is_none() {
         return Ok(JsValue::undefined());
@@ -777,7 +767,7 @@ fn set_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
         // Writing to a *text* node replaces its own text. Writing to an element
         // replaces its subtree. They were both taking the element path, so a
         // text node had its (nonexistent) children cleared and a text child
-        // appended to it — and the write simply vanished.
+        // appended to it, and the write simply vanished.
         //
         // Text nodes were therefore immutable, which is the single most common
         // mutation any reactive UI performs: every framework updates text by
@@ -788,18 +778,17 @@ fn set_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
         );
 
         // Detach the old children; do not destroy them. A browser's
-        // `textContent = "x"` removes the children from the tree and leaves
-        // every one of them a live node, because script may still be holding a
-        // reference to one — and reactive UIs do exactly that. Dropping them
-        // instead freed their ids, and the next mutation naming one of those
-        // ids indexed a dead slot and panicked inside the layout engine.
+        // `textContent = "x"` removes the children from the tree and leaves every
+        // one of them a live node, because script may still be holding a reference
+        // to one, and reactive UIs do exactly that. Dropping them instead freed
+        // their ids, and the next mutation naming one of those ids indexed a dead
+        // slot and panicked inside the layout engine.
         //
         // That panic was caught and reported, which made it *worse* rather than
-        // better: the caller's mutation looked like it had succeeded, so the
-        // page's idea of the tree and the real tree drifted apart, and the
-        // failure surfaced later as an unrelated `insertBefore` error in the
-        // middle of a render. React never recovered from it, which is why this
-        // engine could load its own console and paint nothing.
+        // better: the caller's mutation looked like it had succeeded, so the page's
+        // idea of the tree and the real tree drifted apart, and the failure
+        // surfaced later as an unrelated `insertBefore` error in the middle of a
+        // render.
         let old: Vec<usize> = doc
             .get_node(id)
             .map(|node| node.children.clone())
@@ -822,14 +811,13 @@ fn set_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
 /// Ask the next restyle to re-match the whole tree, not just the changed
 /// element and its parent.
 ///
-/// Blitz's `set_attribute` hints the element and one level up, which is
-/// exactly as far as plain selectors reach — and exactly not far enough for
-/// `:has()` and sibling combinators, which carry a change *upward and
-/// sideways*: `.a:has(.test)` on a grandparent must restyle when the
-/// grandchild's class flips, and Blitz's hint never gets there. The hint here
-/// is the blunt correct answer: root-subtree re-match on the next resolve.
-/// The cost is bounded by the settle loop — however many attributes a script
-/// flips, `styles_stale` folds them into one resolve.
+/// Blitz's `set_attribute` hints the element and one level up, which is exactly
+/// as far as plain selectors reach and exactly not far enough for `:has()` and
+/// sibling combinators, which carry a change *upward and sideways*:
+/// `.a:has(.test)` on a grandparent must restyle when the grandchild's class
+/// flips. The hint here is the blunt correct answer, a root-subtree re-match on
+/// the next resolve, and the cost is bounded by the settle loop, which folds
+/// however many attributes a script flips into one resolve.
 fn hint_whole_document_restyle(doc: &mut blitz_dom::BaseDocument) {
     use style::invalidation::element::restyle_hints::RestyleHint;
     let root_id = doc.root_element().id;
@@ -891,9 +879,9 @@ fn set_inner_html(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     let host = host(context)?;
     // Refuse non-element targets *here*, because blitz's fragment parser
     // panics on them. Reachable from a page: borrow the `innerHTML` setter
-    // off `Element.prototype` and `.call` it on a doctype wrapper — or just
+    // off `Element.prototype` and `.call` it on a doctype wrapper, or just
     // `Object.assign` one wrapper onto another now that members are
-    // enumerable — and one line of page script took the whole engine down.
+    // enumerable, and one line of page script took the whole engine down.
     {
         let doc = host.dom.borrow();
         let is_element = doc.get_node(id).map(|n| n.is_element()).unwrap_or(false);
@@ -934,8 +922,8 @@ fn set_value(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     host.mark_dirty();
     // Whether the write landed, so the prelude knows if it has to remember the
     // value itself. A detached control has no editor to write into, and
-    // silently dropping the assignment meant `el.value = "y"` read back as ""
-    // — a page that filled in a form it had just built saw none of it.
+    // silently dropping the assignment meant `el.value = "y"` read back as "".
+    // A page that filled in a form it had just built saw none of it.
     Ok(JsValue::from(reached_editor))
 }
 
@@ -967,20 +955,16 @@ fn unsupported(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
 /// `fetch`, routed through the same broker as everything else.
 ///
 /// Synchronous underneath, and the prelude wraps the result in an
-/// already-resolved promise. That is a real difference from a browser — there
-/// is no concurrency, so two fetches run in order rather than at once — and it
-/// is the honest trade for keeping the engine as the HTTP client. A page that
-/// awaited them still observes the right order; a page that raced them for
-/// speed does not get the speed.
+/// already-resolved promise. That is a real difference from a browser, since
+/// there is no concurrency and two fetches run in order rather than at once, and
+/// it is the honest trade for keeping the engine as the HTTP client. The URL is
+/// recorded before the answer is returned, so a caller can correlate the click
+/// that ran this script with the request it caused.
 ///
-/// The URL is recorded before the answer is returned, so a caller can correlate
-/// the click that ran this script with the request it caused.
-/// The topmost element at a viewport coordinate.
-///
-/// The same hit test the viewer uses to resolve a human's click, exposed to
-/// script. The hit lands on whatever box is topmost — often a text run inside
-/// the element rather than the element — so it walks up to the nearest element,
-/// which is what `elementFromPoint` is defined to return.
+/// The topmost element at a viewport coordinate: the same hit test the viewer
+/// uses to resolve a human's click, exposed to script. The hit lands on whatever
+/// box is topmost, often a text run inside the element, so it walks up to the
+/// nearest element, which is what `elementFromPoint` is defined to return.
 fn element_from_point(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let x = args
         .first()
@@ -1015,7 +999,7 @@ fn element_from_point(_this: &JsValue, args: &[JsValue], context: &mut Context) 
 
 /// Does this one element match the selector?
 ///
-/// A direct predicate on the element — no traversal at all. An earlier version
+/// A direct predicate on the element, no traversal at all. An earlier version
 /// asked the *parent* for all its matching descendants and checked membership,
 /// which made every `matches()` call walk a subtree and every `closest()` walk
 /// one per ancestor. On a page whose framework calls `closest` in a render loop
@@ -1079,7 +1063,7 @@ fn random_bytes(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
 /// Is this node attached to the document?
 ///
 /// One call instead of one per ancestor. The JavaScript version asked `parent`
-/// in a loop, so the cost of an `appendChild` grew with how deep the page was —
+/// in a loop, so the cost of an `appendChild` grew with how deep the page was,
 /// and every insertion pays it, because a node has to be connected before its
 /// `connectedCallback` can run.
 fn is_connected(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -1104,7 +1088,7 @@ fn is_connected(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
 ///
 /// Asked of the tree rather than remembered on the JavaScript side. A set of
 /// ids populated by `createComment` only knows about comments *script* made,
-/// so every comment the parser produced came back as a text node — and preact
+/// so every comment the parser produced came back as a text node, and preact
 /// and React both separate adjacent text with `<!-- -->` when they render on
 /// the server. Hydration saw text where it expected a comment, decided the
 /// markup did not match, and rendered the page a second time beside the first.
@@ -1172,12 +1156,11 @@ fn user_agent(_this: &JsValue, _args: &[JsValue], _context: &mut Context) -> JsR
 /// One binding rather than a dozen, and one call rather than one per property:
 /// the prelude reads this once while it is building `navigator`, so the cost is
 /// a single crossing per realm instead of a crossing behind every property a
-/// fingerprinting script touches — and those are touched in bursts.
+/// fingerprinting script touches, and those are touched in bursts.
 ///
-/// The shape is deliberately flat and dumb. Anything the prelude has to
-/// *decide* — whether to define `screen` at all, what `appVersion` is — is a
-/// decision, and decisions belong on one side or the other rather than half in
-/// each. What crosses here is only what the identity says.
+/// The shape is deliberately flat and dumb. Anything the prelude has to *decide*
+/// is a decision, and decisions belong on one side or the other rather than half
+/// in each.
 #[cfg(feature = "identity")]
 fn identity(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let host = host(context)?;
@@ -1219,7 +1202,7 @@ fn identity(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResu
     // Absent rather than null when the identity declares no display. The rule
     // `prelude.js` already follows is that a name which exists and answers
     // wrongly is worse than one that is absent, and a headless engine's honest
-    // screen size is a guess — so `native` and `privacy` expose no `screen` at
+    // screen size is a guess, so `native` and `privacy` expose no `screen` at
     // all, exactly as before this module existed. A *declared* identity is the
     // case that rule was waiting for: the answer is stated, not guessed.
     if let Some(screen) = &identity.screen {
@@ -1248,7 +1231,7 @@ fn identity(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResu
 /// Accept a request from script and hand back a ticket.
 ///
 /// Nothing goes on the wire here. The request joins an ordered queue, and
-/// [`fetch_drain`] starts it when a slot is free — which is what makes two
+/// [`fetch_drain`] starts it when a slot is free, which is what makes two
 /// `fetch` calls actually overlap instead of running one after the other. The
 /// old binding did the whole round trip inline, so a page that fanned out ten
 /// requests paid for them in series and every SPA waterfall was our own.
@@ -1257,8 +1240,8 @@ fn fetch_start(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     let method = arg_string(args, 1, context).unwrap_or_else(|_| "GET".to_string());
     let body = arg_string(args, 2, context).unwrap_or_default();
     // The rest of the request's origin story: what the page set, and how it
-    // asked to treat the boundary. Defaults match `fetch`'s own — `cors` mode,
-    // `same-origin` credentials — so a page that says nothing gets the
+    // asked to treat the boundary. Defaults match `fetch`'s own (`cors` mode,
+    // `same-origin` credentials) so a page that says nothing gets the
     // behaviour a browser gives it rather than the widest one available.
     let mode = crate::cors::Mode::parse(&arg_string(args, 3, context).unwrap_or_default());
     let credentials =
@@ -1272,7 +1255,7 @@ fn fetch_start(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     };
     // The queue, before the ticket. `fetch()` returns before anything is
     // decided about the request, so a loop calling it builds a slot per call
-    // — a URL, a method, a body, headers — and the drain runs once per settle
+    // (a URL, a method, a body, headers) and the drain runs once per settle
     // round. The request budget refuses requests; it never saw the queue.
     if host.pending_fetches.borrow().len() >= crate::script::host::MAX_QUEUED_FETCHES {
         return reply_error(
@@ -1420,8 +1403,8 @@ fn fetch_drain(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsR
     let mut arrived: Vec<(u64, crate::net::FetchOutcome)> = Vec::new();
     {
         let mut pending = host.pending_fetches.borrow_mut();
-        // Exactly one `try_recv` per slot. Asking twice — once to find out
-        // whether an answer was there and again to take it — takes the value on
+        // Exactly one `try_recv` per slot. Asking twice, once to find out
+        // whether an answer was there and again to take it, takes the value on
         // the first call and finds an empty channel on the second, which read
         // as every request ending without an answer.
         let ids: Vec<u64> = pending.keys().copied().collect();
@@ -1544,16 +1527,16 @@ const VOID_ELEMENTS: [&str; 14] = [
 
 /// Serialise one node and its subtree.
 ///
-/// Written here rather than deferred to blitz's `outer_html`, which **drops
-/// comments**. That was harmless until comments started mattering: preact and
+/// Written here rather than deferred to blitz's `outer_html`, which drops
+/// comments. That was harmless until comments started mattering: preact and
 /// React separate adjacent text with `<!-- -->` when rendering on the server, so
-/// a page that reads its own markup back and re-parses it — which sanitizers and
-/// template libraries do — was losing the markers hydration depends on.
+/// a page that reads its own markup back and re-parses it was losing the markers
+/// hydration depends on.
 ///
 /// A parsed comment's *text* is gone before this sees it: `NodeData::Comment`
-/// carries no payload, so blitz discards the content at parse time and only the
-/// comments this engine created have text to give back. The empty separator —
-/// the case that matters — round-trips exactly.
+/// carries no payload, so only the comments this engine created have text to
+/// give back. The empty separator, the case that matters, round-trips exactly.
+///
 /// One step of the serialisation, so the walk below can be a loop.
 enum Step<'a> {
     /// Serialise this node and push its children.
@@ -1564,13 +1547,12 @@ enum Step<'a> {
 
 /// Serialise a subtree.
 ///
-/// **Iterative, with its own stack.** The recursive version was the third door
-/// into the deep-tree problem that ends the process rather than the page:
+/// Iterative, with its own stack. The recursive version was the third door into
+/// the deep-tree problem that ends the process rather than the page:
 /// `el.innerHTML = "<div>".repeat(20000)` is four characters of JavaScript, and
-/// script can read the result back in the same turn it built it — before any
-/// layout, and so before the bound `crate::engine::prune_deep_nesting` applies
-/// there. A stack overflow is a `SIGSEGV` with no panic to catch, so the walk
-/// is written not to have one.
+/// script can read the result back in the same turn it built it, before any
+/// layout and so before `crate::engine::prune_deep_nesting` applies. A stack
+/// overflow is a `SIGSEGV` with no panic to catch.
 fn serialise(
     doc: &blitz_dom::BaseDocument,
     comments: &std::collections::HashMap<usize, String>,
@@ -1673,18 +1655,16 @@ fn outer_html(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
 /// A node's border box in viewport coordinates: `[x, y, width, height]`.
 ///
 /// Blitz stores each box's position relative to its parent, so the absolute
-/// position is the sum up the ancestor chain, minus the viewport scroll — which
+/// position is the sum up the ancestor chain, minus the viewport scroll, which
 /// is what makes this a *client* rect rather than a document one. Answered
 /// rather than reported unsupported because the engine already computes it; the
 /// previous version returned zeros, which sends a positioning library into a
 /// loop that never converges.
-/// Put a node at the top of the viewport, clamped to the document.
 ///
-/// Backs `Element.scrollIntoView`. It moves what a screenshot or a live viewer
-/// shows and nothing about what the text outline contains, because that outline
-/// covers the whole document regardless of where the viewport sits — so a page
-/// that scrolls to its content is not thereby made more readable, only more
-/// watchable.
+/// Put a node at the top of the viewport, clamped to the document. Backs
+/// `Element.scrollIntoView`. It moves what a screenshot or a live viewer shows
+/// and nothing about what the text outline contains, since that outline covers
+/// the whole document regardless of where the viewport sits.
 fn scroll_to_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;
@@ -1695,7 +1675,7 @@ fn scroll_to_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
         return Ok(JsValue::undefined());
     }
 
-    // Absolute position, by walking to the root — the same sum `rect` makes,
+    // Absolute position, by walking to the root. The same sum `rect` makes,
     // before the scroll offset is taken back out of it.
     let mut y = 0.0f32;
     let mut current = Some(id);
@@ -1719,18 +1699,15 @@ fn scroll_to_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
 /// One entry point for every canvas drawing call.
 ///
 /// A dispatcher rather than thirty primitives, because the whole surface takes
-/// the same shape — a node id, an operation name, and a list of numbers or
-/// strings — and thirty near-identical `fn`s would be thirty places for the
-/// argument handling to drift. The prelude's `CanvasRenderingContext2D` is what
-/// gives it the spec's shape; this is the part that has to touch Rust.
+/// the same shape (a node id, an operation name, and a list of numbers or
+/// strings) and thirty near-identical `fn`s would be thirty places for the
+/// argument handling to drift. The prelude's `CanvasRenderingContext2D` gives it
+/// the spec's shape; this is the part that has to touch Rust.
 ///
 /// Returns `true` when the operation was performed and `false` when it was not
-/// understood, which is what the prelude turns into an `unsupported()` entry.
-/// **That return value is the honesty rule of this whole feature**: a canvas
-/// call that quietly does nothing is the silent stub roadmap-history.md §B8.4
-/// refuses, and
-/// the only thing standing between this module and that failure is that an
-/// unknown operation says so instead of returning `undefined`.
+/// understood, which the prelude turns into an `unsupported()` entry. That
+/// return value is the honesty rule of this whole feature: a canvas call that
+/// quietly does nothing is the silent stub roadmap-history.md §B8.4 refuses.
 fn canvas_op(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let op = arg_string(args, 1, context)?;
@@ -1886,15 +1863,14 @@ fn canvas_op(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
 /// Create or resize the surface behind a `<canvas>`, and report its size.
 ///
 /// Called two ways, and the fourth argument is the difference between them.
-/// `getContext` wants the surface it already has and must not wipe it.
-/// The `width`/`height` setters must **always** reset the bitmap, even when
-/// the value is unchanged — `canvas.width = canvas.width` is the idiomatic
-/// erase and it works precisely because assigning the same number still
-/// clears. Sizing on inequality looked right and made that idiom a no-op.
+/// `getContext` wants the surface it already has and must not wipe it. The
+/// `width`/`height` setters must *always* reset the bitmap, even when the value
+/// is unchanged: `canvas.width = canvas.width` is the idiomatic erase and it
+/// works precisely because assigning the same number still clears. Sizing on
+/// inequality looked right and made that idiom a no-op.
 ///
-/// Returns `[width, height]`, which is what the element reports back, so a page
-/// that asks for an absurd size is told what it actually got rather than being
-/// allowed to believe the number it asked for.
+/// Returns `[width, height]`, so a page that asks for an absurd size is told
+/// what it actually got.
 fn canvas_size(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let width = args.get_or_undefined(1).to_number(context)? as u32;
@@ -1992,20 +1968,19 @@ fn rect(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
 /// The note that stood here said Stylo's accessors are generated at build time
 /// and there is "no stable generic 'give me property X as a string' on
 /// `ComputedValues` to bind against", so six properties were hand-listed and
-/// every other question answered "". That was wrong, and WPT is what proved it:
+/// every other question answered "". That was wrong, and WPT proved it:
 /// `ComputedValues::computed_value_to_string` takes a `PropertyDeclarationId`
 /// and does exactly that, and `PropertyId::parse_enabled_for_all_content` turns
-/// a property name into one without needing a parser context to be built first.
+/// a property name into one.
 ///
 /// §11.5.11 recorded `getComputedStyle` as implemented far enough to look
-/// implemented — `color` came back empty. This is the fix, and the shape of the
-/// mistake is worth keeping: the curated list was not a considered scope, it
-/// was a wrong belief about the dependency, and it survived four corpora
-/// because a page that reads `color` and gets "" mostly carries on.
+/// implemented: `color` came back empty. The shape of the mistake is worth
+/// keeping: the curated list was not a considered scope, it was a wrong belief
+/// about the dependency, and it survived four corpora because a page that reads
+/// `color` and gets "" mostly carries on.
 ///
 /// What is still not answered names itself: shorthands, custom properties, and
-/// the layout-dependent resolutions (`top` on a positioned box resolves to a
-/// used pixel value in a browser, and Stylo alone cannot know it).
+/// the layout-dependent resolutions.
 fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let property = arg_string(args, 1, context)?.to_lowercase();
@@ -2014,11 +1989,10 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     // Recompute the cascade first if the tree moved since it last ran.
     //
     // A browser resolves style on demand, and pages depend on it: the CSSOM
-    // tests build their whole subject in script — `createElement`, `appendChild`,
-    // then `getComputedStyle` — and every one of them read "" here, because
-    // Stylo had never seen the new nodes. `resolve` is safe to call from a
-    // primitive for the same reason every other mutation is: it never calls back
-    // into script, so nothing can re-enter while it runs.
+    // tests build their whole subject in script and every one of them read ""
+    // here, because Stylo had never seen the new nodes. `resolve` is safe to
+    // call from a primitive for the same reason every other mutation is: it
+    // never calls back into script.
     //
     // `styles_stale` rather than `dirty`, because the settle loop consumes
     // `dirty` to decide whether to lay out and clearing it here would skip a
@@ -2043,7 +2017,7 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     }
 
     let Some(styles) = node.primary_styles() else {
-        // No primary styles means the node is not rendered — `display: none`
+        // No primary styles means the node is not rendered: `display: none`
         // is the honest answer for a visibility question about it.
         return Ok(match property.as_str() {
             "display" => js_string!("none").into(),
@@ -2057,13 +2031,12 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     // different questions and the difference is not subtle: every inline
     // element reported `block`, because that is the box blitz constructs for a
     // run of inline content. `getComputedStyle` is defined to return the
-    // computed value, so it now goes through the same longhand path as
-    // everything else and a `<span>` says `inline`.
+    // computed value, so it now goes through the same longhand path and a
+    // `<span>` says `inline`.
     //
-    // `snapshot.rs` was already reading `clone_display()` for its hidden-content
-    // filter, so the engine held two answers to one question and only the
-    // snapshot's was right. Found by review, after `innerText` used this to
-    // decide where the line breaks go and put one between two spans.
+    // `snapshot.rs` was already reading `clone_display()` for its
+    // hidden-content filter, so the engine held two answers to one question and
+    // only the snapshot's was right.
 
     use style::properties::{PropertyDeclarationId, PropertyId};
     let answer = match PropertyId::parse_enabled_for_all_content(&property) {
@@ -2074,15 +2047,14 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
         Ok(PropertyId::NonCustom(id)) => id
             .as_longhand()
             .map(|longhand| styles.computed_value_to_string(PropertyDeclarationId::Longhand(longhand))),
-        // `--custom-property`, which is how real pages theme themselves, so
-        // this was a live gap rather than an obscure one.
+        // `--custom-property`, which is how real pages theme themselves, so this
+        // was a live gap rather than an obscure one.
         //
-        // Looked up by walking `property_at`, which is the public way in: the
-        // keyed `get` wants a `PropertyDescriptors` for the registration, and
-        // an unregistered custom property — which is nearly all of them — has
-        // none. An unset one answers "" rather than naming itself, because ""
-        // is what a browser says and the property is not *missing*, it is
-        // simply not set.
+        // Looked up by walking `property_at`, which is the public way in: the keyed
+        // `get` wants a `PropertyDescriptors` for the registration, and an
+        // unregistered custom property, which is nearly all of them, has none. An
+        // unset one answers "" rather than naming itself, because "" is what a
+        // browser says and the property is not *missing*, only unset.
         Ok(PropertyId::Custom(name)) => {
             let customs = styles.custom_properties();
             let mut answer = String::new();
@@ -2114,27 +2086,25 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
 ///
 /// This was a JavaScript walk over `childNodes` and it cost 142ms on a
 /// 6,000-node page against `textContent`'s 6ms. The style lookup was not the
-/// expensive part — measured, after a fast path for `display` failed to move
-/// the number — it was the walk itself: every level materialises an array of
-/// wrapped nodes, and every property read pays a proxy trap. Native, the same
-/// answer needs one call and no wrappers at all.
+/// expensive part, measured; it was the walk itself, since every level
+/// materialises an array of wrapped nodes and every property read pays a proxy
+/// trap. Native, the same answer needs one call and no wrappers.
 ///
-/// Still an approximation of a spec written over layout boxes, and the same one
-/// the JavaScript version made: `display: none` subtrees are excluded, `<br>` is
-/// a break, non-inline boxes break on each side, and runs of breaks collapse.
-/// It can differ from a browser on deliberately awkward whitespace.
+/// Still an approximation of a spec written over layout boxes, the same one the
+/// JavaScript version made: `display: none` subtrees are excluded, `<br>` is a
+/// break, non-inline boxes break on each side, and runs of breaks collapse.
 fn inner_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;
-    // The walk reads computed style — `display` for what is rendered,
-    // `white-space-collapse` for how text folds — so the cascade must be
+    // The walk reads computed style (`display` for what is rendered,
+    // `white-space-collapse` for how text folds) so the cascade must be
     // current: a page that sets `div.style.whiteSpace = "pre"` and reads
     // `innerText` on the next line means the pre.
     settle_layout(&host);
     let doc = host.dom.borrow();
 
     // An unrendered element falls back to `textContent`, per the spec's first
-    // step — "not being rendered" is decided before any of the text rules run.
+    // step, "not being rendered" is decided before any of the text rules run.
     let rendered = doc
         .get_node(id)
         .and_then(|n| n.primary_styles())
@@ -2151,16 +2121,16 @@ fn inner_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
     Ok(js_string!(assemble_inner_text(segments)).into())
 }
 
-/// **Iterative, with its own stack**, like [`serialise`] above.
+/// Iterative, with its own stack, like [`serialise`] above.
 ///
 /// The depth a tree may reach is bounded before layout
 /// (`crate::engine::prune_deep_nesting`), and every caller of this lays out
-/// first — so it was safe by an invariant that lives in another file and is not
-/// this function's to rely on. A walker whose failure mode is a `SIGSEGV` with
-/// no panic to catch should not depend on somebody else having gone first.
+/// first, so it was safe by an invariant that lives in another file. A walker
+/// whose failure mode is a `SIGSEGV` with no panic to catch should not depend on
+/// somebody else having gone first.
 ///
 /// The node named by `id` contributes nothing itself, only its descendants,
-/// which is what the recursive version did and what `textContent` means.
+/// which is what `textContent` means.
 fn collect_text_content(doc: &blitz_dom::BaseDocument, id: usize, out: &mut String) {
     let Some(root) = doc.get_node(id) else { return };
     // Reversed on the way in so they come off in document order.
@@ -2288,7 +2258,7 @@ fn collect_rendered_text(
 
 /// Join the segments: block-break runs become one newline, hard breaks keep
 /// their count, collapsible text sheds the spaces that touch a break or an
-/// edge — and preserved text sheds nothing, which is what `<pre>` means.
+/// edge, and preserved text sheds nothing, which is what `<pre>` means.
 fn assemble_inner_text(segments: Vec<TextSegment>) -> String {
     // Each entry is a rendered line-ish chunk: (text, preserved-edges flags
     // folded in already). Build the output by walking segments and tracking
@@ -2341,8 +2311,8 @@ fn assemble_inner_text(segments: Vec<TextSegment>) -> String {
             }
         }
     }
-    // A trailing collapsible space vanishes; a preserved one — the end of a
-    // `<pre>abc </pre>` — is content and stays.
+    // A trailing collapsible space vanishes; a preserved one, the end of a
+    // `<pre>abc </pre>`, is content and stays.
     if !tail_preserved {
         while result.ends_with(' ') {
             result.pop();
@@ -2355,8 +2325,8 @@ fn assemble_inner_text(segments: Vec<TextSegment>) -> String {
 ///
 /// `TextDecoder` used to accept every label and answer "utf-8" to all of them,
 /// so `new TextDecoder("not-a-real-encoding")` succeeded and `shift_jis`
-/// silently decoded as UTF-8. Both are wrong answers rather than missing ones:
-/// a page checking whether an encoding is supported was told yes, and a page
+/// silently decoded as UTF-8. Both are wrong answers rather than missing ones: a
+/// page checking whether an encoding is supported was told yes, and a page
 /// decoding Shift-JIS got mojibake with no error.
 ///
 /// `encoding_rs` owns the label table the standard defines, so this is a lookup
@@ -2445,15 +2415,13 @@ fn document_encoding(_this: &JsValue, _args: &[JsValue], context: &mut Context) 
 /// panics.
 ///
 /// blitz `expect`s an `<img src>` to resolve while flushing the parser's eager
-/// operations, and that flush runs inside *every* structural mutation — so
+/// operations, and that flush runs inside *every* structural mutation, so
 /// attaching a subtree containing one unresolvable image killed the process,
 /// taking the page, the snapshot and the receipts with it.
 ///
-/// This has now been found three times in three primitives: `set_attribute`,
-/// the initial parse, and `append`. Each was fixed where it was found, which is
-/// precisely why there was a third. This is the class fix — every mutation goes
-/// through here, so the next entry point to reach that `expect` is already
-/// covered.
+/// Found three times in three primitives: `set_attribute`, the initial parse,
+/// and `append`. Each was fixed where it was found, which is precisely why there
+/// was a third. This is the class fix.
 fn guard_mutation(host: &HostHandle, what: &str, body: impl FnOnce()) {
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
     if let Err(payload) = outcome {
@@ -2476,26 +2444,25 @@ fn guard_mutation(host: &HostHandle, what: &str, body: impl FnOnce()) {
 /// Bring style and layout up to date, if script has changed the tree since they
 /// last ran.
 ///
-/// Anything that answers a *measured* question has to call this first. A
-/// browser resolves on demand, and pages depend on it: build an element, give
-/// it a size, append it, ask how big it is. Without this the answer is zero —
-/// not "unknown", but a confident `0x0` for an element that plainly has a size,
-/// which is the shape of wrong answer this engine keeps finding in itself.
+/// Anything that answers a *measured* question has to call this first. A browser
+/// resolves on demand, and pages depend on it: build an element, give it a size,
+/// append it, ask how big it is. Without this the answer is zero, not "unknown",
+/// but a confident `0x0` for an element that plainly has a size.
 ///
 /// `resolve` never calls back into script, so taking the mutable borrow here is
 /// safe for the same reason every other mutation is.
 fn settle_layout(host: &HostHandle) {
     if *host.styles_stale.borrow() {
         *host.styles_stale.borrow_mut() = false;
-        // Through the engine's helper, not `resolve` directly. This was the
-        // fourth door into the deep-tree problem: layout recurses, and
-        // `getComputedStyle` on a tree script has just built reaches it before
-        // the settle loop does — `el.innerHTML = "<div>".repeat(20000)` then
-        // one style read, and the process is gone with no panic to catch.
+        // Through the engine's helper, not `resolve` directly. This was the fourth
+        // door into the deep-tree problem: layout recurses, and `getComputedStyle`
+        // on a tree script has just built reaches it before the settle loop does, so
+        // `el.innerHTML = "<div>".repeat(20000)` then one style read leaves the
+        // process gone with no panic to catch.
         //
-        // It also picks up `guard_layout`, which matters more here than
-        // anywhere: a panic raised inside a native binding unwinds through the
-        // JavaScript engine, across a `Gc` that does not expect it.
+        // It also picks up `guard_layout`, which matters more here than anywhere: a
+        // panic raised inside a native binding unwinds through the JavaScript
+        // engine, across a `Gc` that does not expect it.
         let _ = crate::engine::lay_out(&host.dom);
     }
 }
@@ -2503,7 +2470,7 @@ fn settle_layout(host: &HostHandle) {
 /// Whether a selector parses, so the prelude can throw where a browser throws.
 ///
 /// `querySelector("!!!")` is a `SyntaxError` in every browser, and this engine
-/// answered `null` — indistinguishable from "there is no such element". A page
+/// answered `null`: indistinguishable from "there is no such element". A page
 /// with a typo in a selector was told its element does not exist, which is the
 /// plausible wrong answer this engine keeps removing: it sends the caller down
 /// the not-found branch instead of showing them their mistake.
@@ -2518,12 +2485,12 @@ fn valid_selector(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
 /// Whether this is a CSS property at all, which is what `in` on a computed
 /// style is asking.
 ///
-/// `"color" in getComputedStyle(el)` was **false** for every property, because
-/// the computed-style object is a proxy with only a `get` trap and `in` uses
-/// `has`. WPT's `test_computed_value` asserts exactly that on its first line,
-/// and it is the standard helper for CSS parsing tests, so thousands of
-/// subtests failed before they ever compared a value — including all of
-/// `css-color`, where Stylo supported every feature under test.
+/// `"color" in getComputedStyle(el)` was *false* for every property, because the
+/// computed-style object is a proxy with only a `get` trap and `in` uses `has`.
+/// WPT's `test_computed_value` asserts exactly that on its first line, and it is
+/// the standard helper for CSS parsing tests, so thousands of subtests failed
+/// before they ever compared a value, including all of `css-color`, where Stylo
+/// supported every feature under test.
 fn is_css_property(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let name = arg_string(args, 0, context)?;
     let known = style::properties::PropertyId::parse_enabled_for_all_content(&name).is_ok();
@@ -2534,7 +2501,7 @@ fn is_css_property(_this: &JsValue, args: &[JsValue], context: &mut Context) -> 
 ///
 /// Answered by actually parsing it rather than by consulting a list. A list
 /// would be a second opinion about what this engine supports, and the two would
-/// drift the moment Stylo moved — and `CSS.supports` is a question pages ask
+/// drift the moment Stylo moved, and `CSS.supports` is a question pages ask
 /// precisely so they can take a *different code path*, so a wrong answer here
 /// does not degrade, it misroutes.
 fn supports_css(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -2582,23 +2549,22 @@ fn supports_css(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     Ok(JsValue::from(supported))
 }
 
-/// One declaration, parsed and serialised back — the CSSOM "specified value".
+/// One declaration, parsed and serialised back: the CSSOM "specified value".
 ///
 /// `el.style.backgroundPosition` is defined as the *serialisation* of what the
 /// author wrote, not the text itself, and the two differ more often than they
 /// look: `.5%` serialises as `0.5%`, `-0` as `0`, and a shorthand comes back
 /// re-composed from its longhands. The inline declaration used to hand back the
-/// raw substring between `:` and `;`, so `css/cssom/serialize-values` failed
-/// 164 subtests on numbers alone.
+/// raw substring between `:` and `;`, so `css/cssom/serialize-values` failed 164
+/// subtests on numbers alone.
 ///
 /// Done here rather than in the prelude because the engine already holds a
 /// correct CSS parser, and a serialiser written in JavaScript would disagree
-/// with it about exactly the cases this is for. It is the same parser
-/// `CSS.supports` uses, one function above.
+/// with it about exactly the cases this is for.
 ///
 /// An empty answer means "this did not parse", and the caller keeps the raw
-/// text rather than dropping the declaration — a value this cannot serialise is
-/// far more likely to be a gap here than a page writing nonsense.
+/// text: a value this cannot serialise is far more likely to be a gap here than
+/// a page writing nonsense.
 fn serialize_css_value(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let property = arg_string(args, 0, context)?;
     let value = arg_string(args, 1, context)?;
@@ -2615,8 +2581,8 @@ fn serialize_css_value(_this: &JsValue, args: &[JsValue], context: &mut Context)
         return Ok(js_string!("").into());
     };
 
-    // The base URL is parsed **once per thread**, not once per call. Unlike
-    // `CSS.supports` above — which a page asks a handful of times — this runs
+    // The base URL is parsed once per thread, not once per call. Unlike
+    // `CSS.supports` above, which a page asks a handful of times, this runs
     // on every inline-style property read, so re-parsing `about:blank` and
     // rebuilding it each time would put a URL parse on a path frameworks touch
     // constantly.
@@ -2663,23 +2629,20 @@ fn serialize_css_value(_this: &JsValue, args: &[JsValue], context: &mut Context)
 }
 
 /// Parse a URL against an optional base, using the same parser the broker uses.
-///
 /// Native rather than a JavaScript reimplementation because the engine already
-/// contains a correct URL parser, and a second one in the prelude would
-/// disagree with it about exactly the cases that matter — percent-encoding,
-/// default ports, and what counts as an origin.
-/// `url.username = x` and `url.password = x`, performed by the parser.
+/// contains a correct URL parser, and a second one in the prelude would disagree
+/// with it about percent-encoding, default ports, and what counts as an origin.
 ///
-/// Not a string rebuild followed by a re-parse, and the difference is the whole
-/// reason this exists: the URL Standard percent-encodes userinfo with its own
-/// set, and a *raw* control character in an authority is a parse **failure** —
-/// so serialising `https://\0test@host/` and handing it back would drop the
-/// write instead of storing `%00test`. `url::Url` already implements the
-/// spec's steps, so they are called rather than reimplemented in JavaScript.
+/// `url.username = x` and `url.password = x`, performed by the parser. Not a
+/// string rebuild followed by a re-parse, and the difference is the whole reason
+/// this exists: the URL Standard percent-encodes userinfo with its own set, and
+/// a *raw* control character in an authority is a parse *failure*, so
+/// serialising `https://\0test@host/` and handing it back would drop the write
+/// instead of storing `%00test`.
 ///
-/// A URL that cannot have a username or password (an opaque path such as
-/// `data:` or `mailto:`) answers null, and the setter leaves the URL alone —
-/// which is what the standard says to do rather than an error this invented.
+/// A URL that cannot have a username or password (an opaque path such as `data:`
+/// or `mailto:`) answers null, and the setter leaves the URL alone, which is
+/// what the standard says to do.
 fn url_with_userinfo(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let href = arg_string(args, 0, context)?;
     let field = arg_string(args, 1, context)?;
@@ -2707,19 +2670,17 @@ fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
         .map(|host| *host.encoding.borrow())
         .unwrap_or(encoding_rs::UTF_8);
 
-    // A query belongs to the document, not to UTF-8 — and it has to be encoded
+    // A query belongs to the document, not to UTF-8, and it has to be encoded
     // *before* parsing rather than after.
     //
-    // The first version of this decoded the parsed query and re-encoded it,
-    // which cannot work: once `url::Url` has run, an author's own `%41` and a
-    // `%E4%B8%82` the parser produced from a raw `丂` are both just `%XX` and
-    // nothing can tell them apart. So `?x=%41` came back as `?x=A` and
-    // `?100%25` as `?100%` — an escape the page wrote, destroyed, and in the
-    // second case turned into an invalid one. Found by diffing against Chromium.
+    // The first version decoded the parsed query and re-encoded it, which cannot
+    // work: once `url::Url` has run, an author's own `%41` and a `%E4%B8%82` the
+    // parser produced from a raw `丂` are both just `%XX` and nothing can tell
+    // them apart. So `?x=%41` came back as `?x=A` and `?100%25` as `?100%`: an
+    // escape the page wrote, destroyed, and in the second case turned into an
+    // invalid one. Found by diffing against Chromium.
     //
-    // Encoding the raw text first has neither problem: ASCII passes through
-    // untouched, `%` included, and only the characters the document's encoding
-    // has to make a decision about are changed.
+    // Encoding the raw text first has neither problem.
     let href = if encoding == encoding_rs::UTF_8 {
         href
     } else {
@@ -2740,7 +2701,7 @@ fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     let fields: [(&str, String); 10] = [
         ("href", url.to_string()),
         // The userinfo half. It was read as "" and written nowhere, on the
-        // grounds that the parser did not surface it — but `url::Url` has had
+        // grounds that the parser did not surface it, but `url::Url` has had
         // both all along, so `url-setters-stripping` failed 226 subtests
         // against a component this engine could already see.
         ("username", url.username().to_string()),
@@ -2797,7 +2758,7 @@ fn viewport(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResu
 ///
 /// Deliberately not the wire header. A session credential is almost always
 /// `HttpOnly`, and withholding it is what keeps the property that an agent can
-/// be logged in without being able to read the thing that makes it so — because
+/// be logged in without being able to read the thing that makes it so, because
 /// anything script can read, script can write into the DOM, and the agent reads
 /// the DOM.
 fn read_cookies(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -2821,14 +2782,14 @@ fn write_cookie(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
 // The realm is single-threaded and `!Send`, so a socket cannot be read from it.
 // These follow the same shape the fetch path already uses: a worker thread does
 // the blocking read and hands frames back over a channel, and the page collects
-// them at a point the engine chooses — here, once per settle round.
+// them at a point the engine chooses, here once per settle round.
 //
 // That choice has a consequence worth stating rather than leaving to be
-// discovered. **A message that arrives while nothing is running is delivered at
-// the next verb, not the moment it lands.** The session is idle by design —
-// there is no pump, which is what makes it cost nothing at rest — so there is
-// no thread of control to deliver into. For an agent driving a page this is
-// invisible; for anything expecting real-time delivery it is not.
+// discovered. A message that arrives while nothing is running is delivered at
+// the next verb, not the moment it lands. The session is idle by design, which
+// is what makes it cost nothing at rest, so there is no thread of control to
+// deliver into. For an agent driving a page this is invisible; for anything
+// expecting real-time delivery it is not.
 
 /// One drained event as `[kind, payload, name]`.
 ///
@@ -2903,7 +2864,7 @@ fn socket_close(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
 
 /// Everything that has arrived on one socket since the last drain.
 ///
-/// `[[kind, payload], ...]` — `kind` is `open`, `message`, `close` or `error`.
+/// `[[kind, payload], ...]`: `kind` is `open`, `message`, `close` or `error`.
 /// Flat pairs rather than objects because the prelude turns them into real
 /// events anyway, and building objects here would mean building them twice.
 fn socket_drain(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {

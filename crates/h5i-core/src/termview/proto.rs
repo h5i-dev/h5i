@@ -1,25 +1,25 @@
 //! The stream protocol, as agent-browser actually speaks it.
 //!
 //! Both directions are JSON text frames over one WebSocket. This module is the
-//! single place that knows their shape, so the viewer's event loop deals in
-//! typed values and a change upstream lands in one file.
+//! single place that knows their shape, so the viewer's event loop deals in typed
+//! values and a change upstream lands in one file.
 //!
 //! Two things here are pinned to observed behaviour rather than to a
-//! specification, and both are load-bearing:
+//! specification, and both matter:
 //!
-//! * **Input messages are `input_mouse` / `input_keyboard` / `input_touch`.**
+//! * Input messages are `input_mouse` / `input_keyboard` / `input_touch`.
 //!   agent-browser's dispatcher matches those three names and falls through to
 //!   `_ => {}` for everything else, so a message named after the DOM event
 //!   (`mousedown`, `keydown`) is *accepted by the socket and silently
 //!   discarded*. There is no error, no log line, and no way for a client to
-//!   notice: the connection stays healthy and the page simply never moves.
-//!   h5i's own web viewer shipped with exactly that bug (fixed alongside this
-//!   module), which is why the mapping is tested here rather than trusted.
-//! * **An absent string field is omitted, never sent as `null`.** Upstream
-//!   builds its CDP parameters by copying string fields through only when they
-//!   parse as strings, and CDP rejects the whole command when one is null. The
-//!   caller there discards the error, so a single null drops the keystroke
-//!   quietly. [`KeyEvent::to_json`] omits, and a test holds it to that.
+//!   notice: the connection stays healthy and the page simply never moves. h5i's
+//!   own web viewer shipped with exactly that bug (fixed alongside this module),
+//!   which is why the mapping is tested here rather than trusted.
+//! * An absent string field is omitted, never sent as `null`. Upstream builds its
+//!   CDP parameters by copying string fields through only when they parse as
+//!   strings, and CDP rejects the whole command when one is null. The caller
+//!   there discards the error, so a single null drops the keystroke quietly.
+//!   [`KeyEvent::to_json`] omits, and a test holds it to that.
 
 use serde_json::{json, Value};
 
@@ -109,7 +109,7 @@ impl MouseEvent {
 }
 
 /// Key down or key up. A terminal delivers presses only, so the viewer
-/// synthesizes the pair — see [`super::input`].
+/// synthesizes the pair. See [`super::input`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyKind {
     Down,
@@ -149,7 +149,7 @@ impl KeyEvent {
         m.insert("eventType".into(), json!(self.kind.as_str()));
         m.insert("key".into(), json!(self.key));
         // Omitted when unknown. Upstream copies string fields through only when
-        // they parse as strings, so a null here is not "no code" — it is a
+        // they parse as strings, so a null here is not "no code". It is a
         // rejected CDP command and a lost keystroke.
         if !self.code.is_empty() {
             m.insert("code".into(), json!(self.code));
@@ -168,13 +168,13 @@ impl KeyEvent {
 
 /// Ask the stream for ack pacing at a frame-rate ceiling.
 ///
-/// Ack pacing is the right mode for a terminal and not merely a tuning knob.
-/// Under push pacing the box streams frames as fast as it renders them; a
-/// terminal that draws more slowly than that falls steadily behind, because
-/// "latest frame wins" only holds *above* the socket — anything already handed
-/// to the transport is delivered in order. Under ack pacing the box keeps at
-/// most one frame in flight, so the viewer's own draw rate sets the pace and it
-/// can never accumulate a backlog it will have to skip.
+/// Ack pacing is the right mode for a terminal, not merely a tuning knob. Under
+/// push pacing the box streams frames as fast as it renders them; a terminal that
+/// draws more slowly falls steadily behind, because "latest frame wins" only
+/// holds *above* the socket, and anything already handed to the transport is
+/// delivered in order. Under ack pacing the box keeps at most one frame in
+/// flight, so the viewer's own draw rate sets the pace and it can never
+/// accumulate a backlog it will have to skip.
 pub fn config_ack_pacing(max_fps: u32) -> Value {
     json!({"type": "config", "maxFps": max_fps, "pacing": "ack"})
 }
@@ -301,8 +301,8 @@ mod tests {
     #[test]
     fn input_messages_carry_the_names_the_box_actually_dispatches() {
         // The whole point of this test. agent-browser matches these three
-        // strings and silently drops everything else, so a rename upstream —
-        // or a well-meaning "use the DOM event name" here — produces a viewer
+        // strings and silently drops everything else, so a rename upstream,
+        // or a well-meaning "use the DOM event name" here, produces a viewer
         // that connects, streams, accepts clicks and moves nothing.
         let m = MouseEvent {
             kind: MouseKind::Pressed,
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn an_unknown_string_field_is_omitted_rather_than_nulled() {
         // CDP rejects the command outright on a null string and upstream
-        // discards the error, so a null `code` does not degrade the event — it
+        // discards the error, so a null `code` does not degrade the event. It
         // deletes it.
         let k = KeyEvent {
             kind: KeyKind::Up,

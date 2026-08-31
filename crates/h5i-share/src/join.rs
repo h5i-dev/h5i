@@ -3,27 +3,25 @@
 //! Turns a ticket into a URL on the joiner's own machine. Every request to that
 //! URL becomes one QUIC stream to the sharer, which becomes one TCP connection
 //! to the dev server inside their box. The joiner's browser sees an ordinary
-//! local web app: HTML, hot reload, XHR, the lot.
+//! local web app.
 //!
 //! Two things about this side are worth being explicit about, because both are
 //! easy to get wrong in a way that only hurts the person who was doing someone
 //! else a favour by joining.
 //!
-//! **The local listener is gated.** A port bound on loopback is reachable by
-//! every process on this machine and by every page open in this browser. That
-//! is the same problem the viewer forward solves on the sharer's machine, and
-//! it arrives here on somebody else's computer, so it gets the same answer: a
-//! token in the URL, moved into a cookie on first use, and a refusal without
-//! it. The token is minted **here** and is not the ticket secret — nothing that
-//! authorizes the share is ever handed to a browser.
+//! The local listener is gated. A port bound on loopback is reachable by every
+//! process on this machine and by every page open in this browser. That is the
+//! same problem the viewer forward solves on the sharer's machine, arriving here
+//! on somebody else's computer, so it gets the same answer: a token in the URL,
+//! moved into a cookie on first use, and a refusal without it. The token is
+//! minted *here* and is not the ticket secret.
 //!
-//! **The page is untrusted code, and a loopback origin is a privileged place to
-//! run it.** The app being shared was written by someone else's agent. Served
-//! from `127.0.0.1` it sits on an origin that browsers exempt from their
-//! private-network protections, so it has an easier reach at this machine's own
-//! local services than the same page on a public origin would. That is stated
-//! in MANUAL.md and printed at join time rather than buried: it is the
-//! joiner's risk, and they are the one person who did not choose to take it.
+//! The page is untrusted code, and a loopback origin is a privileged place to
+//! run it. Served from `127.0.0.1` it sits on an origin that browsers exempt
+//! from their private-network protections, so it has an easier reach at this
+//! machine's own local services than the same page on a public origin would.
+//! That is stated in MANUAL.md and printed at join time rather than buried: it
+//! is the joiner's risk, and they are the one person who did not choose it.
 
 use h5i_error::H5iError;
 
@@ -54,38 +52,34 @@ pub struct Joined {
 
 /// Bind this join's own address on the loopback interface.
 ///
-/// **The address is the isolation.** Cookies are scoped by *host* and ignore the
+/// The address is the isolation. Cookies are scoped by *host* and ignore the
 /// port, so a proxy on `127.0.0.1:8899` shares one jar with every other HTTP
 /// service on this machine, which goes wrong in both directions:
 ///
-/// * **Outward.** The cookie this proxy sets, `h5i_share_<port>=<token>`, is
-///   sent by the browser to *every* `127.0.0.1` service the joiner visits while
-///   joined. `HttpOnly` is no help, this being the server-side `Cookie` header.
-///   Any such service reads the port from the cookie's name and the token from
-///   its value, and can then reach the remote box. The token is minted here
-///   precisely because every local process is outside the gate.
+/// * Outward. The cookie this proxy sets, `h5i_share_<port>=<token>`, is sent by
+///   the browser to *every* `127.0.0.1` service the joiner visits while joined.
+///   `HttpOnly` is no help, this being the server-side `Cookie` header. Any such
+///   service reads the port from the cookie's name and the token from its value,
+///   and can then reach the remote box.
 ///
-/// * **Inward, which is worse.** Every cookie any *other* loopback service set
-///   on `127.0.0.1` is sent here and forwarded upstream, so a `session=<secret>`
-///   belonging to the joiner's own local app arrives at agent-written code
-///   inside somebody else's box on its first request. The joiner is the person
-///   who did not choose that risk.
+/// * Inward, which is worse. Every cookie any *other* loopback service set on
+///   `127.0.0.1` is sent here and forwarded upstream, so a `session=<secret>`
+///   belonging to the joiner's own local app arrives at agent-written code inside
+///   somebody else's box on its first request.
 ///
 /// A different loopback address is a different cookie host, with no DNS, no
 /// `/etc/hosts` and no browser-specific `*.localhost` handling: `127.0.0.0/8` is
-/// all loopback, so `127.x.y.z` is reachable from this machine and nowhere else,
-/// and the browser keeps a jar for it only this share has written to.
+/// all loopback, so `127.x.y.z` is reachable from this machine and nowhere else.
 ///
 /// Linux routes the whole `/8` by default. macOS configures only `127.0.0.1` on
 /// `lo0`, so the bind fails and this falls back, and the two leaks are not
 /// equally answerable there:
 ///
-/// * The **inward** one is closed on the fallback, portably, by
-///   [`crate::gate::AppCookies`]: only cookies the box itself set go upstream
-///   and the joiner's own credentials stop here. It costs the box any cookie the
-///   app set from JavaScript.
+/// * The *inward* one is closed on the fallback, portably, by
+///   [`crate::gate::AppCookies`]: only cookies the box itself set go upstream. It
+///   costs the box any cookie the app set from JavaScript.
 ///
-/// * The **outward** one has no fix without a cookie host of our own, and macOS
+/// * The *outward* one has no fix without a cookie host of our own, and macOS
 ///   will not give one without `ifconfig lo0 alias` as root. So it is not fixed,
 ///   it is *chosen*: the fallback is refused unless the joiner asked for it. A
 ///   CLI should not be asking for root, and a warning printed after the URL is
@@ -110,19 +104,15 @@ async fn bind_loopback(port: u16) -> Result<(tokio::net::TcpListener, bool), H5i
     // way a macOS machine has one of these at all: `sudo ifconfig lo0 alias
     // 127.0.0.2`. Eight guesses out of sixteen million will not find a single
     // aliased address, so without this sweep the documented way to get a
-    // private jar on macOS would not work, and the loop above would be the
-    // reason. On Linux nothing reaches here — the whole `/8` is already routed.
+    // private jar on macOS would not work. On Linux nothing reaches here.
     //
     // Predictable, unlike the addresses above, and that is not the property
     // doing the work: the isolation is that the browser keeps a separate jar
-    // per host, not that the host is hard to guess. The random ones are random
-    // because they can be.
+    // per host, not that the host is hard to guess.
     //
     // Taken as private, with one caveat that belongs to whoever configured it:
     // an address somebody aliased for their *own* services is a jar shared with
-    // those services, and h5i cannot tell the two reasons apart. An alias kept
-    // for this is a jar of this share's own; one that already has a dev server
-    // on it is not.
+    // those services, and h5i cannot tell the two reasons apart.
     for d in 2..=9u8 {
         let addr = std::net::Ipv4Addr::new(127, 0, 0, d);
         if let Ok(l) = tokio::net::TcpListener::bind((addr, port)).await {
@@ -137,23 +127,21 @@ async fn bind_loopback(port: u16) -> Result<(tokio::net::TcpListener, bool), H5i
 
 /// Bind the address the joiner *chose*, or fall back to [`bind_loopback`].
 ///
-/// An explicit address is bound exactly — no retries, no fallback: somebody
-/// who asked for `127.0.0.1` on purpose is not served better by silently
-/// getting a random private address, and the other way around. Loopback only,
-/// on this path as on every other: this proxy exists to give one browser on
-/// this machine a door, not to republish somebody else's box to the network.
+/// An explicit address is bound exactly, no retries, no fallback: somebody who
+/// asked for `127.0.0.1` on purpose is not served better by silently getting a
+/// random private address, and the other way around. Loopback only, on this path
+/// as on every other.
 ///
 /// Naming `127.0.0.1` by hand *is* the shared-jar consent. The flag exists so
 /// the person carrying the risk says so on the command line, and an explicit
-/// `--bind 127.0.0.1` says it at least as clearly as `--shared-jar` does —
-/// what it must not do is skip the machinery that consent buys: the
-/// [`crate::gate::AppCookies`] filter and the warning both key off the
-/// returned flag, so they engage here exactly as they do on the fallback.
+/// `--bind 127.0.0.1` says it at least as clearly as `--shared-jar` does. What
+/// it must not do is skip the machinery that consent buys: the
+/// [`crate::gate::AppCookies`] filter and the warning both key off the returned
+/// flag.
 ///
 /// WSL is where the explicit choice is real rather than a preference: Windows
 /// forwards only `127.0.0.1` into the VM, so the private address this proxy
-/// prefers binds fine — the fallback never fires, and `--shared-jar` alone
-/// changes nothing — and is then unreachable from every Windows browser.
+/// prefers binds fine and is then unreachable from every Windows browser.
 async fn bind_for(
     bind: Option<std::net::Ipv4Addr>,
     port: u16,
@@ -200,12 +188,11 @@ pub async fn run(
     // exists to give one browser on this machine a door, not to republish
     // someone else's dev server.
     //
-    // Before the dial, not after it, and that ordering is the whole point of
-    // putting it here: a joiner who is going to be told "not on this machine
-    // without saying so" should be told it without a connection having been
-    // made in their name. Reaching the sharer first would spend one of their
-    // share's slots and put a visitor on their receipt for a join that never
-    // happened.
+    // Before the dial, not after it, and that ordering is the point: a joiner
+    // who is going to be told "not on this machine without saying so" should be
+    // told it without a connection having been made in their name. Reaching the
+    // sharer first would spend one of their share's slots and put a visitor on
+    // their receipt for a join that never happened.
     let (listener, shared_jar) = bind_for(bind, port, allow_shared_jar).await?;
     let local = listener.local_addr()?;
 
@@ -289,21 +276,20 @@ pub async fn run(
             // and exit, rather than leaving a local URL that answers every
             // request with a failure the joiner has to interpret.
             reason = conn.closed() => {
-                // Not an error. A share ending is the most ordinary thing that
-                // happens to one, and this used to exit non-zero with
-                // `Error: Metadata error: the share ended: closed by peer:
-                // h5i: this share has ended (code 5)` — an internal enum name,
-                // the same fact three times, and a wire constant, for a
-                // revoke, an expiry, a Ctrl-C and a stopped box alike.
+                // Not an error. A share ending is the most ordinary thing that happens
+                // to one, and this used to exit non-zero with `Error: Metadata error:
+                // the share ended: closed by peer: h5i: this share has ended (code 5)`:
+                // an internal enum name, the same fact three times, and a wire constant,
+                // for a revoke, an expiry, a Ctrl-C and a stopped box alike.
                 //
-                // Sanitised: these are bytes the *sharer* chose, arriving on
-                // the joiner's terminal. quinn renders an application close
-                // reason with `from_utf8_lossy`, so a `\r` or an `\x1b[2J` in
-                // it can erase or forge the lines around it.
+                // Sanitised: these are bytes the *sharer* chose, arriving on the joiner's
+                // terminal. quinn renders an application close reason with
+                // `from_utf8_lossy`, so a `\r` or an `\x1b[2J` in it can erase or forge
+                // the lines around it.
                 let said = h5i_core::redact::sanitize_display(&reason.to_string());
                 // A share *ending* is ordinary; a connection *failing* is not,
                 // and the first version returned `Ok` for both. So a sharer
-                // killed mid-session — or a laptop lid, or a dropped link —
+                // killed mid-session (or a laptop lid, or a dropped link)
                 // printed "they stopped sharing, or the ticket ran out" and
                 // exited 0, when the ticket was almost certainly still good
                 // and joining again would have worked. Only the sharer's own
@@ -333,7 +319,7 @@ async fn handle(
     cookie: &str,
     app: Option<&crate::gate::AppCookies>,
 ) -> Result<(), H5iError> {
-    // No receipt on this side — the joiner has none — so both answers end the
+    // No receipt on this side, the joiner has none, so both answers end the
     // same way, and the distinction the sharer's front makes is not one this
     // half has anywhere to put.
     let Ok((head, rest)) = http_front::read_head(&mut sock).await else {
@@ -362,7 +348,7 @@ async fn handle(
     // A failure here is answered with an HTTP response rather than by dropping
     // the connection. A browser shown a closed socket says "the connection was
     // reset", which tells the person nothing about a share that is busy or a
-    // ticket that was revoked — and they are the one who has to decide whether
+    // ticket that was revoked, and they are the one who has to decide whether
     // to wait or to ask for a new invite.
     let (send, recv) = match crate::p2p::open_stream(conn, secret).await {
         Ok(pair) => pair,
@@ -394,19 +380,19 @@ async fn handle(
 ///
 /// Its own function so the decision can be tested: `run` binds a listener and
 /// serves until interrupted, so a test that went through it would be a test of
-/// tokio. This is the whole behaviour change of the check — which of the four
+/// tokio. This is the whole behaviour change of the check, which of the four
 /// answers stops the command and which is only worth repeating.
 fn check_outcome(r: Result<(), crate::p2p::OpenError>) -> Result<Option<String>, H5iError> {
     match r {
         Ok(()) => Ok(None),
         // The route into the box is broken on the sharer's side. Not fatal to
-        // the join — a restarted share on the same ticket would work — but
+        // the join, a restarted share on the same ticket would work, but
         // worth saying up front rather than letting the first page load say it.
         Err(e @ crate::p2p::OpenError::RouteBroken) => Ok(Some(format!("{e}"))),
         // Refused is the only answer about the ticket itself, so it is the only
         // one that stops the command for that reason. Busy and unreachable are
-        // both conditions that clear on their own — the share fills up and
-        // empties again, the dev server is started a minute later — and failing
+        // both conditions that clear on their own (the share fills up and
+        // empties again, the dev server is started a minute later) and failing
         // on them would tell somebody their invite is broken when it is not.
         // A sharer that cannot read its own grant table is in the second group:
         // a freed-up disk or descriptor fixes it without a new ticket.
@@ -428,7 +414,7 @@ fn check_outcome(r: Result<(), crate::p2p::OpenError>) -> Result<Option<String>,
 /// of what this refusal is: there is nothing wrong with the ticket, the share,
 /// or the network. The one fact is that this machine cannot give the share a
 /// cookie jar of its own, and the person who would carry that is the person
-/// reading this — so it is theirs to answer rather than ours to assume.
+/// reading this, so it is theirs to answer rather than ours to assume.
 fn shared_jar_refusal() -> String {
     format!(
         "this machine has no loopback address to spare, so this join would land on 127.0.0.1 \
@@ -458,13 +444,12 @@ pub const BIND_FLAG: &str = "--bind";
 /// What to say about a ticket that looks expired *on this machine*.
 ///
 /// The check is local, and a local check against a wrong clock is an
-/// accusation. A joiner two hours fast refuses a ticket the sharer's own
-/// `share status` shows with 58 minutes left, tells the person to ask for a
-/// replacement, and every replacement fails the same way — with nothing in the
-/// message pointing at the actual problem. So: how long ago, in this machine's
-/// opinion, and what that opinion depends on. A ticket that expired minutes ago
-/// is almost certainly just expired; one that "expired" hours before it was
-/// sent is a clock.
+/// accusation. A joiner two hours fast refuses a ticket the sharer's own `share
+/// status` shows with 58 minutes left, tells the person to ask for a
+/// replacement, and every replacement fails the same way. So: how long ago, in
+/// this machine's opinion, and what that opinion depends on. A ticket that
+/// expired minutes ago is almost certainly just expired; one that "expired"
+/// hours before it was sent is a clock.
 fn expired_here(expires_at: i64, now: i64) -> String {
     let ago = now.saturating_sub(expires_at);
     format!(
@@ -476,8 +461,8 @@ fn expired_here(expires_at: i64, now: i64) -> String {
 /// The whole sentence a joiner reads when its connection is closed.
 ///
 /// The headline is not always "the share ended". A revoke cuts *this peer* off
-/// and leaves the share running for everyone else — that is the advertised
-/// behaviour of `share revoke` — so announcing the share's end to the one
+/// and leaves the share running for everyone else, that is the advertised
+/// behaviour of `share revoke`, so announcing the share's end to the one
 /// person it was aimed at was a statement about somebody else's screen. The
 /// clause after it was already right; the sentence in front of it was not.
 fn ending_line(said: &str) -> String {
@@ -504,7 +489,7 @@ fn why_it_ended(said: &str) -> String {
         // version matched only "no direct path", which is sent *before* the
         // joiner finishes its handshake and so never reaches here; the one
         // that does reach here says "the direct path was lost", which it
-        // missed — so it printed the raw wire text instead.
+        // missed, so it printed the raw wire text instead.
         " — the direct connection was lost, and they shared with --direct-only".into()
     } else if said.contains("no ticket was presented") {
         // A joiner that connected and never opened the URL. The wire string is
@@ -529,8 +514,8 @@ fn upstream_failure(e: &crate::p2p::OpenError) -> String {
     let (code, reason) = match e {
         crate::p2p::OpenError::Busy => (503, "Service Unavailable"),
         // The same two codes the tunnel front uses for the same two answers,
-        // so the browser's own handling — and anything reading a log of
-        // statuses — does not depend on which transport carried it.
+        // so the browser's own handling, and anything reading a log of
+        // statuses, does not depend on which transport carried it.
         crate::p2p::OpenError::ShareOver => (410, "Gone"),
         crate::p2p::OpenError::SharerFault => (503, "Service Unavailable"),
         _ => (502, "Bad Gateway"),
@@ -587,7 +572,7 @@ mod tests {
     #[test]
     fn a_revoke_is_not_announced_as_the_end_of_the_share() {
         // `share revoke` cuts one peer off and leaves the share serving
-        // everybody else — that is what it is for. The person it was aimed at
+        // everybody else. That is what it is for. The person it was aimed at
         // was told "the share ended", which is a claim about other people's
         // screens and the wrong thing to tell somebody deciding whether to ask
         // for a new link.
@@ -608,8 +593,8 @@ mod tests {
     fn a_ticket_this_machine_thinks_is_expired_says_whose_opinion_that_is() {
         // The check is local. A joiner whose clock is two hours fast refuses a
         // ticket the sharer's own `share status` shows with 58 minutes left,
-        // and the old sentence — "this ticket has expired, ask for a new one"
-        // — sent them round a loop where every replacement fails identically,
+        // and the old sentence ("this ticket has expired, ask for a new one")
+        // sent them round a loop where every replacement fails identically,
         // with nothing naming the cause.
         let msg = expired_here(1_000, 1_000 + 7_200);
         assert!(msg.contains("2h0m ago"), "{msg}");
@@ -652,8 +637,8 @@ mod tests {
         let down = check_outcome(Err(OpenError::Unreachable)).expect("unreachable is not fatal");
         assert!(down.is_some(), "an unreachable box said nothing at all");
 
-        // A share that has ended is fatal for the opposite reason to a refusal
-        // — not "your ticket is bad" but "there is nothing left to join" — and
+        // A share that has ended is fatal for the opposite reason to a refusal,
+        // not "your ticket is bad" but "there is nothing left to join", and
         // must not say either of the two sentences that send somebody off to
         // ask for a replacement invite.
         let over = check_outcome(Err(OpenError::ShareOver)).expect_err("a dead share is fatal");
@@ -713,21 +698,21 @@ mod tests {
 
     /// Each join gets its own cookie jar, because it gets its own host.
     ///
-    /// Cookies are scoped by host and ignore the port, so binding
-    /// `127.0.0.1` put this proxy in one jar with every other local service —
-    /// and that leaked both ways at once. Outward: the token this proxy sets
-    /// went to every `127.0.0.1` service the joiner visited while joined,
-    /// with the port in the cookie's own name, so any of them could reach the
-    /// remote box. Inward, and worse: every cookie those services had set
-    /// came here and was forwarded, so a `session=<secret>` for the joiner's
-    /// own local app arrived at agent-written code inside somebody else's box.
+    /// Cookies are scoped by host and ignore the port, so binding `127.0.0.1`
+    /// put this proxy in one jar with every other local service, and that
+    /// leaked both ways at once. Outward: the token this proxy sets went to
+    /// every `127.0.0.1` service the joiner visited while joined, with the port
+    /// in the cookie's own name. Inward, and worse: every cookie those services
+    /// had set came here and was forwarded, so a `session=<secret>` for the
+    /// joiner's own local app arrived at agent-written code inside somebody
+    /// else's box.
     #[tokio::test]
     async fn a_join_binds_a_loopback_address_of_its_own() {
         let (a, shared_a) = bind_loopback(0).await.expect("bind");
         let (b, shared_b) = bind_loopback(0).await.expect("bind");
         let (ip_a, ip_b) = (a.local_addr().unwrap().ip(), b.local_addr().unwrap().ip());
 
-        // On a host that routes all of `127.0.0.0/8` — Linux — both joins get
+        // On a host that routes all of `127.0.0.0/8`, Linux, both joins get
         // an address of their own, and it is never `127.0.0.1`. macOS
         // configures only `127.0.0.1` on `lo0`, so there this falls back and
         // says so rather than pretending the jar is private.
@@ -776,18 +761,16 @@ mod tests {
     /// The fallback is a decision, and it belongs to the person whose machine
     /// it is.
     ///
-    /// A join on `127.0.0.1` hands this proxy's token to every local service
-    /// the joiner visits while joined, because cookies ignore the port — and
-    /// unlike the other direction there is no fix for it that does not need a
-    /// cookie host of our own. So it is refused rather than warned about, and
-    /// the refusal has to come *before* the dial: reaching the sharer first
-    /// would spend a slot in their share and put a visitor on their receipt
-    /// for a join that never happened.
+    /// A join on `127.0.0.1` hands this proxy's token to every local service the
+    /// joiner visits while joined, because cookies ignore the port, and unlike
+    /// the other direction there is no fix that does not need a cookie host of
+    /// our own. So it is refused rather than warned about, and the refusal has
+    /// to come *before* the dial: reaching the sharer first would spend a slot
+    /// in their share and put a visitor on their receipt for a join that never
+    /// happened.
     ///
-    /// This runs where the fallback is real. macOS configures only
-    /// `127.0.0.1` on `lo0` and is the whole reason this exists; a machine
-    /// that routes `127.0.0.0/8` never reaches the branch, and the assertion
-    /// that it does not is the one above.
+    /// This runs where the fallback is real. macOS configures only `127.0.0.1`
+    /// on `lo0` and is the whole reason this exists.
     #[tokio::test]
     async fn a_shared_jar_is_refused_before_anything_is_dialled() {
         let Ok((_l, true)) = bind_loopback(0).await else {
@@ -795,7 +778,7 @@ mod tests {
         };
         // A ticket with an hour left on it: nothing about this refusal is
         // about the ticket, and one that had expired would pass for the wrong
-        // reason — the expiry check runs first.
+        // reason. The expiry check runs first.
         let good = ticket(chrono::Utc::now().timestamp() + 3600);
         let err = run(good, 0, None, false, |_| {
             panic!("a shared jar was announced instead of refused")
@@ -808,7 +791,7 @@ mod tests {
     }
 
     /// An explicit `--bind` is bound exactly, and choosing `127.0.0.1` by
-    /// name is itself the shared-jar consent — with the machinery consent
+    /// name is itself the shared-jar consent, with the machinery consent
     /// buys, not around it: the returned flag is what turns on the cookie
     /// filter and the warning, so it must say `true` for `127.0.0.1` and
     /// `false` for an address of the join's own.
@@ -822,7 +805,7 @@ mod tests {
         assert!(shared, "an explicit 127.0.0.1 must still engage the shared-jar machinery");
 
         // A named address of the join's own keeps a private jar. Only where
-        // the host routes it — macOS without an lo0 alias cannot bind this,
+        // the host routes it. MacOS without an lo0 alias cannot bind this,
         // and that failure must be an error, not a silent fallback.
         let own = std::net::Ipv4Addr::new(127, 0, 0, 7);
         match bind_for(Some(own), 0, false).await {
@@ -854,8 +837,8 @@ mod tests {
     /// What the refusal has to say, in the words of the person reading it.
     ///
     /// It is the only thing standing between a joiner and a leak they did not
-    /// choose, so it names the flag that gets past it — spelled from the same
-    /// constant the command line uses — and the way out that does not need
+    /// choose, so it names the flag that gets past it, spelled from the same
+    /// constant the command line uses, and the way out that does not need
     /// one.
     #[test]
     fn the_refusal_says_what_to_do_about_it() {

@@ -1,10 +1,9 @@
 //! `h5i-core`'s placement trait, implemented over the runner protocol.
-//!
 //! This is the only place the two halves meet. `h5i-core` owns the box
 //! lifecycle and knows nothing about SSH or frames; `h5i-runner` owns the
 //! protocol and knows nothing about manifests. The binary is above both, which
-//! is where a dependency between them would otherwise have to go — and where
-//! it would eventually become a cycle, since a later milestone will want the
+//! is where a dependency between them would otherwise have to go, and where it
+//! would eventually become a cycle, since a later milestone will want the
 //! worker reaching for receipts and export.
 
 use h5i_core::error::H5iError;
@@ -43,7 +42,7 @@ impl PairedRunner {
     ///
     /// The worker refuses too, and its refusal is the enforcement (ROADMAP.md
     /// R7). This one exists so the message arrives before a bundle is built and
-    /// sent, and so it can name what the runner *does* offer — which the client
+    /// sent, and so it can name what the runner *does* offer, which the client
     /// knows from its cached probe and the worker would have to be asked for.
     pub fn check_supports(&self, isolation: &str) -> anyhow::Result<()> {
         let Some(caps) = self.record.cached_capabilities() else {
@@ -75,8 +74,8 @@ impl PairedRunner {
     /// The manifest pins a host-key hash, and this compares it against the
     /// runner that answers to that *name* now. A name re-paired to different
     /// hardware would otherwise send a box's commands to a machine that has
-    /// never seen it — which is exactly the failure that made identity
-    /// cryptographic in the first place (ROADMAP.md R6).
+    /// never seen it, which is exactly the failure that made identity
+    /// cryptographic in the first place (design-runner.md R6).
     pub fn check_identity(&self, m: &h5i_core::env::EnvManifest) -> anyhow::Result<()> {
         let Some(recorded) = &m.runner_id else {
             return Ok(());
@@ -214,11 +213,10 @@ impl RemoteRunner for PairedRunner {
 }
 
 /// The idempotency key: a digest over everything that decides what gets built.
-///
 /// Deliberately *not* over the whole request. `operation_id` names the attempt
 /// and must not be in it, or every retry would look like a different box and
-/// the idempotent case (ROADMAP.md R7) would never trigger. The lease is out
-/// for the same reason: asking for a longer lease on the same box is not a
+/// the idempotent case (design-runner.md R7) would never trigger. The lease is
+/// out for the same reason: asking for a longer lease on the same box is not a
 /// request for a different box.
 fn request_digest(spec: &RemoteCreateSpec<'_>, source: &SourceSpec) -> String {
     let material = serde_json::json!({

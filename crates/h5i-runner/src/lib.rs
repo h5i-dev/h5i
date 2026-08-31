@@ -1,18 +1,18 @@
-//! h5i remote runner — a box on a machine that is not this one.
+//! h5i remote runner. A box on a machine that is not this one.
 //!
-//! ROADMAP R1 to R13 carry the design. Four decisions govern the code:
+//! design-runner.md R1 to R13 carry the design. Four decisions govern the code:
 //!
-//! - **Placement is an axis, not a tier** (R1). A runner requires Linux and this
+//! - Placement is an axis, not a tier (R1). A runner requires Linux and this
 //!   protocol; isolation tiers, a container runtime, memory, storage,
 //!   persistence and its own internet route are advertised
 //!   [`proto::Capabilities`]. A capability the runner lacks is a refusal, never
 //!   a silent weakening.
-//! - **The worker is h5i** (R3), not a shim driving podman, so the
+//! - The worker is h5i (R3), not a shim driving podman, so the
 //!   policy-to-argv logic and the egress proxy stay where the runtime is.
-//! - **Nothing listens** (R4). An SSH forced command speaking frames on stdio,
+//! - *Nothing listens* (R4). An SSH forced command speaking frames on stdio,
 //!   one process per RPC. No daemon, port, token or TLS; authentication is the
 //!   pair key outbound and the pinned host key inbound.
-//! - **Identity is cryptographic** (R6). A runner is the SHA-256 of its host key
+//! - Identity is cryptographic (R6). A runner is the SHA-256 of its host key
 //!   ([`identity`]), not its name, because names can be re-pointed at other
 //!   hardware.
 //!

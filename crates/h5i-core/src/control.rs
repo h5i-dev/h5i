@@ -2,24 +2,24 @@
 //!
 //! Two clients can drive one browser: the agent, through `agent-browser`, and a
 //! human, through the viewer's input channel. Neither CDP nor agent-browser
-//! arbitrates between them — both dispatch input, and the result is a mess
-//! neither can reason about. So the lock is h5i's, and it copies Neko's
-//! semantics (`request` / `take` / `release`) rather than inventing new ones.
+//! arbitrates between them. Both dispatch input, and the result is a mess neither
+//! can reason about. So the lock is h5i's, and it copies Neko's semantics
+//! (`request` / `take` / `release`) rather than inventing new ones.
 //!
 //! Three rules the design depends on:
 //!
-//! * **The agent holds control by default.** A box exists to let an agent work;
-//!   it should not have to ask.
-//! * **A human takes control, never asks for it.** Someone reaching for the
-//!   viewer wants the pointer now, and the agent is a program that can wait.
-//! * **Handing control back invalidates what the agent knew.** The human moved
-//!   the page, so every `@ref` from the agent's last snapshot may now point at
-//!   something else. The agent is told to re-snapshot before its next action,
-//!   and acting without one is refused rather than mis-clicked.
+//! * The agent holds control by default. A box exists to let an agent work; it
+//!   should not have to ask.
+//! * A human takes control, never asks for it. Someone reaching for the viewer
+//!   wants the pointer now, and the agent is a program that can wait.
+//! * Handing control back invalidates what the agent knew. The human moved the
+//!   page, so every `@ref` from the agent's last snapshot may now point at
+//!   something else. The agent is told to re-snapshot before its next action, and
+//!   acting without one is refused rather than mis-clicked.
 //!
 //! State lives at `<env>/control.json`, host-owned like the rest of the env
-//! directory: the box can read who holds control but cannot grant itself the
-//! lock (roadmap 5.4, 5.7).
+//! directory: the box can read who holds control but cannot grant itself the lock
+//! (roadmap 5.4, 5.7).
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -135,7 +135,7 @@ pub fn snapshotted(env_dir: &Path) -> Result<Control, H5iError> {
     let mut c = read(env_dir);
     // Same read-modify-write hazard `release` guards: this rewrites the whole
     // record, so a takeover landing between the read above and the write below
-    // would be erased — the file would say the agent holds control while a
+    // would be erased. The file would say the agent holds control while a
     // human is driving the page. Since the mediator now calls this on every
     // forwarded snapshot (constantly), re-read and refuse to clear anything if
     // a human has taken the wheel in the meantime.

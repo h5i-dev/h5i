@@ -1,13 +1,12 @@
 //! `h5i browser` end to end, against the real engine.
 //!
 //! These drive the binary rather than the library, because the properties they
-//! pin are properties of the command an agent actually types: that a dead
-//! session is refused with its own exit code, that an id is never handed back
-//! to a second session, and that what a page composed does not reach a terminal
-//! with its escape sequences intact.
+//! pin are properties of the command an agent actually types: that a dead session
+//! is refused with its own exit code, that an id is never handed back to a second
+//! session, and that what a page composed does not reach a terminal with its
+//! escape sequences intact.
 //!
-//! Skipped, loudly, when the binary under test has not been built. There is no
-//! separate engine to find: `h5i` execs itself to render a page.
+//! Skipped, loudly, when the binary under test has not been built.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -35,7 +34,7 @@ fn h5i() -> PathBuf {
 /// A one-page HTTP server, so the tests exercise the path the product is for.
 ///
 /// `file://` was the obvious shortcut and the wrong one: the engine loads a
-/// local file as a *start target* and refuses to **fetch** one, so a second
+/// local file as a *start target* and refuses to *fetch* one, so a second
 /// `open` on a file URL is denied by policy. That is correct behaviour (a
 /// page-initiated navigation to `file:` is an exfiltration path) and it makes
 /// file URLs unable to test navigation at all.
@@ -348,7 +347,7 @@ fn a_host_session_says_which_lane_its_requests_are() {
     let text = String::from_utf8_lossy(&out.stdout);
     // The default is honest about being the engine's own account. A page-only
     // claim rendered as host-observed would be the one lie this product cannot
-    // afford — and the default sandbox must not tempt anyone into it, since a
+    // afford, and the default sandbox must not tempt anyone into it, since a
     // process-tier sandbox corroborates no part of the request log.
     assert!(text.contains("engine-claimed"), "{text}");
     // And the placement line names what the sandbox does *not* contain, whether
@@ -422,7 +421,7 @@ fn an_expired_session_is_an_ending_on_the_record() {
 }
 
 /// The engine writes its request log where the session directory says, and the
-/// log is the session's own record — not something the caller assembles.
+/// log is the session's own record, not something the caller assembles.
 #[test]
 fn the_request_log_lands_in_the_sessions_own_directory() {
     let Some(fx) = Fixture::new() else {
@@ -661,15 +660,13 @@ fn a_read_leaves_no_session() {
 ///
 /// The engine is fail-closed and a navigation is policy-checked like any other
 /// request, so without this grant a session denied the very URL it was started
-/// on: `h5i browser open https://example.com` came back "origin
-/// `https://example.com` is not in the allowlist" while `--allow`'s own help
-/// promised that a URL's own origin needs no grant. Loopback is exempt by
-/// default, which is why every test here — and every dev server — sailed past
-/// it, and why the first remote URL anyone typed hit it.
+/// on, while `--allow`'s own help promised that a URL's own origin needs no
+/// grant. Loopback is exempt by default, which is why every test here, and every
+/// dev server, sailed past it.
 ///
-/// `--no-loopback` is what makes this test able to see it at all: it removes
-/// the exemption, so the only thing that can load a page on 127.0.0.1 is the
-/// grant `open` makes for the URL it was given.
+/// `--no-loopback` is what makes this test able to see it at all: it removes the
+/// exemption, so the only thing that can load a page on 127.0.0.1 is the grant
+/// `open` makes for the URL it was given.
 #[test]
 fn an_open_grants_the_page_it_was_opened_on() {
     let Some(fx) = Fixture::new() else {
@@ -743,18 +740,15 @@ fn the_policy_digest_follows_the_page_the_session_was_opened_on() {
 
 /// The helper lane runs with no session, when `--url` names the media.
 ///
-/// This is the shape an agent actually types for a video — `h5i browser
-/// transcript --via yt-dlp --url <url>` — and it used to answer with the
-/// closing note of whatever session had last been open, because the lane
-/// resolved a session before it did anything else. There is no page here to
-/// render and nothing for a session to contribute but a placement, so a run
-/// with none happens on this machine, says exactly that, and is still written
-/// down.
+/// This is the shape an agent actually types for a video, and it used to answer
+/// with the closing note of whatever session had last been open, because the
+/// lane resolved a session before it did anything else. There is no page here to
+/// render and nothing for a session to contribute but a placement.
 ///
-/// yt-dlp is stood in for. The lane's contract is that h5i builds the argv,
-/// runs the program where the session is, and records what it ran; none of
-/// that needs the real program, and a test that needed the network to pass
-/// would not be run.
+/// yt-dlp is stood in for. The lane's contract is that h5i builds the argv, runs
+/// the program where the session is, and records what it ran; none of that needs
+/// the real program, and a test that needed the network to pass would not be
+/// run.
 #[cfg(unix)]
 #[test]
 fn a_helper_run_needs_no_session_when_a_url_names_the_media() {
@@ -866,7 +860,7 @@ fn a_named_session_that_has_ended_is_refused_rather_than_run_here() {
     assert!(why.contains(&id), "{why}");
 }
 
-/// `--out` is a path on **this** machine, and h5i is what writes it.
+/// `--out` is a path on *this* machine, and h5i is what writes it.
 ///
 /// The engine is confined to its own directory, so handing it the caller's path
 /// made `--out ~/shot.png` fail with a bare `Permission denied` from a sandbox
@@ -1171,7 +1165,7 @@ fn identity_check_says_what_it_does_not_cover_as_plainly_as_what_it_does() {
 ///
 /// This is the property the old `net_args` comment was reaching for when it
 /// sent `--identity` on every invocation. It is a fact about two constants, and
-/// paying for it on the wire broke every box running an older h5i — so it is
+/// paying for it on the wire broke every box running an older h5i, so it is
 /// checked here instead, where it costs nothing and fails loudly.
 #[cfg(feature = "identity")]
 #[test]
@@ -1203,7 +1197,7 @@ fn the_two_defaults_are_one_word() {
 ///
 /// The regression this pins is specific and was shipped: `net_args` pushed the
 /// flag unconditionally, so a boxed session whose in-box h5i predated it failed
-/// at argument parsing — `h5i browser read --in <box>` stopped working for
+/// at argument parsing: `h5i browser read --in <box>` stopped working for
 /// callers who had never heard of identities. Every other flag here is
 /// conditional; this one has to be too.
 #[cfg(feature = "identity")]

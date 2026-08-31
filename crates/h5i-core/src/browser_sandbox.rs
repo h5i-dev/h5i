@@ -7,23 +7,21 @@
 //! *tier* without the box: the Landlock scoping, seccomp filter and rlimits of
 //! `isolation = process`, built from a profile rather than a repository.
 //!
-//! It contains the **consequences** of a compromised engine: the filesystem it
+//! It contains the *consequences* of a compromised engine: the filesystem it
 //! reaches, the environment it reads, what it can allocate, and the escalation
 //! surface seccomp denies. It does not stop the engine starting a program, which
 //! is survivable because Landlock's domain is inherited across `execve` and
 //! cannot be relaxed.
 //!
-//! It does not contain the **connection**. A browser needs the network, so a
+//! It does not contain the *connection*. A browser needs the network, so a
 //! compromised engine keeps the host's reachability, and the policy deciding
 //! which origins is in-process and therefore past it. Containing that needs a
 //! boundary outside the engine: `--in` a box whose tier enforces egress, or the
-//! broker/renderer split. **Nothing here upgrades the request lane**; a
-//! process-tier session stays `engine-claimed`.
+//! broker/renderer split.
 //!
-//! Where Landlock, seccomp or user namespaces are missing (hardened kernels,
-//! AppArmor, CI containers, macOS, Windows) the session runs unconfined and
-//! **says so**, on the summary line and in the record. A sandbox nobody can see
-//! is indistinguishable from one that was never applied.
+//! Where Landlock, seccomp or user namespaces are missing the session runs
+//! unconfined and *says so*, on the summary line and in the record. A sandbox
+//! nobody can see is indistinguishable from one that was never applied.
 
 use std::path::{Path, PathBuf};
 
@@ -71,14 +69,12 @@ impl Default for Confinement {
 ///
 /// A copy of the engine's `default_font_dirs`, and it has to be: inside the
 /// sandbox the environment is cleared, so `$HOME` is gone and the engine's own
-/// discovery would skip every personal directory whether or not Landlock
-/// granted it. So h5i computes the list, grants exactly it, and passes exactly
-/// it back as `--font-dir` — one list, used for both, because a grant and a
-/// search path that are derived separately are two things that can disagree.
+/// discovery would skip every personal directory whether or not Landlock granted
+/// it. So h5i computes the list, grants exactly it, and passes exactly it back as
+/// `--font-dir`: one list used for both, because a grant and a search path
+/// derived separately are two things that can disagree.
 ///
-/// Only directories that exist. A grant for a path that is not there is skipped
-/// by the Landlock builder anyway, and passing it as `--font-dir` would make the
-/// engine walk nothing.
+/// Only directories that exist.
 pub fn font_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
@@ -118,7 +114,7 @@ pub struct Wants<'a> {
     /// control file, its logs, its cookie jar, its artifacts.
     pub session_dir: &'a Path,
     /// Extra directories the engine must be able to read. Fonts the caller
-    /// named explicitly, mostly — the system font path is already covered by
+    /// named explicitly, mostly. The system font path is already covered by
     /// the profile's defaults, but `~/.fonts` is not, because nothing under
     /// `$HOME` is granted by default and that is the rule worth keeping.
     pub reads: &'a [PathBuf],
@@ -127,21 +123,19 @@ pub struct Wants<'a> {
     /// Empty by default, and that is the change worth noticing: outside a
     /// sandbox the engine inherits the whole environment, so a compromised one
     /// reads every secret on the machine. Here it reads the ones that were
-    /// named, and a placeholder for anything else resolves to nothing.
+    /// named.
     ///
     /// Full variable names, `H5I_SECRET_` prefix included. The caller
-    /// normalizes, because the prefix is not decoration: it is the namespace
-    /// the engine substitutes from, and it has to survive all the way to the
-    /// variable the child actually reads. See [`profile_for`].
+    /// normalizes, because the prefix is the namespace the engine substitutes
+    /// from and it has to survive all the way to the variable the child reads.
     pub secrets: &'a [String],
     /// The wall-clock bound, in seconds, or `0` for none.
     ///
     /// The two callers want opposite things and the encoding is a trap worth
     /// naming: [`sandbox::spawn_background`] applies no clock at all, so a
     /// resident session passes `0` and is bounded by `--expires-in` instead.
-    /// [`sandbox::run`] passes the value straight to a deadline, where `0` is
-    /// a deadline that has *already passed* — a run-to-completion read that
-    /// left this at `0` would be killed before it fetched anything.
+    /// [`sandbox::run`] passes the value straight to a deadline, where `0` is a
+    /// deadline that has *already passed*.
     pub wall_secs: u64,
 }
 
@@ -149,7 +143,7 @@ pub struct Wants<'a> {
 ///
 /// `Err` is reserved for a policy that could not be resolved at all. A host that
 /// simply lacks the kernel features answers `Ok(None)` with a reason, because
-/// that is not a failure of the request — it is an answer about the machine.
+/// that is not a failure of the request. It is an answer about the machine.
 /// What came of asking for confinement.
 pub enum Outcome {
     /// A policy that resolved and ran.
@@ -170,8 +164,7 @@ pub fn resolve_for(wants: &Wants<'_>) -> Result<Option<Confined>, H5iError> {
     // follow symlinks, so `~/.fonts` pointing at `$HOME` would grant the home
     // directory, and `resolve` refuses that because the grant would contain a
     // denied `~/.ssh`. Refusing is right; refusing *the whole sandbox* over a
-    // font path is not. So the personal directories are dropped and the policy
-    // is resolved again, and the caller is told which.
+    // font path is not.
     for (fonts, dropped) in font_grant_attempts(&all) {
         let profile = profile_for(wants, &fonts);
         let Ok(policy) = sandbox::resolve(&profile, &caps) else {
@@ -233,7 +226,7 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
     }
     // Read-only, and not attacker-chosen: a font the user installed is not the
     // page's font. The ones a page supplies arrive over `@font-face`, go through
-    // the broker, and are parsed either way — granting these adds no new
+    // the broker, and are parsed either way. Granting these adds no new
     // parser input, only the faces someone meant to have.
     for dir in fonts {
         p.fs_read.push(dir.display().to_string());
@@ -249,7 +242,7 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
         p.fs_read.push(path.display().to_string());
     }
 
-    // **Not** an exec denial, because there is none to make here. `tools` gates
+    // *Not* an exec denial, because there is none to make here. `tools` gates
     // the *initial* command and an empty list means no restriction at all;
     // `execve` is not on the seccomp deny list, which covers privilege
     // escalation and kernel surface rather than process creation.
@@ -257,13 +250,11 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
     // What makes that acceptable is Landlock's own rule: the domain is
     // inherited across `execve` and cannot be relaxed. A compromised engine can
     // start a shell, and the shell reads and writes exactly what the engine
-    // could — nothing. The containment is the filesystem domain, not a list of
-    // permitted programs, and saying otherwise would be a claim the mechanism
-    // does not make.
+    // could, which is nothing. The containment is the filesystem domain, not a
+    // list of permitted programs.
     //
-    // The ceiling is a ceiling, not a ban: the engine is multi-threaded (the
-    // viewer loop, the control loop, the HTTP client's own runtime) and this
-    // counts threads.
+    // The ceiling is a ceiling, not a ban: the engine is multi-threaded and
+    // this counts threads.
     p.max_procs = Some(64);
 
     p.secrets = wants.secrets.to_vec();
@@ -273,21 +264,19 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
     // for a session started with `--secret`.
     //
     // A box gets both from `merge_secret_grants` when its `env.toml` is loaded.
-    // A session has no `env.toml` — it has no repository at all — so the grants
-    // are assembled here, from the same list, and the broker resolves them at
-    // spawn time like any other run's.
+    // A session has no `env.toml`, so the grants are assembled here, from the
+    // same list, and the broker resolves them at spawn time.
     //
-    // The grant's **name is the variable the child will see**, so it keeps the
+    // The grant's name is the variable the child will see, so it keeps the
     // `H5I_SECRET_` prefix: `inject = env` injects `(name, value)`, and the
     // engine substitutes from exactly that namespace. A grant named `ACME_PASS`
     // would arrive as `ACME_PASS` and `$H5I_SECRET_ACME_PASS` would resolve to
-    // nothing — the failure this exists to end.
+    // nothing.
     //
-    // `inject` is left at its default of `env`, which is the only one reachable
-    // here: `broker` refuses `inject = file` off the workspace tier, and a
-    // session is process tier. That refusal is load-bearing rather than
-    // incidental — a file-injected secret is unlinked when the `Brokered` guard
-    // drops, and `h5i browser open` returns while the session keeps running.
+    // `inject` is left at its default of `env`, the only one reachable here:
+    // `broker` refuses `inject = file` off the workspace tier, and that refusal
+    // matters, because a file-injected secret is unlinked when the `Brokered`
+    // guard drops while the session keeps running.
     p.secret_grants = grants_for(wants.secrets);
 
     // A page can allocate. The budgets in the engine bound what one navigation
@@ -306,8 +295,8 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
 ///
 /// One formula, two readers: [`profile_for`] declares these on the profile, and
 /// the caller brokers them at spawn time. A session that runs unconfined has no
-/// profile to read them off — the host could not confine, or the caller said
-/// not to — and deriving them a second way there is how the two would come to
+/// profile to read them off (the host could not confine, or the caller said
+/// not to) and deriving them a second way there is how the two would come to
 /// disagree about which credential a session was promised.
 pub fn grants_for(names: &[String]) -> Vec<SecretGrant> {
     names
@@ -325,24 +314,20 @@ pub fn grants_for(names: &[String]) -> Vec<SecretGrant> {
 ///
 /// `/etc` is granted to every confined profile, so on most hosts this finds
 /// nothing and returns empty. But `/etc/resolv.conf` is a symlink on more
-/// machines than one would like — WSL points it at `/mnt/wsl/resolv.conf`,
-/// `resolvconf` and `systemd-resolved` at somewhere under `/run` — and a
-/// Landlock grant follows the link to a path the domain never granted.
+/// machines than one would like (WSL points it at `/mnt/wsl/resolv.conf`,
+/// `resolvconf` and `systemd-resolved` at somewhere under `/run`) and a Landlock
+/// grant follows the link to a path the domain never granted.
 ///
-/// The failure that causes is worth spelling out, because it is the reason this
-/// function exists rather than a line in the default grants: `getaddrinfo`
-/// returns "Temporary failure in name resolution", every fetch is refused
-/// before it reaches the wire, and the message reads like the network is down
-/// rather than like the sandbox denied one file. A default sandbox that turns
-/// every public URL into a DNS error is a default nobody would keep.
+/// The failure that causes is why this is a function rather than a line in the
+/// default grants: `getaddrinfo` returns "Temporary failure in name resolution",
+/// every fetch is refused before it reaches the wire, and the message reads like
+/// the network is down rather than like the sandbox denied one file.
 ///
-/// The box profiles now carry the well-known locations themselves, as a static
-/// list (`sandbox_policy`'s `RESOLVER_PATHS`), because a box's policy is
-/// serialized and digested and a runtime-resolved grant would give one profile
-/// a different digest on every host. This is the other half: a browser session
-/// on *this machine* builds its sandbox at runtime and pins no such digest, so
-/// it can follow the link wherever it actually goes and cover the hosts that
-/// list does not name.
+/// The box profiles carry the well-known locations themselves, as a static list,
+/// because a box's policy is serialized and digested and a runtime-resolved
+/// grant would give one profile a different digest on every host. This is the
+/// other half: a browser session on *this machine* pins no such digest, so it
+/// can follow the link wherever it goes.
 fn resolver_grants() -> Vec<PathBuf> {
     let conf = Path::new("/etc/resolv.conf");
     match conf.canonicalize() {
@@ -516,9 +501,9 @@ mod tests {
     }
 
     /// A font directory must never decide whether there is a sandbox. The
-    /// second attempt exists for one case that really happens — `~/.fonts` as a
+    /// second attempt exists for one case that really happens (`~/.fonts` as a
     /// symlink resolving somewhere the policy denies, which makes the whole
-    /// policy unresolvable — and it gives up the personal directories rather
+    /// policy unresolvable) and it gives up the personal directories rather
     /// than the confinement.
     #[test]
     fn the_fallback_gives_up_fonts_rather_than_the_sandbox() {

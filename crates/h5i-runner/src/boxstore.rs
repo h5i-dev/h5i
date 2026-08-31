@@ -12,15 +12,14 @@
 //!
 //! Two ideas carry the whole module.
 //!
-//! **A box exists at exactly one instant** (ROADMAP.md R7). Everything is built
-//! under `creating/<operation_id>` and an atomic rename into `live/<box_id>` is
-//! the moment it becomes real. There is no half-built state for a crash to
-//! invent: either the rename happened or it did not, and what a crash leaves
-//! behind names the *attempt*, not the box.
+//! A box exists at exactly one instant (design-runner.md R7). Everything is
+//! built under `creating/<operation_id>` and an atomic rename into
+//! `live/<box_id>` is the moment it becomes real. There is no half-built state
+//! for a crash to invent, and what a crash leaves behind names the *attempt*, not the box.
 //!
-//! **The lease is a fact on disk, not a timer** (R11). There is no daemon on
-//! the runner to watch a clock, so expiry is something any later invocation can
-//! evaluate from what it finds. That is why every worker invocation sweeps
+//! The lease is a fact on disk, not a timer (R11). There is no daemon on the
+//! runner to watch a clock, so expiry is something any later invocation can
+//! evaluate from what it finds, which is why every worker invocation sweeps
 //! before it does its own work: the reaper is whoever turns up next.
 
 use std::path::{Path, PathBuf};
@@ -437,9 +436,9 @@ impl BoxStore {
 
         // A lock that silently does not lock is worse than no lock: every
         // caller above believes exec and export are mutually exclusive. A
-        // runner must be Linux anyway (ROADMAP.md R1), so the honest answer off
-        // Unix is to refuse rather than to hand back a handle that guards
-        // nothing.
+        // runner must be Linux anyway (design-runner.md R1), so the honest
+        // answer off Unix is to refuse rather than to hand back a handle that
+        // guards nothing.
         #[cfg(not(unix))]
         {
             let _ = (kind, file);
@@ -463,17 +462,14 @@ impl BoxStore {
 }
 
 /// A held lock on one box.
-///
 /// Worker invocations are separate processes, so the lock has to be a fact the
-/// filesystem holds rather than something in memory: this is `flock` on a file
-/// beside the box, released when the handle drops (or when the process dies,
-/// which is the property that matters — a worker killed mid-exec must not leave
-/// a box locked forever).
-///
-/// The rule (ROADMAP.md R8): create, destroy and export take it **exclusive**;
-/// exec takes it **shared**. An export while execs are running would read a
-/// torn tree, and a torn tree that passes validation is worse than a refused
-/// request.
+/// filesystem holds rather than something in memory: `flock` on a file beside
+/// the box, released when the handle drops or when the process dies, which is
+/// the property that matters.
+/// The rule (design-runner.md R8): create, destroy and export take it
+/// *exclusive*; exec takes it *shared*. An export while execs are running would
+/// read a torn tree, and a torn tree that passes validation is worse than a
+/// refused request.
 #[derive(Debug)]
 pub struct BoxLock {
     _file: std::fs::File,
@@ -580,7 +576,7 @@ mod tests {
         let creating = store.begin("op1").expect("begin");
 
         // Everything is under the attempt's directory, and the box's name does
-        // not exist yet — there is no half-built box for a crash to leave.
+        // not exist yet. There is no half-built box for a crash to leave.
         assert!(creating.work_dir().exists());
         assert!(!store.box_dir("demo").exists());
         assert!(store.find("demo").unwrap().is_none());

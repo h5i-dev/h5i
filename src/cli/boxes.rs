@@ -1,4 +1,4 @@
-//! `h5i box` — the box lifecycle: create, run, shell, export, remove.
+//! `h5i box`. The box lifecycle: create, run, shell, export, remove.
 //!
 //! `h5i env <verb>` is the same enum under the old noun, kept hidden for one
 //! release so existing scripts and muscle memory keep working.
@@ -28,13 +28,13 @@ pub enum BoxCommands {
         /// Base the env on a GitHub pull request (number, #number, or URL):
         /// fetches refs/pull/<n>/head from the remote, pins it as the immutable
         /// base, and points the env's parent branch at a local `pr/<n>`
-        /// tracking branch — so propose/apply review the PR head, and apply
+        /// tracking branch, so propose/apply review the PR head, and apply
         /// prints the push-back command. Needs only `git`; `gh` (optional)
         /// enriches the push-back hint with the PR's head branch name.
         #[arg(long, conflicts_with = "from", value_name = "NUMBER|URL")]
         pr: Option<String>,
         /// Copy an external repository into the box instead of taking a
-        /// worktree of this one. The box is **detached**: this repository is
+        /// worktree of this one. The box is *detached*: this repository is
         /// never touched, and `h5i box export` is the only way out.
         #[arg(long, conflicts_with_all = ["from", "pr"], value_name = "URL")]
         clone: Option<String>,
@@ -80,13 +80,13 @@ pub enum BoxCommands {
         /// Run this box on a paired runner instead of this machine.
         ///
         /// The source is copied across as a git bundle and the box is built
-        /// there; the repository, the policy and the credentials stay here.
-        /// The box is bound to that machine's host key, not to its name, so a
-        /// name re-pointed at other hardware never silently moves a box.
+        /// there; the repository, the policy and the credentials stay here. The
+        /// box is bound to that machine's host key, not to its name, so a name
+        /// re-pointed at other hardware never silently moves a box.
         ///
-        /// `h5i runner pair` sets one up and `h5i runner probe` says what it
-        /// can do. A tier the runner does not offer is refused with the
-        /// capability named, never quietly swapped for a weaker one.
+        /// `h5i runner pair` sets one up and `h5i runner probe` says what it can
+        /// do. A tier the runner does not offer is refused with the capability
+        /// named, never quietly swapped for a weaker one.
         #[cfg(feature = "runner")]
         #[arg(long, value_name = "NAME")]
         runner: Option<String>,
@@ -121,7 +121,7 @@ pub enum BoxCommands {
         command: Vec<String>,
     },
 
-    /// Open an interactive, confined session INSIDE the environment — the
+    /// Open an interactive, confined session INSIDE the environment. The
     /// "agent-in-box". stdio is inherited (a real terminal), so every command
     /// the session spawns is contained by the box, not by the agent choosing to
     /// wrap each call. Defaults to a login shell when no command is given.
@@ -165,8 +165,8 @@ pub enum BoxCommands {
     ///
     /// A second observer of the same run, in a lane the box cannot reach: an
     /// eBPF collector reports `execve`, `connect` and `openat` whether or not
-    /// anything in the box wanted them reported. Observation only — nothing
-    /// here denies anything — and off unless a profile's `[detect]` section
+    /// anything in the box wanted them reported. Observation only, nothing
+    /// here denies anything, and off unless a profile's `[detect]` section
     /// turns it on. `h5i box detect probe` says whether this machine can.
     Detect {
         #[command(subcommand)]
@@ -174,7 +174,7 @@ pub enum BoxCommands {
     },
 
     /// Machine-readable host enforcement report: isolation tier, egress-enforced
-    /// yes/no, resource-limit support, and per-claim satisfiable/runnable — so a
+    /// yes/no, resource-limit support, and per-claim satisfiable/runnable, so a
     /// product can adapt to the real host without scraping `env probe` text.
     Capabilities {
         /// Emit the structured report as JSON instead of the human view.
@@ -203,12 +203,13 @@ pub enum BoxCommands {
     ///
     /// Starts a loopback-only forward that h5i owns: the box's stream port is
     /// never published, every connection carries the box's own token,
-    /// cross-origin handshakes are refused, and your input reaches the page only
-    /// while you hold the control lock (`h5i browser take`). Runs until Ctrl-C.
+    /// cross-origin handshakes are refused, and your input reaches the page
+    /// only while you hold the control lock (`h5i browser take`). Runs until
+    /// Ctrl-C.
     ///
-    /// With `--term`, the page is drawn in this terminal instead, and nothing is
-    /// bound or served at all: no port, no token, and no host browser. Needs a
-    /// terminal that speaks the Kitty graphics protocol.
+    /// With `--term`, the page is drawn in this terminal instead, and nothing
+    /// is bound or served at all. Needs a terminal that speaks the Kitty
+    /// graphics protocol.
     View {
         name: String,
         /// Loopback port to bind. 0 picks a free one and prints it.
@@ -229,13 +230,12 @@ pub enum BoxCommands {
 
     /// Let one other person try this box's web app, from their own machine.
     ///
-    // The middle sentence is the one that differs, because the guarantee
-    // differs. Saying "h5i enters the box's network namespace" on a platform
-    // with no namespaces is not a small inaccuracy: it is the sentence a reader
-    // uses to decide how exposed the port is, and on macOS it claims an
-    // isolation that is exactly what macOS does not have. The short summary
-    // above — the only part that reaches the man page and the published manual,
-    // both generated on Linux — is deliberately left alone.
+    /// The middle sentence is the one that differs, because the guarantee
+    /// differs. Saying "h5i enters the box's network namespace" on a platform
+    /// with no namespaces is not a small inaccuracy: it is the sentence a
+    /// reader uses to decide how exposed the port is. The short summary above,
+    /// the only part that reaches the man page and the published manual, both
+    /// generated on Linux, is deliberately left alone.
     #[cfg_attr(
         not(target_os = "macos"),
         doc = "The box's port is never published. h5i enters the box's network namespace, dials \
@@ -269,7 +269,7 @@ pub enum BoxCommands {
     },
 
     /// List the secret grants an environment's policy declares, with a dry-run
-    /// resolution status (never the value — only a fingerprint when resolvable)
+    /// resolution status (never the value: only a fingerprint when resolvable)
     Secrets {
         name: String,
         /// Emit the status as JSON instead of the human view
@@ -278,7 +278,7 @@ pub enum BoxCommands {
     },
 
     /// Manage long-lived services declared in the env's `.h5i/env.toml`
-    /// (`[service.<name>]`), confined and pid-tracked — no daemon
+    /// (`[service.<name>]`), confined and pid-tracked, no daemon
     Service {
         #[command(subcommand)]
         action: EnvServiceCommands,
@@ -347,7 +347,7 @@ pub enum BoxCommands {
         json: bool,
     },
 
-    /// Compare environments side by side — changes + latest run results (the
+    /// Compare environments side by side. Changes + latest run results (the
     /// "arena" reviewer comparison). Best on envs sharing one base.
     Compare {
         /// Two or more environment names
@@ -375,7 +375,7 @@ pub enum BoxCommands {
     },
 
     /// Snapshot the worktree (mediated commit, path-allowlist enforced) and
-    /// mark the box proposed — produces a review brief. Never writes the
+    /// mark the box proposed. Produces a review brief. Never writes the
     /// parent branch. `export` runs this as its freeze step.
     Propose { name: String },
 
@@ -388,7 +388,7 @@ pub enum BoxCommands {
         patch: bool,
     },
 
-    /// Abort an environment — manifest and workspace preserved for forensics
+    /// Abort an environment. Manifest and workspace preserved for forensics
     Abort { name: String },
 
     /// Warm dependency caches: one per project and ecosystem, keyed by that
@@ -449,7 +449,7 @@ pub enum EnvServiceCommands {
 /// sets `claude`, Codex sets `codex`); a human on a bare shell gets `human`.
 /// The identity scopes the env's branch namespace and the agent-in-box profile.
 ///
-/// Unset is `human` and says nothing — that is the normal bare-shell case. A
+/// Unset is `human` and says nothing. That is the normal bare-shell case. A
 /// value that is present but unusable warns instead of falling through in
 /// silence, so a typo'd identity does not quietly scatter a run's envs into the
 /// `human` namespace, where the agent then fails to find them by their own name.
@@ -523,7 +523,7 @@ pub fn looks_like_repo_url(source: &str) -> bool {
 /// What the box may reach, short enough for the terminal viewer's status line.
 ///
 /// An empty allowlist reads as "localhost", not as "none": loopback is always
-/// open — it is how the dev server is reachable at all — so a box with no
+/// open, it is how the dev server is reachable at all, so a box with no
 /// egress entries can still talk to itself, and saying "none" would overstate
 /// the confinement in the one place a human is looking for a quick answer.
 pub fn egress_summary(hosts: &[String]) -> String {
@@ -576,7 +576,7 @@ fn slugify(s: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
-/// `base`, or `base-2`, `base-3`, … — the first name no box has taken.
+/// `base`, or `base-2`, `base-3`, …. The first name no box has taken.
 pub fn free_box_name(base: &str) -> anyhow::Result<String> {
     let repo = super::discover_repo("h5i box")?;
     let h5i_root = h5i_core::storage::h5i_root_for_repo(&repo)?;
@@ -734,18 +734,16 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                 .to_path_buf();
 
             // Surface environments pulled from other clones: materialize any
-            // manifests/policies present in refs/h5i/env but absent (or older)
-            // on disk, so `list`/`status`/`diff`/`apply` see them.
-            // Sync the shared env roster to disk — but never in a sealed box,
-            // where the host-owned env manifests are read-only (the write only
-            // fails with EACCES and spams a warning). The box already has its
-            // own env materialized; the shared roster is the host's concern.
+            // manifests and policies present in refs/h5i/env but absent, or
+            // older, on disk, so `list`/`status`/`diff`/`apply` see them.
+            //
+            // Never in a sealed box, where the host-owned env manifests are
+            // read-only and the write only fails with EACCES and spams a warning.
+            // The box already has its own env materialized.
             //
             // `env shell` is on the interactive hot path and operates on a single
             // named env that is almost always already materialized locally, so it
-            // skips the eager sync and materializes lazily (only on a `find` miss)
-            // below — trimming a `refs/h5i/env/meta` read + disk writes off every
-            // shell start.
+            // skips the eager sync and materializes lazily below.
             let in_env_box = std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok();
             let lazy_materialize_env_ref = matches!(&action, BoxCommands::Shell { .. });
             if !in_env_box && !lazy_materialize_env_ref
@@ -933,7 +931,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     // Discoverability: when we auto-picked a kernel tier and the host
                     // has no rootless Podman, tell the user the `container` tier
                     // (the one with a network egress allowlist) exists and what it
-                    // needs — otherwise they would never learn Podman unlocks it.
+                    // needs. Otherwise they would never learn Podman unlocks it.
                     if auto_picked
                         && matches!(
                             m.isolation_claim.as_str(),
@@ -1036,14 +1034,14 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                             rss
                         );
                     }
-                    // A wall-clock kill is a failure, not success — the child
+                    // A wall-clock kill is a failure, not success. The child
                     // was SIGKILLed so it has no exit code of its own. Use the
                     // conventional timeout code (124, as coreutils `timeout`).
                     if outcome.timed_out {
                         std::process::exit(124);
                     }
                     // Transparent wrapper: pass the child's exit code through.
-                    // A None code means the child died on a signal — surface it
+                    // A None code means the child died on a signal. Surface it
                     // as a generic failure rather than a silent success.
                     match outcome.exit_code {
                         Some(0) => {}
@@ -1080,7 +1078,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     };
                     // An empty `command` means "default interactive shell";
                     // `env::shell` builds the argv (host bashrc is replaced with a
-                    // generated plain rc by default — see `default_shell_argv`).
+                    // generated plain rc by default: see `default_shell_argv`).
                     eprintln!(
                         "{} entering {} (isolation: {}, profile: {}{}) — confined session; exit to return",
                         LOOKING,
@@ -1169,7 +1167,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
 
                 BoxCommands::Probe => {
                     // Diagnostics must report the live truth, not last run's
-                    // verdict — bypass the per-boot podman probe cache.
+                    // verdict. Bypass the per-boot podman probe cache.
                     let caps = h5i_core::sandbox::probe_host_fresh();
                     println!("── Host isolation capabilities ──");
                     println!("  os           = {}", caps.os);
@@ -1199,7 +1197,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     }
                     // An interactive box shell shares the operator's terminal
                     // (that is what makes job control work), so whether the box
-                    // can type into it is part of what this host enforces — and
+                    // can type into it is part of what this host enforces, and
                     // it is not h5i's to assert: on Linux it is the kernel's
                     // setting, the same at every tier; on macOS it is the
                     // Seatbelt profile, so it holds only where one is applied.
@@ -1275,7 +1273,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     // here while `sandbox::probe` enumerated it correctly, so
                     // the command whose whole job is "what can this host
                     // enforce" left out the tier the code calls the security
-                    // keystone — and anyone choosing a tier from this output
+                    // keystone, and anyone choosing a tier from this output
                     // would conclude it was unavailable.
                     for (claim, profile_net_deny) in [
                         (h5i_core::sandbox::IsolationClaim::Workspace, false),
@@ -1345,8 +1343,8 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                 }
 
                 BoxCommands::Capabilities { json } => {
-                    // Same as Probe: a capability report is a diagnostic —
-                    // never serve it from the probe cache.
+                    // Same as Probe: a capability report is a diagnostic.
+                    // Never serve it from the probe cache.
                     let report = h5i_core::sandbox::capabilities_report_fresh();
                     // The runtime-detection lane is grafted on here rather than
                     // added to `CapabilitiesReport` itself: that type lives in
@@ -1462,7 +1460,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                                 if let serde_json::Value::Object(ref mut map) = v {
                                     let d = h5i_core::env::drift(git, m);
                                     map.insert("drift".into(), serde_json::to_value(&d).unwrap_or(serde_json::Value::Null));
-                                    // Live sessions (the pid registry) — runtime
+                                    // Live sessions (the pid registry). Runtime
                                     // state, so injected like drift rather than
                                     // stored in the manifest.
                                     let live = h5i_core::env::live_sessions(&m.dir(&h5i_root));
@@ -1605,7 +1603,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     EnvServiceCommands::Start { env, service } => {
                         let m = h5i_core::env::find(&h5i_root, &env)?;
                         let rec = h5i_core::env::service_start(git, &h5i_root, &m, &service)?;
-                        // A guest service has no *injected* host port — its box
+                        // A guest service has no *injected* host port. Its box
                         // owns a network stack, so it binds the port it declared
                         // and nothing had to be allocated. Reading only
                         // `dynamic_port` here left the tier that just gained
@@ -1878,19 +1876,18 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                             Ok(m) => {
                             match h5i_core::env::rm(git, &h5i_root, &m, force) {
                                 Ok(()) => {
-                                    // The far side only after this side agreed
-                                    // to let the box go. The other order looks
-                                    // tidier and is wrong: `rm` refuses a live
-                                    // box, and destroying the runner's copy
-                                    // first would leave a local record pointing
-                                    // at nothing while the user was told the
-                                    // removal had failed.
+                                    // The far side only after this side agreed to
+                                    // let the box go. The other order looks tidier
+                                    // and is wrong: `rm` refuses a live box, and
+                                    // destroying the runner's copy first would
+                                    // leave a local record pointing at nothing
+                                    // while the user was told the removal had
+                                    // failed.
                                     //
-                                    // The remaining failure — this side gone,
-                                    // the runner unreachable — leaves an orphan
-                                    // there, which is exactly what the lease is
-                                    // for: it expires and the next sweep takes
-                                    // it. Best effort, and said out loud.
+                                    // The remaining failure, this side gone and
+                                    // the runner unreachable, leaves an orphan
+                                    // there, which is what the lease is for: it
+                                    // expires and the next sweep takes it.
                                     #[cfg(feature = "runner")]
                                     if h5i_core::env::is_remote(&m)
                                         && let Some(problem) =
@@ -1907,7 +1904,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                                     // just lost its engine. Recording the cause
                                     // here is the difference between a record
                                     // that says "evicted, the box was removed"
-                                    // and one that says "died" — both true, one
+                                    // and one that says "died". Both true, one
                                     // of them knowable only on this side of the
                                     // boundary and only at this moment.
                                     if let Ok(root) = h5i_core::browser_session::root()

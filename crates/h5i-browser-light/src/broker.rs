@@ -10,18 +10,16 @@
 //! engine has always run. [`crate::ipc::BrokerClient`] asks another process,
 //! leaving the renderer a socket to its parent and nothing else: no policy to
 //! edit, no jar to read, no sink to silence, no `H5I_SECRET_*` in its
-//! environment. The claim "a request not in the log did not happen" is otherwise
-//! only as strong as the parsers sharing an address space with the recorder.
+//! environment.
 //!
-//! **The rule for adding a method:** every one becomes a message a hostile
-//! renderer may send at will, in any order, with any arguments. So the
-//! operations are the ones that were measured (roadmap-history.md §B18.6) and no
-//! more. Nothing hands back a live reference to broker state, and nothing lets
-//! the caller name a *thing* the broker holds rather than a *request* it decides
-//! about. The jar is the worked example: it used to be `broker.jar()`, which
-//! cannot cross a process boundary and on this side of it would have handed the
-//! page's parsers the session. It is three operations now, with `HttpOnly`
-//! enforced inside them.
+//! The rule for adding a method: every one becomes a message a hostile renderer
+//! may send at will, in any order, with any arguments. So the operations are the
+//! ones that were measured (roadmap-history.md §B18.6) and no more. Nothing
+//! hands back a live reference to broker state, and nothing lets the caller name
+//! a *thing* the broker holds rather than a *request* it decides about. The jar
+//! is the worked example: it used to be `broker.jar()`, which cannot cross a
+//! process boundary and on this side of it would have handed the page's parsers
+//! the session. It is three operations now, with `HttpOnly` enforced inside.
 
 use std::sync::Arc;
 
@@ -57,7 +55,7 @@ pub struct Fetch {
     pub document: Option<Url>,
     /// Set when a *page* asked, which is what subjects the answer to the
     /// same-origin policy. `None` is the agent exercising its own authority
-    /// over a URL it named, which is a different question — see [`crate::cors`].
+    /// over a URL it named, which is a different question. See [`crate::cors`].
     pub cors: Option<CorsAsk>,
 }
 
@@ -127,14 +125,14 @@ pub struct Allowance {
 /// A long-lived connection, from the side that does not own it.
 ///
 /// WebSocket and server-sent events are the two things in this engine that are
-/// not request-and-answer, and they are the two the split has to carry rather
-/// than transport. The socket itself stays with the broker — it is the wire —
-/// and the renderer holds this: send a message, take what has arrived, stop.
+/// not request-and-answer, and the two the split has to carry rather than
+/// transport. The socket itself stays with the broker, being the wire, and the
+/// renderer holds this: send a message, take what has arrived, stop.
 ///
 /// `drain` is a poll rather than a callback deliberately. The renderer's settle
-/// loop already asks "has anything happened" on a tick, and a broker that
-/// pushed would need a queue on the renderer's side that a chatty server could
-/// grow without bound.
+/// loop already asks "has anything happened" on a tick, and a broker that pushed
+/// would need a queue on the renderer's side that a chatty server could grow
+/// without bound.
 pub trait Channel: Send + Sync {
     /// Send a text frame. `Err` for a stream that cannot be written to, which
     /// is what a server-sent event stream is.
@@ -148,7 +146,7 @@ pub trait Channel: Send + Sync {
 
 /// The one way bytes enter this engine.
 pub trait Broker: Send + Sync {
-    /// Check policy, record the decision, use the wire — in that order, and
+    /// Check policy, record the decision, use the wire. In that order, and
     /// with no second path. Every other fetch entry point on this trait is a
     /// convenience over this one.
     fn send(&self, fetch: &Fetch) -> FetchOutcome;
@@ -158,15 +156,13 @@ pub trait Broker: Send + Sync {
     /// For work that would otherwise sit on the critical path behind a request
     /// this process is only waiting on. The renderer's broker is a *separate
     /// process*, so [`Self::send`] is one round trip and the renderer thread is
-    /// idle for all of it — which is long enough to hide the browser prelude's
-    /// compile in (§B15.12a). Boa's heap is thread-local, so that compile
-    /// cannot go to a worker thread; this is the only way it overlaps anything.
+    /// idle for all of it, long enough to hide the browser prelude's compile in
+    /// (§B15.12a). Boa's heap is thread-local, so that compile cannot go to a
+    /// worker thread.
     ///
-    /// **`while_waiting` must be speculative work**, in the sense that skipping
-    /// it entirely has to be correct. The default implementation does exactly
-    /// that: a broker doing the fetch on this thread has no idle window, and
-    /// running the closure *before* the fetch would not be an overlap but a
-    /// serial addition to the very path this exists to shorten. It must also
+    /// `while_waiting` must be speculative work, in the sense that skipping it
+    /// entirely has to be correct. The default implementation does exactly that:
+    /// a broker doing the fetch on this thread has no idle window. It must also
     /// not touch this broker, which is mid-request.
     fn send_while(&self, fetch: &Fetch, while_waiting: &mut dyn FnMut()) -> FetchOutcome {
         let _ = while_waiting;
@@ -176,11 +172,11 @@ pub trait Broker: Send + Sync {
     /// The requests this broker has decided about, in the order it recorded
     /// them.
     ///
-    /// The renderer displays these; it does not own them. The authoritative
-    /// copy is the broker's own sink and the file it writes, which is the
-    /// distinction worth keeping in mind when the renderer prints a table: a
-    /// compromised renderer holds the terminal and can print whatever it likes.
-    /// What it cannot do is change what was written.
+    /// The renderer displays these; it does not own them. The authoritative copy
+    /// is the broker's own sink and the file it writes, which is the distinction
+    /// worth keeping in mind when the renderer prints a table: a compromised
+    /// renderer holds the terminal and can print whatever it likes, but it
+    /// cannot change what was written.
     fn records(&self) -> Vec<RequestRecord>;
 
     /// The highest sequence recorded so far, or `None` on an empty log. The
@@ -254,7 +250,7 @@ pub trait Broker: Send + Sync {
     fn document_cookie(&self, url: &Url) -> String;
 
     /// Store a cookie script set, subject to the same rules the wire path
-    /// applies — and to one more, since script may not set `HttpOnly`.
+    /// applies, and to one more, since script may not set `HttpOnly`.
     /// Returns how many were stored.
     fn store_cookie(&self, url: &Url, header: &str) -> usize;
 
@@ -272,21 +268,19 @@ pub trait Broker: Send + Sync {
         document: Option<&Url>,
     ) -> Result<Arc<dyn Channel>, String>;
 
-    /// The credentials this session may substitute, by name. Never values —
-    /// that is the whole of [`crate::secrets`].
-    /// Who this session says it is.
+    /// The credentials this session may substitute, by name. Never values. That
+    /// is the whole of [`crate::secrets`].
     ///
-    /// On the trait rather than read from a constant because the two halves of
-    /// a split engine both need it and only one of them has it: the broker
-    /// holds the identity because the broker writes the headers, and the
-    /// renderer has to answer `navigator` from the *same* object or the page
-    /// and the wire describe two different browsers.
+    /// Who this session says it is. On the trait rather than read from a
+    /// constant because the two halves of a split engine both need it and only
+    /// one of them has it: the broker holds the identity because the broker
+    /// writes the headers, and the renderer has to answer `navigator` from the
+    /// *same* object.
     ///
     /// An `Arc` rather than a borrow or a copy. It cannot be a borrow because
-    /// across the process split there is nothing to borrow from — the value
-    /// arrives as a message. It must not be a copy because this is read once
-    /// per realm and a realm is per navigation, so the strings would be
-    /// reallocated on every page for a value fixed at the session's start.
+    /// across the process split there is nothing to borrow from. It must not be
+    /// a copy because this is read once per realm and a realm is per navigation,
+    /// so the strings would be reallocated on every page.
     #[cfg(feature = "identity")]
     fn identity(&self) -> std::sync::Arc<crate::identity::Identity>;
 
@@ -294,12 +288,10 @@ pub trait Broker: Send + Sync {
 
     /// Resolve `$H5I_SECRET_*` placeholders on the way into a field.
     ///
-    /// The limit is worth stating where the operation is declared, because it
-    /// is easy to oversell: substitution happens on the way *into* the page, so
-    /// the renderer receives the value for the credential that was actually
-    /// used. What the split protects is every credential that was not — a
-    /// compromised renderer no longer holds the environment, so it reads the
-    /// ones it was handed and no others.
+    /// The limit is worth stating where the operation is declared, because it is
+    /// easy to oversell: substitution happens on the way *into* the page, so the
+    /// renderer receives the value for the credential that was actually used.
+    /// What the split protects is every credential that was not.
     fn substitute(&self, text: &str) -> Resolved;
 
     /// Put the placeholder back wherever a value appears in outgoing text.
@@ -343,7 +335,7 @@ pub trait Broker: Send + Sync {
         self.send(&Fetch::get(url, initiator).from_document(document))
     }
 
-    /// Send a request that may carry a body — what a form submission needs.
+    /// Send a request that may carry a body. What a form submission needs.
     fn send_from(
         &self,
         url: &Url,

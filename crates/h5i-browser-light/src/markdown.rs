@@ -2,18 +2,18 @@
 //!
 //! A denser read than the accessibility outline, and the right shape for reading
 //! the untrusted web. The outline exists to be *acted on*, carrying `@ref`
-//! handles and dropping anything unclickable; markdown exists to be *read*, so
-//! it keeps prose, emphasis, lists and tables and carries no handles.
+//! handles and dropping anything unclickable; markdown exists to be *read*, so it
+//! keeps prose, emphasis, lists and tables and carries no handles.
 //!
 //! Three things the reference implementation got wrong, all cheap to fix and all
-//! covered by tests below: tables need a `|---|---|` separator row or no
-//! renderer treats them as tables; ordered lists need their numbers, since every
-//! item as `1.` reads as a list of ones to anything but a markdown renderer, and
-//! a model reading raw text is exactly that; and nested lists need their indent,
-//! since threading a depth through the walk and never applying it flattens the
+//! covered by tests below: tables need a `|---|---|` separator row or no renderer
+//! treats them as tables; ordered lists need their numbers, since every item as
+//! `1.` reads as a list of ones to anything but a markdown renderer, and a model
+//! reading raw text is exactly that; and nested lists need their indent, since
+//! threading a depth through the walk and never applying it flattens the
 //! structure that made the list worth keeping.
 //!
-//! **The fence applies.** The snapshot's unforgeability rests on no page-derived
+//! The fence applies. The snapshot's unforgeability rests on no page-derived
 //! value spanning a line, which markdown cannot promise: a paragraph may be long
 //! and a `<pre>` may contain anything. So the marker is defanged over the
 //! finished document instead. A page that writes the closing marker into its own
@@ -246,13 +246,12 @@ impl Writer {
 
             "pre" => {
                 self.blank();
-                // Newlines are preserved here — a code block collapsed to one
-                // line is not a code block — so `escape` cannot be used, and a
-                // page whose `<pre>` contains ``` would otherwise close the
-                // fence early and have everything after it read as markdown
-                // structure. That is exactly the forged structure `escape`
-                // exists to prevent, arriving through the one path that skips
-                // it. The fence is instead made longer than any run of
+                // Newlines are preserved here (a code block collapsed to one line is
+                // not a code block) so `escape` cannot be used, and a page whose `<pre>`
+                // contains ``` would otherwise close the fence early and have everything
+                // after it read as markdown structure. That is exactly the forged
+                // structure `escape` exists to prevent, arriving through the one path
+                // that skips it. The fence is instead made longer than any run of
                 // backticks in the content, which is what the format says to do.
                 let raw = node.text_content();
                 let fence = "`".repeat(longest_backtick_run(&raw).max(2) + 1);

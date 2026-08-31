@@ -2,25 +2,23 @@
 //!
 //! A `<video>` is a hole in every reading this engine produces, so a page whose
 //! substance is a forty-minute talk reads as a title and a play button. Most of
-//! the time the content is already there in text: HTML has carried
-//! `<track kind="captions">` since 2010, and a caption file is prose with
-//! timestamps, which is the shape a model reads well. So this verb decodes
-//! nothing. It finds the tracks the page declared, fetches them through the
-//! broker like any other subresource, and parses the cues out.
+//! the time the content is already there in text: HTML has carried `<track
+//! kind="captions">` since 2010, and a caption file is prose with timestamps,
+//! which is the shape a model reads well. So this verb decodes nothing. It finds
+//! the tracks the page declared, fetches them through the broker like any other
+//! subresource, and parses the cues out.
 //!
-//! **This is not audio support.** [`crate::Capabilities::video`] stays `false`:
-//! no decoder, no media element that plays, no `MediaSource`, and ROADMAP's "no
-//! GStreamer, no PulseAudio" is not reopened. A text fetch over a URL the
-//! document named moves no capability, so this needs no `--script` and no grant.
+//! This is not audio support. [`crate::Capabilities::video`] stays `false`: no
+//! decoder, no media element that plays, no `MediaSource`. A text fetch over a
+//! URL the document named moves no capability, so this needs no `--script` and
+//! no grant.
 //!
 //! What changes is that "this page has media" stops being the end of the answer.
 //! A media element with no track is reported as one, with its source URL,
-//! because that routes a caller somewhere else while silence reads as "no media"
-//! and is simply wrong.
+//! because that routes a caller somewhere else while silence reads as "no media".
 //!
 //! The fence applies: a caption file is a stranger's bytes landing in front of a
-//! model, so it is [`collapse`]d per cue. Arriving as a subtitle rather than a
-//! heading buys it no more trust.
+//! model, so it is [`collapse`]d per cue.
 
 use blitz_dom::{BaseDocument, Node};
 use serde::{Deserialize, Serialize};
@@ -63,13 +61,12 @@ pub struct Media {
     pub kind: String,
     /// A CSS selector that names this element, when the page gave it one.
     ///
-    /// `#player` from an `id`, and nothing otherwise. Deliberately not
-    /// synthesised from a position: `video:nth-of-type(2)` is scoped to a
-    /// parent rather than to the document, so on a page whose players sit in
-    /// different containers it names the wrong element — and a handle that
-    /// resolves to the wrong thing is worse than no handle, because a caller
-    /// acts on it. A `@ref` is not minted here either: refs are checked against
-    /// the reading that minted them, and this is not a snapshot.
+    /// `#player` from an `id`, and nothing otherwise. Deliberately not synthesised
+    /// from a position: `video:nth-of-type(2)` is scoped to a parent rather than
+    /// to the document, so on a page whose players sit in different containers it
+    /// names the wrong element, and a handle that resolves to the wrong thing is
+    /// worse than no handle. A `@ref` is not minted here either: refs are checked
+    /// against the reading that minted them, and this is not a snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selector: Option<String>,
     /// Where the media itself lives, resolved absolute.
@@ -169,14 +166,14 @@ impl Track {
     }
 }
 
-/// Track kinds that carry what was **said**.
+/// Track kinds that carry what was *said*.
 ///
 /// One list, referenced by both the predicate and the selection. They were
 /// written out separately for a while, which is two places that have to agree
 /// about the same fact and can therefore stop agreeing.
 const SPOKEN: &[&str] = &["subtitles", "captions"];
 
-/// Track kinds that carry an **outline** of what was said.
+/// Track kinds that carry an *outline* of what was said.
 ///
 /// Apart from [`SPOKEN`] because the two are chosen independently: a page gets
 /// one of each, since thirty languages are the same words thirty times while an
@@ -193,21 +190,19 @@ pub struct Cue {
     pub text: String,
 }
 
-/// Which tracks to actually fetch.
-///
-/// At most two per media element: what was **said**, and the **outline** of it.
+/// Which tracks to actually fetch: at most two per media element, what was
+/// *said* and the *outline* of it.
 ///
 /// Not all of them, because a well-localised player declares thirty languages
-/// and fetching every one is thirty requests to answer a question about one.
-/// The listing is complete either way, so a caller that wanted a different
-/// language can see it is there and ask again.
+/// and fetching every one is thirty requests to answer a question about one. The
+/// listing is complete either way, so a caller that wanted a different language
+/// can see it is there and ask again.
 ///
 /// There used to be an `all` here that fetched every readable track, and it was
 /// the wrong axis. Thirty languages of one video are the same words thirty
-/// times; a `chapters` track is *different information*, an outline rather than
-/// a translation. Sorting them into one flag meant the only thing that flag was
-/// genuinely good for could not be had without also paying for the twenty-nine
-/// that were redundant. Chapters are read by default now, and the flag is gone.
+/// times; a `chapters` track is *different information*. Sorting them into one
+/// flag meant the only thing that flag was good for could not be had without
+/// paying for the twenty-nine that were redundant.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Selection {
     /// Prefer this language. Matched against `srclang` case-insensitively, by
@@ -253,7 +248,7 @@ impl Transcript {
     /// Tracks that were fetched and did not yield cues, with the reason.
     ///
     /// The difference between "this page has no text lane" and "this page has
-    /// one and it did not load" — a policy refusal, a 5xx, a body that is not
+    /// one and it did not load". A policy refusal, a 5xx, a body that is not
     /// WebVTT. Both end with no cues, and reporting the second as the first
     /// tells an agent to route away from a page whose captions are right there
     /// and were simply not delivered.
@@ -267,8 +262,8 @@ impl Transcript {
                     // `error.is_some()` alone. A track whose `src` will not
                     // parse as a URL gets an error and never reaches
                     // `fetched = true`, so requiring both let exactly that case
-                    // fall through to "its words exist only in the audio" —
-                    // the misreport this method was added to prevent. A track
+                    // fall through to "its words exist only in the audio".
+                    // The misreport this method was added to prevent. A track
                     // that was listed and not asked for has no error, so it is
                     // still not a failure.
                     .filter(|track| track.error.is_some())
@@ -290,13 +285,12 @@ impl Transcript {
     ///
     /// Fenced over the finished document rather than per value, the way
     /// [`crate::markdown`] does it: the per-line invariant holds for a cue,
-    /// which is collapsed, but the assembled transcript spans lines and the
-    /// invariant does not survive the assembly.
+    /// which is collapsed, but the assembled transcript spans lines.
     ///
-    /// A track that was listed and not fetched says so, and a media element
-    /// with no text lane says *that*, because both are answers. A reader handed
-    /// a page with one captioned video and one silent one must be able to tell
-    /// which is which, or it will report the whole page as transcribed.
+    /// A track that was listed and not fetched says so, and a media element with
+    /// no text lane says *that*, because both are answers. A reader handed a page
+    /// with one captioned video and one silent one must be able to tell which is
+    /// which.
     pub fn render(&self, url: &str) -> String {
         let mut out = format!("url: {url}\n");
         if self.media.is_empty() {
@@ -479,8 +473,8 @@ pub fn discover(doc: &BaseDocument, base: &url::Url) -> Transcript {
                     .map(|raw| cap(collapse(&raw), MAX_CUE_BYTES))
                     .filter(|text| !text.is_empty()),
                 // Presence is the whole test. `default=""` and `default="false"`
-                // both mean the attribute is there, which in HTML means true —
-                // reading the *value* here is the classic way to get it
+                // both mean the attribute is there, which in HTML means true.
+                // Reading the *value* here is the classic way to get it
                 // backwards.
                 default: attr(child, "default").is_some(),
                 src,
@@ -498,14 +492,12 @@ pub fn discover(doc: &BaseDocument, base: &url::Url) -> Transcript {
 
     // Ids, resolved against the whole document rather than per element.
     //
-    // `#dup` names the *first* element with that id, and duplicate ids are
-    // legal in the wild — two copies of an embed snippet is the ordinary way it
-    // happens. Handing the second `<video id="player">` back as `#player` gives
-    // a caller a handle that acts on the first, and this field's own doc says a
-    // handle that resolves to the wrong thing is worse than none. An id that is
-    // not a legal CSS identifier (`video.main`) is dropped for the same reason:
-    // `#video.main` parses as an id plus a class and matches something else.
-    // `crate::selector` guards its ids both ways already.
+    // `#dup` names the *first* element with that id, and duplicate ids are legal
+    // in the wild, two copies of an embed snippet being the ordinary way it
+    // happens. Handing the second `<video id="player">` back as `#player` gives a
+    // caller a handle that acts on the first. An id that is not a legal CSS
+    // identifier (`video.main`) is dropped for the same reason: `#video.main`
+    // parses as an id plus a class.
     let mut seen: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     for (_, node) in doc.tree().iter() {
         if let Some(id) = attr(node, "id").map(|id| collapse(&id)).filter(|id| !id.is_empty()) {
@@ -531,7 +523,7 @@ pub fn discover(doc: &BaseDocument, base: &url::Url) -> Transcript {
 ///
 /// The standard's own enumerated-attribute rule: the missing value default and
 /// the invalid value default are both `subtitles`. Written out because the
-/// alternative — carrying `""` through and special-casing it downstream — is
+/// alternative, carrying `""` through and special-casing it downstream, is
 /// how a track ends up excluded from a transcript for having omitted an
 /// attribute it was allowed to omit.
 fn normalise_kind(raw: Option<&str>) -> String {
@@ -596,12 +588,11 @@ pub fn chosen(media: &Media, selection: &Selection) -> Vec<usize> {
 /// Fetch the chosen tracks and parse them, through the broker like anything
 /// else.
 ///
-/// `document` is the page the tracks were declared on, and it is load-bearing
-/// rather than bookkeeping: without it the policy reads a caption fetch as the
-/// agent naming a URL, and `<track src="http://127.0.0.1:3000/…">` on a page
-/// from the open web would reach the box's dev server. That is exactly the hole
-/// [`crate::policy::Policy::check_from`] exists to close, and a new fetch path
-/// that forgot to pass an origin would reopen it quietly.
+/// `document` is the page the tracks were declared on, and it decides the
+/// policy rather than being bookkeeping: without it the policy reads a caption
+/// fetch as the agent naming a URL, and `<track src="http://127.0.0.1:3000/…">`
+/// on a page from the open web would reach the box's dev server. That is the
+/// hole [`crate::policy::Policy::check_from`] exists to close.
 pub fn read(
     transcript: &mut Transcript,
     broker: &dyn crate::broker::Broker,
@@ -618,16 +609,15 @@ pub fn read(
                 }
             };
 
-            // A text track is a **CORS request** in a browser, and for exactly
-            // the reason it matters here: the track's *text* is read and handed
-            // to the agent as the transcript, so a cross-origin one is a
-            // cross-origin read of somebody else's document. Without this a
-            // page could point a `<track>` at any allowed origin and have the
-            // engine fetch it, decode it and put it in front of the model.
+            // A text track is a *CORS request* in a browser, and for exactly the
+            // reason it matters here: the track's *text* is read and handed to the
+            // agent as the transcript, so a cross-origin one is a cross-origin read
+            // of somebody else's document. Without this a page could point a
+            // `<track>` at any allowed origin and have the engine fetch it, decode
+            // it and put it in front of the model.
             //
-            // `document` is `None` when the agent named the media itself, which
-            // is the agent exercising its own authority over a URL it chose —
-            // the same distinction `crate::cors::Requester` draws.
+            // `document` is `None` when the agent named the media itself, which is
+            // the agent exercising its own authority over a URL it chose.
             let outcome = match document {
                 Some(document) => broker.send_script(
                     &url,
@@ -659,8 +649,8 @@ pub fn read(
                 continue;
             }
 
-            // WebVTT is UTF-8 by specification — not "usually", *by
-            // specification* — so a lossy decode here is decoding a file that
+            // WebVTT is UTF-8 by specification (not "usually", *by
+            // specification*) so a lossy decode here is decoding a file that
             // is already out of spec, and replacement characters in one cue
             // are a better answer than discarding a whole transcript.
             let body = String::from_utf8_lossy(&outcome.body);
@@ -684,10 +674,8 @@ pub fn read(
 /// almost nothing that matters here: SRT numbers its cues and separates its
 /// milliseconds with a comma, WebVTT has a header line and cue settings after
 /// the timings. Both are blank-line-separated blocks whose timing line holds
-/// `-->`, so keying on that line and ignoring everything around it reads both —
+/// `-->`, so keying on that line and ignoring everything around it reads both,
 /// and reads the badly-formed files in the wild that are neither.
-///
-/// Returns the cues and, when the text was cut short, a note saying so.
 pub fn parse(body: &str, max_bytes: usize) -> (Vec<Cue>, Option<String>) {
     let mut cues: Vec<Cue> = Vec::new();
     let mut bytes = 0usize;
@@ -802,8 +790,8 @@ pub fn stamp(seconds: f64) -> String {
 
 /// Take the markup out of a cue.
 ///
-/// WebVTT cue text carries a small tag vocabulary — `<v Speaker>`, `<i>`, `<c>`,
-/// `<00:00:12.000>` for karaoke timing — and the five named entities. A model
+/// WebVTT cue text carries a small tag vocabulary (`<v Speaker>`, `<i>`, `<c>`,
+/// `<00:00:12.000>` for karaoke timing) and the five named entities. A model
 /// handed `<v Roger>&amp;` reads markup; a model handed `Roger &` reads what was
 /// said. The speaker name inside `<v …>` is kept, because who is speaking is
 /// content.
@@ -814,19 +802,17 @@ fn strip_markup(text: &str) -> String {
     while let Some(ch) = chars.next() {
         match ch {
             '<' => {
-                // One pass, and the buffer is what makes the unterminated case
-                // safe: scan to `>`, and if the input ends first put back the
-                // `<` and everything after it rather than dropping it.
+                // One pass, and the buffer is what makes the unterminated case safe:
+                // scan to `>`, and if the input ends first put back the `<` and
+                // everything after it rather than dropping it.
                 //
                 // Two cleverer versions preceded this and both were worse. A
-                // 128-character bound made a legitimately long closed tag come
-                // out as markup in the transcript. Looking ahead for `>` fixed
-                // that and made this quadratic — a fresh copy of the remaining
-                // text per `<`, on input that is *not yet* bounded, since
-                // `MAX_CUE_BYTES` is applied to what this returns. A caption
-                // body with no blank line and fifty thousand `<` is then tens
-                // of gigabytes of copying: a hang, reachable from a file this
-                // lane fetches and explicitly does not trust.
+                // 128-character bound made a legitimately long closed tag come out as
+                // markup in the transcript. Looking ahead for `>` fixed that and made
+                // this quadratic, taking a fresh copy of the remaining text per `<` on
+                // input that is *not yet* bounded, since `MAX_CUE_BYTES` is applied to
+                // what this returns. A caption body with no blank line and fifty
+                // thousand `<` is then tens of gigabytes of copying.
                 let mut tag = String::new();
                 let mut closed = false;
                 for inner in chars.by_ref() {
@@ -901,7 +887,7 @@ fn is_css_ident(id: &str) -> bool {
     // css-syntax-3's own rule rather than an approximation of it. Every code
     // point at or above U+0080 is an identifier code point, which is what makes
     // `café` in either normal form work, and Devanagari, and every combining
-    // mark — an earlier version tested `is_alphanumeric` instead and rejected
+    // mark. An earlier version tested `is_alphanumeric` instead and rejected
     // all of those, dropping a perfectly good handle on the ground.
     fn starts(c: char) -> bool {
         c.is_alphabetic() || c == '_' || c >= '\u{80}'
@@ -1081,7 +1067,7 @@ mod tests {
     }
 
     /// The bound treated a legitimately long *closed* tag as unterminated and
-    /// put the markup verbatim into the transcript — the same mistake as
+    /// put the markup verbatim into the transcript. The same mistake as
     /// eating the cue, pointing the other way.
     /// The quadratic version of this hung on input it is handed directly: a
     /// caption body with no blank line is one cue, `MAX_CUE_BYTES` is applied

@@ -1,25 +1,20 @@
 //! What one page is allowed to spend before the engine stops answering it.
 //!
-//! Every other limit is **per request**: a response size cap, a redirect count,
-//! a timeout. None bounds a page that makes *many* requests, so a script in a
+//! Every other limit is *per request*: a response size cap, a redirect count, a
+//! timeout. None bounds a page that makes *many* requests, so a script in a
 //! loop, each fetch individually well-behaved, could keep the engine busy
-//! indefinitely. The receipts would faithfully record all ten thousand, and
-//! recording a runaway is not bounding it.
+//! indefinitely, and recording a runaway is not bounding it.
 //!
-//! **Per navigation, not per session**, because of who is spending. A page
-//! fetching in a loop is untrusted code the engine cannot otherwise stop. An
-//! agent navigating twenty times is the principal exercising its own authority,
-//! and bounding that would be the engine deciding how much work its operator may
-//! ask for. So the counters reset on navigation: a fresh page is a fresh
-//! decision by the agent. A session-wide ceiling is coherent and unbuilt, since
-//! the failure it would prevent belongs to the thing driving the engine rather
-//! than to a page inside it.
+//! Per navigation, not per session, because of who is spending. A page fetching
+//! in a loop is untrusted code the engine cannot otherwise stop. An agent
+//! navigating twenty times is the principal exercising its own authority, and
+//! bounding that would be the engine deciding how much work its operator may ask
+//! for. So the counters reset on navigation. A session-wide ceiling is coherent
+//! and unbuilt.
 //!
-//! **Exceeding is a refusal, not a crash.** The next request is denied and
-//! recorded as denied with `budget-exceeded`. The page sees a failed fetch,
-//! which pages handle; the agent sees it in the request log and the snapshot's
-//! notes. Nothing is torn down, because a page that spent its allowance has
-//! still rendered whatever it managed.
+//! Exceeding is a refusal, not a crash. The next request is denied and recorded
+//! as denied with `budget-exceeded`. The page sees a failed fetch, which pages
+//! handle; the agent sees it in the request log and the snapshot's notes.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -55,7 +50,7 @@ impl Default for Limits {
             max_requests: 500,
             max_wire_bytes: 64 * 1024 * 1024,
             // Higher than the wire ceiling, because decoding legitimately
-            // expands — and still bounded, because that is the direction a
+            // expands, and still bounded, because that is the direction a
             // compression bomb pushes.
             max_decoded_bytes: 256 * 1024 * 1024,
             max_network_time: Duration::from_secs(60),
@@ -121,7 +116,7 @@ impl Budget {
     ///
     /// Checked *before* the wire, so an over-budget request is refused rather
     /// than made and then complained about. The request counter is incremented
-    /// here — a request that is about to be attempted has been spent, whatever
+    /// here. A request that is about to be attempted has been spent, whatever
     /// its outcome, or a page whose every fetch fails would have an unlimited
     /// number of them.
     pub fn claim_request(&self) -> Result<(), Exceeded> {
@@ -230,10 +225,10 @@ mod millis {
 
 /// A wall-clock bound on one navigation, from the first byte to the last.
 ///
-/// The per-phase budgets this engine already had — a request timeout, a script
-/// phase budget — each bound their own step and none of them bounds the whole.
-/// A page that spends thirty seconds on the network *and* twenty in its script
-/// is inside every limit and has still taken the better part of a minute.
+/// The per-phase budgets this engine already had each bound their own step and
+/// none of them bounds the whole. A page that spends thirty seconds on the
+/// network *and* twenty in its script is inside every limit and has still taken
+/// the better part of a minute.
 ///
 /// A deadline rather than a timer, because it is consulted from several places
 /// and each needs the same answer: how much is left.
@@ -271,30 +266,26 @@ impl Deadline {
 
 /// The stop of last resort, for the half of this engine no deadline reaches.
 ///
-/// Every other ceiling here guards the **script realm**: `--script-seconds`
-/// bounds the script phase, the loop-iteration limit bounds one `for`, the job
-/// deadline bounds the queue. All three work by asking Boa to stop between
-/// pieces of work it is doing. None of them can do anything about a *layout*
-/// that never returns, because no script is running while layout walks the tree
-/// — and layout is native code with no interruption point in it at all.
+/// Every other ceiling here guards the *script realm*: `--script-seconds` bounds
+/// the script phase, the loop-iteration limit bounds one `for`, the job deadline
+/// bounds the queue. All three work by asking Boa to stop between pieces of
+/// work. None can do anything about a *layout* that never returns, because no
+/// script is running while layout walks the tree, and layout is native code with
+/// no interruption point in it.
 ///
-/// That gap was not theoretical. A cyclic tree — reachable, at the time, from
-/// `document.body.appendChild(new Text("x"))` — sent blitz walking for ever at
+/// That gap was not theoretical. A cyclic tree sent blitz walking for ever at
 /// 100% of a core, straight through a 45-second navigation budget and a
-/// 60-second script budget, for **seven hours**. The tree cannot go cyclic any
+/// 60-second script budget, for *seven hours*. The tree cannot go cyclic any
 /// more, but "no ceiling at all covers half the engine" is the condition that
-/// turned one bug into seven hours, and it is worth closing on its own.
+/// turned one bug into seven hours.
 ///
 /// A separate thread, because the wedged thread cannot help; `_exit`, because
-/// `std::process::exit` waits on the atexit handlers and stdio locks that the
-/// wedged thread may be holding (see `stop_now`). Armed for a *navigation*
-/// rather than for the process, so a long-lived `serve` session is bounded per
-/// page rather than in total.
+/// `std::process::exit` waits on the atexit handlers and stdio locks the wedged
+/// thread may be holding. Armed for a *navigation* rather than for the process.
 ///
 /// The margin is wide on purpose. This is not a tighter version of the
-/// navigation budget — that one reports a page as unfinished and hands back
-/// what rendered, which is a useful answer. Reaching *this* one ends the
-/// process, so it must be somewhere no page that is merely slow can arrive.
+/// navigation budget, which reports a page as unfinished and hands back what
+/// rendered. Reaching *this* one ends the process.
 pub struct HardStop {
     done: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
 }
@@ -353,14 +344,14 @@ mod tests {
 
     #[test]
     fn a_navigation_that_finishes_disarms_its_hard_stop() {
-        // The half of `HardStop` that can be tested in process. The other half
-        // ends the process, so it is verified by running one: a navigation held
-        // open past its ceiling exits 71 and says why.
+        // The half of `HardStop` that can be tested in process. The other half ends
+        // the process, so it is verified by running one: a navigation held open past
+        // its ceiling exits 71 and says why.
         //
-        // What this pins is the part that would be catastrophic to get wrong in
-        // the opposite direction — a guard that fired on a page which had
-        // already finished would take down a working engine, and it would do it
-        // rarely enough to be blamed on anything else.
+        // What this pins is the part that would be catastrophic to get wrong in the
+        // opposite direction. A guard that fired on a page which had already
+        // finished would take down a working engine, rarely enough to be blamed on
+        // anything else.
         for _ in 0..64 {
             drop(HardStop::arm(Duration::from_millis(1)));
         }

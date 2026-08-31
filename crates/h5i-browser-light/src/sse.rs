@@ -1,25 +1,24 @@
 //! `EventSource`: a server-sent event stream.
 //!
 //! The other long-lived connection, and the one that fits this engine's HTTP
-//! stack better than a WebSocket does — it *is* an HTTP response, just one that
-//! never ends. So unlike [`crate::wsclient`] it goes through the same client,
-//! the same proxy and the same TLS as everything else, which means `https://`
-//! works and there is no loopback restriction to argue about.
+//! stack better than a WebSocket does. It *is* an HTTP response, just one that
+//! never ends. So unlike [`crate::wsclient`] it goes through the same client, the
+//! same proxy and the same TLS as everything else, which means `https://` works
+//! and there is no loopback restriction to argue about.
 //!
 //! ## Why it needed a second exit from the broker
 //!
 //! [`crate::broker::Broker::send_from`] reads a whole body before it returns
-//! (`read_capped`), and writes one response record with a final byte count.
-//! That is the right shape for a document and the wrong shape for a stream: an
-//! event stream never completes, so it would hit the response cap or the
-//! client timeout, whichever came first, and be reported as an error.
+//! (`read_capped`) and writes one response record with a final byte count. Right
+//! for a document, wrong for a stream: an event stream never completes, so it
+//! would hit the response cap or the client timeout, whichever came first, and be
+//! reported as an error.
 //!
-//! So there is a second path — [`crate::net::LocalBroker::begin_event_stream`] —
-//! which shares the front half exactly (policy, then the decision record,
-//! *then* the wire) and hands back the response to be read incrementally.
-//! Sharing the front half is the point: a stream is authorised and receipted by
-//! the same code as everything else, so there is one place where the
-//! fail-closed rule lives.
+//! So there is a second path, [`crate::net::LocalBroker::begin_event_stream`],
+//! which shares the front half exactly (policy, then the decision record, *then*
+//! the wire) and hands back the response to be read incrementally. Sharing the
+//! front half is the point: a stream is authorised and receipted by the same code
+//! as everything else, so the fail-closed rule lives in one place.
 //!
 //! Each event is then receipted as it arrives, for the reason the socket client
 //! gives at length: receipting the handshake alone would let this engine's
@@ -37,7 +36,7 @@ use crate::wsclient::{Direction, Event};
 /// Cap on one event's data, so a server cannot grow this without bound.
 const MAX_EVENT_BYTES: usize = 1 << 20;
 
-/// How many undelivered events this may hold, matching the socket client's —
+/// How many undelivered events this may hold, matching the socket client's,
 /// and bounded for the same reason. See [`crate::wsclient`].
 const MAX_QUEUED: usize = 512;
 
@@ -58,7 +57,7 @@ impl EventStream {
             ));
         }
 
-        // Policy, then the record, then the wire — the same order and the same
+        // Policy, then the record, then the wire. The same order and the same
         // code as every other request here.
         let response = broker.begin_event_stream(url, document)?;
 
@@ -149,9 +148,9 @@ impl Drop for EventStream {
 ///
 /// Deliberately the useful subset: `data:` lines accumulate, a blank line
 /// dispatches, `event:` names the type and `id:`/`retry:` are read and ignored.
-/// Reconnection is **not** implemented, and that is a decision rather than an
+/// Reconnection is *not* implemented, and that is a decision rather than an
 /// omission: an engine that silently re-dialled would be making requests the
-/// agent never asked for and the receipt would show them arriving from nowhere.
+/// agent never asked for, and the receipt would show them arriving from nowhere.
 /// A stream that ends fires `error` and stays ended.
 fn read_loop(
     response: reqwest::blocking::Response,
@@ -260,9 +259,9 @@ fn read_loop(
 /// `read_line` with a cap, because a server that never sends a newline is an
 /// unbounded allocation on this side.
 ///
-/// Accumulates **bytes** and decodes once at the end. Pushing each byte as a
+/// Accumulates *bytes* and decodes once at the end. Pushing each byte as a
 /// `char` decoded the stream as Latin-1, so every non-ASCII payload arrived
-/// mangled — `café` reaching the page as `cafÃ©` — and the byte count that goes
+/// mangled, `café` reaching the page as `cafÃ©`, and the byte count that goes
 /// into the receipt was wrong along with it.
 fn read_line_capped<R: Read>(
     reader: &mut BufReader<R>,
@@ -404,7 +403,7 @@ mod tests {
     #[test]
     fn multi_line_data_reaches_the_page_as_a_plain_message() {
         // The regression. The name used to travel packed into the payload as a
-        // first line, and the JS side guessed which messages had one — so
+        // first line, and the JS side guessed which messages had one, so
         // `data: one\ndata: two` became an event *named* `one` carrying `two`,
         // and `onmessage` never fired at all.
         let (port, server) = sse_server("data: one\ndata: two\n\n");

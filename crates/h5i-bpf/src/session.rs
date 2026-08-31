@@ -1,16 +1,14 @@
 //! Loading the probe, attaching it, and reading what comes back.
 //!
 //! Linux only, and only with the `load` feature: everything above this module
-//! — the event model, the rules, the receipt types — compiles and is tested on
-//! every target h5i releases for, and this is the one file that needs a
-//! kernel.
+//! (the event model, the rules, the receipt types) compiles and is tested on
+//! every target h5i releases for, and this is the one file that needs a kernel.
 //!
 //! The lifetime of a [`Session`] is the lifetime of one run. It is started
-//! before the payload is spawned (so the payload's own `execve` is the first
-//! thing it sees) and stopped when the run returns. Nothing survives it: the
-//! programs are detached when the [`aya::Ebpf`] is dropped, the maps go with
-//! them, and there is no daemon and no pinning anywhere in this file
-//! (ROADMAP.md D12).
+//! before the payload is spawned, so the payload's own `execve` is the first
+//! thing it sees, and stopped when the run returns. Nothing survives it: the
+//! programs are detached when the [`aya::Ebpf`] is dropped, and there is no
+//! daemon and no pinning anywhere in this file (design-detect.md D12).
 
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
@@ -86,7 +84,7 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
 
 /// Tracepoints whose *scheduler* field offsets the probe hardcodes, and what
 /// it believes they are. Checked against the kernel's own `format` file when
-/// tracefs is readable (ROADMAP.md D5).
+/// tracefs is readable (design-detect.md D5).
 type FieldLayout = (&'static str, usize, usize);
 
 const SCHED_FIELDS: &[(&str, &[FieldLayout])] = &[
@@ -117,8 +115,8 @@ struct Collected {
     engine: Engine,
     /// Ring-buffer records the decoder refused, and the first reason.
     ///
-    /// A nonzero count is a probe/loader mismatch — a bug in h5i, not
-    /// behaviour of the box — and it goes into the receipt rather than into a
+    /// A nonzero count is a probe/loader mismatch (a bug in h5i, not
+    /// behaviour of the box) and it goes into the receipt rather than into a
     /// log nobody reads, because a run whose evidence was silently thinner
     /// than it should have been is precisely the thing this lane exists to
     /// stop happening.
@@ -128,7 +126,7 @@ struct Collected {
 
 impl Session {
     /// Load, program the scope, and attach. Returns the refusal as a string on
-    /// any failure — the caller turns that into an `unavailable` block, so a
+    /// any failure. The caller turns that into an `unavailable` block, so a
     /// failure to start is recorded rather than logged and forgotten.
     pub fn start(cfg: &DetectConfig) -> Result<Self, String> {
         #[cfg(not(h5i_bpf_object))]
@@ -275,9 +273,9 @@ impl Drop for Session {
 
 /// Read events until asked to stop, then drain what is left.
 ///
-/// The rules run **on this thread**, folded in as each event arrives, rather
+/// The rules run on this thread, folded in as each event arrives, rather
 /// than being shipped over a channel to be folded later. That removes a whole
-/// category of loss — a full channel — and there is nothing to gain from the
+/// category of loss, a full channel, and there is nothing to gain from the
 /// extra hop: the fold is a few comparisons per event and the alternative is a
 /// second place for events to disappear without being counted.
 fn spawn_reader(
@@ -298,7 +296,7 @@ fn spawn_reader(
         }
         // The run has ended, but the kernel may have submitted records between
         // the last drain and the stop. Losing those would mean the last thing
-        // a box did — often the interesting thing — is the one event that
+        // a box did, often the interesting thing, is the one event that
         // never reaches the receipt.
         drain(&mut ring, &mut out);
         out
@@ -309,8 +307,8 @@ fn drain(ring: &mut RingBuf<MapData>, out: &mut Collected) {
     while let Some(item) = ring.next() {
         match Event::decode(&item) {
             Ok(mut ev) => {
-                // The probe cannot report a parent (ROADMAP.md D5); the fold
-                // has been watching forks and can.
+                // The probe cannot report a parent (design-detect.md D5); the
+                // fold has been watching forks and can.
                 if ev.kind != EventKind::Fork
                     && let Some(p) = out.engine.parent_of(ev.tid)
                 {
@@ -347,7 +345,7 @@ fn wait_readable(fd: std::os::fd::RawFd, timeout_ms: libc::c_int) {
 }
 
 /// Kernels before 5.11 charge BPF maps against `RLIMIT_MEMLOCK`, whose default
-/// is 64 KiB — smaller than the ring buffer. Best effort: on 5.11 and later
+/// is 64 KiB. Smaller than the ring buffer. Best effort: on 5.11 and later
 /// the limit is irrelevant, and where it is not, failing to raise it produces
 /// a clear "load failed" a few lines below rather than a mystery here.
 fn raise_memlock() {
@@ -385,7 +383,7 @@ fn check_every_program_is_attached(ebpf: &Ebpf) -> Result<(), String> {
 
 fn program_maps(ebpf: &mut Ebpf, cfg: &DetectConfig) -> Result<(), String> {
     // The kind mask: every kind this build knows. Kinds are not individually
-    // selectable from a profile on purpose — a rule needs the events it needs,
+    // selectable from a profile on purpose. A rule needs the events it needs,
     // and letting a profile disable an event kind would let it disable a rule
     // without saying so.
     let kind_mask = EventKind::ALL
@@ -445,7 +443,7 @@ fn program_maps(ebpf: &mut Ebpf, cfg: &DetectConfig) -> Result<(), String> {
         let mut tracked: BpfHashMap<_, u32, u8> =
             BpfHashMap::try_from(map).map_err(|e| format!("H5I_TRACKED is not a hash: {e}"))?;
         // `0` is H5I_ST_SELF: these are h5i's own threads, so nothing they do
-        // is emitted — but anything they fork is a candidate.
+        // is emitted, but anything they fork is a candidate.
         for tid in scope::self_tids() {
             tracked
                 .insert(tid, 0u8, 0)
@@ -473,12 +471,11 @@ fn attach_all(ebpf: &mut Ebpf) -> Result<(), String> {
 }
 
 /// Hold the kernel to the field offsets the probe assumes.
-///
 /// The syscall-entry layout is fixed ABI and the scheduler tracepoints publish
-/// theirs, so this is a check rather than a discovery. It is **best effort in
-/// one direction only**: tracefs is usually root-only, and an unreadable
-/// `format` file leaves the assumption unverified and the load proceeding — but
-/// a `format` file that is readable and disagrees is a hard refusal, because
+/// theirs, so this is a check rather than a discovery. Best effort in one
+/// direction only: tracefs is usually root-only, and an unreadable `format`
+/// file leaves the assumption unverified and the load proceeding, but a
+/// `format` file that is readable and disagrees is a hard refusal, because
 /// silently reading the wrong four bytes of a fork event is how a scope quietly
 /// stops tracking anything.
 fn verify_tracepoint_layout() -> Result<(), String> {
@@ -587,7 +584,7 @@ fn parse_field(text: &str, field: &str) -> Option<(usize, usize)> {
 /// lives beside the code that produces the successful one.
 pub(crate) fn refused(tier: Tier, why: String) -> RuntimeEvidence {
     let mut ev = RuntimeEvidence::unavailable(why);
-    // Coverage stays `None` — nothing was observed — but the tier's own reason
+    // Coverage stays `None`, nothing was observed, but the tier's own reason
     // is still worth carrying: on the microVM tier the honest answer is that
     // no capability would have helped.
     if let (Coverage::None, Some(reason)) = tier.coverage() {
@@ -628,7 +625,7 @@ mod tests {
     }
 
     /// An array field's name has the `[16]` on it. Getting this wrong would
-    /// make the fork check silently unverifiable — the failure mode the check
+    /// make the fork check silently unverifiable. The failure mode the check
     /// exists to prevent.
     #[test]
     fn array_fields_parse_by_name_without_their_bounds() {

@@ -1,21 +1,19 @@
 //! Moving bytes between two halves of a share, and counting them as they go.
 //!
 //! Deliberately dumb. Once a connection is authorized the bridge has no opinion
-//! about what travels over it: it is HTTP, or a WebSocket carrying hot-reload
-//! messages, or server-sent events, or the app's own protocol. Anything that
-//! tried to understand the payload would be a thing that gets it wrong for one
-//! framework and silently breaks the share.
+//! about what travels over it: HTTP, a WebSocket carrying hot-reload messages,
+//! server-sent events, or the app's own protocol. Anything that tried to
+//! understand the payload would get it wrong for one framework and silently
+//! break the share.
 //!
 //! Two things it does owe the caller.
 //!
-//! **Counting as it goes, not at the end.** A revoke kills live connections by
+//! Counting as it goes, not at the end. A revoke kills live connections by
 //! dropping the future mid-copy, and a total that only existed in the return
 //! value would be lost exactly for the connections a reviewer most wants to see.
-//! So the totals live in atomics the caller owns and reads afterwards either
-//! way.
 //!
-//! **An honest shutdown in both directions.** A half-closed peer must not leave
-//! the other side blocked on a socket that will never say anything again.
+//! An honest shutdown in both directions. A half-closed peer must not leave the
+//! other side blocked on a socket that will never say anything again.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -30,32 +28,32 @@ const CHUNK: usize = 32 * 1024;
 ///
 /// Applied only *after* the other direction has ended, which is what makes it
 /// safe to be this blunt: while both halves are live nothing here has a clock,
-/// so a hot-reload socket or an event stream runs for as long as the ticket
-/// does. A half-close is the browser having gone, and there is nobody left to
-/// read a response that arrives four minutes later.
+/// so a hot-reload socket runs for as long as the ticket does. A half-close is
+/// the browser having gone, and there is nobody left to read a response that
+/// arrives four minutes later.
 ///
-/// Unbounded, it was a slot leak with a one-line reproducer. A browser closing
-/// a WebSocket makes the peer-to-box direction reach EOF, which shuts down the
-/// dev server's socket write half; a server that ignores EOF and stays open but
+/// Unbounded, it was a slot leak with a one-line reproducer. A browser closing a
+/// WebSocket makes the peer-to-box direction reach EOF, which shuts down the dev
+/// server's socket write half; a server that ignores EOF and stays open but
 /// silent then leaves the box-to-peer direction reading forever. Over P2P
-/// closing that one browser stream does not close the shared QUIC connection,
-/// so the outer `conn.closed()` arm never fires either. Each occurrence keeps a
-/// `Bridge::admit` permit, and sixty-four ordinary page reloads against such a
-/// server made the share answer `busy` until the ticket expired.
+/// closing that one browser stream does not close the shared QUIC connection, so
+/// the outer `conn.closed()` arm never fires either. Each occurrence keeps a
+/// `Bridge::admit` permit, and sixty-four ordinary page reloads made the share
+/// answer `busy` until the ticket expired.
 const DRAIN_GRACE: Duration = Duration::from_secs(60);
 
 /// How a direction ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ended {
     /// The reader ran out, or the far side went away. The other direction may
-    /// legitimately still be going — that is a half-close.
+    /// legitimately still be going. That is a half-close.
     Cleanly,
     /// The far side stopped *reading*. Nothing more can be delivered to it, in
     /// either direction, so the connection is over.
     WriteStalled,
     /// The gate refused. Like [`Ended::WriteStalled`], this ends the whole
-    /// connection rather than half of it: the reason a gate says no —
-    /// `--direct-only` and a path that is no longer direct — is a fact about
+    /// connection rather than half of it: the reason a gate says no,
+    /// `--direct-only` and a path that is no longer direct, is a fact about
     /// the connection, not about one direction of it.
     Barred,
 }
@@ -65,11 +63,9 @@ enum Ended {
 /// The one caller that supplies a real one is `--direct-only` (see
 /// [`crate::p2p`]): the connection's selected path is watched by a once-a-second
 /// poll, and a direct path that falls back to a relay between two of those polls
-/// used to mean up to a second of application traffic crossing a third party
-/// before the connection was closed — for a flag whose whole promise is that
-/// none does. Consulted here, the bound becomes "whatever QUIC had already
-/// accepted at the instant the path changed" rather than "a second's worth",
-/// and nothing this copy has not yet handed over is handed over afterwards.
+/// used to mean up to a second of application traffic crossing a third party,
+/// for a flag whose whole promise is that none does. Consulted here, the bound
+/// becomes "whatever QUIC had already accepted at the instant the path changed".
 pub type Gate = dyn Fn() -> bool + Send + Sync;
 
 /// Copy one direction, adding to `counter` after every write that lands.
@@ -93,8 +89,8 @@ where
             return Ended::Barred;
         }
         // Deadlined, like every other write in the crate. A peer that stops
-        // reading an upgraded connection — a backgrounded tab holding a
-        // hot-reload socket — would otherwise park this copy forever, holding
+        // reading an upgraded connection, a backgrounded tab holding a
+        // hot-reload socket, would otherwise park this copy forever, holding
         // one of the share's slots for the life of the ticket.
         if let Err(e) = crate::http_front::write_timed(&mut w, &buf[..n]).await {
             let _ = w.shutdown().await;
@@ -148,8 +144,8 @@ pub async fn duplex_gated<RA, WA, RB, WB>(
     RB: AsyncRead + Unpin + Send,
     WB: AsyncWrite + Unpin + Send,
 {
-    // Not `join!`. A peer that stops reading — the zero-receive-window case the
-    // write deadline exists for — leaves the *other* direction parked on a
+    // Not `join!`. A peer that stops reading, the zero-receive-window case the
+    // write deadline exists for, leaves the *other* direction parked on a
     // socket that is open and silent, so waiting for both meant the deadline
     // fired and the connection was held anyway, which is the thing it was added
     // to prevent. A stalled write ends the whole connection; anything else is a
@@ -240,11 +236,10 @@ mod tests {
     /// A half-close against a server that ignores it does not hold the slot.
     ///
     /// The existing "one side going away" test drops *both* endpoints, so it
-    /// never exercised this: the peer goes and the server stays open and
-    /// silent, which is the ordinary shape of an agent-written dev server that
-    /// does not act on EOF. Unbounded, the box-to-peer copy read forever and
-    /// the `Bridge::admit` permit went with it — sixty-four reloads and the
-    /// share answers `busy` until the ticket expires.
+    /// never exercised this: the peer goes and the server stays open and silent,
+    /// which is the ordinary shape of an agent-written dev server that does not
+    /// act on EOF. Unbounded, the box-to-peer copy read forever and the
+    /// `Bridge::admit` permit went with it.
     #[tokio::test(start_paused = true)]
     async fn a_silent_server_after_the_peer_hangs_up_does_not_hold_the_slot() {
         let (peer, peer_side) = tokio::io::duplex(64);

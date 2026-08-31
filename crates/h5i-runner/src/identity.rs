@@ -1,16 +1,13 @@
 //! Who a runner is.
-//!
 //! A name is a label, and a label can be re-pointed at different hardware
-//! tomorrow. `runner_id` is the SHA-256 of the runner's SSH **host key**, which
-//! is the thing SSH already authenticates on every connection and the thing our
-//! pinned `known_hosts` already refuses to let change silently. Binding a box
-//! to that binds it to a machine (ROADMAP.md R6, and the decision it closed in
+//! tomorrow. `runner_id` is the SHA-256 of the runner's SSH *host key*, the
+//! thing SSH already authenticates on every connection and the thing our pinned
+//! `known_hosts` already refuses to let change silently. Binding a box to that
+//! binds it to a machine (design-runner.md R6, and the decision it closed in
 //! R13).
-//!
 //! A reinstalled machine with a fresh host key is a fresh identity. That is
 //! correct, not a bug: it really is a different trust anchor, whatever its
 //! label says.
-//!
 //! Both spellings of the hash come from here so they cannot drift:
 //! [`HostKey::fingerprint`] is the `SHA256:…` string `ssh-keygen -lf` prints,
 //! for a human to compare out of band, and [`HostKey::runner_id`] is the hex
@@ -71,8 +68,8 @@ impl HostKey {
         if line.is_empty() || line.starts_with('#') {
             return Err(IdentityError::NotAHostKey(line.to_string()));
         }
-        // A `@cert-authority`/`@revoked` marker is a different kind of entry and
-        // must not be read as a key we can pin.
+        // A `@cert-authority`/`@revoked` marker is a different kind of entry
+        // and must not be read as a key we can pin.
         if line.starts_with('@') {
             return Err(IdentityError::NotAHostKey(line.to_string()));
         }
@@ -121,7 +118,7 @@ impl HostKey {
     /// The `known_hosts` line to pin this key against one host.
     ///
     /// The host pattern includes the port when it is not 22, in OpenSSH's
-    /// bracket form, because that is how OpenSSH looks the entry up — a pinned
+    /// bracket form, because that is how OpenSSH looks the entry up. A pinned
     /// key filed under the wrong pattern is a pin that silently never matches.
     pub fn known_hosts_line(&self, host: &str, port: Option<u16>) -> String {
         let pattern = match port {
@@ -133,12 +130,10 @@ impl HostKey {
 }
 
 /// Is this one of the algorithms OpenSSH names a host *key* with?
-///
 /// Deliberately a list rather than a shape test: a field that merely *looks*
 /// like an algorithm is how a comment or a stray token gets read as a key.
-///
 /// `rsa-sha2-256`/`rsa-sha2-512` are deliberately absent. They are *signature*
-/// algorithm names — a `known_hosts` line's key type is always `ssh-rsa` — so
+/// algorithm names and a `known_hosts` line's key type is always `ssh-rsa`, so
 /// accepting them meant that if one ever appeared it would be written back into
 /// a `known_hosts` line OpenSSH does not recognise as a key type: a pin that
 /// silently never matches.
@@ -310,7 +305,8 @@ mod tests {
 
     #[test]
     fn ed25519_wins_a_scan_that_offers_several() {
-        // Deterministic, so `runner_id` does not depend on scanner output order.
+        // Deterministic, so `runner_id` does not depend on scanner output
+        // order.
         let scan = format!(
             "pi.local ssh-rsa {ED25519}\npi.local ssh-ed25519 {ED25519}\n\
              pi.local ecdsa-sha2-nistp256 {ED25519}\n"
@@ -334,7 +330,7 @@ mod tests {
         let scan = format!("h ssh-ed25519 {ED25519}\nh ssh-ed25519 {other}\n");
         assert!(preferred_host_key(&scan).is_err());
 
-        // The same key twice is not a conflict — a scan may legitimately repeat.
+        // The same key twice is not a conflict. A scan may legitimately repeat.
         let dup = format!("h ssh-ed25519 {ED25519}\nh ssh-ed25519 {ED25519}\n");
         assert!(preferred_host_key(&dup).is_ok());
     }

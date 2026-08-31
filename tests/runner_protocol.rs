@@ -5,17 +5,16 @@
 
 //! The runner protocol over a real process boundary.
 //!
-//! `h5i-runner`'s own tests drive the worker loop through two in-memory
-//! buffers, which is where the framing and the state machine are pinned down.
-//! This is the other half of R13.1's exit criterion: the same protocol against
-//! the **real binary**, spawned as a child, with pipes and an exit status in
-//! between — and still no sshd, no second machine and no network, which is what
-//! makes it something CI can run.
+//! `h5i-runner`'s own tests drive the worker loop through two in-memory buffers,
+//! which is where the framing and the state machine are pinned down. This is the
+//! other half of R13.1's exit criterion: the same protocol against the *real
+//! binary*, spawned as a child, with pipes and an exit status in between, and
+//! still no sshd, no second machine and no network.
 //!
 //! What the child-process transport is *for* is the failure half. A peer that
-//! sends an oversized frame, or stops mid-message, or speaks a protocol from
-//! the future, is trivial to arrange here and near-impossible to arrange
-//! against a real runner on demand.
+//! sends an oversized frame, or stops mid-message, or speaks a protocol from the
+//! future, is trivial to arrange here and near-impossible to arrange against a
+//! real runner on demand.
 
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
@@ -198,7 +197,7 @@ fn an_oversized_declaration_is_refused_before_a_byte_of_it_is_read() {
 #[test]
 fn a_truncated_frame_ends_the_session_without_a_reply() {
     // Out of step with the stream, anything written back would be read at an
-    // offset the peer does not expect — so the worker says nothing.
+    // offset the peer does not expect, so the worker says nothing.
     let mut input = hello_bytes(PROTOCOL_VERSION);
     input.extend_from_slice(&64u32.to_be_bytes());
     input.extend_from_slice(b"only a few bytes, not 64");
@@ -220,7 +219,7 @@ fn a_zero_length_frame_carries_no_type_byte_and_is_refused() {
 
 #[test]
 fn the_frame_cap_is_the_formats_and_both_sides_of_it_behave() {
-    // The cap that governs one frame is the **format's**, not the exchange's.
+    // The cap that governs one frame is the *format's*, not the exchange's.
     // An earlier version narrowed it per exchange as well, which read like
     // defence in depth and was a bug: the session's first budget then governed
     // every later RPC on the same channel, so a command with a real amount of
@@ -228,7 +227,7 @@ fn the_frame_cap_is_the_formats_and_both_sides_of_it_behave() {
     let cap = Limits::permissive().max_frame();
     assert_eq!(cap, Limits::control().max_frame(), "one cap, every exchange");
 
-    // Exactly at it: legal framing, and a malformed HELLO — so the refusal must
+    // Exactly at it: legal framing, and a malformed HELLO, so the refusal must
     // be about the payload rather than about the size.
     let mut input = Vec::new();
     FrameWriter::new(&mut input, Limits::permissive())
@@ -244,7 +243,7 @@ fn the_frame_cap_is_the_formats_and_both_sides_of_it_behave() {
 
     // One byte over is refused at the framing layer, before the payload is
     // read, so there is nothing to say back. Written by hand because the
-    // writer refuses to emit it either — which is the point.
+    // writer refuses to emit it either, which is the point.
     let mut input = Vec::new();
     input.extend_from_slice(&((cap as u32) + 1).to_be_bytes());
     input.extend_from_slice(&vec![b'x'; cap + 1]);
@@ -264,7 +263,7 @@ fn a_protocol_from_the_future_meets_us_at_ours_and_one_too_old_is_named() {
     assert!(status.success());
 
     // And a version we cannot meet fails at the handshake, with the numbers in
-    // the message — not later, mid-create, as a mysterious unknown frame.
+    // the message, not later, mid-create, as a mysterious unknown frame.
     let (frames, status) = raw_exchange(&hello_bytes(0));
     assert_eq!(error_in(&frames, 0).code, ErrorCode::ProtocolVersion);
     assert!(!status.success());
@@ -708,13 +707,12 @@ fn destroy_and_gc_leave_the_runner_clean() {
     assert!(client.list_boxes().expect("list").boxes.is_empty());
 }
 
-/// The whole R13.2 cycle over **real SSH**, against a runner you have paired.
+/// The whole R13.2 cycle over *real SSH*, against a runner you have paired.
 ///
 /// Opt-in, like `H5I_TEST_CONTAINER` and `H5I_TEST_NET`: it needs a second
-/// machine (or a localhost sshd) and a pairing, so CI cannot run it and a
-/// developer with one should be able to. Everything above this line is the same
-/// protocol over a child process, which is what makes the child-process
-/// transport worth having; this is the part only a real runner can answer.
+/// machine (or a localhost sshd) and a pairing, so CI cannot run it. Everything
+/// above this line is the same protocol over a child process; this is the part
+/// only a real runner can answer.
 ///
 /// ```bash
 /// h5i runner pair selftest $USER@localhost --worker-path $PWD/target/debug/h5i

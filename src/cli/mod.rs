@@ -8,20 +8,20 @@
 pub mod boxes;
 // `h5i browser`. Gated with the `browser` feature it drives, so a build without
 // the rendering engine linked in has no `browser` verb rather than one that
-// starts a subprocess that cannot render — the same rule `ui`, `share` and
+// starts a subprocess that cannot render. The same rule `ui`, `share` and
 // `runner` follow.
 #[cfg(feature = "browser")]
 pub mod browser;
 // The helper lane behind `h5i browser transcript --via yt-dlp`: an outside
 // program, run deliberately, recorded as one.
 //
-// Its own feature *and* its own flag, and both are deliberate. The feature
-// means a build can be made that has no path to exec anything at all — the
-// stronger promise, and the one a hardened deployment wants to be able to make
-// about a binary rather than about how it is invoked. The flag means the lane
-// never fires by default and never fires as a fallback from the engine's own
-// read, because a fetch that left the engine's request log without anyone
-// asking is exactly the silence this product is arranged against.
+// Its own feature *and* its own flag, both deliberate. The feature means a
+// build can be made that has no path to exec anything at all: the stronger
+// promise, and the one a hardened deployment wants to be able to make about a
+// binary rather than about how it is invoked. The flag means the lane never
+// fires by default and never fires as a fallback from the engine's own read,
+// because a fetch that left the engine's request log without anyone asking is
+// exactly the silence this product is arranged against.
 //
 // It implies `browser`: the two lanes answer with one shape and share one
 // WebVTT parser, which is what stops them disagreeing about a timestamp.
@@ -41,7 +41,7 @@ pub mod detect;
 #[cfg(feature = "share-tunnel")]
 pub mod share;
 // `h5i runner`. Gated with the `runner` feature it drives, so a build without
-// it has no `runner` verb rather than a broken one — and, since the worker end
+// it has no `runner` verb rather than a broken one, and, since the worker end
 // of the protocol is this same binary, no ability to *be* a runner either.
 // The bridge between h5i-core's placement trait and the runner protocol. Same
 // gate as `runner`, because it is the half of that feature the box lifecycle
@@ -53,7 +53,7 @@ pub mod runner;
 pub mod skill;
 // `h5i box watch`. Not feature-gated: `browser_events` is exported from
 // h5i-core unconditionally, and the verb is how someone finds out what a box
-// is doing without opening a browser — which is exactly the build that has no
+// is doing without opening a browser, which is exactly the build that has no
 // console to open.
 pub mod watch;
 // The box console. Gated with the `web` feature it drives, so a
@@ -63,7 +63,7 @@ pub mod ui;
 
 /// `Repository::discover(".")` with an actionable failure. Every verb here
 /// stores its state relative to the enclosing repository, so outside one there
-/// is nothing to act on — and libgit2's raw `class=…; code=…` error names
+/// is nothing to act on, and libgit2's raw `class=…; code=…` error names
 /// neither that precondition nor what to do about it.
 pub fn discover_repo(verb: &str) -> anyhow::Result<git2::Repository> {
     git2::Repository::discover(".").map_err(|e| {

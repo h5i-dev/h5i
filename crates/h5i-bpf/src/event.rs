@@ -5,16 +5,15 @@
 //! they were the only one:
 //!
 //! 1. A compile-time assertion on [`RawEvent`]'s size and alignment here.
-//! 2. A magic word and a version in every record, checked on decode, so a
-//!    probe object and a loader that disagree are caught at the first event
-//!    rather than turned into plausible-looking nonsense.
+//! 2. A magic word and a version in every record, checked on decode, so a probe
+//!    object and a loader that disagree are caught at the first event rather than
+//!    turned into plausible-looking nonsense.
 //! 3. `tests/wire_contract.rs`, which parses the C header and checks the
-//!    constants against the Rust ones — the only one of the three that
-//!    notices a *field* moving rather than the struct changing size.
+//!    constants against the Rust ones. The only one of the three that notices a
+//!    *field* moving rather than the struct changing size.
 //!
-//! Nothing in this module does I/O or touches a kernel, so it compiles and is
-//! tested on every target h5i releases for, including the ones where eBPF is
-//! not a concept.
+//! Nothing here does I/O or touches a kernel, so it compiles and is tested on
+//! every target h5i releases for, including the ones where eBPF is not a concept.
 
 use std::fmt;
 
@@ -208,7 +207,7 @@ impl Family {
 ///
 /// Strings are lossy-decoded and truncated at the first NUL. They are the
 /// bytes a *process* passed to a syscall, not anything the kernel resolved, so
-/// every consumer treats them as a hint (ROADMAP.md D13.3) — and they can
+/// every consumer treats them as a hint (design-detect.md D13.3), and they can
 /// contain anything, including terminal control sequences, which is why the
 /// rendering path runs them through `h5i_error::redact`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,7 +217,7 @@ pub struct Event {
     pub tgid: u32,
     pub tid: u32,
     /// Filled in by the session from the Fork events it has already seen; the
-    /// probe never reports it (ROADMAP.md D5).
+    /// probe never reports it (design-detect.md D5).
     pub ppid: u32,
     pub uid: u32,
     pub a0: i64,
@@ -273,7 +272,7 @@ impl std::error::Error for DecodeError {}
 ///
 /// Lossy, deliberately: a path is whatever bytes a process passed, and
 /// refusing to decode invalid UTF-8 would mean the one event most worth
-/// looking at — a deliberately mangled path — is the one that disappears.
+/// looking at, a deliberately mangled path, is the one that disappears.
 fn cstr(bytes: &[u8]) -> String {
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
     String::from_utf8_lossy(&bytes[..end]).into_owned()
@@ -282,7 +281,7 @@ fn cstr(bytes: &[u8]) -> String {
 /// Render an `AF_UNIX` `sun_path`, including the abstract-namespace form.
 ///
 /// An abstract socket's name starts with a NUL, so `cstr` would render every
-/// one of them as the empty string — and abstract sockets are exactly the ones
+/// one of them as the empty string, and abstract sockets are exactly the ones
 /// worth seeing, since that is how a browser's daemon, a D-Bus and an X server
 /// are all reached.
 fn unix_path(bytes: &[u8]) -> String {
@@ -548,7 +547,7 @@ mod tests {
     }
 
     /// An unknown kind must survive as "something I cannot name", because the
-    /// alternative — dropping it — makes a newer probe look like a quiet one.
+    /// alternative, dropping it, makes a newer probe look like a quiet one.
     #[test]
     fn an_unknown_kind_survives() {
         let raw = wire(999, 0, 0, 0, b"/x\0", b"");

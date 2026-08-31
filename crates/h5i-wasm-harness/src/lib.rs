@@ -5,19 +5,19 @@
 //! same core compiles three ways from one source: natively for `cargo test`
 //! and the `h5i-agent` host binary, and to `wasm32-unknown-unknown` as a `cdylib`
 //! that any `WebAssembly.instantiate` (browser / Node) or WASI runtime can
-//! load. All I/O — the model HTTP call and every tool run — is delegated to
+//! load. All I/O, the model HTTP call and every tool run, is delegated to
 //! the embedding host through `Effect` / `Event` values; the module itself
 //! performs none, which is what lets one binary serve both environments.
 //!
 //! Layout:
-//! - [`agent`] — the state machine (loop shape from mini-swe-agent, structural
+//! - [`agent`]: the state machine (loop shape from mini-swe-agent, structural
 //!   termination from hax). Pure; never does I/O.
-//! - [`json`] — a tiny no_std JSON parser/serializer (insertion-ordered
+//! - [`json`] (a tiny no_std JSON parser/serializer (insertion-ordered
 //!   objects, f64 numbers), so the crate needs no `serde` and stays clean for
 //!   the offline `build-std`-free wasm build.
-//! - [`proto`] — the JSON wire schema for the effect/event boundary plus the
+//! - [`proto`]) the JSON wire schema for the effect/event boundary plus the
 //!   `init` / `step` / `dump` contract shared by every host.
-//! - `wasm` (wasm32 only) — the pinned six-symbol ABI over the above.
+//! - `wasm` (wasm32 only): the pinned six-symbol ABI over the above.
 //!
 //! The `h5i-agent` binary (`src/bin/h5i-agent.rs`) is the native host: a real filesystem,
 //! a scripted mock model, and an optional plain-HTTP local model.

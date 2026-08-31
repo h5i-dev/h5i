@@ -12,7 +12,7 @@
 //! Model source (required either way):
 //!   --script replies.json   scripted mock model (a JSON array of
 //!                           chat-completions response envelopes, replayed in
-//!                           order — the shape of mini-swe-agent's
+//!                           order: the shape of mini-swe-agent's
 //!                           DeterministicModel, models/test_models.py)
 //!   --model-url http://...  real OpenAI-compatible endpoint, http:// only
 //!                           (no TLS without dependencies; meant for
@@ -130,7 +130,7 @@ impl ModelHost for ScriptedModel {
     }
 }
 
-/// Minimal HTTP/1.1 POST over TcpStream. http:// only — good enough for the
+/// Minimal HTTP/1.1 POST over TcpStream. http:// only. Good enough for the
 /// llama.cpp / Ollama localhost workflow, and keeps the binary dependency-free.
 /// Streams by default (tokens render live); `stream = false` blocks for the
 /// whole response.

@@ -1,20 +1,19 @@
 //! Browser evidence: collecting what the page said after the agent touched it.
 //!
 //! `h5i box run <box> -- agent-browser click @e2` already produces a receipt for
-//! the command. What it does not produce, and what a reviewer actually needs, is
-//! the page's answer: the console error the click raised, the exception it threw,
-//! the request that came back 500. Without those the browser half of an export is
-//! the agent's own testimony.
+//! the command. What it does not produce, and what a reviewer needs, is the
+//! page's answer: the console error the click raised, the exception it threw,
+//! the request that came back 500. Without those the browser half of an export
+//! is the agent's own testimony.
 //!
-//! So h5i drains them itself, right after the run, in the same box under the same
-//! policy. Three properties fall out of doing it here rather than asking the agent
-//! to report:
+//! So h5i drains them itself, right after the run, in the same box under the
+//! same policy. Three properties fall out of doing it here:
 //!
-//! * **Timing is ours.** The drain happens at a point the agent does not choose,
-//!   so evidence cannot be collected only when it is flattering.
-//! * **Scope is ours.** The cursor lives host-side, outside every write grant the
+//! * Timing is ours. The drain happens at a point the agent does not choose, so
+//!   evidence cannot be collected only when it is flattering.
+//! * Scope is ours. The cursor lives host-side, outside every write grant the
 //!   box has (roadmap 5.7), so a record already written cannot be walked back.
-//! * **Absence is visible.** A run that invoked a browser verb and produced no
+//! * Absence is visible. A run that invoked a browser verb and produced no
 //!   evidence block is marked `unavailable`, not rendered as a clean page.
 //!
 //! What this is not: a containment boundary. The strings come from a browser
@@ -36,7 +35,7 @@ const MAX_LINES: usize = 40;
 const MAX_LINE: usize = 500;
 
 /// Where the drain cursor lives, relative to an env directory. Host-side, and
-/// deliberately not under `<env>/spool` — the box's only write window there —
+/// deliberately not under `<env>/spool`, the box's only write window there,
 /// so the box cannot rewind it to make old evidence look new, or advance it to
 /// make new evidence disappear.
 const CURSOR_FILE: &str = "browser-cursor.json";
@@ -49,7 +48,7 @@ const CURSOR_FILE: &str = "browser-cursor.json";
 /// carries only its own slice.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 struct Cursor {
-    /// Which browser session these counts belong to — see [`session_id`].
+    /// Which browser session these counts belong to. See [`session_id`].
     ///
     /// Without this the cursor outlives the thing it indexes. At the supervised
     /// tier every run gets a fresh network namespace and a fresh browser, so
@@ -67,22 +66,20 @@ struct Cursor {
 /// Identity of the browser session currently running in this box.
 ///
 /// The daemon writes `<session>.pid` next to its socket, and the private `/tmp`
-/// that holds both is wiped at the start of every run — so the set of pid files
+/// that holds both is wiped at the start of every run, so the set of pid files
 /// is a serviceable session fingerprint, readable from the host without asking
 /// the box anything.
 pub(crate) fn session_id(tmp_root: &Path) -> Option<String> {
-    // Both directories: under mediation the daemon's pid file is in the
-    // private one and the shim mirrors only .version/.config/.stream, so
-    // looking at the visible directory alone returns None on every mediated
-    // run — and a cursor that never sees a session change never resets, so a
-    // fresh browser producing the same number of console lines reads as a
-    // clean page.
-    // Bounded in both directions, because this walks `<env>/tmp` — one of the
-    // two paths a box can write — from the *host*. A pid file holds a decimal
+    // Both directories: under mediation the daemon's pid file is in the private
+    // one and the shim mirrors only .version/.config/.stream, so looking at the
+    // visible directory alone returns None on every mediated run, and a cursor
+    // that never sees a session change never resets.
+    //
+    // Bounded in both directions, because this walks `<env>/tmp`, one of the two
+    // paths a box can write, from the *host*. A pid file holds a decimal
     // integer; without a cap, a box could put four gigabytes in one and have the
     // host allocate it, or fill the directory and have the host build an
-    // unbounded `ids` vector out of the names. Neither is a session
-    // fingerprint, so both are refused rather than read.
+    // unbounded `ids` vector out of the names.
     const MAX_PID_FILES: usize = 64;
     const MAX_PID_BYTES: u64 = 64;
     let mut ids: Vec<String> = std::fs::read_dir(daemon_dir(tmp_root))
@@ -134,16 +131,15 @@ fn write_cursor(env_dir: &Path, c: &Cursor) {
 /// Host path of the box's agent-browser socket directory.
 ///
 /// `browser_env` points the daemon at `/tmp/agent-browser`, and at the kernel
-/// tiers `/tmp` is the per-env scratch backed by `<env>/tmp` — so the socket the
+/// tiers `/tmp` is the per-env scratch backed by `<env>/tmp`, so the socket the
 /// box created is visible from here. That is what makes the "is there a browser
 /// to ask?" check free: no exec, no daemon launch, just a directory listing.
-/// The box-visible socket directory, under the **resolved** host-side `/tmp`.
 ///
 /// Takes the root rather than deriving `<env>/tmp` itself: that derivation is
-/// only correct on Linux kernel tiers, and getting it wrong here means the
-/// liveness gate is always false and the evidence drain is silently skipped —
-/// a run that looks clean because nothing was ever collected. `env::host_tmp_root`
-/// is the single place that knows the mapping.
+/// only correct on Linux kernel tiers, and getting it wrong means the liveness
+/// gate is always false and the evidence drain is silently skipped, so a run
+/// looks clean because nothing was ever collected. `env::host_tmp_root` is the
+/// single place that knows the mapping.
 fn socket_dir(tmp_root: &Path) -> PathBuf {
     tmp_root.join("agent-browser")
 }
@@ -163,12 +159,11 @@ fn daemon_dir(tmp_root: &Path) -> PathBuf {
 /// purely to be told the console was empty, and every run would report a
 /// spuriously clean page.
 ///
-/// A session is a socket **and** a pid file together, in one directory.
-/// Either alone is a leftover: a stale `.pid` outlives a daemon that died, and
-/// since h5i began mediating, a `.sock` in the box-visible directory may be
-/// h5i's own listener — bound before the box starts, which would make this gate
-/// unconditionally true and reintroduce the spurious launch it exists to
-/// prevent. Only a running daemon leaves both.
+/// A session is a socket *and* a pid file together, in one directory. Either
+/// alone is a leftover: a stale `.pid` outlives a daemon that died, and since
+/// h5i began mediating, a `.sock` in the box-visible directory may be h5i's own
+/// listener, bound before the box starts, which would make this gate
+/// unconditionally true. Only a running daemon leaves both.
 ///
 /// Both directories are searched, because under mediation the real daemon binds
 /// the private one while an unmediated box still uses the visible one.
@@ -191,13 +186,12 @@ pub fn browser_is_live(tmp_root: &Path) -> bool {
 
 /// Did this run touch the browser at all?
 ///
-/// Two shapes count. A direct invocation (`h5i box run bx -- agent-browser
-/// click @e2`) is the obvious one. The other is the one agents actually
-/// produce: `sh -c '... && agent-browser click @e2'`, where argv[0] is a shell
-/// and the driver is buried in the command string. Matching the string is a
-/// heuristic, and it is the right kind of wrong — it can over-fire, and
-/// over-firing costs one exec that [`browser_is_live`] has already established
-/// is worth making.
+/// Two shapes count. A direct invocation is the obvious one. The other is the
+/// one agents actually produce: `sh -c '... && agent-browser click @e2'`, where
+/// argv[0] is a shell and the driver is buried in the command string. Matching
+/// the string is a heuristic, and it is the right kind of wrong: it can
+/// over-fire, and over-firing costs one exec that [`browser_is_live`] has
+/// already established is worth making.
 pub fn run_touched_browser(argv: &[String]) -> Option<String> {
     if let Some(verb) = command_verb(argv) {
         return Some(verb);
@@ -210,7 +204,7 @@ pub fn run_touched_browser(argv: &[String]) -> Option<String> {
 /// The `agent-browser` verb this command runs, if it is one.
 ///
 /// Matched on the basename so an absolute path counts, and the verb is the first
-/// argument that is not a global flag — `agent-browser --session x open URL` is
+/// argument that is not a global flag: `agent-browser --session x open URL` is
 /// an `open`. Returns `None` for anything else, which is how a `cargo test` in a
 /// browser box avoids paying for a drain it has no use for.
 pub fn command_verb(argv: &[String]) -> Option<String> {
@@ -239,8 +233,8 @@ pub fn command_verb(argv: &[String]) -> Option<String> {
 }
 
 /// Does this verb warrant a drain? Everything that can change or inspect a page
-/// does; the session-management verbs do not, and `close` especially must not —
-/// draining after it would relaunch the browser we were just asked to shut down.
+/// does; the session-management verbs do not, and `close` especially must not.
+/// Draining after it would relaunch the browser we were just asked to shut down.
 pub fn verb_wants_drain(verb: &str) -> bool {
     !matches!(
         verb,
@@ -281,8 +275,8 @@ fn clip(s: &str) -> String {
 /// Tolerant by construction: this is third-party JSON on the critical path of a
 /// run that has already succeeded, so a shape we do not recognize yields empty
 /// evidence rather than failing the run. The one thing it must not do is
-/// silently report a clean page when it could not read one — that is what
-/// `unavailable` is for, and the caller sets it when the drain did not run.
+/// silently report a clean page when it could not read one, which is what
+/// `unavailable` is for.
 fn parse_batch(out: &[u8], cursor: &mut Cursor) -> BrowserEvidence {
     let mut ev = BrowserEvidence::default();
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(out) else {
@@ -310,7 +304,7 @@ fn parse_batch(out: &[u8], cursor: &mut Cursor) -> BrowserEvidence {
         }
     };
 
-    // `slice` caps each *array*, and the outer list has no cap at all — so a
+    // `slice` caps each *array*, and the outer list has no cap at all, so a
     // batch of ten thousand entries, each carrying its own `messages` array,
     // multiplied straight through into `ev` and from there into a receipt line.
     // The box writes this JSON, so the total is what has to be bounded, not the
@@ -412,7 +406,7 @@ mod tests {
     fn the_mediator_socket_alone_does_not_count_as_a_live_browser() {
         // h5i binds its listener in this directory before the box starts, so a
         // socket-based check would be unconditionally true and the drain would
-        // launch Chrome purely to report an empty console — the spurious launch
+        // launch Chrome purely to report an empty console. The spurious launch
         // this gate exists to prevent.
         let td = tempfile::tempdir().expect("tempdir");
         let dir = td.path().join("tmp").join("agent-browser");
@@ -448,7 +442,7 @@ mod tests {
     #[test]
     fn only_agent_browser_invocations_are_browser_commands() {
         assert_eq!(command_verb(&argv(&["agent-browser", "open", "u"])).as_deref(), Some("open"));
-        // Absolute path still counts — the box may not resolve it through PATH.
+        // Absolute path still counts. The box may not resolve it through PATH.
         assert_eq!(
             command_verb(&argv(&["/usr/local/bin/agent-browser", "snapshot"])).as_deref(),
             Some("snapshot")
@@ -539,7 +533,7 @@ mod tests {
         assert_eq!(ev.console, vec!["[error] boom"]);
         assert_eq!(ev.errors, vec!["TypeError: x is null"]);
         // A 200 is not a finding. A 500 is, and so is a request that never got
-        // a response at all — which in a box usually means the egress allowlist.
+        // a response at all, which in a box usually means the egress allowlist.
         assert_eq!(
             ev.failed_requests,
             vec!["500 POST /api/save", "no response GET https://blocked.example"]
@@ -568,7 +562,7 @@ mod tests {
         assert_eq!(second.console, vec!["[error] two"]);
 
         // A shorter buffer means the session restarted and numbering began
-        // again — take it all rather than silently reporting nothing.
+        // again. Take it all rather than silently reporting nothing.
         let restarted = parse_batch(
             &batch_json(r#"{"type":"error","text":"fresh"}"#, "", ""),
             &mut c,
@@ -597,7 +591,7 @@ mod tests {
     #[test]
     fn a_flood_spread_across_many_entries_is_capped_too() {
         // Each entry's buffer is one longer than the last, which is what an
-        // accumulating buffer actually looks like — so the cursor advances by
+        // accumulating buffer actually looks like, so the cursor advances by
         // one per entry and every entry contributes a fresh line.
         let entries: Vec<String> = (0..200)
             .map(|i| {
@@ -639,7 +633,7 @@ mod tests {
         assert_eq!(ev.verb.as_deref(), Some("click"));
     }
 
-    /// `session_id` walks `<env>/tmp` — one of the two paths a box can write —
+    /// `session_id` walks `<env>/tmp`, one of the two paths a box can write,
     /// from the host, and read every `.pid` file whole. A pid file holds a
     /// decimal integer; a box could put four gigabytes in one, or fill the
     /// directory, and the host would allocate it either way.
@@ -693,7 +687,7 @@ mod tests {
 
         // New run at the supervised tier means a new netns and a new daemon.
         // The buffer is a *different* buffer that happens to be the same
-        // length, so a count comparison alone would call this clean — which is
+        // length, so a count comparison alone would call this clean, which is
         // exactly the failure this identity exists to prevent.
         std::fs::write(sockets.join("default.pid"), "2002").unwrap();
         assert_eq!(
@@ -713,7 +707,7 @@ mod tests {
         let second = collect(td.path(), &td.path().join("tmp"), "click", |_| Some(out.clone()));
         assert!(second.console.is_empty());
 
-        // And the cursor is a sibling of the spool, never inside it — the box's
+        // And the cursor is a sibling of the spool, never inside it. The box's
         // write window must not include the thing that decides what is new.
         let cursor = cursor_path(td.path());
         assert!(cursor.is_file());

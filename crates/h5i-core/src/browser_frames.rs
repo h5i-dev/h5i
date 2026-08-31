@@ -3,27 +3,24 @@
 //! The evidence panes answer *what did the agent do*; this answers *what did the
 //! page look like while it did it*.
 //!
-//! **This does not make the console a remote control.** `h5i ui`'s guarantee is
-//! that every route is a `GET` ([`crate::server`]), and the relay does not spend
-//! it, being one-directional by construction: the console connects out into the
-//! box and reads, so nothing new listens and the box gains no reachability. The
-//! only upstream messages are `config` and `ack`, the pacing the stream server
-//! needs, and no code path runs from an HTTP request to a message on this
-//! socket. Typing still goes through [`crate::view`]'s forward with its own
-//! per-box token and the control lock. Takeover has one door, and it is not this
-//! one.
+//! This does not make the console a remote control. `h5i ui`'s guarantee is that
+//! every route is a `GET` ([`crate::server`]), and the relay does not spend it,
+//! being one-directional by construction: the console connects out into the box
+//! and reads, so nothing new listens and the box gains no reachability. The only
+//! upstream messages are `config` and `ack`, the pacing the stream server needs,
+//! and no code path runs from an HTTP request to a message on this socket.
+//! Typing still goes through [`crate::view`]'s forward with its own per-box
+//! token and the control lock.
 //!
-//! **A frame is box-claimed.** It is the box's rendering of its own page,
-//! arriving as pixels the box chose, so the console shows what the box reports
-//! and the reader decides what that is worth. Nothing derived from a frame
-//! reaches the trusted status row.
+//! A frame is box-claimed: the box's rendering of its own page, arriving as
+//! pixels the box chose. Nothing derived from a frame reaches the trusted status
+//! row.
 //!
 //! One caveat this module cannot fix: `h5i-browser-light` has no resident
 //! session, so a live view served by it shows the page *it* was started on
 //! rather than the one the agent is driving. Chromium's agent-browser is one
 //! daemon owning one session, so its frames really are the agent's page. The
-//! console reports which case it is in rather than letting a picture imply the
-//! stronger one.
+//! console reports which case it is in.
 
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,7 +33,7 @@ use crate::termview::{proto, ws};
 /// Deliberately low. The console is a monitoring surface: it re-fetches the
 /// newest frame when the sequence number changes, so anything faster than a
 /// human notices is bytes across a namespace boundary for nothing. The engine
-/// is change-driven anyway — a still page sends nothing at any cap.
+/// is change-driven anyway. A still page sends nothing at any cap.
 const MAX_FPS: u32 = 4;
 
 /// Largest frame the relay will hold. The WebSocket reader already refuses
@@ -62,8 +59,8 @@ pub struct Frame {
 
 /// A running reader of one box's live view.
 ///
-/// Shaped like [`crate::browser_proxy::MediatorHandle`] — a stop flag and a
-/// `Drop` that joins — because the console already knows how to hold something
+/// Shaped like [`crate::browser_proxy::MediatorHandle`], a stop flag and a
+/// `Drop` that joins, because the console already knows how to hold something
 /// for the life of a session and let it go at the end.
 pub struct FrameRelay {
     latest: Arc<Mutex<Option<Frame>>>,
@@ -165,7 +162,7 @@ fn pump(
     stop: &Arc<AtomicBool>,
 ) -> Result<(), h5i_error::H5iError> {
     // The socket comes back from a fork that entered the box's user and network
-    // namespaces — the same route `h5i box view --term` takes. Nothing binds,
+    // namespaces. The same route `h5i box view --term` takes. Nothing binds,
     // nothing is punched through the namespace.
     let mut socket = crate::view::connect_in_netns(pid, port, pid_ns)?;
 
@@ -194,7 +191,7 @@ fn pump(
                     // Status, url, console and page-error messages all arrive
                     // here. They are the evidence panes' business, and those
                     // read them from the receipt lanes rather than from a
-                    // socket that may not be connected — so they are skipped
+                    // socket that may not be connected, so they are skipped
                     // rather than half-handled in two places.
                     continue;
                 };
@@ -238,7 +235,7 @@ fn decode_frame(seq: u64, data: &str) -> Option<Frame> {
 
 /// Where a box's live view is, if one is running: its pid and stream port.
 ///
-/// `None` is the ordinary case — most boxes are not serving a view — so the
+/// `None` is the ordinary case, most boxes are not serving a view, so the
 /// caller reports it as a state rather than as an error.
 pub fn locate(env_dir: &std::path::Path) -> Option<(u32, u16, std::ffi::OsString)> {
     let port = crate::view::stream_port(env_dir)?;

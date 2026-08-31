@@ -12,7 +12,7 @@
 //! further down, and are re-exported here so every call site keeps its path.
 //! They moved because `h5i-sandbox` sits *below* this crate and could not
 //! reach them: `sandbox::validate_image` worked around that with `{:?}`, and
-//! `microvm::tail_service_log` did not work around it at all — it printed a
+//! `microvm::tail_service_log` did not work around it at all. It printed a
 //! box-written service log to the operator's terminal raw. A guard that half
 //! the code cannot reach is a guard half the code will skip.
 

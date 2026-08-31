@@ -1,7 +1,7 @@
-//! `h5i browser` — the front door.
+//! `h5i browser`: the front door.
 //!
-//! One noun an agent learns: a **session**. `open` makes one, points the
-//! default at it, and every later verb follows that pointer.
+//! One noun an agent learns: a *session*. `open` makes one, points the default
+//! at it, and every later verb follows that pointer.
 //!
 //! ```text
 //! h5i browser open https://example.com
@@ -14,17 +14,16 @@
 //! `--session <name>` runs several at once; a name is reusable once its session
 //! ends, which is why the id is what gets written down.
 //!
-//! **Containment is a placement, not a product.** With no flags the session runs
-//! in this user's process space like any other headless browser, and what it
-//! does that others do not is *record*. `--in <box>` moves the same session into
-//! a box, changing only who saw the network: the lane goes from engine-claimed
-//! to host-observed ([`h5i_core::browser_session::Lane`]).
+//! Containment is a placement, not a product. With no flags the session runs in
+//! this user's process space like any other headless browser, and what it does
+//! that others do not is *record*. `--in <box>` moves the same session into a
+//! box, changing only who saw the network: the lane goes from engine-claimed to
+//! host-observed ([`h5i_core::browser_session::Lane`]).
 //!
 //! Verbs are carried in over `h5i box run` rather than dialled, because a
 //! supervised box's netns puts the engine's loopback control port out of the
 //! host's reach. Two things fall out, both wanted: every verb gets a receipt,
-//! and the control lock is checked on the host, outside the box, which is the
-//! one arrangement in which it is a boundary rather than a request.
+//! and the control lock is checked on the host, outside the box.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -47,22 +46,20 @@ const START_TIMEOUT: Duration = Duration::from_secs(30);
 /// Refuse an identity that lives in a file when the session runs in a box.
 ///
 /// A path cannot travel into a box. Every other path in a boxed argv is
-/// translated to one the box will have — `control_in_box`, `in_box_base` — and
-/// an identity file is named on the host and read by the engine, which for a
-/// boxed session are different filesystems. Passed through raw it arrived as
-/// "no browser identity called `/home/…/mine.toml`" followed by the list of
+/// translated to one the box will have (`control_in_box`, `in_box_base`) and an
+/// identity file is named on the host and read by the engine, which for a boxed
+/// session are different filesystems. Passed through raw it arrived as "no
+/// browser identity called `/home/…/mine.toml`" followed by the list of
 /// built-ins, which reads as a typo rather than as a boundary.
 ///
-/// **Both lanes, not just `open`.** `read --in` builds its own argv and was
-/// missed the first time this was fixed, so the same path went into the same
-/// box and produced the same misleading error.
+/// Both lanes, not just `open`: `read --in` builds its own argv and was missed
+/// the first time this was fixed.
 ///
-/// The test is a built-in name *and* an existing file, in that order — the
-/// order [`h5i_browser_light::identity::Identity::resolve`] uses. A built-in
-/// wins, so a file called `native` never shadows the identity of that name; and
-/// a selector that is neither is left alone, so a mistyped built-in still gets
-/// "no browser identity called `firefox-143-linx`" rather than being told it
-/// named a file it never named.
+/// The test is a built-in name *and* an existing file, in that order, the order
+/// [`h5i_browser_light::identity::Identity::resolve`] uses. A built-in wins, so
+/// a file called `native` never shadows the identity of that name; a selector
+/// that is neither is left alone, so a mistyped built-in still gets "no browser
+/// identity called `firefox-143-linx`".
 #[cfg(feature = "identity")]
 fn refuse_a_file_identity_in_a_box(in_box: Option<&str>, selector: &str) -> anyhow::Result<()> {
     let is_builtin = h5i_browser_light::identity::builtin(selector).is_some();
@@ -114,14 +111,14 @@ pub enum BrowserCommands {
 
         /// Run the session inside this box instead of on this machine.
         ///
-        /// The box must already exist (`h5i box`). A box that declares an
-        /// egress allowlist has a tier that enforces it, because creation is
-        /// fail-closed on that combination, so the session's request lane
-        /// becomes host-observed: what it reached was also seen outside the
-        /// engine. A box that declares none corroborates nothing, and the lane
-        /// stays engine-claimed. `h5i browser status` prints which of the two
-        /// this session got; read it rather than assuming the box earned the
-        /// stronger one. Note the standing Linux trade-off: the tiers that
+        /// The box must already exist (`h5i box`). A box that declares an egress
+        /// allowlist has a tier that enforces it, because creation is fail-closed
+        /// on that combination, so the session's request lane becomes
+        /// host-observed: what it reached was also seen outside the engine. A
+        /// box that declares none corroborates nothing and the lane stays
+        /// engine-claimed. `h5i browser status` prints which of the two this
+        /// session got; read it rather than assuming the box earned the stronger
+        /// one. Note the standing Linux trade-off: the tiers that
         /// enforce egress cannot hold a resident session yet, so today that
         /// combination is `microvm`, or a one-shot `h5i browser read --in`.
         #[arg(long = "in", value_name = "BOX")]
@@ -159,30 +156,29 @@ pub enum BrowserCommands {
         /// machine; inside the sandbox it reads the ones that were named.
         ///
         /// The value is resolved from the environment this command runs in and
-        /// delivered to this session alone. Fail-closed: a name whose variable
-        /// is not set refuses the session rather than starting one that cannot
-        /// use it. `ACME_PASS` and `H5I_SECRET_ACME_PASS` name the same thing.
+        /// delivered to this session alone. Fail-closed: a name whose variable is
+        /// not set refuses the session rather than starting one that cannot use
+        /// it. `ACME_PASS` and `H5I_SECRET_ACME_PASS` name the same thing.
         ///
         /// Not for `--in`: a session in a box takes its credentials from that
         /// box's policy, in `.h5i/env.toml`.
         #[arg(long = "secret", value_name = "NAME")]
         secrets: Vec<String>,
 
-        /// Who this session says it is: a built-in name, or a path to a TOML
-        /// file.
+        /// Who this session says it is: a built-in name, or a path to a TOML file.
         ///
         /// One identity, read by every layer that can be asked. `native` (the
-        /// default) answers as h5i and answers truthfully. `privacy` is still
-        /// h5i with the patch version and the host's time zone pinned, so one
-        /// install stops being distinguishable from another. A `compatible`
-        /// identity claims a different browser — and the session is **refused**
-        /// if this engine cannot back everything that identity declares,
-        /// rather than started with the claim half applied.
+        /// default) answers as h5i and answers truthfully. `privacy` is still h5i
+        /// with the patch version and the host's time zone pinned, so one install
+        /// stops being distinguishable from another. A `compatible` identity
+        /// claims a different browser, and the session is *refused* if this engine
+        /// cannot back everything that identity declares, rather than started
+        /// with the claim half applied.
         ///
-        /// `h5i browser identity list` names the built-ins, and `identity
-        /// check` says what one covers, what it does not, and why it would be
-        /// refused. Nothing here promises a session is undetectable: it
-        /// promises the answers agree with each other.
+        /// `h5i browser identity list` names the built-ins, and `identity check`
+        /// says what one covers, what it does not, and why it would be refused.
+        /// Nothing here promises a session is undetectable: it promises the
+        /// answers agree with each other.
         #[cfg(feature = "identity")]
         #[arg(long, value_name = "NAME|PATH", default_value = "native")]
         identity: String,
@@ -205,7 +201,7 @@ pub enum BrowserCommands {
 
         /// Seed this session's storage from one that has ended.
         ///
-        /// A restore is a **new session with a new id**, and the inheritance is
+        /// A restore is a new session with a new id, and the inheritance is
         /// written into its record. Nothing resurrects an id: an agent holding
         /// a stale one always gets a refusal, never a different session wearing
         /// the same name. Takes an id, not a name, because a name can be reused
@@ -220,16 +216,16 @@ pub enum BrowserCommands {
 
     /// List, show or check a browser identity.
     ///
-    /// An identity is who a session says it is — on the wire and in the page,
-    /// from one source, so the two cannot disagree. `list` names the ones that
-    /// ship, `show` prints one as the TOML you would edit to make your own, and
-    /// `check` says whether this engine can stand behind it.
+    /// An identity is who a session says it is, on the wire and in the page, from
+    /// one source so the two cannot disagree. `list` names the ones that ship,
+    /// `show` prints one as the TOML you would edit to make your own, and `check`
+    /// says whether this engine can stand behind it.
     ///
-    /// `check` is the one to read before trusting an identity. It prints what
-    /// the identity reaches and, just as plainly, what it does not: the TLS
-    /// ClientHello, the HTTP/2 settings, canvas and WebGL readback, the font
-    /// set. The claim is that the answers agree with each other, never that a
-    /// session is undetectable.
+    /// `check` is the one to read before trusting an identity. It prints what the
+    /// identity reaches and, just as plainly, what it does not: the TLS
+    /// ClientHello, the HTTP/2 settings, canvas and WebGL readback, the font set.
+    /// The claim is that the answers agree with each other, never that a session is
+    /// undetectable.
     #[cfg(feature = "identity")]
     Identity {
         /// `list`, `show <name>`, or `check <name>`.
@@ -239,18 +235,17 @@ pub enum BrowserCommands {
 
     /// Read one page, or a batch of them, and leave no session behind.
     ///
-    /// For the shape a crawl actually has: fetch, read, move on. No cookies
-    /// carried between verbs, no `@ref` to click, nothing resident afterwards.
+    /// For the shape a crawl actually has: fetch, read, move on. No cookies carried
+    /// between verbs, no `@ref` to click, nothing resident afterwards.
     ///
-    /// **This is the only browser shape that can have an egress allowlist
-    /// enforced outside the engine.** A session is resident by design, and the
-    /// tier that enforces egress cannot hold a resident process yet; a read runs
-    /// to completion inside this command, which is the shape that tier already
-    /// has. The confinement it got is printed with the result.
+    /// This is the only browser shape that can have an egress allowlist enforced
+    /// outside the engine. A session is resident by design, and the tier that
+    /// enforces egress cannot hold a resident process yet; a read runs to
+    /// completion inside this command, which is the shape that tier already has.
+    /// The confinement it got is printed with the result.
     ///
-    /// Several targets share one browser: one connection pool, one cookie jar
-    /// and one font set across the batch, and a page that fails does not stop
-    /// the ones after it.
+    /// Several targets share one browser (one connection pool, one cookie jar and
+    /// one font set across the batch) and a page that fails does not stop the rest.
     Read {
         /// URLs, or paths to local HTML files.
         #[arg(required = true, num_args = 1..)]
@@ -258,15 +253,15 @@ pub enum BrowserCommands {
 
         /// Read inside this box.
         ///
-        /// The box's profile is where a strict egress allowlist belongs, pinned
-        /// in `.h5i/env.toml` and digested, and a box at the supervised tier
-        /// enforces it at a network namespace boundary outside the engine — the
-        /// one thing a session cannot have, because that tier cannot hold a
-        /// resident process and a read does not need it to.
+        /// The box's profile is where a strict egress allowlist belongs, pinned in
+        /// `.h5i/env.toml` and digested, and a box at the supervised tier enforces
+        /// it at a network namespace boundary outside the engine. The one thing a
+        /// session cannot have, because that tier cannot hold a resident process
+        /// and a read does not need it to.
         ///
         /// Without this, the read runs here under the same built-in sandbox a
-        /// session gets: its files and its environment, and the origin
-        /// allowlist is the engine's alone.
+        /// session gets: its files and its environment, and the origin allowlist is
+        /// the engine's alone.
         #[arg(long = "in", value_name = "BOX")]
         in_box: Option<String>,
 
@@ -285,8 +280,8 @@ pub enum BrowserCommands {
         /// Who this read says it is: a built-in name, or a path to a TOML file.
         ///
         /// The same identities a session takes, and refused on the same terms:
-        /// see `h5i browser identity`. It belongs here as much as on a session
-        /// — a read is a fetch, and a fetch has an agent string.
+        /// see `h5i browser identity`. It belongs here as much as on a session.
+        /// A read is a fetch, and a fetch has an agent string.
         #[cfg(feature = "identity")]
         #[arg(long, value_name = "NAME|PATH", default_value = DEFAULT_IDENTITY)]
         identity: String,
@@ -368,22 +363,21 @@ pub enum BrowserCommands {
     /// something had no way to look at the result. The live view is the human's
     /// channel and is not an answer to a verb.
     ///
-    /// **Refused while `login` is on.** A password is pixels before it is
-    /// anything else, and handing those to the agent is the transfer that mode
-    /// exists to stop.
+    /// Refused while `login` is on: a password is pixels before it is anything
+    /// else, and handing those to the agent is the transfer that mode stops.
     Screenshot {
         /// Which session, when more than one is open. A name from
         /// `--session` at open time, or an opaque id. Defaults to
         /// $H5I_BROWSER_SESSION, then to the session `open` last made.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
-        /// Where to write it, on **this** machine. Defaults to a host-named
+        /// Where to write it, on *this* machine. Defaults to a host-named
         /// file in the session's own artifacts directory.
         ///
         /// The engine paints into a directory it is allowed to write and h5i
         /// moves the file here afterwards, so this is any path you can write,
         /// not a path the confined engine can. For a session in a box that
-        /// means the file is carried out of the box — which needs a tier whose
+        /// means the file is carried out of the box, which needs a tier whose
         /// `/tmp` this machine shares, and says so when it does not.
         #[arg(long, value_name = "PATH")]
         out: Option<PathBuf>,
@@ -549,10 +543,10 @@ pub enum BrowserCommands {
         json: bool,
     },
 
-    /// What the page publishes **about itself**: JSON-LD, OpenGraph, `<meta>`,
+    /// What the page publishes *about itself*: JSON-LD, OpenGraph, `<meta>`,
     /// `<link rel>`.
     ///
-    /// The cheapest read there is — a few hundred bytes where a snapshot is a
+    /// The cheapest read there is. A few hundred bytes where a snapshot is a
     /// few hundred lines. Try it first on an article, a product, or anything
     /// with a canonical URL. A page with no metadata answers `empty`, which is
     /// a fact about the page rather than a failed read.
@@ -571,23 +565,23 @@ pub enum BrowserCommands {
         json: bool,
     },
 
-    /// What the page's media **says**: `<track>` captions, fetched and parsed.
+    /// What the page's media *says*: `<track>` captions, fetched and parsed.
     ///
     /// The hole every other read leaves. A `snapshot` names a `<video>` and
     /// `markdown` skips it, so a page whose substance is a forty-minute talk
     /// reads as a title and a play button. Most players ship a caption track,
-    /// and a caption file is prose with timestamps — which is what a model
-    /// reads well and what audio is not.
+    /// and a caption file is prose with timestamps, which is what a model reads
+    /// well and what audio is not.
     ///
-    /// Two tracks per media element at most: one of the **words**, and the
-    /// **outline** of them from a `chapters` track when the page has one. Thirty
+    /// Two tracks per media element at most: one of the *words*, and the
+    /// *outline* of them from a `chapters` track when the page has one. Thirty
     /// languages of a video are the same words thirty times, so `--lang` names
     /// which one; an outline is different information, so it comes too. Every
     /// track the page declares is listed either way.
     ///
     /// Nothing here decodes audio: the tracks are fetched through the same
-    /// broker as any image, policy-checked and receipted, and media with no
-    /// `<track>` is reported as exactly that rather than as silence.
+    /// broker as any image, and media with no `<track>` is reported as exactly
+    /// that rather than as silence.
     Transcript {
         /// Which session, when more than one is open. A name from
         /// `--session` at open time, or an opaque id. Defaults to
@@ -606,7 +600,7 @@ pub enum BrowserCommands {
         /// track is listed either way.
         #[arg(long, value_name = "LANG")]
         lang: Option<String>,
-        /// The ceiling on caption text carried out of **one** track.
+        /// The ceiling on caption text carried out of *one* track.
         ///
         /// Per track rather than per reply, so a media element with both words
         /// and an outline can carry up to twice this.
@@ -615,26 +609,23 @@ pub enum BrowserCommands {
         /// Read it with an outside program instead of from the page's markup.
         ///
         /// `--via yt-dlp` reaches the transcripts that are not in the markup at
-        /// all — YouTube's above all, whose captions live behind the player's
-        /// own API. About 1,700 sites, and the same reply shape.
+        /// all, YouTube's above all, whose captions live behind the player's own
+        /// API. About 1,700 sites, and the same reply shape.
         ///
-        /// **It is a different lane, not a better one.** yt-dlp opens its own
-        /// sockets from a process the engine never sees, so nothing it fetches
-        /// is in `h5i browser requests` and nothing can be: the reply says so,
-        /// and `h5i browser audit` carries the run as a host-observed row. It
-        /// runs where the session runs, inside the box for a boxed session, and
-        /// it is never a fallback: an engine read that found no captions stays
-        /// a read that found none. The reply says what actually saw its
-        /// traffic, which for a box depends on whether that box's tier enforces
-        /// egress at all.
+        /// It is a different lane, not a better one. yt-dlp opens its own sockets
+        /// from a process the engine never sees, so nothing it fetches is in `h5i
+        /// browser requests` and nothing can be: the reply says so, and `h5i
+        /// browser audit` carries the run as a host-observed row. It runs where the
+        /// session runs, inside the box for a boxed session, and it is never a
+        /// fallback: an engine read that found no captions stays a read that found
+        /// none.
         ///
         /// With `--via`, `--url` names the media and the session does not move:
-        /// there is no page here to render. With **no session open at all**,
-        /// `--url` is the whole of what this lane needs: the run happens on
-        /// this machine, contained by nothing h5i enforces, says so in its
-        /// `evidence` line, and is recorded in
-        /// `h5i browser audit --no-session`. To place it behind a boundary,
-        /// open a session with `--in <box>` and it runs in there.
+        /// there is no page here to render. With no session open at all, `--url` is
+        /// the whole of what this lane needs: the run happens on this machine,
+        /// contained by nothing h5i enforces, says so in its `evidence` line, and
+        /// is recorded in `h5i browser audit --no-session`. To place it behind a
+        /// boundary, open a session with `--in <box>`.
         #[arg(long, value_name = "HELPER")]
         via: Option<String>,
         #[arg(long)]
@@ -725,7 +716,7 @@ pub enum BrowserCommands {
 
     /// Find an element by what it is called, rather than by where it sits.
     ///
-    /// A role and, usually, its accessible name — the way a person would
+    /// A role and, usually, its accessible name. The way a person would
     /// describe it out loud. Survives a re-render that moves everything, which
     /// a `@ref` from an older reading does not.
     Find {
@@ -1196,9 +1187,8 @@ struct StartOptions {
 ///
 /// The two halves are deliberately not one. Opening a URL in a browser that is
 /// already up means *go there*, and making a second session behind the agent's
-/// back would leave the first one holding a page nothing points at any more.
-/// So a live session is navigated, and `--new` is how you say you meant a
-/// second one.
+/// back would leave the first one holding a page nothing points at. So a live
+/// session is navigated, and `--new` is how you say you meant a second one.
 ///
 /// The flags that only make sense at creation are refused rather than ignored
 /// when a session is reused. A session's policy is fixed when its engine
@@ -1283,7 +1273,7 @@ fn creation_flags(opts: &StartOptions) -> Vec<&'static str> {
     // Creation-only for a stronger reason than most of these. The agent string
     // is handed to the HTTP client when the client is built, and a session that
     // could change identity while it ran would be a browser whose user agent
-    // rotated between two requests of one page — which is louder than any value
+    // rotated between two requests of one page, which is louder than any value
     // it could have rotated to.
     #[cfg(feature = "identity")]
     if opts.identity != DEFAULT_IDENTITY {
@@ -1329,17 +1319,15 @@ fn start(
     }
 
     if let (Some(target), false) = (&opts.in_box, opts.secrets.is_empty()) {
-        // A box already has a place to say this, and it is checked in: two ways
-        // to declare one grant is how one of them rots. `--secret` reaches the
-        // profile h5i builds for a *host* session, which is the placement with
-        // no repository and therefore no `env.toml` to write it in. A session
-        // placed in a box inherits that box's policy, so the grant belongs
-        // there, where a reviewer can read it beside everything else the box is
-        // allowed to do.
+        // A box already has a place to say this, and it is checked in: two ways to
+        // declare one grant is how one of them rots. `--secret` reaches the profile
+        // h5i builds for a *host* session, the placement with no repository and
+        // therefore no `env.toml` to write it in. A session placed in a box
+        // inherits that box's policy, so the grant belongs there.
         //
-        // An error rather than a warning because the flag did nothing at all
-        // here: `spawn_in_box` never read it, so every session started this way
-        // ran without the credential it was told to carry and said nothing.
+        // An error rather than a warning because the flag did nothing at all here:
+        // `spawn_in_box` never read it, so every session started this way ran
+        // without the credential it was told to carry and said nothing.
         anyhow::bail!(
             "`--secret` does not apply to a session placed in a box. `{target}` gets its \
              credentials from its own policy.\n\n  \
@@ -1362,27 +1350,26 @@ fn start(
     // a process to clean up and a record to explain.
     //
     // The engine checks it again, and that is not redundancy for its own sake.
-    // The engine is the enforcement point — it is the half that writes the
-    // headers — and this is the half that can say so in a sentence before a
+    // The engine is the enforcement point, it is the half that writes the
+    // headers, and this is the half that can say so in a sentence before a
     // process exists. A `--in <box>` session's engine is behind a boundary this
     // command cannot read an error out of at all.
     #[cfg(feature = "identity")]
     let identity = {
-        // A path cannot travel into a box, and this is the one place that can
-        // say so clearly.
+        // A path cannot travel into a box, and this is the one place that can say
+        // so clearly.
         //
-        // Every other path in a boxed session's argv is translated to one the
-        // box will actually have — `control_in_box`, `in_box_base`. An identity
-        // file is named on the host and read by the engine, and for a boxed
-        // session those are different filesystems: `$WORK` is what the browser
-        // profile grants, and a file beside the caller is not in it. Passed
-        // through raw it became "no browser identity called
-        // `/home/…/mine.toml`", followed by the list of built-ins, which reads
-        // as a typo rather than as a boundary.
+        // Every other path in a boxed session's argv is translated to one the box
+        // will actually have. An identity file is named on the host and read by
+        // the engine, and for a boxed session those are different filesystems:
+        // `$WORK` is what the browser profile grants, and a file beside the caller
+        // is not in it. Passed through raw it became "no browser identity called
+        // `/home/…/mine.toml`" followed by the list of built-ins, which reads as a
+        // typo rather than as a boundary.
         //
         // Refused here rather than made to work, because making it work means
-        // copying a file into the box, and what a box may read is the box's
-        // policy to state rather than this command's to widen.
+        // copying a file into the box, and what a box may read is the box's policy
+        // to state rather than this command's to widen.
         refuse_a_file_identity_in_a_box(opts.in_box.as_deref(), &opts.identity)?;
         let identity = h5i_browser_light::identity::Identity::resolve(&opts.identity)
             .map_err(anyhow::Error::from)?;
@@ -1440,7 +1427,7 @@ fn start(
         storage: bs::Storage::Ephemeral,
         policy_digest: spawned.policy_digest.clone(),
         // Empty in a build without identities, which is what those sessions
-        // are: not "presented nothing", but "not recorded" — the same thing an
+        // are: not "presented nothing", but "not recorded". The same thing an
         // older record says, and what `#[serde(default)]` gives it.
         #[cfg(feature = "identity")]
         identity: identity.name.clone(),
@@ -1510,15 +1497,14 @@ fn start(
 struct Spawned {
     /// Which channel the engine is listening on.
     channel: bs::Channel,
-    /// Ask whether the engine is still on its way up. `Some(reason)` means it
-    /// is not, and the reason is what the user is told.
+    /// Ask whether the engine is still on its way up. `Some(reason)` means it is
+    /// not, and the reason is what the user is told.
     ///
-    /// A closure rather than a pid, because the honest answer differs by
-    /// placement and a pid cannot carry that. On the host it owns the `Child`
-    /// and asks `try_wait` — **a child nobody waits on is a zombie, and a
-    /// zombie answers `kill(pid, 0)`**, so polling the pid would wait the full
-    /// timeout on an engine that exited immediately, which is the commonest
-    /// failure there is. In a box it asks the service registry, which knows
+    /// A closure rather than a pid, because the honest answer differs by placement
+    /// and a pid cannot carry that. On the host it owns the `Child` and asks
+    /// `try_wait`: a child nobody waits on is a zombie, and a zombie answers
+    /// `kill(pid, 0)`, so polling the pid would wait the full timeout on an engine
+    /// that exited immediately. In a box it asks the service registry, which knows
     /// that a microvm's pid is a guest pid and not this machine's to signal.
     alive: Box<dyn FnMut() -> Option<String>>,
     /// The process this machine can signal, when there is one. `None` for a
@@ -1526,7 +1512,7 @@ struct Spawned {
     /// guest, and a host `kill` on that number would be aimed at whatever
     /// unrelated process happens to hold it.
     pid: Option<u32>,
-    /// The control file's path **as the engine sees it**. Inside a box that is a
+    /// The control file's path as the engine sees it. Inside a box that is a
     /// box path; on the host it is a host path. Never mixed: binding one and
     /// reading the other is how enforcement goes silently missing.
     control_in_engine_view: PathBuf,
@@ -1539,7 +1525,7 @@ struct Spawned {
     /// for: a host without Landlock answers `None` with the reason.
     confinement: h5i_core::browser_sandbox::Confinement,
     /// Whether something outside the engine actually decides what may leave.
-    /// See [`bs::Session::lane_for`] — this is the input to the one claim the
+    /// See [`bs::Session::lane_for`]. This is the input to the one claim the
     /// product makes that a reader can check.
     boundary_enforced: bool,
     /// How to end it. `close` calls this before recording the ending.
@@ -1557,7 +1543,7 @@ fn spawn_on_host(
     // The port is the simpler channel and the session directory can be
     // anywhere, which matters: a socket address is capped near 100 bytes and a
     // registry under a long temp path would exceed it. Inside a box a port is
-    // not merely awkward, it does not work — the netns may have no usable
+    // not merely awkward, it does not work. The netns may have no usable
     // loopback at all, and `net.mode = deny` leaves nothing to dial. The
     // registry inside a box lives under the box's own tmp, which is short.
     let channel = if in_a_box {
@@ -1601,7 +1587,7 @@ fn spawn_on_host(
     // The sandbox, unless the caller declined it or the host cannot.
     //
     // The engine's own binary has to be readable, because a confined `execve`
-    // needs it and nothing under a development checkout — or under `~/.cargo` —
+    // needs it and nothing under a development checkout, or under `~/.cargo`,
     // is granted by the defaults. This is the same wall a box hits when the
     // engine is somewhere it may read and not run.
     let engine = engine_binary()?;
@@ -1625,24 +1611,21 @@ fn spawn_on_host(
     //
     // Above the confined/unconfined branch on purpose. A host that cannot
     // confine still has to answer `--secret` the same way, and the first cut of
-    // this brokered only on the confined path — so on a machine without
-    // Landlock, or under `--no-sandbox`, a credential that did not exist would
-    // have started a session that quietly could not use it. Fail-closed is not
-    // a property of the sandbox; it is a property of the promise.
+    // this brokered only on the confined path, so on a machine without Landlock,
+    // or under `--no-sandbox`, a credential that did not exist would have started
+    // a session that quietly could not use it. Fail-closed is a property of the
+    // promise, not of the sandbox.
     //
     // The grants come from the same function that put them on the profile, so
     // the unconfined path cannot promise a different set from the confined one.
     // Nothing is written to disk: `inject = env` has no file, and `broker`
-    // refuses `inject = file` off the workspace tier, which is what keeps the
-    // guard's unlink-on-drop from mattering to a session that outlives this
-    // command.
+    // refuses `inject = file` off the workspace tier.
     //
     // Skipped entirely when nothing was named, which is not the same as
     // brokering an empty list: `fingerprint_key` mints a key file on first use,
-    // and a session that named no credential should not leave one behind in
-    // everybody's state directory for a comparison it will never make.
+    // and a session that named no credential should not leave one behind.
     //
-    // The guard is held for the rest of this function on purpose. It is what
+    // The guard is held for the rest of this function on purpose: it is what
     // would unlink a file-injected secret, and letting it drop before the child
     // is spawned would be the bug that shape of grant is refused here to avoid.
     let brokered = if secrets.is_empty() {
@@ -1667,7 +1650,7 @@ fn spawn_on_host(
     // Inside the sandbox the environment is cleared, so the engine's own
     // `$HOME`-based font discovery finds nothing. The grant and the search path
     // come from one list so they cannot disagree, and `--font-dir` *replaces*
-    // the engine's defaults — which is why the system directories travel with
+    // the engine's defaults, which is why the system directories travel with
     // the personal ones rather than being left implicit.
     if let Some(c) = &confined {
         for dir in &c.fonts {
@@ -1727,8 +1710,8 @@ fn spawn_on_host(
                 .stdout(Stdio::from(log.try_clone()?))
                 .stderr(Stdio::from(log));
             // Named credentials, set explicitly even though this child inherits
-            // the whole environment anyway. What it buys is not secrecy — there
-            // is none to buy on this path, and the summary line says so — it is
+            // the whole environment anyway. What it buys is not secrecy (there
+            // is none to buy on this path, and the summary line says so) it is
             // that `--secret` means one thing in both shapes: named, resolved,
             // and refused if it is not there.
             command.envs(granted.clone());
@@ -1762,7 +1745,7 @@ fn spawn_on_host(
         channel,
         // `waitpid(WNOHANG)` rather than a signal probe: the confined spawn
         // hands back a pid and drops the `Child`, so a dead engine is an
-        // unreaped zombie and `kill(pid, 0)` would call it alive — which is the
+        // unreaped zombie and `kill(pid, 0)` would call it alive, which is the
         // bug that made a start wait its whole timeout on an engine that exited
         // immediately.
         alive: Box::new(move || reap(pid)),
@@ -1786,8 +1769,8 @@ fn spawn_on_host(
 /// checked before anything is started.
 ///
 /// Written as a preflight rather than discovered by the 30-second start timeout
-/// because all three of these failures look identical from outside — the engine
-/// never advertises — and each of them has a different fix. A timeout that
+/// because all three of these failures look identical from outside, the engine
+/// never advertises, and each of them has a different fix. A timeout that
 /// says "did not come up" for a box that could never have run it is the kind of
 /// error that costs an afternoon.
 fn preflight_box(
@@ -1823,18 +1806,17 @@ fn preflight_box(
     }
 
     // 2. The box's h5i has to be one it can run, and one that carries an
-    //    engine. **Two failures, and they are told apart by the shell's own
-    //    exit codes** rather than by guessing.
+    //    engine. Two failures, told apart by the shell's own exit codes rather
+    //    than by guessing.
     //
-    //    An earlier version of this comment said the first could not happen any
-    //    more. It happens on the machine this was written on: a `cargo install`
-    //    h5i lives in `~/.cargo/bin`, which every profile grants **read** and
-    //    none grants **exec**, so `command -v h5i` inside the box finds it and
-    //    running it dies with `Permission denied`. Reporting that as "no
-    //    browser engine in it" sends whoever reads it to rebuild a binary that
-    //    was fine. `sh` answers 126 for "found it, could not execute it" and
-    //    127 for "no such command", which is exactly the distinction, and it
-    //    survives the redirection that keeps the probe quiet.
+    //    The first still happens: a `cargo install` h5i lives in
+    //    `~/.cargo/bin`, which every profile grants *read* and none grants
+    //    *exec*, so `command -v h5i` inside the box finds it and running it
+    //    dies with `Permission denied`. Reporting that as "no browser engine
+    //    in it" sends whoever reads it to rebuild a binary that was fine. `sh`
+    //    answers 126 for "found it, could not execute it" and 127 for "no such
+    //    command", and that survives the redirection that keeps the probe
+    //    quiet.
     let probe = Command::new(std::env::current_exe()?)
         .arg("box")
         .arg("run")
@@ -1884,8 +1866,8 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
 
     // What this box actually enforces at its boundary, read from the policy it
     // was created with rather than assumed from the fact that it is a box. Box
-    // creation is fail-closed on the combination — a profile that declares an
-    // egress allowlist cannot be created at a tier that cannot enforce one — so
+    // creation is fail-closed on the combination, a profile that declares an
+    // egress allowlist cannot be created at a tier that cannot enforce one, so
     // a declared allowlist here is an enforced one.
     let boundary_enforced = match h5i_core::env::load_policy(&h5i_root, &manifest) {
         Ok(policy) => {
@@ -1898,12 +1880,12 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
     // Both views of the same file, named here rather than inherited from the
     // box's environment. The `browser` profile does set `H5I_BROWSER_STREAM_FILE`
     // and the engine would derive a control file beside it, but relying on that
-    // would tie `--in` to one profile — and a session in a box is not a
+    // would tie `--in` to one profile, and a session in a box is not a
     // property of the profile, it is a property of the placement.
     let files = h5i_core::env::box_tmp_file(&h5i_root, &manifest, BROWSER_SERVICE);
     let (control_in_box, control_on_host) = match &files {
         // The box always has a path, and it is always the one `box_tmp_file`
-        // built — qualified where the box's `/tmp` is shared with the host's.
+        // built. Qualified where the box's `/tmp` is shared with the host's.
         // Only the host's view of it can be missing: an image-backed tier keeps
         // that `/tmp` inside the image, and a tier whose mapping h5i cannot
         // name is refused rather than guessed at. Inventing a bare
@@ -1957,7 +1939,7 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
         opts.url.clone(),
         // A socket, not a port. Every `h5i box run` gets its own network
         // namespace, so a verb carried in later has a loopback of its own and
-        // the port this session binds is not on it — the connection fails with
+        // the port this session binds is not on it. The connection fails with
         // ENETUNREACH, which reads exactly like a session that is not running.
         // The box's filesystem is one filesystem across every run in it, so a
         // path is the address that survives.
@@ -1973,7 +1955,7 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
         // filesystem the engine has. Whether this machine can read it back
         // afterwards is the `control_on_host` question above, and a tier that
         // keeps its /tmp in an image is a tier whose jar does not survive the
-        // box — which is a narrowing of `--restore`, not of the session.
+        // box, which is a narrowing of `--restore`, not of the session.
         "--cookie-jar".into(),
         in_box_base.with_extension("cookies.json").display().to_string(),
         "--width".into(),
@@ -1986,9 +1968,9 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
         argv.push("--script".into());
     }
 
-    // **A service, not a run.** `h5i box run` takes the box's exclusive writer
+    // A service, not a run. `h5i box run` takes the box's exclusive writer
     // lock and holds it for the life of the command, so a resident engine
-    // started that way locks every later verb out of its own box — the failure
+    // started that way locks every later verb out of its own box. The failure
     // this path was rewritten to fix. A service takes the service lock instead,
     // which is what lets a brief `box run` carry a verb in while the engine
     // keeps serving.
@@ -2111,7 +2093,7 @@ fn shell_join(argv: &[String]) -> String {
 /// The engine used to be a second binary, and finding it was a problem with
 /// two halves that both bit: on the host it might be an older install earlier
 /// on `$PATH`, and inside a box it might sit in `~/.cargo/bin`, which Landlock
-/// makes readable and **not executable** — so `command -v` found it and `exec`
+/// makes readable and *not executable*, so `command -v` found it and `exec`
 /// refused it. Neither can happen now: the engine is this binary, and a box
 /// that can run `h5i` at all can run it.
 const ENGINE_SUBCOMMAND: &str = "__engine";
@@ -2179,22 +2161,21 @@ fn net_args(opts: &StartOptions) -> Vec<String> {
     if opts.no_loopback {
         argv.push("--no-loopback".into());
     }
-    // **Only when it differs from the default**, which is what every other flag
+    // Only when it differs from the default, which is what every other flag
     // here already does, and the reason is not tidiness.
     //
     // A boxed session runs the h5i *inside the box*, and that binary is not
-    // this one — a staged upgrade leaves the two at different versions for as
+    // this one. A staged upgrade leaves the two at different versions for as
     // long as the rollout takes. Sending `--identity` unconditionally made an
     // older in-box engine fail at argument parsing, so every boxed session and
     // every `read --in` broke the moment the host was upgraded, including for
     // callers who had never heard of identities. Sending it only when someone
     // asked for one keeps the default path byte-identical to what older boxes
-    // already understand, and makes the failure land on the person who asked
-    // for something that box cannot do.
+    // understand, and makes the failure land on the person who asked for
+    // something that box cannot do.
     //
-    // The property the old comment was reaching for — that h5i's default and
-    // the engine's are the same word — is a fact about two constants, and
-    // `the_two_defaults_are_one_word` checks it directly instead.
+    // That h5i's default and the engine's are the same word is a fact about
+    // two constants, and `the_two_defaults_are_one_word` checks it directly.
     #[cfg(feature = "identity")]
     if opts.identity != DEFAULT_IDENTITY {
         argv.push("--identity".into());
@@ -2207,25 +2188,22 @@ fn net_args(opts: &StartOptions) -> Vec<String> {
 /// page it asked to open.
 ///
 /// The second half is not a convenience, it is the difference between `open`
-/// working and not. The engine is fail-closed and a navigation is policy-checked
-/// like any other request, so a session started with an empty allowlist denied
-/// the very page it was told to open — `h5i browser open https://example.com`
-/// came back "origin `https://example.com` is not in the allowlist", while
-/// `--allow`'s own help promised that a URL's own origin is reachable without
-/// it. Loopback is exempt by default, which is why every test and every dev
-/// server missed this and why the first remote URL anyone typed hit it.
+/// working and not. The engine is fail-closed and a navigation is
+/// policy-checked like any other request, so a session started with an empty
+/// allowlist denied the very page it was told to open, while `--allow`'s own
+/// help promised that a URL's own origin is reachable without it. Loopback is
+/// exempt by default, which is why every test and every dev server missed this.
 ///
 /// `read` has granted its targets this way since it was written
 /// ([`origins_of`]), and this is the same rule for the session lane: the page
 /// and nothing else. An off-origin subresource is still refused and still says
-/// so in the request log, and widening the grant to "and whatever this page
-/// pulls in" is the thing neither lane does.
+/// so in the request log.
 ///
 /// Handed to the engine verbatim, because its `--allow` normalizes with the
-/// same code that later checks a request — a second notion of "origin" here is
-/// a second one to drift. Only a `http`/`https` target grants anything: a page
-/// opened from a file needs no grant, and a bare path normalizes to a host that
-/// was never asked for.
+/// same code that later checks a request, and a second notion of "origin" here
+/// is a second one to drift. Only a `http`/`https` target grants anything: a
+/// page opened from a file needs no grant, and a bare path normalizes to a host
+/// that was never asked for.
 fn granted_origins(opts: &StartOptions) -> Vec<String> {
     let mut origins = opts.allow.clone();
     if is_web_url(&opts.url) && !origins.contains(&opts.url) {
@@ -2245,18 +2223,16 @@ fn is_web_url(target: &str) -> bool {
 /// The digest of what a host session was allowed to do.
 ///
 /// A host session has no box and so no box policy; its policy *is* the
-/// allowlist and the two switches it was started with. Digesting them means
-/// two sessions with the same digest were allowed the same things, which is the
-/// only promise the field makes anywhere.
+/// allowlist and the two switches it was started with. Digesting them means two
+/// sessions with the same digest were allowed the same things, which is the
+/// only promise the field makes.
 ///
-/// The *effective* allowlist, [`granted_origins`], and not the flags alone: the
+/// The *effective* allowlist, [`granted_origins`], not the flags alone: the
 /// page a session was opened on is in its policy, so two sessions opened
-/// somewhere else entirely were allowed different things and must not digest
-/// the same. It is the start URL as typed rather than the origin derived from
-/// it, so two sessions opened on two pages of one site digest differently
-/// though their grants match — the promise is that an equal digest means equal
-/// grants, and this keeps that direction true without a second notion of
-/// "origin" here to drift from the engine's.
+/// somewhere else entirely must not digest the same. It is the start URL as
+/// typed rather than the origin derived from it, so two sessions opened on two
+/// pages of one site digest differently though their grants match. The promise
+/// is that an equal digest means equal grants.
 fn host_policy_digest(opts: &StartOptions) -> String {
     use sha2::{Digest, Sha256};
     let mut allow = granted_origins(opts);
@@ -2302,8 +2278,8 @@ fn await_control(spawned: &mut Spawned, dir: &Path) -> Result<(), String> {
 /// The last few lines of the engine's own output, scrubbed.
 ///
 /// Quoted into an error because the useful half of a failed start is almost
-/// always one line the engine already printed — a URL the box cannot see, an
-/// engine not on its `PATH` — and telling someone to go and read a file is one
+/// always one line the engine already printed (a URL the box cannot see, an
+/// engine not on its `PATH`) and telling someone to go and read a file is one
 /// step more than they need. Scrubbed like any other answer: this text came
 /// from a process that was rendering a page.
 fn tail_of(log: &Path) -> String {
@@ -2325,25 +2301,24 @@ fn tail_of(log: &Path) -> String {
 ///
 /// Deliberately narrow: cookies only, and by copy. Nothing about the old
 /// session's process, port or box comes across, because none of it is still
-/// true — this is an inheritance of state, not a resumption of a run.
-/// **It refuses rather than seeding nothing.** For most of this flag's life
-/// there was no `cookies.json` anywhere: the engine's jar lived in the process
-/// and died with it, so `source.exists()` was always false, the copy never
+/// true. An inheritance of state, not a resumption of a run.
+///
+/// It refuses rather than seeding nothing. For most of this flag's life there
+/// was no `cookies.json` anywhere: the engine's jar lived in the process and
+/// died with it, so `source.exists()` was always false, the copy never
 /// happened, and `--restore` was a silent no-op wearing help text that promised
-/// an inherited login. That is the defect roadmap-history.md §B19.6 records,
-/// and the fix
-/// has two halves — the engine now writes a jar (`--cookie-jar`), and this says
-/// so when there is none instead of continuing as though there were.
+/// an inherited login (roadmap-history.md §B19.6). The engine now writes a jar
+/// (`--cookie-jar`), and this says so when there is none.
 ///
 /// Three reasons a session can leave no jar, and the caller needs to tell them
-/// apart, so the message names which one it is rather than saying "not found":
+/// apart, so the message names which one it is:
 ///
 /// * it predates the jar file,
 /// * it ran in a box whose `/tmp` this machine cannot read,
 /// * it never stored a cookie.
 ///
 /// The last is indistinguishable from the first two by inspection, so the
-/// message says what is missing and what that means, and lets the caller decide.
+/// message says what is missing and lets the caller decide.
 fn seed_storage(root: &Path, from: &str, into: &Path) -> anyhow::Result<()> {
     let source = bs::dir(root, from).join(bs::COOKIES_FILE);
     if !source.exists() {
@@ -2362,28 +2337,26 @@ fn seed_storage(root: &Path, from: &str, into: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Take a PNG of the page, into a file **h5i names**.
+/// Take a PNG of the page, into a file *h5i names*.
 ///
 /// The naming is the whole reason this is not one more line in `run`'s match.
-/// `bs::artifact_path` reduces a name to one component of a known-safe
-/// alphabet before joining it, so a session cannot write through `..`, through
-/// a symlink it planted, or onto a dotfile — and the engine is never asked to
-/// choose, it is told. That rule was written for exactly this verb and this is
-/// its first user.
+/// `bs::artifact_path` reduces a name to one component of a known-safe alphabet
+/// before joining it, so a session cannot write through `..`, through a symlink
+/// it planted, or onto a dotfile, and the engine is never asked to choose.
 ///
 /// Two placements, two filesystems:
 ///
-/// * **Host.** The artifacts directory under the session's own record, which is
-///   where a reviewer already looks for what a session produced.
-/// * **Box.** The engine can only write inside the box, so the default goes
-///   beside the control socket — the one path the record already knows is
-///   writable there — and the reply says it is inside the box rather than
-///   printing a host path that does not exist.
+/// * Host. The artifacts directory under the session's own record, where a
+///   reviewer already looks for what a session produced.
+/// * Box. The engine can only write inside the box, so the default goes beside
+///   the control socket, the one path the record knows is writable there, and
+///   the reply says it is inside the box rather than printing a host path that
+///   does not exist.
 ///
-/// `--out` is a **host** path in both cases, and h5i is what puts the file
-/// there. The engine paints where it is allowed to and never where the caller
-/// pointed: it is confined, h5i is not, and a path the caller named is h5i's to
-/// write. Handing it through was what made `--out ~/shot.png` fail with a bare
+/// `--out` is a *host* path in both cases, and h5i is what puts the file there.
+/// The engine paints where it is allowed to and never where the caller pointed:
+/// it is confined, h5i is not, and a path the caller named is h5i's to write.
+/// Handing it through was what made `--out ~/shot.png` fail with a bare
 /// `Permission denied` from a sandbox the caller never asked about.
 fn screenshot(
     root: &Path,
@@ -2409,16 +2382,13 @@ fn screenshot(
         .unwrap_or(0);
     let name = format!("screenshot-{stamp}.png");
 
-    // **The engine always paints into a directory it may write**, and h5i moves
+    // The engine always paints into a directory it may write, and h5i moves
     // the file afterwards. Handing `--out` straight to the engine is what this
     // used to do, and a confined session may write only its own directory, so
-    // `--out ~/shot.png` came back as a bare `Permission denied` — h5i asking a
-    // sandboxed process to write somewhere h5i itself could have written, and
-    // then reporting the sandbox's refusal as though the path were at fault.
-    // Which process holds the authority for a path the *caller* named is not a
-    // question the engine should be asked: it is the same rule the cookie jar
-    // already follows, h5i chooses the path and the engine only chooses the
-    // bytes.
+    // `--out ~/shot.png` came back as a bare `Permission denied`: h5i asking a
+    // sandboxed process to write somewhere h5i itself could have written, then
+    // reporting the sandbox's refusal as though the path were at fault. Same
+    // rule as the cookie jar: h5i chooses the path, the engine the bytes.
     let (painted, host_view) = match &session.placement {
         bs::Placement::Host => {
             let path = bs::artifact_path(root, &session.id, &name);
@@ -2445,7 +2415,7 @@ fn screenshot(
                 .join(bs::safe_name(&name));
             // Where this machine sees that same file, when it can see it at
             // all. An image-backed tier keeps its `/tmp` inside the image, and
-            // then the file exists and is unreachable from here — which is a
+            // then the file exists and is unreachable from here, which is a
             // fact to report rather than to paper over.
             let on_host = session
                 .control
@@ -2538,13 +2508,13 @@ fn deliver_file(
 ///
 /// The three things that happen here and nowhere else, in order:
 ///
-/// 1. **The session must be live.** An ended one is refused with
-///    [`bs::EXIT_SESSION_GONE`], never restarted. An agent that retries into a
-///    silently restarted browser has lost the page it was reasoning about and
-///    the record of how it lost it.
-/// 2. **The control lock is checked**, before the verb leaves this process.
-/// 3. **The answer is scrubbed.** Everything a session returns was composed by
-///    a page.
+/// 1. The session must be live. An ended one is refused with
+///    [`bs::EXIT_SESSION_GONE`], never restarted: an agent that retries into
+///    a silently restarted browser has lost the page it was reasoning about
+///    and the record of how it lost it.
+/// 2. The control lock is checked, before the verb leaves this process.
+/// 3. The answer is scrubbed. Everything a session returns was composed by a
+///    page.
 fn verb(
     root: &Path,
     selector: Option<&str>,
@@ -2595,7 +2565,7 @@ fn verb_then(
     }
     bs::scrub(&mut answer);
 
-    // A refusal is an answer, and `--json` promised the answer — so it is
+    // A refusal is an answer, and `--json` promised the answer, so it is
     // printed either way. What must not happen is printing it and exiting 0: a
     // script that checks the status code would read "denied by policy" as
     // success, which is the failure this whole design is arranged against.
@@ -2620,8 +2590,8 @@ fn verb_then(
 /// `transcript --via <helper>`: the lane that is not the engine.
 ///
 /// Kept apart from [`verb`] on purpose. `verb` carries a request to the engine
-/// and everything it does — the control lock, the stale-ref clearing, the
-/// refusal-is-still-an-answer exit code — is about that conversation. This
+/// and everything it does (the control lock, the stale-ref clearing, the
+/// refusal-is-still-an-answer exit code) is about that conversation. This
 /// talks to a different program entirely, and folding it into the same function
 /// would be the first step toward the two being hard to tell apart, which is
 /// the one property this lane must never lose.
@@ -2650,15 +2620,13 @@ fn via_helper(
 
     // A session when there is one, and none when there is not.
     //
-    // **Only when the caller named neither a session nor a URL is a missing
-    // session an error.** `--url` names the media and this lane renders no
-    // page, so a session would contribute nothing here but a placement; asking
-    // for one anyway is what made `h5i browser transcript --via yt-dlp --url …`
-    // answer with the closing note of a session that had nothing to do with the
-    // question. A `--session` that names something gone is still an error,
-    // because running somewhere else would move the lane to a boundary the
-    // caller did not choose — the same rule that keeps a boxed run out of the
-    // host.
+    // Only when the caller named neither a session nor a URL is a missing
+    // session an error. `--url` names the media and this lane renders no page,
+    // so a session would contribute nothing but a placement; asking for one
+    // anyway is what made `h5i browser transcript --via yt-dlp --url …` answer
+    // with the closing note of an unrelated session. A `--session` that names
+    // something gone is still an error, because running somewhere else would
+    // move the lane to a boundary the caller did not choose.
     let session = match bs::resolve(root, selector) {
         Ok(session) => Some(session),
         Err(gone) if selector.is_some() || url.is_none() => {
@@ -2727,15 +2695,14 @@ fn via_helper(
 
     // Judged by what arrived, not by the helper's exit code. yt-dlp exits
     // non-zero if any part of a run failed, and the first live run of this lane
-    // wrote the transcript, then hit a 429 fetching a second language, and
-    // exited 1 — a complete answer reported as a failure, which is exactly the
-    // shape that sends a caller retrying work it already has.
+    // wrote the transcript, hit a 429 fetching a second language, and exited 1:
+    // a complete answer reported as a failure, the shape that sends a caller
+    // retrying work it already has.
     //
     // A clean run that found no captions is *also* not a failure: the question
-    // was answered, and the answer is that this URL has none. What is a failure
-    // is a run that produced nothing and said why, because a caller scripting
-    // this has to tell "no captions" from "yt-dlp is broken" without reading
-    // prose.
+    // was answered. What is a failure is a run that produced nothing, because a
+    // caller scripting this has to tell "no captions" from "yt-dlp is broken"
+    // without reading prose.
     if !outcome.answered && outcome.status.is_some_and(|code| code != 0) {
         std::process::exit(1);
     }
@@ -2746,7 +2713,7 @@ fn via_helper(
 ///
 /// An error rather than a missing flag, because the flag is in the help text
 /// either way and a caller who typed it deserves to be told which of the two
-/// things is missing — the build, or the program.
+/// things is missing. The build, or the program.
 #[cfg(not(feature = "ytdlp"))]
 #[allow(clippy::too_many_arguments)]
 fn via_helper(
@@ -2776,12 +2743,12 @@ fn refusal(answer: &Value) -> String {
 
 /// `h5i browser identity ...`, answered by the engine.
 ///
-/// Carried to the engine rather than answered here, and that is not indirection
-/// for its own sake: the engine is the half that presents an identity and the
-/// half that refuses one, so it is the half that should say what it can back.
-/// A second implementation in this crate would be a second opinion, and the
-/// only interesting question `check` answers — "would this be refused?" — is
-/// one only the refusing component can answer without guessing.
+/// Carried to the engine rather than answered here: the engine is the half
+/// that presents an identity and the half that refuses one, so it is the half
+/// that should say what it can back. A second implementation in this crate
+/// would be a second opinion, and the only interesting question `check`
+/// answers, "would this be refused?", is one only the refusing component can
+/// answer without guessing.
 ///
 /// No session and no sandbox: this reads a table and prints it.
 #[cfg(feature = "identity")]
@@ -2819,7 +2786,7 @@ fn deliver(session: &bs::Session, dir: &Path, argv: Vec<String>) -> anyhow::Resu
             command.output()?
         }
         bs::Placement::Box { name } => {
-            // The control file **as the box sees it**, straight from the record
+            // The control file as the box sees it, straight from the record
             // the start wrote. Deriving it here instead would be a second place
             // that has to agree with the first.
             let control = session
@@ -2887,16 +2854,14 @@ fn deliver(session: &bs::Session, dir: &Path, argv: Vec<String>) -> anyhow::Resu
 /// digest that was enforced. Without it the read runs here under the same
 /// built-in sandbox a session gets.
 ///
-/// There is no `--allow` here, and that is deliberate twice over. The engine is
-/// fail-closed, so *something* has to name the origins — but naming a URL and
-/// then naming its origin again is ceremony that teaches nothing, so the
-/// targets grant themselves and nothing else: a page that pulls a script from
-/// a third-party CDN, or redirects off-origin, is still refused and still says
-/// so in the request log. And an allowlist wider than "what I asked for"
-/// belongs in `.h5i/env.toml`, reached through `--in`, where a tier enforces it
-/// and a digest pins it. An earlier version took the allowlist as arguments;
-/// that was a second way to say what `.h5i/env.toml` already says, and a policy
-/// assembled from arguments is one nothing can be verified against.
+/// There is no `--allow` here, deliberately twice over. The engine is
+/// fail-closed, so *something* has to name the origins, but naming a URL and
+/// then naming its origin again teaches nothing, so the targets grant
+/// themselves and nothing else: a page that pulls a script from a third-party
+/// CDN, or redirects off-origin, is still refused and still says so in the
+/// request log. And an allowlist wider than "what I asked for" belongs in
+/// `.h5i/env.toml`, reached through `--in`, where a tier enforces it and a
+/// digest pins it.
 fn read(
     targets: Vec<String>,
     in_box: Option<String>,
@@ -2947,7 +2912,7 @@ fn read(
 /// a full URL and normalizes it with the same code that later checks a request,
 /// so there is nothing to parse here and no second notion of "origin" to drift
 /// from the first. A local file path normalizes to no entry at all, which is
-/// right — a page opened from disk needs no grant.
+/// right. A page opened from disk needs no grant.
 ///
 /// Deduplicated so a batch produces a stable argv.
 fn origins_of(targets: &[String]) -> Vec<String> {
@@ -2967,7 +2932,7 @@ fn origins_of(targets: &[String]) -> Vec<String> {
 /// read is run-to-completion, which is why it fits a tier a session does not.
 fn read_in_box(name: &str, engine_args: &[String], json: bool) -> anyhow::Result<()> {
     // `box run --json` rather than its streamed output: the envelope carries the
-    // **policy digest that was enforced**, which is the reason to read inside a
+    // policy digest that was enforced, which is the reason to read inside a
     // box at all and the thing a hand-built policy could never hand back. It
     // also keeps `box run`'s own framing out of the middle of a page.
     let out = Command::new(std::env::current_exe()?)
@@ -3087,8 +3052,8 @@ fn relay(stdout: &[u8], stderr: &[u8], json: bool, confinement: Value) {
     };
     bs::scrub(&mut body);
     if json {
-        // An object gains a field; anything else — a `--text` read, or a box's
-        // merged output — becomes one, so the key is in the same place either way.
+        // An object gains a field; anything else (a `--text` read, or a box's
+        // merged output) becomes one, so the key is in the same place either way.
         let answer = match body {
             Value::Object(mut map) => {
                 map.insert("confinement".into(), confinement);
@@ -3328,20 +3293,19 @@ fn audit(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> 
     // What could and could not be read, before the rows. A reader has to know
     // whether an empty timeline means a quiet session or a log h5i cannot see.
     let src = &audit.sources;
-    // The helper lane is named only when there is one. A source line that
-    // listed it as `empty` on every session would read as a lane that exists
-    // and did nothing, where the truth is that nothing outside the engine
-    // touched this session at all.
-    // Named only when there *is* a helper log. `Availability::of` answers
-    // `Unavailable` for a file that is not there, which is the ordinary case —
-    // almost no session runs a helper — and `availability()` paints that red,
-    // the colour reserved for "nothing can be concluded from the silence of a
-    // log h5i could not read". So the arm was inverted: it hid the one state
-    // worth showing and shouted the one that means nothing happened.
-    // Hidden only when the log is absent, which `audit` now reports as `Empty`
-    // rather than folding it in with a log it could not open. Suppressing
-    // `Unavailable` too would have dropped the one state the red is for: a
-    // helper log that exists and cannot be read.
+    // Named only when there *is* a helper log. A source line listing the lane
+    // as `empty` on every session would read as a lane that exists and did
+    // nothing, where the truth is that nothing outside the engine touched this
+    // session at all.
+    //
+    // `Availability::of` answers `Unavailable` for a file that is not there,
+    // the ordinary case since almost no session runs a helper, and
+    // `availability()` paints that red, the colour reserved for "nothing can
+    // be concluded from the silence of a log h5i could not read". So the arm
+    // was inverted: it hid the one state worth showing and shouted the one
+    // that means nothing happened. `audit` now reports an absent log as
+    // `Empty`, keeping the red for a helper log that exists and cannot be
+    // read.
     let helpers = match src.helpers {
         bs::Availability::Empty => String::new(),
         other => format!(" · helpers {}", availability(other)),
@@ -3390,9 +3354,8 @@ fn audit(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> 
 /// audit would be a claim about that session that is not true. They are the
 /// same rows in the same shape, read from
 /// [`bs::SESSIONLESS_HELPERS_FILE`](h5i_core::browser_session::SESSIONLESS_HELPERS_FILE),
-/// and every one of them is host-observed: h5i built the argv and ran the
-/// program, so the row is an observation rather than the helper's account of
-/// itself.
+/// and every one is host-observed: h5i built the argv and ran the program, so
+/// the row is an observation rather than the helper's account of itself.
 fn sessionless_audit(root: &Path, json: bool) -> anyhow::Result<()> {
     let rows = bs::sessionless_helpers(root)?;
 
@@ -3505,7 +3468,7 @@ fn render_event(kind: &h5i_core::browser_events::EventKind) -> String {
         K::SessionReset { source } => format!("source restarted: {source}"),
         // The lane's boundary, drawn where a reader will see it. `helper` is
         // its own word rather than `verb` because the fetches it made are not
-        // in the rows above or below it — and an auditor who reads this row as
+        // in the rows above or below it, and an auditor who reads this row as
         // one more engine action has been misled about the one thing this
         // timeline is for.
         K::Helper {
@@ -3533,7 +3496,7 @@ fn render_event(kind: &h5i_core::browser_events::EventKind) -> String {
 ///
 /// The host path signals the engine directly. The boxed path goes through
 /// `service_stop`, which is what ingests the engine's in-box log as a capture
-/// and writes the stop into the box's event log — so closing a boxed session
+/// and writes the stop into the box's event log, so closing a boxed session
 /// leaves evidence in the box's own record, not only in the session's.
 fn stop_engine(session: &bs::Session) -> anyhow::Result<()> {
     match &session.placement {
@@ -3621,8 +3584,8 @@ fn viewer_url(name: &str, port: u16) -> anyhow::Result<()> {
 /// Render an engine answer for a person.
 ///
 /// Known shapes get a plain rendering; anything else falls back to the JSON,
-/// which is a shape an agent can still use. Nothing here interprets the values
-/// — they came from a page, and [`bs::scrub`] has already run.
+/// which is a shape an agent can still use. Nothing here interprets the values.
+/// They came from a page, and [`bs::scrub`] has already run.
 fn print_answer(answer: &Value) {
     let body = answer.get("data").unwrap_or(answer);
     for key in ["outline", "text", "markdown", "message"] {
@@ -3663,15 +3626,14 @@ fn unresolved_credential(error: h5i_core::error::H5iError) -> anyhow::Error {
 /// works.
 ///
 /// Both `--secret ACME_PASS` and `--secret H5I_SECRET_ACME_PASS` mean the same
-/// credential, and the manual has used each. The prefix is not decoration: it
-/// is the namespace the engine substitutes from, so it has to be on the
-/// variable the session's child actually reads, and normalizing here is what
-/// keeps one spelling from silently naming a variable nothing sets.
+/// credential, and the manual has used each. The prefix is the namespace the
+/// engine substitutes from, so it has to be on the variable the session's child
+/// actually reads, and normalizing here keeps one spelling from silently naming
+/// a variable nothing sets.
 ///
 /// Refused rather than mangled if it is not a variable name. A grant is
 /// resolved from the host environment by this exact string; a name with a space
-/// or a `$` in it could only ever be a typo, and the fail-closed answer to a
-/// typo is to say so before the session exists.
+/// or a `$` in it could only be a typo.
 fn secret_variables(named: &[String]) -> anyhow::Result<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for raw in named {
@@ -3700,21 +3662,21 @@ fn secret_variables(named: &[String]) -> anyhow::Result<Vec<String>> {
     Ok(out)
 }
 
-/// Where a file-injected secret would go, which is deliberately **not** under
+/// Where a file-injected secret would go, which is deliberately *not* under
 /// the session directory.
 ///
 /// `$WORK` is the one place the engine may write, so a credential written there
 /// would be a credential the confined engine could read back and rewrite. The
-/// path is unreachable today — `broker` refuses `inject = file` off the
-/// workspace tier — and it is chosen as though it were not.
+/// path is unreachable today, `broker` refuses `inject = file` off the
+/// workspace tier, and it is chosen as though it were not.
 fn secret_dir(root: &Path) -> PathBuf {
     root.join("secrets")
 }
 
 /// Forward `H5I_BROWSER_NO_SPLIT` into a confined session, if it is set.
 ///
-/// The engine runs as two processes — a broker that decides and records, and a
-/// renderer that parses the page — and this is the switch that runs it as one.
+/// The engine runs as two processes (a broker that decides and records, and a
+/// renderer that parses the page) and this is the switch that runs it as one.
 /// Empty in the ordinary case, which is the case that matters: the sandbox
 /// clears the environment, and everything that is not deliberately passed stays
 /// out.
@@ -3752,7 +3714,7 @@ fn detach(_command: &mut Command) {}
 ///
 /// `waitpid(WNOHANG)` rather than `kill(pid, 0)`. The confined spawn hands back
 /// a pid and drops the `Child`, so an engine that died is an unreaped zombie
-/// and a signal probe calls it alive — which is what made a start wait its whole
+/// and a signal probe calls it alive, which is what made a start wait its whole
 /// timeout on an engine that exited immediately.
 #[cfg(unix)]
 fn reap(pid: u32) -> Option<String> {

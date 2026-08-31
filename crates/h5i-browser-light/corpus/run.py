@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Point the engine at real sites and let them choose what to build next.
 
-ROADMAP.md §B8. This is a **development tool, not a test**: it needs the
+roadmap-history.md §B8. This is a **development tool, not a test**: it needs the
 network, the sites change under it, and a run takes minutes. The regression gate
 that CI runs is `tests/corpus.rs`, which exercises the same patterns against
 local fixtures and needs nothing outside the repository.
@@ -136,7 +136,7 @@ APPLICATIONS = [
 # came back short and looked like an engine failure. The corpus exists to see
 # what pages ask for, so an instrument that pre-filters the asks is measuring
 # its own configuration. `harness.ENGINE_GRANT` is that decision made once, out
-# loud, and it widens the name check only (ROADMAP §B19.5).
+# loud, and it widens the name check only (roadmap-history.md §B19.5).
 
 # A per-child address-space ceiling. One enormous page rendered without a cap
 # took the whole machine down mid-run. A child that hits this dies with a status
@@ -210,8 +210,8 @@ def anonymous(text):
 
 
 def measure(binary, name, sites):
-    api_calls, api_sites, asked_by = collections.Counter(), collections.Counter(), {}
-    error_kinds = collections.Counter()
+    api_calls, api_sites, asked_by = collections.Counter(),
+    collections.Counter(), {} error_kinds = collections.Counter()
     rows, failures, anonymous_errors = [], [], []
 
     print(f"\n### {name} ({len(sites)} sites)\n")
@@ -246,29 +246,29 @@ def measure(binary, name, sites):
             "denied": js["denied"],
             "errors": len(js.get("errors", [])),
             "page_errors": js.get("page_errors", 0),
-            "cut_off": bool(js.get("settled") and "still busy" in str(js["settled"])),
-            "script_failed": script_failed,
+            "cut_off": bool(js.get("settled") and "still busy" in
+            str(js["settled"])), "script_failed": script_failed,
             # Script that *loses* content is its own kind of failure, and it
             # looks like success in a column that only counts lines.
             "script_lost": js["lines"] < base["lines"] * 0.8,
         })
         print(
-            f"  {js['lines']:>4} lines ({base['lines']:>4} w/o)  {js['refs']:>3} refs  "
-            f"{len(js.get('errors', [])):>2} err  {js.get('page_errors', 0):>3} page  "
+            f"  {js['lines']:>4} lines ({base['lines']:>4} w/o)  {js['refs']:>3} refs 
+            " f"{len(js.get('errors', [])):>2} err  {js.get('page_errors', 0):>3} page  "
             f"{js['denied']:>2} denied  {url}"
-            + ("   [script run FAILED — this row is the no-script reading]" if script_failed else "")
-            + ("   [script LOST content]" if js["lines"] < base["lines"] * 0.8 else ""),
-            flush=True,
+            + ("   [script run FAILED — this row is the no-script reading]" if
+            script_failed else "") + ("   [script LOST content]" if js["lines"] < base["lines"]
+            * 0.8 else ""), flush=True,
         )
 
     rendered = sum(1 for r in rows if r["lines_with"] >= 5)
     gained = [r for r in rows if r["lines_with"] > r["lines_without"] * 1.2 + 2]
-    print(f"\n{len(rows)}/{len(sites)} loaded; {rendered} gave a usable outline (>=5 lines)")
-    print(f"{len(gained)} rendered materially more *with* script")
-    print(f"{sum(1 for r in rows if r['cut_off'])} did not settle within budget")
-    broken = [r["url"] for r in rows if r["script_failed"]]
-    lost = [r["url"] for r in rows if r["script_lost"] and not r["script_failed"]]
-    if broken:
+    print(f"\n{len(rows)}/{len(sites)} loaded; {rendered} gave a usable outline (>=5
+    lines)") print(f"{len(gained)} rendered materially more *with* script")
+    print(f"{sum(1 for r in rows if r['cut_off'])} did not settle within
+    budget") broken = [r["url"] for r in rows if r["script_failed"]]
+    lost = [r["url"] for r in rows if r["script_lost"] and not
+    r["script_failed"]] if broken:
         print(f"{len(broken)} could not be read *with* script at all: {', '.join(broken)}")
     if lost:
         print(f"{len(lost)} rendered materially LESS with script: {', '.join(lost)}")
@@ -320,8 +320,8 @@ def main():
     harness.check_engine(binary)
     print(f"engine: {binary} (grant: {harness.ENGINE_GRANT})")
 
-    results = {name: measure(binary, name, sites) for name, sites in corpora.items()}
-    if args.json_out:
+    results = {name: measure(binary, name, sites) for name, sites in
+    corpora.items()} if args.json_out:
         with open(args.json_out, "w") as f:
             json.dump(results, f, indent=2)
 

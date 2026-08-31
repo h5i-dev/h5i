@@ -1,4 +1,4 @@
-//! h5i-sandbox — multi-tier process/container confinement for h5i.
+//! h5i-sandbox. Multi-tier process/container confinement for h5i.
 //!
 //! The policy model (`sandbox_policy`) plus the confinement machinery and
 //! runtime backends: kernel-tier Landlock/seccomp/namespaces (`sandbox`,
@@ -19,13 +19,13 @@ pub mod auth_proxy;
 pub mod cgroup;
 pub mod container;
 /// The effective configuration a kernel-tier invocation applies
-/// (ROADMAP.md §P1) — Linux only, like the mechanisms it describes.
+/// (design-policy.md §P1). Linux only, like the mechanisms it describes.
 #[cfg(target_os = "linux")]
 pub mod effective;
-/// The filesystem-authority validator (ROADMAP.md §P2): the per-run
+/// The filesystem-authority validator (design-policy.md §P2): the per-run
 /// translation validation of the effective config against declared intent.
 pub mod fs_authority;
-/// The mount-realization audit (ROADMAP.md §P3): diff realized
+/// The mount-realization audit (design-policy.md §P3): diff realized
 /// `/proc/<pid>/mountinfo` against the planned binds before exec.
 pub mod mount_audit;
 pub mod microvm;

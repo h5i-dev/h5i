@@ -1,19 +1,18 @@
 //! The loopback HTTP front that both browser-facing sides of a share use.
 //!
-//! Two places serve HTTP to a browser and they are otherwise nothing alike: the
+//! Two places serve HTTP to a browser and are otherwise nothing alike: the
 //! sharer's quick tunnel ([`crate::tunnel`]), whose visitor is on the open
 //! internet behind Cloudflare, and the joiner's own proxy ([`crate::join`]),
-//! whose visitor is a tab on the same machine. What they have in common is the
-//! part that must not be written twice: read a bounded head, find the
-//! credential, bounce the first request so the token leaves the URL, and never
-//! pass the credential upstream.
+//! whose visitor is a tab on the same machine. What they share is the part that
+//! must not be written twice: read a bounded head, find the credential, bounce
+//! the first request so the token leaves the URL, and never pass the credential
+//! upstream.
 //!
-//! The joiner's side needs this as much as the sharer's, and that is worth
-//! saying because it is the non-obvious half. A proxy bound on the joiner's
-//! loopback is reachable by every process on their machine and by every page
-//! they have open — the same problem the viewer forward has, arriving on
-//! somebody else's computer. So it gets the same answer: a token, and a refusal
-//! without it.
+//! The joiner's side needs this as much as the sharer's, which is the
+//! non-obvious half: a proxy bound on the joiner's loopback is reachable by
+//! every process on their machine and every page they have open. Same problem
+//! as the viewer forward, arriving on somebody else's computer, so it gets the
+//! same answer: a token, and a refusal without it.
 
 use std::time::Duration;
 
@@ -32,8 +31,8 @@ const HEAD_TIMEOUT: Duration = Duration::from_secs(15);
 /// would look to the visitor like the share was broken.
 const RESPONSE_HEAD_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// A response head past this is relayed as-is rather than parsed. Generous —
-/// a real one is a few kilobytes — and its only job is to stop an unbounded
+/// A response head past this is relayed as-is rather than parsed. Generous,
+/// a real one is a few kilobytes, and its only job is to stop an unbounded
 /// buffer.
 const MAX_RESPONSE_HEAD: usize = 256 * 1024;
 
@@ -50,15 +49,15 @@ const BODY_IDLE: Duration = Duration::from_secs(30);
 /// abandoned.
 ///
 /// Every deadline in this file used to guard a *read*, which left the whole set
-/// of them unreachable: a visitor who stops reading — a paused download, a
-/// backgrounded tab, a deliberately zero receive window — parks `write_all`
-/// forever, and a loop parked in a write never reaches the loop-top check that
-/// was supposed to bound it. One such request holds a share slot and a socket
-/// into the box for the life of the ticket; sixty-four of them take the share
-/// down and make the receipt blame the honest visitors.
+/// unreachable: a visitor who stops reading (a paused download, a backgrounded
+/// tab, a deliberately zero receive window) parks `write_all` forever, and a
+/// loop parked in a write never reaches the loop-top check meant to bound it.
+/// One such request holds a share slot and a socket into the box for the life
+/// of the ticket; sixty-four take the share down and make the receipt blame the
+/// honest visitors.
 ///
 /// Generous, because a slow link is not a hostile one: TCP unblocks the moment
-/// the far side reads anything at all.
+/// the far side reads anything.
 const WRITE_STALL: Duration = Duration::from_secs(120);
 
 /// The longest a chunk-size line or a single trailer may be.
@@ -70,7 +69,7 @@ const MAX_TRAILERS: usize = 8 * 1024;
 ///
 /// A server-sent-events stream is the legitimate case and an hour is generous
 /// for a share whose ticket lasts one by default. It applies to framed
-/// responses too — "they end when their body does" is a promise agent-written
+/// responses too. "They end when their body does" is a promise agent-written
 /// code never made, and a box dribbling a byte a minute would otherwise reset
 /// the idle timer for as long as it liked.
 const UNFRAMED_LIFETIME: Duration = Duration::from_secs(3600);
@@ -80,7 +79,7 @@ const UNFRAMED_LIFETIME: Duration = Duration::from_secs(3600);
 /// Longer than the unframed cap because the two bound different risks. An
 /// unframed response is open-ended by construction and an hour is generous for
 /// it. A framed one is bounded in *bytes* already, and an hour of it is a
-/// perfectly ordinary large download on a slow link — a hundred megabytes over
+/// perfectly ordinary large download on a slow link. A hundred megabytes over
 /// a hundred kilobits is over two hours. Cutting that off at an hour truncated
 /// it silently, which is the shape of failure a visitor cannot debug.
 const FRAMED_LIFETIME: Duration = Duration::from_secs(6 * 3600);
@@ -102,18 +101,16 @@ const MAX_INTERIM_RESPONSES: usize = 8;
 /// What to do with a connection once its head has been read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Next {
-    /// Write these bytes and close. The redirect that sets the cookie, or a
+    /// Write these bytes and close: the redirect that sets the cookie, or a
     /// refusal.
     ///
-    /// The second field is the refusal's own reason, when there is one — the
-    /// redirect has none. Carried rather than recovered, because the caller
-    /// was recovering it by testing the rendered bytes for `HTTP/1.1 400`:
-    /// that reached the `400`s and left both `403`s counted nowhere. Those are
-    /// the gate refusing a foreign-origin browser request carrying the share
-    /// cookie, and refusing a service worker registration that would keep
-    /// control of the joiner's loopback origin after the share ends — at least
-    /// as relevant to an ingress receipt as an unparsable head, and a session
-    /// made entirely of them reported no turned-away activity at all.
+    /// The second field is the refusal's own reason, when there is one; the
+    /// redirect has none. Carried rather than recovered, because the caller was
+    /// recovering it by testing the rendered bytes for `HTTP/1.1 400`, which
+    /// reached the `400`s and left both `403`s counted nowhere. Those are the gate
+    /// refusing a foreign-origin browser request carrying the share cookie, and
+    /// refusing a service worker registration that would keep control of the
+    /// joiner's loopback origin after the share ends.
     Respond(String, Option<gate::Refusal>),
     /// Authorized: open the upstream, send this head, then move bytes.
     Proxy {
@@ -127,22 +124,19 @@ pub enum Next {
 
 /// Why there is no head to work with.
 ///
-/// Two answers, not one, because they are different facts about the connection
-/// and only one of them belongs in an ingress receipt.
-///
-/// The head reader refuses several shapes before [`gate::parse`] ever sees
-/// them — a header block past [`gate::MAX_HEAD`], bytes that are not UTF-8 (a
-/// TLS `ClientHello` sent to a plaintext front is the everyday one), an
-/// incomplete head the peer stops feeding — and the caller had no way to tell
-/// those from a peer that opened a socket and said nothing. So it dropped all of
-/// them silently, and the largest smuggling-shaped probe a share can be sent was
-/// the one thing its receipt could not mention: `turned_away` counts only heads
-/// that were *read* and then refused.
+/// Two answers, not one, because they are different facts and only one belongs
+/// in an ingress receipt. The head reader refuses several shapes before
+/// [`gate::parse`] sees them (a header block past [`gate::MAX_HEAD`], bytes
+/// that are not UTF-8, with a TLS `ClientHello` sent to a plaintext front the
+/// everyday case, an incomplete head the peer stops feeding) and the caller had
+/// no way to tell those from a peer that opened a socket and said nothing. So
+/// it dropped all of them silently, and the largest smuggling-shaped probe a
+/// share can be sent was the one thing its receipt could not mention.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoHead {
     /// Nothing arrived, or the peer went away before saying anything. A
     /// browser's speculative preconnect is exactly this shape and so is every
-    /// port scan, so it is not worth a line — recording it would bury the rows
+    /// port scan, so it is not worth a line. Recording it would bury the rows
     /// that mean something under noise anybody can generate.
     Silent,
     /// Bytes arrived and they are not a head this share will read. Worth
@@ -153,7 +147,7 @@ pub enum NoHead {
 
 /// Read up to the end of the headers.
 ///
-/// Returns the head and whatever arrived after it — a request body usually
+/// Returns the head and whatever arrived after it. A request body usually
 /// follows in the same packet, and a proxy that read it and threw it away would
 /// break every form on the shared app.
 pub async fn read_head<R: tokio::io::AsyncRead + Unpin>(
@@ -220,7 +214,7 @@ pub async fn write_timed<W: tokio::io::AsyncWrite + Unpin>(
 ///
 /// A stalled write is `TimedOut` whichever direction it went, and the two
 /// directions deserve opposite answers: a peer that stopped reading gets
-/// nothing more, a *box* that stopped reading is a `502` — the peer did
+/// nothing more, a *box* that stopped reading is a `502`. The peer did
 /// nothing wrong and telling them their upload was too slow sends them to fix
 /// something that is not broken.
 async fn write_to_box<W: tokio::io::AsyncWrite + Unpin>(
@@ -236,14 +230,13 @@ async fn write_to_box<W: tokio::io::AsyncWrite + Unpin>(
 
 /// A write to the box failed. A marker only this module can construct.
 ///
-/// Two things it carries, and both matter to what the visitor is told. That the
-/// failure was on the *box* side at all — an earlier version used
+/// It carries two things, both of which change what the visitor is told. That
+/// the failure was on the *box* side at all: an earlier version used
 /// `ErrorKind::BrokenPipe`, which the kernel also produces, so a peer's own
 /// disconnect could be reported as the box's. And whether the box *stalled*
-/// (nothing moved for two minutes: it is wedged, and the visitor gets a `502`)
-/// or *closed* (it answered early and hung up: a `413` from a size limit, a
-/// `401` before the body is read — and its answer is already in the socket
-/// waiting to be relayed).
+/// (nothing moved for two minutes, so it is wedged and the visitor gets a
+/// `502`) or *closed* (it answered early and hung up, and its answer is already
+/// in the socket waiting to be relayed).
 #[derive(Debug)]
 struct BoxWrite {
     stalled: bool,
@@ -275,7 +268,7 @@ fn find_head_end(buf: &[u8]) -> Option<usize> {
 
 /// Decide what a request gets.
 ///
-/// `authorize` is the caller's grant check — the bridge's table on the sharer's
+/// `authorize` is the caller's grant check. The bridge's table on the sharer's
 /// side, a single local token on the joiner's. It is only ever called with a
 /// token that already looks like one, because [`gate::parse`] refuses the rest.
 pub fn decide(
@@ -309,15 +302,13 @@ pub fn decide(
     }
     if req.from_query {
         // Authorized, but the token is in the URL. Set the cookie and send the
-        // browser to the same page without it, rather than proxying this one:
-        // a request that reached the app with the token in its target would put
-        // it in the app's logs and in `Referer` on every link out of the page.
+        // browser to the same page without it, rather than proxying this one: a
+        // request that reached the app with the token in its target would put it in
+        // the app's logs and in `Referer` on every link out of the page.
         //
-        // An upgrade is the one thing that cannot be redirected — a WebSocket
-        // handshake follows no 302 — but a browser never opens one before the
-        // page that opens it, so by then the cookie is set.
-        // Not a refusal: this is a visitor following the invite link and being
-        // sent on to the same page without the token in it.
+        // An upgrade is the one thing that cannot be redirected, since a WebSocket
+        // handshake follows no 302, but a browser never opens one before the page
+        // that opens it, so by then the cookie is set. Not a refusal.
         return Next::Respond(
             gate::set_cookie_redirect(
                 cookie,
@@ -339,7 +330,7 @@ pub fn decide(
 pub struct Forwarded<'a> {
     /// Rewritten head: share credential removed, `Connection: close` forced.
     pub head: &'a str,
-    /// Bytes that arrived in the same read as the head — the start of the body.
+    /// Bytes that arrived in the same read as the head. The start of the body.
     pub rest: &'a [u8],
     pub req: &'a gate::Request,
 }
@@ -352,7 +343,7 @@ pub struct Counters {
     pub to_peer: std::sync::atomic::AtomicU64,
     /// Set when the box left a response unfinished. Silent truncation is the
     /// part a visitor cannot debug and the sharer cannot see, so it is carried
-    /// back out to the receipt — and a visitor who cancelled a download is
+    /// back out to the receipt, and a visitor who cancelled a download is
     /// deliberately not counted, because that is not the box's doing.
     pub truncated: std::sync::atomic::AtomicBool,
 }
@@ -373,23 +364,20 @@ impl Counters {
 
 /// Forward exactly one request into the box and one response back, then stop.
 ///
-/// **This is where the one-request rule is actually enforced.** Adding
-/// `Connection: close` to the request asks the box to hang up, and the box runs
-/// agent-written code that may decline; a proxy that then kept copying would
-/// hold an ungated pipe on which a second request — from anyone whose bytes
-/// reach this connection — would reach the box without passing the gate.
+/// This is where the one-request rule is enforced. Adding `Connection: close`
+/// to the request asks the box to hang up, and the box runs agent-written code
+/// that may decline; a proxy that then kept copying would hold an ungated pipe
+/// on which a second request, from anyone whose bytes reach this connection,
+/// would reach the box without passing the gate.
 ///
-/// So the client's side is **forwarded** for exactly the bytes this request
+/// So the client's side is *forwarded* for exactly the bytes this request
 /// declared and not one more. It is still read after that, and everything it
-/// says is thrown away — that is how a client hanging up is noticed, and
-/// discarding is as strong a guarantee as not reading, because what matters is
-/// that nothing the client sends after its first request reaches the box.
-/// Whatever the box does with `Connection: close` is then its own business.
+/// says is thrown away: that is how a client hanging up is noticed, and
+/// discarding is as strong a guarantee as not reading.
 ///
-/// The exception is a real upgrade, and it is checked rather than believed: the
-/// box has to answer `101` before the connection becomes a two-way pipe. A
-/// request that merely *asked* to upgrade and got an ordinary response is
-/// treated like any other single request.
+/// The exception is a real upgrade, checked rather than believed: the box has
+/// to answer `101` before the connection becomes a two-way pipe. A request that
+/// merely *asked* to upgrade and got an ordinary response is a single request.
 pub async fn proxy_one<UR, UW>(
     client: tokio::net::TcpStream,
     up_r: UR,
@@ -417,14 +405,14 @@ where
     // after the body it was gating. curl gives up after a second and sends
     // anyway; a client that waits without a timeout used to stall until the
     // body deadline and then get no answer at all. So the proxy answers, and
-    // the header is not passed on — the box would otherwise send a second,
+    // the header is not passed on. The box would otherwise send a second,
     // useless `100` behind the body.
     if req.expects_continue {
         write_timed(&mut peer_w, b"HTTP/1.1 100 Continue\r\n\r\n").await?;
         to_peer.fetch_add(25, Ordering::Relaxed);
     }
 
-    // The box refusing the head at all — wedged, or gone. There is no answer
+    // The box refusing the head at all. Wedged, or gone. There is no answer
     // to go and read, so this is the one write to the box that always ends the
     // request.
     if write_to_box(&mut up_w, head.as_bytes()).await.is_err() {
@@ -439,38 +427,32 @@ where
     to_box.fetch_add(head.len() as u64, Ordering::Relaxed);
 
     // The declared body, and only the declared body. Anything past it on this
-    // connection is a pipelined second request, and dropping it on the floor is
-    // the point rather than an oversight.
+    // connection is a pipelined second request, and dropping it is the point.
     //
-    // **Watched while it is forwarded, not after.** The box's answer is read
-    // only once the whole body has gone across, and the one way an early
-    // rejection used to reach the visitor was the box *closing* its read side —
-    // which is what the test server does and is not what a real HTTP server has
-    // to do. A server that writes `413`, `401` or `417` after the head and
-    // leaves its read side open, in front of a client that declared a large
-    // body and then paused, left h5i waiting out `BODY_IDLE` and then replacing
-    // that already-delivered answer with its own `408`. `Expect: 100-continue`
-    // makes it likelier still: h5i synthesises the `100` itself and takes the
-    // header out, so the box never gets the chance to refuse at the one point
-    // the mechanism exists for.
+    // Watched while it is forwarded, not after. The box's answer used to be read
+    // only once the whole body had gone across, so the one way an early rejection
+    // reached the visitor was the box *closing* its read side, which the test
+    // server does and a real HTTP server need not. A server that writes `413`,
+    // `401` or `417` after the head and leaves its read side open, in front of a
+    // client that declared a large body and then paused, left h5i waiting out
+    // `BODY_IDLE` and then replacing that already-delivered answer with its own
+    // `408`. `Expect: 100-continue` makes it likelier: h5i synthesises the `100`
+    // itself and takes the header out, so the box never gets the chance to refuse.
     //
     // So the two run together, and a final answer (anything `>= 200`) stops the
-    // body. Interim heads are left alone — they are the response phase's
-    // business, and the bytes carry over into it.
+    // body. Interim heads are the response phase's business.
     let mut early = Vec::new();
     let mut up_r = up_r;
     let from_rest;
     if req.chunked {
-        // Parsed rather than refused, and the refusal was not a small cost: a
-        // browser sends `Content-Length` for a form, but `cloudflared` bridges
-        // HTTP/2 to the box's HTTP/1.1 and has no length to carry over, so it
-        // chunks *every* request with a body. Refusing chunked meant every
-        // POST through a tunnel share answered `501`, which is most of what
-        // "let somebody try the web app" means.
+        // Parsed rather than refused, and the refusal was not a small cost: a browser
+        // sends `Content-Length` for a form, but `cloudflared` bridges HTTP/2 to the
+        // box's HTTP/1.1 and has no length to carry over, so it chunks *every* request
+        // with a body. Refusing chunked meant every POST through a tunnel share
+        // answered `501`.
         //
-        // Forwarded verbatim, chunk framing and all — the box speaks HTTP and
-        // this proxy does not need to change the encoding, only to know where
-        // the request ends.
+        // Forwarded verbatim, chunk framing and all: the box speaks HTTP and this
+        // proxy only needs to know where the request ends.
         let forwarded = tokio::select! {
             r = forward_chunked(&mut peer_r, &mut up_w, rest_from_client, to_box) => Some(r),
             // The box answered before the upload finished. Abandoning the
@@ -481,13 +463,13 @@ where
         if let Some(Err(e)) = forwarded {
             // Answered rather than dropped, and answered with the right thing.
             // "Your request is malformed" and "your upload was too slow" are
-            // different sentences, and on a tunnel share — where `cloudflared`
-            // chunks every body it forwards — the slow one is the common case,
+            // different sentences, and on a tunnel share, where `cloudflared`
+            // chunks every body it forwards, the slow one is the common case,
             // so telling a visitor on hotel wifi that their request is not one
             // this share can serve is the message they would actually get.
             match box_write_failure(&e) {
                 // The box closed its read side. It has almost certainly already
-                // written the answer that explains why — a `413`, a `401` — so
+                // written the answer that explains why (a `413`, a `401`) so
                 // stop sending and go and read it, exactly as the
                 // `Content-Length` path does. Answering `400` here told the
                 // visitor their request was malformed when it was not, and
@@ -519,8 +501,8 @@ where
         let mut remaining_override = false;
         // The same wall clock the chunked path has. `Content-Length` is
         // deliberately accepted all the way to `u64::MAX`, so without one an
-        // authorized peer declaring a body it never finishes — one byte every
-        // twenty-nine seconds — holds a share slot and a socket into the box
+        // authorized peer declaring a body it never finishes, one byte every
+        // twenty-nine seconds, holds a share slot and a socket into the box
         // for the life of its ticket, which is up to a day.
         let body_deadline = tokio::time::Instant::now() + BODY_LIFETIME;
         from_rest = (rest.len() as u64).min(want) as usize;
@@ -553,8 +535,8 @@ where
         let mut buf = vec![0u8; 32 * 1024];
         while remaining > 0 {
             if tokio::time::Instant::now() >= body_deadline {
-                // Answered rather than dropped. The peer is still there — that
-                // is the whole problem — and a closed socket with no reply is
+                // Answered rather than dropped. The peer is still there, that
+                // is the whole problem, and a closed socket with no reply is
                 // the least informative thing to hand somebody whose upload
                 // was too slow.
                 return refuse_the_response(
@@ -610,7 +592,7 @@ where
                     .await;
                 }
                 // Not a stall: the box closed its read side, which is what a
-                // dev server does when it answers before reading the body — a
+                // dev server does when it answers before reading the body. A
                 // `413` from a size limit, a `401` from auth. Its answer is
                 // already in the socket, so stop sending and go and read it
                 // rather than inventing one.
@@ -622,20 +604,19 @@ where
     }
 
     // An informational response is a head that is not *the* response: `100
-    // Continue` when the client said `Expect: 100-continue` (curl does, for a
-    // body over a kilobyte), `103 Early Hints` from a server that sends them.
-    // Each is relayed exactly as it came — rewriting `Connection` on a `100`
-    // would be telling the client the connection is over before the answer has
-    // started — and then the real head is read behind it.
-    // Seeded with whatever the early-answer watch already read off the box.
-    // Those bytes are the front of its response head; dropping them would
+    // Continue` when the client said `Expect: 100-continue`, `103 Early Hints`
+    // from a server that sends them. Each is relayed exactly as it came, since
+    // rewriting `Connection` on a `100` would tell the client the connection is
+    // over before the answer has started, and then the real head is read behind
+    // it. Seeded with whatever the early-answer watch already read off the box:
+    // those bytes are the front of its response head, and dropping them would
     // leave `read_response` parsing from the middle of one.
     let mut rest = early;
     let mut interim = 0;
     // One deadline for the whole head phase, not one per head. `read_response`
     // computes its own from whenever it is called, so a box that dribbles a
     // `103` just inside the timeout used to multiply the budget by the number
-    // of interim heads allowed — while holding one of the share's connection
+    // of interim heads allowed, while holding one of the share's connection
     // slots the entire time.
     let head_deadline = tokio::time::Instant::now() + RESPONSE_HEAD_TIMEOUT;
     let (head, complete) = loop {
@@ -645,7 +626,7 @@ where
         }
         // Held to the same line discipline as the final head. Adding that check
         // to `relay_response` alone left the two paths that relay a head
-        // *without* going through it — this one and the `101` — exactly as they
+        // *without* going through it, this one and the `101`, exactly as they
         // were, which is to say the bare CR the fix was written for still
         // walked a `Set-Cookie` past the filter.
         if !head_is_well_formed(&head) {
@@ -688,7 +669,7 @@ where
         if head.is_empty() && !complete {
             // The box hung up on a handshake without answering it. This used to
             // return with nothing written at all, so the visitor's WebSocket
-            // failed with a bare close and no status — the one shape a browser
+            // failed with a bare close and no status. The one shape a browser
             // console reports as "connection closed before receiving a
             // handshake response", which says nothing about where the fault is.
             // The same `502` every other silent box gets is at least readable.
@@ -712,7 +693,7 @@ where
                 .await;
             }
             // Filtered like every other response head. This was the one that
-            // was not — and it is the only `1xx` a dev server actually sends,
+            // was not, and it is the only `1xx` a dev server actually sends,
             // so it was strictly more reachable than the `103` case that got
             // the filter first. `Connection` is left alone: an upgrade is where
             // that header means something.
@@ -754,7 +735,7 @@ where
 /// A `101`: the box agreeing to change protocols.
 ///
 /// One predicate, because there were two and they disagreed about `HTTP/1.0
-/// 101` — the upgrade check accepted it and the interim check called it an
+/// 101`: the upgrade check accepted it and the interim check called it an
 /// interim head, so a box answering that way had its response relayed as an
 /// interim and the proxy then waited two minutes for a "real" one.
 fn is_switching(head: &[u8]) -> bool {
@@ -769,23 +750,19 @@ fn is_informational(head: &[u8]) -> bool {
 
 /// The status code from a response head.
 ///
-/// Reads the first *non-empty* line, which is the line
-/// [`head_is_well_formed`] accepts as the status line and `rebuild_head`
-/// absorbs the blanks before. Taking the bytes up to the first `\r` instead
-/// meant that for the one shape both of those deliberately tolerate — a
-/// leading CRLF — this returned `None`, and every caller then read that as
-/// "not that status":
+/// Reads the first *non-empty* line, which is the line [`head_is_well_formed`]
+/// accepts as the status line and `rebuild_head` absorbs the blanks before.
+/// Taking the bytes up to the first `\r` instead meant that for the one shape
+/// both of those deliberately tolerate, a leading CRLF, this returned `None`,
+/// and every caller read that as "not that status":
 ///
-/// * an accepted `100 Continue` was not informational, so an interim answer
-///   was treated as the final one;
+/// * an accepted `100 Continue` was not informational, so an interim answer was
+///   treated as the final one;
 /// * an accepted `101` was not a switch, so the connection never entered the
 ///   upgraded duplex path and the WebSocket died;
 /// * an accepted `204` or `304` was not bodyless, so the relay waited for a
-///   body that is never sent until the idle timeout fired — and `304` is what
-///   a dev server answers for every asset the browser already has.
-///
-/// The existing leading-blank test only used a `200`, whose behaviour is the
-/// same either way, so none of these branches were covered.
+///   body that is never sent until the idle timeout fired, and `304` is what a
+///   dev server answers for every asset the browser already has.
 fn status_code(head: &[u8]) -> Option<u16> {
     let line = head
         .split(|&b| b == b'\n')
@@ -800,7 +777,7 @@ fn status_code(head: &[u8]) -> Option<u16> {
 /// Three cases where a `Content-Length` is present and describes a body that is
 /// never sent, and waiting for it would hang the connection until an idle
 /// timeout: the answer to a `HEAD`, a `204 No Content`, and a `304 Not
-/// Modified`. The last is not exotic — it is what a dev server answers for
+/// Modified`. The last is not exotic. It is what a dev server answers for
 /// every asset a browser already has.
 fn has_no_body(method: &str, head: &[u8]) -> bool {
     if method.eq_ignore_ascii_case("HEAD") {
@@ -811,14 +788,14 @@ fn has_no_body(method: &str, head: &[u8]) -> bool {
 
 /// Forward a chunked request body, verbatim, and stop at its end.
 ///
-/// The point is not to understand the body — it is passed through byte for
-/// byte — but to know where it stops, so that what follows on the connection is
-/// the pipelined request this proxy exists to drop rather than something it
+/// The point is not to understand the body, which is passed through byte for
+/// byte, but to know where it stops, so what follows on the connection is the
+/// pipelined request this proxy exists to drop rather than something it
 /// forwards by accident.
 ///
 /// Everything is bounded before it is believed: the size line, the trailer
 /// section, and the whole body's wall clock. A chunk *size* is not bounded,
-/// because a legitimate upload is as big as it is, and the peer sending it is
+/// because a legitimate upload is as big as it is and the peer sending it is
 /// one the grant table already admitted.
 async fn forward_chunked<R, W>(
     r: &mut R,
@@ -882,23 +859,19 @@ where
             }
         }
 
-        // The declared data, then the CRLF that closes it — **checked**, not
-        // counted.
+        // The declared data, then the CRLF that closes it. *Checked*, not counted.
         //
-        // This used to consume `size + 2` bytes and forward them without
-        // looking at the last two, so `1\r\nAXX0\r\n\r\n` was a complete
-        // request: one byte of data, `XX` where its CRLF should be, and the
-        // `0` chunk read out of the middle of the stream. Every conforming
-        // server rejects that, which means h5i had declared a request finished
-        // at a point nothing else agrees is a boundary — and the chunk framing
-        // is the only thing telling this proxy where the request ends, which is
-        // the last place to be relaxed. Found by the chunked fuzz, which reads
-        // the same stream leniently and could not find an end where this
-        // claimed one.
+        // This used to consume `size + 2` bytes and forward them without looking at
+        // the last two, so `1\r\nAXX0\r\n\r\n` was a complete request: one byte of
+        // data, `XX` where its CRLF should be, and the `0` chunk read out of the
+        // middle of the stream. Every conforming server rejects that, so h5i had
+        // declared a request finished at a point nothing else agrees is a boundary,
+        // and the chunk framing is the only thing telling this proxy where the request
+        // ends. Found by the chunked fuzz, which reads the same stream leniently and
+        // could not find an end where this claimed one.
         //
-        // No `checked_add` is needed now that the two are separate: `size` is
-        // consumed as itself, so `u64::MAX` is a body this streams until the
-        // peer stops rather than an overflow.
+        // No `checked_add` is needed now the two are separate: `size` is consumed as
+        // itself, so `u64::MAX` is a body this streams until the peer stops.
         let mut left = size;
         while left > 0 {
             // Inside the loop, not only at the top of the outer one. The
@@ -1020,32 +993,27 @@ fn is_trailer(line: &[u8]) -> bool {
 
 /// Read the box's response head.
 ///
-/// Byte-oriented, unlike the request reader, and that is not fussiness: a
-/// response head is allowed to carry bytes that are not UTF-8 (a `filename=`
-/// in a legacy encoding is the ordinary case), and a reader that gave up on
-/// those would delete a response the box had already produced.
+/// Byte-oriented, unlike the request reader, and not out of fussiness: a
+/// response head may carry bytes that are not UTF-8 (a `filename=` in a legacy
+/// encoding is the ordinary case), and a reader that gave up on those would
+/// delete a response the box had already produced.
 ///
 /// Returns what was read either way. `complete` says whether the blank line
-/// arrived; when it did not — a head past the cap, a box that stopped talking —
-/// the caller relays the bytes verbatim rather than discarding them, because a
-/// truncated response is something a person can debug and a silently empty one
-/// is not.
-/// Resolve when the box has written a **final** response head.
+/// arrived; when it did not, the caller relays the bytes verbatim rather than
+/// discarding them, because a truncated response is something a person can
+/// debug and a silently empty one is not.
 ///
-/// Run beside the request-body forward, so an answer that arrives before the
-/// upload finishes is the thing that ends the upload rather than something
-/// discovered thirty seconds later. Everything it reads is accumulated into
-/// `buf`, which the caller passes on as `read_response`'s pending bytes — this
-/// consumes from the socket, so dropping what it read would leave the response
-/// phase parsing from the middle of a head.
+/// Resolves when the box has written a *final* response head. Run beside the
+/// request-body forward, so an answer that arrives before the upload finishes
+/// is what ends the upload rather than something discovered thirty seconds
+/// later. Everything it reads is accumulated into `buf`, which the caller
+/// passes on as `read_response`'s pending bytes.
 ///
-/// Interim heads (`1xx`, including `101`) do not count: `100 Continue` is a
-/// permission to keep sending, `103 Early Hints` is not an answer at all, and a
-/// `101` belongs to the upgrade path, which has no request body to race. Only
-/// `>= 200` is a decision.
-///
-/// Never resolves if the box says nothing, which is the ordinary case: this is
-/// always one arm of a `select!` and the other arm is what makes progress.
+/// Interim heads (`1xx`, including `101`) do not count: `100 Continue` is
+/// permission to keep sending, `103 Early Hints` is not an answer, and a `101`
+/// belongs to the upgrade path, which has no request body to race. Never
+/// resolves if the box says nothing, which is the ordinary case: this is always
+/// one arm of a `select!`.
 async fn watch_for_final_response<R: tokio::io::AsyncRead + Unpin>(r: &mut R, buf: &mut Vec<u8>) {
     let mut chunk = [0u8; 4096];
     loop {
@@ -1072,8 +1040,8 @@ async fn watch_for_final_response<R: tokio::io::AsyncRead + Unpin>(r: &mut R, bu
             }
         }
         match r.read(&mut chunk).await {
-            // The box closed or errored. Not this function's business — the
-            // body forward will notice, or `read_response` will — and
+            // The box closed or errored. Not this function's business (the
+            // body forward will notice, or `read_response` will) and
             // resolving here would race a legitimate "the box hung up"
             // ending into looking like an answer.
             Ok(0) | Err(_) => break,
@@ -1116,17 +1084,16 @@ async fn read_response<R: tokio::io::AsyncRead + Unpin>(
 
 /// Relay one response and close.
 ///
-/// The head is rewritten to say `Connection: close`, and that is a correctness
-/// fix rather than tidiness. The proxy stops reading the client after one
-/// request; a response that told the client "keep this connection, send me
-/// another" produced exactly that — a connection the client believed reusable
-/// and that answered nothing, which on the tunnel path is an intermittent hang
-/// and a `502` for every POST the client will not retry.
+/// The head is rewritten to say `Connection: close`, which is a correctness fix
+/// rather than tidiness. The proxy stops reading the client after one request;
+/// a response telling the client "keep this connection, send me another"
+/// produced exactly that: a connection the client believed reusable that
+/// answered nothing, which on the tunnel path is an intermittent hang and a
+/// `502` for every POST the client will not retry.
 ///
 /// The body is framed by `Content-Length` when there is one, so the connection
 /// ends when the response does rather than waiting on a box that may never hang
-/// up. Without one it is relayed until the box closes or goes quiet for a long
-/// time, which is the best that can be done without parsing chunked encoding.
+/// up. Without one it is relayed until the box closes or goes quiet.
 #[allow(clippy::too_many_arguments)]
 async fn relay_response<PR, PW, UR>(
     mut peer_r: PR,
@@ -1149,11 +1116,11 @@ where
     // The same line discipline the request head is held to. `gate` refuses a
     // bare CR or LF there because normalising "leaves two parsers and hopes
     // they agree"; the response side used to do exactly that, and a bare CR
-    // walked a `Connection: keep-alive` and a `Set-Cookie` past both filters —
-    // the box deciding whether the sanitiser applied to it.
+    // walked a `Connection: keep-alive` and a `Set-Cookie` past both filters.
+    // The box deciding whether the sanitiser applied to it.
     if complete && !head_is_well_formed(&head) {
-        // Its own answer. The box *did* finish this head — it is malformed, not
-        // truncated — and telling the sharer to look for a truncation sends
+        // Its own answer. The box *did* finish this head (it is malformed, not
+        // truncated) and telling the sharer to look for a truncation sends
         // them after something that is not happening, while discarding the one
         // signal that would tell them their app emits injectable headers.
         return refuse_the_response(&mut peer_r, &mut peer_w, malformed_head_response(), to_peer)
@@ -1163,7 +1130,7 @@ where
     if !complete && head.is_empty() {
         // The box closed without saying anything at all. That is a different
         // fact from starting a reply and not finishing it, and it is what
-        // happens when a dev server rejects a request by hanging up — so the
+        // happens when a dev server rejects a request by hanging up, so the
         // sharer is told the box answered nothing rather than sent to look for
         // a truncation.
         return refuse_the_response(
@@ -1176,19 +1143,16 @@ where
     }
 
     if !complete {
-        // A head the box never finished is not a response, and relaying the
-        // bytes verbatim — which is what this did, to avoid "silently deleting
-        // a response" — hands the visitor a head that skipped every rewrite:
-        // no forced `close`, no share-cookie filter, no length sanitising. The
-        // box chooses when to stop talking, so that was the whole sanitiser
-        // behind a door the box holds. A refusal the visitor can read is the
-        // better half of the trade.
+        // A head the box never finished is not a response, and relaying the bytes
+        // verbatim (which is what this did, to avoid "silently deleting a
+        // response") hands the visitor a head that skipped every rewrite: no forced
+        // `close`, no share-cookie filter, no length sanitising. The box chooses
+        // when to stop talking, so that put the whole sanitiser behind a door the
+        // box holds.
         //
-        // Recorded as a truncation, because that is what it is: the box began a
-        // response and did not finish it. The visitor gets a readable `502`
-        // either way, and without this the receipt was silent about a real box
-        // failure — the sharer would read "no truncations" and go looking
-        // somewhere else entirely.
+        // Recorded as a truncation, because that is what it is. The visitor gets a
+        // readable `502` either way, and without this the receipt was silent about
+        // a real box failure and the sharer would go looking elsewhere.
         truncated.store(true, Ordering::Relaxed);
         return refuse_the_response(&mut peer_r, &mut peer_w, unfinished_response(), to_peer).await;
     }
@@ -1196,22 +1160,19 @@ where
     let (out, body_len, body_kind) = {
         let framing = response_framing(&head);
         let rewritten = close_the_connection(&head);
-        // The head is sanitised on its own terms, and the body length is a
-        // separate question. Deciding both at once put "no body" and "framing
-        // we refuse to trust" through the same branch, which is how an
-        // ambiguous *page* ended up delivered with no content at all.
-        // Not passed on. Handing the visitor two `Content-Length` headers is a
-        // response-smuggling shape the request side refuses outright, and a
-        // client that reads it either errors or picks one — which is the
-        // disagreement all over again, one hop further out. Stripped even when
-        // the answer carries no body: a `304` is the commonest response a dev
-        // server produces, and "this branch has no body so the headers cannot
-        // hurt" is how an invariant ends up holding on one path and not the
-        // other.
+        // The head is sanitised on its own terms, and the body length is a separate
+        // question. Deciding both at once put "no body" and "framing we refuse to
+        // trust" through the same branch, which is how an ambiguous *page* ended up
+        // delivered with no content at all.
         //
-        // What the visitor is left with is one framing rather than two: the
-        // chunk stream if a `Transfer-Encoding` was the other half of the
-        // contradiction, and the connection closing otherwise.
+        // Two `Content-Length` headers are a response-smuggling shape the request
+        // side refuses outright, and a client that reads it either errors or picks
+        // one, which is the same disagreement one hop further out. Stripped even
+        // when the answer carries no body: a `304` is the commonest response a dev
+        // server produces, and "this branch has no body so the headers cannot hurt"
+        // is how an invariant ends up holding on one path and not the other.
+        //
+        // What the visitor is left with is one framing rather than two.
         let out = if framing.strip_lengths {
             strip_lengths(&rewritten)
         } else {
@@ -1220,7 +1181,7 @@ where
         // A `HEAD`, a `204` or a `304` declares a length and sends nothing.
         // Waiting for that body would hold the connection until the idle
         // timeout, and a `304` is what a dev server answers for every asset the
-        // browser already has — so this is the common case, not the exotic one.
+        // browser already has, so this is the common case, not the exotic one.
         let body_len = if bodyless {
             Some(0)
         } else {
@@ -1228,7 +1189,7 @@ where
                 Body::Length(n) => Some(n),
                 // Nothing this proxy can count, so the ending is either the
                 // terminating chunk (watched for below) or the connection
-                // closing — which is exactly what the head now says.
+                // closing, which is exactly what the head now says.
                 Body::Chunked | Body::UntilClose => None,
             }
         };
@@ -1261,8 +1222,8 @@ where
 
     if body_len == Some(sent_body) || scan.as_ref().is_some_and(Scan::is_done) {
         // The response is complete. Do not just drop the socket: the peer's own
-        // request body may still be unread — a dev server that answers before
-        // reading it is the ordinary case — and closing on unread bytes resets
+        // request body may still be unread, a dev server that answers before
+        // reading it is the ordinary case, and closing on unread bytes resets
         // the connection, which throws away the answer just delivered.
         finish_with(peer_r, peer_w).await;
         return Ok(());
@@ -1271,7 +1232,7 @@ where
     let mut buf = vec![0u8; 32 * 1024];
     let mut discard = vec![0u8; 8 * 1024];
     // The peer has stopped *sending*. Not the same as the peer going away, and
-    // the difference is a truncated download — see the discard branch below.
+    // the difference is a truncated download. See the discard branch below.
     let mut peer_said_all_it_will = false;
     // Whether a clock, rather than either end, is what ended this. Only matters
     // once the peer has half-closed: from then on nothing can tell us it left,
@@ -1280,7 +1241,7 @@ where
     let mut a_timer_ended_it = false;
     // Which side ended the relay. Truncation is a claim about the *box*, and
     // the visitor closing a tab mid-download is the commonest way this loop
-    // ends — reporting that as the box cutting a response short libels it in
+    // ends. Reporting that as the box cutting a response short libels it in
     // the one artifact that is supposed to be evidence.
     let mut box_ended_it = false;
     // The box's side stopped without ending: a timer fired, or the stream
@@ -1288,7 +1249,7 @@ where
     // is the only thing that can make one short.
     let mut cut_short = false;
     // An absolute cap as well as an idle one. The idle timeout is rebuilt every
-    // time round the loop, including when the *client* says something — so a
+    // time round the loop, including when the *client* says something, so a
     // peer dribbling a byte a minute could hold an unframed response open for
     // as long as it liked, which is the ceiling this share has instead of a
     // per-peer limit.
@@ -1322,8 +1283,8 @@ where
                         box_ended_it = true;
                         break;
                     }
-                    // A read error is not an ending, it is an interruption —
-                    // the box's side went away mid-stream. Short either way.
+                    // A read error is not an ending, it is an interruption.
+                    // The box's side went away mid-stream. Short either way.
                     Ok(Err(_)) => {
                         box_ended_it = true;
                         cut_short = true;
@@ -1367,21 +1328,19 @@ where
             // "stop reading": it is how a client hanging up is noticed, and
             // without it a connection where both ends went quiet would hold one
             // of the share's slots until the grant expired. Discarding is as
-            // strong a guarantee as not reading — what matters is that no byte
+            // strong a guarantee as not reading. What matters is that no byte
             // the client sends after its first request reaches the box.
             from_peer = peer_r.read(&mut discard), if !peer_said_all_it_will => {
                 match from_peer {
-                    // Not the end of the connection. A client that sends its
-                    // request and then shuts down its write side is doing
-                    // something HTTP/1.1 explicitly allows, and it is what
-                    // anything built out of a single `write` then a read does —
-                    // `curl -T- </dev/null`, a CI scraper, `printf ... | nc`.
-                    // Treating that EOF as "the visitor left" ended the relay
-                    // on the spot, so those clients got the first 32 KiB of a
-                    // download and a clean close, with nothing recorded: the
-                    // response was cut short and the receipt said the box was
-                    // fine, because by then it was the *front* cutting it.
-                    // They are still owed the rest; stop watching, keep sending.
+                    // Not the end of the connection. A client that sends its request and
+                    // then shuts down its write side is doing something HTTP/1.1
+                    // explicitly allows, and it is what anything built out of a single
+                    // `write` then a read does: `curl -T- </dev/null`, a CI scraper,
+                    // `printf ... | nc`. Treating that EOF as "the visitor left" ended the
+                    // relay on the spot, so those clients got the first 32 KiB of a
+                    // download and a clean close, with nothing recorded: the response was
+                    // cut short and the receipt said the box was fine, because by then it
+                    // was the *front* cutting it. Stop watching, keep sending.
                     Ok(0) => peer_said_all_it_will = true,
                     // An error is the connection failing, which is different.
                     Err(_) => break,
@@ -1390,9 +1349,9 @@ where
             }
         }
     }
-    // Two questions, and the flag needs both. *Did the box end it* — because a
+    // Two questions, and the flag needs both. *Did the box end it*, because a
     // visitor closing a tab mid-download is the commonest way out of this loop
-    // and is nobody's fault but theirs. And *was what arrived short* — which
+    // and is nobody's fault but theirs. And *was what arrived short*, which
     // for a declared length is arithmetic, and for an unframed response is
     // knowable only when the box stopped without ever closing its stream:
     // the deadline and the idle timeout, both of which cut a stream the client
@@ -1400,7 +1359,7 @@ where
     let short = match body_len {
         Some(n) => sent_body < n,
         // Chunked: the terminating chunk is the ending, so a stream that
-        // stopped without one is short however it stopped — including the
+        // stopped without one is short however it stopped, including the
         // clean close that would be a complete answer for a response with no
         // framing at all. A body whose framing this could not follow
         // (`Scan::Lost`) falls back to the unframed rule rather than accusing
@@ -1414,7 +1373,7 @@ where
     };
     // And a third question, for the one case where the first cannot be answered.
     // Once the peer has half-closed there is nothing left that could tell us it
-    // went away — the discard branch is disabled and only a failed write would
+    // went away. The discard branch is disabled and only a failed write would
     // notice, and an idle box writes nothing. So a *timer* ending a half-closed
     // connection is exactly as consistent with a client that died as with a box
     // that went quiet, and recording it as the box's doing puts a claim in the
@@ -1452,17 +1411,16 @@ fn strip_lengths(head: &[u8]) -> Vec<u8> {
 enum Body {
     /// Exactly this many bytes.
     Length(u64),
-    /// At the terminating zero-length chunk, which this proxy watches for as
-    /// it relays. It does not *parse* the body — the bytes go through
-    /// untouched — it only tracks where the framing says the message stops.
+    /// At the terminating zero-length chunk, which this proxy watches for as it
+    /// relays. It does not *parse* the body, which goes through untouched; it
+    /// only tracks where the framing says the message stops.
     ///
-    /// It used to be folded into [`Body::UntilClose`], and the cost of that was
-    /// a slot held for five minutes per request. This code already treats "an
-    /// agent-written server that ignores `Connection: close`" as a supported
-    /// case; against one, the browser had a complete response in hand while
-    /// h5i sat waiting for a close that was not coming, until `RESPONSE_IDLE`
-    /// fired. Sixty-four requests and the share answered `busy` for the rest of
-    /// that interval, and a steady trickle kept it there.
+    /// It used to be folded into [`Body::UntilClose`], at a cost of a slot held
+    /// for five minutes per request. This code treats "an agent-written server
+    /// that ignores `Connection: close`" as a supported case; against one, the
+    /// browser had a complete response in hand while h5i sat waiting for a close
+    /// that was not coming, until `RESPONSE_IDLE` fired. Sixty-four requests and
+    /// the share answered `busy` for the rest of that interval.
     Chunked,
     /// The connection closing is the framing, and there is nothing else to go
     /// on.
@@ -1485,22 +1443,20 @@ struct Framing {
 ///
 /// `Transfer-Encoding` beats `Content-Length` for every HTTP client, so framing
 /// on the length when both are present sends the client a prefix of the *chunk
-/// framing* and closes — a truncated stream that reads as the app being broken.
+/// framing* and closes: a truncated stream that reads as the app being broken.
 ///
-/// **Any** transfer coding does that, not only `chunked`, and that was the hole:
+/// *Any* transfer coding does that, not only `chunked`, and that was the hole:
 /// a response carrying `Transfer-Encoding: gzip` *and* `Content-Length: 4` was
 /// graded `Length(4)` here, so both headers reached the visitor and h5i stopped
-/// after four bytes — while the recipient, for which a transfer coding is
-/// authoritative, was reading a stream that ends when the connection does. Same
-/// arithmetic, opposite direction, and the result is a hang or a truncation
-/// depending on whose parser you ask. A coding this proxy cannot follow means
-/// the connection closing is the only framing it will commit to, and the length
-/// does not travel.
+/// after four bytes, while the recipient, for which a transfer coding is
+/// authoritative, was reading a stream that ends when the connection does. A
+/// coding this proxy cannot follow means the connection closing is the only
+/// framing it will commit to, and the length does not travel.
 ///
 /// `chunked` has to be the *final* coding to be worth anything: `chunked, gzip`
-/// is invalid and, more to the point, means the octets on the wire are not
-/// chunk-framed, so watching for a terminating chunk in them would be watching
-/// for a byte pattern in compressed data.
+/// is invalid and means the octets on the wire are not chunk-framed, so
+/// watching for a terminating chunk would be watching for a byte pattern in
+/// compressed data.
 fn response_framing(head: &[u8]) -> Framing {
     let mut length = None;
     let mut lengths = 0;
@@ -1523,7 +1479,7 @@ fn response_framing(head: &[u8]) -> Framing {
                 // agree with what the box is actually going to send.
                 //
                 // `identity` is legal, deprecated, and means "no encoding", so
-                // it is dropped here rather than counted as a coding — grading
+                // it is dropped here rather than counted as a coding. Grading
                 // it as one would strip a perfectly good `Content-Length`.
                 codings.extend(
                     value
@@ -1575,13 +1531,13 @@ const MAX_SCAN_LINE: usize = 16 * 1024;
 /// Where a relayed chunked body has got to.
 ///
 /// Fed the same bytes that go to the visitor, in the same order, and asked
-/// after each write whether the message has ended. It reads only the framing —
-/// the size lines, the trailers and the blank line that closes them — and skips
+/// after each write whether the message has ended. It reads only the framing
+/// (the size lines, the trailers and the blank line that closes them) and skips
 /// the data, so a body is never buffered and never inspected.
 ///
 /// A body it cannot follow ends up [`Scan::Lost`], which is not an error: the
-/// relay falls back to the old behaviour of waiting for the close, which is
-/// what it did for every chunked response before this existed.
+/// relay falls back to waiting for the close, which is what it did for every
+/// chunked response before this existed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Scan {
     /// Reading a size line, or a trailer line once the zero chunk has been seen.
@@ -1592,13 +1548,11 @@ enum Scan {
     ///
     /// Its own state rather than two extra bytes on [`Scan::Data`], and the
     /// difference is whether those bytes are *checked*. Counted, the scanner
-    /// found the end of `1\r\nAXX0\r\n\r\n` — one byte of data, `XX` where its
-    /// CRLF belongs — at a boundary no client recognises, and since the relay
+    /// found the end of `1\r\nAXX0\r\n\r\n` (one byte of data, `XX` where its
+    /// CRLF belongs) at a boundary no client recognises, and since the relay
     /// clamps at whatever the scanner calls the end, that turned a malformed
     /// response into one h5i truncated on the box's behalf. Checked, the same
-    /// stream is [`Scan::Lost`], which falls back to being framed by the
-    /// connection closing: the visitor gets every byte the box sent and their
-    /// own client decides, which is what happened before this scanner existed.
+    /// stream is [`Scan::Lost`] and the visitor gets every byte the box sent.
     Closing(u8),
     /// The terminating chunk and its trailers have gone by.
     Done,
@@ -1619,22 +1573,19 @@ impl Scan {
         matches!(self, Scan::Done)
     }
 
-    /// Advance over bytes about to be relayed, and answer **how many of them
-    /// belong to this response**.
+    /// Advance over bytes about to be relayed, and answer how many of them
+    /// belong to this response.
     ///
     /// The count is what makes the chunked path enforce the same rule the
     /// `Content-Length` path gets from arithmetic. Without it everything the box
     /// wrote past the terminating chunk went to the visitor: a second status
-    /// line, its own `Set-Cookie`, its own `Connection` — a head that reached
-    /// the visitor's client having skipped `close_the_connection` and
-    /// `strip_share_cookies` entirely. Conforming clients discard it, because
-    /// the head they did parse says `Connection: close`; the objection is that
-    /// whether the sanitiser applies was the box's choice, which is the same
-    /// door the unfinished-head path was closed for.
+    /// line, its own `Set-Cookie`, its own `Connection`, a head that reached the
+    /// visitor's client having skipped `close_the_connection` and
+    /// `strip_share_cookies`. Conforming clients discard it; the objection is
+    /// that whether the sanitiser applies was the box's choice.
     ///
     /// `Lost` answers "all of them": a body whose framing this could not follow
-    /// falls back to being framed by the connection closing, which is what
-    /// every chunked response did before the scanner existed.
+    /// falls back to being framed by the connection closing.
     fn feed(&mut self, bytes: &[u8]) -> usize {
         let total = bytes.len();
         let mut rest = bytes;
@@ -1696,7 +1647,7 @@ impl Scan {
             // Trailers, then the blank line that ends them. CRLF only: a bare
             // LF was accepted here while `is_trailer` refused one on the line
             // above, so a response framed with bare LFs had its end found by
-            // the terminator and its trailers rejected — two readings of the
+            // the terminator and its trailers rejected. Two readings of the
             // same stream, in the one place that decides where a message stops.
             // Now it is `Lost`, which means framed by the close.
             return if line == b"\r\n" {
@@ -1715,8 +1666,8 @@ impl Scan {
                 after_zero: true,
                 line: Vec::new(),
             },
-            // The data, and then its closing CRLF as a state of its own —
-            // checked rather than counted. No `checked_add` is needed for that
+            // The data, and then its closing CRLF as a state of its own.
+            // Checked rather than counted. No `checked_add` is needed for that
             // reason: `u64::MAX` is a chunk this streams rather than an
             // overflow.
             Some(n) => Scan::Data(n),
@@ -1760,8 +1711,8 @@ where
         to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
     }
     // Drained, like every other close. These are the paths where the peer is
-    // *most* likely to still be sending — it declared a body and we refused
-    // part-way through it — so they are the ones a reset would most reliably
+    // *most* likely to still be sending, it declared a body and we refused
+    // part-way through it, so they are the ones a reset would most reliably
     // destroy the answer on.
     finish_with(peer_r, peer_w).await;
     Ok(())
@@ -1775,18 +1726,15 @@ const LINGER_DRAIN: Duration = Duration::from_secs(2);
 ///
 /// A read that times out having returned nothing means the receive queue is
 /// empty *now*, and an empty receive queue is the whole condition for closing
-/// without a reset. So the common case — a peer that sent one request, got its
-/// answer and is waiting for the close — costs this and not [`LINGER_DRAIN`].
+/// without a reset. So the common case, a peer that sent one request, got its
+/// answer and is waiting for the close, costs this and not [`LINGER_DRAIN`].
 ///
 /// Short, because anything already queued is returned by the first `read`
-/// immediately; the wait only buys bytes that are still in flight. A peer that
-/// neither closes nor sends pays it in full, and on a tunnel share that peer is
-/// `cloudflared`, which pools connections — so this is per request, on the only
-/// transport where the drain has a stated purpose.
-/// Without the split every request held one of the share's 64 slots for two
-/// seconds past its response, and a page of fifty subresources through a client
-/// that does not close first would have started answering `503 This share is
-/// busy` on a share nobody else was using.
+/// immediately; the wait only buys bytes still in flight. A peer that neither
+/// closes nor sends pays it in full, and on a tunnel share that peer is
+/// `cloudflared`, which pools connections. Without the split every request held
+/// one of the share's 64 slots for two seconds past its response, and a page of
+/// fifty subresources would have started answering `503 This share is busy`.
 const LINGER_PROBE: Duration = Duration::from_millis(40);
 
 /// And how much to swallow once there is something. Plenty for a form post that
@@ -1801,21 +1749,18 @@ const MAX_LINGER_BYTES: u64 = 4 * 1024 * 1024;
 /// side's *unflushed send queue*. So the shape to avoid is a response still
 /// buffered locally when the socket closes on an upload nobody read.
 ///
-/// **How much this is worth, honestly.** We could not construct a case on Linux
-/// where deleting this drain changed what a visitor received, and we tried: the
-/// relay loop already reads and discards everything the peer sends for as long
-/// as a body is in flight, so on the path where responses are large there is
-/// nothing left unread by the time this runs. What is left is the refusal
-/// paths, where the peer really may still be uploading — and there the answer
-/// is a few dozen bytes, which is on the wire long before the close, and Linux
-/// does not purge the *peer's* receive queue on an RST. So the visitor reads
-/// those either way. A test asserting otherwise passed with the drain deleted,
-/// which is how this comment came to be rewritten.
+/// How much this is worth, honestly. We could not construct a case on Linux
+/// where deleting this drain changed what a visitor received: the relay loop
+/// already reads and discards everything the peer sends while a body is in
+/// flight, so where responses are large there is nothing left unread. What is
+/// left is the refusal paths, and there the answer is a few dozen bytes, on the
+/// wire long before the close, and Linux does not purge the *peer's* receive
+/// queue on an RST.
 ///
 /// It is kept because it is bounded (see the two constants) and because the
-/// thing at the other end of a tunnel share is not a browser but `cloudflared`,
-/// and what an intermediary does with an origin that resets rather than closes
-/// is its business, not ours. Closing cleanly is the cheap half of that.
+/// thing at the other end of a tunnel share is `cloudflared`, and what an
+/// intermediary does with an origin that resets rather than closes is its
+/// business.
 async fn finish_with<PR, PW>(mut peer_r: PR, mut peer_w: PW)
 where
     PR: tokio::io::AsyncRead + Unpin,
@@ -1889,19 +1834,18 @@ fn unfinished_response() -> String {
 
 /// `HTTP/<d>.<d> <3 digits>`, and then whatever reason phrase it likes.
 ///
-/// A `starts_with(b"HTTP/")` test was the first attempt and it is not the same
+/// A `starts_with(b"HTTP/")` test was the first attempt and is not the same
 /// thing: `HTTP/1.1`, `HTTP/`, `HTTP/oops` and `HTTP/1.1: 200 OK` all pass it,
 /// and a third of the heads the fuzz corpus produced that got through the check
-/// had a first line that was not a status line at all. Those relay verbatim —
-/// no filter predicate can match a `HTTP/`-prefixed line — so the visitor's
-/// browser reports the same nameless protocol error the check was added to
-/// cure.
+/// had a first line that was not a status line. Those relay verbatim, since no
+/// filter predicate can match a `HTTP/`-prefixed line, so the visitor's browser
+/// reports the same nameless protocol error the check was added to cure.
 fn is_status_line(l: &[u8]) -> bool {
     let Some(rest) = l.strip_prefix(b"HTTP/") else {
         return false;
     };
     // `1.1`, `1.0`, and `2`/`3` for a box that answers with a version this
-    // proxy does not speak — refusing those is the same readable `502`.
+    // proxy does not speak. Refusing those is the same readable `502`.
     let mut it = rest.splitn(2, |&b| b == b' ');
     let Some(version) = it.next() else {
         return false;
@@ -1919,7 +1863,7 @@ fn is_status_line(l: &[u8]) -> bool {
     // The reason phrase is the box's to choose and it reaches the visitor
     // verbatim, so it is held to what RFC 7230 allows: HTAB, SP, visible ASCII
     // and obs-text. A box answering `HTTP/1.1 200 \x1b[31mCOMPROMISED` had
-    // those escapes relayed to whatever the visitor was reading with — inert
+    // those escapes relayed to whatever the visitor was reading with: inert
     // in a browser, not inert in a terminal, and malformed either way.
     let reason_ok = parts.next().is_none_or(|r| {
         r.iter()
@@ -1933,20 +1877,19 @@ fn is_status_line(l: &[u8]) -> bool {
 ///
 /// Both rules are the request side's, for the request side's reason: a line
 /// this proxy reads as one thing and the visitor's browser reads as two is a
-/// header walking past the filters. Obs-fold is the second door — `header_name`
+/// header walking past the filters. Obs-fold is the second door: `header_name`
 /// trims, so a folded continuation matches a filter and gets dropped, or
 /// survives a dropped line and reattaches itself to the header above.
 fn head_is_well_formed(head: &[u8]) -> bool {
     // It has to be a response at all. The sanitiser rebuilds a head by dropping
-    // the lines a filter rejects, and it drops empty ones — so a box whose
-    // first line is a header rather than a status line had that header
-    // *promoted* into the status line's place, and the visitor got a reply
-    // beginning `Connection: close` with no status in it at all. A browser
-    // calls that a protocol error and says nothing about where the fault is.
+    // the lines a filter rejects, and it drops empty ones, so a box whose first
+    // line is a header rather than a status line had that header *promoted* into
+    // the status line's place, and the visitor got a reply beginning
+    // `Connection: close` with no status in it.
     //
-    // A leading blank line before a real status line is still fine, and is
-    // absorbed: clients have always tolerated one, and refusing it would fail a
-    // response that is only untidy.
+    // A leading blank line before a real status line is absorbed: clients have
+    // always tolerated one, and refusing it would fail a response that is only
+    // untidy.
     let first = head
         .split(|&b| b == b'\n')
         .map(|l| l.strip_suffix(b"\r").unwrap_or(l))
@@ -1974,10 +1917,9 @@ fn head_is_well_formed(head: &[u8]) -> bool {
 /// Rebuild a response head, dropping the lines a filter rejects and appending
 /// whatever the caller wants at the end.
 ///
-/// One loop, because there were three near-identical ones — the `Connection`
-/// rewrite, the length strip and the cookie filter — and three copies of a
-/// parser is a divergence waiting for the round that finds it. Each caller
-/// differs only in what it drops and what it adds.
+/// One loop, because there were three near-identical ones (the `Connection`
+/// rewrite, the length strip, the cookie filter) and three copies of a parser
+/// is a divergence waiting for the round that finds it.
 ///
 /// The status line survives every filter, and it is worth being precise about
 /// why: not because it has no colon (`HTTP/1.1 500 Error: bad thing` does), but
@@ -2015,17 +1957,16 @@ fn strip_share_cookies(head: &[u8]) -> Vec<u8> {
 
 /// The name a `Set-Cookie` line sets, or `None` for any other header.
 ///
-/// **Not `set_cookie_pair().map(name)`, which is how it was written.** That
-/// requires an `=`, so `Set-Cookie: h5i_share` — a header with a name and no
-/// value — was not a `Set-Cookie` for one of ours and travelled to the visitor
+/// Not `set_cookie_pair().map(name)`, which is how it was written. That
+/// requires an `=`, so `Set-Cookie: h5i_share`, a header with a name and no
+/// value, was not a `Set-Cookie` for one of ours and travelled to the visitor
 /// untouched. Found by the response fuzzer at 147,554 rounds.
 ///
-/// It is not a leak on its own: RFC 6265 §5.2 says a set-cookie-string whose
-/// name-value pair lacks an `=` is ignored entirely, so a conforming browser
-/// stores nothing. It is the same rule applied on one branch and not the other,
-/// which is the exact defect `split_cookie` records having had on the *request*
-/// side — and its comment there gives the answer this one now matches:
-/// whatever is named like ours does not travel, however it is spelled.
+/// Not a leak on its own: RFC 6265 §5.2 says a set-cookie-string whose
+/// name-value pair lacks an `=` is ignored entirely. It is the same rule
+/// applied on one branch and not the other, and the answer matches
+/// `split_cookie` on the request side: whatever is named like ours does not
+/// travel, however it is spelled.
 fn set_cookie_name(line: &[u8]) -> Option<String> {
     if header_name(line) != "set-cookie" {
         return None;
@@ -2045,23 +1986,22 @@ fn set_cookie_name(line: &[u8]) -> Option<String> {
     )
 }
 
-/// The name **and value** a `Set-Cookie` line assigns, for the allowlist.
+/// The name *and value* a `Set-Cookie` line assigns, for the allowlist.
 ///
 /// Still requires an `=`, unlike [`set_cookie_name`], and the asymmetry is the
 /// point: this feeds [`gate::AppCookies`], which decides what may be sent *to*
 /// the box, and a cookie with no value is one no browser stores and therefore
 /// one no browser sends back. Learning a name from it would put an entry on the
-/// allowlist that only somebody else's cookie could ever match.
+/// allowlist only somebody else's cookie could match.
 ///
-/// Both, because a name on its own is not enough to tell one cookie from
-/// another in a jar this proxy shares with the rest of the machine: two
-/// cookies may carry one name when their paths differ, and the browser sends
-/// both back in one header. See [`gate::AppCookies`].
+/// Both, because a name alone cannot tell one cookie from another in a jar this
+/// proxy shares with the rest of the machine: two cookies may carry one name
+/// when their paths differ, and the browser sends both back in one header.
 ///
 /// `split_once`, not `split`: a cookie value may itself contain `=` (base64
-/// padding is the everyday case), and taking the first field of a `split`
-/// would learn a value the browser never sends back — which fails closed, but
-/// fails, and would drop the cookie of any app whose session id ends in `=`.
+/// padding is the everyday case), and taking the first field would learn a
+/// value the browser never sends back, dropping the cookie of any app whose
+/// session id ends in `=`.
 fn set_cookie_pair(line: &[u8]) -> Option<(String, String)> {
     if header_name(line) != "set-cookie" {
         return None;
@@ -2077,7 +2017,7 @@ fn set_cookie_pair(line: &[u8]) -> Option<(String, String)> {
 /// can be told from the rest of a shared jar's contents.
 ///
 /// Called on every response head that reaches the visitor, interim and final
-/// alike — not because a `1xx` is a likely place to set a cookie, but because
+/// alike, not because a `1xx` is a likely place to set a cookie, but because
 /// "the rule ran on two of the three paths" is the defect this file keeps
 /// having. Missing one costs an app its cookie; it cannot leak anything.
 ///
@@ -2097,14 +2037,14 @@ fn learn_app_cookies(head: &[u8], app: Option<&gate::AppCookies>) {
 
 /// Is this header line a `Set-Cookie` for one of ours?
 ///
-/// The box cannot guess a token, so the worst it could do is clear one — but
+/// The box cannot guess a token, so the worst it could do is clear one, but
 /// cookies ignore the port, so on the joining side one box could log a visitor
 /// out of a *different* share. Nothing legitimate sets a cookie by this name.
 fn sets_a_share_cookie(line: &[u8]) -> bool {
     // The *name*, by the one predicate both directions share. A raw
     // `starts_with` here deleted an app's `Set-Cookie: h5i_shared_theme=dark`
     // from every response, so the app lost state only when viewed through a
-    // share — see `gate::is_share_cookie_name`.
+    // share. See `gate::is_share_cookie_name`.
     set_cookie_name(line).is_some_and(|n| crate::gate::is_share_cookie_name(&n))
 }
 
@@ -2115,7 +2055,7 @@ mod status_line_tests {
     #[test]
     fn a_reply_with_no_status_line_is_not_a_response() {
         // Found by the fuzzer. The sanitiser rebuilds a head by dropping the
-        // lines a filter rejects, and it drops empty ones — so a box whose
+        // lines a filter rejects, and it drops empty ones, so a box whose
         // first line is a header rather than a status line had that header
         // promoted into the status line's place, and the visitor got a reply
         // that began `Connection: close` with no status in it at all. A browser
@@ -2156,11 +2096,10 @@ mod status_line_tests {
     ///
     /// `head_is_well_formed` and `rebuild_head` both tolerate a leading CRLF
     /// and `status_code` did not, so for that one accepted shape every caller
-    /// got `None` and read it as "not that status". The test above only ever
-    /// used a `200`, whose behaviour is the same either way, so all three
-    /// consequences went uncovered: an interim answer treated as final, an
-    /// upgrade that never enters the duplex path, and a bodyless response the
-    /// relay waits out an idle timeout for.
+    /// got `None` and read it as "not that status". The test above only used a
+    /// `200`, whose behaviour is the same either way, so all three consequences
+    /// went uncovered: an interim answer treated as final, an upgrade that never
+    /// enters the duplex path, and a bodyless response the relay waits out.
     #[test]
     fn a_status_line_after_a_blank_line_is_still_a_status_line() {
         for (head, code) in [
@@ -2253,10 +2192,9 @@ mod status_line_tests {
     /// The mirror of the request side's bug, and the relay's clamp is what made
     /// it consequential: the closing two bytes were *counted* with the data
     /// rather than checked, so the scanner found the end of `1\r\nAXX0\r\n\r\n`
-    /// — one byte of data and `XX` where its CRLF belongs — and h5i truncated
-    /// the response there and closed, on behalf of a box that had sent
-    /// something no client would parse. `Lost` is the honest answer: relay it
-    /// all and let the visitor's own client refuse it.
+    /// at a boundary no client recognises, and h5i truncated the response there
+    /// on behalf of a box that had sent something no client would parse. `Lost`
+    /// is the honest answer: relay it all and let the visitor's client refuse it.
     #[test]
     fn a_chunk_the_box_did_not_close_is_framing_this_will_not_follow() {
         for body in [
@@ -2264,7 +2202,7 @@ mod status_line_tests {
             &b"2\r\nabXX0\r\n\r\n"[..],
             // A bare LF where the closing CRLF belongs, and a bare-LF
             // terminator: the second used to end the body while a bare-LF
-            // *trailer* was refused one line above it — two readings of the one
+            // *trailer* was refused one line above it. Two readings of the one
             // stream that decides where a message stops.
             &b"1\r\nA\n0\r\n\r\n"[..],
             &b"0\n\n"[..],
@@ -2343,7 +2281,7 @@ mod response_fuzz {
             );
 
             // No share cookie, ever. The box cannot guess a token, but it can
-            // clear one — and cookies ignore the port, so on the joining side
+            // clear one, and cookies ignore the port, so on the joining side
             // one box could log a visitor out of a different share.
             for v in header_values(&out, "set-cookie") {
                 let name = v
@@ -2365,7 +2303,7 @@ mod response_fuzz {
             // One framing on the way out. Two lengths, or a length beside
             // *any* transfer coding, is a response-smuggling shape: the
             // visitor's client picks one and we picked the other. Not only
-            // `chunked` — a recipient treats `Transfer-Encoding: gzip` as
+            // `chunked`: a recipient treats `Transfer-Encoding: gzip` as
             // authoritative over a length just the same.
             let lengths = header_values(&out, "content-length").len();
             let encoded = header_values(&out, "transfer-encoding").iter().any(|v| {
@@ -2423,7 +2361,7 @@ mod response_fuzz {
     /// `set_cookie_pair().map(name)`, which requires an `=`, so the box could
     /// emit `Set-Cookie: h5i_share` and have it relayed. A conforming browser
     /// ignores that header (RFC 6265 §5.2), so this was a rule with a hole
-    /// rather than a leak — and the request side had already closed the same
+    /// rather than a leak, and the request side had already closed the same
     /// hole, in the same words, on the way in.
     #[test]
     fn a_set_cookie_with_no_value_is_still_not_the_boxs_to_send() {
@@ -2491,15 +2429,14 @@ mod chunked_fuzz {
     ///
     /// This is the one place h5i and the box can disagree about where a
     /// *request* ends, which is the definition of request smuggling: the front
-    /// authorizes one request and forwards exactly its bytes, and anything it
-    /// forwards past the body's end is a second request that never passed the
-    /// gate. It had three hand-written cases.
+    /// authorizes one request and forwards exactly its bytes, and anything past
+    /// the body's end is a second request that never passed the gate.
     ///
     /// The oracle is an independent reader, deliberately more permissive than
-    /// `chunk_size` — it accepts the bare-LF and whitespace-padded size lines
-    /// h5i refuses — because a *lenient* box is the dangerous counterparty. If
-    /// h5i forwards bytes this reader places after the end of the body, they are
-    /// bytes some server would read as a new request.
+    /// `chunk_size`: it accepts the bare-LF and whitespace-padded size lines h5i
+    /// refuses, because a *lenient* box is the dangerous counterparty. If h5i
+    /// forwards bytes this reader places after the body's end, they are bytes
+    /// some server would read as a new request.
     #[tokio::test]
     async fn a_chunked_body_never_carries_a_second_request_into_the_box() {
         let mut rng = Rng::new(0xC4A4);
@@ -2517,7 +2454,7 @@ mod chunked_fuzz {
             let r = forward_chunked(&mut peer, &mut out, &[], &counted).await;
 
             // Whatever happened, what reached the box is a prefix of what the
-            // client sent — this proxy forwards, it does not rewrite.
+            // client sent. This proxy forwards, it does not rewrite.
             assert!(
                 body.as_bytes().starts_with(&out),
                 "the box received bytes the client did not send: {} -> {:?}",
@@ -2536,7 +2473,7 @@ mod chunked_fuzz {
             // string: bytes past where the body ends are a second request, and
             // bytes before it are this request's, however they read. A client
             // that declares a chunk long enough to cover the tail has made
-            // those bytes its own body, and the box's parser agrees — so
+            // those bytes its own body, and the box's parser agrees, so
             // "SMUGGLED must never appear" is the wrong assertion and this is
             // the right one.
             let end = body_end(body.as_bytes());
@@ -2552,8 +2489,8 @@ mod chunked_fuzz {
             match r {
                 Ok(()) => {
                     accepted += 1;
-                    // A completed forward stopped exactly where an independent
-                    // — and deliberately *more permissive* — reader places the
+                    // A completed forward stopped exactly where an independent,
+                    // and deliberately *more permissive*, reader places the
                     // end. Accepting a body this reader cannot end is h5i
                     // calling a request complete at a boundary no server
                     // recognises, which is how the missing CRLF check showed up.
@@ -2599,12 +2536,12 @@ mod chunked_fuzz {
 
     /// Where a chunked body ends, read leniently.
     ///
-    /// Independent of `chunk_size` on purpose, and *more* permissive than it:
-    /// bare LF endings, whitespace around the size, and a hex value with any
-    /// number of digits are all accepted here and refused there. A lenient box
-    /// is the dangerous counterparty, so the oracle has to be the lenient one.
+    /// Independent of `chunk_size` on purpose, and *more* permissive: bare LF
+    /// endings, whitespace around the size, and a hex value of any length are
+    /// accepted here and refused there. A lenient box is the dangerous
+    /// counterparty, so the oracle has to be the lenient one.
     ///
-    /// `None` means this reader cannot find an end either — in which case h5i
+    /// `None` means this reader cannot find an end either, in which case h5i
     /// must not have claimed to.
     fn body_end(b: &[u8]) -> Option<usize> {
         let mut at = 0usize;
@@ -2653,7 +2590,7 @@ mod chunked_fuzz {
     ///
     /// `forward_chunked` decides it for a *request* and `Scan` for a
     /// *response*, they are written separately, and both were loose about the
-    /// same two bytes — which is what two copies of a parser do. Nothing forces
+    /// same two bytes, which is what two copies of a parser do. Nothing forces
     /// them to agree except this.
     #[test]
     fn the_request_and_response_readers_end_a_body_in_the_same_place() {
@@ -2722,17 +2659,15 @@ mod response_tests {
         tokio::time::Instant::now() + Duration::from_secs(5)
     }
 
-    /// A chunked response ends at its terminating chunk, and what the box
-    /// wrote after it does not reach the visitor.
+    /// A chunked response ends at its terminating chunk, and what the box wrote
+    /// after it does not reach the visitor.
     ///
-    /// The `Content-Length` path has always clamped — it is arithmetic — and
-    /// the chunked path relayed the lot: a second status line, a `Set-Cookie`
-    /// of the box's choosing, a `Connection` of its choosing, all of it having
-    /// skipped `close_the_connection` and `strip_share_cookies`. A conforming
-    /// client discards it, because the head it parsed says `Connection: close`;
-    /// what is wrong with it is that whether the sanitiser applied was the
-    /// box's decision, which is the same door the unfinished-head refusal was
-    /// written to shut.
+    /// The `Content-Length` path has always clamped, being arithmetic, and the
+    /// chunked path relayed the lot: a second status line, a `Set-Cookie` of the
+    /// box's choosing, a `Connection` of its choosing, all having skipped
+    /// `close_the_connection` and `strip_share_cookies`. A conforming client
+    /// discards it; what is wrong is that whether the sanitiser applied was the
+    /// box's decision.
     #[tokio::test]
     async fn nothing_the_box_wrote_after_the_terminating_chunk_reaches_the_visitor() {
         let head = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
@@ -2837,13 +2772,12 @@ mod response_tests {
 
     /// A chunk whose data is not closed by CRLF is not a chunk.
     ///
-    /// The size and the two bytes after it used to be one count — `size + 2`
-    /// bytes consumed and forwarded without looking — so `1\r\nAXX0\r\n\r\n`
-    /// was a *complete request*: one byte of data, `XX` where its CRLF belongs,
-    /// and the terminating `0` read out of the middle of the stream. Every
+    /// The size and the two bytes after it used to be one count, `size + 2`
+    /// bytes consumed and forwarded without looking, so `1\r\nAXX0\r\n\r\n` was
+    /// a *complete request*: one byte of data, `XX` where its CRLF belongs, and
+    /// the terminating `0` read out of the middle of the stream. Every
     /// conforming server rejects that, so h5i was declaring a request finished
-    /// at a boundary nothing else recognises — and the chunk framing is the only
-    /// thing telling this proxy where a request ends.
+    /// at a boundary nothing else recognises.
     ///
     /// Found by the chunked fuzz, which reads the same stream more leniently
     /// than h5i does and could not find an end where h5i claimed one.
@@ -2934,7 +2868,7 @@ mod response_tests {
     fn a_websocket_handshake_survives_the_cookie_filter_byte_for_byte() {
         // The `101` head goes through the filter like every other response
         // head, and a client checks `Sec-WebSocket-Accept` against a hash it
-        // computed itself — so rebuilding this head has to come out identical
+        // computed itself, so rebuilding this head has to come out identical
         // when there is nothing to strip.
         let head = b"HTTP/1.1 101 Switching Protocols\r\n\
                      Upgrade: websocket\r\n\
@@ -2992,7 +2926,7 @@ mod response_tests {
     #[tokio::test]
     async fn a_chunk_size_at_the_edge_of_the_type_is_refused() {
         // `u64::MAX` is a well-formed chunk header, and `size + 2` would panic
-        // in a debug build and wrap to one in a release build — forwarding two
+        // in a debug build and wrap to one in a release build. Forwarding two
         // bytes and then reading the peer's body as chunk headers.
         let body = b"ffffffffffffffff\r\n";
         let mut peer = &body[..];
@@ -3007,7 +2941,7 @@ mod response_tests {
     /// declaring a body of `u64::MAX` and dribbling a byte a minute holds a slot
     /// for the life of its ticket". The chunked path checked it only at the top
     /// of the per-chunk loop, and a single chunk header declaring `u64::MAX`
-    /// never returns there — so the bound was one the peer chose whether to be
+    /// never returns there, so the bound was one the peer chose whether to be
     /// bound by. The `Content-Length` path beside it has always checked on every
     /// read.
     #[tokio::test]
@@ -3032,11 +2966,10 @@ mod response_tests {
         // forever.
         //
         // No `tokio::time::timeout` wrapper, because it could not fire: this
-        // reader is always `Ready`, so the task never yields and the runtime
-        // never advances a timer. That is the point — the *only* thing that can
-        // end this loop is the synchronous deadline check inside it. Against a
-        // build without that check this test hangs rather than failing, which is
-        // the bug stated as plainly as a test can state it.
+        // reader is always `Ready`, so the task never yields and the runtime never
+        // advances a timer. That is the point. The *only* thing that can end this
+        // loop is the synchronous deadline check inside it, and against a build
+        // without that check this test hangs rather than failing.
         let err = forward_chunked_within(
             &mut Endless,
             &mut out,
@@ -3066,7 +2999,7 @@ mod response_tests {
     fn a_bodyless_answer_is_not_waited_on() {
         // A `304` is what a dev server answers for every asset the browser
         // already has, and it declares a length it never sends. Waiting for
-        // that body holds the connection until the idle timeout — on the
+        // that body holds the connection until the idle timeout. On the
         // commonest response there is.
         assert!(has_no_body(
             "GET",
@@ -3088,7 +3021,7 @@ mod response_tests {
     fn a_box_that_stalled_and_a_box_that_hung_up_are_told_apart() {
         // They call for opposite handling: a stalled box is wedged and the
         // visitor gets a `502`, a closed one has already written the answer
-        // that explains itself — a `413`, a `401` — and the right move is to go
+        // that explains itself (a `413`, a `401`) and the right move is to go
         // and read it rather than invent one.
         let stalled = std::io::Error::other(BoxWrite { stalled: true });
         let closed = std::io::Error::other(BoxWrite { stalled: false });
@@ -3218,7 +3151,7 @@ mod response_tests {
             response_framing(
                 b"HTTP/1.1 200 OK\r\nTransfer-Encoding: x-chunked-foo\r\nContent-Length: 4\r\n\r\n"
             ),
-            // Not chunked — but it *is* a transfer coding, and a recipient
+            // Not chunked, but it *is* a transfer coding, and a recipient
             // honours one over a length whatever it is called. The length does
             // not travel and the close is the framing.
             framed(Body::UntilClose, true)
@@ -3302,7 +3235,7 @@ mod response_tests {
             framed(Body::UntilClose, true)
         );
         // A transfer coding that is not `chunked`, beside a length. Both
-        // headers used to reach the visitor with h5i framing on the length —
+        // headers used to reach the visitor with h5i framing on the length,
         // so h5i stopped after four bytes and the client, for which the coding
         // is authoritative, waited for a stream that had already stopped.
         assert_eq!(
@@ -3334,7 +3267,7 @@ mod response_tests {
 
     #[test]
     fn the_box_cannot_clobber_the_visitors_share_cookie() {
-        // It cannot guess a token, so the worst it could do is clear one — but
+        // It cannot guess a token, so the worst it could do is clear one, but
         // cookies ignore the port, so on the joining side one box could log a
         // visitor out of a different share.
         let head = b"HTTP/1.1 200 OK\r\nSet-Cookie: h5i_share_1234=junk; Path=/\r\n\
@@ -3383,7 +3316,7 @@ mod response_tests {
         learn_app_cookies(padded, Some(&jar));
         assert!(jar.knows("s", "YWJj=="));
 
-        // `None` is the ordinary case — a jar this share has to itself — and
+        // `None` is the ordinary case, a jar this share has to itself, and
         // it must not fall over on a head it is not keeping.
         learn_app_cookies(head, None);
     }
@@ -3426,12 +3359,12 @@ where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     // Deadlined like every other write. Small ones into an empty send buffer,
-    // so a stall needs a receive window closed from the first byte — but "every
+    // so a stall needs a receive window closed from the first byte, but "every
     // write has a deadline" is either true or it is not.
     let _ = write_timed(sock, body.as_bytes()).await;
     let _ = sock.flush().await;
     // And drained like every other close. This is the writer for every
-    // front-door answer — the `401`, the `503`, the invite redirect — and a
+    // front-door answer (the `401`, the `503`, the invite redirect) and a
     // refusal is precisely when a peer is most likely to still be sending a
     // body nobody read, which is what turns the close into a reset that
     // destroys the answer.
@@ -3470,7 +3403,7 @@ mod tests {
         let mut r = raw.as_bytes();
         // `Refused`, not `Silent`, and the distinction is what the receipt is
         // owed: this is a peer that sent 32 KB of headers, which is the shape
-        // the gate exists to refuse — and every one of them used to be dropped
+        // the gate exists to refuse, and every one of them used to be dropped
         // with no line anywhere. A peer that said nothing still gets none.
         assert_eq!(read_head(&mut r).await, Err(NoHead::Refused));
     }

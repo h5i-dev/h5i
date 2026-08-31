@@ -19,7 +19,7 @@ pub struct PrBase {
     pub oid: String,
     /// Local tracking branch (short name, `pr/<n>`) pinned at `oid`.
     pub local_branch: String,
-    /// The PR's head branch name on its source repo (via `gh`; best-effort —
+    /// The PR's head branch name on its source repo (via `gh`; best-effort:
     /// `None` when `gh` is absent or the remote isn't a GitHub repo).
     pub head_ref: Option<String>,
     /// True when the PR comes from a fork (via `gh`; best-effort).
@@ -65,7 +65,7 @@ pub fn parse_pr_spec(spec: &str) -> Result<u64, H5iError> {
 pub fn resolve_pr_base(workdir: &Path, spec: &str, remote: &str) -> Result<PrBase, H5iError> {
     let number = parse_pr_spec(spec)?;
     // Fetch into a throwaway incoming ref, then pin a branch and drop the temp
-    // ref — the branch keeps the commit alive.
+    // ref. The branch keeps the commit alive.
     let tmp_ref = format!("refs/h5i/_incoming/pr-{number}");
     let refspec = format!("+refs/pull/{number}/head:{tmp_ref}");
     let out = Command::new("git")
@@ -118,7 +118,7 @@ pub fn resolve_pr_base(workdir: &Path, spec: &str, remote: &str) -> Result<PrBas
         .current_dir(workdir)
         .status();
 
-    // Best-effort `gh` enrichment — never fatal (plain-git users and mirrors
+    // Best-effort `gh` enrichment. Never fatal (plain-git users and mirrors
     // of GitHub repos still get a fully working env).
     let (head_ref, cross_repo) = match gh_capture(
         workdir,

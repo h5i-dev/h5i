@@ -3,7 +3,7 @@
 //! The unit tests in `browser_proxy` prove the policy path with fake streams.
 //! This proves the part that only a real daemon can: that the actual
 //! `agent-browser` CLI, unmodified, works through an h5i mediator sitting on
-//! the socket it was told to use — and is refused when h5i says no.
+//! the socket it was told to use, and is refused when h5i says no.
 //!
 //! Skipped (loudly) when the host has no agent-browser or no Chrome, because a
 //! test that silently passes on a machine that cannot run it is worse than one
@@ -16,7 +16,7 @@ use std::process::Command;
 use h5i_core::browser_proxy::{self, ActionPolicy};
 
 /// `sun_path` is 108 bytes, and a socket dir plus `default.sock` gets there
-/// faster than expected — so these live at the top of `/tmp`, not under a
+/// faster than expected, so these live at the top of `/tmp`, not under a
 /// nested temp dir.
 fn short_dir(tag: &str) -> PathBuf {
     let dir = PathBuf::from(format!("/tmp/h5i-med-{}-{tag}", std::process::id()));
@@ -178,7 +178,7 @@ fn a_human_takeover_stops_the_real_cli_from_clicking() {
         let _ = std::fs::copy(daemon_dir.join(name), front_dir.join(name));
     }
 
-    // The human takes the lock — the case the lock existed for and nothing
+    // The human takes the lock. The case the lock existed for and nothing
     // enforced against the agent until now.
     h5i_core::control::take(&env_dir).expect("human takes control");
 

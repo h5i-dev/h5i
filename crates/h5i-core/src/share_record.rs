@@ -2,24 +2,22 @@
 //!
 //! `h5i-share` owns this file: it writes it, locks it, and decides what a grant
 //! means. But three things below that crate need to know whether a box is being
-//! shared right now — `box rm` must not pull a box out from under somebody,
+//! shared right now (`box rm` must not pull a box out from under somebody,
 //! `export` must not produce a bundle that is silent about it, and the console
-//! must say so while it is open — and `h5i-share` sits *above* `h5i-core`, so
-//! none of them can call it.
+//! must say so while it is open) and `h5i-share` sits *above* `h5i-core`.
 //!
 //! They each grew their own `serde_json::Value` probe instead, and by the time
-//! anyone counted there were four definitions of "a live share" in the
-//! codebase. The three down here needed exactly one field, a numeric `pid`, so
-//! they accepted files the real reader rejects — and a `share.json` containing
-//! only `{"pid": 1234}` made `box rm` refuse forever while `box share stop`
-//! answered "not being shared", which is a dead end reachable by nothing worse
-//! than adding a required field to the record in a later version. None of the
-//! three knew about `winding_up` either, a field `h5i-share` added precisely
-//! because a live pid is not the same as a share that is serving.
+//! anyone counted there were four definitions of "a live share" in the codebase.
+//! The three down here needed exactly one field, a numeric `pid`, so they
+//! accepted files the real reader rejects, and a `share.json` containing only
+//! `{"pid": 1234}` made `box rm` refuse forever while `box share stop` answered
+//! "not being shared". None of the three knew about `winding_up` either, a field
+//! `h5i-share` added precisely because a live pid is not a share that is
+//! serving.
 //!
 //! So: one reader, here, that fails closed on any file it does not fully
-//! understand — and a test in `h5i-share` that writes a real record and asserts
-//! this reads it, so the two cannot drift apart silently.
+//! understand, and a test in `h5i-share` that writes a real record and asserts
+//! this reads it.
 
 use std::path::Path;
 
@@ -33,37 +31,32 @@ const GATE_FILE: &str = "share-gate.lock";
 
 /// How long a caller waits for the gate before giving up.
 ///
-/// Generous, because the operations it guards are short and the alternative —
-/// failing fast — turns an ordinary overlap into an error the user has to
-/// understand. `rm --force` on a large worktree is the longest of them.
+/// Generous, because the operations it guards are short and the alternative,
+/// failing fast, turns an ordinary overlap into an error the user has to
+/// understand.
 ///
-/// Unix only, like the `flock` it bounds: there is no waiting on the other
-/// branch, because there is nothing there to wait for.
+/// Unix only, like the `flock` it bounds.
 #[cfg(unix)]
 const GATE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Exclusive access to the *decision* about whether this box is shared.
 ///
-/// Everything that reads [`read_live`] to decide what to do next — `apply`,
-/// `rebase`, `abort`, `rm`, `export` — and the one thing that changes the
-/// answer, `h5i-share`'s `session::claim`, takes this first and holds it for
-/// the whole operation.
+/// Everything that reads [`read_live`] to decide what to do next (`apply`,
+/// `rebase`, `abort`, `rm`, `export`) and the one thing that changes the answer,
+/// `h5i-share`'s `session::claim`, takes this first and holds it for the whole
+/// operation.
 ///
 /// Without it the check and the operation were two steps with a gap between
-/// them, and `run.lock` did not close it: a share does not hold `run.lock` —
-/// the box *session* it stands on does — and a share's own claim happens after
-/// its transport setup, which for `--tunnel` waits up to forty-five seconds
-/// for a URL. So the writer could exit during that wait, releasing `run.lock`;
-/// `rebase` or `export` or `rm` would then see no `share.json` at all and
-/// proceed; and the in-flight start would claim and announce a public URL
-/// while that operation was running. A visitor admitted while `rebase`
-/// force-checks out the worktree, or a box deleted out from under a share that
-/// then recreates its directory to write a receipt into, are both reachable
-/// that way.
+/// them, and `run.lock` did not close it: a share does not hold `run.lock`, the
+/// box *session* it stands on does, and a share's own claim happens after its
+/// transport setup, which for `--tunnel` waits up to forty-five seconds for a
+/// URL. So the writer could exit during that wait, releasing `run.lock`;
+/// `rebase` or `export` or `rm` would then see no `share.json` and proceed; and
+/// the in-flight start would claim and announce a public URL while that
+/// operation was running.
 ///
 /// Ordered *before* `run.lock` everywhere it is taken with it, and never taken
-/// while holding `run.lock`, so the two cannot deadlock. `h5i-share` never
-/// takes `run.lock` at all.
+/// while holding `run.lock`, so the two cannot deadlock.
 #[derive(Debug)]
 pub struct ShareGate {
     #[allow(dead_code)]
@@ -135,14 +128,12 @@ const SESSION_VERSION: u8 = 1;
 ///
 /// "Every field required" was the claim and not the code: `endpoint`,
 /// `started_at`, and a grant's `id` and `secret_sha256` were all required by the
-/// real deserializer up in `h5i-share` and absent from this one, and
-/// `transport` took any string at all. That asymmetry is exactly the
-/// split-brain this module exists to prevent, and it points the wrong way: a
-/// record missing `endpoint` read as *live* down here — the console advertised
-/// it, `apply`/`rebase`/`abort` refused as "being shared" — while
-/// `box share status` and `box share stop`, which use the real reader, said the
-/// box was not being shared and could not perform the recovery the refusal
-/// recommended. Reachable under version skew or a hand-edited file.
+/// real deserializer and absent from this one, and `transport` took any string
+/// at all. That asymmetry points the wrong way: a record missing `endpoint` read
+/// as *live* down here, so the console advertised it and
+/// `apply`/`rebase`/`abort` refused as "being shared", while `box share status`
+/// and `stop`, which use the real reader, said the box was not being shared and
+/// could not perform the recovery the refusal recommended.
 #[derive(Debug, Clone, Deserialize)]
 struct OnDisk {
     v: u8,
@@ -239,7 +230,7 @@ pub fn read_live(env_dir: &Path) -> Option<ShareRecord> {
         return None;
     }
     // Bounded by `i32`, not by `u32`. `pid_t` is signed, so `4294967295` fits
-    // a `u32` and still arrives at `kill` as `-1` — "every process" — which
+    // a `u32` and still arrives at `kill` as `-1`, "every process", which
     // returns success and made a nonsense record read as live forever. `2^32`
     // truncates to `0`, "this process group", with the same result. Both are
     // out of range for a pid and both are refused here.
@@ -264,7 +255,7 @@ pub fn read_live(env_dir: &Path) -> Option<ShareRecord> {
 
 #[cfg(unix)]
 fn pid_alive(pid: u32) -> bool {
-    // `EPERM` — somebody else's process with this pid — is counted as not ours
+    // `EPERM`, somebody else's process with this pid, is counted as not ours
     // and therefore not a share of this box, which is the safe answer for every
     // caller here.
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
@@ -332,13 +323,10 @@ mod tests {
     ///
     /// The asymmetry this pins down was not theoretical. A record with a live
     /// pid, a live-looking grant and no `endpoint` made this function return
-    /// `Some` — so the console advertised the share and `apply`/`rebase`/
-    /// `abort` refused with "this box is being shared" — while `h5i box share
-    /// status` and `stop`, which go through the real deserializer, answered
-    /// "not being shared" and could not perform the recovery the refusal
-    /// recommended. The mirror of that dead end is what `h5i-share`'s
-    /// `what_this_crate_writes_is_what_h5i_core_reads` covers going the other
-    /// way; this is the closing half.
+    /// `Some`, so the console advertised the share and `apply`/`rebase`/`abort`
+    /// refused with "this box is being shared", while `h5i box share status` and
+    /// `stop` answered "not being shared" and could not perform the recovery the
+    /// refusal recommended.
     #[test]
     fn a_record_missing_any_required_field_is_not_a_share() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -413,7 +401,7 @@ mod tests {
         // other five, and the only one below `h5i-share`. It had no boundary
         // test either: `>=` here and `>` there would have `box rm` refusing a
         // share whose door the share itself had already shut, for one second
-        // per expiry — or the reverse, which is worse.
+        // per expiry, or the reverse, which is worse.
         let dir = tempfile::tempdir().expect("tempdir");
         let pid = std::process::id();
         let at = |t: i64| {

@@ -1,7 +1,7 @@
 //! Session tokens: the one place h5i mints a secret.
 //!
-//! Two surfaces hand a bearer token to a human's browser and then trust it —
-//! the box console ([`crate::server`]) and the per-box viewer forward
+//! Two surfaces hand a bearer token to a human's browser and then trust it.
+//! The box console ([`crate::server`]) and the per-box viewer forward
 //! ([`crate::view`]). Both listen on loopback, which on a developer machine
 //! means every local process and every page the human has open can *reach*
 //! them; the token is the whole of what separates the operator from all of
@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     fn every_token_is_distinct() {
-        // Not a randomness test — a collision here means the source is wired up
+        // Not a randomness test. A collision here means the source is wired up
         // wrong (a constant, a reused buffer), which is the failure that would
         // actually ship.
         let mut seen = std::collections::HashSet::new();

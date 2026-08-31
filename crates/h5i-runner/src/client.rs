@@ -1,11 +1,10 @@
 //! The control-plane side: opening a channel, shaking hands, asking one thing.
-//!
-//! Every method here is one channel and one RPC (ROADMAP.md R4), and each one
+//! Every method here is one channel and one RPC (design-runner.md R4), and each
 //! starts by proving the peer is there before it starts the longer clock for
 //! the request. That is the two-clock discipline R5 asks for, made real by
 //! [`Channel::rearm`] rather than asserted: a peer that never answers the
 //! handshake is killed in seconds, and a peer that answers and then takes a
-//! while to do the work is given the time the work needs.
+//! while is given the time the work needs.
 
 use std::io::Read;
 use std::process::{ChildStdin, ChildStdout};
@@ -43,9 +42,9 @@ pub enum ClientError {
     TimedOut { what: String },
 
     /// The worker enforced a policy that is not the one this side resolved.
-    ///
     /// Cheap to check and worth checking: it turns "the runner silently ran an
-    /// older policy" from a possibility into a detected fault (ROADMAP.md R7).
+    /// older policy" from a possibility into a detected fault (design-runner.md
+    /// R7).
     #[error(
         "the runner built the box under a different policy than the one resolved here — \
          expected {expected}, it enforced {enforced}. The box was not accepted."
@@ -126,7 +125,7 @@ impl Client {
     /// Handshake, then ask what this machine can do right now.
     ///
     /// The capability report is validated here, on receipt, and a report that
-    /// fails validation is an error rather than a stored value — R13.1's
+    /// fails validation is an error rather than a stored value. R13.1's
     /// "hostile capability values are clamped or refused, never stored".
     pub fn probe(&self) -> Result<Probed, ClientError> {
         let mut session = Session::open(&*self.transport, self.deadlines)?;
@@ -139,15 +138,13 @@ impl Client {
     }
 
     /// Make a box on the runner.
-    ///
     /// `bundle` is `None` for an empty source. When it is `Some`, its bytes go
     /// out as `DATA` frames after the request and before `DATA_DONE`, on the
-    /// same channel — the transfer is part of this RPC rather than a second one
-    /// that could arrive without it.
-    ///
+    /// same channel, so the transfer is part of this RPC rather than a second
+    /// one that could arrive without it.
     /// The policy digest the worker echoes is checked here, not merely logged:
     /// it is the one thing that says the box was built under the policy this
-    /// side resolved (ROADMAP.md R7).
+    /// side resolved (design-runner.md R7).
     pub fn create(
         &self,
         request: &CreateRequest,
@@ -200,7 +197,7 @@ impl Client {
     ///
     /// Returns once the command has finished. The `EXEC_STARTED` frame is
     /// waited for first, which is what separates "it spawned" from "here is
-    /// what it printed" — a spawn failure is reported as one rather than as an
+    /// what it printed". A spawn failure is reported as one rather than as an
     /// empty result.
     pub fn exec(&self, request: &ExecRequest) -> Result<ExecOutput, ClientError> {
         let mut session = Session::open(&*self.transport, self.deadlines)?;
@@ -315,7 +312,7 @@ impl Session {
             h5i_version: env!("CARGO_PKG_VERSION").to_string(),
         };
         // A write failure here is nearly always the peer having already exited
-        // — ssh refusing to authenticate, or no h5i on the far side — so the
+        // (ssh refusing to authenticate, or no h5i on the far side) so the
         // stderr tail is the whole diagnosis and a bare EPIPE is none of it.
         if writer.write(FrameKind::Hello.as_u8(), &proto::encode(&hello)?).is_err() {
             let stderr = channel.stderr_tail();

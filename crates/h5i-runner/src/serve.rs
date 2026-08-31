@@ -1,18 +1,14 @@
 //! The worker: one process per RPC, speaking frames on its own stdio.
-//!
 //! This is what an SSH forced command runs. It is stateless across invocations
-//! by design (ROADMAP.md R3) — box state lives in the container runtime and the
-//! state dir, never in a resident daemon, because there is no daemon. Nothing
-//! listens on any interface, of any kind, ever.
-//!
-//! **Nothing but frames may reach stdout.** A stray `println!` in this path is
-//! not a cosmetic bug, it is a corrupt stream: the client would read the text
-//! as a length prefix. Diagnostics go to stderr, which the client captures and
-//! puts in its error messages.
-//!
-//! The loop is written as a small state machine with an explicit disposition
-//! for every failure, because "what happens to the session when a peer sends
-//! something wrong" is the question a protocol most often leaves to accident.
+//! by design (design-runner.md R3): box state lives in the container runtime
+//! and the state dir, never in a resident daemon, because there is no daemon.
+//! Nothing listens on any interface, of any kind, ever.
+//! Nothing but frames may reach stdout. A stray `println!` here is not a
+//! cosmetic bug but a corrupt stream: the client would read the text as a
+//! length prefix. Diagnostics go to stderr, which the client captures.
+//! The loop is a small state machine with an explicit disposition for every
+//! failure, because "what happens to the session when a peer sends something
+//! wrong" is the question a protocol most often leaves to accident.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -74,10 +70,9 @@ pub struct Worker {
     /// inside it.
     capabilities: Option<Capabilities>,
     /// Whether this invocation has already swept.
-    ///
-    /// The reaper is whoever turns up next (ROADMAP.md R11): there is no daemon
-    /// to watch a clock, so every invocation sweeps before doing its own work.
-    /// Once per session, not once per frame.
+    /// The reaper is whoever turns up next (design-runner.md R11): there is no
+    /// daemon to watch a clock, so every invocation sweeps before doing its own
+    /// work. Once per session, not once per frame.
     swept: bool,
 }
 
@@ -181,7 +176,7 @@ enum Disposition {
     /// else on the same channel.
     Answer(ErrorMsg),
     /// Answer and stop. For anything that means the peer is not speaking this
-    /// protocol — an unknown frame type, a frame out of order, a payload that
+    /// protocol. An unknown frame type, a frame out of order, a payload that
     /// is not what its type says. Continuing would be guessing.
     Fatal(ErrorMsg),
     /// A framing failure partway through an RPC. Nothing is written back: we
@@ -201,7 +196,7 @@ pub fn serve<R: Read, W: Write>(
     worker: &mut Worker,
 ) -> Result<(), ServeError> {
     // A control session is small. The budget is the receiver's, and it bounds
-    // a peer that decides to talk forever — the frame cap alone does not.
+    // a peer that decides to talk forever. The frame cap alone does not.
     let limits = Limits::control();
     let mut frames = FrameReader::new(reader, limits);
     let mut out = FrameWriter::new(writer, limits);
@@ -382,11 +377,10 @@ pub fn serve<R: Read, W: Write>(
 }
 
 /// Serve on this process's own stdin and stdout: what the forced command runs.
-///
 /// Unix only, and that is the design rather than a portability gap: a runner
-/// requires Linux (ROADMAP.md R1), so the *worker* half of this crate has no
-/// meaning elsewhere. The *client* half is portable, which is why the gate is
-/// here and not on the crate.
+/// requires Linux (design-runner.md R1), so the *worker* half of this crate has
+/// no meaning elsewhere. The *client* half is portable, which is why the gate
+/// is here and not on the crate.
 #[cfg(unix)]
 pub fn serve_stdio(worker: &mut Worker) -> Result<(), ServeError> {
     let stdin = std::io::stdin();
@@ -406,19 +400,15 @@ pub fn serve_stdio(_worker: &mut Worker) -> Result<(), ServeError> {
 }
 
 /// A reader that gives up when the peer goes quiet.
-///
 /// A pipe has no read timeout, so the wait has to be made explicit. `poll` on
 /// the descriptor before each read is the whole mechanism: it turns a peer that
-/// stops talking into an ordinary end of stream, which every reader above
-/// already handles.
-///
-/// **It reads the descriptor directly, with no buffering layer underneath.**
-/// Not a performance choice: `FrameReader` does its own buffering, and wrapping
-/// a `BufReader` here is a deadlock. `poll` asks the *kernel* whether bytes are
-/// available, so a reader holding the next frame in a userspace buffer reports
-/// nothing readable and the worker waits out its own timeout on data it already
-/// has. That is exactly what happened the first time this was written around
-/// `stdin().lock()`.
+/// stops talking into an ordinary end of stream.
+/// It reads the descriptor directly, with no buffering layer underneath. Not a
+/// performance choice: `FrameReader` does its own buffering, and wrapping a
+/// `BufReader` here is a deadlock, because `poll` asks the *kernel* whether
+/// bytes are available, so a reader holding the next frame in a userspace
+/// buffer reports nothing readable and the worker waits out its own timeout on
+/// data it already has.
 #[cfg(unix)]
 pub struct IdleTimeout<'fd> {
     fd: std::os::unix::io::RawFd,
@@ -461,7 +451,7 @@ impl Read for IdleTimeout<'_> {
                 let e = std::io::Error::last_os_error();
                 // Interrupted: poll again. `Ok(0)` would be read as a clean end
                 // of stream by every caller above and would silently truncate
-                // the session — a signal is not a hangup.
+                // the session. A signal is not a hangup.
                 if e.kind() == std::io::ErrorKind::Interrupted {
                     continue;
                 }
@@ -484,16 +474,15 @@ impl Read for IdleTimeout<'_> {
 
 
 /// The worker's default and hard bounds on one command.
-///
-/// The client's number is a request and these are the budget (ROADMAP.md R5):
-/// never trust a peer to bound a run on someone else's machine.
+/// The client's number is a request and these are the budget (design-runner.md
+/// R5): never trust a peer to bound a run on someone else's machine.
 const EXEC_DEFAULT_SECS: u64 = 300;
 
 /// Free space a create insists on beyond the source itself: room for the
 /// checkout and the object store.
 ///
 /// Deliberately modest. The job is to refuse a create onto a disk that is
-/// already nearly full, not to decide how much room a build deserves — a
+/// already nearly full, not to decide how much room a build deserves. A
 /// runner with a gigabyte free is a small runner, not a broken one.
 const HEADROOM_MB: u64 = 256;
 
@@ -503,20 +492,15 @@ const HEADROOM_MB: u64 = 256;
 const MAX_BOXES: usize = 64;
 
 /// How long the worker will wait for a frame that never comes.
-///
 /// The worker had no clock at all, and the client's watchdog is not a
 /// substitute: a peer that opens a session, declares a frame and then trickles
 /// one byte an hour costs a worker process, an sshd session, the buffer for the
-/// declared frame, and — inside an exec or an export — a held box lock that
+/// declared frame, and, inside an exec or an export, a held box lock that
 /// blocks every export of that box until the process dies.
-///
 /// Generous, because it bounds *silence between frames* rather than a command's
-/// runtime: nothing is read while a build runs, so a slow build is never idle
-/// by this measure.
-///
-/// Gated with the reader it configures. `-D warnings` counts an unused constant
-/// as an error, and on a platform where the only thing that reads this is
-/// compiled out, it is unused.
+/// runtime: nothing is read while a build runs.
+/// Gated with the reader it configures, since `-D warnings` counts an unused
+/// constant as an error.
 #[cfg(unix)]
 const IDLE_SECS: u64 = 300;
 
@@ -527,15 +511,13 @@ const IDLE_SECS: u64 = 300;
 /// facts and the client can clear its handshake clock before starting the long
 /// one.
 ///
-/// **Output arrives at the end, not progressively.** `sandbox::run_with_env` is
-/// the same function the local path calls and it captures rather than streams,
-/// so this milestone gets the exit code, the timings and the egress evidence
+/// Output arrives at the end, not progressively. `sandbox::run_with_env` is the
+/// same function the local path calls and it captures rather than streams, so
+/// this milestone gets the exit code, the timings and the egress evidence
 /// across correctly, and a long build says nothing until it finishes. Making it
 /// progressive means a streaming variant inside `h5i-sandbox`, which is real
-/// work on the local path's most load-bearing function and is deliberately not
-/// bundled into this one. The frames are already the right shape for it: this
-/// sends `STDOUT`/`STDERR` in chunks, and a streaming runner would send the
-/// same frames earlier.
+/// work on the local path's most load-bearing function. The frames are already
+/// the right shape for it.
 fn handle_exec<W: Write>(
     payload: &[u8],
     worker: &mut Worker,
@@ -687,9 +669,9 @@ fn handle_exec<W: Write>(
 
 /// Hand back what the box has become.
 ///
-/// Exclusive, because an export beside a running command reads a torn tree —
+/// Exclusive, because an export beside a running command reads a torn tree,
 /// and a torn tree that passes the receiving side's scans is worse than a
-/// refused request (ROADMAP.md R8).
+/// refused request (design-runner.md R8).
 fn handle_export<W: Write>(
     payload: &[u8],
     worker: &mut Worker,
@@ -784,17 +766,17 @@ fn load_policy(
 
 /// Make a box, or hand back the one that is already there.
 ///
-/// The order is the whole design (ROADMAP.md R7):
+/// The order is the whole design (design-runner.md R7):
 ///
 /// 1. Validate the request, so nothing peer-supplied becomes a path first.
-/// 2. Check the tier against what this runner advertises — a capability it
-///    lacks is a refusal naming the capability, never a quiet downgrade (R1).
-/// 3. Decide the idempotent case *before* building anything: a matching
-///    request digest returns the existing box, a differing one is a conflict.
-/// 4. Rebuild the policy locally and check its digest. The client sent the
-///    three fields a `ResolvedPolicy` serialises; every host path in it is
-///    deliberately not among them, so this side reconstructs its own and the
-///    digests still have to agree.
+/// 2. Check the tier against what this runner advertises. A capability it lacks
+///    is a refusal naming the capability, never a quiet downgrade (R1).
+/// 3. Decide the idempotent case *before* building anything: a matching request
+///    digest returns the existing box, a differing one is a conflict.
+/// 4. Rebuild the policy locally and check its digest. The client sent the three
+///    fields a `ResolvedPolicy` serialises; every host path in it is deliberately
+///    not among them, so this side reconstructs its own and the digests still
+///    have to agree.
 /// 5. Build under `creating/<operation_id>`, and rename. The rename is the
 ///    instant the box exists.
 fn handle_create<R: Read>(
@@ -889,8 +871,8 @@ fn handle_create<R: Read>(
     })?;
 
     // The tier the request *declares* and the tier the policy *is* must be the
-    // same tier. Nothing dispatches on `req.isolation` — `run_with_env`
-    // dispatches on `policy.claim` — so without this the capability gate above
+    // same tier. Nothing dispatches on `req.isolation`, `run_with_env`
+    // dispatches on `policy.claim`, so without this the capability gate above
     // guards a field that decides nothing: a create could declare `container`,
     // be recorded and displayed as `container`, and run every command through
     // `run_unconfined`.
@@ -912,8 +894,8 @@ fn handle_create<R: Read>(
             format!("the policy in this create is not one h5i can read: {e}"),
         ))
     })?;
-    // Nothing dispatches on `req.isolation` — `run_with_env` dispatches on
-    // `policy.claim` — so without this the capability gate above guards a field
+    // Nothing dispatches on `req.isolation`, `run_with_env` dispatches on
+    // `policy.claim`, so without this the capability gate above guards a field
     // that decides nothing: a create could declare `container`, be recorded and
     // displayed as `container`, and run every command through `run_unconfined`.
     if resolved.claim.as_str() != req.isolation {
@@ -1041,7 +1023,7 @@ fn receive_source<R: Read>(
     // Its own budget: a bundle is megabytes and the handshake that preceded it
     // was bytes.
     frames.begin_rpc(transfer_limits());
-    // Restored on **every** way out of this function, not only the successful
+    // Restored on *every* way out of this function, not only the successful
     // one. A budget widened for a transfer and left behind by an early return
     // governs the rest of the session, and a create that fails its digest check
     // is the cheapest way for a peer to arrange that.
@@ -1563,7 +1545,7 @@ mod tests {
     fn a_create_whose_declared_tier_is_not_its_policys_tier_is_refused() {
         // The capability gate checks `req.isolation`; `run_with_env` dispatches
         // on `policy.claim`. If those may differ, the gate guards a field that
-        // decides nothing — a box could be declared, recorded and displayed as
+        // decides nothing. A box could be declared, recorded and displayed as
         // `container` and run every command unconfined.
         let dir = tempfile::tempdir().unwrap();
         let mut req = create_request("liar", "op1", &"a".repeat(64));
@@ -1632,7 +1614,8 @@ mod tests {
         let d: DestroyResult = proto::decode("DESTROY_RESULT", &frames[1].payload).unwrap();
         assert!(d.existed);
 
-        // A retry after a lost answer must not fail: gone is the state asked for.
+        // A retry after a lost answer must not fail: gone is the state asked
+        // for.
         let (frames, _) = session_in(dir.path(), &[hello(), msg(FrameKind::DestroyBox, &destroy)]);
         let d: DestroyResult = proto::decode("DESTROY_RESULT", &frames[1].payload).unwrap();
         assert!(!d.existed);
@@ -1841,7 +1824,7 @@ mod worker_fuzz {
     }
 
     /// The worker's whole loop, fed nonsense, must always end in an answer or
-    /// an error — never a panic and never a hang.
+    /// an error. Never a panic and never a hang.
     ///
     /// This is the loop an SSH forced command hands untrusted bytes to. Every
     /// individual guard is unit-tested above; this asks whether the *state

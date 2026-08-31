@@ -1,7 +1,7 @@
-//! `h5i ui` — CLI handler for the box console.
+//! `h5i ui`: CLI handler for the box console.
 //!
 //! The command is deliberately thin: bind, print the one URL that works, and
-//! block. Everything else is [`h5i_core::server`], including the token — which
+//! block. Everything else is [`h5i_core::server`], including the token, which
 //! is why the URL is printed rather than constructed here.
 
 use console::style;
@@ -58,7 +58,7 @@ fn launch_browser(url: &str) {
 
     // Spawning is not the failure that matters. `start` runs behind a `cmd`
     // that is always present, and `xdg-open` reports a missing handler in its
-    // exit status rather than at spawn — so the status is the only signal that
+    // exit status rather than at spawn, so the status is the only signal that
     // the browser did not come up. Waiting happens off-thread because some
     // `xdg-open` backends block until the browser itself exits, and the console
     // has to start serving now; the thread doubles as the child's reaper.
@@ -71,7 +71,7 @@ fn launch_browser(url: &str) {
     });
 }
 
-/// The opener for `target_os`, paired with the name to blame in a warning —
+/// The opener for `target_os`, paired with the name to blame in a warning,
 /// which is not always the program, since Windows reaches the browser through
 /// `cmd`. Split from the host so every arm is reachable from one build.
 fn browser_command_for(url: &str, target_os: &str) -> (&'static str, std::process::Command) {

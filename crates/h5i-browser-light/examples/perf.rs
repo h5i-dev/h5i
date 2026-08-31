@@ -1,7 +1,7 @@
 //! What this engine costs, measured rather than assumed.
 //!
-//! roadmap-history.md §B5 Tier 4. Nothing here had numbers after script landed: not
-//! the time to read a page, not the memory a page holds, and not the price of
+//! roadmap-history.md §B5 Tier 4. Nothing here had numbers after script landed:
+//! not the time to read a page, not the memory a page holds, and not the price of
 //! the reporting proxy that now sits in front of every DOM property read.
 //!
 //!     cargo run --release --example perf
@@ -114,8 +114,8 @@ fn main() {
         let scripted_html = document_with_script(rows);
         // No `run_scripts` here: a script-enabled factory has already run them
         // inside `from_html`, through `finish_page`. Calling it again does not
-        // no-op — it builds a *second* realm and runs the page's scripts again
-        // — so this column counted the realm twice for as long as it has
+        // no-op, it builds a *second* realm and runs the page's scripts again,
+        // so this column counted the realm twice for as long as it has
         // existed. At 15.9 ms a realm that was a third of the number; at 58 ms
         // it was most of it, which is how it was finally noticed.
         let with_script = time(5, || {
@@ -215,8 +215,8 @@ fn main() {
                 .expect("realm");
         });
         println!("\nstarting the script realm: {start:.1?} per page");
-        // Code, not bytes. Blanking every comment in the prelude — 164 KiB of
-        // 448, a third of the file — changed parse time by nothing at all, so
+        // Code, not bytes. Blanking every comment in the prelude (164 KiB of
+        // 448, a third of the file) changed parse time by nothing at all, so
         // the number that predicts this cost is what the parser has to
         // tokenise, and the documentation is free.
         let code = |source: &str| -> usize {
@@ -256,7 +256,7 @@ fn main() {
     //
     // It found one. The deadline watchdog polled a flag every 20 ms and was
     // *joined*, so a settle that finished in 50 us then waited for a sleeping
-    // thread to notice — up to 20 ms on every settle, and on every agent `wait`
+    // thread to notice: up to 20 ms on every settle, and on every agent `wait`
     // besides. It read as script time in a phase profile, and it was
     // intermittent, because whether the watchdog had reached its first sleep was
     // a race with the body finishing.
@@ -313,10 +313,10 @@ fn main() {
     //
     // This section is why the reporting moved. Every DOM property read used to
     // go through a `get` trap on a proxy in front of every wrapper, so that an
-    // unknown name could report itself — 799 ns of the 882 ns a *known*
-    // property cost, against 82 ns for a plain object. The reporting now sits
-    // at the end of the prototype chain instead, where only a read that missed
-    // arrives, and a known read never meets it.
+    // unknown name could report itself: 799 ns of the 882 ns a *known* property
+    // cost, against 82 ns for a plain object. The reporting now sits at the end
+    // of the prototype chain, where only a read that missed arrives, and a known
+    // read never meets it.
     println!();
     let url = url::Url::parse("https://bench.example/").unwrap();
     let (scripted, broker) = factory(true);

@@ -4,11 +4,11 @@
 //!
 //! `import "lodash"` has no meaning on the web without an import map: the
 //! specifier names nothing a browser can fetch. A loader that quietly rewrites
-//! it — Thalora maps bare specifiers to `https://esm.sh/{}` — turns one line of
-//! page script into an unrequested request to a third party, chosen by the
-//! engine rather than by the page. Inside a sandbox whose entire claim is that
-//! every request is policy-checked and receipted, an engine that invents
-//! destinations is the wrong kind of helpful.
+//! it (Thalora maps bare specifiers to `https://esm.sh/{}`) turns one line of
+//! page script into an unrequested request to a third party chosen by the engine
+//! rather than by the page. Inside a sandbox whose claim is that every request is
+//! policy-checked and receipted, an engine that invents destinations is the wrong
+//! kind of helpful.
 //!
 //! So a bare specifier is refused, by name, with what would have to exist for it
 //! to work. The agent reads that and knows the page needs a bundle it did not
@@ -16,8 +16,8 @@
 //!
 //! # Every module fetch is a brokered fetch
 //!
-//! Same broker, same policy, same receipts, and the same document origin, so a
-//! module cannot reach the box's dev server from a page the web served
+//! Same broker, same policy, same receipts, same document origin, so a module
+//! cannot reach the box's dev server from a page the web served
 //! (roadmap-history.md §B3.1). A private HTTP client here would be the one
 //! request class in the engine with no record.
 
@@ -57,7 +57,7 @@ impl BrokerModuleLoader {
         }
     }
 
-    /// The document URL, used when a referrer has no path of its own — an
+    /// The document URL, used when a referrer has no path of its own. An
     /// inline `<script type="module">`, whose relative imports resolve against
     /// the page that contains it.
     fn base_for(&self, referrer: &Referrer) -> Url {
@@ -107,8 +107,8 @@ impl BrokerModuleLoader {
     /// Where a module was served from, for `import.meta.url`.
     fn url_of(&self, module: &Module) -> Option<String> {
         let path = module.path()?.to_string_lossy().into_owned();
-        // The path a module was parsed under *is* its final URL — see the
-        // comment where the source is built — so the map is a lookup by either.
+        // The path a module was parsed under *is* its final URL, see the
+        // comment where the source is built, so the map is a lookup by either.
         self.paths
             .borrow()
             .values()
@@ -123,7 +123,7 @@ impl ModuleLoader for BrokerModuleLoader {
     ///
     /// Async in Boa 0.21, and *synchronous underneath*: the broker blocks, and
     /// this returns an already-finished future. That is deliberate rather than
-    /// lazy — a module graph has to be resolved before the page can run at all,
+    /// lazy. A module graph has to be resolved before the page can run at all,
     /// so there is no work to overlap it with, and the borrow of the context is
     /// never held across a suspension point because there is none.
     async fn load_imported_module(
@@ -172,14 +172,14 @@ impl ModuleLoader for BrokerModuleLoader {
         // `send_script`, not `send_from`, and that is the same-origin policy
         // rather than bookkeeping.
         //
-        // A module script is a **`cors` request in every browser** — unlike a
-        // classic `<script src>`, which is why JSONP exists — and this fetched
-        // one with no CORS context at all: no `Origin` header, no
-        // `Access-Control-Allow-Origin` check on the answer, and the response
-        // handed back with full exposure. `import("https://other.example/x.js")`
-        // was a cross-origin body fetched, parsed and *evaluated in this page's
-        // realm*, which is the one thing the CORS rule on module scripts exists
-        // to refuse. Same shape as the hole `EventSource` had.
+        // A module script is a `cors` request in every browser (unlike a classic
+        // `<script src>`, which is why JSONP exists) and this fetched one with no
+        // CORS context at all: no `Origin` header, no `Access-Control-Allow-Origin`
+        // check on the answer, and the response handed back with full exposure.
+        // `import("https://other.example/x.js")` was a cross-origin body fetched,
+        // parsed and *evaluated in this page's realm*, the one thing the CORS rule
+        // on module scripts exists to refuse. Same shape as the hole `EventSource`
+        // had.
         //
         // `same-origin` credentials, which is what a module script without a
         // `crossorigin` attribute gets.
@@ -212,8 +212,8 @@ impl ModuleLoader for BrokerModuleLoader {
             )));
         }
 
-        // An HTTP error is not a module. The fetch *succeeded* — the server
-        // answered — so `outcome.error` is empty, but a 404 body is an error
+        // An HTTP error is not a module. The fetch *succeeded*, the server
+        // answered, so `outcome.error` is empty, but a 404 body is an error
         // page or nothing at all. Parsing it as JavaScript either throws a
         // syntax error blaming the page's own code, or, for an empty body,
         // succeeds as an empty module and the import silently exports nothing.
@@ -236,7 +236,7 @@ impl ModuleLoader for BrokerModuleLoader {
 
         // Remember where this module came from, so `import.meta.url` can answer.
         // Without it, `new URL("./x.css", import.meta.url)` gets `undefined` as
-        // its base and throws `Invalid URL` — which is how one asset path took
+        // its base and throws `Invalid URL`, which is how one asset path took
         // down a whole bundle.
         self.paths
             .borrow_mut()

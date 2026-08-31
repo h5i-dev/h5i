@@ -1,24 +1,21 @@
 //! Turning the box's JPEG into pixels the terminal can be handed.
 //!
-//! This is the one place in the viewer that parses a non-trivial format
-//! produced *inside* the box, so it is the place a malicious or simply broken
-//! page could try to reach the host process. Three things follow:
+//! This is the one place in the viewer that parses a non-trivial format produced
+//! *inside* the box, so it is the place a malicious or simply broken page could
+//! try to reach the host process. Three things follow:
 //!
 //! * The decoder is `zune-jpeg`, which forbids unsafe code. A memory-unsafe
-//!   decoder here would hand a box the host's address space, and no amount of
-//!   care elsewhere in the viewer would matter.
-//! * Dimensions are capped before decoding, so a header claiming 60000×60000
-//!   is refused rather than allocating ten gigabytes.
-//! * A frame that fails to decode is dropped, never fatal. The box can produce
-//!   a corrupt frame by crashing at the wrong moment, and a viewer that exits
-//!   on one is a viewer that a flaky page can close.
+//!   decoder here would hand a box the host's address space.
+//! * Dimensions are capped before decoding, so a header claiming 60000×60000 is
+//!   refused rather than allocating ten gigabytes.
+//! * A frame that fails to decode is dropped, never fatal. The box can produce a
+//!   corrupt frame by crashing at the wrong moment, and a viewer that exits on
+//!   one is a viewer a flaky page can close.
 //!
 //! Scaling lives here too, and it is a bandwidth decision rather than a visual
 //! one. The terminal will happily scale an image into a cell box for us, but
-//! only after every byte of it has crossed the PTY — and over SSH that is the
-//! whole cost. Sending the frame at the size it will actually be displayed is
-//! the difference between a viewer that works on a remote box and one that does
-//! not.
+//! only after every byte of it has crossed the PTY, and over SSH that is the
+//! whole cost.
 
 use zune_jpeg::zune_core::bytestream::ZCursor;
 use zune_jpeg::zune_core::colorspace::ColorSpace;
@@ -61,7 +58,7 @@ pub fn decode(jpeg: &[u8]) -> Result<Rgb, H5iError> {
     // A frame with no extent is not a frame. Refused here rather than carried:
     // every consumer downstream divides or clamps by these numbers, and a zero
     // is the one value that makes `downscale`'s `clamp(y0 + 1, sh)` assert
-    // `min <= max` and abort — in release as well as debug, because that is a
+    // `min <= max` and abort. In release as well as debug, because that is a
     // `clamp` precondition and not an overflow check.
     if width == 0 || height == 0 {
         return Err(H5iError::Metadata(format!(
@@ -102,7 +99,7 @@ pub struct Fit {
 /// Fit a `src_w × src_h` frame into `cols × rows` cells without distorting it.
 ///
 /// The terminal scales the transmitted image to exactly fill the cell box it is
-/// given, so the cell box — not the image — is what decides the final aspect
+/// given, so the cell box, not the image, is what decides the final aspect
 /// ratio. Picking `cols` and `rows` whose *pixel* extent matches the frame's
 /// proportions is therefore the whole job, and it is why the cell's pixel size
 /// has to be known rather than assumed.
@@ -125,7 +122,7 @@ pub fn fit(src_w: u32, src_h: u32, cols: u16, rows: u16, cell_w: u16, cell_h: u1
 
     // The frame is displayed at the cell box's pixel extent, so that is what is
     // worth transmitting: more is bytes the terminal throws away, and less is
-    // detail nobody gets back. Never upscale — a terminal asked to enlarge a
+    // detail nobody gets back. Never upscale. A terminal asked to enlarge a
     // small frame does it for free, at no cost on the wire.
     let disp_w = (c * cell_w).min(src_w);
     let disp_h = (r * cell_h).min(src_h);
@@ -144,12 +141,11 @@ pub fn fit(src_w: u32, src_h: u32, cols: u16, rows: u16, cell_w: u16, cell_h: u1
 /// Box averaging rather than nearest-neighbour, because the input is rendered
 /// text: dropping samples turns antialiased glyphs into noise, and the point of
 /// a real browser in the terminal is being able to read the page. Returns the
-/// input untouched when no scaling is called for, which is the common case for
-/// a small viewport and worth not paying for.
+/// input untouched when no scaling is called for.
 pub fn downscale(src: &Rgb, tw: u32, th: u32) -> std::borrow::Cow<'_, Rgb> {
     // Its sibling [`fit`] takes `src_w.max(1)`/`src_h.max(1)` on the same two
     // numbers, and this took them as they came. A zero-extent source makes the
-    // row clamp below `clamp(y0 + 1, 0)`, and `clamp` asserts `min <= max` —
+    // row clamp below `clamp(y0 + 1, 0)`, and `clamp` asserts `min <= max`,
     // so the process aborts, in release as much as in debug. `decode` refuses
     // such a frame now; this is the same answer at the other end, because `Rgb`
     // has public fields and one guard in one constructor is not a property of
@@ -203,7 +199,7 @@ mod tests {
 
     /// `downscale` divides and clamps by the source's dimensions, and `clamp`
     /// asserts `min <= max`. A zero-extent frame made that
-    /// `clamp(y0 + 1, 0)` — an abort, in release as much as in debug, on a
+    /// `clamp(y0 + 1, 0)`: an abort, in release as much as in debug, on a
     /// frame the *box* supplied. Its sibling `fit` has always taken
     /// `src_h.max(1)` on the same number.
     #[test]
@@ -247,7 +243,7 @@ mod tests {
     #[test]
     fn a_frame_keeps_its_proportions_whichever_way_the_pane_is_shaped() {
         // A short, wide pane. 200 cols × 8px is 1600px across, and a 1280×800
-        // frame that wide would need 1000px of height — 62.5 rows of 16px,
+        // frame that wide would need 1000px of height. 62.5 rows of 16px,
         // which does not fit in 60. So height binds: every row is used and some
         // columns are left over.
         let wide = fit(1280, 800, 200, 60, 8, 16);
@@ -276,8 +272,8 @@ mod tests {
     #[test]
     fn a_frame_is_never_sent_larger_than_it_will_be_displayed() {
         // The bandwidth rule. A 1280-wide frame shown in an 80×24 pane of 8×16
-        // cells is displayed at 640px, so sending 1280 is half the bytes wasted
-        // — and over SSH that is the entire cost of the viewer.
+        // cells is displayed at 640px, so sending 1280 is half the bytes wasted,
+        // and over SSH that is the entire cost of the viewer.
         let f = fit(1280, 800, 80, 24, 8, 16);
         assert!(f.pixel_width <= 640, "{f:?}");
         assert!(f.pixel_width <= 1280 && f.pixel_height <= 800);

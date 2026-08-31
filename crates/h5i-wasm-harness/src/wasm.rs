@@ -2,7 +2,7 @@
 //! only for `wasm32` (`#[cfg(target_arch = "wasm32")]` in `lib.rs`), so the
 //! native build and `cargo test` never see the allocator / panic handler.
 //!
-//! Exports (no imports at all — loadable by plain `WebAssembly.instantiate` in
+//! Exports (no imports at all: loadable by plain `WebAssembly.instantiate` in
 //! a browser/Node AND by any WASI runtime):
 //!   memory
 //!   alloc(len: i32) -> i32          host obtains a guest buffer to write into
@@ -15,7 +15,7 @@
 //!   agent_dump() -> u64             deterministic transcript JSON out
 //!
 //! Return convention: (ptr << 32) | len of guest-owned UTF-8 JSON, valid until
-//! the NEXT exported call — and `alloc()` IS an export call, so the host must
+//! the NEXT exported call, and `alloc()` IS an export call, so the host must
 //! copy a returned effect out BEFORE calling `alloc` for the next event. (The
 //! current bump allocator would make the lazy order accidentally safe; the
 //! rule is stated strictly so a future real allocator cannot break hosts.)
