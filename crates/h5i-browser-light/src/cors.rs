@@ -5,26 +5,25 @@
 //! unanswered: grant two origins and a script on either could `fetch` the other
 //! and read the body. The cookie jar made it worse in this repository's own
 //! history, since §B16's `Domain` support turned an unauthenticated cross-origin
-//! read into an authenticated one. Neither change was wrong alone.
+//! read into an authenticated one.
 //!
 //! Enforced:
 //!
 //! * *Same-origin* is unrestricted, which is the point of an origin.
-//! * *Cross-origin `no-cors`* may be sent and its response is opaque: no
-//!   status, no headers, no body. That is what makes an `<img>` safe.
+//! * *Cross-origin `no-cors`* may be sent and its response is opaque: no status,
+//!   no headers, no body. That is what makes an `<img>` safe.
 //! * *Cross-origin `cors`* sends `Origin`, preflights when not simple, and
 //!   exposes the response only if the server named this origin back. Headers are
 //!   filtered to the safelist plus `Access-Control-Expose-Headers`.
 //! * *Credentials* need the server to opt in twice, `Allow-Credentials: true`
 //!   *and* an explicit origin echo, since `*` with credentials is the
 //!   misconfiguration this catches.
-//! * A redirect re-evaluates all of it, so a third origin yields an opaque
-//!   `null` origin and a server cannot launder a read by bouncing it.
+//! * A redirect re-evaluates all of it, so a server cannot launder a read by
+//!   bouncing it.
 //!
 //! No `Access-Control-Max-Age` cache: a preflight per request is one fewer piece
 //! of state that can be wrong. CORB/ORB are out of scope, defending a shared
-//! process against a side channel this engine does not have, since every
-//! document gets its own realm and loses it on navigation.
+//! process against a side channel this engine does not have.
 
 use url::Url;
 
@@ -224,8 +223,7 @@ fn header_is_safelisted(name: &str, value: &str) -> bool {
 /// of an origin. Collapsing them into one `Option` gives the second the
 /// authority of the first, which is precisely backwards: a `file:` page is
 /// same-origin with nothing and should be able to read nothing cross-origin,
-/// while an agent typing a URL is exercising its own authority and there is no
-/// document boundary to cross at all.
+/// while an agent typing a URL is exercising its own authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Requester<'a> {
     /// The agent named this URL. Unrestricted.

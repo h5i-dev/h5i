@@ -15,16 +15,14 @@
 //! both the fail-closed direction.
 //!
 //! Linux kernel tiers only, per §P1's v1 scope. Seatbelt, container and microvm
-//! enforce through mechanisms this schema does not describe, so they are
-//! excluded rather than half-described.
+//! enforce through mechanisms this schema does not describe.
 //!
 //! Every `serde(skip)` field of [`ResolvedPolicy`] is either in the dump or
-//! excluded here by name (§P1's exit criterion): the bind lists, readonly mode
-//! and egress extras are *in* it; `box_git` is container mounts whose kernel
-//! -tier paths already appear under `landlock`; `env_capture_spool` and
-//! `env_inbox` are container plumbing the kernel tiers reach through recorded fs
-//! grants; `hosts_services` is a microvm idle-stop hint; `egress_proxy_port` is
-//! container proxy wiring; and `effective_out` is where this dump is written.
+//! excluded here by name: the bind lists, readonly mode and egress extras are
+//! *in* it; `box_git` is container mounts whose kernel-tier paths already appear
+//! under `landlock`; `env_capture_spool` and `env_inbox` are container plumbing;
+//! `hosts_services` is a microvm idle-stop hint; `egress_proxy_port` is container
+//! proxy wiring; and `effective_out` is where this dump is written.
 
 use std::path::Path;
 
@@ -405,14 +403,12 @@ pub fn validate_effective(
     );
     #[cfg(unix)]
     {
-        // Check the landlock grants AND every bind's source and target. A grant
-        // is the user's own declaration, but a bind whose mountpoint or source
-        // lies beneath the worktree and resolves out through a planted symlink
-        // is the runc-class escape (§P3). The config-lock and private binds
-        // sit under $WORK, so their paths are exactly where a previous run's
-        // agent could redirect. `symlink_escapes` ignores paths outside the
-        // worktree, so h5i's managed dirs (cache, home-state) are not
-        // second-guessed.
+        // Check the landlock grants AND every bind's source and target. A grant is
+        // the user's own declaration, but a bind whose mountpoint or source lies
+        // beneath the worktree and resolves out through a planted symlink is the
+        // runc-class escape (§P3). The config-lock and private binds sit under
+        // $WORK, exactly where a previous run's agent could redirect.
+        // `symlink_escapes` ignores paths outside the worktree.
         let mut paths: Vec<String> =
             cfg.landlock.ro.iter().chain(cfg.landlock.rw.iter()).cloned().collect();
         for b in &cfg.binds {
