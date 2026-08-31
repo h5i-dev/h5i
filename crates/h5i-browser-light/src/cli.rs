@@ -1267,9 +1267,23 @@ fn local_broker(net: &NetArgs) -> Result<Arc<crate::net::LocalBroker>, H5iError>
                 path.display()
             ))
         })?;
-        if loaded > 0 {
+        if loaded.loaded > 0 {
             eprintln!(
-                "h5i-browser-light: restored {loaded} cookie(s) from {}",
+                "h5i-browser-light: restored {} cookie(s) from {}",
+                loaded.loaded,
+                path.display()
+            );
+        }
+        // Said, not swallowed. A row the jar refused is one no server could
+        // have set — a cookie widened to a public suffix, a `__Host-` name
+        // without the flags that name means — and a login that is missing
+        // because of one should say so rather than look like a login that was
+        // never saved.
+        if loaded.refused > 0 {
+            eprintln!(
+                "h5i-browser-light: {} cookie(s) in {} were refused: they claim a scope or a \
+                 name prefix no server could have set, so they were not restored",
+                loaded.refused,
                 path.display()
             );
         }
