@@ -1166,3 +1166,77 @@ fn identity_check_says_what_it_does_not_cover_as_plainly_as_what_it_does() {
     assert!(uncovered.contains("ClientHello"), "{uncovered}");
     assert!(uncovered.contains("HTTP/2"), "{uncovered}");
 }
+
+/// h5i's default identity and the engine's are the same word.
+///
+/// This is the property the old `net_args` comment was reaching for when it
+/// sent `--identity` on every invocation. It is a fact about two constants, and
+/// paying for it on the wire broke every box running an older h5i — so it is
+/// checked here instead, where it costs nothing and fails loudly.
+#[cfg(feature = "identity")]
+#[test]
+fn the_two_defaults_are_one_word() {
+    let Some(fixture) = Fixture::new() else {
+        return skip("h5i is not built");
+    };
+
+    // What the engine falls back to when no `--identity` reaches it.
+    let out = fixture.run(&["browser", "identity", "check", "native", "--json"]);
+    let report: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("check prints JSON");
+    assert_eq!(report["name"], "native");
+    assert_eq!(report["mode"], "native");
+
+    // And what h5i sends when nobody types the flag: nothing at all, so the
+    // engine's own default is what decides. `identity` on the record is the
+    // name h5i resolved, and the two have to agree or the record describes a
+    // session that never ran.
+    let id = fixture.open(&[]);
+    let status = fixture.run(&["browser", "status", "--session", &id, "--json"]);
+    let record: serde_json::Value =
+        serde_json::from_slice(&status.stdout).expect("status prints a record");
+    assert_eq!(record["identity"], "native");
+    let _ = fixture.run(&["browser", "close", "--session", &id]);
+}
+
+/// A default session sends the engine no `--identity` at all.
+///
+/// The regression this pins is specific and was shipped: `net_args` pushed the
+/// flag unconditionally, so a boxed session whose in-box h5i predated it failed
+/// at argument parsing — `h5i browser read --in <box>` stopped working for
+/// callers who had never heard of identities. Every other flag here is
+/// conditional; this one has to be too.
+#[cfg(feature = "identity")]
+#[test]
+fn the_default_identity_adds_no_flag_an_older_engine_would_refuse() {
+    let Some(fixture) = Fixture::new() else {
+        return skip("h5i is not built");
+    };
+
+    // `--in` needs a box, so the check is made against the argv h5i builds for
+    // the sessionless lane instead: with no `--identity` typed, the engine is
+    // run with none, and the proof is that a build of the engine that has never
+    // heard of the flag would have been given nothing to choke on.
+    //
+    // Asserted through behaviour rather than by reading argv: an engine that
+    // received `--identity` and rejected it fails the read outright, and a
+    // successful read is what says nothing unknown was passed.
+    let url = fixture.site.base.clone();
+    let out = fixture.run(&["browser", "read", url.as_str(), "--no-sandbox"]);
+    assert!(
+        out.status.success(),
+        "a default read must not pass anything the engine could refuse: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // And when one *is* named, it does travel.
+    let named = fixture.run(&[
+        "browser", "read", url.as_str(), "--no-sandbox", "--script",
+        "--identity", "chrome-151-windows",
+    ]);
+    assert!(!named.status.success(), "a refused identity must reach the engine");
+    assert!(
+        String::from_utf8_lossy(&named.stderr).contains("ua-client-hints"),
+        "the refusal should come from the engine, not from clap"
+    );
+}

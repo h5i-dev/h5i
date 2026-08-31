@@ -44,6 +44,16 @@ use h5i_core::ui::SUCCESS;
 /// says what it was waiting for and leaves the engine's own log behind.
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Whether an identity selector is a path rather than a built-in name.
+///
+/// Asked the same way [`h5i_browser_light::identity::Identity::resolve`] asks
+/// it, and in the same order: a built-in name wins, so a file that happens to
+/// be called `native` never shadows the identity of that name.
+#[cfg(feature = "identity")]
+fn names_a_file(selector: &str) -> bool {
+    h5i_browser_light::identity::builtin(selector).is_none()
+}
+
 /// The identity a session presents unless one is named.
 ///
 /// The honest one, and the same word the engine's own `--identity` defaults to.
@@ -1334,6 +1344,33 @@ fn start(
     // command cannot read an error out of at all.
     #[cfg(feature = "identity")]
     let identity = {
+        // A path cannot travel into a box, and this is the one place that can
+        // say so clearly.
+        //
+        // Every other path in a boxed session's argv is translated to one the
+        // box will actually have — `control_in_box`, `in_box_base`. An identity
+        // file is named on the host and read by the engine, and for a boxed
+        // session those are different filesystems: `$WORK` is what the browser
+        // profile grants, and a file beside the caller is not in it. Passed
+        // through raw it became "no browser identity called
+        // `/home/…/mine.toml`", followed by the list of built-ins, which reads
+        // as a typo rather than as a boundary.
+        //
+        // Refused here rather than made to work, because making it work means
+        // copying a file into the box, and what a box may read is the box's
+        // policy to state rather than this command's to widen.
+        if opts.in_box.is_some() && names_a_file(&opts.identity) {
+            anyhow::bail!(
+                "`--identity {}` names a file on this machine, and this session runs in a \
+                 box.\n\n  \
+                 A box has its own filesystem, so a path beside you is not a path it has. \
+                 Use one of the built-in identities, which travel by name:\n    \
+                 h5i browser identity list\n\n  \
+                 Or put the file where the box can read it and name it by the path it has \
+                 in there.",
+                opts.identity
+            );
+        }
         let identity = h5i_browser_light::identity::Identity::resolve(&opts.identity)
             .map_err(anyhow::Error::from)?;
         identity
@@ -2129,11 +2166,24 @@ fn net_args(opts: &StartOptions) -> Vec<String> {
     if opts.no_loopback {
         argv.push("--no-loopback".into());
     }
-    // Passed always rather than only when it differs from the default, because
-    // the engine's default and h5i's have to be the same word for the record to
-    // mean anything, and passing it is what makes that checkable.
+    // **Only when it differs from the default**, which is what every other flag
+    // here already does, and the reason is not tidiness.
+    //
+    // A boxed session runs the h5i *inside the box*, and that binary is not
+    // this one — a staged upgrade leaves the two at different versions for as
+    // long as the rollout takes. Sending `--identity` unconditionally made an
+    // older in-box engine fail at argument parsing, so every boxed session and
+    // every `read --in` broke the moment the host was upgraded, including for
+    // callers who had never heard of identities. Sending it only when someone
+    // asked for one keeps the default path byte-identical to what older boxes
+    // already understand, and makes the failure land on the person who asked
+    // for something that box cannot do.
+    //
+    // The property the old comment was reaching for — that h5i's default and
+    // the engine's are the same word — is a fact about two constants, and
+    // `the_two_defaults_are_one_word` checks it directly instead.
     #[cfg(feature = "identity")]
-    {
+    if opts.identity != DEFAULT_IDENTITY {
         argv.push("--identity".into());
         argv.push(opts.identity.clone());
     }
@@ -2858,10 +2908,11 @@ fn read(
     if json {
         engine_args.push("--json".into());
     }
-    // Always, not only when it differs: the engine's default and h5i's have to
-    // be the same word, and passing it is what makes that checkable.
+    // Only when it differs from the default. See `net_args`: an in-box engine
+    // may be older than this one, and a flag it has never heard of is a usage
+    // error rather than a read.
     #[cfg(feature = "identity")]
-    {
+    if identity != DEFAULT_IDENTITY {
         engine_args.push("--identity".into());
         engine_args.push(identity);
     }

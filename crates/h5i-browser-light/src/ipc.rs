@@ -604,23 +604,31 @@ impl Broker for BrokerClient {
         }
     }
 
-    /// Asked once per realm, and cached for the life of this client.
+    /// Asked once, and cached for the life of this client.
     ///
     /// The identity cannot change while a session runs — that is the whole
-    /// point of it — so a second ask could only ever get the same answer. The
-    /// fallback is the honest one rather than a blank: a renderer that has lost
-    /// its broker is about to stop anyway, and the alternative is a page told
-    /// it is running in a browser with no name.
+    /// point of it — so a second ask could only ever get the same answer.
+    ///
+    /// **Only an answer is cached.** A broker that has ended takes this
+    /// renderer with it (`over` calls `stop_now` on that path), so the fallback
+    /// is very nearly unreachable; caching it anyway would mean one failed ask
+    /// pinning the page to `native` for the rest of the session while the
+    /// broker went on sending another identity's headers. That is precisely the
+    /// disagreement between the wire and the page that this whole module
+    /// exists to make impossible, so it must not be reachable through the
+    /// module's own error path.
     #[cfg(feature = "identity")]
     fn identity(&self) -> Arc<crate::identity::Identity> {
         if let Some(known) = self.identity.get() {
             return known.clone();
         }
-        let answered = match self.said(Ask::Identity) {
-            Some(Said::Identity(identity)) => identity,
-            _ => crate::identity::native(),
-        };
-        self.identity.get_or_init(|| Arc::new(answered)).clone()
+        match self.said(Ask::Identity) {
+            Some(Said::Identity(identity)) => {
+                self.identity.get_or_init(|| Arc::new(identity)).clone()
+            }
+            // Not cached: the next ask gets to try again.
+            _ => Arc::new(crate::identity::native()),
+        }
     }
 
     fn substitute(&self, text: &str) -> Resolved {
