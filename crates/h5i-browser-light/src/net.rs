@@ -590,6 +590,19 @@ impl LocalBroker {
             return Err(format!("the preflight was denied by policy: {reason}"));
         }
 
+        // A preflight is a request in its own right, and the budget is the one
+        // place that had not been told. It sat *before* the claim in
+        // `send_with_cors`, so a page issuing non-simple cross-origin requests
+        // whose preflights the server refuses made unlimited round trips while
+        // the allowance recorded none of them — the real request never happened,
+        // so the request that was counted never happened either.
+        if let Err(over) = self.budget.claim_request() {
+            let record = RequestRecord::request(seq, Initiator::Subresource, "OPTIONS", url.as_str())
+                .denied(&over.0);
+            let _ = self.record_pair(&record);
+            return Err(over.0);
+        }
+
         let record = RequestRecord::request(seq, Initiator::Subresource, "OPTIONS", url.as_str());
         if let Err(e) = self.append(&record) {
             return Err(format!(
@@ -640,6 +653,10 @@ impl LocalBroker {
         outcome.status = Some(status.as_u16());
         outcome.duration_ms = Some(elapsed);
         let _ = self.append(&outcome);
+        // What it cost. A preflight is small on the wire and real on the clock,
+        // and the clock is the half a page can spend without trying.
+        self.budget
+            .record(0, 0, Duration::from_millis(elapsed));
 
         if !status.is_success() {
             return Err(format!(
@@ -1350,6 +1367,21 @@ impl LocalBroker {
             return Err(format!("denied by policy: {reason}"));
         }
 
+        // Against the page's allowance like any other request. A connection is
+        // one request that then carries an unbounded number of frames — the
+        // frames are charged in `record_socket_frame`, and this is the handshake
+        // — so a page could otherwise open as many as it liked and spend
+        // nothing to do it.
+        if let Err(over) = self.budget.claim_request() {
+            let record =
+                RequestRecord::request(seq, Initiator::Subresource, "WS-OPEN", url.as_str())
+                    .denied(&over.0);
+            if let Err(e) = self.record_pair(&record) {
+                return Err(format!("receipt sink refused: {e}"));
+            }
+            return Err(over.0);
+        }
+
         let record = RequestRecord::request(seq, Initiator::Subresource, "WS-OPEN", url.as_str());
         if let Err(e) = self.append(&record) {
             return Err(format!(
@@ -1511,6 +1543,21 @@ impl LocalBroker {
             }) => (origin_header.clone(), *send_cookies, *check_response),
             _ => (None, true, false),
         };
+
+        // Budgeted like the socket handshake, and for the same reason: opening
+        // a stream is one request that then carries frames, each of which
+        // spends the allowance in `record_socket_frame`. Without this a page
+        // could open as many streams as it liked — each one a thread — and the
+        // allowance would say it had spent nothing.
+        if let Err(over) = self.budget.claim_request() {
+            let record =
+                RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str())
+                    .denied(&over.0);
+            if let Err(e) = self.record_pair(&record) {
+                return Err(format!("receipt sink refused: {e}"));
+            }
+            return Err(over.0);
+        }
 
         let record = RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str());
         if let Err(e) = self.append(&record) {
@@ -2058,6 +2105,47 @@ mod cookie_wire_tests {
             sink.records().iter().any(|r| r.url.contains("tracker.example")),
             "the refused hop is not in the log"
         );
+    }
+
+    /// Every request on the wire counts, including the ones that are not the
+    /// page's own `fetch`.
+    ///
+    /// A preflight sat *before* the claim in `send_with_cors`, so a page
+    /// issuing non-simple cross-origin requests whose preflights the server
+    /// refuses made unlimited round trips while the allowance recorded none of
+    /// them: the real request never happened, so the request that was counted
+    /// never happened either. A socket handshake and an event stream were
+    /// outside it too, and each of those is a connection that then carries
+    /// frames.
+    #[test]
+    fn a_preflight_a_socket_and_a_stream_all_spend_the_pages_allowance() {
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits {
+                max_requests: 2,
+                ..Default::default()
+            },
+        )
+        .expect("broker");
+
+        // Nothing is listening; the point is which of these the *budget*
+        // refuses, and it refuses before anything is dialled.
+        let ws = Url::parse("ws://127.0.0.1:9/hmr").unwrap();
+        assert!(
+            broker.authorise_socket(&ws, None).is_ok(),
+            "the first is inside the allowance"
+        );
+        let sse = Url::parse("http://127.0.0.1:9/stream").unwrap();
+        // The second spends the last of it; whether the wire answers is not
+        // what is under test.
+        let _ = broker.begin_event_stream(&sse, None);
+
+        let over = broker
+            .authorise_socket(&ws, None)
+            .expect_err("the third is over the allowance");
+        assert!(over.contains("budget-exceeded"), "{over}");
     }
 
     /// The budget bounds what an untrusted page can spend, and every limit in

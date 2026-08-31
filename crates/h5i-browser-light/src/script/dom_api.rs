@@ -2476,7 +2476,16 @@ fn guard_mutation(host: &HostHandle, what: &str, body: impl FnOnce()) {
 fn settle_layout(host: &HostHandle) {
     if *host.styles_stale.borrow() {
         *host.styles_stale.borrow_mut() = false;
-        host.dom.borrow_mut().resolve(0.0);
+        // Through the engine's helper, not `resolve` directly. This was the
+        // fourth door into the deep-tree problem: layout recurses, and
+        // `getComputedStyle` on a tree script has just built reaches it before
+        // the settle loop does — `el.innerHTML = "<div>".repeat(20000)` then
+        // one style read, and the process is gone with no panic to catch.
+        //
+        // It also picks up `guard_layout`, which matters more here than
+        // anywhere: a panic raised inside a native binding unwinds through the
+        // JavaScript engine, across a `Gc` that does not expect it.
+        let _ = crate::engine::lay_out(&host.dom);
     }
 }
 

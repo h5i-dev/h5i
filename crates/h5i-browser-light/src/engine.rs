@@ -2490,7 +2490,7 @@ impl PageFactory {
 /// The walk is one iterative pass over the node tree, against a `resolve` that
 /// does style resolution and layout over the same nodes: a constant factor on
 /// something already linear in the document.
-fn lay_out(doc: &Rc<RefCell<BaseDocument>>) -> Result<(), String> {
+pub(crate) fn lay_out(doc: &Rc<RefCell<BaseDocument>>) -> Result<(), String> {
     lay_out_doc(&mut doc.borrow_mut())
 }
 
@@ -3517,6 +3517,46 @@ mod frame_tests {
             started.elapsed() / 10
         };
         eprintln!("nodes={nodes} prune={walk:?} layout={layout:?}");
+    }
+
+    /// The fourth door: `getComputedStyle` resolves style on demand, so a
+    /// style read reaches layout on a tree script has just built — before the
+    /// settle loop does, and so before the bound the settle loop applies.
+    #[test]
+    fn a_style_read_on_a_deep_tree_does_not_take_the_process_down() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let broker = crate::net::LocalBroker::new(
+                    Policy::new(),
+                    Arc::new(MemorySink::new()),
+                    None,
+                )
+                .expect("broker");
+                let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+                let factory = PageFactory::new(
+                    broker,
+                    fonts.sources.clone(),
+                    PageOptions {
+                        script: true,
+                        ..PageOptions::default()
+                    },
+                );
+                let page = factory.from_html(
+                    "<html><body><div id='host'></div><p id='out'>none</p><script>\
+                     const h = document.getElementById('host');\
+                     h.innerHTML = '<div>'.repeat(20000);\
+                     document.getElementById('out').textContent =\
+                       'w=' + getComputedStyle(h).width;\
+                     </script></body></html>",
+                    &Url::parse("https://host.example/").unwrap(),
+                );
+                let rendered = page.snapshot().render();
+                assert!(rendered.contains("w="), "the script finished:\n{rendered}");
+            })
+            .expect("a thread")
+            .join()
+            .expect("the engine survives a style read on a tree its own script built");
     }
 
     /// An ordinary page is nowhere near the bound, so it is untouched and says
