@@ -1270,15 +1270,38 @@ fn fetch_start(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         Ok(url) => url,
         Err(error) => return reply_error(&format!("`{target}` is not a URL: {error}"), context),
     };
+    // The queue, before the ticket. `fetch()` returns before anything is
+    // decided about the request, so a loop calling it builds a slot per call
+    // — a URL, a method, a body, headers — and the drain runs once per settle
+    // round. The request budget refuses requests; it never saw the queue.
+    if host.pending_fetches.borrow().len() >= crate::script::host::MAX_QUEUED_FETCHES {
+        return reply_error(
+            &format!(
+                "this page has {} requests queued and not yet started, which is the most one \
+                 page may hold. The per-navigation request budget is the bound on how many it \
+                 may make; this is the bound on how many it may have waiting.",
+                crate::script::host::MAX_QUEUED_FETCHES
+            ),
+            context,
+        );
+    }
+
     let id = host.next_fetch.get();
     host.next_fetch.set(id + 1);
-    host.requests
-        .borrow_mut()
-        .push(crate::script::host::RequestLink {
-            ticket: id,
-            url: resolved.to_string(),
-            seq: None,
-        });
+    {
+        // Bounded like the queue, and for the same reason: this list is the
+        // causal join between an action and a row in the request log, and it
+        // grew one entry per `fetch()` for the life of the page. What is
+        // dropped is the *link*; the receipt is the broker's and is untouched.
+        let mut links = host.requests.borrow_mut();
+        if links.len() < crate::script::host::MAX_REQUEST_LINKS {
+            links.push(crate::script::host::RequestLink {
+                ticket: id,
+                url: resolved.to_string(),
+                seq: None,
+            });
+        }
+    }
     host.pending_fetches.borrow_mut().insert(
         id,
         crate::script::host::FetchSlot::Queued {

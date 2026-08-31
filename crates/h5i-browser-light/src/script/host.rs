@@ -229,6 +229,31 @@ pub struct RequestLink {
     pub seq: Option<u64>,
 }
 
+/// How many requests a page may have *waiting to be started*.
+///
+/// [`MAX_INFLIGHT_FETCHES`] bounds what is on the wire and
+/// [`crate::budget::Limits::max_requests`] bounds what a page may send — and
+/// neither bounded the queue in between. `fetch()` returns before anything is
+/// decided about it, so a loop calling it builds one `FetchSlot` per call,
+/// holding a URL, a method, a body and headers, and the drain only runs once
+/// per settle round. Five million iterations is what the loop limit permits;
+/// even a small body each is gigabytes before the request budget has refused a
+/// single one.
+///
+/// Twice the default request allowance, so the *budget* is what an ordinary
+/// runaway page hits and this only catches the shape the budget cannot see: a
+/// page queueing faster than the engine can refuse.
+pub const MAX_QUEUED_FETCHES: usize = 1_000;
+
+/// How many request links one realm remembers.
+///
+/// The link list is the causal join between an action and a row in the request
+/// log, and it grew one entry per `fetch()` for the life of the page — so the
+/// bound above stops the queue and this stops the ledger of it. What is dropped
+/// is the *link*, never the receipt: the request log is the record, and it is
+/// the broker's.
+pub const MAX_REQUEST_LINKS: usize = 4_000;
+
 /// How many requests this engine will have on the wire at once.
 ///
 /// Six, which is what browsers settled on per host for HTTP/1.1 — enough that a

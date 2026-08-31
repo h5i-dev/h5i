@@ -2685,6 +2685,35 @@ fn a_cross_origin_module_needs_the_servers_permission() {
     );
 }
 
+/// `MAX_INFLIGHT_FETCHES` bounds what is on the wire and the request budget
+/// bounds what a page may send; neither bounded the queue in between.
+/// `fetch()` returns before anything is decided about it, so a loop calling it
+/// builds one slot per call — a URL, a method, a body, headers — and the drain
+/// only runs once per settle round.
+#[test]
+fn a_page_cannot_queue_requests_without_end() {
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let base = url::Url::parse("http://127.0.0.1:1/").unwrap();
+
+    // Far more than the queue holds, each with a body, and nothing awaited.
+    let page = factory.from_html(
+        r#"<html><body><p id="out">before</p><script>
+             let refused = 0;
+             const body = 'x'.repeat(512);
+             for (let i = 0; i < 20000; i++) {
+               try { fetch('/q?' + i, { method: 'POST', body }); } catch (e) { refused++; }
+             }
+             document.querySelector('#out').textContent = 'done';
+           </script></body></html>"#,
+        &base,
+    );
+
+    let rendered = page.snapshot().render();
+    assert!(rendered.contains("done"), "the page finished:\n{rendered}");
+}
+
 #[test]
 fn a_module_imported_twice_is_fetched_once() {
     let (port, asked) = module_server(vec![
