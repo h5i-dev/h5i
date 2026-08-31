@@ -5,18 +5,16 @@
 //! ([`crate::tunnel`]) and the loopback proxy on the joiner's side
 //! ([`crate::join`]), and both need the same three things:
 //!
-//! 1. Find the credential. First request carries it in the query string,
+//! 1. Find the credential. The first request carries it in the query string,
 //!    because a URL is the only thing you can hand someone who has no h5i.
 //!    Every request after that carries it in a cookie.
-//! 2. Get it out of the address bar. A token in the URL leaks into
-//!    `Referer` on every outbound link, into screen shares, and into whatever
-//!    the shared app logs. So the first request is answered with a redirect that
-//!    sets the cookie and points at the same page without the token, and it is
-//!    never proxied.
-//! 3. Never let it reach the box. The shared app is agent-written code we
-//!    are deliberately exposing to someone; handing it the credential that
-//!    authorizes the share would be handing it the share. The cookie and the
-//!    query parameter are stripped on the way upstream, and a test pins that.
+//! 2. Get it out of the address bar. A token in the URL leaks into `Referer`
+//!    on every outbound link, into screen shares, and into whatever the shared
+//!    app logs. So the first request is answered with a redirect that sets the
+//!    cookie and points at the same page without the token.
+//! 3. Never let it reach the box. The shared app is agent-written code we are
+//!    deliberately exposing to someone; handing it the credential that
+//!    authorizes the share would be handing it the share.
 //!
 //! Parsing is deliberately small and refuses rather than repairs. Everything
 //! here arrives from the open internet in tunnel mode.
@@ -28,20 +26,18 @@
 /// `h5i join` sessions on one machine would otherwise set the same cookie on
 /// `127.0.0.1` and quietly log each other out, and every request the browser
 /// made to any other local service would carry the token into that service's
-/// logs. Naming it per port fixes the first outright and narrows the second to
-/// services that are looking for it.
+/// logs. Naming it per port fixes the first outright and narrows the second.
 pub const COOKIE: &str = "h5i_share";
 
 /// Is this cookie name one of h5i's own?
 ///
-/// The two names that exist are the bare [`COOKIE`] and `h5i_share_<port>`,
-/// and both sanitisers were testing `starts_with("h5i_share")` instead, which
-/// is a different set. An app cookie called `h5i_shared_theme` or
-/// `h5i_shareable_session` matched, so it was deleted from every request on the
-/// way into the box and its `Set-Cookie` was deleted from every response on the
-/// way out. The app then loses its state or its login *only when viewed through
-/// a share*, which contradicts the contract stated directly above
-/// [`split_cookie`]: the app's own cookies pass through untouched.
+/// The two names that exist are the bare [`COOKIE`] and `h5i_share_<port>`, and
+/// both sanitisers were testing `starts_with("h5i_share")`, a different set. An
+/// app cookie called `h5i_shared_theme` matched, so it was deleted from every
+/// request on the way into the box and its `Set-Cookie` deleted from every
+/// response on the way out. The app then loses its state or its login *only when
+/// viewed through a share*, contradicting the contract stated above
+/// [`split_cookie`].
 ///
 /// One predicate, used in both directions and by the fuzz invariant, so the
 /// three cannot drift.
@@ -72,35 +68,31 @@ const MAX_APP_COOKIES: usize = 64;
 /// The cookie names the box has set for itself, learned from its own
 /// `Set-Cookie` headers as its responses go past.
 ///
-/// What it is for. A cookie jar is scoped by host and ignores the port, so
-/// a proxy on `127.0.0.1` receives every cookie every *other* local service on
-/// this machine has set, and forwards them, because a share that logs the
-/// visitor out of the app being demonstrated is a broken share. On a jar of
-/// this share's own that rule costs nothing: nothing else has ever written
-/// there. On the shared `127.0.0.1` jar it means the joiner's own
+/// A cookie jar is scoped by host and ignores the port, so a proxy on
+/// `127.0.0.1` receives every cookie every *other* local service on this machine
+/// has set, and forwards them, because a share that logs the visitor out of the
+/// app being demonstrated is a broken share. On a jar of this share's own that
+/// rule costs nothing. On the shared `127.0.0.1` jar it means the joiner's own
 /// `session=<secret>`, from their own local app, arrives at agent-written code
-/// inside somebody else's box on the first request. The joiner is the person
+/// inside somebody else's box on the first request, and the joiner is the person
 /// who did not choose that risk.
 ///
 /// So on that jar, and only there, the rule is narrowed: a cookie goes upstream
-/// only if the box on the other end set it. Everything else in the jar belongs
-/// to somebody the box has never heard of.
+/// only if the box on the other end set it.
 ///
-/// What it costs. A cookie written by `document.cookie` never appears in a
-/// `Set-Cookie` this proxy can see, so the box does not get those back. That is
-/// a real loss of fidelity, said out loud at join time rather than discovered.
-/// It is the safe direction to be wrong in: an unlearned name is dropped, never
-/// forwarded, so a path that forgets to learn breaks an app rather than leaking
-/// a credential.
+/// What it costs: a cookie written by `document.cookie` never appears in a
+/// `Set-Cookie` this proxy can see, so the box does not get those back. A real
+/// loss of fidelity, said out loud at join time rather than discovered, and the
+/// safe direction to be wrong in, since an unlearned name is dropped rather than
+/// forwarded.
 ///
-/// **Name *and* value, not name alone.** Two cookies may share a name in one
-/// jar when their paths differ, and the browser then sends both segments in
-/// one `Cookie` header. Matching on the name alone forwarded both, so a box
-/// that set `sid` at some deep path, having guessed a name the joiner's own
-/// service uses at `/`, was handed the joiner's `sid` beside its own on every
-/// request under that path. Guessing is cheap: `sid`, `session`, `token`,
-/// `jwt`. The value closes it, because the one thing a box cannot do is set a
-/// cookie to a secret it has not been told.
+/// Name *and* value, not name alone. Two cookies may share a name in one jar
+/// when their paths differ, and the browser then sends both segments in one
+/// `Cookie` header. Matching on the name alone forwarded both, so a box that set
+/// `sid` at some deep path, having guessed a name the joiner's own service uses
+/// at `/`, was handed the joiner's `sid` beside its own on every request under
+/// that path. Guessing is cheap. The value closes it, because the one thing a
+/// box cannot do is set a cookie to a secret it has not been told.
 #[derive(Default, Debug)]
 pub struct AppCookies {
     /// `name=value`, exactly as the box set it and exactly as the browser will
@@ -180,32 +172,30 @@ pub struct Request {
 
 /// Does this request come from a page that is not this share?
 ///
-/// Two `h5i join` proxies on one machine are `127.0.0.1:A` and `127.0.0.1:B`.
-/// Those are different *origins* but the *same site*, so `SameSite=Lax` does
-/// not hold a cookie back between them: a page served by one share could make
-/// credentialed requests to another colleague's box on the next port, and they
-/// reached it. CORS stops the page reading the answers; it does not stop the
-/// side effects, and a demo of somebody's agent-written app is exactly the
-/// place a request like that would come from.
-///
-/// The console's own gate (`h5i_core::server::authorize`) has had this check
-/// since it was written, for the same reason. This one never got it.
+/// Two `h5i join` proxies on one machine are `127.0.0.1:A` and `127.0.0.1:B`:
+/// different *origins* but the *same site*, so `SameSite=Lax` does not hold a
+/// cookie back between them, and a page served by one share could make
+/// credentialed requests to another colleague's box on the next port. CORS stops
+/// the page reading the answers; it does not stop the side effects, and a demo
+/// of somebody's agent-written app is exactly where such a request would come
+/// from. The console's own gate (`h5i_core::server::authorize`) has had this
+/// check since it was written; this one never got it.
 ///
 /// Compared by host and port only, not by scheme: a tunnel share arrives with
 /// `Origin: https://…trycloudflare.com` and `Host: …trycloudflare.com`, and
-/// requiring the schemes to agree would refuse the app's own requests. An
-/// absent `Origin` is allowed. That is an ordinary navigation, which is how
-/// every visitor arrives.
-/// Every value of these headers is read, not the first, and that is the same
-/// rule the framing checks follow: a second copy is a disagreement, and a
-/// disagreement about *where a request came from* is resolved against the
-/// request. `header()` was used here and `headers_named()` everywhere else in
-/// this file, so a head carrying `Sec-Fetch-Site: same-origin` followed by
+/// requiring the schemes to agree would refuse the app's own requests. An absent
+/// `Origin` is allowed, being an ordinary navigation, which is how every visitor
+/// arrives.
+///
+/// Every value of these headers is read, not the first, the same rule the
+/// framing checks follow: a disagreement about *where a request came from* is
+/// resolved against the request. `header()` was used here and `headers_named()`
+/// everywhere else, so a head carrying `Sec-Fetch-Site: same-origin` followed by
 /// anything at all was read as the share's own page. Found by the fuzzer at
-/// round 9,931. No browser sends two, and `Sec-Fetch-Site` is a forbidden
-/// header name so no page can add one; what makes it worth closing is that
-/// `cloudflared` bridges HTTP/2 to HTTP/1.1 and a repeated h2 field arrives
-/// here as two lines.
+/// round 9,931. No browser sends two, and `Sec-Fetch-Site` is a forbidden header
+/// name so no page can add one; what makes it worth closing is that
+/// `cloudflared` bridges HTTP/2 to HTTP/1.1 and a repeated h2 field arrives here
+/// as two lines.
 fn is_cross_origin(headers: &[&str], host: Option<&str>, carries_invite: bool) -> bool {
     // `Sec-Fetch-Site` first, because `Origin` is not sent at all on a
     // subresource GET, which is the shape the check was written for and did
@@ -222,34 +212,29 @@ fn is_cross_origin(headers: &[&str], host: Option<&str>, carries_invite: bool) -
             // The share's own page, or a user-initiated load: typed, clicked
             // from a bookmark, or opened from the address bar.
             "same-origin" | "none" => false,
-            // A navigation from *another site* is how every visitor arrives:
-            // the invite is followed from a chat window, and refusing that
-            // refuses everybody at the front door.
+            // A navigation from *another site* is how every visitor arrives: the
+            // invite is followed from a chat window, and refusing that refuses
+            // everybody at the front door.
             //
-            // But only the invite. `SameSite=Lax` is precisely the rule
-            // that attaches a cookie to a cross-site top-level GET navigation,
-            // so once a visitor has the share cookie this carve-out let any
-            // site on the internet that learns the origin navigate them to
-            // `…/reset` or `…/delete?id=1` and have it authorized. That is
-            // ordinary CSRF, wearing the exception written for the chat
+            // But only the invite. `SameSite=Lax` is precisely the rule that attaches a
+            // cookie to a cross-site top-level GET navigation, so once a visitor has the
+            // share cookie this carve-out let any site on the internet that learns the
+            // origin navigate them to `…/reset` or `…/delete?id=1` and have it
+            // authorized: ordinary CSRF, wearing the exception written for the chat
             // window.
             //
-            // The distinction the exception actually needs is not "is this a
-            // navigation" but "did this request bring the capability with it".
-            // A link out of a chat window carries the token in its query
-            // string; the attacker's link cannot, because the token is the one
-            // thing they do not have. A cross-site navigation authenticated
-            // only by a cookie already in the browser is refused.
+            // The distinction the exception needs is not "is this a navigation" but "did
+            // this request bring the capability with it". A link out of a chat window
+            // carries the token in its query string; the attacker's link cannot, because
+            // the token is the one thing they do not have.
             "cross-site" => !(is_a_navigation(headers) && carries_invite),
-            // But a navigation from the same *site* is not that. Two `h5i
-            // join` proxies on one machine are `127.0.0.1:A` and
-            // `127.0.0.1:B` (different origins, same site, because a site
-            // does not include the port) and `SameSite=Lax` constrains only
-            // cross-site requests, so a same-site POST is not constrained at
-            // all. A form on share A targeting share B arrived as
-            // `same-site` + `navigate` + `document`, which the carve-out let
-            // through with B's cookie attached. The invite link is never
-            // same-site.
+            // But a navigation from the same *site* is not that. Two `h5i join`
+            // proxies on one machine are `127.0.0.1:A` and `127.0.0.1:B`, different
+            // origins and the same site because a site does not include the port, and
+            // `SameSite=Lax` constrains only cross-site requests, so a same-site POST
+            // is not constrained at all. A form on share A targeting share B arrived
+            // as `same-site` + `navigate` + `document`, which the carve-out let
+            // through with B's cookie attached. The invite link is never same-site.
             _ => true,
         });
     }
@@ -275,12 +260,13 @@ fn is_cross_origin(headers: &[&str], host: Option<&str>, carries_invite: bool) -
 ///
 /// Both halves are required. `Sec-Fetch-Mode: navigate` alone is also sent for
 /// an `<iframe>` and for a prefetch; pairing it with `Sec-Fetch-Dest: document`
-/// is what narrows it to the address bar. An `<iframe>` of this share from
-/// another page is `dest: iframe`, and is refused. A framed share is not
-/// something a visitor can see the address of.
-/// Both halves are also required to be *unambiguous*: this is the one thing
-/// that opens the cross-site carve-out, so a head that says two things about
-/// its own shape does not get to pick the generous one.
+/// narrows it to the address bar. An `<iframe>` of this share from another page
+/// is `dest: iframe` and is refused, since a framed share is not something a
+/// visitor can see the address of.
+///
+/// Both halves are also required to be *unambiguous*: this is the one thing that
+/// opens the cross-site carve-out, so a head that says two things about its own
+/// shape does not get to pick the generous one.
 fn is_a_navigation(headers: &[&str]) -> bool {
     let all = |name: &str, want: &str| {
         let vs = headers_named(headers, name);
@@ -292,18 +278,16 @@ fn is_a_navigation(headers: &[&str]) -> bool {
 /// Is this request trying to register a service worker?
 ///
 /// Browsers treat `http://127.0.0.1:<port>` as a *potentially trustworthy*
-/// origin, so a page served over the joiner's loopback proxy is a secure
-/// context and may call `navigator.serviceWorker.register()`. What it registers
-/// outlives `h5i join`: after Ctrl-C the origin is still controlled, and if
-/// the joiner later runs their own dev server on that port (3000, 5173, 8080)
-/// the worker intercepts every fetch of their app.
+/// origin, so a page served over the joiner's loopback proxy is a secure context
+/// and may call `navigator.serviceWorker.register()`. What it registers outlives
+/// `h5i join`: after Ctrl-C the origin is still controlled, and if the joiner
+/// later runs their own dev server on that port the worker intercepts every
+/// fetch of their app.
 ///
-/// The joiner is the person who did not choose this risk. A demo does not need
-/// a service worker, so the registration request is refused by name; browsers
-/// send `Service-Worker: script` on exactly that fetch and on nothing else.
-/// Any copy of the header, for the reason `is_cross_origin` reads all of its
-/// own: a refusal is the fail-closed answer, so "one of them says `script`" is
-/// the reading to take.
+/// The joiner is the person who did not choose this risk. A demo does not need a
+/// service worker, so the registration request is refused by name; browsers send
+/// `Service-Worker: script` on exactly that fetch and on nothing else. Any copy
+/// of the header, for the reason `is_cross_origin` reads all of its own.
 fn registers_a_service_worker(headers: &[&str]) -> bool {
     headers_named(headers, "service-worker")
         .iter()
@@ -383,22 +367,19 @@ fn plausible(token: &str) -> bool {
 ///
 /// Compared after percent-decoding, because that is what the thing on the other
 /// end does. `%68%35%69` is `h5i` to every web framework that decodes its
-/// parameter names, which is all of them, and a literal comparison passed it
-/// through untouched, carrying whatever value it named into the app's logs and
-/// into `Referer` on every link out of the page. That is the one thing this
-/// module exists to prevent, arriving in the one spelling the strip did not
-/// know about.
+/// parameter names, and a literal comparison passed it through untouched,
+/// carrying whatever value it named into the app's logs and into `Referer` on
+/// every link out of the page.
 ///
-/// Decoded *by byte*, never by slicing the `&str`: a name may hold any UTF-8
-/// the client chose, and `&raw[i + 1..i + 3]` after a `%` lands inside a
-/// multi-byte character for an input as ordinary as `%aé`. A panic on the
-/// request path, reachable by anyone who can send this share a URL.
+/// Decoded *by byte*, never by slicing the `&str`: a name may hold any UTF-8 the
+/// client chose, and `&raw[i + 1..i + 3]` after a `%` lands inside a multi-byte
+/// character for an input as ordinary as `%aé`, a panic on the request path
+/// reachable by anyone who can send this share a URL.
 ///
 /// The decoding is deliberately partial and exact: only a well-formed escape
 /// turns into its byte, a malformed one stays as itself, and the comparison is
 /// case-sensitive because query parameter names are. This is a *name
-/// comparison*, not a URL parser. The target is forwarded byte for byte and
-/// nothing here rewrites it.
+/// comparison*, not a URL parser.
 fn is_share_param_name(raw: &str) -> bool {
     if raw == QUERY_PARAM {
         return true;
@@ -439,23 +420,19 @@ fn is_share_param_name(raw: &str) -> bool {
 /// Remove the share parameter from a request target, leaving the rest of the
 /// query alone. The app's own parameters are its business.
 ///
-/// Every occurrence, whatever the value. Narrowing this to values
-/// [`plausible`] accepts is the obvious tidy-up and it is wrong: the box reads
-/// the query after percent-decoding, so `?h5i=<secret>%20` is a value this
-/// module refuses as a credential and the app resolves back into one. The
-/// removal is therefore a superset of the read, and it has to stay that way.
-/// The fuzz invariant on this is `k != h5i` for every parameter reaching the
-/// box, not `not a credential`.
+/// Every occurrence, whatever the value. Narrowing this to values [`plausible`]
+/// accepts is the obvious tidy-up and it is wrong: the box reads the query after
+/// percent-decoding, so `?h5i=<secret>%20` is a value this module refuses as a
+/// credential and the app resolves back into one. The removal is therefore a
+/// superset of the read, and it has to stay that way.
 ///
-/// The cost is an app that uses a parameter of this exact name losing it
-/// through a share. Unlike the cookie side, where a *prefix* rule was
-/// swallowing names like `h5i_shared_theme` and had to be narrowed, this is an
-/// exact match on the tool's own name, so the collision is one nobody has.
+/// The cost is an app that uses a parameter of this exact name losing it through
+/// a share. Unlike the cookie side, where a *prefix* rule was swallowing names
+/// like `h5i_shared_theme`, this is an exact match on the tool's own name.
 ///
-/// The name is compared decoded, for the same reason the value is not
-/// narrowed. `?%68%35%69=<secret>` is `h5i=<secret>` to every framework that
-/// decodes its parameter names, and it was passed straight through: the one
-/// spelling of the credential that survived the strip.
+/// The name is compared decoded, for the same reason the value is not narrowed:
+/// `?%68%35%69=<secret>` is `h5i=<secret>` to every framework that decodes its
+/// parameter names, and it was passed straight through.
 fn strip_param(target: &str) -> (String, Option<String>) {
     let Some((path, query)) = target.split_once('?') else {
         return (target.to_string(), None);
@@ -482,23 +459,22 @@ fn strip_param(target: &str) -> (String, Option<String>) {
 }
 
 /// Pull our cookie out of a `Cookie` header, and return the header as it should
-/// go upstream, which is to say, without *any* h5i share cookie.
+/// go upstream: without *any* h5i share cookie.
 ///
 /// Reading our own by exact name and dropping every cookie whose name starts
 /// with [`COOKIE`] are two different rules on purpose, and the difference is a
 /// credential leak.
 ///
-/// Cookies ignore the port, so a browser sends every `127.0.0.1` cookie to
-/// every `127.0.0.1` listener. Two `h5i join` sessions on one machine, the
-/// case per-port naming was introduced for, therefore put *both* share
-/// credentials in every request to either. Stripping only the exact name would
-/// leave one share handing the other's credential to the agent-written code it
-/// is showing somebody, which is the one thing this module exists to prevent.
+/// Cookies ignore the port, so a browser sends every `127.0.0.1` cookie to every
+/// `127.0.0.1` listener. Two `h5i join` sessions on one machine, the case
+/// per-port naming was introduced for, therefore put *both* share credentials in
+/// every request to either. Stripping only the exact name would leave one share
+/// handing the other's credential to the agent-written code it is showing
+/// somebody.
 ///
 /// `app` narrows what is kept from "everything that is not ours" to "what the
 /// box itself set", and is `Some` exactly when this proxy had to settle for a
-/// cookie jar it shares with the rest of the machine. See [`AppCookies`] for
-/// why that jar cannot be treated as the app's own.
+/// cookie jar it shares with the rest of the machine. See [`AppCookies`].
 fn split_cookie(value: &str, name: &str, app: Option<&AppCookies>) -> (Option<String>, String) {
     let mut ours = None;
     let kept: Vec<&str> = value
@@ -513,18 +489,15 @@ fn split_cookie(value: &str, name: &str, app: Option<&AppCookies>) -> (Option<St
                     }
                     !is_share_cookie_name(k) && app.is_none_or(|a| a.knows(k, v.trim()))
                 }
-                // A segment with no `=` at all. It cannot carry a token,
-                // there is nothing after an equals sign to carry it, so this
-                // is not a leak. It is the prefix rule being applied on one
-                // branch and not the other, which is the exact shape of every
-                // "the check ran on two of the three paths" defect this file
-                // has already had. Whatever is named like ours does not go to
-                // the box, however it is spelled.
+                // A segment with no `=` at all cannot carry a token, so this is not a
+                // leak. It is the prefix rule being applied on one branch and not the
+                // other, the exact shape of every "the check ran on two of the three paths"
+                // defect this file has already had. Whatever is named like ours does not go
+                // to the box, however it is spelled.
                 //
-                // The allowlist applies here too, and it can only ever say no:
-                // a `Set-Cookie` has a value, so nothing the box set can arrive
-                // spelled like this, and a name learned from the box can never
-                // match a segment that has no name.
+                // The allowlist applies here too, and it can only ever say no: a
+                // `Set-Cookie` has a value, so nothing the box set can arrive spelled like
+                // this.
                 None => !c.is_empty() && !is_share_cookie_name(c) && app.is_none(),
             }
         })
@@ -556,16 +529,15 @@ fn lists_token(value: &str, token: &str) -> bool {
 /// Refuse a head whose headers are shaped in a way two parsers could read
 /// differently.
 ///
-/// Same reasoning as the CRLF check below and the same failure if it is
-/// skipped: the gate decides where a request ends and the box decides
-/// separately, and any construction they can disagree about is a construction
-/// that walks a second request past the gate.
+/// Same reasoning as the CRLF check below and the same failure if skipped: the
+/// gate decides where a request ends and the box decides separately, and any
+/// construction they can disagree about walks a second request past the gate.
 ///
-/// * *Obs-fold* (a header line starting with a space or tab) is a
-///   continuation of the previous header to a server that implements RFC 7230's
-///   obsolete line folding, and a header of its own to a parser splitting on
-///   CRLF. `X-Pad: a\r\n Content-Length: 35` is no body to one and a 35-byte
-///   body to the other.
+/// * *Obs-fold* (a header line starting with a space or tab) is a continuation
+///   of the previous header to a server that implements RFC 7230's obsolete line
+///   folding, and a header of its own to a parser splitting on CRLF.
+///   `X-Pad: a\r\n Content-Length: 35` is no body to one and a 35-byte body to
+///   the other.
 /// * A space before the colon (`Content-Length : 35`) must be rejected by a
 ///   conforming server, and is a valid header to anything that trims the name.
 fn headers_are_unambiguous(headers: &[&str]) -> bool {
@@ -585,10 +557,9 @@ fn headers_are_unambiguous(headers: &[&str]) -> bool {
 /// Checked as a whole rather than by trimming the two whitespace characters
 /// anyone thinks of. Rust's `str::trim` strips the entire Unicode whitespace
 /// class (vertical tab, form feed, NEL, non-breaking space, the en/em quads,
-/// ideographic space) so a name like `Content-Length\u{0c}` matched every
-/// lookup in this module while being a malformed line to the box. That is the
-/// same disagreement as a space before the colon, arriving by a door two
-/// characters wide.
+/// ideographic space) so a name like `Content-Length\u{0c}` matched every lookup
+/// in this module while being a malformed line to the box: the same disagreement
+/// as a space before the colon, arriving by a door two characters wide.
 pub fn is_tchar(b: u8) -> bool {
     b.is_ascii_alphanumeric()
         || matches!(
@@ -674,9 +645,8 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
     // does exactly that.
     //
     // Note the asymmetry, which is deliberate and is the safe direction:
-    // `strip_param` removes *every* occurrence of the parameter and this
-    // accepts only the values that could be a credential. Removal is a superset
-    // of reading, so a value refused here has still left the target.
+    // `strip_param` removes *every* occurrence of the parameter and this accepts
+    // only the values that could be a credential.
     let query_token = query_token.filter(|t| plausible(t));
     let from_query = query_token.is_some();
     let token = query_token.or(cookie_token).filter(|t| plausible(t));
@@ -795,8 +765,7 @@ pub fn safe_location(target: &str) -> String {
 ///
 /// `Host` and `X-Forwarded-Proto` are deliberately *not* here: a dev server
 /// builds absolute URLs out of them, and a share that broke every link on the
-/// page would not be used. They tell the box it is behind a proxy, which the
-/// docs say plainly instead of claiming otherwise.
+/// page would not be used.
 const HIDE_FROM_BOX: &[&str] = &[
     "cf-connecting-ip",
     "cf-connecting-ipv6",
@@ -815,28 +784,26 @@ const HIDE_FROM_BOX: &[&str] = &[
     "forwarded",
 ];
 
-/// The head to send to the box: the share credential removed from both places
-/// it could be, `Connection: close` forced, everything else byte-for-byte.
+/// The head to send to the box: the share credential removed from both places it
+/// could be, `Connection: close` forced, everything else byte-for-byte.
 ///
 /// The `Cookie` header is rewritten rather than dropped, because the shared app
 /// may have set cookies of its own and a share that silently logs the visitor
 /// out of the app being demonstrated is a broken share. `app` narrows that to
 /// the box's own cookies on a jar this proxy does not hold; see [`AppCookies`].
 ///
-/// `Connection: close` is an authorization control, not a performance
-/// choice. A connection is authorized once, when its first request arrives,
-/// which is equivalent to authorizing every request only if a connection
-/// carries exactly one. By default it does not: `cloudflared` pools connections
-/// to the origin and reuses them for whatever request comes next, *from
-/// whatever visitor*, so a request with no credential could ride in on a
-/// connection someone else's credential opened. Browsers pool per origin the
-/// same way, putting the identical hole on the joiner's proxy. Closing after
-/// one response collapses it: one connection, one request, one check.
+/// `Connection: close` is an authorization control, not a performance choice. A
+/// connection is authorized once, when its first request arrives, which is
+/// equivalent to authorizing every request only if a connection carries exactly
+/// one. By default it does not: `cloudflared` pools connections to the origin
+/// and reuses them for whatever request comes next, *from whatever visitor*, so
+/// a request with no credential could ride in on a connection someone else's
+/// credential opened. Browsers pool per origin the same way, putting the
+/// identical hole on the joiner's proxy.
 ///
-/// An upgrade is the exception and must be, since `Connection` is how an
-/// upgrade is negotiated. That is safe for the same reason it is necessary: an
-/// upgraded connection stops being an HTTP connection and is never returned to
-/// anybody's pool.
+/// An upgrade is the exception and must be, since `Connection` is how an upgrade
+/// is negotiated. That is safe for the same reason it is necessary: an upgraded
+/// connection stops being an HTTP connection and is never returned to a pool.
 pub fn rewrite_for_upstream(
     head: &str,
     req: &Request,
@@ -995,16 +962,14 @@ mod cookie_shape_tests {
         assert_eq!(kept, "h5i_shared_theme=dark; h5i_shareable_session=s");
     }
 
-    /// On a jar this share does not have to itself, a cookie belongs to the
-    /// box only if the box set it.
+    /// On a jar this share does not have to itself, a cookie belongs to the box
+    /// only if the box set it.
     ///
-    /// The joiner's browser sends every `127.0.0.1` cookie to every
-    /// `127.0.0.1` listener, so on the fallback address the `Cookie` header
-    /// arriving here is the whole machine's, not the app's. Forwarding it put
-    /// the joiner's own `session=<secret>` (from their own local app, on
-    /// their own machine) into agent-written code inside somebody else's box,
-    /// and it went on the *first* request, before the box had said anything at
-    /// all.
+    /// The joiner's browser sends every `127.0.0.1` cookie to every `127.0.0.1`
+    /// listener, so on the fallback address the `Cookie` header arriving here is
+    /// the whole machine's, not the app's. Forwarding it put the joiner's own
+    /// `session=<secret>`, from their own local app on their own machine, into
+    /// agent-written code inside somebody else's box, on the *first* request.
     #[test]
     fn on_a_shared_jar_only_the_boxs_own_cookies_go_upstream() {
         let jar = AppCookies::default();
@@ -1030,13 +995,11 @@ mod cookie_shape_tests {
     /// One name, two cookies, and only the box's own goes back.
     ///
     /// Cookies sharing a name coexist in one jar when their paths differ, and
-    /// the browser sends both segments in a single `Cookie` header. Matching
-    /// on the name alone forwarded both, so a box that set `sid` at a deep
-    /// path, having guessed a name the joiner's own local service uses at `/`,
-    /// was handed the joiner's `sid` beside its own on every request under
-    /// that path. The guess is cheap (`sid`, `session`, `token`, `jwt`) and
-    /// the box is untrusted code by construction, so this was the inward leak
-    /// reopening through the fix for it.
+    /// the browser sends both segments in a single `Cookie` header. Matching on
+    /// the name alone forwarded both, so a box that set `sid` at a deep path,
+    /// having guessed a name the joiner's own local service uses at `/`, was
+    /// handed the joiner's `sid` beside its own on every request under that
+    /// path. The guess is cheap and the box is untrusted code by construction.
     ///
     /// The value closes it: the one thing a box cannot do is set a cookie to a
     /// secret nobody has told it.
@@ -1226,14 +1189,13 @@ mod origin_tests {
     ///
     /// `SameSite=Lax` is exactly the rule that puts a cookie on a cross-site
     /// top-level GET navigation, so once a visitor holds the share cookie, the
-    /// carve-out written for "the link came from a chat window" admitted any
-    /// site on the internet that had learned the origin: `<a
+    /// carve-out written for "the link came from a chat window" admitted any site
+    /// on the internet that had learned the origin: `<a
     /// href="http://127.0.0.1:8899/reset">`, or a meta refresh, and the state
-    /// change happens with the credential attached. CORS never enters into it.
-    /// Nothing needs to read the answer.
+    /// change happens with the credential attached. CORS never enters into it,
+    /// since nothing needs to read the answer.
     ///
-    /// The exception belongs to the request that *brings* the capability, not
-    /// to the shape of the request.
+    /// The exception belongs to the request that *brings* the capability.
     #[test]
     fn a_cross_site_navigation_without_the_invite_is_refused() {
         let nav = "Sec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: navigate\r\n\
@@ -1298,15 +1260,15 @@ mod origin_tests {
     /// generous one.
     ///
     /// Found by the fuzzer at round 9,931. Every framing check in this file
-    /// reads *every* copy of its header, because a second copy is a
-    /// disagreement rather than a curiosity, and the origin check, the newest
-    /// of them, read the first. `Sec-Fetch-Site: same-origin` followed by
-    /// anything at all was therefore this share's own page.
+    /// reads *every* copy of its header, because a second copy is a disagreement
+    /// rather than a curiosity, and the origin check, the newest of them, read
+    /// the first. `Sec-Fetch-Site: same-origin` followed by anything at all was
+    /// therefore this share's own page.
     ///
-    /// No browser sends two and no page can add one: `Sec-Fetch-Site` is a
-    /// forbidden header name. What makes it worth closing is the hop in
-    /// between: `cloudflared` bridges HTTP/2 to HTTP/1.1, and a field repeated
-    /// in h2 arrives at this listener as two lines.
+    /// No browser sends two and no page can add one, `Sec-Fetch-Site` being a
+    /// forbidden header name. What makes it worth closing is the hop in between:
+    /// `cloudflared` bridges HTTP/2 to HTTP/1.1, and a field repeated in h2
+    /// arrives at this listener as two lines.
     #[test]
     fn a_second_answer_about_where_a_request_came_from_is_not_the_generous_one() {
         let two = |a: &str, b: &str| {
@@ -1384,23 +1346,20 @@ mod origin_tests {
         assert!(sw.service_worker);
     }
 
-    /// The shape the bridge above actually produces for `Origin`: one line,
-    /// with the values joined by a comma.
+    /// The shape the bridge above actually produces for `Origin`: one line, with
+    /// the values joined by a comma.
     ///
     /// The test above pins two *lines*, which is what `cloudflared` hands over
     /// for `Sec-Fetch-Site`, `Sec-Fetch-Mode`, `Sec-Fetch-Dest` and
-    /// `Service-Worker`: checked against a live quick tunnel, with an HTTP/2
-    /// client repeating each of them. `Origin` came through the same hop
-    /// folded into `Origin: http://a.example, http://b.example`, so the one
-    /// header the `headers_named` fix was reaching for is the one header that
-    /// never arrives as two lines. Nothing here had that shape.
+    /// `Service-Worker`, checked against a live quick tunnel with an HTTP/2
+    /// client repeating each. `Origin` came through the same hop folded into
+    /// `Origin: http://a.example, http://b.example`, so the one header the
+    /// `headers_named` fix was reaching for is the one that never arrives as two
+    /// lines.
     ///
-    /// It falls the right way, and for a reason worth stating rather than
-    /// leaving to arithmetic: an origin is a single value with no list form,
-    /// so a comma in one is already a head no browser produced, and the host
-    /// comparison cannot match a value carrying two of them. Both halves being
-    /// this share does not rescue it. That is still not an origin, and
-    /// treating it as one would mean parsing a list the grammar does not have.
+    /// It falls the right way: an origin is a single value with no list form, so
+    /// a comma in one is already a head no browser produced, and the host
+    /// comparison cannot match a value carrying two of them.
     #[test]
     fn an_origin_the_bridge_folded_into_one_line_is_not_this_share() {
         for origin in [
@@ -1635,16 +1594,14 @@ mod fuzz_tests {
 
             let out = rewrite_for_upstream(&head, &req, COOKIE, None);
 
-            // The box must never see the credential that admitted its
-            // visitor. Scoped to the headers and the request target, the two
-            // places this proxy decides what to send, rather than to the whole
-            // head: a client that puts the string in its own method or in a
-            // header of its own invention is leaking a token it already holds
-            // to a box it already reached, which is not a property this code
-            // can or should enforce.
+            // The box must never see the credential that admitted its visitor.
+            // Scoped to the headers and the request target, the two places this proxy
+            // decides what to send, rather than to the whole head: a client that puts
+            // the string in its own method or in a header of its own invention is
+            // leaking a token it already holds to a box it already reached.
+            //
             // By cookie *name*, not by substring of the line. A cookie called
-            // `999h5i_share` merely contains the string and is somebody else's
-            // cookie; ours are the ones named `h5i_share` or `h5i_share_<port>`.
+            // `999h5i_share` merely contains the string and is somebody else's.
             for line in header_lines(&out) {
                 if header_name_of(line) != "cookie" {
                     continue;
@@ -1660,18 +1617,16 @@ mod fuzz_tests {
                 }
             }
 
-            // The same head on a jar this share does not have to itself, where
-            // the rule is narrower: nothing goes upstream but what the box set,
-            // and this box has set nothing. So *no* cookie may survive, however
-            // the header is spelled. Quoted values, stray whitespace, a
-            // segment with no `=`, a second `Cookie` header. That is the state
-            // of the very first request through a join on `127.0.0.1`, which is
-            // the one that used to carry the joiner's own `session=<secret>`
-            // into somebody else's box.
+            // The same head on a jar this share does not have to itself, where the
+            // rule is narrower: nothing goes upstream but what the box set, and this
+            // box has set nothing. So *no* cookie may survive, however the header is
+            // spelled: quoted values, stray whitespace, a segment with no `=`, a second
+            // `Cookie` header. That is the state of the very first request through a
+            // join on `127.0.0.1`, the one that used to carry the joiner's own
+            // `session=<secret>` into somebody else's box.
             //
             // Unfloored on purpose: it runs on every head that parses, and the
-            // `with_cookie` floor below already guarantees a supply of heads
-            // carrying real cookies for it to refuse.
+            // `with_cookie` floor below already guarantees a supply of real cookies.
             let narrowed = rewrite_for_upstream(&head, &req, COOKIE, Some(&nothing_learned));
             for line in header_lines(&narrowed) {
                 assert!(
@@ -1716,14 +1671,14 @@ mod fuzz_tests {
         }
 
         // Floors, not exact numbers: the point is that the generator is still
-        // reaching the code, and a test that silently stops doing so is worse
-        // than no test because it reads as coverage.
-        // Floors, well under what the generator achieves today (about 18%,
-        // 0.8% and 0.8% of heads), so RNG variation cannot trip them but a
-        // collapse will. Before this was measured the same three numbers were
-        // 1.9%, 0.01% and 0.008%: the two-framings assertion had run on
-        // essentially nothing, and "the credential never reaches the box",
-        // the property in the test's own name, on about one input per run.
+        // reaching the code, and a test that silently stops doing so is worse than
+        // no test because it reads as coverage.
+        //
+        // Well under what the generator achieves today (about 18%, 0.8% and 0.8%
+        // of heads), so RNG variation cannot trip them but a collapse will. Before
+        // this was measured the same three numbers were 1.9%, 0.01% and 0.008%:
+        // the two-framings assertion had run on essentially nothing, and "the
+        // credential never reaches the box" on about one input per run.
         let n = rounds();
         let counts =
             format!("parsed {parsed}, framed {with_framing}, cookied {with_cookie}, of {n}");
@@ -1771,9 +1726,9 @@ mod fuzz_tests {
     /// capability with it.
     ///
     /// The property `is_cross_origin` exists for, checked against generated
-    /// heads rather than against the handful somebody wrote down. It was the
-    /// newest decision in this file and the only one the corpus never offered a
-    /// single input to.
+    /// heads rather than the handful somebody wrote down. It was the newest
+    /// decision in this file and the only one the corpus never offered a single
+    /// input to.
     ///
     /// The oracle is deliberately re-derived from the head rather than from
     /// `Request`: it reads *every* value of each header, where the gate reads
@@ -2420,17 +2375,16 @@ mod tests {
         }
     }
 
-    /// The parameter is removed in the spelling the *box* will read, not only
-    /// in the one h5i writes.
+    /// The parameter is removed in the spelling the *box* will read, not only in
+    /// the one h5i writes.
     ///
     /// `?%68%35%69=<secret>` is `h5i=<secret>` to every web framework that
     /// decodes its parameter names, and a literal comparison forwarded it
     /// untouched, so the credential reached the app's logs and rode out on
-    /// `Referer` with every link on the page, which is the one thing this
-    /// module exists to prevent. The narrowing that would have caught it on the
-    /// *value* side does not exist for the opposite reason: `?h5i=<secret>%20`
-    /// is not a credential to this parser and is one to the app, so the removal
-    /// stays a superset of the read.
+    /// `Referer` with every link on the page. The narrowing that would have
+    /// caught it on the *value* side does not exist for the opposite reason:
+    /// `?h5i=<secret>%20` is not a credential to this parser and is one to the
+    /// app, so the removal stays a superset of the read.
     #[test]
     fn the_parameter_is_stripped_however_it_is_spelled() {
         let real = "a".repeat(64);
