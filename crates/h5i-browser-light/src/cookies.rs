@@ -180,7 +180,7 @@ pub struct Restored {
 /// `parse_set_cookie`, so the two cannot drift into disagreeing about what a
 /// cookie is.
 fn is_storable(cookie: &Cookie) -> bool {
-    if cookie.name.is_empty() || cookie.host.is_empty() {
+    if cookie.host.is_empty() || !is_wire_safe(&cookie.name, &cookie.value) {
         return false;
     }
     if !cookie.path.starts_with('/') {
@@ -639,11 +639,35 @@ fn is_secure(url: &Url) -> bool {
     if url.scheme() == "https" {
         return true;
     }
-    // `[::1]` with the brackets, because that is what `host_str` returns for an
-    // IPv6 literal — the bare `::1` this listed could never match, so a dev
-    // server on IPv6 loopback was the one first-party channel the rule above
-    // did not cover.
-    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1" | "[::1]"))
+    // The same rule the allowlist uses, rather than a second list beside it.
+    // The hand-written one covered `localhost`, `127.0.0.1` and `[::1]` and
+    // missed the rest of `127.0.0.0/8` and `app.localhost` — both loopback by
+    // the allowlist's reckoning, both a potentially-trustworthy origin by a
+    // browser's, and neither able to get a `Secure` cookie back. One rule
+    // cannot disagree with itself.
+    url.host_str().is_some_and(crate::policy::is_loopback)
+}
+
+/// Whether a cookie's name and value are what a header can carry.
+///
+/// RFC 6265 makes a cookie-name a token and a cookie-octet everything except
+/// control characters, whitespace, `"`, `,`, `;` and `\\`. The wire path never
+/// sees a control character — HTTP header parsing rejects one before this does
+/// — but `document.cookie` is a string from page script, and a jar file is a
+/// string from a file. Both reached the `Cookie:` header unchecked, so one
+/// malformed cookie made *every* later request's header unparseable and the
+/// page lost the cookies that were fine along with the one that was not.
+fn is_wire_safe(name: &str, value: &str) -> bool {
+    let bad = |c: char| {
+        c.is_control() || c.is_whitespace() || matches!(c, '"' | ',' | ';' | '\\' | '=')
+    };
+    // `=` separates the pair, so it may not appear in a name; a value may hold
+    // one, which is what a base64 padding character is.
+    !name.is_empty()
+        && !name.chars().any(bad)
+        && !value
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || matches!(c, '"' | ',' | ';' | '\\'))
 }
 
 /// RFC 6265 §5.1.4 default-path: the request path with its last segment
@@ -801,6 +825,12 @@ fn parse_set_cookie(header: &str, host: &str, url: &Url, now: SystemTime) -> Opt
         return None;
     }
     let value = value.trim().trim_matches('"').to_string();
+    // Before anything else is read off the header: a name or value a `Cookie:`
+    // header cannot carry is not a cookie, and storing one poisons every later
+    // request rather than only this one.
+    if !is_wire_safe(name, &value) {
+        return None;
+    }
 
     let mut path: Option<String> = None;
     let mut secure = false;
@@ -1239,6 +1269,75 @@ mod tests {
         let jar = Jar::new();
         jar.store(&url("http://[::1]:3000/"), ["sid=abc; Secure"]);
         assert!(jar.header_for(&url("http://[::1]:3000/")).is_some());
+    }
+
+    /// A name or value a `Cookie:` header cannot carry is not a cookie, and
+    /// storing one poisoned *every* later request rather than only this one:
+    /// the whole header is built from the jar, so the page lost the cookies
+    /// that were fine along with the one that was not. `document.cookie` is a
+    /// string from page script and a jar file is a string from a file; neither
+    /// goes through an HTTP header parser on the way in.
+    #[test]
+    fn a_cookie_a_header_cannot_carry_is_not_stored() {
+        let jar = Jar::new();
+        let site = url("https://app.example/");
+        jar.store(&site, ["good=fine"]);
+
+        for header in [
+            "bad\rname=v",
+            "bad\nname=v",
+            "bad name=v",
+            "quo\"ted=v",
+            "com,ma=v",
+            "ok=va\rlue",
+            "ok=va lue",
+            "ok=va,lue",
+        ] {
+            assert_eq!(
+                jar.store(&site, [header]),
+                0,
+                "`{}` should not have been stored",
+                header.escape_debug()
+            );
+        }
+        assert_eq!(jar.len(), 1, "and the one good cookie is still there");
+
+        // A base64 value keeps its padding: `=` is legal in a value and only
+        // separates the pair once.
+        assert_eq!(jar.store(&site, ["token=YWJjZA=="]), 1);
+        let (header, _) = jar.header_for(&site).expect("sent");
+        assert!(header.contains("token=YWJjZA=="), "{header}");
+    }
+
+    /// Loopback is a first-party channel by one rule, not two: the allowlist's
+    /// `is_loopback` covers the whole of `127.0.0.0/8` and `*.localhost`, and
+    /// the hand-written list beside it covered neither — so a dev server on
+    /// `app.localhost` never got its `Secure` cookie back.
+    #[test]
+    fn every_spelling_of_loopback_is_a_first_party_channel() {
+        for address in [
+            "http://localhost:3000/",
+            "http://app.localhost:3000/",
+            "http://127.0.0.1:3000/",
+            "http://127.0.0.2:3000/",
+            "http://[::1]:3000/",
+        ] {
+            let jar = Jar::new();
+            let site = url(address);
+            assert_eq!(
+                jar.store(&site, ["sid=abc; Secure"]),
+                1,
+                "{address} should store a Secure cookie"
+            );
+            assert!(
+                jar.header_for(&site).is_some(),
+                "{address} should get it back"
+            );
+        }
+        // And plain http elsewhere still is not.
+        let jar = Jar::new();
+        jar.store(&url("http://app.example/"), ["sid=abc; Secure"]);
+        assert!(jar.header_for(&url("http://app.example/")).is_none());
     }
 
     #[test]
