@@ -1,26 +1,23 @@
 //! What the frames mean.
 //!
 //! [`crate::wire`] moves bodies; this module says what a type code is and what
-//! its payload deserialises to. The split is deliberate: an unknown type code
-//! is a framing success and a meaning failure, and only the second one ends the
+//! its payload deserialises to. The split is deliberate: an unknown type code is
+//! a framing success and a meaning failure, and only the second one ends the
 //! session.
 //!
 //! Two rules run through everything here.
 //!
 //! `HELLO` is static, `PROBE` is dynamic, and neither does the other's job
 //! (ROADMAP.md R5). The handshake carries what cannot change while a worker
-//! binary sits on disk. The protocol version, the h5i version, the
-//! architecture. Everything that drifts between one minute and the next (how
-//! much memory is free, whether podman is installed today, which tiers actually
-//! verify) belongs to [`Capabilities`] and arrives only in answer to a
-//! `PROBE`. A field in the wrong one of those two is a field that goes stale in
-//! a cache and lies later.
+//! binary sits on disk: the protocol version, the h5i version, the architecture.
+//! Everything that drifts between one minute and the next belongs to
+//! [`Capabilities`] and arrives only in answer to a `PROBE`. A field in the wrong
+//! one of those two goes stale in a cache and lies later.
 //!
-//! Identity never rides in a frame. `runner_id` is computed on the client
-//! from the host key SSH verified against the pinned `known_hosts`
+//! Identity never rides in a frame. `runner_id` is computed on the client from
+//! the host key SSH verified against the pinned `known_hosts`
 //! ([`crate::identity`]). [`HelloAck::runner_id_echo`] exists so a mismatch can
-//! be *noticed*, and is never the source of the value: what a peer asserts
-//! about itself is exactly what pinning exists to make irrelevant.
+//! be *noticed*, and is never the source of the value.
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -372,13 +369,13 @@ pub struct Capabilities {
 impl Capabilities {
     /// Make a peer-supplied report safe to store and print, or refuse it.
     ///
-    /// R13.1's exit criterion asks for hostile capability values to be clamped
-    /// or refused and *never stored*, which is this function. The distinction
-    /// it draws: a number that is merely implausible gets clamped, because a
-    /// runner with a broken `/proc` should still be usable; a value that would
-    /// change a *decision* (an isolation tier this h5i does not have a name
-    /// for, an OS that is not Linux) is refused, because storing it would mean
-    /// a later create consults a capability list that means nothing.
+    /// R13.1's exit criterion asks for hostile capability values to be clamped or
+    /// refused and *never stored*. The distinction it draws: a number that is
+    /// merely implausible gets clamped, because a runner with a broken `/proc`
+    /// should still be usable; a value that would change a *decision*, an
+    /// isolation tier this h5i does not have a name for or an OS that is not
+    /// Linux, is refused, because storing it would mean a later create consults a
+    /// capability list that means nothing.
     pub fn sanitized(mut self) -> Result<Self, ProtoError> {
         self.arch = clean_field("arch", &self.arch)?;
         self.os = clean_field("os", &self.os)?;
@@ -960,11 +957,10 @@ impl ExitMsg {
     ///
     /// `EgressSummary.hosts[].host` is an arbitrary string from a machine the
     /// threat model says may be compromised, and the producer-side cap on how
-    /// many there are is a producer-side cap. It binds the honest worker and
-    /// not the other kind. Nothing renders those strings today, which is why
-    /// this is consistency rather than a hole; a receipt is a durable record,
-    /// and what goes into one should be bounded when it is written rather than
-    /// when somebody later decides to print it.
+    /// many there are binds the honest worker and not the other kind. Nothing
+    /// renders those strings today, which is why this is consistency rather than
+    /// a hole; a receipt is a durable record, and what goes into one should be
+    /// bounded when it is written.
     pub fn sanitized(mut self) -> Result<Self, ProtoError> {
         if let Some(egress) = self.egress.take() {
             let text = serde_json::to_string(&egress).unwrap_or_default();

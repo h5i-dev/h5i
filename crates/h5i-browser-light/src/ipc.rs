@@ -1,10 +1,10 @@
 //! The wire between the two halves.
 //!
-//! A *broker* holds the policy, receipts, jar, budget and secrets; a
-//! *renderer* parses the page and holds none of them. The renderer reaches the
-//! broker through [`crate::broker::Broker`], and this is that trait over a
-//! socket. The broker is the parent and spawns the renderer with the socket as
-//! its standard input, so no library passes it and no port exists.
+//! A *broker* holds the policy, receipts, jar, budget and secrets; a *renderer*
+//! parses the page and holds none of them. The renderer reaches the broker
+//! through [`crate::broker::Broker`], and this is that trait over a socket. The
+//! broker is the parent and spawns the renderer with the socket as its standard
+//! input, so no library passes it and no port exists.
 //!
 //! ```text
 //! u32 header_len | u32 blob_len | header | blob
@@ -14,15 +14,12 @@
 //! base64 in the JSON would cost a third again in bytes on the path a page's
 //! images take.
 //!
-//! What a hostile renderer can do is the whole security argument. It cannot
-//! edit the policy, silence the receipt sink, read an `HttpOnly` cookie, reach
-//! the network without a decision record, or touch an ungranted credential. It
-//! can claim any origin as the asker (`Fetch::document` drives the loopback and
-//! same-origin rules; the broker refusing to attribute a request to a document
-//! it never served is not built), resolve any credential this session holds
-//! (`substitute` is an operation, and narrowing to "the one being typed" needs
-//! §B18.2's control channel), and lie about what it renders. The split moves the
-//! recorder out of reach; no arrangement of processes makes a renderer honest.
+//! What a hostile renderer can do is the whole security argument. It cannot edit
+//! the policy, silence the receipt sink, read an `HttpOnly` cookie, reach the
+//! network without a decision record, or touch an ungranted credential. It can
+//! claim any origin as the asker, resolve any credential this session holds, and
+//! lie about what it renders. The split moves the recorder out of reach; no
+//! arrangement of processes makes a renderer honest.
 //!
 //! Spawning, adopting and serving are Unix-gated. The protocol, framing and
 //! client compile everywhere, so the portable half cannot rot behind a `cfg`
@@ -223,15 +220,12 @@ pub struct BrokerClient {
     /// Whether this session has any credential at all, asked once.
     ///
     /// Redaction runs over every string in every control reply, and with no
-    /// secrets configured it is provably a no-op: `Secrets::redact` iterates
-    /// the values it holds, and there are none. Without this that no-op cost
-    /// two copies of a whole snapshot reply across the socket, on every verb,
-    /// for the overwhelmingly common session that named no credential.
+    /// secrets configured it is provably a no-op: `Secrets::redact` iterates the
+    /// values it holds, and there are none. Without this that no-op cost two
+    /// copies of a whole snapshot reply across the socket, on every verb.
     ///
     /// Cached because it cannot change: the broker reads `H5I_SECRET_*` once,
-    /// when it is built, and offers no operation that would add one. That is
-    /// the same property `stream.rs` used to rely on when it read the
-    /// environment once at startup so a later `setenv` could not widen it.
+    /// when it is built, and offers no operation that would add one.
     has_secrets: std::sync::OnceLock<bool>,
     /// Who this session says it is, asked once, for the same reason.
     ///
@@ -248,17 +242,14 @@ pub struct BrokerClient {
 ///
 /// `std::process::exit` is the wrong tool here and the difference is not
 /// theoretical. It runs the atexit handlers and flushes stdio on its way out,
-/// and both take locks, so a thread calling it while *another* thread is deep
-/// in allocation gets to wait for that thread, which is precisely the thread we
-/// have given up on. Measured: with the renderer's main thread spinning inside
-/// layout, this path printed "so it is stopping" and then did not stop. Six of
-/// them accumulated on one machine, the oldest running for seven hours, each
-/// holding a core.
+/// and both take locks, so a thread calling it while *another* thread is deep in
+/// allocation gets to wait for that thread, which is precisely the thread we have
+/// given up on. Measured: with the renderer's main thread spinning inside layout,
+/// this path printed "so it is stopping" and then did not stop. Six of them
+/// accumulated on one machine, the oldest running for seven hours.
 ///
-/// `_exit` skips all of it and returns the descriptor to the kernel. Nothing is
-/// lost: there is no result to flush on this path, the broker that would have
-/// received one is gone, and the line above went to stderr, which Rust does
-/// not buffer.
+/// `_exit` skips all of it. Nothing is lost: there is no result to flush on this
+/// path, and the line above went to stderr, which Rust does not buffer.
 pub(crate) fn stop_now(code: i32) -> ! {
     #[cfg(unix)]
     unsafe {
@@ -374,15 +365,13 @@ impl BrokerClient {
 
     /// Ask, and hand back the receiver rather than waiting on it.
     ///
-    /// Split out of [`Self::ask`] so a caller with something useful to do can
-    /// do it while the broker works. The renderer compiling its prelude during
-    /// a navigation, which is the only reason this exists. See
-    /// `Broker::send_while`.
+    /// Split out of [`Self::ask`] so a caller with something useful to do can do
+    /// it while the broker works: the renderer compiling its prelude during a
+    /// navigation, which is the only reason this exists.
     ///
     /// The caller owns the waiting from here. Dropping the receiver without
     /// reading it leaves an entry in `waiting` that the reply thread will find
-    /// and send into a dead channel, which it already tolerates: the send
-    /// fails, and nothing else depends on it.
+    /// and send into a dead channel, which it already tolerates.
     fn begin(&self, ask: Ask, blob: &[u8]) -> Option<Receiver<(Said, Vec<u8>)>> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = sync_channel(1);
@@ -604,19 +593,15 @@ impl Broker for BrokerClient {
         }
     }
 
-    /// Asked once, and cached for the life of this client.
+    /// Asked once, and cached for the life of this client. The identity cannot
+    /// change while a session runs, which is the whole point of it.
     ///
-    /// The identity cannot change while a session runs, that is the whole
-    /// point of it, so a second ask could only ever get the same answer.
-    ///
-    /// Only an answer is cached. A broker that has ended takes this
-    /// renderer with it (`over` calls `stop_now` on that path), so the fallback
-    /// is very nearly unreachable; caching it anyway would mean one failed ask
-    /// pinning the page to `native` for the rest of the session while the
-    /// broker went on sending another identity's headers. That is precisely the
-    /// disagreement between the wire and the page that this whole module
-    /// exists to make impossible, so it must not be reachable through the
-    /// module's own error path.
+    /// Only an answer is cached. A broker that has ended takes this renderer
+    /// with it, so the fallback is very nearly unreachable; caching it anyway
+    /// would mean one failed ask pinning the page to `native` for the rest of
+    /// the session while the broker went on sending another identity's headers.
+    /// That is precisely the disagreement between the wire and the page this
+    /// module exists to make impossible.
     #[cfg(feature = "identity")]
     fn identity(&self) -> Arc<crate::identity::Identity> {
         if let Some(known) = self.identity.get() {
@@ -722,13 +707,12 @@ impl BrokerClient {
 ///
 /// Unix only, and so is the split: the transport is a socket pair the child
 /// inherits, and there is no second implementation. Everything above this line
-/// is portable, which is what keeps the trait and the framing testable
-/// everywhere the engine builds.
+/// is portable, which keeps the trait and the framing testable everywhere.
 ///
 /// Returns when the socket closes, which is what a renderer that exited looks
 /// like from here. Cheap answers are given on this thread; the ones that touch
-/// the wire get one of their own, because a fetch that took thirty seconds
-/// would otherwise stall every drain and every cookie read behind it.
+/// the wire get one of their own, because a fetch that took thirty seconds would
+/// otherwise stall every drain and every cookie read behind it.
 #[cfg(unix)]
 #[cfg(unix)]
 pub fn serve(broker: Arc<LocalBroker>, socket: std::os::unix::net::UnixStream) {
@@ -777,16 +761,15 @@ fn serve_over(
     //
     // A renderer that has gone away takes its connections with it: nothing can
     // drain them, and a socket nobody reads is a server left talking to itself.
-    // So they are closed. On a thread of their own, and nobody waits for it.
-    // `Socket::close` takes the same lock a `send` holds, and a send into a
-    // peer that has stopped reading blocks for as long as the peer likes; doing
-    // this inline would hand a hostile server the ability to keep a session's
-    // process alive after its renderer had exited. The same is why the workers
-    // are not joined: one of them may be inside exactly that send.
+    // So they are closed, on a thread of their own that nobody waits for.
+    // `Socket::close` takes the same lock a `send` holds, and a send into a peer
+    // that has stopped reading blocks for as long as the peer likes; doing this
+    // inline would hand a hostile server the ability to keep a session's process
+    // alive after its renderer had exited. The same is why the workers are not
+    // joined.
     //
-    // Nothing is lost by not waiting. The close frame is politeness; the
-    // process is about to exit, and exit closes every socket the kernel holds
-    // for it.
+    // Nothing is lost by not waiting: the close frame is politeness, and exit
+    // closes every socket the kernel holds.
     let leaving: Vec<Arc<dyn Channel>> = desk
         .channels
         .lock()
@@ -934,13 +917,11 @@ pub const NO_SPLIT_VAR: &str = "H5I_BROWSER_NO_SPLIT";
 
 /// Environment the renderer does not get.
 ///
-/// The concrete half of what the split buys, and the part that is true the
-/// moment the second process exists. A compromised engine used to read every
-/// `H5I_SECRET_*` on the machine because it *was* the process holding them;
-/// now it reads the values it was handed for the fields it was told to fill.
-/// The other three are configuration a renderer has no use for: the receipts
-/// path names a file only the broker writes, the proxy is the broker's wire,
-/// and the allowlist is the broker's decision.
+/// The concrete half of what the split buys, true the moment the second
+/// process exists. A compromised engine used to read every `H5I_SECRET_*` on
+/// the machine because it *was* the process holding them; now it reads the
+/// values it was handed for the fields it was told to fill. The other three
+/// are configuration a renderer has no use for.
 #[cfg(unix)]
 fn scrubbed(name: &str) -> bool {
     name.starts_with(crate::secrets::PREFIX)
