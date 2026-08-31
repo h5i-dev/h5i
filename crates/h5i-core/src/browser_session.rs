@@ -515,8 +515,34 @@ pub fn root() -> Result<PathBuf, H5iError> {
 /// `<root>/sessions`, created if it is not there.
 pub fn sessions_dir(root: &Path) -> Result<PathBuf, H5iError> {
     let dir = root.join(SESSIONS);
-    fs::create_dir_all(&dir).map_err(H5iError::Io)?;
+    create_private_dir_all(&dir)?;
     Ok(dir)
+}
+
+/// `create_dir_all`, but the directories this crate makes are the owner's.
+///
+/// A session directory holds the control socket, the cookie jar, the request
+/// log and the action log — the channel that *is* authority over the session,
+/// and a complete account of what the agent did with it. `create_dir_all`
+/// leaves the mode to the umask, which is 0755 on a default one, and the
+/// directory is not somewhere private: inside a box the browser state root is
+/// the box's own `/tmp`, which the `agent` profile shares with the host.
+///
+/// The mode is set at creation rather than chmod'd afterwards, so there is no
+/// window in which the directory exists and is readable. Existing directories
+/// are left alone: a mode somebody chose is not this function's to overwrite.
+fn create_private_dir_all(dir: &Path) -> Result<(), H5iError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(H5iError::Io)
+    }
+    #[cfg(not(unix))]
+    fs::create_dir_all(dir).map_err(H5iError::Io)
 }
 
 /// The directory holding one session's record, control file, log and artifacts.
@@ -534,9 +560,9 @@ pub fn new_id(root: &Path) -> Result<String, H5iError> {
     for _ in 0..64 {
         let id = format!("br_{}", suffix());
         let path = sessions.join(&id);
-        match fs::create_dir(&path) {
+        match private_create_dir(&path) {
             Ok(()) => {
-                fs::create_dir_all(path.join(ARTIFACTS_DIR)).map_err(H5iError::Io)?;
+                create_private_dir_all(&path.join(ARTIFACTS_DIR))?;
                 return Ok(id);
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -546,6 +572,18 @@ pub fn new_id(root: &Path) -> Result<String, H5iError> {
     Err(H5iError::Metadata(
         "could not mint a free browser session id after 64 tries".into(),
     ))
+}
+
+/// `create_dir` with the mode set, keeping the `AlreadyExists` error that
+/// [`new_id`] uses as its claim on an id.
+fn private_create_dir(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new().mode(0o700).create(path)
+    }
+    #[cfg(not(unix))]
+    fs::create_dir(path)
 }
 
 /// Six characters of `[0-9a-z]`, avoiding the letters that read as digits.

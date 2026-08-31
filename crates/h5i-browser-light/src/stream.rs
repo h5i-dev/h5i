@@ -314,16 +314,43 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         .map_err(|e| H5iError::Metadata(format!("could not bind {}: {e}", options.addr)))?;
     let port = local_port(&viewers)?;
 
+    // A port, or a socket, but never both.
+    //
+    // A loopback port has no access control of any kind: any process on the
+    // machine that guesses it drives the session, and driving the session
+    // includes `type $H5I_SECRET_…`. That is the accepted cost of the port
+    // channel, which is why `cli::default_control_file` goes to such lengths
+    // over a private directory to hold it. A session that asked for a *socket*
+    // has already chosen the addressable, permission-checked channel — binding
+    // a second unauthenticated one beside it would hand back everything the
+    // choice bought, on a port nothing even advertises. `--control-socket`
+    // conflicts with `--control-file`, so this is the whole of the fork.
+    #[cfg(unix)]
+    let want_port = options.control_socket.is_none();
+    #[cfg(not(unix))]
+    let want_port = true;
+
     // Bound before anything is advertised, so a client that finds one file and
     // then the other never finds a port nobody is listening on.
-    let control = TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| H5iError::Metadata(format!("could not bind a control port: {e}")))?;
-    let control_port = local_port(&control)?;
+    let control = if want_port {
+        Some(
+            TcpListener::bind("127.0.0.1:0")
+                .map_err(|e| H5iError::Metadata(format!("could not bind a control port: {e}")))?,
+        )
+    } else {
+        None
+    };
+    let control_port = match &control {
+        Some(listener) => Some(local_port(listener)?),
+        None => None,
+    };
 
     if let Some(path) = &options.stream_file {
         write_port_file(path, port)?;
     }
-    if let Some(path) = &options.control_file {
+    if let Some(path) = &options.control_file
+        && let Some(control_port) = control_port
+    {
         write_port_file(path, control_port)?;
     }
 
@@ -351,7 +378,9 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
     }
 
     eprintln!("h5i-browser-light: live view on 127.0.0.1:{port}");
-    eprintln!("h5i-browser-light: session control on 127.0.0.1:{control_port}");
+    if let Some(control_port) = control_port {
+        eprintln!("h5i-browser-light: session control on 127.0.0.1:{control_port}");
+    }
     #[cfg(unix)]
     if let Some(path) = &options.control_socket {
         eprintln!("h5i-browser-light: session control on {}", path.display());
@@ -367,7 +396,13 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         let unix_tx = tx.clone();
         thread::spawn(move || accept_control_unix(listener, unix_tx));
     }
-    thread::spawn(move || accept_control(control, tx));
+    if let Some(control) = control {
+        thread::spawn(move || accept_control(control, tx));
+    } else {
+        // The sender still has to be consumed, or `rx` would never see the
+        // channel close and `run_session` would outlive every client.
+        drop(tx);
+    }
 
     // Opened before the listeners are advertised: a session that cannot record
     // what it is asked to do should fail at startup, where someone is watching,
@@ -673,7 +708,42 @@ fn bind_control_socket(path: &Path) -> Result<UnixListener, H5iError> {
         std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
     }
     let _ = std::fs::remove_file(path);
-    UnixListener::bind(path).map_err(|e| H5iError::with_path(e, path))
+    let listener = UnixListener::bind(path).map_err(|e| H5iError::with_path(e, path))?;
+    // Whoever can connect to this socket *is* the agent: they can navigate,
+    // evaluate script in the page, and `type $H5I_SECRET_…` — which resolves a
+    // credential into the DOM they can then read back with `snapshot`. Linux
+    // checks write permission on the socket file at `connect`, so its mode is
+    // the access control, and leaving it to the umask made it 0755 on a
+    // default one and 0775 or 0777 on a laxer one. That would be theoretical if
+    // the path were private, and it is not: a boxed session's socket lives
+    // under the box's `/tmp`, which the `agent` profile shares with the host.
+    //
+    // Narrowed after the bind rather than by fiddling with the process umask,
+    // which is global to a process that has threads in it. The window is
+    // between `bind` and here, and closing it entirely needs a private parent
+    // directory — which is what `cli::make_private_dir` gives the default path.
+    restrict_to_owner(path)?;
+    Ok(listener)
+}
+
+/// Make a session artifact readable, and connectable, only by its owner.
+///
+/// The control socket, the port files and the logs all carry something worth
+/// having: a channel that is authority over the session, a port that is the
+/// same authority, and a record of everything the session fetched. None of them
+/// should be left to whatever umask the process happened to inherit.
+#[cfg(unix)]
+fn restrict_to_owner(path: &Path) -> Result<(), H5iError> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| H5iError::with_path(e, path))
+}
+
+/// Windows has no mode bits to set, and inventing an ACL check here would be a
+/// guess wearing the shape of a guarantee.
+#[cfg(not(unix))]
+fn restrict_to_owner(_path: &Path) -> Result<(), H5iError> {
+    Ok(())
 }
 
 /// One control connection, whatever carried it.
@@ -2531,7 +2601,12 @@ fn write_port_file(path: &Path, port: u16) -> Result<(), H5iError> {
     {
         std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
     }
-    std::fs::write(path, port.to_string()).map_err(|e| H5iError::with_path(e, path))
+    std::fs::write(path, port.to_string()).map_err(|e| H5iError::with_path(e, path))?;
+    // The port is not a secret in the sense a password is — a loopback port can
+    // be found by trying them — but it is the address of an unauthenticated
+    // channel, and a file that hands it over is one step somebody does not have
+    // to take. 0600 rather than the umask's 0644.
+    restrict_to_owner(path)
 }
 
 /// Handle one client message, returning what to send back.
@@ -2618,6 +2693,59 @@ mod tests {
 
     fn session_with(html: &str) -> Session {
         session_and_broker(html, crate::secrets::Secrets::default()).0
+    }
+
+    /// Whoever can connect to the control socket *is* the agent: they can
+    /// navigate, evaluate script, and `type $H5I_SECRET_…`, which resolves a
+    /// credential into a DOM they can then read back. Linux checks write
+    /// permission on the socket file at `connect`, so the mode is the access
+    /// control — and it used to be whatever the umask made it, on a path that
+    /// inside a box is under a `/tmp` the `agent` profile shares with the host.
+    #[cfg(unix)]
+    #[test]
+    fn the_control_socket_is_connectable_only_by_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("session.sock");
+        // The laxest umask a process can inherit, so this proves the mode is
+        // set rather than merely inherited from a tidy environment.
+        let previous = unsafe { umask_for_test(0) };
+        let listener = bind_control_socket(&path);
+        unsafe { umask_for_test(previous) };
+        listener.expect("the socket binds");
+
+        let mode = std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the control socket is {mode:o}, not 0600");
+    }
+
+    /// And the port file beside it, for the same reason one step removed: it
+    /// holds the address of a channel that has no authentication of its own.
+    #[cfg(unix)]
+    #[test]
+    fn a_port_file_is_readable_only_by_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("session.control");
+        let previous = unsafe { umask_for_test(0) };
+        let written = write_port_file(&path, 4321);
+        unsafe { umask_for_test(previous) };
+        written.expect("the file is written");
+
+        let mode = std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the port file is {mode:o}, not 0600");
+        assert_eq!(read_port_file(&path).expect("reads"), 4321);
+    }
+
+    /// `umask`, without taking a dependency on `libc` for one call. The same
+    /// shape `cli::libc_getuid` uses and for the same reason.
+    #[cfg(unix)]
+    unsafe fn umask_for_test(mask: u32) -> u32 {
+        unsafe extern "C" {
+            fn umask(mask: u32) -> u32;
+        }
+        unsafe { umask(mask) }
     }
 
     /// The same session, plus the broker underneath it.
