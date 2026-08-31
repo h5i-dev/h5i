@@ -1,20 +1,19 @@
 //! Who a runner is.
 //!
 //! A name is a label, and a label can be re-pointed at different hardware
-//! tomorrow. `runner_id` is the SHA-256 of the runner's SSH *host key*, which
-//! is the thing SSH already authenticates on every connection and the thing our
-//! pinned `known_hosts` already refuses to let change silently. Binding a box
-//! to that binds it to a machine (ROADMAP.md R6, and the decision it closed in
-//! R13).
+//! tomorrow. `runner_id` is the SHA-256 of the runner's SSH *host key*, the thing
+//! SSH already authenticates on every connection and the thing our pinned
+//! `known_hosts` already refuses to let change silently. Binding a box to that
+//! binds it to a machine (ROADMAP.md R6, and the decision it closed in R13).
 //!
 //! A reinstalled machine with a fresh host key is a fresh identity. That is
-//! correct, not a bug: it really is a different trust anchor, whatever its
-//! label says.
+//! correct, not a bug: it really is a different trust anchor, whatever its label
+//! says.
 //!
 //! Both spellings of the hash come from here so they cannot drift:
-//! [`HostKey::fingerprint`] is the `SHA256:…` string `ssh-keygen -lf` prints,
-//! for a human to compare out of band, and [`HostKey::runner_id`] is the hex
-//! form that goes in a manifest.
+//! [`HostKey::fingerprint`] is the `SHA256:…` string `ssh-keygen -lf` prints, for
+//! a human to compare out of band, and [`HostKey::runner_id`] is the hex form
+//! that goes in a manifest.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
@@ -134,13 +133,13 @@ impl HostKey {
 
 /// Is this one of the algorithms OpenSSH names a host *key* with?
 ///
-/// Deliberately a list rather than a shape test: a field that merely *looks*
-/// like an algorithm is how a comment or a stray token gets read as a key.
+/// Deliberately a list rather than a shape test: a field that merely *looks* like
+/// an algorithm is how a comment or a stray token gets read as a key.
 ///
 /// `rsa-sha2-256`/`rsa-sha2-512` are deliberately absent. They are *signature*
-/// algorithm names, a `known_hosts` line's key type is always `ssh-rsa`, so
-/// accepting them meant that if one ever appeared it would be written back into
-/// a `known_hosts` line OpenSSH does not recognise as a key type: a pin that
+/// algorithm names and a `known_hosts` line's key type is always `ssh-rsa`, so
+/// accepting them meant that if one ever appeared it would be written back into a
+/// `known_hosts` line OpenSSH does not recognise as a key type: a pin that
 /// silently never matches.
 fn is_key_algorithm(s: &str) -> bool {
     matches!(

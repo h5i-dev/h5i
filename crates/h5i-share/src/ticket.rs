@@ -8,16 +8,16 @@
 //!
 //! Three properties are deliberate:
 //!
-//! * The secret is in the ticket, not on disk. The sharer keeps only its
-//!   SHA-256 ([`crate::session`]), so a stolen box directory does not admit
-//!   anyone. The consequence is that a ticket is printed once and cannot be
-//!   reprinted; mint another with `h5i box share grant`.
-//! * The addressing is opaque here. `addr` is whatever the transport put
-//!   there, carried as JSON. That keeps this module free of the P2P dependency
-//!   so the encoding can be tested, and reviewed, without one.
-//! * Decoding is bounded before it allocates. A ticket arrives by paste
-//!   from wherever, so the length cap is checked on the encoded text, before
-//!   base64 and before serde see any of it.
+//! * The secret is in the ticket, not on disk. The sharer keeps only its SHA-256
+//!   ([`crate::session`]), so a stolen box directory does not admit anyone. The
+//!   consequence is that a ticket is printed once and cannot be reprinted; mint
+//!   another with `h5i box share grant`.
+//! * The addressing is opaque here. `addr` is whatever the transport put there,
+//!   carried as JSON. That keeps this module free of the P2P dependency so the
+//!   encoding can be tested, and reviewed, without one.
+//! * Decoding is bounded before it allocates. A ticket arrives by paste from
+//!   wherever, so the length cap is checked on the encoded text, before base64
+//!   and before serde see any of it.
 
 use base64::Engine as _;
 use h5i_error::H5iError;
@@ -88,12 +88,12 @@ impl Ticket {
         let s = s.trim_matches(|c| c == '"' || c == '\'' || c == '`');
         // And so do line breaks. A ticket is one long line; email clients hard
         // wrap at 72 or 78 columns, terminals wrap on copy, and chat clients
-        // insert breaks of their own, after which this said "probably
-        // truncated or line-wrapped", which is an accurate diagnosis and a
-        // dead end for somebody holding the whole ticket in two pieces. The
-        // base64 alphabet contains no whitespace, so removing it cannot change
-        // which ticket this is; it can only turn a refusal into the ticket the
-        // sender meant. Allocates only when there is something to remove.
+        // insert breaks of their own, after which this said "probably truncated
+        // or line-wrapped": an accurate diagnosis and a dead end for somebody
+        // holding the whole ticket in two pieces. The base64 alphabet contains no
+        // whitespace, so removing it cannot change which ticket this is; it can
+        // only turn a refusal into the ticket the sender meant. Allocates only
+        // when there is something to remove.
         let rejoined: String;
         let s = if s.contains(char::is_whitespace) {
             rejoined = s.chars().filter(|c| !c.is_whitespace()).collect();
@@ -186,13 +186,12 @@ mod tests {
     #[test]
     fn a_ticket_a_mail_client_wrapped_is_still_that_ticket() {
         // A ticket is one long line and the world is full of things that break
-        // long lines: mail clients hard wrap at 72 or 78 columns, terminals
-        // wrap on copy, chat clients insert their own. The refusal for that
-        // was accurate, "probably truncated or line-wrapped", and a dead end
-        // for somebody holding the whole ticket in two pieces. Whitespace is
-        // not in the base64 alphabet, so removing it cannot turn one ticket
-        // into another; it can only turn a refusal into the ticket the sender
-        // meant.
+        // long lines: mail clients hard wrap at 72 or 78 columns, terminals wrap
+        // on copy, chat clients insert their own. The refusal for that was
+        // accurate, "probably truncated or line-wrapped", and a dead end for
+        // somebody holding the whole ticket in two pieces. Whitespace is not in
+        // the base64 alphabet, so removing it cannot turn one ticket into
+        // another; it can only turn a refusal into the ticket the sender meant.
         let one_line = sample().encode().expect("encode");
         let mid = one_line.len() / 2;
         let wrapped = format!("{}\n{}", &one_line[..mid], &one_line[mid..]);

@@ -1,20 +1,19 @@
 //! The event the kernel hands up, and the decoding of it.
 //!
-//! Mirrors `bpf/h5i_event.h` field for field. The two are held together by
-//! three things, in increasing order of how much they would embarrass us if
-//! they were the only one:
+//! Mirrors `bpf/h5i_event.h` field for field. The two are held together by three
+//! things, in increasing order of how much they would embarrass us if they were
+//! the only one:
 //!
 //! 1. A compile-time assertion on [`RawEvent`]'s size and alignment here.
-//! 2. A magic word and a version in every record, checked on decode, so a
-//!    probe object and a loader that disagree are caught at the first event
-//!    rather than turned into plausible-looking nonsense.
+//! 2. A magic word and a version in every record, checked on decode, so a probe
+//!    object and a loader that disagree are caught at the first event rather than
+//!    turned into plausible-looking nonsense.
 //! 3. `tests/wire_contract.rs`, which parses the C header and checks the
-//!    constants against the Rust ones. The only one of the three that
-//!    notices a *field* moving rather than the struct changing size.
+//!    constants against the Rust ones. The only one of the three that notices a
+//!    *field* moving rather than the struct changing size.
 //!
-//! Nothing in this module does I/O or touches a kernel, so it compiles and is
-//! tested on every target h5i releases for, including the ones where eBPF is
-//! not a concept.
+//! Nothing here does I/O or touches a kernel, so it compiles and is tested on
+//! every target h5i releases for, including the ones where eBPF is not a concept.
 
 use std::fmt;
 

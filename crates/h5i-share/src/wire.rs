@@ -7,34 +7,34 @@
 //! sharer → joiner   status                            (1 byte)
 //! ```
 //!
-//! The magic has a second spelling, `H5IP`, which means "I am only checking
-//! this ticket". Same size, same version, same secret; what differs is what the
-//! sharer does with it. A `H5IS` greeting ends with a socket into the box; a
-//! `H5IP` one is answered from the grant table alone and touches nothing. That
-//! distinction is why it is a separate frame rather than a convention: without
-//! it the check cost a connection to the dev server, a slot out of the share's
-//! 64, and, if that dev server did not close on end-of-input, a pump parked
-//! for the life of the joiner, holding the slot.
+//! The magic has a second spelling, `H5IP`, meaning "I am only checking this
+//! ticket". Same size, same version, same secret; what differs is what the sharer
+//! does with it. A `H5IS` greeting ends with a socket into the box; a `H5IP` one
+//! is answered from the grant table alone and touches nothing. That distinction
+//! is why it is a separate frame rather than a convention: without it the check
+//! cost a connection to the dev server, a slot out of the share's 64, and, if
+//! that dev server did not close on end-of-input, a pump parked for the life of
+//! the joiner, holding the slot.
 //!
 //! Fixed size on purpose. A length prefix is a number an attacker chooses, and
-//! this frame is the very first thing an unauthenticated peer sends. The
-//! cheapest way not to have a length-handling bug is not to have a length. The
-//! QUIC stream underneath is already encrypted and authenticated by iroh, so
-//! this frame is not protecting the secret in transit; it is deciding whether
-//! this peer gets a socket into the box.
+//! this frame is the first thing an unauthenticated peer sends. The cheapest way
+//! not to have a length-handling bug is not to have a length. The QUIC stream
+//! underneath is already encrypted and authenticated by iroh, so this frame is
+//! not protecting the secret in transit; it decides whether this peer gets a
+//! socket into the box.
 //!
 //! It lives in its own module, free of the P2P dependency, so the format can be
 //! tested in a build that has no iroh in it at all.
 
 /// Application-layer protocol negotiation. Both ends must agree on this exact
-/// string or QUIC drops the connection before either speaks, which is a free
-//  first filter against anything that wandered onto the endpoint.
+/// string or QUIC drops the connection before either speaks, a free first
+/// filter against anything that wandered onto the endpoint.
 /// Bumped when the greeting changed. The `H5IP` spelling below is a frame an
 /// older sharer reads as junk and answers `REPLY_DENIED` to, which the joiner
-/// would render as "the sharer refused this ticket … ask for a new one", and
-/// the new ticket would fail identically, forever. ALPN is the one place where
-/// two versions can fail to agree *before* either says anything, so a skew ends
-/// as a connection that will not open rather than as advice nobody can act on.
+/// would render as "the sharer refused this ticket … ask for a new one", and the
+/// new ticket would fail identically, forever. ALPN is the one place where two
+/// versions can fail to agree *before* either says anything, so a skew ends as a
+/// connection that will not open rather than as advice nobody can act on.
 pub const ALPN: &[u8] = b"h5i/share/2";
 
 const MAGIC: &[u8; 4] = b"H5IS";
