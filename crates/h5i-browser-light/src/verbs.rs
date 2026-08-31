@@ -3,25 +3,24 @@
 //! The verb set used to be written out three times, in the clap enum, the JSON
 //! payload it built, and a `match verb` over string literals in
 //! [`crate::stream`], with nothing making the three agree. Forgetting one
-//! produced a verb the CLI could send and the session did not know, answering
-//! "unknown verb" to a command the help text advertises.
+//! produced a verb the CLI could send and the session did not know.
 //!
 //! One enum now, with every per-verb property an exhaustive `match`, so a new
 //! verb is a compile error until each question has been answered for it.
 //!
-//! One of those questions is a security question, which is why this is a
-//! type rather than a tidier `match`. LOGIN mode refuses every verb that reads
-//! the page, and used to do it with a string allowlist:
+//! One of those questions is a security question, which is why this is a type
+//! rather than a tidier `match`. LOGIN mode refuses every verb that reads the
+//! page, and used to do it with a string allowlist:
 //!
 //! ```ignore
 //! if session.login && !matches!(verb, "status" | "login") { ... }
 //! ```
 //!
-//! The default was refusal, so the failure direction was safe and a new verb
-//! stayed refused. But the allowlist was two string literals: one typo widened
-//! it, and no test that did not already know about the typo would have caught
-//! it. [`Verb::readable_during_login`] is the same rule as a predicate, where a
-//! typo does not resolve and a new verb does not compile until it has answered.
+//! The default was refusal, so the failure direction was safe. But the allowlist
+//! was two string literals: one typo widened it, and no test that did not
+//! already know about the typo would have caught it.
+//! [`Verb::readable_during_login`] is the same rule as a predicate, where a typo
+//! does not resolve and a new verb does not compile until it has answered.
 
 use serde_json::{json, Value};
 
@@ -331,8 +330,8 @@ impl Verb {
     /// Whether this verb belongs in a replay.
     ///
     /// State-mutating verbs only. A replay exists to reach a state again, and
-    /// the reads are how a model decided what to do next rather than part of
-    /// the doing. Replaying them would cost time and change nothing.
+    /// the reads are how a model decided what to do next rather than part of the
+    /// doing.
     ///
     /// Waits are the interesting exclusion. A wait is not a state change, and
     /// the settle it drives happens anyway on the verbs that are recorded; a
@@ -388,13 +387,11 @@ impl Verb {
     /// A round trip an agent does not have to spend. `navigate` then `markdown`
     /// is two turns through a model to answer one question, and the model pays
     /// for the intervening reply in context as well as latency. The read verbs
-    /// therefore take the URL directly, and the reply says where it ended up so
-    /// a redirect is not silent.
+    /// therefore take the URL directly, and the reply says where it ended up.
     ///
     /// Only *reads* qualify. Fusing a navigation into `type` or `click` would
     /// mean acting on a page whose refs the caller has never seen, which is the
-    /// failure the staleness check exists to prevent. The ref would be
-    /// resolved against a reading nobody had read.
+    /// failure the staleness check exists to prevent.
     pub fn navigates_first(self) -> bool {
         match self {
             Verb::Snapshot
@@ -458,10 +455,9 @@ impl Verb {
 ///
 /// *The recovery*, in the message, because the reader is usually a model
 /// deciding what to do next and "no such ref" tells it what happened without
-/// telling it what to do instead. Both reference engines this was drawn from
-/// converged on the same shape, and the one that did not have it reported every
-/// failure as one error code with a free-text string, which nothing can branch
-/// on.
+/// telling it what to do instead. Both reference engines converged on the same
+/// shape, and the one that did not have it reported every failure as one error
+/// code with a free-text string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerbError {
     pub code: Code,

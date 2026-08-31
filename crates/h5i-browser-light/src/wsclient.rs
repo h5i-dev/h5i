@@ -6,25 +6,23 @@
 //! hot-module-reload channel is a WebSocket, so the place this engine alone can
 //! reach was also the place it rendered a half-built page.
 //!
-//! `ws://` and `wss://`. The old refusal said `wss://` needed a raw TLS
-//! stream the HTTP client does not expose, which was true of `reqwest` and had
-//! been generalised into a property of the engine. A socket that owns its
-//! transport needs nothing from the HTTP client, and this one carries `rustls`
-//! directly. The policy path is untouched: check, receipt, then dial.
+//! `ws://` and `wss://`. The old refusal said `wss://` needed a raw TLS stream
+//! the HTTP client does not expose, which was true of `reqwest` and had been
+//! generalised into a property of the engine. A socket that owns its transport
+//! needs nothing from the HTTP client, and this one carries `rustls` directly.
+//! The policy path is untouched: check, receipt, then dial.
 //!
-//! Loopback only whenever an egress proxy is configured. A raw socket does
-//! not go through the proxy `reqwest` was given, and inside a box that proxy is
-//! how the sandbox's allowlist stays in the path, so a non-loopback socket is
-//! refused whenever `$H5I_EGRESS_PROXY` is set. Loopback is exempt because the
-//! proxy already excludes it, so nothing in the path is bypassed.
+//! Loopback only whenever an egress proxy is configured. A raw socket does not
+//! go through the proxy `reqwest` was given, and inside a box that proxy is how
+//! the sandbox's allowlist stays in the path. Loopback is exempt because the
+//! proxy already excludes it.
 //!
-//! Every frame is receipted. The receipt is not an observation of the
-//! network, it *is* the network, so a socket open ten minutes carrying four
-//! hundred messages cannot be receipted at the handshake alone: that is the
-//! CONNECT-gate blindness this engine exists to remove. Each frame is written as
-//! an ordinary request/response pair with `WS-SEND` or `WS-RECV` as its method,
-//! so the console, `h5i box watch` and the export bundle need no changes and no
-//! old reader has a new phase to skip.
+//! Every frame is receipted. The receipt is not an observation of the network,
+//! it *is* the network, so a socket open ten minutes carrying four hundred
+//! messages cannot be receipted at the handshake alone: that is the CONNECT-gate
+//! blindness this engine exists to remove. Each frame is written as an ordinary
+//! request/response pair with `WS-SEND` or `WS-RECV` as its method, so the
+//! console, `h5i box watch` and the export bundle need no changes.
 
 use std::io::{BufReader, Read, Write};
 use std::net::TcpStream;
@@ -42,23 +40,21 @@ use crate::ws::{self, Incoming};
 /// One type so that everything above it (the handshake, the frame reader, the
 /// masked writer) is written once rather than twice. The difference between
 /// `ws://` and `wss://` should be a field, not a parallel code path, because a
-/// parallel path is where the two drift and only one of them keeps getting the
-/// receipt rule right.
+/// parallel path is where the two drift and only one keeps getting the receipt
+/// rule right.
 ///
 /// ## Why the TLS side holds a lock
 ///
 /// A plain `TcpStream` can be `try_clone`d, so the reader thread and the writer
-/// each get their own handle and never contend. A TLS *connection* is one piece
-/// of state (sequence numbers, keys, the record buffer) and cannot be split
-/// that way, so both sides share it under a mutex.
+/// each get their own handle. A TLS *connection* is one piece of state (sequence
+/// numbers, keys, the record buffer) and cannot be split that way, so both sides
+/// share it under a mutex.
 ///
 /// That would deadlock on its own: the reader blocks in `read`, holding the
 /// lock, and a `send` waits behind it forever. The fix is the read timeout set
-/// in [`Socket::open`] for TLS sockets. The reader wakes every so often, finds
-/// nothing, drops the lock, and goes round again, so a writer always gets in
-/// within one timeout. The cost is a wakeup a few times a second on an idle
-/// socket, which is what a lock-free design would have spent on a second
-/// connection.
+/// in [`Socket::open`] for TLS sockets, so the reader wakes every so often,
+/// finds nothing, drops the lock, and goes round again. The cost is a wakeup a
+/// few times a second on an idle socket.
 struct Wire {
     sock: TcpStream,
     /// `None` for `ws://`. Shared with the reader thread for `wss://`.
@@ -187,11 +183,10 @@ fn tls_config() -> Arc<rustls::ClientConfig> {
 ///
 /// `read_line` grows a `String` until it meets a newline, so a server that
 /// answers `101` and then sends bytes without one is an unbounded allocation on
-/// this side, and a server that sends short header lines forever is a loop
-/// that never ends. The server half of this protocol bounds its own handshake
-/// (`ws::MAX_HANDSHAKE`); the client half read the answer of whatever it had
-/// just dialled with no bound at all, which is the wrong way round: the answer
-/// is the part written by someone else.
+/// this side, and a server that sends short header lines forever is a loop that
+/// never ends. The server half of this protocol bounds its own handshake; the
+/// client half read the answer of whatever it had just dialled with no bound at
+/// all, which is the wrong way round.
 const MAX_HANDSHAKE_LINE: usize = 8 * 1024;
 const MAX_HANDSHAKE_LINES: usize = 128;
 
@@ -200,16 +195,15 @@ const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10
 
 /// How many undelivered messages a socket may hold.
 ///
-/// A *bounded* channel, which is a stronger statement than the cap this used
-/// to apply on the way out. The old shape trimmed an unbounded queue when the
-/// page happened to drain it, but the page only drains at a settle, and a
-/// resident session is idle between verbs by design, so a chatty socket grew
-/// without limit in exactly the case the cap was written for.
+/// A *bounded* channel, which is a stronger statement than the cap this used to
+/// apply on the way out. The old shape trimmed an unbounded queue when the page
+/// happened to drain it, but the page only drains at a settle, and a resident
+/// session is idle between verbs by design, so a chatty socket grew without
+/// limit in exactly the case the cap was written for.
 ///
 /// Bounded, the reader thread blocks instead, TCP back-pressures the server, and
 /// nothing is silently lost. That also removes a drop counter which, because it
-/// only ever increased, made every later drain report an error event, and an
-/// event delivered every round is a page the settle loop can never call idle.
+/// only ever increased, made every later drain report an error event.
 const MAX_QUEUED: usize = 512;
 
 /// What a socket hands the page.

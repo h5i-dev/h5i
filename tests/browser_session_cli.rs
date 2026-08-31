@@ -1,13 +1,12 @@
 //! `h5i browser` end to end, against the real engine.
 //!
 //! These drive the binary rather than the library, because the properties they
-//! pin are properties of the command an agent actually types: that a dead
-//! session is refused with its own exit code, that an id is never handed back
-//! to a second session, and that what a page composed does not reach a terminal
-//! with its escape sequences intact.
+//! pin are properties of the command an agent actually types: that a dead session
+//! is refused with its own exit code, that an id is never handed back to a second
+//! session, and that what a page composed does not reach a terminal with its
+//! escape sequences intact.
 //!
-//! Skipped, loudly, when the binary under test has not been built. There is no
-//! separate engine to find: `h5i` execs itself to render a page.
+//! Skipped, loudly, when the binary under test has not been built.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -661,15 +660,13 @@ fn a_read_leaves_no_session() {
 ///
 /// The engine is fail-closed and a navigation is policy-checked like any other
 /// request, so without this grant a session denied the very URL it was started
-/// on: `h5i browser open https://example.com` came back "origin
-/// `https://example.com` is not in the allowlist" while `--allow`'s own help
-/// promised that a URL's own origin needs no grant. Loopback is exempt by
-/// default, which is why every test here, and every dev server, sailed past
-/// it, and why the first remote URL anyone typed hit it.
+/// on, while `--allow`'s own help promised that a URL's own origin needs no
+/// grant. Loopback is exempt by default, which is why every test here, and every
+/// dev server, sailed past it.
 ///
-/// `--no-loopback` is what makes this test able to see it at all: it removes
-/// the exemption, so the only thing that can load a page on 127.0.0.1 is the
-/// grant `open` makes for the URL it was given.
+/// `--no-loopback` is what makes this test able to see it at all: it removes the
+/// exemption, so the only thing that can load a page on 127.0.0.1 is the grant
+/// `open` makes for the URL it was given.
 #[test]
 fn an_open_grants_the_page_it_was_opened_on() {
     let Some(fx) = Fixture::new() else {
@@ -743,18 +740,15 @@ fn the_policy_digest_follows_the_page_the_session_was_opened_on() {
 
 /// The helper lane runs with no session, when `--url` names the media.
 ///
-/// This is the shape an agent actually types for a video, `h5i browser
-/// transcript --via yt-dlp --url <url>`, and it used to answer with the
-/// closing note of whatever session had last been open, because the lane
-/// resolved a session before it did anything else. There is no page here to
-/// render and nothing for a session to contribute but a placement, so a run
-/// with none happens on this machine, says exactly that, and is still written
-/// down.
+/// This is the shape an agent actually types for a video, and it used to answer
+/// with the closing note of whatever session had last been open, because the
+/// lane resolved a session before it did anything else. There is no page here to
+/// render and nothing for a session to contribute but a placement.
 ///
-/// yt-dlp is stood in for. The lane's contract is that h5i builds the argv,
-/// runs the program where the session is, and records what it ran; none of
-/// that needs the real program, and a test that needed the network to pass
-/// would not be run.
+/// yt-dlp is stood in for. The lane's contract is that h5i builds the argv, runs
+/// the program where the session is, and records what it ran; none of that needs
+/// the real program, and a test that needed the network to pass would not be
+/// run.
 #[cfg(unix)]
 #[test]
 fn a_helper_run_needs_no_session_when_a_url_names_the_media() {
