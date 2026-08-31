@@ -2,8 +2,8 @@
 //!
 //! One stream, three consumers: the console's browser terminal, the terminal
 //! viewer, and the exported receipt. Two viewers collecting their own data are
-//! two viewers that disagree, and that disagreement is unfalsifiable for
-//! whoever is watching.
+//! two viewers that disagree, and that disagreement is unfalsifiable for whoever
+//! is watching.
 //!
 //! Every event carries two things that are not the same question. [`Lane`] is
 //! who observed it, host-observed or box-claimed. [`Grade`] is how complete the
@@ -12,14 +12,13 @@
 //! box-claimed, and that log is fail-closed by construction because the engine
 //! refuses the fetch when the record cannot be written. Chromium's Fetch lane is
 //! box-claimed *and* best-effort, since attach races and buffer limits leave
-//! gaps. A viewer rendering those alike would report coverage it does not have.
+//! gaps.
 //!
-//! Correlation is carried, never guessed. [`ViewerEvent::caused_by`] is set
-//! only where the source carries the link. Nothing infers causation from
-//! timestamps; a UI drawing an arrow on that basis is inventing evidence.
+//! Correlation is carried, never guessed. [`ViewerEvent::caused_by`] is set only
+//! where the source carries the link; nothing infers causation from timestamps.
 //!
-//! Time is when h5i read the record, not when the box produced it: the
-//! request log carries a sequence number and no clock, so an event time would be
+//! Time is when h5i read the record, not when the box produced it: the request
+//! log carries a sequence number and no clock, so an event time would be
 //! fabricated. Ordering comes from [`EventLog`]'s monotonic `id`.
 
 use serde::{Deserialize, Serialize};
@@ -148,15 +147,14 @@ pub enum EventKind {
     /// buried in a forwarded row is not scannable.
     PolicyVerdict { subject: String, reason: String },
     /// A source restarted: the file h5i was reading got shorter, which only
-    /// happens when a new run cleared the box's `/tmp` and a fresh session
-    /// began writing.
+    /// happens when a new run cleared the box's `/tmp` and a fresh session began
+    /// writing.
     ///
     /// Host-observed, because h5i noticed it about the box rather than being
-    /// told. It exists so a restart looks like a restart: without it the
-    /// reader silently resumes numbering and a viewer holding an old cursor
-    /// swallows the head of the new session, reporting a quiet page where there
-    /// was a busy one. That is the failure this whole module is arranged to
-    /// prevent, and it was live in the first version of this reader.
+    /// told. It exists so a restart looks like a restart: without it the reader
+    /// silently resumes numbering and a viewer holding an old cursor swallows
+    /// the head of the new session, reporting a quiet page where there was a
+    /// busy one.
     SessionReset { source: String },
     /// Who is driving the browser, and from when.
     ///
@@ -172,18 +170,16 @@ pub enum EventKind {
     },
     /// An outside program h5i ran on this session's behalf, and what came of it.
     ///
-    /// Host-observed, and it is the row that keeps the request log honest.
-    /// A helper makes its own network connections, from a process the engine
-    /// never sees, so its fetches are not in `h5i browser requests`, and the
-    /// invariant that log carries ("a request that is not here did not happen")
-    /// would quietly become false if a helper's traffic went unrecorded
-    /// anywhere. It does not become false, because the helper is not the
-    /// engine: this row says a second program ran, names it, and names what it
-    /// was told to do, so a reader can see the boundary rather than having to
-    /// know about it.
+    /// Host-observed, and the row that keeps the request log honest. A helper
+    /// makes its own network connections, from a process the engine never sees,
+    /// so its fetches are not in `h5i browser requests`, and the invariant that
+    /// log carries ("a request that is not here did not happen") would quietly
+    /// become false if a helper's traffic went unrecorded anywhere. It does not,
+    /// because this row says a second program ran, names it, and names what it
+    /// was told to do.
     ///
-    /// `argv` is what was actually executed, credentials excluded. H5i builds
-    /// it, so this is a fact rather than the helper's account of itself.
+    /// `argv` is what was actually executed, credentials excluded. H5i builds it,
+    /// so this is a fact rather than the helper's account of itself.
     Helper {
         name: String,
         argv: Vec<String>,
@@ -398,15 +394,15 @@ impl EventLog {
             if let Some(key) = draft.key {
                 self.keys.push_back((key, id));
                 self.by_key.insert(key, id);
-                // The key table is bounded like the log itself: a session that
-                // makes a million requests must not grow an entry per request
-                // that nothing will ever point at again.
+                // The key table is bounded like the log itself: a session that makes a
+                // million requests must not grow an entry per request that nothing will
+                // ever point at again.
                 //
-                // `pop_front`, not `remove(0)`. Both halves of this loop used to
-                // be linear in the cap and are driven by a log the *box* writes,
-                // so one poll over the 8 MiB `grown()` will read cost a measured
-                // 127 ms shifting the vector and 125 ms scanning it. On a
-                // console that polls on a timer. 0.2 ms and O(1) now.
+                // `pop_front`, not `remove(0)`. Both halves of this loop used to be linear
+                // in the cap and are driven by a log the *box* writes, so one poll over the
+                // 8 MiB `grown()` will read cost a measured 127 ms shifting the vector and
+                // 125 ms scanning it, on a console that polls on a timer. 0.2 ms and O(1)
+                // now.
                 if self.keys.len() > self.capacity
                     && let Some((old_key, old_id)) = self.keys.pop_front()
                 {
@@ -471,8 +467,7 @@ fn clean(s: &str) -> String {
 /// Defensive throughout, because this is untrusted input from a box that may be
 /// mid-write: a line that is not JSON, an object missing its sequence number, or
 /// a phase this build does not know is skipped rather than failing the read. A
-/// half-written trailing line is the ordinary case, not an error. The engine
-/// appends while the console polls.
+/// half-written trailing line is the ordinary case, not an error.
 pub fn ingest_request_log(text: &str) -> Vec<Draft> {
     ingest_request_log_with(text, &std::collections::BTreeMap::new())
 }
@@ -674,19 +669,18 @@ pub fn ingest_evidence(evidence: &crate::receipt::BrowserEvidence) -> Vec<Draft>
     drafts
 }
 
-/// Parse the light engine's own action log. What the box says it was asked to
+/// Parse the light engine's own action log: what the box says it was asked to
 /// do, as opposed to what h5i watched cross a socket.
 ///
 /// Box-claimed, always. The engine writes this from inside the box, and no
 /// arrangement of files could make that host-observed: h5i sits on no socket
 /// between an agent and this engine, because the engine *is* the browser. The
-/// rows are still worth showing, an empty pane for a session an agent is
-/// driving is a worse lie than a row that says who is claiming it, and the
-/// grade travels with each one so a reader can weigh it.
+/// rows are still worth showing, since an empty pane for a session an agent is
+/// driving is a worse lie than a row that says who is claiming it.
 ///
 /// Only `result` lines become rows. The `request` line that precedes each one
 /// exists to make "no record, no action" true inside the engine; rendering both
-/// would double every verb in the pane for no gain a reader could use.
+/// would double every verb in the pane.
 pub fn ingest_light_actions(text: &str) -> Vec<Draft> {
     ingest_light_actions_with(text, &mut std::collections::BTreeMap::new())
 }
@@ -782,17 +776,15 @@ pub fn ingest_actions_log(text: &str) -> Vec<Draft> {
 /// reason is a defect the first version of this reader shipped with. It
 /// re-parsed every source on every poll and numbered events from 1 each time,
 /// which is stable only while the files grow by appending, and they do not.
-/// Every run clears the box's private `/tmp` (`prepare_private_tmp`), so a
-/// second browser run starts the request log over at zero bytes, the numbering
-/// restarts with it, and a console tab holding a cursor from the first run
-/// silently drops the head of the second. A viewer under-reporting a session is
-/// exactly what the lane and grade fields exist to prevent elsewhere, so it does
-/// not get to happen here through arithmetic.
+/// Every run clears the box's private `/tmp`, so a second browser run starts the
+/// request log over at zero bytes, the numbering restarts with it, and a console
+/// tab holding a cursor from the first run silently drops the head of the
+/// second.
 ///
 /// Holding the position turns that into its opposite: ids never restart, a
 /// shortened file is *detected*, and the restart is emitted as
-/// [`EventKind::SessionReset`]. A row a human can see. It also stops the
-/// console re-reading and re-parsing whole files once a second.
+/// [`EventKind::SessionReset`], a row a human can see. It also stops the console
+/// re-reading and re-parsing whole files once a second.
 #[derive(Debug)]
 pub struct BoxStream {
     log: EventLog,
@@ -827,13 +819,13 @@ impl BoxStream {
 
     /// Fold in whatever the sources have produced since the last call.
     ///
-    /// Four sources, read in a fixed order. Mediated actions, the light
-    /// engine's own actions, its request log, then the page evidence carried on
-    /// receipts. The first two never both exist: a box runs one engine.
-    /// That order is the read order, not a timeline: the sources share no
-    /// clock (the request log carries a sequence number and no timestamp), so
-    /// interleaving them by time would mean inventing one. Within a source the
-    /// order is the source's own, which is the ordering that means something.
+    /// Four sources, read in a fixed order: mediated actions, the light engine's
+    /// own actions, its request log, then the page evidence carried on receipts.
+    /// The first two never both exist, since a box runs one engine.
+    ///
+    /// That order is the read order, not a timeline: the sources share no clock,
+    /// so interleaving them by time would mean inventing one. Within a source the
+    /// order is the source's own.
     ///
     /// Best effort by design: a box that has never opened a browser has none of
     /// these files, and that is an empty stream rather than an error.
@@ -915,9 +907,7 @@ struct Growth {
 const MAX_GROWTH_PER_POLL: u64 = 8 * 1024 * 1024;
 
 /// Read the complete lines `path` has grown by since `*offset`, advancing it.
-///
-/// `None` when there is nothing new to fold in, no file, no growth, or growth
-/// that does not yet contain a line terminator.
+/// `None` when there is nothing new to fold in.
 ///
 /// Reads bytes rather than a `String` and cuts at the last newline before
 /// decoding: a partial write can split a multi-byte character, and decoding

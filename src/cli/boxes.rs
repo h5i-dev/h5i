@@ -80,13 +80,13 @@ pub enum BoxCommands {
         /// Run this box on a paired runner instead of this machine.
         ///
         /// The source is copied across as a git bundle and the box is built
-        /// there; the repository, the policy and the credentials stay here.
-        /// The box is bound to that machine's host key, not to its name, so a
-        /// name re-pointed at other hardware never silently moves a box.
+        /// there; the repository, the policy and the credentials stay here. The
+        /// box is bound to that machine's host key, not to its name, so a name
+        /// re-pointed at other hardware never silently moves a box.
         ///
-        /// `h5i runner pair` sets one up and `h5i runner probe` says what it
-        /// can do. A tier the runner does not offer is refused with the
-        /// capability named, never quietly swapped for a weaker one.
+        /// `h5i runner pair` sets one up and `h5i runner probe` says what it can
+        /// do. A tier the runner does not offer is refused with the capability
+        /// named.
         #[cfg(feature = "runner")]
         #[arg(long, value_name = "NAME")]
         runner: Option<String>,
@@ -203,12 +203,13 @@ pub enum BoxCommands {
     ///
     /// Starts a loopback-only forward that h5i owns: the box's stream port is
     /// never published, every connection carries the box's own token,
-    /// cross-origin handshakes are refused, and your input reaches the page only
-    /// while you hold the control lock (`h5i browser take`). Runs until Ctrl-C.
+    /// cross-origin handshakes are refused, and your input reaches the page
+    /// only while you hold the control lock (`h5i browser take`). Runs until
+    /// Ctrl-C.
     ///
-    /// With `--term`, the page is drawn in this terminal instead, and nothing is
-    /// bound or served at all: no port, no token, and no host browser. Needs a
-    /// terminal that speaks the Kitty graphics protocol.
+    /// With `--term`, the page is drawn in this terminal instead, and nothing
+    /// is bound or served at all. Needs a terminal that speaks the Kitty
+    /// graphics protocol.
     View {
         name: String,
         /// Loopback port to bind. 0 picks a free one and prints it.
@@ -229,13 +230,12 @@ pub enum BoxCommands {
 
     /// Let one other person try this box's web app, from their own machine.
     ///
-    // The middle sentence is the one that differs, because the guarantee
-    // differs. Saying "h5i enters the box's network namespace" on a platform
-    // with no namespaces is not a small inaccuracy: it is the sentence a reader
-    // uses to decide how exposed the port is, and on macOS it claims an
-    // isolation that is exactly what macOS does not have. The short summary
-    // above (the only part that reaches the man page and the published manual,
-    // both generated on Linux) is deliberately left alone.
+    /// The middle sentence is the one that differs, because the guarantee
+    /// differs. Saying "h5i enters the box's network namespace" on a platform
+    /// with no namespaces is not a small inaccuracy: it is the sentence a
+    /// reader uses to decide how exposed the port is. The short summary above,
+    /// the only part that reaches the man page and the published manual, both
+    /// generated on Linux, is deliberately left alone.
     #[cfg_attr(
         not(target_os = "macos"),
         doc = "The box's port is never published. h5i enters the box's network namespace, dials \
@@ -734,18 +734,16 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                 .to_path_buf();
 
             // Surface environments pulled from other clones: materialize any
-            // manifests/policies present in refs/h5i/env but absent (or older)
-            // on disk, so `list`/`status`/`diff`/`apply` see them.
-            // Sync the shared env roster to disk, but never in a sealed box,
-            // where the host-owned env manifests are read-only (the write only
-            // fails with EACCES and spams a warning). The box already has its
-            // own env materialized; the shared roster is the host's concern.
+            // manifests and policies present in refs/h5i/env but absent, or
+            // older, on disk, so `list`/`status`/`diff`/`apply` see them.
+            //
+            // Never in a sealed box, where the host-owned env manifests are
+            // read-only and the write only fails with EACCES and spams a warning.
+            // The box already has its own env materialized.
             //
             // `env shell` is on the interactive hot path and operates on a single
             // named env that is almost always already materialized locally, so it
-            // skips the eager sync and materializes lazily (only on a `find` miss)
-            // below. Trimming a `refs/h5i/env/meta` read + disk writes off every
-            // shell start.
+            // skips the eager sync and materializes lazily below.
             let in_env_box = std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok();
             let lazy_materialize_env_ref = matches!(&action, BoxCommands::Shell { .. });
             if !in_env_box && !lazy_materialize_env_ref
@@ -1878,19 +1876,18 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                             Ok(m) => {
                             match h5i_core::env::rm(git, &h5i_root, &m, force) {
                                 Ok(()) => {
-                                    // The far side only after this side agreed
-                                    // to let the box go. The other order looks
-                                    // tidier and is wrong: `rm` refuses a live
-                                    // box, and destroying the runner's copy
-                                    // first would leave a local record pointing
-                                    // at nothing while the user was told the
-                                    // removal had failed.
+                                    // The far side only after this side agreed to
+                                    // let the box go. The other order looks tidier
+                                    // and is wrong: `rm` refuses a live box, and
+                                    // destroying the runner's copy first would
+                                    // leave a local record pointing at nothing
+                                    // while the user was told the removal had
+                                    // failed.
                                     //
-                                    // The remaining failure (this side gone,
-                                    // the runner unreachable) leaves an orphan
-                                    // there, which is exactly what the lease is
-                                    // for: it expires and the next sweep takes
-                                    // it. Best effort, and said out loud.
+                                    // The remaining failure, this side gone and
+                                    // the runner unreachable, leaves an orphan
+                                    // there, which is what the lease is for: it
+                                    // expires and the next sweep takes it.
                                     #[cfg(feature = "runner")]
                                     if h5i_core::env::is_remote(&m)
                                         && let Some(problem) =

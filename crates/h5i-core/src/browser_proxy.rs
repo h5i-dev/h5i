@@ -6,15 +6,15 @@
 //! socket, and the protocol is one line of JSON each way under a single mutex,
 //! which is why a few hundred lines can sit in front of it.
 //!
-//! This is enforcement against an agent following the documented path: the
-//! CLI reads `AGENT_BROWSER_SOCKET_DIR`, that directory is h5i's listener, and
-//! every verb is decided here. That is the threat the lock was written for.
+//! This is enforcement against an agent following the documented path: the CLI
+//! reads `AGENT_BROWSER_SOCKET_DIR`, that directory is h5i's listener, and every
+//! verb is decided here.
 //!
-//! It is not containment against a deliberately evasive agent, structurally:
-//! the daemon runs inside the box and Landlock grants are per-box, so any socket
-//! the daemon can bind the agent can connect to. Moving the daemon out would
-//! break what boxes are for, since it could no longer reach the dev server on
-//! the box's own loopback.
+//! It is not containment against a deliberately evasive agent, structurally: the
+//! daemon runs inside the box and Landlock grants are per-box, so any socket the
+//! daemon can bind the agent can connect to. Moving the daemon out would break
+//! what boxes are for, since it could no longer reach the dev server on the box's
+//! own loopback.
 //!
 //! Two things learned by driving the real daemon:
 //!
@@ -25,8 +25,7 @@
 //! 2. The daemon's config fingerprint covers its options, not its path, which is
 //!    what lets the real daemon run somewhere the box cannot reach: mirror
 //!    `.version`/`.config` into the box-visible directory and the CLI is
-//!    satisfied. Get the environment wrong and it decides the daemon is stale
-//!    and tries (1).
+//!    satisfied. Get the environment wrong and it decides the daemon is stale.
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, Write};
@@ -78,11 +77,10 @@ const READ_ONLY_ACTIONS: &[&str] = &[
 
 /// What a profile permits the agent to do with the browser.
 ///
-/// Modelled on agent-browser's own `ActionPolicy`, which is the right
-/// vocabulary and about the right size. `deny` is the interesting half:
-/// `evaluate` is arbitrary code in the page, and `credentials_*`/`state_*`
-/// reach the browser's stored secrets, so a profile that wants a reading
-/// browser can say so.
+/// Modelled on agent-browser's own `ActionPolicy`, which is the right vocabulary
+/// and about the right size. `deny` is the interesting half: `evaluate` is
+/// arbitrary code in the page, and `credentials_*`/`state_*` reach the browser's
+/// stored secrets, so a profile that wants a reading browser can say so.
 ///
 /// The spelling is the *action* name, not the CLI verb: `evaluate`, which is
 /// what `agent-browser eval` sends on the wire. Entries are checked against
@@ -100,20 +98,16 @@ pub struct ActionPolicy {
 /// therefore denied with it.
 ///
 /// The list exists because a denylist over a ~250-verb protocol is only as good
-/// as its synonyms, and this one had none. `evaluate` is documented as the
-/// entry "most profiles want, because it is arbitrary code in the page", and
-/// denying it left `evalhandle` (a `Runtime.evaluate` under another name),
-/// `waitforfunction`, `addscript`, `addinitscript`, `expose` and `setcontent`
-/// all forwarding, so a profile that had asked for a reading browser got one
-/// that still ran whatever the agent wrote. `credentials` was the same shape:
-/// denied, while `auth_show` and `auth_login` read and used the same stored
-/// logins.
+/// as its synonyms, and this one had none. `evaluate` is documented as the entry
+/// "most profiles want, because it is arbitrary code in the page", and denying it
+/// left `evalhandle` (a `Runtime.evaluate` under another name), `waitforfunction`,
+/// `addscript`, `addinitscript`, `expose` and `setcontent` all forwarding, so a
+/// profile that had asked for a reading browser got one that still ran whatever
+/// the agent wrote. `credentials` was the same shape.
 ///
-/// The left-hand name is what a profile writes; the right-hand names are what
-/// it also means. Extending this is how a *new* daemon verb that reaches an
-/// existing capability is covered without every profile being rewritten,
-/// which is the failure mode `is_mutating`'s "unknown verbs count as mutating"
-/// already guards the other lane against.
+/// The left-hand name is what a profile writes; the right-hand names are what it
+/// also means. Extending this is how a *new* daemon verb that reaches an
+/// existing capability is covered without every profile being rewritten.
 const DENY_ALSO_COVERS: &[(&str, &[&str])] = &[
     (
         "evaluate",
@@ -185,13 +179,12 @@ pub fn is_mutating(action: &str) -> bool {
 /// Whether completing this verb refreshes the agent's view of the page, and so
 /// clears the stale-handle latch a human takeover set.
 ///
-/// Deliberately just `snapshot`: that is the verb
-/// [`control::Verdict::explain`] names, and the two have to agree or the
-/// refusal is advice the agent cannot act on.
+/// Deliberately just `snapshot`: that is the verb [`control::Verdict::explain`]
+/// names, and the two have to agree or the refusal is advice the agent cannot
+/// act on.
 ///
 /// Because it is the *only* way out of the latch, a profile is not allowed to
-/// deny it. See `sandbox_policy::validate_browser_deny`, which refuses
-/// `snapshot` for exactly this reason.
+/// deny it. See `sandbox_policy::validate_browser_deny`.
 fn clears_resnapshot(action: &str) -> bool {
     action == "snapshot"
 }
@@ -403,8 +396,8 @@ pub fn mediate_observed(
     mediation
 }
 
-/// Send one request and relay exactly one response line back.
-/// The longest single protocol line either side may send.
+/// Send one request and relay exactly one response line back, and the longest
+/// single protocol line either side may send.
 ///
 /// The protocol is one line of JSON each way. `BufRead::lines` and `read_line`
 /// grow a `String` until they meet a newline, so without a ceiling a peer that
@@ -412,12 +405,11 @@ pub fn mediate_observed(
 /// and both peers here are inside the box: the client is the agent's CLI on a
 /// socket in `<env>/tmp`, and the daemon is a process in the box too.
 ///
-/// `refuse_no_daemon` has capped its one read since it was written, with a
-/// comment working out this exact hazard. It is the path taken when no daemon
-/// answered; the path taken the rest of the time had no cap at all.
+/// `refuse_no_daemon` has capped its one read since it was written. It is the
+/// path taken when no daemon answered; the path taken the rest of the time had
+/// no cap at all.
 ///
-/// 8 MiB, well past any real line, a `snapshot` of a large page is the biggest
-/// thing on this wire, and far below what a host notices.
+/// 8 MiB, well past any real line and far below what a host notices.
 const MAX_LINE: u64 = 8 * 1024 * 1024;
 
 /// Read one `\n`-terminated line, refusing one that outruns [`MAX_LINE`].
@@ -517,12 +509,12 @@ const UPSTREAM_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 #[cfg(unix)] // only the unix-gated listener references this
 const MAX_ACCEPT_ERRORS: usize = 20;
 
-/// Connections served at once. The accept loop spawns one thread per
-/// connection and the socket sits in `<env>/tmp`, which is one of the two
-/// paths the box can write, so without a ceiling a loop of `connect()` calls
-/// inside the box spawns unbounded *host* threads. `auth_proxy` has carried
-/// this bound since it was written ("the box is one client"); this sibling,
-/// reachable the same way and by the same actor, had none.
+/// Connections served at once. The accept loop spawns one thread per connection
+/// and the socket sits in `<env>/tmp`, one of the two paths the box can write,
+/// so without a ceiling a loop of `connect()` calls inside the box spawns
+/// unbounded *host* threads. `auth_proxy` has carried this bound since it was
+/// written; this sibling, reachable the same way and by the same actor, had
+/// none.
 ///
 /// 64, matching that sibling. The box's browser CLI opens one connection per
 /// command and nothing legitimate approaches it.
@@ -549,10 +541,9 @@ impl Drop for InFlightSlot {
 /// (`AGENT_BROWSER_SOCKET_DIR`); `upstream` is where the box's shim starts the
 /// real daemon.
 ///
-/// The upstream need not exist yet: the mediator has to own its socket
-/// *before* the box runs, or the box's first `agent-browser` call finds
-/// nothing there and starts an unmediated daemon of its own on the very path
-/// we meant to hold.
+/// The upstream need not exist yet: the mediator has to own its socket *before*
+/// the box runs, or the box's first `agent-browser` call finds nothing there and
+/// starts an unmediated daemon of its own on the very path we meant to hold.
 #[cfg(unix)]
 pub fn spawn(
     socket_path: &Path,
@@ -582,14 +573,13 @@ pub fn spawn(
     // forwards, which includes reading the page and, subject to the policy
     // above, running script in it. Linux checks write permission on the socket
     // file at `connect`, so the mode is the access control, and leaving it to
-    // the umask made it 0755 on a default one and 0775 or 0777 on a laxer one.
-    // The path is `AGENT_BROWSER_SOCKET_DIR`, which is under a box's `/tmp`.
-    // Shared with the host under the `agent` profile.
+    // the umask made it 0755 on a default one. The path is
+    // `AGENT_BROWSER_SOCKET_DIR`, under a box's `/tmp`, shared with the host
+    // under the `agent` profile.
     //
     // This does not make the mediator containment against a deliberately
-    // evasive agent inside the box, which the module header says it is not. It
-    // stops the socket from being everyone *else* on the machine's, which is a
-    // different question and one this can answer.
+    // evasive agent inside the box. It stops the socket from being everyone
+    // *else* on the machine's, which is a different question.
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600));
@@ -616,15 +606,13 @@ pub fn spawn(
                         if stop.load(Ordering::SeqCst) {
                             break;
                         }
-                        // Refuse rather than queue: a queued connection still
-                        // holds a descriptor, and the actor filling these slots
-                        // is a box in a loop. Not counted as an accept error.
-                        // The listener is healthy, it is the load that is not.
-                        // Claimed with one atomic and released by the guard,
-                        // the shape `container`'s proxy uses: a `load` followed
-                        // by a `fetch_add` is correct only because exactly one
-                        // thread accepts, and that is a property of this loop
-                        // rather than of the cap.
+                        // Refuse rather than queue: a queued connection still holds a
+                        // descriptor, and the actor filling these slots is a box in a
+                        // loop. Not counted as an accept error, since the listener is
+                        // healthy and it is the load that is not. Claimed with one
+                        // atomic and released by the guard, the shape `container`'s
+                        // proxy uses: a `load` followed by a `fetch_add` is correct
+                        // only because exactly one thread accepts.
                         let taken = in_flight.fetch_add(1, Ordering::SeqCst);
                         let slot = InFlightSlot(in_flight.clone());
                         if taken >= MAX_IN_FLIGHT {
@@ -758,21 +746,16 @@ pub fn spawn(
 /// Its own lane (`browser-proxy`) rather than a field on `BrowserEvidence`,
 /// because the two are different kinds of claim: the existing evidence is
 /// drained from the page *after* a run and is box-claimed, while this is
-/// host-observed. H5i sat on the socket and watched each verb go by. A
+/// host-observed, h5i having sat on the socket and watched each verb go by. A
 /// reviewer should be able to tell those apart without reading the code, which
 /// is what `HOST_OBSERVED_LANES` is for.
 ///
-/// Records nothing when nothing happened: a browser box whose agent never
-/// touched the browser should not grow an empty receipt per run.
-/// Where the structured copy of the mediated actions lives, host-side.
-///
-/// A sibling of `receipt.jsonl` and deliberately *not* under `<env>/spool` or
-/// `<env>/tmp`, the two paths a box can write. The same rule the viewer token
-/// follows. It exists because the receipt carries these actions as *rendered
-/// text*, and a reader that wanted them back as data would have to parse a
-/// display format. Reversing a display format is the quiet-wrong-answer shape
-/// this codebase keeps getting bitten by, so the data is written as data once,
-/// here, for the browser terminal (roadmap-history.md M11a) and anything after it.
+/// Records nothing when nothing happened. Where the structured copy lives is a
+/// sibling of `receipt.jsonl` and deliberately *not* under `<env>/spool` or
+/// `<env>/tmp`, the two paths a box can write. It exists because the receipt
+/// carries these actions as *rendered text*, and a reader that wanted them back
+/// as data would have to parse a display format, which is the quiet-wrong-answer
+/// shape this codebase keeps getting bitten by.
 pub fn actions_log(env_dir: &Path) -> std::path::PathBuf {
     env_dir.join("browser-actions.jsonl")
 }
@@ -887,29 +870,24 @@ fn read_first_line_within(
 fn refuse_no_daemon(client: &std::os::unix::net::UnixStream) {
     use std::io::Write;
 
-    // Read one line. The request the client is waiting on a reply to. Best
-    // effort, and *bounded*: a client that connects to probe liveness and waits
-    // for the peer to speak first would otherwise block this thread forever and
-    // never receive the refusal, which is the hang this branch exists to
-    // prevent. Threads here are detached, so an unbounded wait also leaks one
-    // per retry while a daemon is failing to start.
+    // Read one line: the request the client is waiting on a reply to. Best
+    // effort, and *bounded*, because a client that connects to probe liveness
+    // and waits for the peer to speak first would otherwise block this thread
+    // forever and never receive the refusal. Threads here are detached, so an
+    // unbounded wait also leaks one per retry while a daemon is failing to
+    // start.
     //
     // Bounded in *bytes* as well as time, which is the half the timeout does
     // not cover: `SO_RCVTIMEO` ends one `read()`, while `read_line` keeps
-    // calling it and growing its `String` until a newline arrives. A peer
-    // sending a byte a second, or a megabyte with no newline in it, was neither
-    // timed out nor capped. A request id is a short JSON line; anything past
-    // this cap is not one.
+    // calling it and growing its `String` until a newline arrives.
     const MAX_FIRST_LINE: u64 = 64 * 1024;
     // And bounded overall, which the two above still do not add up to. The
     // timeout ends one `read()` and the cap ends the *bytes*; the loop between
-    // them is ended by neither. A peer that lets every read *succeed*, one
-    // byte just inside each interval, never trips the timeout, because a
-    // timeout is an error and a byte is not, so it walks the whole cap at its
-    // own pace: 64 Ki reads of up to two seconds each is a day and a half
-    // holding a host thread, from a socket in `<env>/tmp` that the box writes.
-    // `auth_proxy::read_head` spells out the same arithmetic and answers it
-    // with a deadline; this path had the two halves and not the whole.
+    // them is ended by neither. A peer that lets every read *succeed*, one byte
+    // just inside each interval, never trips the timeout, because a timeout is
+    // an error and a byte is not, so it walks the whole cap at its own pace: 64
+    // Ki reads of up to two seconds each is a day and a half holding a host
+    // thread, from a socket in `<env>/tmp` that the box writes.
     const FIRST_LINE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
     const PER_READ: std::time::Duration = std::time::Duration::from_secs(2);
     let first = read_first_line_within(client, PER_READ, FIRST_LINE_DEADLINE, MAX_FIRST_LINE);
@@ -1428,15 +1406,14 @@ mod tests {
 
     /// The dribble the byte cap and the per-read timeout both miss.
     ///
-    /// A peer that lets every `read()` *succeed* (one byte, comfortably inside
-    /// the per-read interval, forever) never trips that timeout, because a
+    /// A peer that lets every `read()` *succeed*, one byte comfortably inside
+    /// the per-read interval, forever, never trips that timeout, because a
     /// timeout is an error and a byte is not. `read_line` keeps going, and the
     /// only other bound is 64 KiB of bytes: at this rate that is a day and a
-    /// half of a host thread, asked for from a socket in `<env>/tmp`.
+    /// half of a host thread.
     ///
-    /// Driven at production's shape with the clock scaled down, which is why
-    /// the bounds are parameters: 100 ms per read, a 400 ms deadline, and a
-    /// peer feeding a byte every 20 ms so no read ever fails.
+    /// Driven at production's shape with the clock scaled down, which is why the
+    /// bounds are parameters.
     #[test]
     #[cfg(unix)]
     fn a_dribbling_peer_cannot_hold_the_refusal_thread() {
