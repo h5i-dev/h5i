@@ -242,8 +242,7 @@ fn a_timer_landing_next_to_the_budget_does_not_abort_the_engine() {
     // process, taking the snapshot and the receipts with it.
     //
     // Two timers on purpose: the first has to land near the budget so the clock
-    // arrives there, and the second has to still be pending afterwards so the
-    // loop takes the jump again from that position.
+    // arrives there, and the second has to still be pending afterwards.
     let (_page, mut script) = page_and_script("<html><body></body></html>");
     script
         .eval("setTimeout(() => {}, 9999); setTimeout(() => {}, 20000);")
@@ -257,12 +256,11 @@ fn a_timer_landing_next_to_the_budget_does_not_abort_the_engine() {
 // ── what WPT found ─────────────────────────────────────────────────────────
 //
 // These lock in behaviours the Web Platform Tests caught and this branch fixed.
-// They live here rather than in a CI job that clones WPT, and the reason is not
-// only that the clone is slow: a pass count measured against an *unpinned*
-// upstream corpus is not a fixed thing to compare against. The first CI run
-// proved it. The runner scored `encoding` out of 142,445 subtests where this
-// machine scored it out of 229,349, because the two had different revisions of
-// WPT. The number moved without the engine moving.
+// They live here rather than in a CI job that clones WPT, and not only because
+// the clone is slow: a pass count measured against an *unpinned* upstream
+// corpus is not a fixed thing to compare against. The first CI run proved it,
+// scoring `encoding` out of 142,445 subtests where this machine scored it out
+// of 229,349, because the two had different revisions of WPT.
 //
 // So the suite keeps the *behaviours*, hermetically, and `wpt/` stays a local
 // instrument for finding new ones. See roadmap-history.md §B12.9.
@@ -1409,14 +1407,14 @@ fn an_answer_that_is_not_an_event_stream_is_not_read_as_one() {
 }
 
 /// Each of these is a thread, and the thread is the resource the session's
-/// sandbox profile actually caps. At 64 for the whole process, shared with the
+/// sandbox profile actually caps: 64 for the whole process, shared with the
 /// viewer loop, the control loop, the HTTP client's runtime and the fetch
 /// workers. Nothing bounded them, so a page could open until thread creation
 /// failed and take the engine's own workers down with it.
 ///
 /// The arithmetic rather than sixteen live servers: what is under test is the
 /// bound, and the two maps it counts over are the sockets and the streams
-/// together, because each of them is one thread.
+/// together, because each is one thread.
 #[test]
 fn a_page_cannot_hold_more_open_connections_than_the_engine_has_room_for() {
     use crate::script::host::MAX_OPEN_CHANNELS;
@@ -2019,8 +2017,7 @@ fn computed_style_answers_what_it_knows_and_reports_what_it_does_not() {
     // an "uncurated" property reports itself as missing, because the six
     // properties this once answered were believed to be all that could be
     // bound. WPT disproved that: `ComputedValues::computed_value_to_string`
-    // resolves any longhand. The assertion below is the same shape as the old
-    // one, pointed at what is genuinely still unanswered.
+    // resolves any longhand.
     let (_page, mut script) = page_and_script(
         "<html><body><div id='shown'>a</div><div id='hidden' style='display:none'>b</div></body></html>",
     );
@@ -3656,15 +3653,13 @@ fn conformance_script(html: &str) -> (crate::engine::Page, Script) {
 fn the_webidl_decoration_arrives_only_when_an_instrument_asks() {
     // The decoration is a whole source that is not parsed by default, so this
     // checks the tier seam as much as the decoration: a realm built the
-    // ordinary way must not have it, and one built with the flag must. From a
-    // file the first realm never handed to Boa.
+    // ordinary way must not have it, and one built with the flag must.
     //
-    // What the pass actually adds, probed on both a plain class accessor and a
-    // reflected one: the member becomes enumerable, and the accessor refuses a
-    // receiver that is not an instance. The `get x` naming is *not* part of it
-    // (Boa names class accessors correctly on its own, and the reflection
-    // tables name theirs) which is worth pinning down, because it is the one
-    // of the three a reader would assume the pass was carrying.
+    // What the pass adds, probed on both a plain class accessor and a reflected
+    // one: the member becomes enumerable, and the accessor refuses a receiver
+    // that is not an instance. The `get x` naming is *not* part of it, which is
+    // worth pinning down because it is the one of the three a reader would
+    // assume the pass was carrying.
     let probe = r#"(() => {
         const out = [];
         for (const [Iface, key] of [[Node, "textContent"], [Element, "id"]]) {
@@ -3704,8 +3699,8 @@ fn the_webidl_decoration_arrives_only_when_an_instrument_asks() {
 /// tax the documentation this engine is largely made of, and would not predict
 /// the cost. Everything else is a token the parser builds.
 ///
-/// The rule is line-based, which is exact here because the prelude has no block
-/// comments and no template literal spans a line. Both checked below.
+/// The rule is line-based, exact here because the prelude has no block comments
+/// and no template literal spans a line. Both checked below.
 fn code_bytes(source: &str) -> usize {
     source
         .lines()
@@ -3716,78 +3711,67 @@ fn code_bytes(source: &str) -> usize {
 
 #[test]
 fn the_eagerly_parsed_prelude_stays_within_its_budget() {
-    // The exchange rate fell, and the budget is still the floor under
-    // noticing. Parse and compile were 67 ms of the 83 a realm cost and were
-    // paid per page; sharing the compiled prelude across realms moved them to
-    // once per thread, and a later realm now spends under a microsecond there.
-    // What every page still pays for a KiB is the *running* of it, 12.4 ms for
-    // the whole 273 KiB, so about 45 µs of per-page realm cost per KiB,
-    // against the ~150 µs it was. The first page a renderer serves still pays
-    // the compile, at roughly 245 µs per KiB, and that is the page a person is
-    // waiting on.
+    // The exchange rate fell, and the budget is still the floor under noticing.
+    // Parse and compile were 67 ms of the 83 a realm cost and were paid per
+    // page; sharing the compiled prelude across realms moved them to once per
+    // thread, and a later realm now spends under a microsecond there. What every
+    // page still pays per KiB is the *running* of it, 12.4 ms for the whole
+    // 273 KiB, about 45 µs of per-page realm cost per KiB against the ~150 µs it
+    // was. The first page a renderer serves still pays the compile, at roughly
+    // 245 µs per KiB.
     //
     // The reason for a budget is unchanged. The prelude grew by 4,692 lines in
     // two commits during a coverage push, the realm went from 15.9 ms to 82.8 ms
-    // per page, and nothing said so. The tests all passed, because a slower
+    // per page, and nothing said so: the tests all passed, because a slower
     // engine is not a wrong one. A budget that has to be raised on purpose puts
-    // the price in the diff that pays it.
+    // the price in the diff that pays it. Raising it is a normal thing to do,
+    // not a failure. The question the number asks is only whether it could be a
+    // tier instead: see `TIERS` in `mod.rs`, and `lazyGlobals` in the prelude.
     //
-    // Raising it is a normal thing to do, not a failure. The question the number
-    // asks is only whether it could be a tier instead: see `TIERS` in `mod.rs`,
-    // and `lazyGlobals` in the prelude.
     // 278, raised 2026-08-30, and the honest reason is *not* the coverage
-    // number. That batch was a bad trade and the note should say so.
-    //
-    // 2.4 KiB bought 32 subtests, a ratio of 0.013 against the 0.4 this branch
-    // averages. What it bought that is worth having:
+    // number: 2.4 KiB bought 32 subtests, a ratio of 0.013 against the 0.4 this
+    // branch averages. What it bought that is worth having:
     //
     //   * `Attr` as a real node class. `attributes` returned plain
     //     `{name, value}` literals, so `localName`, `prefix`, `namespaceURI`,
-    //     `ownerElement` and a `nodeType` of 2 were all missing from something
-    //     real code reads.
-    //   * `checkVisibility`, which is CSSOM-View's "would a person see this".
-    //     That is the question this product exists to answer, the
-    //     snapshot and the verbs ask it constantly, so it earns core space on
-    //     its own terms rather than on WPT's.
-    //   * `compatMode`, which is a fact about this engine (it parses
-    //     `QuirksMode::NoQuirks` unconditionally) rather than a guess.
+    //     `ownerElement` and a `nodeType` of 2 were all missing.
+    //   * `checkVisibility`, CSSOM-View's "would a person see this", which the
+    //     snapshot and the verbs ask constantly, so it earns core space on its
+    //     own terms rather than on WPT's.
+    //   * `compatMode`, a fact about this engine rather than a guess.
     //
     // The earlier history is worth keeping too. It went 275 -> 276 for CSSOM
     // shapes that were real objects wearing no interface (`matchMedia()`
     // returning a `MediaQueryList`, `sheet.media` being a `MediaList` and not a
-    // *String*) and came straight back down when the reflection table turned
-    // out to write every attribute name twice: 139 entries of `["foo", "foo"]`
-    // plus 72 more with a type after them, and fifteen copies of three ARIA
-    // option objects. That returned 3.9 KiB, more than the features cost.
+    // *String*) and came straight back down when the reflection table turned out
+    // to write every attribute name twice, returning 3.9 KiB, more than the
+    // features cost.
     //
-    // And the budget is not a performance guard, which was measured rather
-    // than assumed. `examples/perf` puts `prelude run` at 15.9 ms of a 16.2 ms
-    // later realm, and a deliberately padded 50 KiB build measured the slope at
-    // 40-52 us/KiB. Consistent with the 45 quoted above. But the run-to-run
-    // spread on this box is +/-4 ms, so even an 18% size delta is not
-    // statistically resolvable (t ~ 1.2). A few KiB is far below the noise
-    // floor. What the budget actually does is force the question, and it has
-    // twice: it put the interface-prototype mirror in the `conformance` tier
-    // where pages pay nothing for it, and it found the table redundancy above.
-    // Keep it tight for that reason, not because a KiB is measurably slow.
-    // 280, raised after an adversarial review of this branch. The extra 2 KiB
-    // is almost entirely bug fixes to what the branch already added, not
-    // new surface: `classList.toggle` doing WebIDL boolean conversion and
-    // validating on the declining path, `Attr`/`MediaList`/`MediaQueryList`
-    // refusing `new` the way `brand()` used to, `Attr.localName` not splitting
-    // a colon it has no prefix for, `removeProperty` returning the serialised
-    // value `getPropertyValue` would, and `sheet.media` being live rather than
-    // a snapshot. Those found 67 subtests between them, so the surface was
-    // wrong in ways the coverage numbers had been quietly paying for.
-    // 281, and this KiB is a *speed* purchase rather than a surface one,
-    // which is a first for this budget. `classList.add` measured 100 us against
-    // 2 us for the `setAttribute` underneath it, and it is the largest single
-    // JS cost on a component-shaped page. 35 ms of an 88 ms load. Two causes,
-    // both in code this file guards: `_all()` tokenised with a regex into a
-    // `Set` and back out through a spread (43 us, four intermediates), and the
-    // indexed proxy sat in front of every internal `this._node` read inside
-    // every method. Hand-rolled tokenising plus binding methods to the target
-    // takes `add` to 25 us and `contains` to 10 us. 4x each.
+    // And the budget is not a performance guard, which was measured rather than
+    // assumed. `examples/perf` puts `prelude run` at 15.9 ms of a 16.2 ms later
+    // realm, and a deliberately padded 50 KiB build measured the slope at
+    // 40-52 us/KiB. But the run-to-run spread on this box is +/-4 ms, so even an
+    // 18% size delta is not statistically resolvable (t ~ 1.2). What the budget
+    // actually does is force the question, and it has twice: it put the
+    // interface-prototype mirror in the `conformance` tier where pages pay
+    // nothing for it, and it found the table redundancy above.
+    //
+    // 280, raised after an adversarial review of this branch. The extra 2 KiB is
+    // almost entirely bug fixes to what the branch already added, not new
+    // surface: `classList.toggle` doing WebIDL boolean conversion,
+    // `Attr`/`MediaList`/`MediaQueryList` refusing `new`, `Attr.localName` not
+    // splitting a colon it has no prefix for, `removeProperty` returning the
+    // serialised value `getPropertyValue` would, and `sheet.media` being live.
+    // Those found 67 subtests between them.
+    //
+    // 281, and this KiB is a *speed* purchase rather than a surface one, a first
+    // for this budget. `classList.add` measured 100 us against 2 us for the
+    // `setAttribute` underneath it, the largest single JS cost on a
+    // component-shaped page: 35 ms of an 88 ms load. Two causes, both in code
+    // this file guards: `_all()` tokenised with a regex into a `Set` and back
+    // out through a spread, and the indexed proxy sat in front of every internal
+    // `this._node` read inside every method. Hand-rolled tokenising plus binding
+    // methods to the target takes `add` to 25 us and `contains` to 10 us.
     const BUDGET_KIB: usize = 281;
 
     assert!(
@@ -3811,13 +3795,12 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
 /// Two realms in a row, and the second must not be able to tell that the first
 /// existed.
 ///
-/// This is the guard on sharing the prelude's compiled code between realms
+/// The guard on sharing the prelude's compiled code between realms
 /// (`bind_to_realm` in our Boa fork). The saving is real, parse and compile
-/// were 42 ms of the 63 a realm cost, but the thing being shared is one step
+/// being 42 ms of the 63 a realm cost, but the thing being shared is one step
 /// away from the thing §B15.12a refuses outright: reusing the *realm*, which
 /// would let a page set attacker-controlled state, navigate, and have the next
-/// document see it. Sharing instructions is safe and sharing state is not, so
-/// the difference is asserted here rather than left to the argument for it.
+/// document see it. Sharing instructions is safe and sharing state is not.
 #[test]
 fn a_realm_shares_the_preludes_code_and_none_of_its_state() {
     let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
@@ -3898,22 +3881,21 @@ fn the_prelude_is_compiled_once_for_a_thread_and_run_for_every_realm() {
 
 /// A thread that warmed before it had a realm must be able to end.
 ///
-/// This is a regression test for a crash, not for a wrong answer, and it has an
-/// unusual shape because of it: everything the thread does succeeds, and the
-/// process then aborts as the thread exits, with
-/// `tcache_thread_shutdown(): unaligned tcache chunk detected`. So the failure
-/// is the test binary dying rather than an assertion, and the thread has to be
-/// spawned and joined for the teardown to happen at all.
+/// A regression test for a crash, not for a wrong answer, and it has an unusual
+/// shape because of it: everything the thread does succeeds, and the process
+/// then aborts as the thread exits, with `tcache_thread_shutdown(): unaligned
+/// tcache chunk detected`. So the failure is the test binary dying rather than
+/// an assertion, and the thread has to be spawned and joined for the teardown
+/// to happen at all.
 ///
 /// The order is the entire content of the test. Building a realm first touches
 /// Boa's garbage-collected heap before it touches [`PRELUDE_TEMPLATE`], and the
 /// thread-local destructors then run in an order that happens to be safe.
 /// Warming first inverts it, and the template drops `Gc` handles into a heap
 /// that has already been torn down. Warming before a realm exists is precisely
-/// what the overlap does, so this is the shape the product runs in.
+/// what the overlap does.
 ///
-/// See [`PreludeTemplate`] for why the fix is that the template is never
-/// dropped at all.
+/// See [`PreludeTemplate`] for why the fix is that the template is never dropped.
 #[test]
 fn the_compile_survives_a_thread_that_warmed_before_it_had_a_realm() {
     std::thread::spawn(|| {
@@ -3935,8 +3917,7 @@ fn the_compile_survives_a_thread_that_warmed_before_it_had_a_realm() {
 /// The link between "the compile happens during the fetch" and "the page is
 /// faster", asserted where a stopwatch cannot argue with it. `ipc.rs` proves the
 /// work runs while the request is in flight and `engine.rs` proves it is only
-/// attempted where there is a wait to hide it in; this is the third side, that
-/// the work is the thing the realm would otherwise have had to do.
+/// attempted where there is a wait to hide it in; this is the third side.
 ///
 /// Two threads, because the template is per-thread: one realm pays the compile
 /// the way an unwarmed page does, and the other must find it already paid.
@@ -4158,13 +4139,12 @@ fn an_attribute_is_found_by_the_name_the_idl_spells_it_with() {
     // DOM §4.9: an element in the HTML namespace lowercases the qualified name
     // before looking an attribute up. This engine lowercased on *write* and not
     // on read, so `setAttribute("accessKey", v)` stored `accesskey` and
-    // `getAttribute("accessKey")` answered null for an attribute that was
-    // plainly there.
+    // `getAttribute("accessKey")` answered null for an attribute plainly there.
     //
-    // It cost about 15,000 WPT subtests, which is the largest single cluster in
-    // the suite: the reflection harness passes the IDL name straight through
-    // (`domName = idlName`), so every camelCase reflected attribute failed on
-    // every element in all eleven `reflection-*.html` files.
+    // It cost about 15,000 WPT subtests, the largest single cluster in the
+    // suite: the reflection harness passes the IDL name straight through, so
+    // every camelCase reflected attribute failed on every element in all eleven
+    // `reflection-*.html` files.
     let broker =
         crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let factory = scripted_factory(broker);
@@ -4545,11 +4525,10 @@ fn a_constructed_text_node_is_a_text_node_and_not_the_document() {
     // document inside one of its own descendants.
     //
     // What that cost: `dom/events/Event-dispatch-click.html` does exactly this
-    // (`input.appendChild(new Text("does not matter"))`) and the engine walked
-    // the resulting cycle for ever, at 100% of a core, past every deadline it
-    // has. Those guard the script realm, and no script is running while layout
-    // walks. Six of them were found spinning on one machine, the oldest for
-    // seven hours. The file now reports in 0.18 s.
+    // and the engine walked the resulting cycle for ever, at 100% of a core,
+    // past every deadline it has, since those guard the script realm and no
+    // script is running while layout walks. Six were found spinning on one
+    // machine, the oldest for seven hours. The file now reports in 0.18 s.
     let (_page, mut script) = page_and_script("<html><body><div id='d'></div></body></html>");
     assert_eq!(
         script
@@ -4659,13 +4638,12 @@ fn a_node_cannot_be_put_inside_itself() {
     // The rule that makes the hang above impossible to reach again, from any
     // direction rather than from the one that was found.
     //
-    // It is checked twice on purpose. Here, *before* the child is unlinked from
-    // its parent, because that is the only moment the ancestor relationship
-    // still exists. The spec orders it that way for exactly this reason. And
-    // again in `dom_api.rs`, which is the last door before blitz and the only
-    // one a raw primitive call goes through. Neither check can replace the
-    // other: this one cannot see a primitive call, and that one cannot see an
-    // ancestry that the detach has already erased.
+    // Checked twice on purpose. Here, *before* the child is unlinked from its
+    // parent, because that is the only moment the ancestor relationship still
+    // exists, which is why the spec orders it that way. And again in
+    // `dom_api.rs`, the last door before blitz and the only one a raw primitive
+    // call goes through. Neither can replace the other: this one cannot see a
+    // primitive call, and that one cannot see an ancestry the detach has erased.
     let (_page, mut script) = page_and_script(
         "<html><body><div id='outer'><div id='inner'></div></div></body></html>",
     );
@@ -4777,11 +4755,10 @@ fn an_internal_read_never_reaches_the_sentinel() {
     // sometimes (`_nsuri`, set by `createElementNS` and by nothing the parser
     // does) is absent on almost every element, so `get tagName()` reading it
     // walked the whole prototype chain into a proxy trap to learn something
-    // about itself. It cost 1415 ns on an accessor whose native call is 196 ns.
+    // about itself, costing 1415 ns on an accessor whose native call is 196 ns.
     //
     // `declareInternals` puts an `undefined` on the prototype so the read stops
-    // at the first hop. This is the guard for the next such field: a workout
-    // over the surface an ordinary page touches, and nothing of ours may miss.
+    // at the first hop. This is the guard for the next such field.
     let (_page, mut script) = page_and_script(
         "<html><body><div id='d' class='a b'><p>one</p><a href='/x'>two</a>\
          <input type='checkbox'><input type='text' value='v'>\
@@ -6209,8 +6186,8 @@ fn the_wire_agent_and_the_scripted_one_are_the_same_string() {
 /// that for itself, which is what this does: `api.identity` is the only door,
 /// and in a bare build there is no door.
 ///
-/// Written as one test with two arms rather than two tests, so the pair reads
-/// as a single fact about the switch.
+/// Written as one test with two arms rather than two tests, so the pair reads as
+/// a single fact about the switch.
 #[test]
 fn the_identity_binding_exists_only_in_a_build_that_has_identities() {
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
@@ -6236,13 +6213,10 @@ fn the_identity_binding_exists_only_in_a_build_that_has_identities() {
 /// the prelude falls back to a literal, and a literal is exactly the second
 /// source of truth this module was written to remove. It cannot drift, because
 /// this test reads the same properties out of a realm and compares them to
-/// `identity::native()`, which the wire is built from. Change one and this
-/// fails.
+/// `identity::native()`, which the wire is built from.
 ///
 /// It runs in the *feature-on* build and still proves the feature-off one,
-/// because what it pins is that the two agree: with the feature on the values
-/// come from `native()` through the binding, and the assertions below are
-/// written against the literal's numbers.
+/// because what it pins is that the two agree.
 #[test]
 fn the_bare_build_answers_what_native_declares() {
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
@@ -7006,11 +6980,10 @@ fn a_generated_key_is_not_reported_as_a_missing_api() {
 ///
 /// A page that holds a reference to a child and then overwrites its parent's
 /// text still holds a live node afterwards, and every reactive UI does exactly
-/// that: the framework keeps its own pointer into the tree. Destroying the
-/// child freed its id, and the next mutation naming that id indexed a dead slot
-/// and panicked inside the layout engine. A panic that was caught and reported
-/// as a *successful* mutation, so the page's model of the tree and the real
-/// tree drifted apart and the failure surfaced somewhere else entirely.
+/// that. Destroying the child freed its id, and the next mutation naming that id
+/// indexed a dead slot and panicked inside the layout engine: a panic that was
+/// caught and reported as a *successful* mutation, so the page's model of the
+/// tree and the real tree drifted apart and the failure surfaced elsewhere.
 #[test]
 fn overwriting_text_detaches_the_old_children_without_destroying_them() {
     let (_page, broker) = run_page(
