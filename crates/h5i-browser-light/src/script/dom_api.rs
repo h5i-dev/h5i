@@ -2851,6 +2851,10 @@ fn socket_open(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         boa_engine::JsNativeError::syntax().with_message(format!("`{raw}` is not a URL: {e}"))
     })?;
 
+    if let Err(why) = room_for_a_channel(&host) {
+        return Err(boa_engine::JsNativeError::error().with_message(why).into());
+    }
+
     match host.broker.open_socket(&url, Some(&host.base)) {
         Ok(socket) => {
             let id = host.next_socket.get();
@@ -2907,6 +2911,27 @@ fn socket_drain(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     Ok(out.into())
 }
 
+/// Whether this page may hold another long-lived connection.
+///
+/// See [`crate::script::host::MAX_OPEN_CHANNELS`]: each of these is a thread,
+/// and the thread is the resource the session's sandbox profile actually caps.
+fn room_for_a_channel(host: &HostHandle) -> Result<(), String> {
+    let held = host.sockets.borrow().len() + host.streams.borrow().len();
+    channel_room(held)
+}
+
+/// The arithmetic on its own, so the bound can be tested without a socket.
+pub(crate) fn channel_room(held: usize) -> Result<(), String> {
+    if held >= crate::script::host::MAX_OPEN_CHANNELS {
+        return Err(format!(
+            "this page already holds {held} open connections, which is the most one page may \
+             have at once. Close one before opening another; the per-navigation request \
+             budget is the separate bound on how many it may open in total."
+        ));
+    }
+    Ok(())
+}
+
 // ── server-sent events ───────────────────────────────────────────────────────
 //
 // The same shape as the socket primitives above, and deliberately so: two
@@ -2919,6 +2944,10 @@ fn sse_open(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     let url = host.base.join(&raw).map_err(|e| {
         boa_engine::JsNativeError::syntax().with_message(format!("`{raw}` is not a URL: {e}"))
     })?;
+
+    if let Err(why) = room_for_a_channel(&host) {
+        return Err(boa_engine::JsNativeError::error().with_message(why).into());
+    }
 
     match host.broker.open_event_stream(&url, Some(&host.base)) {
         Ok(stream) => {

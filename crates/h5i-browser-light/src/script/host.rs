@@ -229,6 +229,26 @@ pub struct RequestLink {
     pub seq: Option<u64>,
 }
 
+/// How many long-lived connections one page may hold at once.
+///
+/// Sockets and event streams together, because each is a thread and the thread
+/// is the resource: the browser session's own sandbox profile caps the process
+/// at 64, and that ceiling is shared with the viewer loop, the control loop,
+/// the HTTP client's runtime and the fetch workers. Nothing bounded these, so a
+/// page could open until thread creation failed and take the engine's own
+/// workers down with it.
+///
+/// The per-navigation request budget bounds how many a page may *open* over the
+/// life of a page; this bounds how many it may hold at one moment. Sixteen is
+/// far past what a real page does — a dev server's hot-reload socket, a
+/// notification stream, a live feed — and far short of the ceiling.
+///
+/// Counted over the maps rather than over live peers: this engine cannot ask a
+/// channel whether the far end has gone without a method on the trait that
+/// crosses the process split, and a page that opens sixteen and closes none is
+/// holding sixteen whatever the peers think.
+pub const MAX_OPEN_CHANNELS: usize = 16;
+
 /// How many requests a page may have *waiting to be started*.
 ///
 /// [`MAX_INFLIGHT_FETCHES`] bounds what is on the wire and

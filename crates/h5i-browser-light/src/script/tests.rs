@@ -1408,6 +1408,35 @@ fn an_answer_that_is_not_an_event_stream_is_not_read_as_one() {
     let _ = server.join();
 }
 
+/// Each of these is a thread, and the thread is the resource the session's
+/// sandbox profile actually caps — at 64 for the whole process, shared with the
+/// viewer loop, the control loop, the HTTP client's runtime and the fetch
+/// workers. Nothing bounded them, so a page could open until thread creation
+/// failed and take the engine's own workers down with it.
+///
+/// The arithmetic rather than sixteen live servers: what is under test is the
+/// bound, and the two maps it counts over are the sockets and the streams
+/// together, because each of them is one thread.
+#[test]
+fn a_page_cannot_hold_more_open_connections_than_the_engine_has_room_for() {
+    use crate::script::host::MAX_OPEN_CHANNELS;
+
+    assert!(
+        MAX_OPEN_CHANNELS < 64,
+        "the bound has to leave room under the profile's thread ceiling"
+    );
+    assert!(crate::script::dom_api::channel_room(0).is_ok());
+    assert!(crate::script::dom_api::channel_room(MAX_OPEN_CHANNELS - 1).is_ok());
+
+    let refused = crate::script::dom_api::channel_room(MAX_OPEN_CHANNELS)
+        .expect_err("the page is at the bound");
+    assert!(refused.contains("open connections"), "{refused}");
+    assert!(
+        refused.contains("Close one"),
+        "it says what to do about it: {refused}"
+    );
+}
+
 #[test]
 fn eventsource_is_real_rather_than_a_name_that_answers_feature_detection() {
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
