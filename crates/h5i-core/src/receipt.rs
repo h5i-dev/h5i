@@ -1,24 +1,23 @@
 //! Execution receipts: the honest record of what actually ran in a box.
 //!
-//! One append-only JSONL log per environment (`<env>/receipt.jsonl`) plus the
-//! raw payload of each record under `<env>/receipts/<id>.raw`. A record is
-//! generated from observation (the command, its exit code, its resource
-//! accounting, the egress verdicts the proxy handed down) never from the
-//! agent's account of itself.
+//! One append-only JSONL log per environment (`<env>/receipt.jsonl`) plus the raw
+//! payload of each record under `<env>/receipts/<id>.raw`. A record is generated
+//! from observation (the command, its exit code, its resource accounting, the
+//! egress verdicts the proxy handed down) never from the agent's account of
+//! itself.
 //!
 //! Two properties the design depends on:
 //!
-//! * Append only. [`append`] opens the log with `O_APPEND` and never
-//!   rewrites an existing line. A reader tolerates a malformed tail line
-//!   (a torn concurrent write) instead of failing the whole read.
-//! * Redacted at the boundary. Secrets are scrubbed from the command and
-//!   from the raw payload *before* either is written, and the scrub is
-//!   recorded by rule id, never by value.
+//! * Append only. [`append`] opens the log with `O_APPEND` and never rewrites an
+//!   existing line. A reader tolerates a malformed tail line instead of failing
+//!   the whole read.
+//! * Redacted at the boundary. Secrets are scrubbed from the command and from
+//!   the raw payload *before* either is written, and the scrub is recorded by
+//!   rule id, never by value.
 //!
-//! The store is host side today. Section 5.7 of the roadmap moves the writer
-//! to an inherited fd owned by a host collector so an in-box agent cannot
-//! rewrite what it already reported; the record shape here is what that
-//! collector will carry.
+//! The store is host side today. Section 5.7 of the roadmap moves the writer to
+//! an inherited fd owned by a host collector so an in-box agent cannot rewrite
+//! what it already reported.
 
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -43,20 +42,19 @@ const ID_LEN: usize = 16;
 ///
 /// The agent's own account of a UI check is the least trustworthy part of an
 /// export: "I clicked Submit and it worked" is a sentence, not evidence. This is
-/// the observed half. The verb that ran, and the console messages, page errors
+/// the observed half: the verb that ran, and the console messages, page errors
 /// and failed requests that followed it.
 ///
 /// Lane. This is box-claimed, like `tee-shim`: the numbers come out of the
 /// browser inside the box. What makes it useful anyway is that h5i decides
-/// *when* to collect it (right after the browser command, in the same policy)
+/// *when* to collect it, right after the browser command and in the same policy,
 /// rather than the agent choosing what to report. An agent can still close the
 /// browser to stop the record, and a run with a browser verb and no evidence
 /// block is itself visible.
 ///
-/// Only what is new. The browser's buffers accumulate for the life of a
-/// session, so every field here is the slice since the previous drain, tracked
-/// by a host-side cursor outside the box's write grants. Repeating the whole
-/// buffer on every record would bury the one error that just appeared.
+/// Only what is new. The browser's buffers accumulate for the life of a session,
+/// so every field here is the slice since the previous drain, tracked by a
+/// host-side cursor outside the box's write grants.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BrowserEvidence {
     /// The agent-browser verb this run invoked (`open`, `click`, `snapshot`, …).
@@ -95,13 +93,13 @@ impl BrowserEvidence {
 /// What an ingress session was, as structured fact rather than as prose.
 ///
 /// The one thing a reviewer must be able to read off a share record without
-/// ambiguity is whether a third party could read the traffic. A Cloudflare
-/// quick tunnel terminates TLS, and peer-to-peer does not. That was being
-/// recovered by testing whether the rendered command string contained the
-/// substring `tunnel`, and the command string contains the box's name: a
-/// perfectly ordinary P2P share of a box called `tunnel`, `my-tunnel` or
-/// `tunneling` was reported to the reviewer as Cloudflare-terminated. A wrong
-/// security claim in the evidence artifact is worse than a missing one.
+/// ambiguity is whether a third party could read the traffic. A Cloudflare quick
+/// tunnel terminates TLS, and peer-to-peer does not. That was being recovered by
+/// testing whether the rendered command string contained the substring `tunnel`,
+/// and the command string contains the box's name: a perfectly ordinary P2P
+/// share of a box called `tunnel` was reported to the reviewer as
+/// Cloudflare-terminated. A wrong security claim in the evidence artifact is
+/// worse than a missing one.
 ///
 /// So it is a field. Prose is rendered from this; nothing parses the prose.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -148,16 +146,15 @@ pub struct ExecRecord {
     /// no dump and for records from before it existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_digest: Option<String>,
-    /// Other boxes of this repository materialized on this host whose
-    /// effective Landlock grants
-    /// overlap this box's. Cross-box influence possible through the shared
-    /// path each entry names (`env/<agent>/<slug> via <path>`). Empty is the
-    /// strong answer: a clean check in both directions means neither box can
-    /// influence the other through their granted filesystems. Scope
-    /// is exactly the grant lists. Binds, network, and host processes
-    /// outside any box are not covered, and a listed overlap may be closed
-    /// in practice by a bind (the private `/tmp` redirect notably); the
-    /// check fails safe, never silent.
+    /// Other boxes of this repository materialized on this host whose effective
+    /// Landlock grants overlap this box's, as `env/<agent>/<slug> via <path>`.
+    /// Empty is the strong answer: a clean check in both directions means
+    /// neither box can influence the other through their granted filesystems.
+    ///
+    /// Scope is exactly the grant lists. Binds, network, and host processes
+    /// outside any box are not covered, and a listed overlap may be closed in
+    /// practice by a bind, notably the private `/tmp` redirect. The check fails
+    /// safe, never silent.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fs_overlap: Vec<String>,
     /// Which lane observed this: `host-env-run`, `tee-shim`, `shell-egress`.
@@ -202,11 +199,10 @@ pub struct ExecRecord {
     ///
     /// A second observer of the same command, in its own lane. `source` above
     /// stays `host-env-run`, deliberately: the record is *about the command*,
-    /// and this is a different observer of that command rather than a
-    /// different record. Present even when the detector could not attach, the
-    /// block then carries the reason, because a missing block and a quiet box
-    /// would otherwise look identical, which is the confusion this lane exists
-    /// to remove.
+    /// and this is a different observer of that command rather than a different
+    /// record. Present even when the detector could not attach, the block then
+    /// carrying the reason, because a missing block and a quiet box would
+    /// otherwise look identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<h5i_bpf::RuntimeEvidence>,
     /// Secret rules that fired while redacting, by rule id.
@@ -321,15 +317,13 @@ fn redact_binary(raw: &[u8]) -> Vec<u8> {
 
 /// Record ids are lowercase hex. Checking that before a handle becomes a path
 /// keeps `../..` out of the join. No caller can reach it with hostile input
-/// today, `env::inspect` is gated by `find` succeeding on the same handle,
-/// but `raw_bytes` is `pub`, and a console route added later would inherit the
+/// today, `env::inspect` being gated by `find` succeeding on the same handle,
+/// but `raw_bytes` is `pub` and a console route added later would inherit the
 /// unvalidated join rather than this refusal.
 ///
 /// Public because the id of a record read back off disk becomes a path in more
-/// than one crate module (`export::copy_share_payloads` names the bundle file
-/// after it), and every one of those joins needs the same gate. A record is
-/// deserialized JSON, so its `id` is whatever the file says: `append` writes a
-/// hex digest, but "what h5i wrote" is not what a reader is holding.
+/// than one crate module, and every one of those joins needs the same gate. A
+/// record is deserialized JSON, so its `id` is whatever the file says.
 pub fn is_record_handle(id: &str) -> bool {
     !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -347,17 +341,15 @@ static RUN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 
 /// The handle for one *run*.
 ///
-/// This used to be `sha256(payload)[..16]`: the content address of the output
-/// and nothing else. That made the id collide across genuinely different runs:
-/// `true` and `false` both produce no output, so both got the same id, as did
-/// `echo hello` and `printf hello`. Lookup is first-match-wins, so the second
-/// run of a colliding pair became unreachable through `inspect`, and `compare`
-/// showed the wrong command and exit code for a box's latest run.
+/// This used to be `sha256(payload)[..16]`: the content address of the output and
+/// nothing else. That made the id collide across genuinely different runs, since
+/// `true` and `false` both produce no output. Lookup is first-match-wins, so the
+/// second run of a colliding pair became unreachable through `inspect`, and
+/// `compare` showed the wrong command and exit code for a box's latest run.
 ///
 /// So the id now covers what distinguishes a run (when it happened, where, what
 /// was executed and how it ended) with the payload digest still folded in, plus
-/// the process-local sequence number. `raw_oid` remains the content address, so
-/// nothing about payload deduplication changes.
+/// the process-local sequence number. `raw_oid` remains the content address.
 fn run_id(timestamp: &str, input: &RecordInput, digest: &str) -> String {
     let seq = RUN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // NUL separators: no field can contain one, so no two distinct field sets
@@ -386,13 +378,12 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
     let redacted_holder;
     let raw: &[u8] = match std::str::from_utf8(raw) {
         Ok(text) => {
-            // Redaction is UNCONDITIONAL. `scan_text` applies a placeholder
-            // stoplist (`example`, `dummy`, `fake`, …) and skips the whole line
-            // when it hits one, which is right for detection and fail-open for
-            // publication: a box printing `example config: ghp_<real>` produced
-            // no findings, so the credential was stored verbatim. `redact_line`
-            // deliberately has no stoplist for exactly this reason, and there is
-            // a regression test pinning that. Gating the call on the detector
+            // Redaction is UNCONDITIONAL. `scan_text` applies a placeholder stoplist
+            // (`example`, `dummy`, `fake`, …) and skips the whole line when it hits
+            // one, which is right for detection and fail-open for publication: a box
+            // printing `example config: ghp_<real>` produced no findings, so the
+            // credential was stored verbatim. `redact_line` deliberately has no
+            // stoplist for exactly this reason, and gating the call on the detector
             // put the hole back one level up.
             //
             // So scan only to name the rules that fired, and always scrub.
@@ -609,16 +600,15 @@ pub fn raw_bytes(env_dir: &Path, id: &str) -> Result<Vec<u8>, H5iError> {
 /// Blob filename for a `sha256:<hex>` object id.
 ///
 /// The key becomes a path component, and `raw_oid` is a field of a record
-/// deserialized from `receipt.jsonl`, so it is whatever the file says, not
-/// necessarily the digest `append` wrote. Two things follow, and neither was
-/// being done:
+/// deserialized from `receipt.jsonl`, so it is whatever the file says. Two
+/// things follow, and neither was being done:
 ///
 /// * The prefix must be validated as hex, or `sha256:../../../../../x` is a
 ///   16-character traversal out of `receipts/` and `raw_bytes` reads a file of
 ///   the writer's choosing. `valid_handle` exists for exactly this and was
 ///   applied only on the fallback branch below it.
 /// * The slice must be taken on a *character boundary*, or a multi-byte
-///   `raw_oid` (`sha256:` + ten `é`) panics the process inside a `[..16]`.
+///   `raw_oid` panics the process inside a `[..16]`.
 fn blob_key(raw_oid: &str) -> Option<String> {
     let key = raw_oid.strip_prefix("sha256:")?.get(..ID_LEN)?;
     is_record_handle(key).then(|| key.to_string())
@@ -629,18 +619,15 @@ fn blob_key(raw_oid: &str) -> Option<String> {
 /// Everything variable here is sanitised on the way out, because a receipt is
 /// read as evidence and half of what it carries was written by the thing being
 /// reviewed. `cmd` at the container tier comes from the box's own tee shim; the
-/// browser lines are strings a *web page* produced. An escape sequence in any
-/// of them rewrites the lines above it, so a box could show the reviewer
-/// `exit : 0` and `egress : 0 denied` over a run that was neither. `export`'s
-/// `report.md` has sanitised the same fields since it was written; this
-/// renderer, which prints to a terminal, the surface where the sequences
-/// actually execute, did not.
+/// browser lines are strings a *web page* produced. An escape sequence in any of
+/// them rewrites the lines above it, so a box could show the reviewer `exit : 0`
+/// over a run that was neither. `export`'s `report.md` has sanitised the same
+/// fields since it was written; this renderer, which prints to a terminal, did
+/// not.
 ///
 /// The payload goes through [`crate::redact::sanitize_block`] rather than the
 /// single-line form: it is meant to have lines, and folding them together would
-/// make the one command that shows a captured log useless. Colour sequences go
-/// with the rest, which is the trade a document that has to be trustworthy
-/// makes.
+/// make the one command that shows a captured log useless.
 pub fn render(rec: &ExecRecord, raw: &[u8]) -> String {
     use crate::redact::sanitize_display as clean;
     let mut out = String::new();
