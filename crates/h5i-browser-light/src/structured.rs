@@ -222,7 +222,7 @@ fn cap(mut value: String) -> String {
 ///
 /// The fence in [`crate::snapshot::Snapshot::render`] rests on no page-derived
 /// value spanning a line. JSON-LD is page-derived and arbitrarily nested, so
-/// the collapse has to reach every leaf — a forged fence marker inside
+/// the collapse has to reach every leaf. A forged fence marker inside
 /// `{"description": "…"}` is exactly as effective as one in a heading.
 fn fence_json(value: serde_json::Value) -> serde_json::Value {
     match value {

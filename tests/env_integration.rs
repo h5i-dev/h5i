@@ -1,4 +1,4 @@
-//! End-to-end tests for `h5i env` — isolated agent environments
+//! End-to-end tests for `h5i env`: isolated agent environments
 //! (worktree + sandbox + provenance, docs/environments-design.md).
 //!
 //! These tests drive the compiled binary as a subprocess against real git
@@ -9,13 +9,13 @@
 //!   2. `run` is capture-wrapped and policy-enforced: evidence lands in
 //!      `refs/h5i/objects` tagged with the env id + policy digest, and the
 //!      child's exit code passes through.
-//!   3. `propose`/`apply` is the only road into the parent branch — apply
+//!   3. `propose`/`apply` is the only road into the parent branch. Apply
 //!      refuses without propose, and the mediated commit fails closed on
 //!      path-allowlist violations (nested `.git`).
 //!   4. Isolation claims fail closed: an unsatisfiable claim refuses at
 //!      `create`, it never silently downgrades.
 //!   5. The kernel sandbox actually confines (write-outside-$WORK blocked,
-//!      network denied) — these assertions are **capability-gated** and skip
+//!      network denied). These assertions are *capability-gated* and skip
 //!      cleanly on hosts without Landlock/userns (e.g. stock WSL2).
 //!
 //! Run with:
@@ -56,7 +56,7 @@ fn out_str(out: &Output) -> String {
 ///
 /// The capability bits (Landlock + user namespaces + seccomp) can all be
 /// present while a hardened kernel still denies `exec` under the full
-/// confinement stack — notably AppArmor-restricted unprivileged user
+/// confinement stack. Notably AppArmor-restricted unprivileged user
 /// namespaces on Ubuntu 24.04 / GitHub-Actions runners. `env create
 /// --isolation process` now functionally self-tests and fails closed there, so
 /// a successful create is the authoritative signal that the kernel tests can
@@ -81,7 +81,7 @@ fn process_tier_runnable() -> bool {
 ///
 /// The supervised tier needs the whole mediation stack green (seccomp
 /// user-notification, cgroup v2 delegation, nftables, namespaces) and refuses
-/// rather than downgrading, so plenty of hosts — CI runners especially — will
+/// rather than downgrading, so plenty of hosts, CI runners especially, will
 /// skip every test gated on this.
 fn supervised_tier_runnable() -> bool {
     use std::sync::OnceLock;
@@ -160,8 +160,8 @@ impl Repo {
         serde_json::from_str(&text).expect("manifest json")
     }
 
-    /// The **latest** receipt recorded for env `<slug>`. Records are appended
-    /// chronologically, so the last line is the newest — important when an env
+    /// The *latest* receipt recorded for env `<slug>`. Records are appended
+    /// chronologically, so the last line is the newest. Important when an env
     /// has several runs.
     fn capture_manifest(&self, slug: &str) -> serde_json::Value {
         let log = self.env_dir(slug).join("receipt.jsonl");
@@ -252,7 +252,7 @@ fn append_synthetic_env_manifest(repo: &git2::Repository, m: &h5i_core::env::Env
 
 /// A fail-closed step between the worktree and the manifest used to leave a
 /// registered+locked worktree and a branch that `create` refuses to reuse and
-/// `rm` cannot see — recoverable only with `git worktree prune` and
+/// `rm` cannot see. Recoverable only with `git worktree prune` and
 /// `git branch -D` by hand.
 #[test]
 fn a_failed_create_leaves_nothing_behind_to_clean_up() {
@@ -307,8 +307,8 @@ fn a_failed_create_leaves_nothing_behind_to_clean_up() {
 #[test]
 fn create_builds_worktree_branch_policy_and_event() {
     let r = Repo::new();
-    // `h5i init` drops its own untracked scaffolding (CLAUDE.md, .claude/…) —
-    // snapshot the status BEFORE create so we assert create adds nothing.
+    // `h5i init` drops its own untracked scaffolding (CLAUDE.md, .claude/…).
+    // Snapshot the status BEFORE create so we assert create adds nothing.
     let st_before = out_str(&git(&r.dir, &["status", "--porcelain"]));
     let out = out_str(&r.h5i_ok(&["env", "create", "fix-auth"]));
     assert!(out.contains("env/tester/fix-auth"), "{out}");
@@ -456,8 +456,8 @@ fn create_refuses_duplicates_and_bad_names() {
     }
 }
 
-/// The two states a brand-new user meets before git is ready — no repository
-/// at all, and a `git init` with no commit behind HEAD — must answer with the
+/// The two states a brand-new user meets before git is ready (no repository
+/// at all, and a `git init` with no commit behind HEAD) must answer with the
 /// command that fixes them. Both used to leak libgit2's diagnosis
 /// (`could not find repository at '.'; class=Repository (6)` and
 /// `revspec 'HEAD' not found`), which names neither the precondition nor
@@ -488,7 +488,7 @@ fn create_names_the_fix_when_there_is_no_repo_or_no_commit() {
         "libgit2 internals must not leak: {said}"
     );
 
-    // A fresh `git init` with an unborn HEAD: say what is missing — a commit —
+    // A fresh `git init` with an unborn HEAD: say what is missing, a commit,
     // and how to make one, rather than "revspec 'HEAD' not found".
     let unborn = TempDir::new().expect("tempdir");
     run_ok(Command::new("git").args(["init", "-b", "main"]).arg(unborn.path()));
@@ -518,7 +518,7 @@ fn create_names_the_fix_when_there_is_no_repo_or_no_commit() {
 }
 
 /// A directory under `.git/worktrees/` that is not a worktree registration
-/// must not be able to stop `create` — for this env or any other.
+/// must not be able to stop `create`. For this env or any other.
 ///
 /// libgit2's `git_worktree_lookup` fails on such a directory, and
 /// `git_repository_foreach_worktree` hands that failure up as `1` rather than
@@ -527,7 +527,7 @@ fn create_names_the_fix_when_there_is_no_repo_or_no_commit() {
 /// branch in the repo, and `create` died on a branch it had made two lines
 /// earlier: `reference refs/heads/h5i/env/tester/... is already checked out`.
 /// Nothing about that message points at the leftover, and no amount of picking
-/// a different name gets past it — the repo is simply done creating boxes.
+/// a different name gets past it. The repo is simply done creating boxes.
 ///
 /// Several leftovers, not one: libgit2 filters the invalid entries out of
 /// `git_worktree_list` by removing them from a vector *while iterating it*, so
@@ -558,7 +558,7 @@ fn stale_worktree_registrations_do_not_break_create() {
 /// A `create` that fails while making the worktree must leave nothing behind.
 ///
 /// The branch is created immediately before the worktree, and the rollback used
-/// to be armed immediately *after* it — so a failure in between left a branch
+/// to be armed immediately *after* it, so a failure in between left a branch
 /// and an `<env>/` directory with no manifest. `list` resolves envs through the
 /// manifest and showed nothing; `rm` could not resolve the name either; and
 /// retrying the same name answered "already exists" for an env that had never
@@ -583,7 +583,7 @@ fn a_create_that_fails_at_the_worktree_leaves_no_branch_or_directory() {
     );
 
     // And the name is genuinely free again: not "already exists", not "branch
-    // already exists" — it just works.
+    // already exists". It just works.
     std::fs::remove_file(r.dir.join(".git/worktrees")).unwrap();
     r.h5i_ok(&["env", "create", "halfmade"]);
 }
@@ -599,8 +599,8 @@ fn create_reclaims_an_env_directory_left_without_a_manifest() {
     r.h5i_ok(&["env", "create", "leftover"]);
     assert!(r.env_dir("leftover").join("manifest.json").exists());
 
-    // A leftover that still holds a workspace is *not* silently reclaimed —
-    // there is something in it to lose, so it is reported with the paths named.
+    // A leftover that still holds a workspace is *not* silently reclaimed.
+    // There is something in it to lose, so it is reported with the paths named.
     std::fs::create_dir_all(r.env_dir("held").join("work")).unwrap();
     let out = r.h5i(&["env", "create", "held"]);
     assert!(!out.status.success());
@@ -624,7 +624,7 @@ fn create_pins_an_explicit_base_revision() {
     r.h5i_ok(&["env", "create", "old-base", "--from", &first]);
     let m = r.manifest("old-base");
     assert_eq!(m["base_commit"].as_str().unwrap(), first);
-    // The worktree reflects the OLD base — later.txt is absent.
+    // The worktree reflects the OLD base. Later.txt is absent.
     assert!(!r.work("old-base").join("later.txt").exists());
 }
 
@@ -632,7 +632,7 @@ fn create_pins_an_explicit_base_revision() {
 /// `policy.effective.json` from the same computation the sandbox applies and
 /// pins its digest in the manifest; a run rewrites it at the apply seam and
 /// pins the digest of what it enforced in the capture record. A workspace-tier
-/// env writes none — the schema describes the kernel mechanisms and nothing
+/// env writes none. The schema describes the kernel mechanisms and nothing
 /// else.
 #[test]
 #[cfg(target_os = "linux")]
@@ -677,7 +677,7 @@ fn effective_config_written_at_create_and_pinned_per_run() {
     assert!(r.manifest("ws").get("effective_digest").is_none());
 
     // With only dump-less neighbors, the run's receipt claims no overlap
-    // (the field is omitted when empty) — the machine-checked strong answer.
+    // (the field is omitted when empty). The machine-checked strong answer.
     assert!(rec.get("fs_overlap").is_none(), "solo box must record no overlap: {rec}");
 
     // A second kernel-tier box on the same repo DOES overlap the first:
@@ -752,7 +752,7 @@ fn env_allow_add_list_remove_and_in_box_refusal() {
     let out = run(&["env", "allow", "https://evil.example/x"], false);
     assert!(!out.status.success(), "URL must be rejected");
 
-    // In-box mutation is refused — a confined agent must not widen its own
+    // In-box mutation is refused. A confined agent must not widen its own
     // network grants (the file also isn't box-writable; this is the belt).
     let out = run(&["env", "allow", "evil.example"], true);
     assert!(!out.status.success(), "in-box env allow must refuse");
@@ -789,7 +789,7 @@ fn env_create_pr_pins_pr_head_as_base() {
     r.h5i_ok(&["env", "create", "review-pr", "--pr", "7"]);
     let m = r.manifest("review-pr");
     // The immutable base IS the PR head, and the review target is its local
-    // tracking branch — not whatever branch happened to be checked out.
+    // tracking branch, not whatever branch happened to be checked out.
     assert_eq!(m["base_commit"].as_str().unwrap(), pr_head);
     assert_eq!(m["parent_branch"].as_str().unwrap(), "pr/7");
     assert_eq!(m["pr"].as_u64().unwrap(), 7);
@@ -862,8 +862,8 @@ fn run_captures_evidence_with_env_id_and_policy_digest() {
 }
 
 /// `env status` surfaces evidence STAGED in the spool but not yet ingested
-/// (visible mid-session, before the host materializes it at run/shell end) —
-/// staged captures, notes, and tee-shim records, with the pending commands.
+/// (visible mid-session, before the host materializes it at run/shell end).
+/// Staged captures, notes, and tee-shim records, with the pending commands.
 #[test]
 fn env_status_shows_pending_spool_evidence() {
     let r = Repo::new();
@@ -1175,7 +1175,7 @@ fn apply_patch_mode_squashes_into_single_parent_commit() {
     assert!(msg.contains("--patch"), "squash commit subject: {msg}");
 }
 
-/// `--patch` also squashes when the parent has advanced — the result is a
+/// `--patch` also squashes when the parent has advanced. The result is a
 /// single-parent commit on top of the advanced parent (a 3-way merge tree with
 /// only the parent recorded as a parent), not a two-parent merge.
 #[test]
@@ -1211,7 +1211,7 @@ fn apply_patch_mode_squashes_over_advanced_parent() {
 fn apply_noop_env_reports_nothing_to_apply() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "empty"]);
-    // Propose with no worktree changes — the env branch tip stays at base.
+    // Propose with no worktree changes. The env branch tip stays at base.
     r.h5i_ok(&["env", "propose", "empty"]);
 
     let before = out_str(&git(&r.dir, &["rev-parse", "main"]));
@@ -1258,7 +1258,7 @@ fn apply_refuses_second_apply() {
 fn mediated_commit_fails_closed_on_nested_git_repo() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "smuggle"]);
-    // An agent (or its build) drops a nested git repo inside $WORK — staging
+    // An agent (or its build) drops a nested git repo inside $WORK. Staging
     // it would record a gitlink/submodule pointer. Must refuse, not skip.
     let nested = r.work("smuggle").join("vendor/dep");
     std::fs::create_dir_all(&nested).unwrap();
@@ -1359,14 +1359,14 @@ fn add_base_submodule(r: &Repo, src_name: &str, sub_path: &str) -> String {
 fn mediated_commit_allows_unchanged_base_submodule() {
     // Regression: a repo that legitimately uses a git submodule must still be
     // proposable. The submodule is an upstream gitlink the env inherited at
-    // create time — not an agent-smuggled pointer — so it round-trips unchanged
+    // create time, not an agent-smuggled pointer, so it round-trips unchanged
     // instead of tripping the fail-closed gitlink refusal.
     let r = Repo::new();
     let gitlink = add_base_submodule(&r, "sub-src", "examples/dep");
 
     r.h5i_ok(&["env", "create", "sub"]);
     // The agent makes an ordinary edit, so the mediated commit has real changes
-    // to write — the inherited gitlink must survive alongside them.
+    // to write. The inherited gitlink must survive alongside them.
     std::fs::write(r.work("sub").join("new.txt"), "agent work\n").unwrap();
 
     // Propose must SUCCEED (previously refused with a gitlink violation).
@@ -1390,7 +1390,7 @@ fn mediated_commit_allows_unchanged_base_submodule() {
 
 #[test]
 fn mediated_commit_still_rejects_new_gitlink_beside_submodule() {
-    // The exemption is scoped to the *registered* base submodule path — it is
+    // The exemption is scoped to the *registered* base submodule path. It is
     // NOT a blanket "any gitlink allowed". A new nested repo the agent drops at
     // a different path must still fail the mediated commit, even when a legit
     // submodule is present.
@@ -1452,7 +1452,7 @@ fn secret_grant_is_injected_then_redacted_and_audited() {
         .expect("run");
     assert!(out.status.success(), "run failed: {}", out_str(&out));
 
-    // The injected value must NOT appear in the capture — but the surrounding
+    // The injected value must NOT appear in the capture, but the surrounding
     // text must, proving the secret was actually injected (then redacted).
     let cap = r.capture_manifest("needs-secret");
     let raw = String::from_utf8_lossy(&r.capture_raw_for(
@@ -1564,11 +1564,11 @@ fn supervised_claim_refuses_when_stack_incomplete() {
     let _serial = supervised_guard();
     let r = Repo::new();
     // On this host (and any without the full mediation stack) the supervised
-    // claim must be REFUSED — never silently downgraded. An impossible claim.
+    // claim must be REFUSED. Never silently downgraded. An impossible claim.
     let out = r.h5i(&["env", "create", "untrusted", "--isolation", "supervised"]);
     if out.status.success() {
         // The only way this succeeds is if the host genuinely has the whole
-        // stack green — then the manifest must honestly say 'supervised'.
+        // stack green, then the manifest must honestly say 'supervised'.
         assert_eq!(r.manifest("untrusted")["isolation_claim"], "supervised");
     } else {
         let text = out_str(&out);
@@ -1581,7 +1581,7 @@ fn supervised_claim_refuses_when_stack_incomplete() {
 }
 
 /// Set up a repo with a `supervised` profile (plus optional extra profile TOML)
-/// and create env `slug`. Returns `None` — so the caller skips cleanly — when
+/// and create env `slug`. Returns `None`, so the caller skips cleanly, when
 /// the host can't satisfy the supervised claim (e.g. CI without cgroup
 /// delegation), exactly like the container tests gate on rootless Podman.
 /// Serializes the heavy supervised e2e tests. Each spawns confined children
@@ -1628,7 +1628,7 @@ fn supervised_run_raw(r: &Repo, slug: &str, argv: &[&str]) -> Option<String> {
     let mut full = vec!["env", "run", slug, "--"];
     full.extend_from_slice(argv);
     // Run synchronously. A non-zero exit (OOM-killed, denied write, …) still
-    // produces a capture — what we read below; only a setup failure has none.
+    // produces a capture. What we read below; only a setup failure has none.
     let _out = Command::new(H5I)
         .args(&full)
         .env("H5I_AGENT", "tester")
@@ -1640,8 +1640,8 @@ fn supervised_run_raw(r: &Repo, slug: &str, argv: &[&str]) -> Option<String> {
 }
 
 /// Comprehensive live proof of the supervised tier's runtime enforcement, in a
-/// SINGLE env with a few **sequential** runs (deliberately not one test per
-/// property — many parallel supervised runs forking confined children exhaust
+/// SINGLE env with a few *sequential* runs (deliberately not one test per
+/// property: many parallel supervised runs forking confined children exhaust
 /// the host's fork capacity and flake unrelated git steps). Covers the
 /// seccomp-notify socket gate, the airtight netns, the Landlock FS allowlist,
 /// the seccomp deny-list, and the gate-verdict recording. Capability-gated.
@@ -1696,7 +1696,7 @@ fn supervised_enforces_runtime_confinement() {
         "packet socket denied:\n{net}"
     );
     // Linux denies the ungranted family at `socket()`, via the seccomp-notify
-    // gate. Seatbelt has no hook there — it filters the *operations*, so the fd
+    // gate. Seatbelt has no hook there. It filters the *operations*, so the fd
     // is created and `bind`/`connect` are what fail. Same containment (an
     // ungranted AF_UNIX socket cannot be used), different layer, so the
     // assertion follows the mechanism the platform actually has. The macOS half
@@ -1721,11 +1721,11 @@ fn supervised_enforces_runtime_confinement() {
         net.contains("NOCONNECT") && !net.contains("CONNECTED"),
         "netns must have no egress:\n{net}"
     );
-    // seccomp deny-list blocks ptrace(PTRACE_TRACEME) — a classic sandbox-escape
+    // seccomp deny-list blocks ptrace(PTRACE_TRACEME). A classic sandbox-escape
     // vector that would otherwise succeed (return 0) for an unprivileged process.
     // A bare EPERM here is unambiguous: only the deny-list produces it.
     //
-    // macOS has no seccomp, so `PT_TRACE_ME` is not refused — and on its own it
+    // macOS has no seccomp, so `PT_TRACE_ME` is not refused, and on its own it
     // is not an escape either: it marks the caller traceable by its own parent,
     // which is inside the box. The vector that matters is attaching to a process
     // the box does not own, and Seatbelt denies that. Assert the property, not
@@ -1747,10 +1747,10 @@ fn supervised_enforces_runtime_confinement() {
     // This tally is a product of the seccomp-notify gate, which sees every
     // `socket()` and can count it. macOS has no such hook: enforcement there is
     // the Seatbelt profile plus, when the profile declares an allowlist, the
-    // host proxy — and only the proxy produces a per-request tally. So a
+    // host proxy, and only the proxy produces a per-request tally. So a
     // deny-all profile on macOS enforces (asserted above: no route out, and an
     // ungranted AF_UNIX cannot bind) while recording no counts. Weaker evidence,
-    // same boundary — the same trade the microvm tier documents.
+    // same boundary. The same trade the microvm tier documents.
     if !cfg!(target_os = "macos") {
         let cap = r.capture_manifest("confine");
         let eg = &cap["egress"];
@@ -1796,7 +1796,7 @@ fn supervised_enforces_runtime_confinement() {
 fn supervised_memory_limit_is_enforced() {
     // Darwin has no cgroups, does not enforce RLIMIT_AS against the mmap'd
     // heap, and scopes RLIMIT_NPROC to the uid rather than the box, so the
-    // kernel tiers there apply no memory cap — a documented limitation that
+    // kernel tiers there apply no memory cap. A documented limitation that
     // `box status` now marks with `*` rather than reporting as enforced. The
     // cap is real at the container and microvm tiers.
     if cfg!(target_os = "macos") {
@@ -1830,11 +1830,11 @@ fn have_bin(name: &str) -> bool {
 }
 
 /// Supervised increment 2: a `net.egress` allowlist confines the netns to
-/// exactly the pinned hosts — slirp4netns provides the uplink, an nftables
+/// exactly the pinned hosts. Slirp4netns provides the uplink, an nftables
 /// default-drop ruleset is the airtight L3/L4 guard, and DNS is pinned via a
 /// private `/etc/hosts` (no port 53 at all). So an allowlisted host resolves to
 /// the pinned IP and connects, while everything else fails closed. Needs real
-/// outbound network, so it is **opt-in** via `H5I_TEST_NET=1` (mirrors the
+/// outbound network, so it is *opt-in* via `H5I_TEST_NET=1` (mirrors the
 /// container tests' `H5I_TEST_CONTAINER`), and capability-gated on the
 /// supervised stack + slirp4netns.
 #[test]
@@ -1877,7 +1877,7 @@ fn supervised_egress_allowlist_confines_to_pinned_hosts() {
 
 /// Set up a repo pinning `<profile>` to `supervised` and create env `slug` with
 /// it. `None` (skip) when the host cannot satisfy the claim or lacks the
-/// profile's tooling — same gate style as [`supervised_env`].
+/// profile's tooling. Same gate style as [`supervised_env`].
 fn supervised_profile_env(slug: &str, profile: &str) -> Option<Repo> {
     let r = Repo::new();
     std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
@@ -1906,7 +1906,7 @@ fn supervised_profile_env(slug: &str, profile: &str) -> Option<Repo> {
 }
 
 /// The private `/tmp` bind must not hide the box's own workspace when the
-/// repository itself lives under `/tmp` — which every `tempfile` repo in this
+/// repository itself lives under `/tmp`, which every `tempfile` repo in this
 /// suite does, and which is the common case for CI.
 ///
 /// This is the M4 write-up's first finding, and the write-up is wrong: it
@@ -1915,7 +1915,7 @@ fn supervised_profile_env(slug: &str, profile: &str) -> Option<Repo> {
 /// called it an unfixed footgun that `create` should refuse. It is not one. The
 /// bind-ordering fix (`home_binds_in_mount_order`, which mounts `/tmp` last)
 /// already made this work, and a `create`-time refusal would have rejected a
-/// configuration that runs correctly — including this suite's own fixtures.
+/// configuration that runs correctly, including this suite's own fixtures.
 ///
 /// So the test pins the working behaviour instead of guarding a phantom: the
 /// workspace is visible from inside, and `/tmp` is still the empty per-env
@@ -1953,8 +1953,8 @@ fn a_workspace_under_tmp_survives_the_private_tmp_bind() {
     );
 }
 
-/// The gap the M4 live run exposed: **no test ran an agent-family profile at
-/// `supervised`**, and `supervised` is the only kernel tier that can host one
+/// The gap the M4 live run exposed: no test ran an agent-family profile at
+/// `supervised`, and `supervised` is the only kernel tier that can host one
 /// (`process` refuses the egress these profiles need). Both M4 surprises lived
 /// in that gap, including the one this asserts.
 ///
@@ -1963,7 +1963,7 @@ fn a_workspace_under_tmp_survives_the_private_tmp_bind() {
 /// control socket is a filesystem-bound `AF_UNIX` listener, the gate denied the
 /// family for every profile, and the daemon died before writing a word. A
 /// profile-scoped grant is the fix, so the test that guards it has to be
-/// per-profile — `browser` gets `AF_UNIX`, and the neighbouring profile that
+/// per-profile: `browser` gets `AF_UNIX`, and the neighbouring profile that
 /// did not ask for it still does not.
 #[test]
 fn a_browser_box_at_supervised_gets_af_unix_and_its_neighbours_do_not() {
@@ -1986,17 +1986,17 @@ fn a_browser_box_at_supervised_gets_af_unix_and_its_neighbours_do_not() {
         return;
     }
 
-    // Bind a real filesystem-bound listener, which is what the daemon does —
+    // Bind a real filesystem-bound listener, which is what the daemon does,
     // not just socket(), so a gate that allowed the family but a Landlock grant
     // that refused MAKE_SOCK would still be caught.
     //
     // Under `TMPDIR`, not a literal `/tmp`: only the Linux tiers bind-mount a
     // per-env directory over `/tmp`, and on macOS the literal path is denied
-    // outright — the same distinction the daemon's own socket dir now follows.
+    // outright. The same distinction the daemon's own socket dir now follows.
     // Bound from *inside* the directory, so `sun_path` stays a bare filename.
     // A box's private tmp is `<repo>/.git/.h5i/env/<agent>/<slug>/tmp`, and with
     // the repo itself under a temp dir the absolute socket path runs past the
-    // 104-byte `sun_path` limit — which fails as "AF_UNIX path too long" and
+    // 104-byte `sun_path` limit, which fails as "AF_UNIX path too long" and
     // would read here as a policy denial rather than the length limit it is.
     let script = "import socket,os,errno\n\
         d=os.path.join(os.environ.get('TMPDIR','/tmp'),'gate-probe')\n\
@@ -2014,7 +2014,7 @@ fn a_browser_box_at_supervised_gets_af_unix_and_its_neighbours_do_not() {
     );
 
     // The grant is per-profile, not a tier-wide loosening. A `default` box on
-    // the same host, same tier, still gets EPERM — otherwise the fix would have
+    // the same host, same tier, still gets EPERM. Otherwise the fix would have
     // widened every box to buy one.
     let Some(plain) = supervised_env("plainbox", "") else {
         return;
@@ -2134,7 +2134,7 @@ fn rm_erases_workspace_branches_and_manifest() {
 
 /// Secure-by-default: `--isolation auto` (which force-probes, ignoring the
 /// test's `H5I_DEFAULT_ISOLATION=workspace` pin) selects the *strongest* tier
-/// this host can actually run — and the invariant is that the picked tier then
+/// this host can actually run, and the invariant is that the picked tier then
 /// runs a command cleanly (auto never lands on an unrunnable tier). Serialized
 /// with the other confined-fork tests since auto may pick supervised/process.
 #[test]
@@ -2182,8 +2182,8 @@ fn unimplemented_backends_refuse_at_create() {
     assert!(!out.status.success(), "unknown claim must refuse");
 }
 
-/// The microvm tier has an adapter, so it refuses for *substantive* reasons —
-/// a missing image or a host that cannot virtualize — and never by silently
+/// The microvm tier has an adapter, so it refuses for *substantive* reasons,
+/// a missing image or a host that cannot virtualize, and never by silently
 /// downgrading to a weaker tier.
 #[test]
 fn microvm_claim_fails_closed_with_an_actionable_reason() {
@@ -2200,7 +2200,7 @@ fn microvm_claim_fails_closed_with_an_actionable_reason() {
     );
 
     // With an image the verdict depends on the host. Either it resolves to the
-    // microvm tier, or it refuses saying so — never a quiet downgrade to a
+    // microvm tier, or it refuses saying so. Never a quiet downgrade to a
     // weaker claim, which is the failure mode this whole design exists to avoid.
     let out = r.h5i(&[
         "env",
@@ -2231,7 +2231,7 @@ fn process_claim_is_all_or_nothing_per_host() {
         assert!(out.status.success(), "{}", out_str(&out));
         assert_eq!(r.manifest("confined")["isolation_claim"], "process");
     } else {
-        // Fail closed: refuse with an explicit reason, never downgrade — whether
+        // Fail closed: refuse with an explicit reason, never downgrade. Whether
         // the bits are missing or the confinement simply can't exec on this host.
         assert!(
             !out.status.success(),
@@ -2250,7 +2250,7 @@ fn process_claim_is_all_or_nothing_per_host() {
 
 /// Write outside $WORK is blocked by Landlock; write inside works; network is
 /// unreachable under net.mode=deny. Skips (with a notice) when the host can't
-/// satisfy the process claim — the fail-closed path is covered above.
+/// satisfy the process claim. The fail-closed path is covered above.
 #[test]
 fn process_tier_confines_fs_and_network() {
     if !process_tier_runnable() {
@@ -2288,7 +2288,7 @@ fn process_tier_confines_fs_and_network() {
     assert!(!out.status.success(), "write outside $WORK must fail");
     assert!(!escape.exists(), "no file may appear outside $WORK");
 
-    // The shared .git IS reachable through the worktree gitlink — but only on
+    // The shared .git IS reachable through the worktree gitlink, but only on
     // the narrow in-box surface (own admin dir + objects + own ref namespace;
     // see env::box_git_grants). A worktree that can't even `rev-parse HEAD`
     // bricks the boxed agent; the write-side jail is proven in
@@ -2459,7 +2459,7 @@ fn box_git_grants_stay_fail_closed_outside_env_namespace() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "boxjail", "--isolation", "process"]);
 
-    // Diverge the env branch first — otherwise `update-ref main HEAD` would be
+    // Diverge the env branch first. Otherwise `update-ref main HEAD` would be
     // an undetectable no-op (same oid).
     r.h5i_ok(&[
         "env",
@@ -2596,7 +2596,7 @@ fn box_git_grants_stay_fail_closed_outside_env_namespace() {
 }
 
 /// The wall-clock kill must reap the WHOLE process tree (process-group kill),
-/// not just the direct child — a runaway backgrounded descendant must die too.
+/// not just the direct child. A runaway backgrounded descendant must die too.
 /// Runs at the workspace tier so it needs no kernel capabilities.
 #[test]
 fn wall_clock_kill_reaps_descendant_processes() {
@@ -2610,8 +2610,8 @@ fn wall_clock_kill_reaps_descendant_processes() {
     r.h5i_ok(&["env", "create", "reap"]);
 
     // Background a grandchild that writes a marker 8s in, while the foreground
-    // blocks for 60s. The 1s wall-clock fires long before 8s — even if the
-    // poller slips by several seconds under parallel test load — and a correct
+    // blocks for 60s. The 1s wall-clock fires long before 8s, even if the
+    // poller slips by several seconds under parallel test load, and a correct
     // group-kill takes the grandchild with it, so the marker never appears.
     let t0 = std::time::Instant::now();
     let out = r.h5i(&[
@@ -2640,10 +2640,10 @@ fn wall_clock_kill_reaps_descendant_processes() {
 }
 
 /// A wall-clock kill must surface as the conventional `timeout(1)` exit code
-/// **124** (main.rs maps `outcome.timed_out` → `exit(124)`), so callers/CI can
+/// *124* (main.rs maps `outcome.timed_out` → `exit(124)`), so callers/CI can
 /// distinguish "killed by the deadline" from an ordinary non-zero exit. The
 /// reap test above only asserts `!success`; this pins the documented code.
-/// Workspace tier — no kernel capabilities needed.
+/// Workspace tier, no kernel capabilities needed.
 #[test]
 fn wall_clock_kill_exits_with_code_124() {
     let r = Repo::new();
@@ -2668,7 +2668,7 @@ fn wall_clock_kill_exits_with_code_124() {
 /// `env shell` (the agent-in-box) runs an interactive, stdio-inherited session
 /// inside the env: a command after `--` executes in `$WORK`, its exit code
 /// passes through transparently, and the env returns to `idle` with a `shell`
-/// event logged (nothing is captured — it's interactive). Workspace tier so it
+/// event logged (nothing is captured: it's interactive). Workspace tier so it
 /// needs no kernel capabilities.
 #[test]
 fn env_shell_runs_in_box_and_passes_exit_code() {
@@ -2839,7 +2839,7 @@ fn env_shell_existing_local_env_skips_shared_manifest_sync() {
 }
 
 /// `isolation=process` with `net.mode=host` must STILL confine the filesystem
-/// (Landlock applies without a network namespace) — proving the always-create
+/// (Landlock applies without a network namespace). Proving the always-create
 /// user namespace works when egress is allowed. Capability-gated.
 #[test]
 fn process_tier_host_net_still_confines_fs() {
@@ -2922,7 +2922,7 @@ fn process_tier_env_allowlist() {
     );
 }
 
-/// `resources.fsize` caps any single file the confined command writes — a
+/// `resources.fsize` caps any single file the confined command writes. A
 /// disk-bomb backstop (RLIMIT_FSIZE → SIGXFSZ). Capability-gated.
 #[test]
 fn process_tier_fsize_caps_disk_bomb() {
@@ -2964,14 +2964,14 @@ fn process_tier_fsize_caps_disk_bomb() {
 }
 
 /// The PID-namespace jail (design §5 "PID view"): a confined process must not be
-/// able to see — or read the `/proc/<pid>/environ` of — host processes. Without
+/// able to see, or read the `/proc/<pid>/environ` of, host processes. Without
 /// it, a build script at the `process` tier could dump the operator's whole
 /// environment (every host secret) straight out of `/proc`, defeating the
 /// `env.pass` allowlist. Capability-gated.
 #[test]
 fn process_tier_pid_namespace_hides_host_processes_and_environ() {
     // PID namespaces are a Linux primitive. Darwin has none, and h5i does not
-    // pretend otherwise — `box probe` reports mechanism=seatbelt, and the
+    // pretend otherwise: `box probe` reports mechanism=seatbelt, and the
     // process-hiding property is carried there by `(deny process-info*
     // (target others))` instead. Asserting "the workload is PID 1" on macOS
     // tests a mechanism the platform never claimed.
@@ -2998,10 +2998,10 @@ fn process_tier_pid_namespace_hides_host_processes_and_environ() {
         .expect("spawn victim host process");
     let vpid = victim.id();
 
-    // Control: on the host, the same uid can usually read the victim's environ —
-    // proving the secret is genuinely exposed there. Retry briefly: the new env
+    // Control: on the host, the same uid can usually read the victim's environ.
+    // Proving the secret is genuinely exposed there. Retry briefly: the new env
     // only lands after the child's execve completes. (Some hosts set
-    // yama ptrace_scope=2 and forbid it even same-uid; we don't require it — the
+    // yama ptrace_scope=2 and forbid it even same-uid; we don't require it: the
     // namespace assertions below stand on their own.)
     let mut host_can_read = false;
     for _ in 0..50 {
@@ -3014,7 +3014,7 @@ fn process_tier_pid_namespace_hides_host_processes_and_environ() {
     }
 
     // Inside the box: the victim's PID does not exist in the new namespace, so its
-    // /proc entry — and the secret — is unreachable.
+    // /proc entry, and the secret, is unreachable.
     let out = r.h5i(&[
         "env",
         "run",
@@ -3076,14 +3076,14 @@ fn process_tier_pid_namespace_hides_host_processes_and_environ() {
 }
 
 /// The supervised tier is the one that claims untrusted-code containment, so it
-/// gets the PID namespace too — and the property that matters most there is not
-/// visibility but **reach**. The box's user namespace maps back to the operator's
+/// gets the PID namespace too, and the property that matters most there is not
+/// visibility but *reach*. The box's user namespace maps back to the operator's
 /// real uid, so without a PID namespace a `kill -9` from inside the box lands on
 /// any host process that user owns: their editor, their build, the h5i process
 /// supervising the box. "A runaway agent stays in the box" has to mean that.
 ///
-/// (`/proc/<pid>/environ` was never readable here — the userns already fails
-/// `ptrace_may_access` — but argv, process enumeration and signals were.)
+/// (`/proc/<pid>/environ` was never readable here, the userns already fails
+/// `ptrace_may_access`, but argv, process enumeration and signals were.)
 #[test]
 fn supervised_tier_cannot_see_or_signal_host_processes() {
     if !supervised_tier_runnable() {
@@ -3224,9 +3224,9 @@ fn process_tier_proc_self_is_readable_under_pid_namespace() {
 
 // ─── 7b. container backend (rootless podman; design phase 4) ────────────────
 
-/// Whether to run the real-container tests. They are **opt-in** via
+/// Whether to run the real-container tests. They are *opt-in* via
 /// `H5I_TEST_CONTAINER=1`: they pull an image and (for egress) make a live
-/// network call, so we never run them implicitly in CI — where podman may be
+/// network call, so we never run them implicitly in CI. Where podman may be
 /// present but the network/image pull would be a flakiness and surprise-egress
 /// risk. Locally: `H5I_TEST_CONTAINER=1 cargo test`. When opted in, this still
 /// functionally verifies rootless podman actually runs (skips if it can't).
@@ -3426,9 +3426,9 @@ fn container_box_git_plumbing_mounted_at_host_paths() {
 }
 
 /// The container agent-in-box session injects the wrap-bash hook as Claude
-/// **managed settings**, read-only, at the unoverridable managed-settings path.
-/// The in-box agent cannot write it (root-owned path + ro mount) and — per
-/// Claude's merge rules — cannot disable a managed hook from its own config, so
+/// *managed settings*, read-only, at the unoverridable managed-settings path.
+/// The in-box agent cannot write it (root-owned path + ro mount) and, per
+/// Claude's merge rules, cannot disable a managed hook from its own config, so
 /// in-box command observation cannot be silenced. (`env shell` is the agent
 /// path; `env run` does not inject it.)
 #[test]
@@ -3483,8 +3483,8 @@ fn container_injects_managed_settings_hook_read_only() {
 
 /// Container tier: the in-box capture spool is mounted at `/.h5i/spool` (rw,
 /// despite the read-only rootfs) and the host ingests what the box writes into
-/// it. We write a synthetic `inbox-capture` record from inside the box —
-/// sidestepping the need for a glibc-matched `h5i` binary in the image — and
+/// it. We write a synthetic `inbox-capture` record from inside the box,
+/// sidestepping the need for a glibc-matched `h5i` binary in the image, and
 /// prove the mount + host-side ingest end-to-end on container.
 #[test]
 fn container_env_capture_spool_is_mounted_and_ingested() {
@@ -3648,7 +3648,7 @@ fn inspect_renders_a_capture_and_refuses_foreign_ones() {
     assert!(out.contains(&cap), "{out}");
     assert!(out.contains("exit"), "{out}");
 
-    // Inspecting the SAME capture id from a different env is refused — evidence
+    // Inspecting the SAME capture id from a different env is refused. Evidence
     // is scoped to its environment. The error names both envs so a reviewer can
     // see whose capture it actually is.
     let out = r.h5i(&["env", "inspect", "two", "--capture", &cap]);
@@ -3661,9 +3661,9 @@ fn inspect_renders_a_capture_and_refuses_foreign_ones() {
     );
 }
 
-/// `inspect` renders every header field the design promises — the capture id +
+/// `inspect` renders every header field the design promises (the capture id +
 /// env id, the command, a non-zero exit code (verbatim, not masked), the policy
-/// digest, the evidence source, the raw object accounting — followed by the
+/// digest, the evidence source, the raw object accounting) followed by the
 /// structured findings (here the generic-command body carrying the output).
 #[test]
 fn inspect_renders_all_capture_fields() {
@@ -3790,7 +3790,7 @@ fn inspect_refuses_unknown_and_too_short_handles() {
 /// `inspect` re-renders a capture whose evidence contained a secret. The
 /// redacted rule is surfaced (so a reviewer knows redaction fired), the secret
 /// value appears nowhere in the rendered view, and the placeholder shows in its
-/// place — `inspect` must never become a side channel back to the raw secret.
+/// place: `inspect` must never become a side channel back to the raw secret.
 #[test]
 fn inspect_surfaces_redactions_without_leaking_the_secret() {
     let r = Repo::new();
@@ -3825,7 +3825,7 @@ fn inspect_surfaces_redactions_without_leaking_the_secret() {
 }
 
 /// `inspect` resolves the env by its fully-qualified id (not just the bare slug)
-/// and resolves the capture from a hex prefix — the same ergonomics the object
+/// and resolves the capture from a hex prefix. The same ergonomics the object
 /// store offers elsewhere, so a reviewer can paste a short handle.
 #[test]
 fn inspect_resolves_env_by_full_id_and_capture_by_prefix() {
@@ -4044,7 +4044,7 @@ fn compare_ranks_environments_and_flags_split_bases() {
     std::fs::write(r.work("cand-a").join("a.txt"), "one line\n").unwrap();
     std::fs::write(r.work("cand-b").join("b.txt"), "x\ny\nz\n").unwrap();
     r.h5i_ok(&["env", "run", "cand-a", "--", "sh", "-c", "echo a-ok"]);
-    // cand-b's run fails on purpose — exit code passes through, so it's not _ok.
+    // cand-b's run fails on purpose. Exit code passes through, so it's not _ok.
     let failed = r.h5i(&["env", "run", "cand-b", "--", "sh", "-c", "exit 2"]);
     assert_eq!(failed.status.code(), Some(2));
 
@@ -4178,7 +4178,7 @@ fn rebase_refuses_on_conflict_and_keeps_the_base() {
     );
     // The base is untouched after a refused rebase.
     assert_eq!(r.manifest("clash")["base_commit"].as_str().unwrap(), base0);
-    // The env is still rebase-able (status unchanged) — refusal is not a dead end.
+    // The env is still rebase-able (status unchanged). Refusal is not a dead end.
     assert_eq!(r.manifest("clash")["status"].as_str().unwrap(), "created");
 }
 
@@ -4191,7 +4191,7 @@ fn rebase_is_a_noop_when_up_to_date() {
         .unwrap()
         .to_string();
 
-    // Parent never advanced — nothing to fold.
+    // Parent never advanced. Nothing to fold.
     let out = out_str(&r.h5i_ok(&["env", "rebase", "still"]));
     assert!(
         out.contains("nothing to rebase"),
@@ -4598,7 +4598,7 @@ fn doctor_reports_healthy_on_fresh_env() {
 fn doctor_flags_tampered_policy_and_exits_nonzero() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "fix-auth"]);
-    // Corrupt the on-disk resolved policy so it no longer loads/verifies — the
+    // Corrupt the on-disk resolved policy so it no longer loads/verifies. The
     // integrity check must fail closed (a hard ✗, not a warning). (A mere
     // comment would be normalized away, since the digest is over canonical TOML;
     // invalid content is an unambiguous tamper.)
@@ -4662,8 +4662,8 @@ fn private_paths_isolate_writes_into_per_env_backing() {
         "echo hello-from-box > cache/marker.txt",
     ]);
 
-    // The write landed in the per-env backing dir, NOT the shared worktree —
-    // this is the inode isolation that prevents cross-env lock/cache contention.
+    // The write landed in the per-env backing dir, NOT the shared worktree.
+    // This is the inode isolation that prevents cross-env lock/cache contention.
     let backing = r.env_dir("work1").join("private/cache/marker.txt");
     assert!(
         backing.is_file(),
@@ -4680,7 +4680,7 @@ fn private_paths_isolate_writes_into_per_env_backing() {
     // all. macOS has no bind mounts, so the redirect is a symlink *to* the
     // backing: the path resolves, which is the point of it, and `exists()` is
     // therefore the wrong question there. Ask the one that actually matters on
-    // both — is this a redirect to the per-env backing, and is it kept out of
+    // both. Is this a redirect to the per-env backing, and is it kept out of
     // the diff h5i would hand a reviewer?
     let worktree_marker = r.work("work1").join("cache/marker.txt");
     if cfg!(target_os = "macos") {
@@ -4707,7 +4707,7 @@ fn private_paths_isolate_writes_into_per_env_backing() {
     }
 }
 
-// ─── Idea 1: secrets broker — `env secrets` legibility + gated command: ───────
+// ─── Idea 1: secrets broker. `env secrets` legibility + gated command: ───────
 
 fn write_secret_profile(r: &Repo) {
     std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
@@ -4730,7 +4730,7 @@ fn env_secrets_reports_status_without_values() {
     let r = Repo::new();
     write_secret_profile(&r);
     r.h5i_ok(&["env", "create", "e1", "--profile", "dev"]);
-    // Resolve status with the host source present — value is fingerprinted,
+    // Resolve status with the host source present. Value is fingerprinted,
     // never surfaced.
     let out = Command::new(H5I)
         .args(["env", "secrets", "e1", "--json"])
@@ -4750,7 +4750,7 @@ fn env_secrets_reports_status_without_values() {
     let row = &rows.as_array().unwrap()[0];
     assert_eq!(row["name"], "API_KEY");
     assert_eq!(row["status"], "ok");
-    // Keyed (HMAC under the per-repo key), not a bare digest — an unsalted
+    // Keyed (HMAC under the per-repo key), not a bare digest. An unsalted
     // sha256 prefix in a durable audit record is grindable offline.
     let fp = row["fingerprint"].as_str().unwrap();
     assert!(fp.starts_with("fp:"), "{fp}");
@@ -4880,7 +4880,7 @@ fn tampered_pinned_service_manifest_fails_closed() {
     git(&r.dir, &["commit", "-m", "service"]);
     r.h5i_ok(&["env", "create", "e1", "--profile", "dev"]);
 
-    // Tamper the env-local pinned manifest directly — the recorded digest no
+    // Tamper the env-local pinned manifest directly. The recorded digest no
     // longer matches, so a service start must refuse.
     let pinned = r.env_dir("e1").join("services.json");
     std::fs::write(
@@ -4916,7 +4916,7 @@ fn no_service_env_cannot_add_unpinned_service_after_create() {
     );
 
     // Add a service to the worktree + repo config after create and try to start
-    // it — it must NOT be startable (the pinned-empty manifest wins).
+    // it. It must NOT be startable (the pinned-empty manifest wins).
     let added = "[profile.dev]\nisolation = \"workspace\"\n\
                  [service.web]\ncommand = \"echo sneaky; sleep 30\"\n";
     std::fs::write(r.work("e1").join(".h5i/env.toml"), added).unwrap();
@@ -5017,7 +5017,7 @@ fn env_rm_removes_multiple_envs() {
     );
 }
 
-/// `h5i box rm good nope` — one missing env must not abort the other.
+/// `h5i box rm good nope`: one missing env must not abort the other.
 /// The present env is removed; exit code is non-zero; both failures are reported.
 #[test]
 fn env_rm_partial_failure_continues_and_exits_nonzero() {
@@ -5179,7 +5179,7 @@ fn export_honours_an_explicit_out_dir() {
 // ─── the embedded skill ─────────────────────────────────────────────────────
 
 /// The binary carries the skill, so it can be installed with no network, no
-/// npm, and no host-to-box file path — which is how it reaches the inside of a
+/// npm, and no host-to-box file path, which is how it reaches the inside of a
 /// box.
 #[test]
 fn skill_install_writes_the_embedded_pages() {
@@ -5205,8 +5205,8 @@ fn skill_install_writes_the_embedded_pages() {
 }
 
 /// Receipt integrity: the persisted policy grants the box `$WORK` and nothing
-/// else under its env directory, so the receipt log and its payloads — which
-/// live one level up from the worktree — are unreachable for writing from
+/// else under its env directory, so the receipt log and its payloads, which
+/// live one level up from the worktree, are unreachable for writing from
 /// inside. A box can stage a new record in its spool; it cannot edit one the
 /// host already recorded.
 #[test]
@@ -5229,7 +5229,7 @@ fn the_receipt_log_is_outside_the_boxs_write_grants() {
         .find(|l| l.trim_start().starts_with("fs_write"))
         .expect("the resolved policy states its write grants");
 
-    // `$WORK` is the worktree — a subdirectory of the env dir. Nothing may
+    // `$WORK` is the worktree. A subdirectory of the env dir. Nothing may
     // grant the env dir itself, which is where receipt.jsonl and receipts/ are.
     for grant in ["receipt", "receipts"] {
         assert!(
@@ -5371,7 +5371,7 @@ fn the_browser_profile_fails_closed_without_the_tooling() {
 }
 
 /// A cache that matches the project's lockfiles is offered to a box, and it is
-/// offered **read-only**: a cache a box could write would be a mutable surface
+/// offered *read-only*: a cache a box could write would be a mutable surface
 /// shared between boxes, which is the thing the design refuses.
 #[test]
 fn a_matching_cache_is_mounted_read_only() {

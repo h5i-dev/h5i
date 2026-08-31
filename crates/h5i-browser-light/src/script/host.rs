@@ -3,7 +3,7 @@
 //! Everything here is deliberately free of GC-managed values. Boa's host data
 //! must be `Trace`, and the only way to hold a `JsObject` correctly is to trace
 //! it; rather than do that for event handlers, timer callbacks and promise
-//! resolvers, **those all live on the JavaScript side** (see `prelude.js`) and
+//! resolvers, those all live on the JavaScript side (see `prelude.js`) and
 //! this holds only plain Rust state. That is why every field below can be
 //! `unsafe_ignore_trace` honestly: none of them can reach the heap Boa collects.
 
@@ -30,8 +30,8 @@ pub struct ConsoleLine {
     pub source: String,
     /// How many times in a row this exact line was said.
     ///
-    /// remix.run logged one identical error **1486 times**, which is not
-    /// information — it is the same information, at a volume that buries
+    /// remix.run logged one identical error *1486 times*, which is not
+    /// information. It is the same information, at a volume that buries
     /// everything else and blows up the snapshot an agent reads.
     pub repeats: usize,
 }
@@ -117,8 +117,8 @@ pub struct Host {
     ///
     /// From the broker, and that is the whole design rather than a detail. The
     /// broker is the half that writes `User-Agent` and `Accept-Language`; if
-    /// this side held its own copy — a constant in `prelude.js`, say, which is
-    /// exactly where these values used to live — then the page and the wire
+    /// this side held its own copy (a constant in `prelude.js`, say, which is
+    /// exactly where these values used to live) then the page and the wire
     /// would be two independent answers to one question, and a server that
     /// reads both would see two browsers. See [`crate::identity`].
     #[cfg(feature = "identity")]
@@ -179,7 +179,7 @@ pub struct Host {
     ///
     /// `NodeData::Comment` carries no payload in this version of blitz, and a
     /// page that writes a comment marker and reads it back should get what it
-    /// wrote — so the text lives here rather than being quietly lost.
+    /// wrote, so the text lives here rather than being quietly lost.
     pub comments: RefCell<std::collections::HashMap<usize, String>>,
 
     /// Requests script asked for that have not been answered yet.
@@ -240,8 +240,8 @@ pub struct RequestLink {
 ///
 /// The per-navigation request budget bounds how many a page may *open* over the
 /// life of a page; this bounds how many it may hold at one moment. Sixteen is
-/// far past what a real page does — a dev server's hot-reload socket, a
-/// notification stream, a live feed — and far short of the ceiling.
+/// far past what a real page does (a dev server's hot-reload socket, a
+/// notification stream, a live feed) and far short of the ceiling.
 ///
 /// Counted over the maps rather than over live peers: this engine cannot ask a
 /// channel whether the far end has gone without a method on the trait that
@@ -252,7 +252,7 @@ pub const MAX_OPEN_CHANNELS: usize = 16;
 /// How many requests a page may have *waiting to be started*.
 ///
 /// [`MAX_INFLIGHT_FETCHES`] bounds what is on the wire and
-/// [`crate::budget::Limits::max_requests`] bounds what a page may send — and
+/// [`crate::budget::Limits::max_requests`] bounds what a page may send, and
 /// neither bounded the queue in between. `fetch()` returns before anything is
 /// decided about it, so a loop calling it builds one `FetchSlot` per call,
 /// holding a URL, a method, a body and headers, and the drain only runs once
@@ -268,7 +268,7 @@ pub const MAX_QUEUED_FETCHES: usize = 1_000;
 /// How many request links one realm remembers.
 ///
 /// The link list is the causal join between an action and a row in the request
-/// log, and it grew one entry per `fetch()` for the life of the page — so the
+/// log, and it grew one entry per `fetch()` for the life of the page, so the
 /// bound above stops the queue and this stops the ledger of it. What is dropped
 /// is the *link*, never the receipt: the request log is the record, and it is
 /// the broker's.
@@ -276,7 +276,7 @@ pub const MAX_REQUEST_LINKS: usize = 4_000;
 
 /// How many requests this engine will have on the wire at once.
 ///
-/// Six, which is what browsers settled on per host for HTTP/1.1 — enough that a
+/// Six, which is what browsers settled on per host for HTTP/1.1. Enough that a
 /// page fanning out its data loads in parallel instead of in a queue, few
 /// enough that a page with two hundred images cannot spawn two hundred threads
 /// inside a box with a memory ceiling.
@@ -309,7 +309,7 @@ pub enum FetchSlot {
 /// Boa's host data must be `Trace`, and `Rc<Host>` is not. The handle exists to
 /// carry the `unsafe_ignore_trace` in one place with one justification: `Host`
 /// holds no GC-managed value and cannot reach one, because every JS-side thing
-/// with a lifetime — listeners, timer callbacks, promise resolvers — lives in
+/// with a lifetime (listeners, timer callbacks, promise resolvers) lives in
 /// `prelude.js` where Boa's own collector already owns it.
 #[derive(Clone, Trace, Finalize, JsData)]
 pub struct HostHandle(#[unsafe_ignore_trace] pub std::rc::Rc<Host>);
@@ -325,7 +325,7 @@ impl Host {
     pub fn new(dom: Dom, broker: std::sync::Arc<dyn Broker>, base: url::Url) -> Self {
         // Asked before the broker is stored, and asked once. Across the process
         // split this is a message, so a binding that asked per property read
-        // would put a round trip behind `navigator.platform` — and the client
+        // would put a round trip behind `navigator.platform`, and the client
         // caches the answer, because an identity cannot change while a session
         // runs. One `Arc` clone per realm, and no strings copied.
         #[cfg(feature = "identity")]

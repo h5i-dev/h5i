@@ -19,7 +19,7 @@
 //! allowlist invariants (no symlink escape, no nested `.git`, no agent-introduced
 //! gitlink) hold for anything reaching this directory.
 //!
-//! `report.md` builds its **What the browser saw** section from per-run browser
+//! `report.md` builds its What the browser saw section from per-run browser
 //! evidence ([`crate::browser`]) rather than the agent's account of its own
 //! testing, for the case where a report says "verified in the browser" over a
 //! page that threw an uncaught exception.
@@ -47,8 +47,8 @@ pub struct ExportSummary {
     /// Distinct secret-redaction rules that fired while recording.
     pub redactions: Vec<String>,
     /// Boxes whose effective filesystem grants overlapped this one's, as the
-    /// newest run/shell receipt recorded them (`env/<id> via <path>`) —
-    /// latest-record semantics, matching the console. A reviewer applying
+    /// newest run/shell receipt recorded them (`env/<id> via <path>`).
+    /// Latest-record semantics, matching the console. A reviewer applying
     /// this bundle should know the box did not run alone.
     pub fs_overlap: Vec<String>,
     /// Browser sessions that ran inside this box, with their timelines written
@@ -85,9 +85,9 @@ struct ReceiptBundle<'a> {
 /// Escape the markdown a box can steer.
 ///
 /// `sanitize_display` strips control characters and bidi marks, which is the
-/// right job for a terminal, but this text lands in `report.md` — a document a
+/// right job for a terminal, but this text lands in `report.md`. A document a
 /// reviewer reads as evidence. A recorded command containing a backtick closes
-/// the code span around it, so `` x` — **reviewed and approved** ` `` renders
+/// the code span around it, so `` x`. Reviewed and approved ` `` renders
 /// as authoritative prose next to the run it describes. Newlines are already
 /// flattened, so no new table rows can be forged; this closes the inline half.
 fn md_escape(s: &str) -> String {
@@ -108,7 +108,7 @@ fn md_escape(s: &str) -> String {
 ///
 /// Not [`md_escape`] plus backticks, which is what this was. Backslash escapes
 /// are not processed inside a code span, so every command containing a
-/// parenthesis rendered to the reviewer with the backslashes still in it —
+/// parenthesis rendered to the reviewer with the backslashes still in it:
 /// `h5i box share demo \(port 3000, 1 peer\(s\), 20s\)`. The one character a
 /// table cell genuinely needs escaped is the pipe, which GFM splits on before
 /// any inline parsing and which is honoured inside code spans for exactly that
@@ -145,8 +145,8 @@ pub fn export(
 
 /// [`export`], for a box that lives on a runner.
 ///
-/// Only the freeze differs. Everything after it — the diff, the receipts, the
-/// report — is object-store and on-disk work that never cared where the box
+/// Only the freeze differs. Everything after it (the diff, the receipts, the
+/// report) is object-store and on-disk work that never cared where the box
 /// ran, which is why this takes a placement rather than forking the bundle.
 pub fn export_with_remote(
     repo: &Repository,
@@ -170,8 +170,8 @@ pub fn export_with_remote(
 
     // Asked before the freeze, purely so the answer is the true one. A share
     // needs a live process inside the box, that process holds `run.lock`, and
-    // `propose` below takes the same lock — so an export attempted during a
-    // share has always failed with "environment is busy — another `h5i box
+    // `propose` below takes the same lock, so an export attempted during a
+    // share has always failed with "environment is busy, another `h5i box
     // run`/`shell` or lifecycle op holds it". True, and not the fact the
     // operator needs: what is holding it is the session their share is
     // standing on, and stopping the share is the thing to do about it.
@@ -180,7 +180,7 @@ pub fn export_with_remote(
     // for a live share again at the end; those two reads and everything
     // between them were unsynchronised with `session::claim` and with the
     // receipt append at teardown, so a short share that started and finished
-    // inside the window appeared in neither — its receipt missed the listing
+    // inside the window appeared in neither. Its receipt missed the listing
     // and its record was gone before the final probe. Both `receipt.json` and
     // `report.md` were then silent about somebody having been let in while the
     // patch was produced.
@@ -264,8 +264,8 @@ pub fn export_with_remote(
 
     // The bundle is supposed to stand alone, and the share section promises a
     // reviewer "the full account of each". That account is the raw payload,
-    // which lived only in the box's own receipt store under a content address
-    // — so what actually reached the reviewer was an aggregate command string
+    // which lived only in the box's own receipt store under a content address,
+    // so what actually reached the reviewer was an aggregate command string
     // and a digest they had no way to resolve. Copied in, one file per share
     // record, named by the record id the JSON already carries.
     let share_payloads =
@@ -287,8 +287,8 @@ pub fn export_with_remote(
 
     let report_path = out.join("report.md");
     // Read straight off disk rather than plumbed in: this crate is below
-    // `h5i-share`, and the one fact needed here — is a live process serving
-    // this box right now — is a two-line read of a file that sits beside the
+    // `h5i-share`, and the one fact needed here, is a live process serving
+    // this box right now, is a two-line read of a file that sits beside the
     // receipt log.
     let live_share = crate::share_record::read_live(&m.dir(h5i_root)).map(|s| s.pid.to_string());
     std::fs::write(
@@ -315,7 +315,7 @@ pub fn export_with_remote(
 /// Copy the raw payload of every share record into `<out>/receipts/<id>.raw`.
 ///
 /// Returns the record ids whose payload made it, so the report names the file
-/// for the sessions that have one and says so for the sessions that do not — a
+/// for the sessions that have one and says so for the sessions that do not. A
 /// missing payload is a fact a reviewer needs, not something to paper over
 /// with a filename that resolves to nothing.
 ///
@@ -346,7 +346,7 @@ pub struct ExportedSession {
 ///
 /// Best effort, and silent when there are none: a box with no browser session
 /// in it should not grow an empty directory to explain. What is *not* silent is
-/// a session whose logs could not be read — that travels inside the audit as
+/// a session whose logs could not be read. That travels inside the audit as
 /// `unavailable`, because "no rows" and "no log" are different findings.
 fn export_browser_audits(m: &EnvManifest, out: &Path) -> Vec<ExportedSession> {
     let Ok(root) = crate::browser_session::root() else {
@@ -408,7 +408,7 @@ fn copy_share_payloads(
     }
     for r in shares {
         // The record's id becomes a filename here, and a record is a line of
-        // JSON read back off disk — `append` writes a hex digest, but this code
+        // JSON read back off disk: `append` writes a hex digest, but this code
         // is holding whatever the file says. An id of `../../../../../x` would
         // put an attacker-chosen payload at an attacker-chosen path on the host,
         // during the one command whose whole job is to produce a bundle a human
@@ -719,10 +719,10 @@ fn report(
     // box; this is the one path that let a second person reach inside it while
     // it was running, and a reviewer who cannot see it is reviewing a different
     // artifact from the one that exists. It was rendered as an ordinary row in
-    // "What ran" — `h5i box share demo (port 3000, 1 peer(s), 600s)` — which
+    // "What ran" (`h5i box share demo (port 3000, 1 peer(s), 600s)`) which
     // reads as a command the box happened to execute.
-    // A share that is *still running* has written no receipt — it writes one
-    // when it ends — so an export taken during a demo was silent about the box
+    // A share that is *still running* has written no receipt, it writes one
+    // when it ends, so an export taken during a demo was silent about the box
     // having been opened to somebody, which is the moment somebody is most
     // likely to take one. The manual says an export "should not be silent
     // about which one it came from"; taken mid-share, it was exactly that.
@@ -751,7 +751,7 @@ fn report(
             // Nothing here parses that string: it contains the box's name, and
             // deciding "this was a Cloudflare tunnel" by looking for `tunnel`
             // in it classified a P2P share of a box called `my-tunnel` as
-            // one — a false security claim in the artifact a reviewer trusts.
+            // one. A false security claim in the artifact a reviewer trusts.
             let (transport, port, peers, secs, away) = match &r.share {
                 Some(s) => (
                     s.transport.clone(),
@@ -819,7 +819,7 @@ mod tests {
 
     /// The bundle names each share payload after the record's id, and a record
     /// is a line of JSON read back off disk. An id that is not a record handle
-    /// must never reach `Path::join` — `../../../../../x` would put box-supplied
+    /// must never reach `Path::join`: `../../../../../x` would put box-supplied
     /// bytes at a host path of the writer's choosing, during the command whose
     /// output a human is about to trust.
     #[test]
@@ -862,7 +862,7 @@ mod tests {
     fn the_mid_share_section_is_reachable_only_in_the_gap_it_describes() {
         // Kept, and worth being exact about why. A live share needs a live
         // process inside the box; that process holds `run.lock`; and `export`
-        // freezes through `propose`, which takes it — so the ordinary
+        // freezes through `propose`, which takes it, so the ordinary
         // mid-share export never gets this far, and now fails with a message
         // that names the share instead of the lock. What remains reachable is
         // the second between the box session ending and the share process
@@ -890,7 +890,7 @@ mod tests {
         assert!(!cell.contains('\\'));
 
         // The pipe is the exception, because GFM splits a row on pipes before
-        // it parses anything inline — so that one really does need escaping,
+        // it parses anything inline, so that one really does need escaping,
         // code span or not.
         assert_eq!(md_code("a | b"), "`a \\| b`");
 
@@ -1056,7 +1056,7 @@ mod tests {
     fn an_export_taken_during_a_share_says_the_share_is_still_open() {
         // A live share has written no receipt yet, so an export taken during a
         // demo said nothing at all about the box having been opened to
-        // somebody — and during a demo is when somebody takes one.
+        // somebody, and during a demo is when somebody takes one.
         let text = report(
             &manifest(),
             &summary(),
@@ -1085,7 +1085,7 @@ mod tests {
     #[test]
     fn a_box_that_was_shared_with_somebody_says_so() {
         // The one path that lets a second person reach *into* a running box,
-        // rendered as an ordinary row in "What ran" — which reads as a command
+        // rendered as an ordinary row in "What ran", which reads as a command
         // the box happened to execute rather than as a door that was opened.
         let mut r = record(None);
         r.source = "share".into();
@@ -1123,7 +1123,7 @@ mod tests {
     ///
     /// The transport was being recovered by searching the rendered command
     /// string for the substring `tunnel`, and that string carries the box's
-    /// name — so an ordinary end-to-end encrypted P2P share of a box called
+    /// name, so an ordinary end-to-end encrypted P2P share of a box called
     /// `my-tunnel` put "not end to end encrypted" into the artifact a reviewer
     /// treats as evidence. Wrong in the direction of alarm, but wrong.
     #[test]

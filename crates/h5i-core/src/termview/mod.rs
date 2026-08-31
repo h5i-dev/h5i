@@ -13,12 +13,12 @@
 //!                                 ◄── input ────── control lock ◄── terminal
 //! ```
 //!
-//! **Nothing is bound.** The socket comes back over `SCM_RIGHTS` from a fork
+//! Nothing is bound. The socket comes back over `SCM_RIGHTS` from a fork
 //! that entered the box's namespaces, so it is a descriptor this process holds:
-//! nothing to connect to, nothing to authenticate. **The trusted path runs both
-//! ways**: the box supplies compressed pixels and nothing else, and every escape
+//! nothing to connect to, nothing to authenticate. The trusted path runs both
+//! ways: the box supplies compressed pixels and nothing else, and every escape
 //! sequence is generated here (see [`kitty`]), so a box cannot reach the host's
-//! PTY even in principle. **The status row cannot be painted over**, the page
+//! PTY even in principle. The status row cannot be painted over, the page
 //! being an image below row two while row one is [`status`], so a page cannot
 //! lie about which origin it is.
 //!
@@ -94,7 +94,7 @@ pub struct Options {
     /// road for a user who knows better than we do.
     pub assume_graphics: bool,
     /// The engine this box is pinned to, when it has one. Read only to tell
-    /// someone how to start a stream — the viewer itself is engine-agnostic,
+    /// someone how to start a stream. The viewer itself is engine-agnostic,
     /// and adding this must not become the start of engine-specific rendering.
     pub engine: Option<String>,
 }
@@ -131,8 +131,8 @@ fn not_streaming_hint(engine: Option<&str>) -> String {
 /// whatever `recv_timeout` *expiring* meant, so a box sending frames faster than
 /// [`TICK`] suppressed it entirely. At the default 10 fps a frame lands every
 /// 100 ms and the 250 ms timeout never elapses, so the status line stopped
-/// refreshing, a resize went unnoticed and a lone Escape was never flushed —
-/// all of it on exactly the pages someone is watching because they are moving.
+/// refreshing, a resize went unnoticed and a lone Escape was never flushed.
+/// All of it on exactly the pages someone is watching because they are moving.
 #[cfg(unix)]
 struct Ticker {
     /// When the next tick is owed.
@@ -359,7 +359,7 @@ pub fn run(_opts: Options) -> Result<(), H5iError> {
 ///
 /// The read runs to the device-attributes reply rather than stopping at the
 /// first graphics answer. Both questions are in flight, and returning on the
-/// first would decide compression before its answer had arrived — which is not
+/// first would decide compression before its answer had arrived, which is not
 /// a slow path, it is a permanently wrong one.
 #[cfg(unix)]
 fn probe_graphics(fd: std::os::fd::RawFd) -> Result<kitty::Encoding, H5iError> {
@@ -640,8 +640,8 @@ impl<'a> App<'a> {
                 self.last_frame = Some(frame);
             }
         }
-        // The lock can change under us — the agent's own tooling, or another
-        // terminal — so it is read rather than remembered.
+        // The lock can change under us (the agent's own tooling, or another
+        // terminal) so it is read rather than remembered.
         self.draw_status();
     }
 
@@ -726,7 +726,7 @@ impl<'a> App<'a> {
         let ctrl = key.modifiers & proto::modifiers::CTRL != 0;
         match key.code {
             KeyCode::Char('q') if !ctrl => true,
-            // Ctrl-C is a keystroke here, not a signal — raw mode saw to that —
+            // Ctrl-C is a keystroke here, not a signal, raw mode saw to that,
             // so leaving on it has to be arranged rather than assumed.
             KeyCode::Char('c') if ctrl => true,
             KeyCode::Char('i') if !ctrl => {
@@ -842,7 +842,7 @@ mod tests {
         // The regression this is here for. Frames every 100 ms, which is what
         // the default `--fps 10` produces. With the tick hung off the receive
         // timeout, a 250 ms timeout next to a 100 ms frame interval never
-        // elapsed and the tick simply never ran — no status refresh, no resize
+        // elapsed and the tick simply never ran, no status refresh, no resize
         // check, for as long as the page kept moving.
         let t0 = Instant::now();
         let mut ticker = Ticker::start(t0);

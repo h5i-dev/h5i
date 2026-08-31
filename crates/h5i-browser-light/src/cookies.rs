@@ -13,13 +13,13 @@
 //! is decided on registrable domains so `a.example.com` and `b.example.com` are
 //! one site.
 //!
-//! **Persistence is opt-in.** The jar dies with the process unless h5i passed
+//! Persistence is opt-in. The jar dies with the process unless h5i passed
 //! `--cookie-jar`, the only caller of [`Jar::persist_to`]. The file is `0600`,
 //! written temp-then-rename, and rewritten on change rather than at exit,
 //! because `close` and `service_stop` SIGKILL the session. [`Jar::retain_origin`]
 //! keeps it to one origin, not a browsing history.
 //!
-//! **Never readable by the agent.** No verb returns a cookie value; the request
+//! Never readable by the agent. No verb returns a cookie value; the request
 //! log counts cookies rather than naming them. The persisted file is for the
 //! next engine via `--restore`.
 
@@ -30,8 +30,8 @@ use url::Url;
 
 /// How a cookie says it may travel across sites.
 ///
-/// Stored rather than dropped. Only one of these is enforceable here — `None`
-/// requires `Secure`, checked at store time — but the value is what a
+/// Stored rather than dropped. Only one of these is enforceable here (`None`
+/// requires `Secure`, checked at store time) but the value is what a
 /// cross-site decision would be made from, and parsing an attribute only to
 /// throw it away is how a jar ends up unable to answer a question it already
 /// had the information for.
@@ -52,7 +52,7 @@ struct Cookie {
     ///
     /// With `host_only` set this is the only host it may be sent to. Otherwise
     /// it is the domain the cookie widened to, and any host at or below it
-    /// matches — see [`domain_matches`].
+    /// matches. See [`domain_matches`].
     host: String,
     /// Whether `Domain` was absent, which is the default and the narrow case.
     ///
@@ -88,7 +88,7 @@ impl Cookie {
     }
 }
 
-/// What a request carried, for the record — counts, never values.
+/// What a request carried, for the record. Counts, never values.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CookieActivity {
     /// How many cookies this request sent.
@@ -203,7 +203,7 @@ fn is_storable(cookie: &Cookie) -> bool {
     }
     // A host-only cookie names one host and widens to nothing, so the suffix
     // list has no say. A widened one is scoped to a *domain*, and a domain that
-    // is a public suffix would reach every host under it — `host: "com"` is one
+    // is a public suffix would reach every host under it: `host: "com"` is one
     // cookie sent to the whole of `.com`. An address is its own host and is
     // never a domain, which is rule 3 on the store path.
     if !cookie.host_only
@@ -224,7 +224,7 @@ impl Jar {
     ///
     /// Called by the engine only when h5i passed `--cookie-jar`. Returns what
     /// the file yielded, or an error describing a file that could not be read
-    /// as a jar — never silence, because a `--restore` that silently loaded
+    /// as a jar. Never silence, because a `--restore` that silently loaded
     /// nothing is the defect this whole feature exists to fix.
     ///
     /// A missing file is not an error: it is the first run.
@@ -245,15 +245,15 @@ impl Jar {
         Ok(loaded)
     }
 
-    /// Merge a jar file's contents into this jar, dropping what has expired —
-    /// **and what no server could have set.**
+    /// Merge a jar file's contents into this jar, dropping what has expired,
+    /// and what no server could have set.
     ///
     /// The store path enforces four `Domain` rules, the two name prefixes and
     /// `SameSite=None` requires `Secure`; this path enforced none of them, so a
     /// jar file was believed about things the wire is not. A row saying
     /// `{"host": "com", "host_only": false}` widened one cookie to every `.com`
     /// host, `__Host-sid` could arrive without the flags that name means, and
-    /// `expires` was a number off a file added straight to `SystemTime` — the
+    /// `expires` was a number off a file added straight to `SystemTime`. The
     /// same overflow the `Max-Age` path fixed with `checked_add`, on the path
     /// that reads a file rather than a header.
     ///
@@ -284,7 +284,7 @@ impl Jar {
         let mut out = Restored::default();
         for stored in parsed.cookies {
             // An expiry the clock cannot represent. `SystemTime + Duration`
-            // **panics** on overflow and this addend is a number off a file, so
+            // *panics* on overflow and this addend is a number off a file, so
             // a jar carrying `18446744073709551615` took the engine down before
             // it had read a page. Refused rather than clamped: the row says
             // when the cookie dies, and a date this build cannot hold is not a
@@ -469,18 +469,18 @@ impl Jar {
         self.store_at(url, headers, SystemTime::now(), Setter::Wire)
     }
 
-    /// Store a cookie **page script** set, through `document.cookie`.
+    /// Store a cookie *page script* set, through `document.cookie`.
     ///
     /// Deliberately not [`Self::store`], which is what `write_cookie` called.
     /// The wire and the script are not the same authority, and `HttpOnly` is the
-    /// whole statement of that difference — so a browser enforces two rules here
+    /// whole statement of that difference, so a browser enforces two rules here
     /// that the response path has no reason to:
     ///
-    /// * **Script may not overwrite an `HttpOnly` cookie.** Replacement goes
+    /// * Script may not overwrite an `HttpOnly` cookie. Replacement goes
     ///   through the same identity match as deletion, so `document.cookie =
     ///   "sid=attacker"` replaced the server's `HttpOnly` session cookie and the
     ///   jar then sent the attacker's value on the wire. Script could not *read*
-    ///   the credential and could substitute one, which is session fixation —
+    ///   the credential and could substitute one, which is session fixation.
     ///   and `document.cookie = "sid=; Max-Age=0"` was a logout the server never
     ///   asked for. Honouring the flag on reads and not on writes is honouring
     ///   half of it.
@@ -548,7 +548,7 @@ impl Jar {
         stored
     }
 
-    /// How many cookies are held. For `doctor` and for tests — never the values.
+    /// How many cookies are held. For `doctor` and for tests. Never the values.
     pub fn len(&self) -> usize {
         self.cookies.lock().map(|j| j.len()).unwrap_or(0)
     }
@@ -586,7 +586,7 @@ impl Jar {
     /// the fourth: it protects the host from the box, and says nothing about two
     /// origins sharing one address space. That did not matter until this engine
     /// held cookies *and* ran script. It cannot be fixed without a process
-    /// split, so it is bounded instead — at any moment the jar holds only
+    /// split, so it is bounded instead. At any moment the jar holds only
     /// cookies for the origin currently loaded, so a foreign origin's script
     /// never runs alongside someone else's live session.
     ///
@@ -641,7 +641,7 @@ fn is_secure(url: &Url) -> bool {
     }
     // The same rule the allowlist uses, rather than a second list beside it.
     // The hand-written one covered `localhost`, `127.0.0.1` and `[::1]` and
-    // missed the rest of `127.0.0.0/8` and `app.localhost` — both loopback by
+    // missed the rest of `127.0.0.0/8` and `app.localhost`. Both loopback by
     // the allowlist's reckoning, both a potentially-trustworthy origin by a
     // browser's, and neither able to get a `Secure` cookie back. One rule
     // cannot disagree with itself.
@@ -652,15 +652,15 @@ fn is_secure(url: &Url) -> bool {
 ///
 /// RFC 6265 makes a cookie-name a token and a cookie-octet everything except
 /// control characters, whitespace, `"`, `,`, `;` and `\\`. The wire path never
-/// sees a control character — HTTP header parsing rejects one before this does
-/// — but `document.cookie` is a string from page script, and a jar file is a
+/// sees a control character, HTTP header parsing rejects one before this does,
+/// but `document.cookie` is a string from page script, and a jar file is a
 /// string from a file. Both reached the `Cookie:` header unchecked, so one
 /// malformed cookie made *every* later request's header unparseable and the
 /// page lost the cookies that were fine along with the one that was not.
 fn is_wire_safe(name: &str, value: &str) -> bool {
-    // **Narrower than the grammar, deliberately.** RFC 6265's cookie-octet also
+    // Narrower than the grammar, deliberately. RFC 6265's cookie-octet also
     // excludes space, comma, quote and backslash, and refusing those would
-    // refuse cookies the web actually sets — every browser accepts them,
+    // refuse cookies the web actually sets. Every browser accepts them,
     // because a `Cookie:` header is one header split on `;` and none of them
     // change where the split falls. What this rejects is what makes the header
     // *unparseable* or reframes it: a control character, and the two delimiters
@@ -668,8 +668,8 @@ fn is_wire_safe(name: &str, value: &str) -> bool {
     let unparseable = |c: char| c.is_control();
     // `=` separates the pair, so it may not appear in a name; a value may hold
     // one, which is what a base64 padding character is. Whitespace in a name is
-    // not a name — the header would carry two tokens where a server expects
-    // one — while whitespace in a value is ordinary.
+    // not a name, the header would carry two tokens where a server expects
+    // one, while whitespace in a value is ordinary.
     !name.is_empty()
         && !name
             .chars()
@@ -678,7 +678,7 @@ fn is_wire_safe(name: &str, value: &str) -> bool {
 }
 
 /// RFC 6265 §5.1.4 default-path: the request path with its last segment
-/// removed. Used **only** to fill in a missing `Path` attribute.
+/// removed. Used *only* to fill in a missing `Path` attribute.
 fn default_path(path: &str) -> String {
     if path.is_empty() || !path.starts_with('/') {
         return "/".to_string();
@@ -703,7 +703,7 @@ fn path_matches(request_path: &str, cookie_path: &str) -> bool {
 
 /// Whether two cookies are the same one, for replacement and deletion.
 ///
-/// RFC 6265 §5.3 identifies a cookie by name, domain and path — and *domain*
+/// RFC 6265 §5.3 identifies a cookie by name, domain and path, and *domain*
 /// here includes whether it was host-only, because `Domain=example.com` set by
 /// `example.com` and a bare cookie set by the same host are two different
 /// cookies that a browser stores side by side. Comparing only the scope string
@@ -716,7 +716,7 @@ fn same_cookie(a: &Cookie, b: &Cookie) -> bool {
 /// Whether a stored cookie may be sent to this host.
 ///
 /// Host-only cookies match exactly. The rest match the domain they were scoped
-/// to and anything below it, **on a label boundary** — the check that makes
+/// to and anything below it, on a label boundary. The check that makes
 /// `attackerexample.com` fail to match a cookie scoped to `example.com`, which
 /// a bare `ends_with` would have let through.
 fn domain_matches(request_host: &str, cookie: &Cookie) -> bool {
@@ -750,7 +750,7 @@ fn registrable_domain(host: &str) -> Option<String> {
 fn is_public_suffix(host: &str) -> bool {
     // A host with no registrable domain is either a suffix itself or a shape
     // the list does not describe. Both must refuse to widen, so both answer
-    // true here — the conservative direction.
+    // true here. The conservative direction.
     match registrable_domain(host) {
         Some(domain) => domain != host,
         None => true,
@@ -820,8 +820,8 @@ fn same_site(a: &str, b: &str) -> bool {
 
 /// Parse one `Set-Cookie` value, or refuse it.
 ///
-/// Refusals are silent by design at this layer — a malformed or disallowed
-/// cookie is not an error the page gets to raise — but they are visible in the
+/// Refusals are silent by design at this layer, a malformed or disallowed
+/// cookie is not an error the page gets to raise, but they are visible in the
 /// count the caller records, which is where a reviewer would notice.
 fn parse_set_cookie(header: &str, host: &str, url: &Url, now: SystemTime) -> Option<Cookie> {
     let mut parts = header.split(';');
@@ -880,9 +880,9 @@ fn parse_set_cookie(header: &str, host: &str, url: &Url, now: SystemTime) -> Opt
     // Max-Age wins over Expires (RFC 6265 §5.2.2), and a non-positive one is
     // an immediate deletion.
     //
-    // `checked_add`, because `SystemTime + Duration` **panics** on overflow and
+    // `checked_add`, because `SystemTime + Duration` *panics* on overflow and
     // the addend here is a number off the wire. `Max-Age=9223372036854775807`
-    // in a `Set-Cookie` aborted the engine — any page the box's browser is
+    // in a `Set-Cookie` aborted the engine. Any page the box's browser is
     // pointed at could end the session with one response header, which is a
     // page deciding whether the agent driving it keeps running.
     //
@@ -919,7 +919,7 @@ fn parse_set_cookie(header: &str, host: &str, url: &Url, now: SystemTime) -> Opt
         return None;
     }
 
-    // Where this cookie may go. `None` is a refusal — a public suffix, or a
+    // Where this cookie may go. `None` is a refusal. A public suffix, or a
     // host asking to widen into a domain it is not under.
     let (scope, host_only) = scope_for(host, domain.as_deref())?;
 
@@ -1097,7 +1097,7 @@ mod tests {
 
     /// A widened cookie and a host-only one of the same name are two cookies,
     /// as they are in a browser. Folding them together would let one delete
-    /// the other — a logout the server never asked for.
+    /// the other. A logout the server never asked for.
     #[test]
     fn a_domain_cookie_does_not_replace_the_host_only_one_beside_it() {
         let jar = Jar::new();
@@ -1251,13 +1251,13 @@ mod tests {
 
     /// A `Max-Age` off the wire is a number the page chose, and
     /// `SystemTime + Duration` panics on overflow. One response header ended
-    /// the engine — and with it whatever the agent driving it was doing.
+    /// the engine, and with it whatever the agent driving it was doing.
     #[test]
     fn an_absurd_max_age_does_not_end_the_session() {
         let jar = Jar::new();
         let u = url("https://a.example/");
         assert_eq!(jar.store(&u, [format!("s=1; Max-Age={}", i64::MAX).as_str()]), 1);
-        // Too far out to represent, so it is held as a session cookie — which
+        // Too far out to represent, so it is held as a session cookie, which
         // in an in-memory jar is the same lifetime, and is still sent.
         let (header, _) = jar.header_for(&u).expect("still sent");
         assert_eq!(header, "s=1");
@@ -1310,7 +1310,7 @@ mod tests {
         // And the rule stays narrower than the grammar, because the web is:
         // a space, a comma and a quote in a *value* are all things real sites
         // set and every browser accepts, and none of them move the `;` the
-        // header is split on. A base64 value keeps its padding too — `=` is
+        // header is split on. A base64 value keeps its padding too: `=` is
         // legal in a value and only separates the pair once.
         for header in [
             "token=YWJjZA==",
@@ -1327,7 +1327,7 @@ mod tests {
 
     /// Loopback is a first-party channel by one rule, not two: the allowlist's
     /// `is_loopback` covers the whole of `127.0.0.0/8` and `*.localhost`, and
-    /// the hand-written list beside it covered neither — so a dev server on
+    /// the hand-written list beside it covered neither, so a dev server on
     /// `app.localhost` never got its `Secure` cookie back.
     #[test]
     fn every_spelling_of_loopback_is_a_first_party_channel() {
@@ -1421,8 +1421,8 @@ mod http_only_tests {
     fn http_only_cookies_cross_the_wire_but_never_reach_script() {
         // The distinction `document.cookie` rests on. A session credential is
         // almost always HttpOnly, so honouring the flag is what lets page
-        // script read cookies at all without handing an agent — which can read
-        // whatever script writes into the DOM — the thing it must not have.
+        // script read cookies at all without handing an agent, which can read
+        // whatever script writes into the DOM, the thing it must not have.
         let jar = Jar::new();
         jar.store(
             &url("https://app.example/"),
@@ -1440,8 +1440,8 @@ mod http_only_tests {
     }
 
     /// `HttpOnly` is a statement about *script*, and it was being honoured in
-    /// one direction only. `write_cookie` called `Jar::store` — the same door a
-    /// `Set-Cookie` header comes through — and replacement there goes by
+    /// one direction only. `write_cookie` called `Jar::store`, the same door a
+    /// `Set-Cookie` header comes through, and replacement there goes by
     /// name/host/path identity, so page script could substitute the server's
     /// session credential without ever being able to read it. That is session
     /// fixation, and the delete form is a logout the server never asked for.
@@ -1465,7 +1465,7 @@ mod http_only_tests {
         assert_eq!(jar.store_from_script(&u, "theme=light"), 1);
         assert!(jar.document_cookie(&u).contains("theme=light"));
 
-        // And script may not *set* `HttpOnly` — RFC 6265 §8.6 ignores the whole
+        // And script may not *set* `HttpOnly`. RFC 6265 §8.6 ignores the whole
         // set-cookie-string, which is what stops it planting a cookie it can
         // then hide behind.
         assert_eq!(jar.store_from_script(&u, "planted=1; HttpOnly"), 0);
@@ -1527,7 +1527,7 @@ mod persistence_tests {
     /// A jar file was believed about things the wire is not. The store path
     /// enforces four `Domain` rules, two name prefixes and `SameSite=None`
     /// requires `Secure`; this path enforced none of them, and the file is not
-    /// this process's own — it lives in the session directory, which inside a
+    /// this process's own. It lives in the session directory, which inside a
     /// box is under a `/tmp` the `agent` profile shares with the host, and
     /// `--restore` exists to carry one session's jar into another.
     #[test]
@@ -1580,7 +1580,7 @@ mod persistence_tests {
     fn http_only_survives_the_round_trip_and_stays_hidden_from_script() {
         // If `HttpOnly` were lost on the way through the file, a restored
         // session would hand page script the credential the original refused
-        // it — persistence quietly undoing the flag it was written beside.
+        // it. Persistence quietly undoing the flag it was written beside.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("cookies.json");
         let site = url("https://app.example/");

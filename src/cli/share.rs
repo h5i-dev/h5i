@@ -1,4 +1,4 @@
-//! `h5i box share` and `h5i join` — the CLI over `h5i-share`.
+//! `h5i box share` and `h5i join`. The CLI over `h5i-share`.
 //!
 //! This module owns every byte the user sees. The library decides policy and
 //! moves bytes; the wording of a ticket, a warning and a refusal lives here,
@@ -74,7 +74,7 @@ pub struct ShareArgs {
     #[arg(value_name = "NAME")]
     pub name: Option<String>,
 
-    /// The port inside the box — whatever the dev server in there binds.
+    /// The port inside the box. Whatever the dev server in there binds.
     ///
     /// Not `0`: that is not a port a server can be listening on, and the same
     /// spelling means "pick a free one" on `h5i join`, which is the opposite.
@@ -91,7 +91,7 @@ pub struct ShareArgs {
     pub label: Option<String>,
 
     /// Publish through a Cloudflare quick tunnel instead of peer to peer, so
-    /// the other side needs no h5i — just a browser.
+    /// the other side needs no h5i. Just a browser.
     ///
     /// The trade is real and is recorded in the receipt: Cloudflare terminates
     /// TLS, so this path is not end-to-end encrypted.
@@ -158,8 +158,8 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
             if json {
                 // With the box's name and whether anything is actually serving.
                 // The record alone carries neither: a consumer could not tell a
-                // running share from one left by a crash — the human view says
-                // "GONE" for that and the JSON said nothing — and could not map
+                // running share from one left by a crash, the human view says
+                // "GONE" for that and the JSON said nothing, and could not map
                 // a row back to a name to act on it.
                 let out: Vec<_> = rows.iter().map(|(m, s)| envelope(&m.slug, s)).collect();
                 println!("{}", serde_json::to_string_pretty(&out)?);
@@ -186,7 +186,7 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
                 // record, so the one consumer that asks about a single box got
                 // strictly less than the one that lists them all: no name to
                 // act on, and no way to tell a serving share from a record a
-                // crashed process left behind — which is the exact gap `ls`
+                // crashed process left behind, which is the exact gap `ls`
                 // had fixed for it two rounds earlier.
                 println!("{}", serde_json::to_string_pretty(&envelope(&name, &s))?);
             } else {
@@ -301,7 +301,7 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
                     // "Within a second" was the time it takes to *notice*
                     // (`STOP_POLL`). Then comes the grace, the transport's
                     // close and up to five seconds of waiting for connections
-                    // still mid-copy — so somebody who watched for a second and
+                    // still mid-copy, so somebody who watched for a second and
                     // saw it still listed concluded the stop had not worked.
                     println!(
                         "   It notices within a second, then writes its receipt and exits — \
@@ -350,7 +350,7 @@ fn box_dir(h5i_root: &std::path::Path, name: &str) -> anyhow::Result<std::path::
 /// The box must have a network namespace of its own, and a live process to
 /// borrow it from. Without one, "the box's port 3000" and "this machine's
 /// port 3000" are the same port, and a share would publish whatever happened
-/// to be listening on the host — which is the one outcome nobody would
+/// to be listening on the host, which is the one outcome nobody would
 /// forgive. So this refuses rather than guessing.
 ///
 /// The condition is deliberately "does this box have a netns of its own",
@@ -375,7 +375,7 @@ fn box_process(
 ) -> anyhow::Result<u32> {
     // A runner box has no process on this machine at all, so the generic
     // message below would tell the operator to start a session with a command
-    // that refuses for the same reason — a circle rather than an answer.
+    // that refuses for the same reason. A circle rather than an answer.
     if h5i_core::env::is_remote(m) {
         anyhow::bail!(
             "`{name}` runs on `{}`, so there is no process here whose network h5i could \
@@ -387,7 +387,7 @@ fn box_process(
     let Some(pid) = h5i_core::view::box_pid(dir) else {
         // A *writer*, which is the same filter `box_pid` applies. Asking
         // whether the registry is non-empty counts `box shell --readonly`
-        // observers too — so with only an observer alive, and in the state a
+        // observers too, so with only an observer alive, and in the state a
         // writer exiting while an observer stays leaves behind, this branch
         // told the operator their box shares the host's network and that they
         // needed a different tier or profile. Neither was true: `box_pid`
@@ -424,12 +424,12 @@ fn box_process(
     m: &h5i_core::env::EnvManifest,
     port: u16,
 ) -> anyhow::Result<u32> {
-    // macOS identifies a box by its **process tree**, not by a namespace, and
+    // macOS identifies a box by its *process tree*, not by a namespace, and
     // the safety that a namespace gives Linux for free is established here by
     // attribution instead: `h5i_share::owner` asks Darwin which process holds
     // the listening socket and refuses unless it is one of this box's. The
     // dialer does that on every connection, so what this function needs is only
-    // the root of the tree — the session process itself.
+    // the root of the tree. The session process itself.
     let pid = {
         // A box inside a VM has no host process holding its port, so
         // attribution would find nothing and report "nothing is listening",
@@ -500,7 +500,7 @@ fn start(h5i_root: &std::path::Path, args: ShareArgs) -> anyhow::Result<()> {
     if args.port == 0 {
         // Refused at the front, beside `--expire 0`. It used to mint a
         // complete ticket and then warn that nothing was listening on port
-        // zero, which nothing ever will be — and `h5i join --port 0` means
+        // zero, which nothing ever will be, and `h5i join --port 0` means
         // "pick a free one", so the same spelling meant opposite things on the
         // two sides.
         anyhow::bail!(
@@ -597,8 +597,8 @@ fn announce(name: &str, args: &ShareArgs, s: &h5i_share::run::Started) {
 /// `live` is "a process holds this record" and `admitting` is "somebody could
 /// still get in", which are different questions with different answers: a
 /// share winding up, or one whose grants are all revoked or expired, is live
-/// and admits nobody. Everything below `h5i-share` already distinguishes them
-/// — `box rm` and `box apply` ask the second — and a consumer of this JSON
+/// and admits nobody. Everything below `h5i-share` already distinguishes them,
+/// `box rm` and `box apply` ask the second, and a consumer of this JSON
 /// could only ask the first.
 fn envelope(name: &str, s: &h5i_share::session::ShareSession) -> serde_json::Value {
     let now = chrono::Utc::now().timestamp();
@@ -617,7 +617,7 @@ fn envelope(name: &str, s: &h5i_share::session::ShareSession) -> serde_json::Val
 ///
 /// `-` is not a convenience. A ticket is the entire authorization, this
 /// process runs for the length of the session, and `/proc/<pid>/cmdline` is
-/// world-readable on an ordinary Linux box — so `h5i join h5i1_…` hands every
+/// world-readable on an ordinary Linux box, so `h5i join h5i1_…` hands every
 /// other user on the machine a working invite for as long as you are joined.
 /// Reading it from a pipe is the way out, and it keeps the ticket out of shell
 /// history at the same time.
@@ -640,12 +640,12 @@ fn ticket_text(arg: &str) -> anyhow::Result<String> {
 
 /// Gated on `share`, not on `share-tunnel`: joining is dialling a ticket, and
 /// a ticket is a peer-to-peer thing. A tunnel-only build has `box share
-/// --tunnel` and no `join`, which is the correct shape — the person on the
+/// --tunnel` and no `join`, which is the correct shape. The person on the
 /// other end of a tunnel opens a link in a browser and needs no h5i at all.
 #[cfg(feature = "share")]
 /// Whether this process runs inside WSL, where Windows forwards only
 /// `127.0.0.1` into the VM: any other loopback address binds fine here and is
-/// then unreachable from a Windows browser — with nothing failing on this
+/// then unreachable from a Windows browser, with nothing failing on this
 /// side to say so.
 fn under_wsl() -> bool {
     std::env::var_os("WSL_DISTRO_NAME").is_some()
@@ -668,7 +668,7 @@ pub fn join(
     let ending = runtime.block_on(h5i_share::join::run(ticket, port, bind, shared_jar, |joined| {
         // Sanitised, because this string came out of a ticket somebody pasted.
         // `ticket::decode` validates the version, the base64, the JSON shape
-        // and the secret's width, and nothing about `box_id` — so a `\r` or an
+        // and the secret's width, and nothing about `box_id`, so a `\r` or an
         // `\x1b[1A` in it can erase or forge the lines below, one of which is
         // the warning telling this person they are about to run somebody else's
         // agent's code on their loopback. They are the one who did not choose
@@ -727,7 +727,7 @@ pub fn join(
              wider still — they ignore the port, so they are shared with everything on this \
              address."
         );
-        // The cookie jar is per *host*, and this join has a host of its own —
+        // The cookie jar is per *host*, and this join has a host of its own,
         // unless the bind for one failed, which is the case worth a sentence.
         if joined.shared_jar {
             println!(
@@ -742,7 +742,7 @@ pub fn join(
             // the first read as "your local credentials are safe", which is a
             // claim about the proxy being made about the situation: this front
             // forwards only what the box set, and the page it serves is on
-            // `127.0.0.1` where cookies ignore the port — so script on it can
+            // `127.0.0.1` where cookies ignore the port, so script on it can
             // read any non-HttpOnly cookie in that jar and send it to the box
             // itself. The filter stops the proxy handing them over; nothing
             // stops the page. The person reading this is the one who did not
@@ -764,7 +764,7 @@ pub fn join(
         );
         println!("   stop      Ctrl-C");
         // Restored. This block was lost when the closure was restructured, and
-        // nothing printed `Joined.warning` for a round — so a joiner whose
+        // nothing printed `Joined.warning` for a round, so a joiner whose
         // share was full, or whose box had nothing listening, or whose route
         // into the box had broken, got a clean "joined" and a URL, then a bare
         // 502 on the first page load. The explanation was in hand and thrown
@@ -777,8 +777,8 @@ pub fn join(
     // A share ending is the most ordinary thing that happens to one, so it
     // leaves by the front door: a line on stdout and exit 0. It used to be
     // `Error: Metadata error: the share ended: closed by peer: h5i: this share
-    // has ended (code 5)` — an internal enum name, the same fact three times
-    // and a wire constant — for a revoke, an expiry, a Ctrl-C and a stopped
+    // has ended (code 5)` (an internal enum name, the same fact three times
+    // and a wire constant) for a revoke, an expiry, a Ctrl-C and a stopped
     // box alike.
     println!();
     println!("{} {ending}", SUCCESS);
@@ -838,8 +838,8 @@ mod tests {
     #[test]
     #[cfg(feature = "share")]
     fn a_ticket_can_arrive_without_going_through_the_process_table() {
-        // `/proc/<pid>/cmdline` is world-readable on an ordinary Linux box —
-        // mode `-r--r--r--`, no `hidepid` — and `h5i join` runs for the whole
+        // `/proc/<pid>/cmdline` is world-readable on an ordinary Linux box
+        // (mode `-r--r--r--`, no `hidepid`) and `h5i join` runs for the whole
         // session. A ticket passed as an argument is therefore a working
         // invite, legible to every other user on the machine, for as long as
         // somebody is joined. Anything but `-` is still taken literally.

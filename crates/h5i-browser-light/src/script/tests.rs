@@ -44,7 +44,7 @@ fn page_and_script_as(
 
 /// A page taken all the way through loading, which is what `page_and_script`
 /// deliberately is not: it builds a bare realm, so anything installed *by*
-/// `run_scripts` — the document lifecycle, named access — is not there.
+/// `run_scripts` (the document lifecycle, named access) is not there.
 fn run_page(html: &str) -> (crate::engine::Page, Arc<dyn Broker>) {
     let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
@@ -191,7 +191,7 @@ fn a_page_that_never_settles_is_cut_off_and_says_so() {
     // The page has to *owe* the work for that to be true. This one arms a
     // timer past the settle budget, so the budget is genuinely what ended the
     // reading. A self-rescheduling loop used to stand in for this case and is
-    // now a different answer entirely — see the test below.
+    // now a different answer entirely. See the test below.
     let (_page, mut script) = page_and_script("<html><body></body></html>");
     script
         .eval("setTimeout(function(){}, 20000);")
@@ -205,7 +205,7 @@ fn a_page_that_never_settles_is_cut_off_and_says_so() {
 
 /// The case that used to be folded into the one above, and should not have
 /// been. `function again(){ setTimeout(again, 1) } again()` is not a page that
-/// ran out of time — it is a page that will still be looping tomorrow, and
+/// ran out of time. It is a page that will still be looping tomorrow, and
 /// reporting it as cut off told an agent to come back and wait again.
 #[test]
 fn a_self_rescheduling_loop_is_not_reported_as_an_unfinished_page() {
@@ -236,7 +236,7 @@ fn a_self_rescheduling_loop_is_not_reported_as_an_unfinished_page() {
 #[test]
 fn a_timer_landing_next_to_the_budget_does_not_abort_the_engine() {
     // The clock jumps to the next timer rather than stepping toward it, and the
-    // jump used to be written with `clamp` — which panics when its lower bound
+    // jump used to be written with `clamp`, which panics when its lower bound
     // exceeds its upper one. A timer due within one tick of the settle budget
     // makes `clock + TICK_MS` larger than the budget, so this page aborted the
     // process, taking the snapshot and the receipts with it.
@@ -260,7 +260,7 @@ fn a_timer_landing_next_to_the_budget_does_not_abort_the_engine() {
 // They live here rather than in a CI job that clones WPT, and the reason is not
 // only that the clone is slow: a pass count measured against an *unpinned*
 // upstream corpus is not a fixed thing to compare against. The first CI run
-// proved it — the runner scored `encoding` out of 142,445 subtests where this
+// proved it. The runner scored `encoding` out of 142,445 subtests where this
 // machine scored it out of 229,349, because the two had different revisions of
 // WPT. The number moved without the engine moving.
 //
@@ -270,7 +270,7 @@ fn a_timer_landing_next_to_the_budget_does_not_abort_the_engine() {
 #[test]
 fn the_document_lifecycle_fires() {
     // Neither event was ever fired, and `readyState` was the constant
-    // "complete" — which is why four corpora missed it. The common idiom reads
+    // "complete", which is why four corpora missed it. The common idiom reads
     // `readyState === "loading"` and otherwise initialises immediately, so
     // every page took the branch that works and nothing looked wrong.
     //
@@ -298,7 +298,7 @@ fn a_reflected_property_belongs_to_its_interface_and_not_to_every_element() {
     // `Element.prototype` rather than to the interfaces that own each
     // attribute. WPT's reflection helper gates on exactly this expression, took
     // the yes as licence to test a property `<button>` does not have, and one
-    // file went from 209 subtests passing to 330 failing — the engine claimed a
+    // file went from 209 subtests passing to 330 failing. The engine claimed a
     // surface it does not implement and was measured against it.
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
     for (tag, property, expected) in [
@@ -327,7 +327,7 @@ fn has_selectors_match_through_the_prelude_without_a_stylo_fork() {
     // one-bool patch that once changed that was removed by owner decision. So
     // `:has()` on the *query* paths is evaluated in the prelude instead:
     // each group becomes a transient marker class computed with the engine's
-    // own matcher, and the markers are gone again before the call returns —
+    // own matcher, and the markers are gone again before the call returns,
     // which is the second half of what this pins.
     let (_page, mut script) = page_and_script(
         "<html><body>\
@@ -395,7 +395,7 @@ fn has_selectors_match_through_the_prelude_without_a_stylo_fork() {
 fn the_window_runs_the_handler_assigned_to_its_onload_property() {
     // `window.onload = fn` read back as a function and never ran. The `on*`
     // accessors were installed on `Element.prototype`, and the window is not an
-    // element, so the assignment landed on an ordinary expando — correct on
+    // element, so the assignment landed on an ordinary expando. Correct on
     // inspection, inert in practice, which is the reason it survived four
     // corpora and 7,684 timing-out WPT files.
     let (page, _broker) = run_page(
@@ -431,7 +431,7 @@ fn body_onload_is_the_windows_load_handler() {
     // difference is not cosmetic: `load` is fired *at* the window, so a handler
     // left on the body element sits through the one event it exists for.
     //
-    // This is the shape most of WPT's timeout bucket had — a file whose entire
+    // This is the shape most of WPT's timeout bucket had. A file whose entire
     // test is `<body onload="run()">` loaded, registered nothing, and was
     // scored as an engine that ran it and found nothing to say.
     let (page, _broker) = run_page(
@@ -654,7 +654,7 @@ fn a_stylesheet_can_be_read_and_edited_through_its_element() {
 fn a_text_decoder_validates_its_label_and_decodes_as_that_label() {
     // Every label was accepted and every one answered "utf-8", so a page
     // checking whether an encoding was supported was told yes, and Shift-JIS
-    // decoded as UTF-8 — mojibake with no error.
+    // decoded as UTF-8. Mojibake with no error.
     let (_page, mut script) = page_and_script("<html><body></body></html>");
     assert_eq!(script.eval_value("new TextDecoder('shift_jis').encoding").unwrap(), "shift_jis");
     assert_eq!(script.eval_value("new TextDecoder('latin2').encoding").unwrap(), "iso-8859-2");
@@ -785,7 +785,7 @@ fn a_documents_encoding_reaches_both_its_text_and_its_urls() {
     assert!(rendered.contains("日本"), "its text decoded as itself:\n{rendered}");
     // A code point euc-jp cannot represent becomes an HTML numeric character
     // reference with its own punctuation already percent-encoded. This engine
-    // used to answer `?%E4%B8%82` — the right escape of the wrong bytes.
+    // used to answer `?%E4%B8%82`: the right escape of the wrong bytes.
     assert!(
         rendered.contains("?%26%2319970%3B"),
         "an unmappable code point is a numeric reference:\n{rendered}"
@@ -812,7 +812,7 @@ fn a_utf8_document_is_untouched_by_any_of_that() {
 fn a_measured_answer_reflects_what_script_just_built() {
     // Build an element, give it a size, attach it, ask how big it is. Every
     // geometry reader answered a confident `0` before, because layout had not
-    // run since the tree changed — not "unknown", but a wrong number about an
+    // run since the tree changed, not "unknown", but a wrong number about an
     // element that plainly has a size.
     let (_page, mut script) = page_and_script("<html><body></body></html>");
     script
@@ -913,7 +913,7 @@ fn focus_moves_and_the_document_knows_it() {
         "out,in",
         "the old element blurs before the new one focuses"
     );
-    // Nothing focused reports the body, not null — code branching on it expects
+    // Nothing focused reports the body, not null. Code branching on it expects
     // an element.
     script.eval("document.getElementById('b').blur();").expect("runs");
     assert_eq!(script.eval_value("document.activeElement.tagName").unwrap(), "BODY");
@@ -1334,7 +1334,7 @@ fn realm_on(base: &url::Url) -> (crate::engine::Page, Script) {
 
 /// The hole this closes: `EventSource` had no same-origin policy at all. Two
 /// allowed origins and a script on either could open the other's stream and
-/// read it — the exact case `crate::cors` exists to refuse, on a second path
+/// read it. The exact case `crate::cors` exists to refuse, on a second path
 /// that never asked.
 #[test]
 fn a_cross_origin_event_stream_is_refused_when_the_server_does_not_allow_it() {
@@ -1409,7 +1409,7 @@ fn an_answer_that_is_not_an_event_stream_is_not_read_as_one() {
 }
 
 /// Each of these is a thread, and the thread is the resource the session's
-/// sandbox profile actually caps — at 64 for the whole process, shared with the
+/// sandbox profile actually caps. At 64 for the whole process, shared with the
 /// viewer loop, the control loop, the HTTP client's runtime and the fetch
 /// workers. Nothing bounded them, so a page could open until thread creation
 /// failed and take the engine's own workers down with it.
@@ -1514,7 +1514,7 @@ fn an_api_this_engine_lacks_is_absent_rather_than_a_stub_that_lies() {
     // This engine used to answer feature detection with a stub that threw when
     // touched: `typeof WebSocket` was "function" and `'serviceWorker' in
     // navigator` was true. Every page that *correctly* checked before using
-    // therefore took the branch for an API that then failed — the
+    // therefore took the branch for an API that then failed. The
     // plausible-wrong answer this engine exists to refuse, written by us. It
     // cost three real sites their entire bundle.
     assert_eq!(script.eval_value("typeof BroadcastChannel").unwrap(), "undefined");
@@ -1578,7 +1578,7 @@ fn api_server() -> (u16, std::thread::JoinHandle<()>) {
     let port = listener.local_addr().unwrap().port();
     // Exactly as many connections as the test makes, and no more. One more
     // than that and the thread blocks in `accept` forever, which the `join`
-    // below turns into a hung test rather than a failing one — the worst shape
+    // below turns into a hung test rather than a failing one. The worst shape
     // a test can have, because it looks like a slow build.
     let handle = std::thread::spawn(move || {
         for _ in 0..1 {
@@ -1780,9 +1780,9 @@ fn a_page_that_never_settles_says_so_in_the_outline() {
 }
 
 /// The same reporting path, for the page that is running rather than stuck.
-/// The note has to be there — a loop makes two reads of one page disagree
+/// The note has to be there (a loop makes two reads of one page disagree
 /// without the agent having acted, which is the caveat `open_sockets` carries
-/// for the same reason — but it must not say the page is unfinished.
+/// for the same reason) but it must not say the page is unfinished.
 #[test]
 fn a_looping_page_says_it_is_looping_rather_than_unfinished() {
     let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
@@ -1871,7 +1871,7 @@ fn element_style_is_backed_by_the_style_attribute() {
 
 #[test]
 fn bounding_rects_come_from_the_layout_the_engine_already_computed() {
-    // Zeros — which is what this returned before — send a positioning library
+    // Zeros, which is what this returned before, send a positioning library
     // into a loop that never converges.
     let (_page, mut script) = page_and_script(
         "<html><body><div id='a' style='height:40px'>a</div>\
@@ -2015,8 +2015,8 @@ fn computed_style_answers_what_it_knows_and_reports_what_it_does_not() {
     // Every longhand Stylo can resolve is answered; what cannot be resolved
     // names itself rather than returning a plausible "".
     //
-    // This test used to assert the opposite for `font-variant-ligatures` — that
-    // an "uncurated" property reports itself as missing — because the six
+    // This test used to assert the opposite for `font-variant-ligatures`, that
+    // an "uncurated" property reports itself as missing, because the six
     // properties this once answered were believed to be all that could be
     // bound. WPT disproved that: `ComputedValues::computed_value_to_string`
     // resolves any longhand. The assertion below is the same shape as the old
@@ -2181,8 +2181,8 @@ fn form_data_collects_what_a_server_would_receive() {
 
 #[test]
 fn typing_fires_input_and_change_because_it_is_a_user_edit() {
-    // Script setting `.value` must not fire these — a framework re-rendering on
-    // its own write would loop — but a person typing must. The handlers write
+    // Script setting `.value` must not fire these, a framework re-rendering on
+    // its own write would loop, but a person typing must. The handlers write
     // into the DOM so the assertion reads the same tree the agent would, rather
     // than trusting a value the engine already knew.
     let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
@@ -2667,7 +2667,7 @@ fn a_module_graph_loads_and_evaluates() {
     assert!(paths.contains(&"/lib/punctuation.js".to_string()), "{paths:?}");
 }
 
-/// A module script is a `cors` request in every browser — unlike a classic
+/// A module script is a `cors` request in every browser. Unlike a classic
 /// `<script src>`, which is why JSONP exists. This one had no CORS context at
 /// all: no `Origin`, no `Access-Control-Allow-Origin` check on the answer, and
 /// the body handed back with full exposure. So
@@ -2715,7 +2715,7 @@ fn a_cross_origin_module_needs_the_servers_permission() {
 /// `MAX_INFLIGHT_FETCHES` bounds what is on the wire and the request budget
 /// bounds what a page may send; neither bounded the queue in between.
 /// `fetch()` returns before anything is decided about it, so a loop calling it
-/// builds one slot per call — a URL, a method, a body, headers — and the drain
+/// builds one slot per call (a URL, a method, a body, headers) and the drain
 /// only runs once per settle round.
 #[test]
 fn a_page_cannot_queue_requests_without_end() {
@@ -2835,7 +2835,7 @@ fn scripted_text(body: &str) -> (String, Vec<crate::script::host::ConsoleLine>) 
 fn create_event_follows_the_legacy_table_in_both_directions() {
     // Both directions matter: an alias constructs the *mapped* interface, and
     // a name off the table throws NotSupportedError even when the interface
-    // exists — createEvent is a legacy door the spec stopped widening.
+    // exists. CreateEvent is a legacy door the spec stopped widening.
     let (text, console) = scripted_text(
         r#"<script>
              const out = [];
@@ -2865,11 +2865,11 @@ fn a_doctype_and_a_processing_instruction_can_be_made_and_read() {
              const out = [];
              const dt = document.implementation.createDocumentType("svg", "pub", "sys");
              out.push(dt.nodeType, dt.name, dt.publicId, dt.systemId, dt instanceof DocumentType);
-             // An empty name is **legal**, and this test used to assert the
+             // An empty name is *legal*, and this test used to assert the
              // opposite. DOM dropped the `Name`-production check from
              // `createDocumentType`, and the suite is unambiguous about it: of
              // the 81 cases in `DOMImplementation-createDocumentType`, 79 must
-             // succeed — "", "1foo", "@foo", "a.b:c" — and only "edi:>" and
+             // succeed ("", "1foo", "@foo", "a.b:c") and only "edi:>" and
              // "edi:a " throw. What survives is the pair of characters that
              // would break serialising `<!DOCTYPE name>`, which is the same
              // rule the processing instruction below applies to `?>`.
@@ -2921,7 +2921,7 @@ fn the_namespace_trio_answers_what_an_html_document_answers() {
 
 #[test]
 fn create_element_ns_carries_its_namespace_on_the_wrapper() {
-    // The one tree is an HTML tree, so the namespace lives on the JS wrapper —
+    // The one tree is an HTML tree, so the namespace lives on the JS wrapper,
     // which is cached by id, so the facts hold for the node's lifetime. An SVG
     // circle reports lowercase, its namespace, and its prefix, none of which
     // the HTML-parsed name underneath can say.
@@ -2982,7 +2982,7 @@ fn aria_enumerated_attributes_follow_the_per_attribute_table() {
 fn a_form_owns_by_attribute_and_not_only_by_containment() {
     // `form=""` names no id and therefore has no owner. This read the
     // attribute for truthiness, so an empty one fell through to the ancestor
-    // search and reported the surrounding form — the opposite answer, since
+    // search and reported the surrounding form. The opposite answer, since
     // taking a control *out* of the form it sits in is the whole point.
     let (text, console) = scripted_text(
         r#"<form id="f"><input id="inside" name="a"><input id="opted" name="b" form=""></form>
@@ -3039,7 +3039,7 @@ fn an_entry_list_carries_the_submitter_charset_and_nothing_disabled() {
 #[test]
 fn request_submit_validates_and_fires_where_submit_does_neither() {
     // The two differ in exactly the ways that matter, and implementing them as
-    // one function — the obvious shortcut — would make `form.submit()` called
+    // one function, the obvious shortcut, would make `form.submit()` called
     // from inside a `submit` handler recurse.
     let (text, console) = scripted_text(
         r#"<form id="f"><input name="a" value="1"><button id="b">go</button></form>
@@ -3125,7 +3125,7 @@ fn a_control_reports_its_validity_and_says_which_constraint_failed() {
 #[test]
 fn a_custom_validity_message_sets_and_clears() {
     // The empty string *clears* the error, which is how a page says "this is
-    // fine now" — storing "" as an error would leave the control permanently
+    // fine now". Storing "" as an error would leave the control permanently
     // invalid and the form permanently unsubmittable.
     let (text, console) = scripted_text(
         r#"<input id="i" value="x">
@@ -3165,7 +3165,7 @@ fn a_text_field_has_a_selection_and_a_number_field_does_not() {
              document.getElementById("out").textContent = out.join("|");
            </script>"#,
     );
-    // A fresh control's selection sits at 0,0 — the caret moves to the end
+    // A fresh control's selection sits at 0,0. The caret moves to the end
     // when *script* assigns `value`, not when the markup seeds it. That is
     // what browsers do and what WPT's type-change suite asserts.
     assert!(
@@ -3177,8 +3177,8 @@ fn a_text_field_has_a_selection_and_a_number_field_does_not() {
 #[test]
 fn an_empty_input_reads_as_empty_rather_than_as_a_space() {
     // blitz seeds a laid-out input's editor with a single space, and the value
-    // getter applied the whitespace-is-unseeded rule to `<textarea>` only — so
-    // `if (!input.value)` was **false** for an empty field. Every page and
+    // getter applied the whitespace-is-unseeded rule to `<textarea>` only, so
+    // `if (!input.value)` was *false* for an empty field. Every page and
     // every agent testing a form for emptiness got the wrong answer, and
     // `required` could never fire.
     let (text, console) = scripted_text(
@@ -3224,7 +3224,7 @@ fn a_clone_keeps_every_attribute_and_a_control_keeps_its_value() {
 #[test]
 fn a_disabled_control_dispatches_no_click() {
     // `click()` on a disabled button fired a click event, so a page that
-    // disables a control to stop it being used still saw it used — with the
+    // disables a control to stop it being used still saw it used, with the
     // form in whatever state the disabling was meant to protect.
     let (text, console) = scripted_text(
         r#"<button id="b" disabled>go</button><button id="ok">go</button>
@@ -3279,7 +3279,7 @@ fn a_numeric_input_steps_and_reports_a_number_or_nan() {
 #[test]
 fn a_token_list_replaces_indexes_and_refuses_a_token_it_cannot_hold() {
     // Four gaps in one type. `replace` was absent (262 corpus asks), indexed
-    // access answered undefined, and the two validations were missing — so
+    // access answered undefined, and the two validations were missing, so
     // `classList.add("")` wrote a trailing space and `classList.add("a b")`
     // wrote a token that read back as *two*, which meant a class a page added
     // could not be removed again.
@@ -3401,7 +3401,7 @@ fn a_popover_opens_closes_and_says_why_it_cannot() {
            </script>"#,
     );
     // The repeated calls are silent no-ops, not errors: WPT's own
-    // `assertIsFunctionalPopover` calls both twice and expects no throw — the
+    // `assertIsFunctionalPopover` calls both twice and expects no throw. The
     // spec's validity check never throws for a visibility mismatch. Only the
     // missing-attribute case is an exception.
     assert!(
@@ -3414,7 +3414,7 @@ fn a_popover_opens_closes_and_says_why_it_cannot() {
 fn popover_target_element_reflects_as_an_element_reference() {
     // Not a string reflection: assigning an element stamps the attribute to
     // `""` and stores the reference, and the reference only answers while the
-    // target is actually in the document — WPT's invoking-attribute suite
+    // target is actually in the document. WPT's invoking-attribute suite
     // checks every corner of that contract.
     let (text, console) = scripted_text(
         r#"<button id="b">go</button><div id="pop" popover>p</div>
@@ -3591,7 +3591,7 @@ fn an_interface_object_answers_what_a_value_is_rather_than_throwing() {
     // §B8.4 refuses a name that exists and answers wrongly, and that rule is
     // about *feature detection*. This is the other case: a page writing
     // `nodes instanceof NodeList` is asking what it holds, and the honest
-    // answers are yes and no — never `ReferenceError`, which is what 47
+    // answers are yes and no. Never `ReferenceError`, which is what 47
     // interface names used to be.
     let (text, console) = scripted_text(
         r#"<script>
@@ -3656,14 +3656,14 @@ fn conformance_script(html: &str) -> (crate::engine::Page, Script) {
 fn the_webidl_decoration_arrives_only_when_an_instrument_asks() {
     // The decoration is a whole source that is not parsed by default, so this
     // checks the tier seam as much as the decoration: a realm built the
-    // ordinary way must not have it, and one built with the flag must — from a
+    // ordinary way must not have it, and one built with the flag must. From a
     // file the first realm never handed to Boa.
     //
     // What the pass actually adds, probed on both a plain class accessor and a
     // reflected one: the member becomes enumerable, and the accessor refuses a
     // receiver that is not an instance. The `get x` naming is *not* part of it
-    // — Boa names class accessors correctly on its own, and the reflection
-    // tables name theirs — which is worth pinning down, because it is the one
+    // (Boa names class accessors correctly on its own, and the reflection
+    // tables name theirs) which is worth pinning down, because it is the one
     // of the three a reader would assume the pass was carrying.
     let probe = r#"(() => {
         const out = [];
@@ -3705,7 +3705,7 @@ fn the_webidl_decoration_arrives_only_when_an_instrument_asks() {
 /// the cost. Everything else is a token the parser builds.
 ///
 /// The rule is line-based, which is exact here because the prelude has no block
-/// comments and no template literal spans a line — both checked below.
+/// comments and no template literal spans a line. Both checked below.
 fn code_bytes(source: &str) -> usize {
     source
         .lines()
@@ -3716,27 +3716,27 @@ fn code_bytes(source: &str) -> usize {
 
 #[test]
 fn the_eagerly_parsed_prelude_stays_within_its_budget() {
-    // **The exchange rate fell, and the budget is still the floor under
-    // noticing.** Parse and compile were 67 ms of the 83 a realm cost and were
+    // The exchange rate fell, and the budget is still the floor under
+    // noticing. Parse and compile were 67 ms of the 83 a realm cost and were
     // paid per page; sharing the compiled prelude across realms moved them to
     // once per thread, and a later realm now spends under a microsecond there.
-    // What every page still pays for a KiB is the *running* of it — 12.4 ms for
-    // the whole 273 KiB — so about **45 µs of per-page realm cost per KiB**,
+    // What every page still pays for a KiB is the *running* of it, 12.4 ms for
+    // the whole 273 KiB, so about 45 µs of per-page realm cost per KiB,
     // against the ~150 µs it was. The first page a renderer serves still pays
     // the compile, at roughly 245 µs per KiB, and that is the page a person is
     // waiting on.
     //
     // The reason for a budget is unchanged. The prelude grew by 4,692 lines in
     // two commits during a coverage push, the realm went from 15.9 ms to 82.8 ms
-    // per page, and nothing said so — the tests all passed, because a slower
+    // per page, and nothing said so. The tests all passed, because a slower
     // engine is not a wrong one. A budget that has to be raised on purpose puts
     // the price in the diff that pays it.
     //
     // Raising it is a normal thing to do, not a failure. The question the number
     // asks is only whether it could be a tier instead: see `TIERS` in `mod.rs`,
     // and `lazyGlobals` in the prelude.
-    // 278, raised 2026-08-30, and the honest reason is **not** the coverage
-    // number — that batch was a bad trade and the note should say so.
+    // 278, raised 2026-08-30, and the honest reason is *not* the coverage
+    // number. That batch was a bad trade and the note should say so.
     //
     // 2.4 KiB bought 32 subtests, a ratio of 0.013 against the 0.4 this branch
     // averages. What it bought that is worth having:
@@ -3746,48 +3746,48 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     //     `ownerElement` and a `nodeType` of 2 were all missing from something
     //     real code reads.
     //   * `checkVisibility`, which is CSSOM-View's "would a person see this".
-    //     That is the question **this product exists to answer** — the
-    //     snapshot and the verbs ask it constantly — so it earns core space on
+    //     That is the question this product exists to answer, the
+    //     snapshot and the verbs ask it constantly, so it earns core space on
     //     its own terms rather than on WPT's.
     //   * `compatMode`, which is a fact about this engine (it parses
     //     `QuirksMode::NoQuirks` unconditionally) rather than a guess.
     //
     // The earlier history is worth keeping too. It went 275 -> 276 for CSSOM
-    // shapes that were real objects wearing no interface — `matchMedia()`
+    // shapes that were real objects wearing no interface (`matchMedia()`
     // returning a `MediaQueryList`, `sheet.media` being a `MediaList` and not a
-    // **String** — and came straight back down when the reflection table turned
+    // *String*) and came straight back down when the reflection table turned
     // out to write every attribute name twice: 139 entries of `["foo", "foo"]`
     // plus 72 more with a type after them, and fifteen copies of three ARIA
     // option objects. That returned 3.9 KiB, more than the features cost.
     //
-    // **And the budget is not a performance guard, which was measured rather
-    // than assumed.** `examples/perf` puts `prelude run` at 15.9 ms of a 16.2 ms
+    // And the budget is not a performance guard, which was measured rather
+    // than assumed. `examples/perf` puts `prelude run` at 15.9 ms of a 16.2 ms
     // later realm, and a deliberately padded 50 KiB build measured the slope at
-    // 40-52 us/KiB — consistent with the 45 quoted above. But the run-to-run
-    // spread on this box is +/-4 ms, so **even an 18% size delta is not
-    // statistically resolvable** (t ~ 1.2). A few KiB is far below the noise
+    // 40-52 us/KiB. Consistent with the 45 quoted above. But the run-to-run
+    // spread on this box is +/-4 ms, so even an 18% size delta is not
+    // statistically resolvable (t ~ 1.2). A few KiB is far below the noise
     // floor. What the budget actually does is force the question, and it has
     // twice: it put the interface-prototype mirror in the `conformance` tier
     // where pages pay nothing for it, and it found the table redundancy above.
     // Keep it tight for that reason, not because a KiB is measurably slow.
     // 280, raised after an adversarial review of this branch. The extra 2 KiB
-    // is almost entirely **bug fixes to what the branch already added**, not
-    // new surface — `classList.toggle` doing WebIDL boolean conversion and
+    // is almost entirely bug fixes to what the branch already added, not
+    // new surface: `classList.toggle` doing WebIDL boolean conversion and
     // validating on the declining path, `Attr`/`MediaList`/`MediaQueryList`
     // refusing `new` the way `brand()` used to, `Attr.localName` not splitting
     // a colon it has no prefix for, `removeProperty` returning the serialised
     // value `getPropertyValue` would, and `sheet.media` being live rather than
     // a snapshot. Those found 67 subtests between them, so the surface was
     // wrong in ways the coverage numbers had been quietly paying for.
-    // 281, and this KiB is a **speed** purchase rather than a surface one,
+    // 281, and this KiB is a *speed* purchase rather than a surface one,
     // which is a first for this budget. `classList.add` measured 100 us against
     // 2 us for the `setAttribute` underneath it, and it is the largest single
-    // JS cost on a component-shaped page — 35 ms of an 88 ms load. Two causes,
+    // JS cost on a component-shaped page. 35 ms of an 88 ms load. Two causes,
     // both in code this file guards: `_all()` tokenised with a regex into a
     // `Set` and back out through a spread (43 us, four intermediates), and the
     // indexed proxy sat in front of every internal `this._node` read inside
     // every method. Hand-rolled tokenising plus binding methods to the target
-    // takes `add` to 25 us and `contains` to 10 us — 4x each.
+    // takes `add` to 25 us and `contains` to 10 us. 4x each.
     const BUDGET_KIB: usize = 281;
 
     assert!(
@@ -3812,8 +3812,8 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
 /// existed.
 ///
 /// This is the guard on sharing the prelude's compiled code between realms
-/// (`bind_to_realm` in our Boa fork). The saving is real — parse and compile
-/// were 42 ms of the 63 a realm cost — but the thing being shared is one step
+/// (`bind_to_realm` in our Boa fork). The saving is real, parse and compile
+/// were 42 ms of the 63 a realm cost, but the thing being shared is one step
 /// away from the thing §B15.12a refuses outright: reusing the *realm*, which
 /// would let a page set attacker-controlled state, navigate, and have the next
 /// document see it. Sharing instructions is safe and sharing state is not, so
@@ -3977,8 +3977,8 @@ fn a_tier_is_not_parsed_until_the_page_asks_for_it() {
     // The deferral has to be observable, or it is a claim rather than a fact:
     // an accessor standing where the interface will be is what "not parsed yet"
     // looks like from JavaScript, and a data property is what it looks like
-    // afterwards. Both are checked here so that a tier quietly becoming eager
-    // — by something in the core touching the name — shows up as a failure.
+    // afterwards. Both are checked here so that a tier quietly becoming eager,
+    // by something in the core touching the name, shows up as a failure.
     let (_page, mut script) = page_and_script("<html><body></body></html>");
     assert_eq!(
         script
@@ -4000,8 +4000,8 @@ fn a_tier_is_not_parsed_until_the_page_asks_for_it() {
             .unwrap(),
         "eager"
     );
-    // The other shape of trigger. `:has()` is not reached by name — it arrives
-    // inside a selector string — so its tier is loaded by the test the core
+    // The other shape of trigger. `:has()` is not reached by name, it arrives
+    // inside a selector string, so its tier is loaded by the test the core
     // already ran to decide whether it needed the evaluator at all. A plain
     // selector must not bring it in; a `:has()` one must.
     let (_page, mut selectors) = page_and_script(
@@ -4022,7 +4022,7 @@ fn a_tier_is_not_parsed_until_the_page_asks_for_it() {
     // with it, because they share a source and splitting them would mean
     // parsing the same file twice.
     //
-    // And it arrives shaped as WebIDL says an interface object is — the pass
+    // And it arrives shaped as WebIDL says an interface object is. The pass
     // that fixes that for the core interfaces ran long before this file did.
     assert_eq!(
         script
@@ -4039,7 +4039,7 @@ fn a_tier_is_not_parsed_until_the_page_asks_for_it() {
 fn interface_objects_are_not_enumerable_on_the_global() {
     // WebIDL §3.7: an interface object is `enumerable: false`. Every one of
     // ours was enumerable, because `Object.assign` creates enumerable data
-    // properties — and `idlharness` checks this first, per interface, before
+    // properties, and `idlharness` checks this first, per interface, before
     // examining anything about the interface itself.
     let (text, console) = scripted_text(
         r#"<script>
@@ -4060,7 +4060,7 @@ console: {console:?}"
 #[test]
 fn a_comment_is_character_data() {
     // It was not, and the cause was a duplicate key: the globals literal bound
-    // `CharacterData` twice, and the later `CharacterData: Text` won — so the
+    // `CharacterData` twice, and the later `CharacterData: Text` won, so the
     // name resolved to `Text` and `comment instanceof CharacterData` was false
     // for a class the comment genuinely extends.
     let (text, console) = scripted_text(
@@ -4085,7 +4085,7 @@ console: {console:?}"
 fn option_value_is_the_attribute_and_survives_being_set() {
     // `option.value = x` went to the *editor* path, which an option does not
     // have, so it landed in a field the option's own getter never reads and
-    // the write was silently lost — taking `new Option(label, value)` with it,
+    // the write was silently lost. Taking `new Option(label, value)` with it,
     // which is most of why that constructor is still written.
     let (text, console) = scripted_text(
         r#"<script>
@@ -4194,8 +4194,8 @@ fn an_attribute_is_found_by_the_name_the_idl_spells_it_with() {
 fn an_svg_attribute_keeps_the_case_the_parser_gave_it() {
     // The other half, and the reason the fix is namespace-conditional rather
     // than a blanket `to_lowercase`. The HTML parser case-corrects SVG
-    // attributes, so an `<svg>` really does hold one named `viewBox` —
-    // lowercasing there would trade one silent wrong answer for another.
+    // attributes, so an `<svg>` really does hold one named `viewBox`.
+    // Lowercasing there would trade one silent wrong answer for another.
     let broker =
         crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let factory = scripted_factory(broker);
@@ -4268,7 +4268,7 @@ fn an_import_map_resolves_a_bare_specifier_the_page_named() {
 fn an_import_map_is_not_executed_as_script() {
     // It is a declaration, not code. Running it would parse JSON as JavaScript
     // and fill the console with a syntax error blaming the page for something
-    // it never asked for — the same trap `type="application/json"` blocks.
+    // it never asked for. The same trap `type="application/json"` blocks.
     let broker =
         crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let factory = scripted_factory(broker);
@@ -4477,8 +4477,8 @@ fn a_click_is_credited_only_with_what_it_caused() {
 
 #[test]
 fn a_script_element_that_is_not_javascript_is_not_executed() {
-    // Pages embed data in script elements — `application/json` for state,
-    // `text/template` for markup — and the spec says those never execute.
+    // Pages embed data in script elements (`application/json` for state,
+    // `text/template` for markup) and the spec says those never execute.
     // Running them parses JSON as JavaScript and fills the console with syntax
     // errors that blame the page. Found by pointing the corpus at github.com.
     let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
@@ -4537,17 +4537,17 @@ fn an_api_this_engine_lacks_names_itself_instead_of_throwing_anonymously() {
 
 #[test]
 fn a_constructed_text_node_is_a_text_node_and_not_the_document() {
-    // `new Text("x")` is a page building a node — DOM §4.10 says it may — and
+    // `new Text("x")` is a page building a node, DOM §4.10 says it may, and
     // this file's classes take a *node id* as their first argument. Without a
     // way to tell those apart the page got a wrapper whose id was the string
     // "x", which the primitives converted to 0, which is the document. So
-    // `new Text("x").nodeType` was **9**, and appending it anywhere put the
+    // `new Text("x").nodeType` was *9*, and appending it anywhere put the
     // document inside one of its own descendants.
     //
     // What that cost: `dom/events/Event-dispatch-click.html` does exactly this
     // (`input.appendChild(new Text("does not matter"))`) and the engine walked
     // the resulting cycle for ever, at 100% of a core, past every deadline it
-    // has — those guard the script realm, and no script is running while layout
+    // has. Those guard the script realm, and no script is running while layout
     // walks. Six of them were found spinning on one machine, the oldest for
     // seven hours. The file now reports in 0.18 s.
     let (_page, mut script) = page_and_script("<html><body><div id='d'></div></body></html>");
@@ -4581,7 +4581,7 @@ fn a_constructed_text_node_is_a_text_node_and_not_the_document() {
 
     // And the interfaces that are *not* constructible say so, which is the same
     // defect wearing the other hat: `new Element()` left `_id` as `null`, the
-    // primitives read that as node 0, and node 0 is the document — so
+    // primitives read that as node 0, and node 0 is the document, so
     // `new Element().textContent = "x"` wrote through to the document and took
     // the process down with it. DOM §4.4 and §4.9: these throw in every engine.
     for name in ["Element", "Node", "CharacterData"] {
@@ -4617,7 +4617,7 @@ fn a_constructed_text_node_is_a_text_node_and_not_the_document() {
 
 #[test]
 fn a_bad_node_id_is_an_error_rather_than_the_document() {
-    // Rust's float-to-integer cast saturates, so `NaN as usize` is 0 — and node
+    // Rust's float-to-integer cast saturates, so `NaN as usize` is 0, and node
     // 0 is the document. Every argument that was not a number at all therefore
     // named the most consequential node in the tree, and named it silently.
     // That is how `new Text("x")` came back with `nodeType === 9`.
@@ -4637,9 +4637,9 @@ fn a_bad_node_id_is_an_error_rather_than_the_document() {
     }
 
     // `undefined` is the exception, and not an accident: `document` carries no
-    // `_id` — every reflected accessor uses `this._id === undefined` as its
+    // `_id` (every reflected accessor uses `this._id === undefined` as its
     // WebIDL brand check, so giving the document one would make it pass for an
-    // element — and every path that hands `document._id` to a primitive means
+    // element) and every path that hands `document._id` to a primitive means
     // the document. 9 is DOCUMENT_NODE.
     assert_eq!(script.eval_value("String(__h5i.nodeKind(undefined))").unwrap(), "9");
     assert_eq!(script.eval_value("String(__h5i.nodeKind(null))").unwrap(), "9");
@@ -4661,7 +4661,7 @@ fn a_node_cannot_be_put_inside_itself() {
     //
     // It is checked twice on purpose. Here, *before* the child is unlinked from
     // its parent, because that is the only moment the ancestor relationship
-    // still exists — the spec orders it that way for exactly this reason. And
+    // still exists. The spec orders it that way for exactly this reason. And
     // again in `dom_api.rs`, which is the last door before blitz and the only
     // one a raw primitive call goes through. Neither check can replace the
     // other: this one cannot see a primitive call, and that one cannot see an
@@ -4774,8 +4774,8 @@ fn a_gap_is_named_by_the_object_it_was_read_from() {
 fn an_internal_read_never_reaches_the_sentinel() {
     // The sentinel at the end of a node's chain is for names *pages* ask for.
     // This file's own bookkeeping must not arrive there: a field we set only
-    // sometimes — `_nsuri`, set by `createElementNS` and by nothing the parser
-    // does — is absent on almost every element, so `get tagName()` reading it
+    // sometimes (`_nsuri`, set by `createElementNS` and by nothing the parser
+    // does) is absent on almost every element, so `get tagName()` reading it
     // walked the whole prototype chain into a proxy trap to learn something
     // about itself. It cost 1415 ns on an accessor whose native call is 196 ns.
     //
@@ -4830,7 +4830,7 @@ fn an_internal_read_never_reaches_the_sentinel() {
 #[test]
 fn url_parsing_uses_the_engines_own_parser() {
     // One parser, not two. A JavaScript reimplementation would disagree with
-    // the broker about percent-encoding, default ports and origins — exactly
+    // the broker about percent-encoding, default ports and origins. Exactly
     // the cases a policy decision turns on.
     let (_page, mut script) = page_and_script("<html><body></body></html>");
 
@@ -5021,7 +5021,7 @@ fn set_interval_repeats_but_does_not_hold_the_page_open() {
     let (_page, mut script) = page_and_script("<html><body></body></html>");
 
     // Virtual time advances only as far as pending one-shot work requires, so
-    // an interval alone settles immediately with no time passed — which is the
+    // an interval alone settles immediately with no time passed, which is the
     // honest answer: nothing happened yet. It fires along the way while the
     // clock is moving for another reason, which is what a real page looks like.
     script
@@ -5321,7 +5321,7 @@ fn current_script_names_the_running_element_and_only_then() {
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), options);
     let base = url::Url::parse("https://app.example/").unwrap();
 
-    // A page reading its own tag for configuration — the whole reason the
+    // A page reading its own tag for configuration. The whole reason the
     // property exists. Returning null would read as "no configuration".
     let mut page = factory.from_html(
         "<html><body><div id='out'></div>\
@@ -5472,7 +5472,7 @@ fn defining_a_component_upgrades_the_markup_already_on_the_page() {
 
     // The order that matters: markup first, definition second. A page that
     // ships server-rendered HTML and defines its components in a deferred
-    // bundle — which is most of them — renders nothing if define() does not
+    // bundle, which is most of them, renders nothing if define() does not
     // reach back for what is already there.
     script
         .eval(
@@ -5584,7 +5584,7 @@ fn a_component_whose_constructor_throws_does_not_take_the_page_with_it() {
 fn an_invalid_custom_element_name_is_refused_by_all_eight_rules() {
     let (_page, mut script) = page_and_script("<html><body></body></html>");
 
-    // HTML §4.13's name rules, of which this engine enforced one — the dash.
+    // HTML §4.13's name rules, of which this engine enforced one. The dash.
     // The rest are not decoration: the name space is shared with the parser, so
     // a name a browser refuses has to be refused here too, or a page gets a
     // component in one engine and an unknown element in the other.
@@ -5771,7 +5771,7 @@ fn the_remaining_document_and_element_asks_answer_from_the_page() {
 
     assert_eq!(script.eval_value("document.getElementsByName('who').length").unwrap(), "2");
 
-    // defaultValue is what a reset restores — the attribute, not the live value.
+    // defaultValue is what a reset restores. The attribute, not the live value.
     script.eval("document.querySelector('input').value = 'typed'").unwrap();
     assert_eq!(script.eval_value("document.querySelector('input').value").unwrap(), "typed");
     assert_eq!(
@@ -5909,7 +5909,7 @@ fn an_uncaught_error_says_which_script_it_came_from() {
     let base = url::Url::parse("https://app.example/").unwrap();
 
     // Boa 0.19 reports neither a line number nor a stack, so the element is the
-    // only locus there is — and "TypeError: cannot convert null" with no locus
+    // only locus there is, and "TypeError: cannot convert null" with no locus
     // at all is the hardest kind of error for an agent to act on.
     let mut page = factory.from_html(
         "<html><body><script>var ok = 1;</script>\
@@ -6084,7 +6084,7 @@ fn requests_overlap_instead_of_queueing_behind_each_other() {
     let mut script = Script::new(page.dom(), broker, &base).expect("realm");
 
     // Five requests a page issues together. Serialised they cost five delays;
-    // overlapping they cost one — and the server can see the difference.
+    // overlapping they cost one, and the server can see the difference.
     script
         .eval(
             "globalThis.done = 0; \
@@ -6206,7 +6206,7 @@ fn the_wire_agent_and_the_scripted_one_are_the_same_string() {
 /// The claim the `identity` feature makes is about the binary, not about how
 /// someone invokes it: without the feature there is no identity module, no
 /// `Screen` interface, and no crossing into Rust to build one. A page can check
-/// that for itself, which is what this does — `api.identity` is the only door,
+/// that for itself, which is what this does: `api.identity` is the only door,
 /// and in a bare build there is no door.
 ///
 /// Written as one test with two arms rather than two tests, so the pair reads
@@ -6233,7 +6233,7 @@ fn the_identity_binding_exists_only_in_a_build_that_has_identities() {
 /// The prelude's fallback literal, held to the identity it stands in for.
 ///
 /// A build without the `identity` feature has no `api.identity()` to call, so
-/// the prelude falls back to a literal — and a literal is exactly the second
+/// the prelude falls back to a literal, and a literal is exactly the second
 /// source of truth this module was written to remove. It cannot drift, because
 /// this test reads the same properties out of a realm and compares them to
 /// `identity::native()`, which the wire is built from. Change one and this
@@ -6252,7 +6252,7 @@ fn the_bare_build_answers_what_native_declares() {
     let reported = |script: &mut Script, expression: &str| script.eval_value(expression).unwrap();
 
     // Every value the fallback literal in `prelude.js` spells out. If one of
-    // these moves, the literal has to move with it — and the assertion names
+    // these moves, the literal has to move with it, and the assertion names
     // the property, so the diff says which line to change.
     assert_eq!(reported(&mut script, "navigator.platform"), "");
     assert_eq!(reported(&mut script, "navigator.vendor"), "");
@@ -6279,7 +6279,7 @@ fn the_default_identity_leaves_the_page_exactly_as_it_was() {
     assert_eq!(script.eval_value("navigator.maxTouchPoints").unwrap(), "0");
     assert_eq!(script.eval_value("navigator.vendor").unwrap(), "");
     assert_eq!(script.eval_value("devicePixelRatio").unwrap(), "1");
-    // No display is declared, so there is none to report — which is what this
+    // No display is declared, so there is none to report, which is what this
     // engine did before an identity existed, and for the same reason: a
     // headless engine's honest screen size is a guess.
     assert_eq!(script.eval_value("typeof screen").unwrap(), "undefined");
@@ -6404,7 +6404,7 @@ fn a_declared_display_appears_and_an_undeclared_one_does_not() {
     );
     // The interface object is present with the instance, never one alone.
     assert_eq!(script.eval_value("typeof Screen").unwrap(), "function");
-    // And it is not enumerable on the global, per WebIDL §3.7 — the rule the
+    // And it is not enumerable on the global, per WebIDL §3.7. The rule the
     // core prelude's own pass applies, and which had already run by the time
     // this tier loaded.
     assert_eq!(
@@ -6422,7 +6422,7 @@ fn a_declared_time_zone_reaches_date_rather_than_only_a_property() {
     // `Date.prototype.getTimezoneOffset` from the prelude would leave
     // `toString` and the date parser computing from the real zone, and a page
     // that compares the two would find a browser whose clock contradicts
-    // itself — which is worse than a browser that simply says where it is.
+    // itself, which is worse than a browser that simply says where it is.
     let mut identity = crate::identity::firefox_linux();
     identity.locale.timezone = crate::identity::TimeZone::named("Asia/Tokyo");
     let (_page, mut script) =
@@ -6442,7 +6442,7 @@ fn a_declared_time_zone_reaches_date_rather_than_only_a_property() {
 
 #[test]
 fn an_undeclared_time_zone_leaves_the_clock_where_it_was() {
-    // `native` declares none, so `Date` keeps computing from the host — which
+    // `native` declares none, so `Date` keeps computing from the host, which
     // is what it did before, and what an honest identity should keep doing.
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
     let host_offset = -chrono::Local::now().offset().local_minus_utc() / 60;
@@ -6480,7 +6480,7 @@ fn a_template_hands_back_content_that_can_be_cloned_and_queried() {
         script.eval_value("document.querySelector('#out').innerHTML").unwrap(),
         "<li class=\"row\"><span>hello</span></li>"
     );
-    // Cloning does not empty the template — it can be used again.
+    // Cloning does not empty the template. It can be used again.
     assert_eq!(
         script.eval_value("document.querySelector('#t').content.childNodes.length").unwrap(),
         "1"
@@ -6615,7 +6615,7 @@ fn utf8_survives_a_round_trip_through_the_encoder() {
 fn random_values_come_from_the_system_and_look_like_it() {
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
 
-    // Not a distribution test — a "did anything actually happen" test. A seeded
+    // Not a distribution test. A "did anything actually happen" test. A seeded
     // generator wearing this name would be a lie a page cannot detect.
     assert_eq!(
         script
@@ -6733,7 +6733,7 @@ fn a_detached_subtree_can_be_searched_before_it_is_inserted() {
         "<html><body><div id='attached'><span class='label'>here</span></div></body></html>",
     );
 
-    // Clone, query, fill, append is how a framework renders a row — and the
+    // Clone, query, fill, append is how a framework renders a row, and the
     // query happens while the fragment is still detached. Stylo's fast path
     // consults the document's id and class caches, which hold only attached
     // nodes and report "handled, nothing found" rather than falling through, so
@@ -6837,7 +6837,7 @@ fn a_missing_method_on_a_host_object_names_itself() {
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
 
     // Only the document and its nodes were watched, so a method missing from
-    // `location` or `navigator` was invisible — and a module failing with "not
+    // `location` or `navigator` was invisible, and a module failing with "not
     // a callable function" that names nothing is the failure §8.3 exists to
     // prevent.
     script.eval("void location.someRoutingHelper; void navigator.someSensor;").unwrap();
@@ -6895,7 +6895,7 @@ fn a_page_that_never_stops_working_is_stopped_and_told_so() {
     // Many small jobs, which is the shape a promise-driven page actually has:
     // each `.then` is its own job, so the queue gets a turn between them and a
     // deadline can be honoured. A single job that never returns is a different
-    // shape and beyond this — see JOB_QUEUE_BUDGET.
+    // shape and beyond this. See JOB_QUEUE_BUDGET.
     script
         .eval(
             "let chain = Promise.resolve(); \
@@ -6989,7 +6989,7 @@ fn a_generated_key_is_not_reported_as_a_missing_api() {
         script.unsupported()
     );
 
-    // A short number in a real API name is still reported — `h1` and `atob2`
+    // A short number in a real API name is still reported: `h1` and `atob2`
     // are the shape a person types, and the filter must not swallow them.
     script.eval("void document.querySelector('#p').scrollIntoViewIfNeeded2;").unwrap();
     assert!(
@@ -7008,7 +7008,7 @@ fn a_generated_key_is_not_reported_as_a_missing_api() {
 /// text still holds a live node afterwards, and every reactive UI does exactly
 /// that: the framework keeps its own pointer into the tree. Destroying the
 /// child freed its id, and the next mutation naming that id indexed a dead slot
-/// and panicked inside the layout engine — a panic that was caught and reported
+/// and panicked inside the layout engine. A panic that was caught and reported
 /// as a *successful* mutation, so the page's model of the tree and the real
 /// tree drifted apart and the failure surfaced somewhere else entirely.
 #[test]
@@ -7063,7 +7063,7 @@ fn removing_an_already_removed_node_is_a_no_op() {
 /// `<div id="thing">` exposes `window.thing`, and the page writing
 /// `var thing = [1,2,3]` must take that name back. The property was an
 /// accessor with no setter, so in sloppy mode the assignment was swallowed and
-/// the page read the element back out of its own variable — the quietest
+/// the page read the element back out of its own variable. The quietest
 /// possible wrong answer, and one nothing in the page could detect.
 #[test]
 fn a_pages_own_variable_takes_a_name_back_from_named_access() {
@@ -7129,7 +7129,7 @@ fn a_variable_holding_a_node_survives_that_nodes_removal() {
 /// finished nor on its way anywhere, and before the nesting limit it was
 /// reported as the latter: `requestAnimationFrame` is a `setTimeout` here, so
 /// an animation loop presented a fresh one-shot every frame, rode the whole
-/// settle budget, and answered `budget` — "it may yet appear" — about a page
+/// settle budget, and answered `budget`, "it may yet appear", about a page
 /// that would still be looping tomorrow.
 #[test]
 fn a_self_rescheduling_loop_is_periodic_not_pending() {
@@ -7202,7 +7202,7 @@ fn an_interval_is_reported_as_periodic_rather_than_quiescent() {
 
 /// A plain one-shot chain that *does* converge must keep blocking, or the
 /// escape hatch would be cutting real work short. Three nested timers is a
-/// normal shape — a page staging its own initialisation — and it has to finish.
+/// normal shape, a page staging its own initialisation, and it has to finish.
 #[test]
 fn a_short_timer_chain_still_holds_the_page_open() {
     let (page, _broker) = run_page(
@@ -7222,8 +7222,8 @@ fn a_short_timer_chain_still_holds_the_page_open() {
 // ── Canvas 2D ──────────────────────────────────────────────────────────────
 
 /// The whole claim of `crate::canvas`, checked end to end: a page draws, and
-/// the pixels are real. A no-op stub — which is what both reference engines
-/// ship — passes every API-shape assertion ever written and fails this one.
+/// the pixels are real. A no-op stub, which is what both reference engines
+/// ship, passes every API-shape assertion ever written and fails this one.
 #[test]
 fn a_page_that_draws_on_a_canvas_gets_real_pixels() {
     let (mut page, _broker) = run_page(
@@ -7287,7 +7287,7 @@ fn an_unbuilt_canvas_call_is_reported_rather_than_silently_ignored() {
 }
 
 /// WebGL is genuinely absent, and `null` is what a browser returns for a
-/// context it cannot provide — so a page's own fallback runs. That behaviour
+/// context it cannot provide, so a page's own fallback runs. That behaviour
 /// was right before 2D existed and still is for everything else.
 #[test]
 fn an_unavailable_context_type_still_answers_null() {

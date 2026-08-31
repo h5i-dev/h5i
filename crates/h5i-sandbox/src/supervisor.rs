@@ -1,4 +1,4 @@
-//! `isolation=supervised` — the seccomp-notify supervisor tier
+//! `isolation=supervised`: the seccomp-notify supervisor tier
 //! (`docs/supervisor-design.md`).
 //!
 // Platform-conditional machinery: `probe()` is cross-platform (the dashboard
@@ -9,13 +9,13 @@
 #![allow(dead_code)]
 //!
 //! This is the security keystone: the first tier that may claim untrusted-code
-//! containment. Its defining property — implemented and tested here in phase A —
-//! is **fail-closed admission**: the claim is satisfiable only when *every*
-//! component probes green, and is otherwise **refused**, never downgraded to a
+//! containment. Its defining property, implemented and tested here in phase A,
+//! is *fail-closed admission*: the claim is satisfiable only when *every*
+//! component probes green, and is otherwise *refused*, never downgraded to a
 //! weaker tier. A half-present stack is a refusal, not a "best-effort pass".
 //!
 //! This module: the honest [`probe`], the pure syscall-decision model, and a
-//! fully-enforcing [`run`] — the shared process-tier confinement plus an
+//! fully-enforcing [`run`]. The shared process-tier confinement plus an
 //! always-on network namespace and the live seccomp-notify socket gate
 //! ([`serve_with_pidfd`]), with an optional netns+nftables+slirp4netns egress
 //! allowlist. Because the full stack does not probe green on every host
@@ -33,7 +33,7 @@ pub struct ComponentStatus {
 }
 
 /// Host readiness for `isolation=supervised`. `usable` is true only when every
-/// required component is `ok` — the single source of truth `resolve` consults.
+/// required component is `ok`: the single source of truth `resolve` consults.
 #[derive(Debug, Clone)]
 pub struct SupervisorCaps {
     pub usable: bool,
@@ -68,7 +68,7 @@ pub fn probe() -> SupervisorCaps {
 #[cfg(target_os = "linux")]
 fn probe_uncached() -> SupervisorCaps {
     // Supervised readiness reads only the kernel bits (userns/Landlock/seccomp),
-    // never the container runtime — use the kernel-only probe so resolving a
+    // never the container runtime. Use the kernel-only probe so resolving a
     // supervised claim doesn't shell out to `podman info`.
     let host = crate::sandbox::probe_host_kernel();
     let cg = crate::cgroup::probe();
@@ -83,7 +83,7 @@ fn probe_uncached() -> SupervisorCaps {
         host.userns,
         (!host.userns).then(|| "unprivileged userns unavailable (AppArmor/WSL2)".into()),
     );
-    // A netns is created via unshare(NEWNET) inside our userns — functionally probed.
+    // A netns is created via unshare(NEWNET) inside our userns. Functionally probed.
     let netns = host.userns && can_unshare_netns();
     add("network-namespace", netns, (!netns).then(|| "cannot unshare NEWNET".into()));
     // nftables is the airtight L3/L4 egress guard; we need the binary AND
@@ -116,21 +116,21 @@ fn probe_uncached() -> SupervisorCaps {
 
 /// macOS readiness for `isolation=supervised`.
 ///
-/// The Linux stack — seccomp user-notification, a network namespace, nftables,
-/// cgroup delegation — does not exist on Darwin and is not faked. What the tier
+/// The Linux stack (seccomp user-notification, a network namespace, nftables,
+/// cgroup delegation) does not exist on Darwin and is not faked. What the tier
 /// promises is *untrusted-code containment plus an enforced domain egress
 /// allowlist*, and macOS reaches both a different way:
 ///
 /// - containment: Seatbelt's `(deny default)` covers filesystem, network, mach
 ///   and sysctl in one policy, and (unlike Landlock) it can subtract, so
 ///   `fs.deny` and the agent-config lock are enforced rather than linted;
-/// - egress allowlist: the box is left with **no** outbound route except h5i's
+/// - egress allowlist: the box is left with *no* outbound route except h5i's
 ///   own DNS-pinned allowlist proxy on loopback, which is the same proxy the
 ///   container tier uses and is enforced by the kernel, not by proxy env vars.
 ///
 /// What is genuinely absent is the syscall filter: there is no macOS equivalent
-/// of a seccomp deny-list, so native code in the box can attempt any syscall —
-/// it just cannot reach a path or a socket the profile does not name. That is
+/// of a seccomp deny-list, so native code in the box can attempt any syscall.
+/// It just cannot reach a path or a socket the profile does not name. That is
 /// reported here rather than glossed, and it is why the component below is
 /// spelled out instead of being asserted `ok`.
 #[cfg(target_os = "macos")]
@@ -145,7 +145,7 @@ pub fn probe() -> SupervisorCaps {
                 detail: sb.detail.clone(),
             }];
             // The allowlist proxy is h5i's own code and needs only a loopback
-            // listener — but a host that cannot bind loopback cannot enforce
+            // listener, but a host that cannot bind loopback cannot enforce
             // egress, so probe it rather than assume it.
             let loopback = std::net::TcpListener::bind("127.0.0.1:0");
             components.push(ComponentStatus {
@@ -162,8 +162,8 @@ pub fn probe() -> SupervisorCaps {
                     .then(|| "needs Seatbelt to pin the box to the proxy port".into()),
             });
             // Stated, never silently assumed: this tier does NOT filter syscalls
-            // on macOS. It is `ok` because the tier does not claim to — the
-            // claim is filesystem/network containment — but it is listed so
+            // on macOS. It is `ok` because the tier does not claim to, the
+            // claim is filesystem/network containment, but it is listed so
             // `env probe` shows the difference from a Linux box.
             components.push(ComponentStatus {
                 name: "syscall-filter",
@@ -283,7 +283,7 @@ fn seccomp_notify_supported() -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
     /// Let the kernel run the original syscall unmediated (safe only when the
-    /// real guard — nftables / Landlock — is the enforcement layer). For sockets
+    /// real guard, nftables / Landlock, is the enforcement layer). For sockets
     /// this is the common path: the packet still hits nftables.
     Continue,
     /// Refuse with `errno` (no pointer deref → no TOCTOU). Used for dangerous
@@ -291,13 +291,13 @@ pub enum Decision {
     Deny(i32),
 }
 
-/// Coarse **default-deny** gate on `socket(domain, type, protocol)` (Codex's
-/// review): only a "boring" inet TCP/UDP socket — or an explicitly granted
-/// `AF_UNIX` — is allowed to `Continue` (after which nftables is the L3/L4
+/// Coarse *default-deny* gate on `socket(domain, type, protocol)` (Codex's
+/// review): only a "boring" inet TCP/UDP socket, or an explicitly granted
+/// `AF_UNIX`, is allowed to `Continue` (after which nftables is the L3/L4
 /// enforcement for *where* its packets may go). Everything else is denied with
 /// `EPERM`: raw/packet sockets and `IPPROTO_RAW` (bypass L3/L4), `AF_NETLINK`
-/// / `AF_VSOCK` / `AF_BLUETOOTH` / `AF_CAN` and any other non-inet family, and —
-/// critically — any **unknown** family/type/protocol. We never "observe and
+/// / `AF_VSOCK` / `AF_BLUETOOTH` / `AF_CAN` and any other non-inet family, and,
+/// critically, any *unknown* family/type/protocol. We never "observe and
 /// allow" an unrecognized socket shape.
 ///
 /// `unix_granted` reflects whether the policy explicitly permits `AF_UNIX`
@@ -326,13 +326,13 @@ pub fn decide_socket(domain: i32, sock_type: i32, protocol: i32, unix_granted: b
     if boring_inet {
         Decision::Continue
     } else {
-        // AF_PACKET, SOCK_RAW, AF_NETLINK, AF_VSOCK, unknown families/types — all deny.
+        // AF_PACKET, SOCK_RAW, AF_NETLINK, AF_VSOCK, unknown families/types. All deny.
         Decision::Deny(libc::EPERM)
     }
 }
 
 /// Gate on `socketpair(domain, type, protocol)`. An `AF_UNIX` socketpair is an
-/// **anonymous connected pair** — it has no address, cannot `connect` anywhere,
+/// anonymous connected pair. It has no address, cannot `connect` anywhere,
 /// and both ends are born inside the sandbox, so it grants no authority the
 /// process didn't already have (it could only leave over an already-granted
 /// channel). It is also load-bearing: tokio's signal handling, Node's
@@ -362,30 +362,30 @@ pub struct EgressDest {
 
 /// The result of resolving `net.egress`: the pinned `IP:port` destinations (for
 /// the nftables allowlist) and, for each *hostname* entry, the single IP it was
-/// pinned to (for a private `/etc/hosts`). Both come from **one** resolution
+/// pinned to (for a private `/etc/hosts`). Both come from *one* resolution
 /// pass, so the address the program connects to is exactly the address nftables
-/// allows — no second lookup that a CDN could answer differently.
+/// allows, no second lookup that a CDN could answer differently.
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedEgress {
     pub dests: Vec<EgressDest>,
-    /// `(hostname, ip)` — only for non-IP-literal entries; pins DNS via files.
+    /// `(hostname, ip)`: only for non-IP-literal entries; pins DNS via files.
     pub host_pins: Vec<(String, IpAddr)>,
     /// `(entry, ip)` for an answer that named somewhere the box must not be
     /// pointed at: link-local, multicast, broadcast. Reported rather than
-    /// dropped, and **fatal** at [`setup_egress`]: the entry looked reasonable
+    /// dropped, and *fatal* at [`setup_egress`]: the entry looked reasonable
     /// and resolved to somewhere a box has no business dialling, and that is the
     /// operator's news, not a detail to swallow.
     pub refused: Vec<(String, IpAddr)>,
     /// `(entry, ip)` for an answer of `0.0.0.0` / `::`, which is what a
     /// filtering resolver returns for a name it blocks. Unpinnable like the
-    /// above and reported like it, but **not** fatal: see [`is_sinkhole`].
+    /// above and reported like it, but *not* fatal: see [`is_sinkhole`].
     pub sinkholed: Vec<(String, IpAddr)>,
 }
 
 /// May a `net.egress` entry pin to this address?
 ///
 /// The policy an operator reads is a *hostname*, and the thing nftables
-/// enforces is whatever that name resolved to — so the readable policy and the
+/// enforces is whatever that name resolved to, so the readable policy and the
 /// enforced destination are only as close as DNS chooses to make them. A repo
 /// that ships `.h5i/env.toml` picks the names, and it can equally pick what
 /// they answer. `net.egress = ["assets.example-cdn.com"]` reads like a CDN and
@@ -393,14 +393,14 @@ pub struct ResolvedEgress {
 ///
 /// What that buys, on the tier whose whole claim is airtight L3/L4 filtering:
 ///
-/// * **`169.254.169.254`** — the cloud instance metadata service, and the
+/// * *`169.254.169.254`*: the cloud instance metadata service, and the
 ///   highest-value target on any cloud host. slirp4netns NATs through the
 ///   host's routing, and `--disable-host-loopback` does not cover it: it hides
 ///   the host's *loopback*, not its link-local. A name resolving here hands the
 ///   box the instance's role credentials.
-/// * **`fe80::/10`**, the same thing over IPv6, and `::ffff:169.254.169.254`,
+/// * *`fe80::/10`*, the same thing over IPv6, and `::ffff:169.254.169.254`,
 ///   the same thing spelled as a mapped address so a v4-only test misses it.
-/// * **multicast, broadcast, unspecified** — no reachable service a repo could
+/// * multicast, broadcast, unspecified, no reachable service a repo could
 ///   mean, and each of them means something else here. The unspecified address
 ///   is unpinnable for the same reason as the rest but says something different
 ///   about *why*, which is what [`is_sinkhole`] separates.
@@ -408,14 +408,14 @@ pub struct ResolvedEgress {
 /// Loopback is deliberately *not* refused. Inside the netns `127.0.0.1` is the
 /// box's own, `oif "lo" accept` already permits it, and the host's loopback is
 /// reached (when it is reached at all) through the slirp gateway rather than
-/// through this address — so a name answering `127.0.0.1` is redundant, not
+/// through this address, so a name answering `127.0.0.1` is redundant, not
 /// dangerous, and refusing it would break naming a service the box itself runs.
 ///
 /// RFC1918 and IPv6 unique-local are deliberately *not* refused: an internal
 /// registry or a company mirror is a real thing to name, and refusing it would
 /// break boxes that work. They are reachable through the host's routing and
 /// that is worth knowing, which is what `refused` reporting and the receipt's
-/// pinned addresses are for — this function only closes the cases where no
+/// pinned addresses are for. This function only closes the cases where no
 /// legitimate entry exists at all.
 fn is_pinnable(ip: &IpAddr) -> bool {
     // A v4 address written as `::ffff:a.b.c.d` is the same address. Unwrap it
@@ -443,7 +443,7 @@ fn is_pinnable(ip: &IpAddr) -> bool {
 /// statement about the *operator's network*, not about the repo's policy, and
 /// it is the one unpinnable answer an ordinary well-meaning `net.egress` entry
 /// runs into. Treating it like a link-local answer refuses the whole box over a
-/// name the resolver had already made unreachable anyway — and the box would
+/// name the resolver had already made unreachable anyway, and the box would
 /// have been fine, because an entry that cannot be pinned is an entry the box
 /// cannot dial. So it is separated here: still never pinned, still reported,
 /// but it costs that one name instead of the run. See [`setup_egress`].
@@ -452,7 +452,7 @@ fn is_pinnable(ip: &IpAddr) -> bool {
 /// tier could be tricked into allowing: nothing about it reaches the host's
 /// link-local (the address the rest of [`is_pinnable`] exists for), it gets no
 /// nftables rule and no `/etc/hosts` pin, and inside the netns a connect to it
-/// lands on the box's own loopback — which `oif "lo" accept` already permits
+/// lands on the box's own loopback, which `oif "lo" accept` already permits
 /// and [`is_pinnable`] deliberately allows by name.
 fn is_sinkhole(ip: &IpAddr) -> bool {
     match ip {
@@ -465,7 +465,7 @@ fn is_sinkhole(ip: &IpAddr) -> bool {
 /// Resolve `net.egress` entries (`host`, `host:port`, defaulting to 443) to
 /// pinned destinations + host pins. A host that fails to resolve contributes
 /// nothing (fail-closed: it simply won't be reachable), and an answer
-/// [`is_pinnable`] refuses is dropped and reported — as `sinkholed` when
+/// [`is_pinnable`] refuses is dropped and reported, as `sinkholed` when
 /// [`is_sinkhole`] explains it, as `refused` otherwise. Pure apart from DNS.
 pub fn resolve_egress(egress: &[String]) -> ResolvedEgress {
     use std::net::ToSocketAddrs;
@@ -497,7 +497,7 @@ pub fn resolve_egress(egress: &[String]) -> ResolvedEgress {
             // The *pinned* address has to be one that survived the check too:
             // this is what goes into the box's `/etc/hosts`, and pinning a
             // refused answer would point the name at an address nftables then
-            // has no rule for — a name that reads as allowed and never works.
+            // has no rule for. A name that reads as allowed and never works.
             first_ip.get_or_insert(a.ip());
             if !r.dests.contains(&dest) {
                 r.dests.push(dest);
@@ -518,10 +518,10 @@ pub fn pin_egress(egress: &[String]) -> Vec<EgressDest> {
     resolve_egress(egress).dests
 }
 
-/// Build the **default-drop** nftables ruleset for a supervised run's network
+/// Build the *default-drop* nftables ruleset for a supervised run's network
 /// namespace. Only loopback, established/related return traffic, the controlled
 /// resolver (port 53), and the pinned `IP:port` allowlist may leave; everything
-/// else — including raw IP connects, other ports, and unlisted hosts — is
+/// else (including raw IP connects, other ports, and unlisted hosts) is
 /// dropped at L3/L4, independent of whether the process respects any proxy.
 /// Pure (string in, ruleset out) so it is unit-tested without touching the host.
 pub fn build_nft_ruleset(allow: &[EgressDest], resolver: Option<IpAddr>) -> String {
@@ -557,13 +557,13 @@ pub fn build_nft_ruleset(allow: &[EgressDest], resolver: Option<IpAddr>) -> Stri
 /// Run `argv` under the supervised tier. Re-verifies the full mediation stack is
 /// green (fail-closed), then executes the command with the shared process-tier
 /// confinement (Landlock + seccomp deny-list + userns/mountns/ipc/uts + cgroup +
-/// no-new-privs + cap-drop) **plus** an always-on network namespace and the
+/// no-new-privs + cap-drop) *plus* an always-on network namespace and the
 /// live seccomp-notify socket gate ([`serve_with_pidfd`]), which denies
 /// raw/packet/netlink/ungranted-unix sockets and records every verdict.
 ///
-/// Scope: `net.mode = deny` (an empty netns — airtight, no egress), or a
+/// Scope: `net.mode = deny` (an empty netns (airtight, no egress), or a
 /// non-empty `net.egress` allowlist enforced via netns + nftables + slirp4netns
-/// (which requires `slirp4netns` on PATH, else the run is refused — fail-closed).
+/// (which requires `slirp4netns` on PATH, else the run is refused) fail-closed).
 pub fn run(
     policy: &crate::sandbox::ResolvedPolicy,
     work: &std::path::Path,
@@ -575,8 +575,8 @@ pub fn run(
 }
 
 /// Shared fail-closed admission for both supervised entry points: the full
-/// mediation stack must probe green, and — when a `net.egress` allowlist is set
-/// — `slirp4netns` must be present (it provides the netns uplink).
+/// mediation stack must probe green, and, when a `net.egress` allowlist is set,
+/// `slirp4netns` must be present (it provides the netns uplink).
 fn preflight(policy: &crate::sandbox::ResolvedPolicy) -> Result<(), H5iError> {
     let caps = probe();
     if !caps.usable {
@@ -592,7 +592,7 @@ fn preflight(policy: &crate::sandbox::ResolvedPolicy) -> Result<(), H5iError> {
 /// The egress uplink is per-platform, so its admission check is too.
 ///
 /// Linux runs the allowlist *inside* the box's network namespace, which needs
-/// `slirp4netns` to provide that namespace's uplink — an external binary that
+/// `slirp4netns` to provide that namespace's uplink. An external binary that
 /// can be missing, hence a check.
 #[cfg(not(target_os = "macos"))]
 fn egress_preflight(policy: &crate::sandbox::ResolvedPolicy) -> Result<(), H5iError> {
@@ -617,7 +617,7 @@ fn egress_preflight(_policy: &crate::sandbox::ResolvedPolicy) -> Result<(), H5iE
     Ok(())
 }
 
-/// The **agent-in-box** path at the supervised tier: an interactive confined
+/// The *agent-in-box* path at the supervised tier: an interactive confined
 /// session (stdio inherited, nothing captured), returning the child's exit code.
 /// Same fail-closed gating as [`run`]; the seccomp-notify socket gate, netns,
 /// Landlock, and cgroup limits all still apply.
@@ -691,7 +691,7 @@ struct EgressNetns {
     // Parent ends (read child pid, signal "uplink ready").
     pid_read_fd: std::os::unix::io::RawFd,
     ready_write_fd: std::os::unix::io::RawFd,
-    // Child ends — handed to the jail (CLOEXEC: gone at the untrusted exec).
+    // Child ends. Handed to the jail (CLOEXEC: gone at the untrusted exec).
     child_pid_write_fd: std::os::unix::io::RawFd,
     child_ready_read_fd: std::os::unix::io::RawFd,
     nft_path: std::ffi::CString,
@@ -727,7 +727,7 @@ impl Drop for EgressNetns {
         }
         // Close the pid pipe's WRITE ends BEFORE joining. The helper parks in
         // `read(pid_r, .., 4)` waiting for the child to report its pid, and its
-        // only early exit is a short read — which needs every writer gone. The
+        // only early exit is a short read, which needs every writer gone. The
         // child's copy closes when it `_exit`s, but ours did not until after
         // the join, so any pre_exec failure before the pid write (a userns
         // ENOSPC from concurrent boxes, a uid_map write failure) deadlocked
@@ -757,7 +757,7 @@ const SLIRP_GATEWAY: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 2, 2));
 /// `slirp4netns` argv for a child netns (pid). `--disable-host-loopback` is
 /// present UNLESS host-loopback is intentionally allowed (auth proxy engaged),
 /// in which case the box can reach the host proxy via the gateway (nftables
-/// still restricts egress to the single proxy port). Pure — unit-tested.
+/// still restricts egress to the single proxy port). Pure. Unit-tested.
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn slirp_args(pid: u32, allow_host_loopback: bool) -> Vec<String> {
     let mut a: Vec<String> = vec!["--configure".into()];
@@ -795,11 +795,11 @@ fn cred_scrub_paths(
         .collect()
 }
 
-/// Remove the runtime's credential file from the box's **per-env HOME copy** when
+/// Remove the runtime's credential file from the box's per-env HOME copy when
 /// the auth proxy is engaged, so the token is absent from the box (not merely
 /// inert). Auth then flows entirely through the proxy + dummy env token. Only
-/// ever touches the env's own backing copy (`policy.home_binds[..].backing`) —
-/// never the real HOME, which `prepare_home_state` only reads. Best-effort and
+/// ever touches the env's own backing copy (`policy.home_binds[..].backing`).
+/// Never the real HOME, which `prepare_home_state` only reads. Best-effort and
 /// idempotent; a later in-box login self-heals the copy if the proxy is disabled.
 #[cfg(any(
     all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
@@ -815,10 +815,10 @@ fn scrub_box_credentials(
 }
 
 /// Build the egress jail. When `auth_port` is `Some`, the credential-injecting
-/// auth proxy is engaged: the box's egress is locked to **only** the proxy at
+/// auth proxy is engaged: the box's egress is locked to *only* the proxy at
 /// `10.0.2.2:<auth_port>` (host-loopback re-enabled for that single port; the
 /// default-drop policy still blocks every other host port and all direct API
-/// egress), so a token in the box — even if present — is inert (unusable
+/// egress), so a token in the box, even if present, is inert (unusable
 /// directly, unexfiltratable). Otherwise the box egresses to the resolved
 /// `net.egress` allowlist with host-loopback disabled (airtight).
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -834,7 +834,7 @@ fn setup_egress(
             let resolved = resolve_egress(&policy.profile.net_egress);
             // Loud, not silent. The entry read like an ordinary host and
             // answered with an address this tier will not dial, and the two
-            // facts only make sense together — dropping it quietly would leave
+            // facts only make sense together. Dropping it quietly would leave
             // a box that fails to reach something its policy plainly allows,
             // with the reason nowhere.
             if let Some((entry, ip)) = resolved.refused.first() {
@@ -849,7 +849,7 @@ fn setup_egress(
             // Reported, not fatal. A sinkholed answer is the operator's resolver
             // saying it blocks the name, so refusing the run would take the
             // whole box down over one entry the box could not have reached
-            // either way — and would blame the policy for the resolver.
+            // either way, and would blame the policy for the resolver.
             for (entry, ip) in &resolved.sinkholed {
                 eprintln!(
                     "h5i: net.egress entry {entry:?} resolves to {ip} — a resolver returns that \
@@ -909,7 +909,7 @@ fn setup_egress(
     let slirp_slot = std::sync::Arc::new(std::sync::Mutex::new(None));
     let slot_for_helper = slirp_slot.clone();
     // Barrier so the helper is parked in read() (not allocating) at the moment
-    // the caller forks the confined child — preserving the single-threaded-fork
+    // the caller forks the confined child. Preserving the single-threaded-fork
     // invariant the pre_exec allocations rely on.
     let (parked_tx, parked_rx) = std::sync::mpsc::channel::<()>();
     let helper = std::thread::spawn(move || {
@@ -923,7 +923,7 @@ fn setup_egress(
         let pid = u32::from_ne_bytes(pidbuf);
         // Spawn the uplink for the child's netns (by pid). --configure sets up
         // tap0 (10.0.2.100/24, gw 10.0.2.2). --disable-host-loopback blocks the
-        // child from reaching host services via the gateway — kept UNLESS the
+        // child from reaching host services via the gateway. Kept UNLESS the
         // auth proxy is engaged, which needs the gateway to forward to the host
         // proxy on loopback (nftables still restricts egress to that one port).
         let child = std::process::Command::new(&slirp)
@@ -937,7 +937,7 @@ fn setup_egress(
             Err(_) => return, // child will time out waiting for ready
         };
         // Poll the child's netns interface list (visible at /proc/<pid>/net/dev)
-        // until tap0 appears — slirp has then configured the uplink.
+        // until tap0 appears. Slirp has then configured the uplink.
         let dev = format!("/proc/{pid}/net/dev");
         let mut ready = false;
         for _ in 0..600 {
@@ -984,7 +984,7 @@ fn run_supervised(
     // Check the notify ABI *before* committing to this tier. The module doc
     // promises the `seccomp_notif` structs are validated against
     // SECCOMP_GET_NOTIF_SIZES and refused on mismatch, but nothing called the
-    // validator on any production path — so on a kernel with a different layout
+    // validator on any production path, so on a kernel with a different layout
     // the listener installed fine and then `ioctl(NOTIF_RECV)`, whose request
     // number embeds our struct size, failed with an unexpected errno. The serve
     // loop broke on the first notification and the box's first socket() blocked
@@ -1053,7 +1053,7 @@ fn run_supervised(
     // The run cgroup is created BEFORE the command so its `cgroup.procs` path can
     // be handed to the PID-namespace supervisor: with a pidns the workload is a
     // grandchild whose pid only exists inside `pre_exec`, so the supervisor there
-    // joins it to the cgroup — otherwise `memory.max` and the accounting would
+    // joins it to the cgroup. Otherwise `memory.max` and the accounting would
     // bind the thin supervisor instead of the process they are meant to bound.
     let cg = crate::sandbox::make_run_cgroup(p.mem_bytes, p.max_procs);
     let procs = cg.as_ref().map(|c| c.procs_path());
@@ -1069,8 +1069,8 @@ fn run_supervised(
         egress_jail,
         // A PID namespace, exactly as the process tier gets. Without it the box
         // shares the host's PID namespace, which is not a cosmetic difference:
-        // it can enumerate host processes, read their `/proc/<pid>/cmdline`, and
-        // — because the userns maps back to the operator's real uid — send
+        // it can enumerate host processes, read their `/proc/<pid>/cmdline`, and,
+        // because the userns maps back to the operator's real uid, send
         // signals to any of their processes, h5i itself included. A tier that
         // claims untrusted-code containment cannot leave `kill -9` pointed at
         // the host. `/proc/<pid>/environ` was already denied (the userns fails
@@ -1078,7 +1078,7 @@ fn run_supervised(
         //
         // Ordering note: the netns/egress handshake in `pre_exec` runs BEFORE the
         // pidns fork and reports `getpid()`, which CLONE_NEWPID leaves in the
-        // host namespace — so `slirp4netns` still targets a pid it can see, and
+        // host namespace, so `slirp4netns` still targets a pid it can see, and
         // the workload shares that netns by inheritance.
         true,
         procs.as_deref(),
@@ -1118,8 +1118,8 @@ fn run_supervised(
     }
 
     // Receive the seccomp listener the workload installed in pre_exec. `spawn()`
-    // returns once the workload reaches `execve` — the listener handoff happens
-    // just before that — so this does not block on a healthy child; a failure
+    // returns once the workload reaches `execve`, the listener handoff happens
+    // just before that, so this does not block on a healthy child; a failure
     // means it died mid-setup.
     let listener = match unsafe { recv_fd(sv_parent) } {
         Ok(fd) => fd,
@@ -1145,7 +1145,7 @@ fn run_supervised(
 
     // Stream output while the supervisor serves syscall notifications. In
     // interactive mode stdio was inherited (not piped), so there is nothing to
-    // drain — the session writes straight to the terminal.
+    // drain. The session writes straight to the terminal.
     let out_h = child.stdout.take().map(|mut out_pipe| {
         std::thread::spawn(move || crate::sandbox::drain_capped(&mut out_pipe))
     });
@@ -1153,7 +1153,7 @@ fn run_supervised(
         std::thread::spawn(move || crate::sandbox::drain_capped(&mut err_pipe))
     });
 
-    // AF_UNIX is not granted by default (SCM_RIGHTS authority passing) — a
+    // AF_UNIX is not granted by default (SCM_RIGHTS authority passing). A
     // profile has to ask for it. What that grant does and does not widen is on
     // `Profile::unix_sockets`; the short version is that abstract sockets stay
     // inside the box's private netns and filesystem-bound ones stay inside its
@@ -1215,7 +1215,7 @@ fn run_supervised(
 ///
 /// The security argument is the mirror image of the Linux one, and it is worth
 /// stating because "point the box at a proxy" is normally *not* an enforcement
-/// mechanism — a program that ignores `HTTPS_PROXY` and opens its own socket
+/// mechanism. A program that ignores `HTTPS_PROXY` and opens its own socket
 /// escapes it. That is not the case here: the Seatbelt profile denies
 /// `network-outbound` to everything except the proxy's loopback port, so
 /// ignoring the env var gets the box a connection refused at the kernel, not a
@@ -1224,11 +1224,11 @@ fn run_supervised(
 ///
 /// Two shapes, matching the Linux path exactly:
 ///
-/// - **credential proxy engaged** (an agent box with a resolvable host token):
+/// - credential proxy engaged (an agent box with a resolvable host token):
 ///   the only reachable port is the credential-injecting auth proxy, the real
 ///   token never enters the box, and it is scrubbed from the box's per-env HOME
 ///   copy so it is absent rather than merely inert. No general egress at all.
-/// - **otherwise**: the DNS-pinned `net.egress` allowlist proxy is the only
+/// - *otherwise*: the DNS-pinned `net.egress` allowlist proxy is the only
 ///   reachable port, and its allow/deny tally becomes the run's egress evidence.
 #[cfg(target_os = "macos")]
 fn run_supervised(
@@ -1383,7 +1383,7 @@ mod tests {
         assert_eq!(allow(AF_INET6, SOCK_DGRAM, 0), Decision::Continue);
         assert_eq!(allow(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0), Decision::Continue);
 
-        // Everything else denies — raw/packet, IPPROTO_RAW, non-inet families.
+        // Everything else denies. Raw/packet, IPPROTO_RAW, non-inet families.
         assert_eq!(allow(AF_INET, SOCK_RAW, 0), Decision::Deny(libc::EPERM));
         assert_eq!(allow(AF_PACKET, SOCK_DGRAM, 0), Decision::Deny(libc::EPERM));
         assert_eq!(allow(AF_INET, SOCK_STREAM, IPPROTO_RAW), Decision::Deny(libc::EPERM));
@@ -1407,7 +1407,7 @@ mod tests {
         const SOCK_RAW: i32 = 3;
         const SOCK_CLOEXEC: i32 = 0o2000000;
 
-        // An anonymous AF_UNIX pair is pure intra-box IPC — allowed without a
+        // An anonymous AF_UNIX pair is pure intra-box IPC. Allowed without a
         // grant (tokio signals / Node child IPC depend on it).
         assert_eq!(decide_socketpair(AF_UNIX, SOCK_STREAM, 0, false), Decision::Continue);
         assert_eq!(
@@ -1479,7 +1479,7 @@ mod tests {
 
     /// The policy an operator reads is a hostname; the thing nftables enforces
     /// is whatever it resolved to. A repo ships `.h5i/env.toml`, so it picks
-    /// the names *and* what they answer — and `169.254.169.254` is the cloud
+    /// the names *and* what they answer, and `169.254.169.254` is the cloud
     /// instance metadata service, reachable through slirp's NAT, invisible in
     /// the policy text, and worth the instance's credentials.
     #[test]
@@ -1523,7 +1523,7 @@ mod tests {
 
     /// Unpinnable is not one thing. `0.0.0.0` is what a filtering resolver
     /// (pi-hole, a corporate policy, a consumer ISP) answers for a name it
-    /// blocks, so it turns up on ordinary well-meaning entries — and refusing
+    /// blocks, so it turns up on ordinary well-meaning entries, and refusing
     /// the run over it would take the whole box down on the operator's DNS,
     /// over a name that was already unreachable. `169.254.169.254` is the
     /// opposite: nothing legitimate answers there, and it stays fatal.
@@ -1573,7 +1573,7 @@ mod tests {
     #[test]
     fn run_egress_fails_closed_when_unsupported() {
         // With a net.egress allowlist, run() still fails closed when the host
-        // cannot satisfy the supervised stack — never a silent partial run.
+        // cannot satisfy the supervised stack. Never a silent partial run.
         // (On a fully-capable host the e2e test in tests/env_integration.rs
         // proves real enforcement.)
         let mut p = crate::sandbox::Profile::builtin("p", crate::sandbox::IsolationClaim::Supervised);
@@ -1581,7 +1581,7 @@ mod tests {
         let pol = crate::sandbox::ResolvedPolicy::new(p.isolation, p);
         // Ask the admission check itself whether this host is capable, rather
         // than re-deriving it from `slirp4netns`. What makes a host ready is
-        // per-platform now — macOS needs no uplink binary at all — so a
+        // per-platform now, macOS needs no uplink binary at all, so a
         // hand-rolled predicate here would drift from the code it guards, which
         // is exactly what it did.
         if preflight(&pol).is_ok() {
@@ -1598,7 +1598,7 @@ mod tests {
 
     /// The netns uplink is Linux-only machinery (`slirp_args`, `SLIRP_GATEWAY`
     /// are `cfg(target_os = "linux")`), so its test is too. macOS reaches the
-    /// same guarantee through the loopback proxy instead — see
+    /// same guarantee through the loopback proxy instead. See
     /// `seatbelt::tests::egress_allows_only_the_proxy_port`.
     #[cfg(target_os = "linux")]
     #[test]
@@ -1621,7 +1621,7 @@ mod tests {
 
     /// The netns uplink is Linux-only machinery (`slirp_args`, `SLIRP_GATEWAY`
     /// are `cfg(target_os = "linux")`), so its test is too. macOS reaches the
-    /// same guarantee through the loopback proxy instead — see
+    /// same guarantee through the loopback proxy instead. See
     /// `seatbelt::tests::egress_allows_only_the_proxy_port`.
     #[cfg(target_os = "linux")]
     #[test]
@@ -1655,7 +1655,7 @@ mod tests {
         ];
         let paths = cred_scrub_paths(AgentRuntime::Claude, &binds);
         assert_eq!(paths, vec![PathBuf::from("/env/home/.claude/.credentials.json")]);
-        // Only the env's own backing copy is ever named — never the real HOME.
+        // Only the env's own backing copy is ever named. Never the real HOME.
         assert!(paths.iter().all(|p| p.starts_with("/env/home")));
 
         let codex = vec![HomeBind {

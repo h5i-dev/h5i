@@ -5,7 +5,7 @@
 //! `postinstall` that lived forty milliseconds, is the one missed.
 //!
 //! Cgroup-id and pid-namespace filters were considered and fail the same test:
-//! **the scope has to be decided before the payload exists.** A scope programmed
+//! the scope has to be decided before the payload exists. A scope programmed
 //! after the child is spawned has already missed the exec that named it, the
 //! most valuable event of the run. A cgroup id is knowable in advance only if
 //! h5i creates the cgroup in advance, which it does not, and a pid-namespace
@@ -107,8 +107,8 @@ impl Tier {
 }
 
 /// The one scope mechanism this build implements. Named in the receipt so a
-/// later privileged collector — which attaches out of band and can therefore
-/// resolve a cgroup or a namespace — can add mechanisms without any reader
+/// later privileged collector, which attaches out of band and can therefore
+/// resolve a cgroup or a namespace, can add mechanisms without any reader
 /// having to guess which one produced an old record.
 pub const SCOPE_PIDTREE: &str = "pidtree";
 

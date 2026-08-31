@@ -2,20 +2,20 @@
 //!
 //! A ticket names one box, one port, one grant and one expiry, and carries the
 //! secret that authorizes a peer plus whatever the transport needs in order to
-//! find the sharer. Possession is authorization — there is no account on either
+//! find the sharer. Possession is authorization. There is no account on either
 //! side, and no directory anywhere that has to agree the two of you know each
 //! other.
 //!
 //! Three properties are deliberate:
 //!
-//! * **The secret is in the ticket, not on disk.** The sharer keeps only its
+//! * The secret is in the ticket, not on disk. The sharer keeps only its
 //!   SHA-256 ([`crate::session`]), so a stolen box directory does not admit
 //!   anyone. The consequence is that a ticket is printed once and cannot be
 //!   reprinted; mint another with `h5i box share grant`.
-//! * **The addressing is opaque here.** `addr` is whatever the transport put
+//! * The addressing is opaque here. `addr` is whatever the transport put
 //!   there, carried as JSON. That keeps this module free of the P2P dependency
 //!   so the encoding can be tested, and reviewed, without one.
-//! * **Decoding is bounded before it allocates.** A ticket arrives by paste
+//! * Decoding is bounded before it allocates. A ticket arrives by paste
 //!   from wherever, so the length cap is checked on the encoded text, before
 //!   base64 and before serde see any of it.
 
@@ -46,7 +46,7 @@ pub struct Ticket {
     pub v: u8,
     /// The box this ticket reaches, for the joiner to see before connecting.
     pub box_id: String,
-    /// The port inside the box. Informational for the joiner — the sharer's
+    /// The port inside the box. Informational for the joiner. The sharer's
     /// bridge is pinned to one port and does not take direction from the wire.
     pub port: u16,
     /// Which grant this is, so `h5i box share revoke <box> <grant>` can name it.
@@ -71,8 +71,8 @@ impl Ticket {
 
     /// Parse a ticket a human pasted.
     ///
-    /// Everything here is attacker-supplied in the case that matters — someone
-    /// sent you a ticket — so each step refuses rather than repairs, and the
+    /// Everything here is attacker-supplied in the case that matters, someone
+    /// sent you a ticket, so each step refuses rather than repairs, and the
     /// error says which step failed without echoing the input back.
     pub fn decode(s: &str) -> Result<Ticket, H5iError> {
         let s = s.trim();
@@ -88,7 +88,7 @@ impl Ticket {
         let s = s.trim_matches(|c| c == '"' || c == '\'' || c == '`');
         // And so do line breaks. A ticket is one long line; email clients hard
         // wrap at 72 or 78 columns, terminals wrap on copy, and chat clients
-        // insert breaks of their own — after which this said "probably
+        // insert breaks of their own, after which this said "probably
         // truncated or line-wrapped", which is an accurate diagnosis and a
         // dead end for somebody holding the whole ticket in two pieces. The
         // base64 alphabet contains no whitespace, so removing it cannot change
@@ -123,8 +123,8 @@ impl Ticket {
                 )
             })?;
         let t: Ticket = serde_json::from_slice(&raw).map_err(|e| {
-            // A cut-short ticket is the commoner of the two truncation cases —
-            // a chat client eliding a long line — and it used to be the one
+            // A cut-short ticket is the commoner of the two truncation cases,
+            // a chat client eliding a long line, and it used to be the one
             // that got serde's cursor position while the line-wrapped case got
             // plain language.
             if e.is_eof() {
@@ -188,7 +188,7 @@ mod tests {
         // A ticket is one long line and the world is full of things that break
         // long lines: mail clients hard wrap at 72 or 78 columns, terminals
         // wrap on copy, chat clients insert their own. The refusal for that
-        // was accurate — "probably truncated or line-wrapped" — and a dead end
+        // was accurate, "probably truncated or line-wrapped", and a dead end
         // for somebody holding the whole ticket in two pieces. Whitespace is
         // not in the base64 alphabet, so removing it cannot turn one ticket
         // into another; it can only turn a refusal into the ticket the sender
@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn the_three_ways_a_ticket_arrives_wrong_each_say_which() {
         // A cut-short ticket used to get serde's cursor position while the
-        // line-wrapped one got plain language — backwards, since eliding a
+        // line-wrapped one got plain language. Backwards, since eliding a
         // long line is the commoner accident.
         let good = super::Ticket {
             v: 1,
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn a_secret_that_is_not_a_secret_is_caught_at_decode() {
         // The failure this prevents is a ticket whose secret is empty or
-        // truncated sailing through decode and then being compared — a short
+        // truncated sailing through decode and then being compared. A short
         // secret is a weak secret, and it should not get as far as the gate.
         for bad in [
             "",

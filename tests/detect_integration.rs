@@ -1,14 +1,14 @@
 //! End-to-end tests for the runtime-detection lane (ROADMAP.md D1–D14).
 //!
 //! These drive the compiled binary against real repositories, and they prove
-//! the properties that hold **on every host** — including the overwhelmingly
+//! the properties that hold on every host, including the overwhelmingly
 //! common one that has no `CAP_BPF` and therefore cannot attach a probe at
 //! all:
 //!
 //!   1. A profile that does not ask to be watched produces a receipt with no
 //!      runtime block. Absence means "did not ask", and nothing else.
 //!   2. A profile that *does* ask always produces a block, whether or not the
-//!      probe could attach — and when it could not, the block carries the
+//!      probe could attach, and when it could not, the block carries the
 //!      reason. This is the property the whole lane rests on: an unwatched run
 //!      must never be indistinguishable from a quiet one.
 //!   3. `require = true` refuses the run rather than performing it unwatched.
@@ -20,7 +20,7 @@
 //!
 //! What is *not* here is the actual attach: that needs `CAP_BPF`, which no CI
 //! runner grants, and it lives in `crates/h5i-bpf/tests/live_attach.rs` behind
-//! `H5I_BPF_LIVE=1`. Splitting them this way is deliberate — everything a
+//! `H5I_BPF_LIVE=1`. Splitting them this way is deliberate. Everything a
 //! host can check is checked everywhere, and the part that cannot be is
 //! isolated rather than skipped inside a suite that then reports "ok".
 
@@ -115,7 +115,7 @@ impl Repo {
 }
 
 /// Does this host actually have the collector? Used only to sharpen an
-/// assertion, never to skip one — every test below asserts something on both
+/// assertion, never to skip one. Every test below asserts something on both
 /// kinds of host.
 fn collector_available() -> bool {
     let out = Command::new(H5I)
@@ -147,9 +147,9 @@ fn a_profile_that_does_not_ask_produces_no_runtime_block() {
 }
 
 /// The property the whole lane rests on. A profile that asked to be watched
-/// gets a block **either way**: with detections when the probe attached, with
+/// gets a block *either way*: with detections when the probe attached, with
 /// a reason when it could not. What must never happen is an empty block, or no
-/// block, on a run nobody watched — that reads exactly like a quiet box.
+/// block, on a run nobody watched. That reads exactly like a quiet box.
 #[test]
 fn a_run_that_asked_to_be_watched_always_carries_a_block() {
     let r = Repo::with_policy(
@@ -176,7 +176,7 @@ fn a_run_that_asked_to_be_watched_always_carries_a_block() {
             .unwrap_or_else(|| panic!("an unwatched run must say why: {rt}"));
         assert!(!why.is_empty());
         assert_eq!(rt["coverage"], "none");
-        // And the detections list must be empty *and* explained — never empty
+        // And the detections list must be empty *and* explained. Never empty
         // and silent.
         assert!(
             rt.get("detections").is_none()
@@ -186,8 +186,8 @@ fn a_run_that_asked_to_be_watched_always_carries_a_block() {
 }
 
 /// `require = true` means what it says: refuse the run rather than perform it
-/// unwatched. On a host that *can* watch, the same profile runs normally —
-/// the switch is about the failure, not about the feature.
+/// unwatched. On a host that *can* watch, the same profile runs normally.
+/// The switch is about the failure, not about the feature.
 #[test]
 fn require_refuses_the_run_when_the_probe_cannot_attach() {
     let r = Repo::with_policy(
@@ -250,7 +250,7 @@ fn require_without_enabled_is_refused() {
 
 /// A rule id nobody provides must stop the run reading as watched. The
 /// selector is checked by the collector, so this surfaces as a refusal to
-/// attach — with the typo named.
+/// attach, with the typo named.
 #[test]
 fn a_misspelled_rule_makes_the_run_report_itself_unwatched() {
     let r = Repo::with_policy(
@@ -365,7 +365,7 @@ fn show_says_nothing_was_watched_rather_than_printing_an_empty_list() {
     assert!(text.contains("not the same as nothing happening"), "{text}");
 }
 
-/// And on a box that asked, it must render the block — including the
+/// And on a box that asked, it must render the block, including the
 /// unavailable one, which is the case a reader most needs to see.
 #[test]
 fn show_renders_a_block_that_could_not_be_collected() {

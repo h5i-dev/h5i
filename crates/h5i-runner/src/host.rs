@@ -3,7 +3,7 @@
 //! This is the source of [`crate::proto::Capabilities`], and the rule it works
 //! under is R1's: a runner requires Linux and the h5i protocol, and everything
 //! else is *advertised*. So the job here is to advertise only what has been
-//! established, and to say plainly — in [`crate::proto::Capabilities::notes`] —
+//! established, and to say plainly, in [`crate::proto::Capabilities::notes`],
 //! what could not be established rather than reporting a confident `false`. A
 //! probe that silently reports `false` for something it merely could not
 //! measure is a probe that lies, and the whole placement decision downstream
@@ -75,7 +75,7 @@ pub fn capabilities(state_dir: &Path) -> Capabilities {
 /// Which tiers this machine will actually run.
 ///
 /// The kernel tiers come from `capabilities_report_fresh`, which resolves a
-/// probe profile and then runs the functional exec self-test — the same gate
+/// probe profile and then runs the functional exec self-test. The same gate
 /// `env create`'s auto-pick uses, so a tier advertised here is a tier that has
 /// demonstrably worked on this machine a moment ago. `_fresh` rather than the
 /// memoised form for the reason the local diagnostics use it: a report that is
@@ -240,7 +240,7 @@ fn unescape_mount(s: &str) -> String {
 ///
 /// A default route, not a reachability test: a probe must not decide it is
 /// entitled to send traffic somewhere to answer a question. This is exactly the
-/// distinction R12 prices — a runner with no default route is the cable-only
+/// distinction R12 prices. A runner with no default route is the cable-only
 /// appliance, which needs brokered egress and is not an MVP topology.
 fn has_default_route() -> Option<bool> {
     let v4 = std::fs::read_to_string("/proc/net/route").ok();
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn the_longest_matching_mount_point_wins() {
         // The kernel resolves a path to the deepest mount that covers it, and a
-        // shallower match would report the wrong filesystem — which is exactly
+        // shallower match would report the wrong filesystem, which is exactly
         // the difference between "boxes survive a reboot" and "they do not".
         let mounts = "\
 /dev/sda1 / ext4 rw 0 0
@@ -399,7 +399,7 @@ eth0\t00000000\t0102A8C0\t0002
     #[test]
     fn the_report_is_always_producible_and_always_sanitises() {
         // Never fails: whatever cannot be measured becomes a note, and the
-        // result must satisfy the protocol's own validation — otherwise the
+        // result must satisfy the protocol's own validation. Otherwise the
         // worker would be emitting reports its own client refuses.
         let dir = tempfile::tempdir().expect("tempdir");
         let caps = capabilities(dir.path());

@@ -20,7 +20,7 @@
 //! the format is testable over an in-memory pipe, with no SSH and no child
 //! process anywhere near the build.
 //!
-//! **Limits are per RPC, not just per frame** (ROADMAP.md R5). A 1 MiB frame cap
+//! Limits are per RPC, not just per frame (ROADMAP.md R5). A 1 MiB frame cap
 //! bounds one message and nothing else, since a peer can send frames forever.
 //! [`FrameReader`] carries running totals and fails the RPC the moment either is
 //! exceeded, so every caller inherits a bound rather than having to remember one.
@@ -45,10 +45,10 @@ pub enum WireError {
     #[error("runner transport I/O: {0}")]
     Io(#[from] std::io::Error),
 
-    /// The peer declared a body larger than the cap. **Nothing was read for
-    /// it**: the declared length is refused on sight, so a peer cannot make us
-    /// allocate or block on bytes it never intends to send. The session is over
-    /// — we are no longer synchronised with the stream and must not guess.
+    /// The peer declared a body larger than the cap. Nothing was read for
+    /// it: the declared length is refused on sight, so a peer cannot make us
+    /// allocate or block on bytes it never intends to send. The session is over.
+    /// We are no longer synchronised with the stream and must not guess.
     #[error("frame declares {declared} bytes, over the {max} byte cap — refusing to read it")]
     Oversized { declared: u64, max: usize },
 
@@ -82,8 +82,8 @@ pub enum WireError {
 /// One frame, after framing and before meaning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
-    /// The type code, uninterpreted. [`crate::proto::FrameKind`] gives it a name
-    /// — or declines to, which is how an unknown frame type is handled.
+    /// The type code, uninterpreted. [`crate::proto::FrameKind`] gives it a name,
+    /// or declines to, which is how an unknown frame type is handled.
     pub kind: u8,
     pub payload: Vec<u8>,
 }
@@ -152,14 +152,14 @@ impl Limits {
             max_frame: MAX_FRAME,
             max_total_bytes,
             // A frame carries up to a megabyte, so this bounds a peer that
-            // sends the whole budget as empty frames — which the byte total
+            // sends the whole budget as empty frames, which the byte total
             // alone would not.
             max_frames: 1_000_000,
         }
     }
 
     /// Narrow an existing budget. Every field takes the smaller of the two, so
-    /// this can only tighten — a caller cannot widen the format's ceiling, and
+    /// this can only tighten. A caller cannot widen the format's ceiling, and
     /// nesting one budget inside another is always safe.
     pub fn narrowed(self, max_frame: usize, max_total_bytes: u64, max_frames: u64) -> Self {
         Self {
@@ -217,7 +217,7 @@ impl<R: Read> FrameReader<R> {
     }
 
     /// The next frame, or `Ok(None)` when the peer closed the stream cleanly at
-    /// a frame boundary — which is how an exchange ends and is not an error.
+    /// a frame boundary, which is how an exchange ends and is not an error.
     ///
     /// Every error this returns is terminal for the session. Once a length has
     /// been read and refused, or a body has ended early, the reader's position
@@ -295,10 +295,10 @@ impl<R: Read> FrameReader<R> {
 
     /// Start a new RPC on this stream, under its own budget.
     ///
-    /// Budgets are **per RPC**, not per connection: a handshake and a source
+    /// Budgets are *per RPC*, not per connection: a handshake and a source
     /// transfer have nothing in common except the socket they share, and one
     /// budget covering both would have to be as loose as the looser of the two.
-    /// So the counters reset with the limits — a create that moves a hundred
+    /// So the counters reset with the limits. A create that moves a hundred
     /// megabytes does not leave a session too spent to answer a `PROBE`.
     ///
     /// This is deliberately explicit rather than implicit per frame kind: a
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn an_empty_payload_is_a_frame_too() {
-        // Every signalling frame — DATA_DONE, CLOSE_STDIN, a bare PROBE — is
+        // Every signalling frame (DATA_DONE, CLOSE_STDIN, a bare PROBE) is
         // this shape, so the one-byte body is the common case and not an edge.
         let f = roundtrip(0x39, b"");
         assert_eq!(f.kind, 0x39);

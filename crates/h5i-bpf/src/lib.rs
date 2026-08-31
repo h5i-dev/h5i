@@ -1,21 +1,21 @@
-//! h5i-bpf — runtime detection: a kernel-observed evidence lane.
+//! h5i-bpf. Runtime detection: a kernel-observed evidence lane.
 //!
-//! Every other lane sits at the **boundary** of a box (h5i as parent, the
-//! CONNECT proxy, the runner's channel) or **inside** it (the tee shim, the
+//! Every other lane sits at the *boundary* of a box (h5i as parent, the
+//! CONNECT proxy, the runner's channel) or *inside* it (the tee shim, the
 //! browser), so both are defeated by work below the outermost command and by a
 //! box that declines to cooperate. This lane is neither: the kernel reports
 //! `execve`, `connect` and `openat` whether or not the box wanted them reported.
 //!
 //! ROADMAP D1 to D14 carry the design and the limits. Three belong here:
 //!
-//! * **It cannot deny anything.** No `bpf_send_signal`, no
+//! * It cannot deny anything. No `bpf_send_signal`, no
 //!   `bpf_override_return`, no LSM programs. Denial belongs to the mechanisms
 //!   that fail closed by construction, and a second thing that sometimes blocks
 //!   would blur a sharp boundary.
-//! * **It reads no kernel structure.** Syscall tracepoint arguments and stable
+//! * It reads no kernel structure. Syscall tracepoint arguments and stable
 //!   helpers only, so no CO-RE, no BTF, and one object that loads on every
 //!   kernel from 5.8 up.
-//! * **It never renders an absence as a clean result.** A run it could not watch
+//! * It never renders an absence as a clean result. A run it could not watch
 //!   carries [`RuntimeEvidence::unavailable`] with the reason; an incomplete one
 //!   carries [`Coverage::Partial`]; a lossy one carries the drop count.
 //!
@@ -124,7 +124,7 @@ impl DetectConfig {
 /// Bounded by [`event::MAX_PREFIX`], and ordered by value so that a truncation
 /// drops the least important entry rather than an arbitrary one.
 ///
-/// `home` and `control_dir` are the box's paths, not the host's — a box has
+/// `home` and `control_dir` are the box's paths, not the host's. A box has
 /// its own home, and a filter built from the host's would match nothing.
 pub fn kernel_prefixes(home: &str, control_dir: &str) -> Vec<String> {
     // Most valuable first, because the tail is what a truncation drops.
@@ -164,7 +164,7 @@ pub fn kernel_prefixes(home: &str, control_dir: &str) -> Vec<String> {
 ///
 /// One type for both outcomes on purpose. A caller that had to handle "started
 /// a session" and "could not start a session" differently would eventually
-/// handle the second one by logging it, and the receipt would carry nothing —
+/// handle the second one by logging it, and the receipt would carry nothing,
 /// which is the failure mode this lane is a correction for.
 pub struct Watch(WatchInner);
 

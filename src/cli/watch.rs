@@ -1,4 +1,4 @@
-//! `h5i box watch` — the box's policy decisions, one line each, as they happen.
+//! `h5i box watch`: the box's policy decisions, one line each, as they happen.
 //!
 //! The third reader of `browser_events` (roadmap-history.md M11c). M11a built the model
 //! and the console's evidence panes; M11b keeps a pane-based terminal viewer
@@ -14,11 +14,11 @@
 //!
 //! Two rules travel with the terse format:
 //!
-//! - **The qualifier is not optional.** Every row carries its lane and its
+//! - The qualifier is not optional. Every row carries its lane and its
 //!   grade as *words*, because a row that does not say whether the box or the
 //!   host observed it is a row asserting more than h5i knows. Brevity is not
 //!   licence to drop them, and colour never carries them alone.
-//! - **Box text is already sanitised.** `browser_events` cleans every
+//! - Box text is already sanitised. `browser_events` cleans every
 //!   box-supplied field once, at ingest ([`h5i_core::browser_events`]), which
 //!   is exactly why this can write straight to a PTY. Nothing here re-sanitises
 //!   and nothing here bypasses it.
@@ -164,7 +164,7 @@ fn header(h5i_root: &std::path::Path, m: &h5i_core::env::EnvManifest, deny_only:
 
 /// Whether this row is a policy saying no.
 ///
-/// Three kinds qualify, and a denied request contributes **two** of them: the
+/// Three kinds qualify, and a denied request contributes *two* of them: the
 /// request row carries the method and URL, the paired `PolicyVerdict` carries
 /// the reason. Showing one and not the other would drop half of what a reader
 /// needs, so `--deny-only` keeps the pair and the `<- #id` link reads it as one.
@@ -361,7 +361,7 @@ mod tests {
     /// Build a `ViewerEvent` without going through an ingest path.
     ///
     /// `Draft` is crate-private to `h5i-core`, so a consumer builds the public
-    /// envelope directly — which is also the shape any other out-of-crate
+    /// envelope directly, which is also the shape any other out-of-crate
     /// reader would have to use, so the test exercises the real surface.
     fn event(kind: EventKind, lane: Lane, grade: Grade) -> ViewerEvent {
         ViewerEvent {

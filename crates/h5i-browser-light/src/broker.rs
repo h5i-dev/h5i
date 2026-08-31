@@ -13,7 +13,7 @@
 //! environment. The claim "a request not in the log did not happen" is otherwise
 //! only as strong as the parsers sharing an address space with the recorder.
 //!
-//! **The rule for adding a method:** every one becomes a message a hostile
+//! The rule for adding a method: every one becomes a message a hostile
 //! renderer may send at will, in any order, with any arguments. So the
 //! operations are the ones that were measured (roadmap-history.md §B18.6) and no
 //! more. Nothing hands back a live reference to broker state, and nothing lets
@@ -57,7 +57,7 @@ pub struct Fetch {
     pub document: Option<Url>,
     /// Set when a *page* asked, which is what subjects the answer to the
     /// same-origin policy. `None` is the agent exercising its own authority
-    /// over a URL it named, which is a different question — see [`crate::cors`].
+    /// over a URL it named, which is a different question. See [`crate::cors`].
     pub cors: Option<CorsAsk>,
 }
 
@@ -128,7 +128,7 @@ pub struct Allowance {
 ///
 /// WebSocket and server-sent events are the two things in this engine that are
 /// not request-and-answer, and they are the two the split has to carry rather
-/// than transport. The socket itself stays with the broker — it is the wire —
+/// than transport. The socket itself stays with the broker, it is the wire,
 /// and the renderer holds this: send a message, take what has arrived, stop.
 ///
 /// `drain` is a poll rather than a callback deliberately. The renderer's settle
@@ -148,7 +148,7 @@ pub trait Channel: Send + Sync {
 
 /// The one way bytes enter this engine.
 pub trait Broker: Send + Sync {
-    /// Check policy, record the decision, use the wire — in that order, and
+    /// Check policy, record the decision, use the wire. In that order, and
     /// with no second path. Every other fetch entry point on this trait is a
     /// convenience over this one.
     fn send(&self, fetch: &Fetch) -> FetchOutcome;
@@ -158,11 +158,11 @@ pub trait Broker: Send + Sync {
     /// For work that would otherwise sit on the critical path behind a request
     /// this process is only waiting on. The renderer's broker is a *separate
     /// process*, so [`Self::send`] is one round trip and the renderer thread is
-    /// idle for all of it — which is long enough to hide the browser prelude's
+    /// idle for all of it, which is long enough to hide the browser prelude's
     /// compile in (§B15.12a). Boa's heap is thread-local, so that compile
     /// cannot go to a worker thread; this is the only way it overlaps anything.
     ///
-    /// **`while_waiting` must be speculative work**, in the sense that skipping
+    /// `while_waiting` must be speculative work, in the sense that skipping
     /// it entirely has to be correct. The default implementation does exactly
     /// that: a broker doing the fetch on this thread has no idle window, and
     /// running the closure *before* the fetch would not be an overlap but a
@@ -254,7 +254,7 @@ pub trait Broker: Send + Sync {
     fn document_cookie(&self, url: &Url) -> String;
 
     /// Store a cookie script set, subject to the same rules the wire path
-    /// applies — and to one more, since script may not set `HttpOnly`.
+    /// applies, and to one more, since script may not set `HttpOnly`.
     /// Returns how many were stored.
     fn store_cookie(&self, url: &Url, header: &str) -> usize;
 
@@ -272,8 +272,8 @@ pub trait Broker: Send + Sync {
         document: Option<&Url>,
     ) -> Result<Arc<dyn Channel>, String>;
 
-    /// The credentials this session may substitute, by name. Never values —
-    /// that is the whole of [`crate::secrets`].
+    /// The credentials this session may substitute, by name. Never values.
+    /// That is the whole of [`crate::secrets`].
     /// Who this session says it is.
     ///
     /// On the trait rather than read from a constant because the two halves of
@@ -283,7 +283,7 @@ pub trait Broker: Send + Sync {
     /// and the wire describe two different browsers.
     ///
     /// An `Arc` rather than a borrow or a copy. It cannot be a borrow because
-    /// across the process split there is nothing to borrow from — the value
+    /// across the process split there is nothing to borrow from. The value
     /// arrives as a message. It must not be a copy because this is read once
     /// per realm and a realm is per navigation, so the strings would be
     /// reallocated on every page for a value fixed at the session's start.
@@ -297,7 +297,7 @@ pub trait Broker: Send + Sync {
     /// The limit is worth stating where the operation is declared, because it
     /// is easy to oversell: substitution happens on the way *into* the page, so
     /// the renderer receives the value for the credential that was actually
-    /// used. What the split protects is every credential that was not — a
+    /// used. What the split protects is every credential that was not. A
     /// compromised renderer no longer holds the environment, so it reads the
     /// ones it was handed and no others.
     fn substitute(&self, text: &str) -> Resolved;
@@ -343,7 +343,7 @@ pub trait Broker: Send + Sync {
         self.send(&Fetch::get(url, initiator).from_document(document))
     }
 
-    /// Send a request that may carry a body — what a form submission needs.
+    /// Send a request that may carry a body. What a form submission needs.
     fn send_from(
         &self,
         url: &Url,

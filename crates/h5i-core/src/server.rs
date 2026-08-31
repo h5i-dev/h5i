@@ -4,7 +4,7 @@
 //! and what has pressed on a boundary? Built over manifests, the resolved
 //! policy, the env event log and [`crate::receipt`].
 //!
-//! **Read-only, structurally.** Every route is a `GET`, so there is no mutating
+//! Read-only, structurally. Every route is a `GET`, so there is no mutating
 //! handler to guard, no CSRF story, and no way to turn this into a remote
 //! control for someone's boxes. A monitoring surface that cannot act is a much
 //! smaller thing to get wrong.
@@ -19,7 +19,7 @@
 //! site, so without it any other local port could `<img src>` this console with
 //! its cookie attached.
 //!
-//! **Honesty.** The dashboard this replaces had a risk classifier; nothing here
+//! Honesty. The dashboard this replaces had a risk classifier; nothing here
 //! invents a score to replace it. [`Signals`] is arithmetic over receipts: red
 //! means enforcement fired, amber means a run failed or the page reported
 //! errors, grey means the evidence is weak. None is an accusation, and the UI
@@ -46,7 +46,7 @@ use crate::sandbox::Profile;
 /// The cookie the page uses after it has spent the token in the URL.
 const COOKIE: &str = "h5i_console";
 
-/// 128 bits, hex — the same budget [`crate::view`] mints for a box viewer.
+/// 128 bits, hex. The same budget [`crate::view`] mints for a box viewer.
 const TOKEN_BYTES: usize = 16;
 
 /// Newest-first cap on the receipts carried in one box's detail payload. A
@@ -70,8 +70,8 @@ pub struct AppState {
     /// stable. Rebuilding the stream per request renumbers from 1 over whatever
     /// the sources currently hold, and a run clears the box's `/tmp`, so a
     /// viewer's cursor would silently swallow the next session (see `BoxStream`).
-    /// Bounded twice over — one entry per box *viewed*, each capped at
-    /// [`STREAM_CAP`] events — and it is derived from files on disk, so losing
+    /// Bounded twice over (one entry per box *viewed*, each capped at
+    /// [`STREAM_CAP`] events) and it is derived from files on disk, so losing
     /// it costs nothing but a re-read.
     browser: Arc<std::sync::Mutex<std::collections::HashMap<String, crate::browser_events::BoxStream>>>,
     /// One live-view reader per box currently being watched. Separate from
@@ -122,24 +122,24 @@ impl Refusal {
 }
 
 /// The whole authorization decision, as a pure function of the four things it
-/// depends on — so it can be tested without a socket.
+/// depends on, so it can be tested without a socket.
 ///
 /// `Origin` is checked first: a request from another origin is refused even
 /// when it somehow carries the right token, because at that point the token is
 /// the thing that has leaked and honouring it would be the bug.
 /// `sec_fetch_site` is every value of that header, because a second copy is a
 /// disagreement about where a request came from and this resolves it against
-/// the request. It closes the gap `Origin` alone cannot: **`Origin` is not sent
-/// on a subresource GET at all**, and the cookie is `SameSite=Strict`, which
+/// the request. It closes the gap `Origin` alone cannot: `Origin` is not sent
+/// on a subresource GET at all, and the cookie is `SameSite=Strict`, which
 /// constrains cross-*site* requests only. Two loopback ports are different
-/// origins and the *same site*, so a page served by any other local service —
-/// `h5i join` puts somebody else's agent-written app on exactly such a port —
+/// origins and the *same site*, so a page served by any other local service,
+/// `h5i join` puts somebody else's agent-written app on exactly such a port,
 /// could `<img src="http://127.0.0.1:<console>/api/…">` with this console's
 /// cookie attached and no `Origin` for the check above to look at. The module
 /// header's "foreign origins refused" was true of `fetch` and false of every
 /// markup-driven request.
 ///
-/// A `cross-site` request that carries the token **in the query** is the
+/// A `cross-site` request that carries the token in the query is the
 /// printed invite link being followed, and is allowed for the same reason
 /// `h5i-share`'s gate allows it: the capability arrived with the request rather
 /// than out of the browser's jar. Nothing else gets the carve-out.
@@ -274,7 +274,7 @@ fn embedded(path: &str) -> Response {
     }
 }
 
-/// `/` — the console page, plus the cookie that lets its `fetch` calls back in.
+/// `/`: the console page, plus the cookie that lets its `fetch` calls back in.
 ///
 /// Reaching this handler means [`gate`] already accepted the request, so the
 /// cookie is only ever handed to someone who proved they had the token.
@@ -304,14 +304,14 @@ async fn asset(Path(path): Path<String>) -> Response {
 /// intent, and the two `..._observed` counters exist so a reader can tell
 /// evidence h5i collected from evidence the box handed it.
 /// The lanes h5i itself writes, from the host, outside the box's reach.
-/// Anything else — `tee-shim`, `inbox-capture`, or a lane added later — is the
+/// Anything else (`tee-shim`, `inbox-capture`, or a lane added later) is the
 /// box's own account and is counted as such.
 // The browser mediator is host-observed like the viewer: the records are
 // written by an h5i process sitting on the socket, not claimed by the box.
 // `share` is on this list because h5i owns both ends of the share bridge, the
 // box supplies none of it, and the box cannot suppress it. Leaving it off
 // inverted the badge: a box whose only receipt was a share read as having no
-// host-observed evidence at all — the grey "the box told us this" badge — for
+// host-observed evidence at all, the grey "the box told us this" badge, for
 // the one lane the box cannot touch.
 const HOST_OBSERVED_LANES: [&str; 5] = [
     "host-env-run",
@@ -331,7 +331,7 @@ pub struct Signals {
     pub timed_out: usize,
     /// Egress the allowlist proxy permitted. Host-observed (container tier).
     pub egress_allowed: u64,
-    /// Egress the proxy refused — the single highest-fidelity signal here,
+    /// Egress the proxy refused. The single highest-fidelity signal here,
     /// and the only thing that turns a row red.
     pub egress_denied: u64,
     /// Distinct refused `host:port` destinations, capped.
@@ -339,15 +339,15 @@ pub struct Signals {
     /// Console errors, page errors and failed requests the in-box browser
     /// reported, summed over runs that drove it.
     pub browser_issues: usize,
-    /// Runs h5i observed from the host — see [`HOST_OBSERVED_LANES`].
+    /// Runs h5i observed from the host. See [`HOST_OBSERVED_LANES`].
     pub host_observed: usize,
-    /// Runs recorded by the in-box tee shim — the box's own account.
+    /// Runs recorded by the in-box tee shim. The box's own account.
     pub box_claimed: usize,
-    /// Runs observed from **outside the box, on a machine we do not own**: a
+    /// Runs observed from outside the box, on a machine we do not own: a
     /// runner (ROADMAP.md R10).
     ///
     /// Its own count rather than folded into either neighbour, because it is
-    /// genuinely neither. The box could not forge these — the worker saw them
+    /// genuinely neither. The box could not forge these. The worker saw them
     /// from outside it, and the channel they arrived on is authenticated with a
     /// pinned host key. But this machine did not watch them either, so a
     /// compromised runner could. Counting them as host-observed would overclaim
@@ -361,13 +361,13 @@ pub struct Signals {
     /// `denial` | `attention` | `clean`.
     pub verdict: &'static str,
     /// The box runs at `workspace` tier: nothing was confined. Reported beside
-    /// the verdict rather than folded into it — it is a standing property of
+    /// the verdict rather than folded into it. It is a standing property of
     /// the box, not something a run did.
     pub weak_isolation: bool,
     /// Runs exist and none of them was host-observed.
     pub box_claimed_only: bool,
     /// The create-time filesystem-authority validator (§P2) found the
-    /// effective config not confined to the declared policy — a grant outside
+    /// effective config not confined to the declared policy. A grant outside
     /// the declared subset, a write not declared writable, a read-only overlay
     /// left writable, or a grant escaping the worktree by symlink. A boundary
     /// trip, so it colors the verdict.
@@ -380,7 +380,7 @@ pub struct Signals {
     /// grading an intent rather than reporting a boundary trip. It is counted
     /// so the pane can *say* it happened, which is a different job.
     pub shares: usize,
-    /// Of those, the ones whose traffic a third party could read — anything
+    /// Of those, the ones whose traffic a third party could read. Anything
     /// but `p2p`, decided by [`crate::receipt::ShareEvidence::third_party_can_read`] rather
     /// than re-derived here, so one rule answers this question everywhere.
     pub shares_third_party_readable: usize,
@@ -392,8 +392,8 @@ pub struct Signals {
     /// them (`env/<id> via <path>`). Latest-record semantics on purpose:
     /// overlap is a property of what is materialized on the host right now,
     /// and a union over history would show boxes long gone. Empty when the
-    /// last check found none — the machine-checked noninterference guarantee
-    /// applies to such pairs — and also for envs whose receipts never carried
+    /// last check found none, the machine-checked noninterference guarantee
+    /// applies to such pairs, and also for envs whose receipts never carried
     /// the check; the pane only speaks when there is something recorded.
     pub fs_overlap: Vec<String>,
     /// Receipts whose kernel-observed lane actually watched the run
@@ -407,7 +407,7 @@ pub struct Signals {
     /// collapsing them would lose both facts.
     #[serde(default)]
     pub kernel_watched: usize,
-    /// Receipts that carry a runtime block which observed nothing — the probe
+    /// Receipts that carry a runtime block which observed nothing. The probe
     /// could not attach, or the tier is one a host probe cannot see into.
     ///
     /// Counted separately and shown, because the whole point of writing the
@@ -457,7 +457,7 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
             s.timed_out += 1;
         }
         // Allowlist, not a catch-all. `_ => host_observed` counted any unknown
-        // source as evidence h5i collected — including `inbox-capture`, which
+        // source as evidence h5i collected, including `inbox-capture`, which
         // the boxed process writes into its own spool. A box could therefore
         // clear the grey "box-claimed" badge by writing its own records, which
         // is precisely the distinction this screen exists to keep.
@@ -483,7 +483,7 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
         if let Some(b) = &r.browser {
             s.browser_issues += b.console.len() + b.errors.len() + b.failed_requests.len();
         }
-        // Newest run/shell record wins — including winning with an empty
+        // Newest run/shell record wins, including winning with an empty
         // list, which clears an overlap a departed box used to cause.
         if matches!(r.source.as_str(), "host-env-run" | "host-env-shell") {
             s.fs_overlap = r.fs_overlap.clone();
@@ -522,7 +522,7 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
     s.fs_overlap.truncate(DENIED_HOSTS_CAP);
     // Receipts are appended in order and their timestamps sort lexically.
     s.last_run_ts = receipts.last().map(|r| r.timestamp.clone());
-    // "Nothing was watched from outside the box" — which a runner-observed run
+    // "Nothing was watched from outside the box", which a runner-observed run
     // *was*, by an h5i we authenticated. Counting only `host_observed` here
     // would put the grey box-claimed badge on a runner box whose every run was
     // seen from outside it, which is the opposite of what the badge means. The
@@ -531,9 +531,9 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
     s.authority_unconfined =
         m.fs_authority.is_some_and(|a| !a.confined() || a.symlink_clean == Some(false));
     // A kernel-observed alert raises `attention`, never `denial`, and the
-    // difference is not pedantry. `denial` means *something was refused* — the
+    // difference is not pedantry. `denial` means *something was refused* (the
     // egress proxy said no, the authority validator found a grant outside the
-    // declared set — and this lane refuses nothing: it reports that a box read
+    // declared set) and this lane refuses nothing: it reports that a box read
     // a credential file, not that it was stopped. Folding it into `denial`
     // would quietly redefine the one word on this screen that currently has a
     // precise meaning (`box-console-honesty-model`). The count is shown on its
@@ -561,7 +561,7 @@ fn rank(s: &Signals) -> u8 {
 /// One row in the fleet.
 ///
 /// The manifest is flattened in, so this payload is a superset of
-/// `h5i box list --json` — the console and the scriptable CLI describe a box
+/// `h5i box list --json`: the console and the scriptable CLI describe a box
 /// with the same field names, and there is no second shape to keep in step.
 #[derive(Serialize)]
 pub struct BoxRow {
@@ -572,7 +572,7 @@ pub struct BoxRow {
     pub drift_summary: String,
     /// PID-verified sessions from the live registry.
     pub live: Vec<LiveSession>,
-    /// The durable status says `running` but no live writer holds the box — a
+    /// The durable status says `running` but no live writer holds the box. A
     /// crash leftover to flag, never to trust.
     pub stale_running: bool,
     /// Is the workspace materialized here (false = pulled from another clone)?
@@ -582,10 +582,10 @@ pub struct BoxRow {
     pub deletions: usize,
     pub last_event: Option<EnvEvent>,
     pub signals: Signals,
-    /// A share serving this box **right now**, if one is.
+    /// A share serving this box *right now*, if one is.
     ///
     /// The receipt lands when the share ends, so until this the console showed
-    /// nothing at all while a box was open to somebody on another machine —
+    /// nothing at all while a box was open to somebody on another machine,
     /// and the console's whole job is saying what is pressing on a boundary.
     /// The one lane that lets somebody *in* was the one it could not see while
     /// it was open.
@@ -596,7 +596,7 @@ pub struct BoxRow {
 ///
 /// Read off `<env>/share.json`, which is where the share keeps it, rather than
 /// through `h5i-share`: that crate is above this one. No secret is in the file
-/// and none is read here — the grant table stores digests, and this takes the
+/// and none is read here. The grant table stores digests, and this takes the
 /// transport, the port and the number of grants that can still admit anybody.
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct SharedNow {
@@ -607,7 +607,7 @@ pub struct SharedNow {
 
 fn shared_now(env_dir: &std::path::Path) -> Option<SharedNow> {
     // Only when somebody can actually reach in. A share that is winding up, or
-    // whose grants have all been revoked, has a live pid and admits nobody —
+    // whose grants have all been revoked, has a live pid and admits nobody,
     // and the badge said "somebody outside can reach port 3000 right now" of
     // it, for as long as that process took to exit. On a screen whose job is
     // saying what is pressing on a boundary, overclaiming toward alarm is the
@@ -711,7 +711,7 @@ impl From<&Profile> for EnforcedPolicy {
 #[derive(Serialize)]
 pub struct BoxDetail {
     pub item: BoxRow,
-    /// `None` when `policy.resolved.toml` is unreadable — a pulled or gc'd box.
+    /// `None` when `policy.resolved.toml` is unreadable. A pulled or gc'd box.
     pub policy: Option<EnforcedPolicy>,
     pub events: Vec<EnvEvent>,
     /// Newest last, capped at [`RECEIPT_CAP`].
@@ -753,7 +753,7 @@ fn receipts_of(h5i_root: &std::path::Path, m: &EnvManifest) -> Vec<ExecRecord> {
     crate::receipt::list(&env::env_dir(h5i_root, &m.agent, &m.slug)).unwrap_or_default()
 }
 
-/// `GET /api/boxes` — the fleet, most pressing first.
+/// `GET /api/boxes`: the fleet, most pressing first.
 async fn api_boxes(State(state): State<Arc<AppState>>) -> Json<Vec<BoxRow>> {
     let path = state.repo_path.clone();
     let rows = blocking(move || {
@@ -777,7 +777,7 @@ async fn api_boxes(State(state): State<Arc<AppState>>) -> Json<Vec<BoxRow>> {
     Json(rows.unwrap_or_default())
 }
 
-/// `GET /api/box/:agent/:slug` — one box in full.
+/// `GET /api/box/:agent/:slug`: one box in full.
 async fn api_box(
     State(state): State<Arc<AppState>>,
     Path((agent, slug)): Path<(String, String)>,
@@ -816,7 +816,7 @@ async fn api_box(
     }
 }
 
-/// `GET /api/box/:agent/:slug/receipts/:id` — one receipt, rendered exactly as
+/// `GET /api/box/:agent/:slug/receipts/:id`: one receipt, rendered exactly as
 /// `h5i box inspect` renders it (which refuses ids belonging to another box).
 async fn api_receipt(
     State(state): State<Arc<AppState>>,
@@ -853,7 +853,7 @@ pub struct BrowserStream {
     /// names the engine rather than leaving a reader to assume Chromium.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub engine: Option<String>,
-    /// Whether a live view is being served inside the box right now — a
+    /// Whether a live view is being served inside the box right now. A
     /// `.stream` file next to the daemon socket, the same discovery
     /// `h5i box view` uses.
     pub live_view: bool,
@@ -861,7 +861,7 @@ pub struct BrowserStream {
     /// holds none.
     ///
     /// The page re-fetches the frame only when this changes, which is what keeps
-    /// a still page at zero requests instead of on a timer — the same
+    /// a still page at zero requests instead of on a timer. The same
     /// change-driven rule the engine itself follows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frame_seq: Option<u64>,
@@ -873,12 +873,12 @@ pub struct BrowserStream {
 }
 
 /// How many events one box's stream holds. A page pulling in subresources makes
-/// two rows each, so this is a few hundred navigations' worth — enough to scroll
+/// two rows each, so this is a few hundred navigations' worth. Enough to scroll
 /// back through a session, bounded enough that a long-lived console does not
 /// grow without limit.
 const STREAM_CAP: usize = 4000;
 
-/// `GET /api/box/:agent/:slug/browser?since=N` — the browser terminal's stream
+/// `GET /api/box/:agent/:slug/browser?since=N`: the browser terminal's stream
 /// (roadmap-history.md M11a).
 ///
 /// A `GET` like every other route here, and for the same reason: the console
@@ -957,7 +957,7 @@ type Relays = std::sync::Mutex<std::collections::HashMap<String, crate::browser_
 ///
 /// Three transitions, all driven by the box rather than by a user action: a
 /// view appears and a reader starts; a view goes away and the reader is dropped
-/// (which closes the socket into the box — a console tab left open must not pin
+/// (which closes the socket into the box: a console tab left open must not pin
 /// a connection to a box that stopped serving); a reader dies on its own and is
 /// replaced, but not faster than its retry delay.
 fn tend_relay(
@@ -989,7 +989,7 @@ fn tend_relay(
     (seq, error)
 }
 
-/// `GET /api/box/:agent/:slug/browser/frame` — the newest frame the console
+/// `GET /api/box/:agent/:slug/browser/frame`: the newest frame the console
 /// holds for this box, as a JPEG.
 ///
 /// A `GET` that returns an image, so the console's "every route is a GET" rule
@@ -1027,12 +1027,12 @@ async fn api_browser_frame(
     }
 }
 
-/// `GET /api/probe` — what this host can actually enforce. The same report
+/// `GET /api/probe`: what this host can actually enforce. The same report
 /// `h5i box capabilities --json` prints, so the console's top strip and the
 /// CLI can never disagree.
 async fn api_probe() -> Json<crate::sandbox::CapabilitiesReport> {
     // A capability report is a diagnostic, so it is probed fresh rather than
-    // served from the per-boot podman cache — exactly as `box probe` does. The
+    // served from the per-boot podman cache. Exactly as `box probe` does. The
     // freshness is a property of the call, not of the process environment: this
     // is a long-lived multithreaded server, and a `set_var` here would race
     // every other thread's `getenv` and outlive the request that wanted it.
@@ -1041,7 +1041,7 @@ async fn api_probe() -> Json<crate::sandbox::CapabilitiesReport> {
 }
 
 /// Every route, wired to `state`. Extracted so tests can drive the surface
-/// without a socket — and so the "all of them are GETs" claim is checkable.
+/// without a socket, and so the "all of them are GETs" claim is checkable.
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(index))
@@ -1062,7 +1062,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 ///
 /// Split from [`Console::serve`] the way [`crate::view`] splits its forward:
 /// binding can fail (a port in use is the common case) and the caller wants to
-/// print the URL — token and all — before blocking forever.
+/// print the URL, token and all, before blocking forever.
 pub struct Console {
     listener: std::net::TcpListener,
     state: Arc<AppState>,
@@ -1182,12 +1182,12 @@ mod tests {
 
     /// The box writes `inbox-capture` records into its own spool. Counting any
     /// unknown source as host-observed let it clear the grey "box-claimed"
-    /// badge — the one distinction this screen is built on.
+    /// badge. The one distinction this screen is built on.
     #[test]
     fn a_box_being_shared_right_now_says_so() {
         // The receipt lands when the share *ends*, so until this the console
         // showed nothing at all while a box was open to somebody on another
-        // machine — for the one lane that lets somebody in, on a screen whose
+        // machine. For the one lane that lets somebody in, on a screen whose
         // job is saying what is pressing on a boundary.
         let dir = tempfile::tempdir().expect("tempdir");
         assert!(shared_now(dir.path()).is_none(), "no file, nothing to say");
@@ -1240,7 +1240,7 @@ mod tests {
         // h5i owns both ends of the share bridge and the box supplies none of
         // it, so leaving the lane off the list inverted the badge: a box whose
         // only receipt was a share read as having no host-observed evidence at
-        // all, which is the grey "the box told us this" badge — for the one
+        // all, which is the grey "the box told us this" badge. For the one
         // lane the box cannot touch.
         assert!(HOST_OBSERVED_LANES.contains(&"share"));
     }
@@ -1321,7 +1321,7 @@ mod tests {
     fn a_refused_destination_is_the_only_thing_that_turns_a_box_red() {
         let m = manifest("container");
         // A failing test run is worth attention, but it is not the boundary
-        // saying no — the distinction the old dashboard's red/amber split
+        // saying no. The distinction the old dashboard's red/amber split
         // existed to preserve.
         let noisy = signals(&m, &[receipt("host-env-run", 1)]);
         assert_eq!(noisy.verdict, "attention");
@@ -1352,7 +1352,7 @@ mod tests {
         let mut first = receipt("host-env-run", 0);
         first.fs_overlap = vec!["env/tester/other via /tmp".into()];
         // A newer run recorded no overlap (the other box is gone): the pane
-        // must clear, not remember — overlap is a property of the host now.
+        // must clear, not remember. Overlap is a property of the host now.
         let second = receipt("host-env-run", 0);
         let s = signals(&m, &[first.clone(), second]);
         assert!(s.fs_overlap.is_empty());
@@ -1463,7 +1463,7 @@ mod tests {
 
     /// The gap `Origin` alone cannot close.
     ///
-    /// A markup-driven GET — `<img>`, `<script src>`, `<link>` — sends no
+    /// A markup-driven GET (`<img>`, `<script src>`, `<link>`) sends no
     /// `Origin` at all, and the console's cookie is `SameSite=Strict`, which
     /// constrains cross-*site* requests only. Two loopback ports are different
     /// origins and the same site, so a page served by any other local service

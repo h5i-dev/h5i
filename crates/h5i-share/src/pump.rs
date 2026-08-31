@@ -8,13 +8,13 @@
 //!
 //! Two things it does owe the caller.
 //!
-//! **Counting as it goes, not at the end.** A revoke kills live connections by
+//! Counting as it goes, not at the end. A revoke kills live connections by
 //! dropping the future mid-copy, and a total that only existed in the return
 //! value would be lost exactly for the connections a reviewer most wants to see.
 //! So the totals live in atomics the caller owns and reads afterwards either
 //! way.
 //!
-//! **An honest shutdown in both directions.** A half-closed peer must not leave
+//! An honest shutdown in both directions. A half-closed peer must not leave
 //! the other side blocked on a socket that will never say anything again.
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -48,14 +48,14 @@ const DRAIN_GRACE: Duration = Duration::from_secs(60);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ended {
     /// The reader ran out, or the far side went away. The other direction may
-    /// legitimately still be going — that is a half-close.
+    /// legitimately still be going. That is a half-close.
     Cleanly,
     /// The far side stopped *reading*. Nothing more can be delivered to it, in
     /// either direction, so the connection is over.
     WriteStalled,
     /// The gate refused. Like [`Ended::WriteStalled`], this ends the whole
-    /// connection rather than half of it: the reason a gate says no —
-    /// `--direct-only` and a path that is no longer direct — is a fact about
+    /// connection rather than half of it: the reason a gate says no,
+    /// `--direct-only` and a path that is no longer direct, is a fact about
     /// the connection, not about one direction of it.
     Barred,
 }
@@ -66,7 +66,7 @@ enum Ended {
 /// [`crate::p2p`]): the connection's selected path is watched by a once-a-second
 /// poll, and a direct path that falls back to a relay between two of those polls
 /// used to mean up to a second of application traffic crossing a third party
-/// before the connection was closed — for a flag whose whole promise is that
+/// before the connection was closed. For a flag whose whole promise is that
 /// none does. Consulted here, the bound becomes "whatever QUIC had already
 /// accepted at the instant the path changed" rather than "a second's worth",
 /// and nothing this copy has not yet handed over is handed over afterwards.
@@ -93,8 +93,8 @@ where
             return Ended::Barred;
         }
         // Deadlined, like every other write in the crate. A peer that stops
-        // reading an upgraded connection — a backgrounded tab holding a
-        // hot-reload socket — would otherwise park this copy forever, holding
+        // reading an upgraded connection, a backgrounded tab holding a
+        // hot-reload socket, would otherwise park this copy forever, holding
         // one of the share's slots for the life of the ticket.
         if let Err(e) = crate::http_front::write_timed(&mut w, &buf[..n]).await {
             let _ = w.shutdown().await;
@@ -148,8 +148,8 @@ pub async fn duplex_gated<RA, WA, RB, WB>(
     RB: AsyncRead + Unpin + Send,
     WB: AsyncWrite + Unpin + Send,
 {
-    // Not `join!`. A peer that stops reading — the zero-receive-window case the
-    // write deadline exists for — leaves the *other* direction parked on a
+    // Not `join!`. A peer that stops reading, the zero-receive-window case the
+    // write deadline exists for, leaves the *other* direction parked on a
     // socket that is open and silent, so waiting for both meant the deadline
     // fired and the connection was held anyway, which is the thing it was added
     // to prevent. A stalled write ends the whole connection; anything else is a
@@ -243,7 +243,7 @@ mod tests {
     /// never exercised this: the peer goes and the server stays open and
     /// silent, which is the ordinary shape of an agent-written dev server that
     /// does not act on EOF. Unbounded, the box-to-peer copy read forever and
-    /// the `Bridge::admit` permit went with it — sixty-four reloads and the
+    /// the `Bridge::admit` permit went with it. Sixty-four reloads and the
     /// share answers `busy` until the ticket expires.
     #[tokio::test(start_paused = true)]
     async fn a_silent_server_after_the_peer_hangs_up_does_not_hold_the_slot() {

@@ -22,9 +22,9 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 /// One compare-and-swap ref update: create `refname` at `new_oid` when `tip`
 /// is `None` (`force = false`, so a racing creator wins), otherwise move it to
-/// `new_oid` only if it still points at `tip`. Both failure modes — a CAS
+/// `new_oid` only if it still points at `tip`. Both failure modes, a CAS
 /// mismatch (the ref moved under us) and the loose-ref lock being held by a
-/// concurrent writer — are retryable; the returned error says which.
+/// concurrent writer, are retryable; the returned error says which.
 pub fn cas_ref_update(
     repo: &Repository,
     refname: &str,

@@ -1,6 +1,6 @@
 //! The engine's command line.
 //!
-//! **Reached through `h5i __engine`, not through a second binary.** The engine
+//! Reached through `h5i __engine`, not through a second binary. The engine
 //! used to ship as `h5i-browser-light` alongside `h5i`, because it was a second
 //! product somebody might want on its own. It is now the renderer behind
 //! `h5i browser`, and two files bought three problems: an install that left the
@@ -15,7 +15,7 @@
 //!
 //! One honesty rule travels with running it directly: outside a box there is no
 //! egress proxy and no receipt store, so what runs here is a light browser with
-//! a request log — the containment claims belong to the box, and this entry
+//! a request log. The containment claims belong to the box, and this entry
 //! point does not imply them.
 
 use std::path::{Path, PathBuf};
@@ -145,7 +145,7 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         control_file: Option<PathBuf>,
 
-        /// Also take control connections on a Unix socket here. **Unix only.**
+        /// Also take control connections on a Unix socket here. Unix only.
         ///
         /// For a session inside an h5i box. Every `h5i box run` gets its own
         /// network namespace, so a verb carried in afterwards has a loopback of
@@ -169,7 +169,7 @@ enum Command {
     /// Drive the resident session a `serve` is holding open.
     ///
     /// This is the agent-facing half of the engine. `open` renders its own page
-    /// and exits, so two `open`s share nothing — no history, no cookies, and
+    /// and exits, so two `open`s share nothing, no history, no cookies, and
     /// nothing a viewer can watch. These verbs act on the page `serve` is
     /// holding, which is the page `h5i box view` is showing.
     #[command(subcommand)]
@@ -179,7 +179,7 @@ enum Command {
     ///
     /// No model, no tokens. The script is a list of steps made of verified CSS
     /// selectors, produced by `session script --save`, and this sends each one
-    /// through the same control channel an agent would use — so the policy, the
+    /// through the same control channel an agent would use, so the policy, the
     /// receipts and the action log all see a replay exactly as they see a live
     /// session.
     ///
@@ -213,7 +213,7 @@ enum Command {
 
     /// List, show or check a browser identity.
     ///
-    /// An identity is who a session says it is — on the wire and in the page,
+    /// An identity is who a session says it is. On the wire and in the page,
     /// from one source. `list` names the built-ins, `show` prints one as the
     /// TOML you would edit, and `check` says whether this engine can stand
     /// behind it, and what it does not cover either way.
@@ -274,8 +274,8 @@ enum SessionVerb {
         ///
         /// Three hundred lines re-read after every click, of which four are
         /// new, is the wrong shape for an agent loop. When the page changed too
-        /// much for a difference to be the shorter answer — a navigation, or a
-        /// page that replaced its own body — the full outline is sent instead
+        /// much for a difference to be the shorter answer (a navigation, or a
+        /// page that replaced its own body) the full outline is sent instead
         /// and the reply says which it is.
         #[arg(long)]
         delta: bool,
@@ -299,9 +299,9 @@ enum SessionVerb {
     /// afterwards, and the agent can see that it is logged in without ever
     /// reading the cookie that says so.
     ///
-    /// **The live view keeps streaming, and that is the limit of this mode.**
+    /// The live view keeps streaming, and that is the limit of this mode.
     /// The human doing the typing has to see what they are typing, so frames
-    /// are not withheld — and the viewer socket is inside the box, where there
+    /// are not withheld, and the viewer socket is inside the box, where there
     /// is no privilege boundary, so an agent that goes looking can attach to it
     /// and watch the same pixels. This refuses the documented path, which is
     /// the threat it was written for; it is not containment against an agent
@@ -338,7 +338,7 @@ enum SessionVerb {
         /// With `--selector`, pass the text alone: the selector is the handle.
         ///
         /// Both positionals are optional to clap and checked in code, because
-        /// clap refuses an optional positional before a required one — and
+        /// clap refuses an optional positional before a required one, and
         /// with `--selector` the ref is genuinely absent. The check gives a
         /// better message than clap's would anyway: it can say which of the
         /// two forms was half-used.
@@ -376,7 +376,7 @@ enum SessionVerb {
     },
     /// Submit the form containing a `@ref`.
     Submit {
-        /// Any `@ref` inside the form — the submit button, or a field.
+        /// Any `@ref` inside the form. The submit button, or a field.
         reference: Option<String>,
         /// A CSS selector instead, which is what a `snapshot`'s `refs` carry
         /// beside each `@ref`.
@@ -406,12 +406,12 @@ enum SessionVerb {
     ///
     /// Three answers, and the third is the point: a page that runs no script,
     /// or a scripted page that has gone quiet, cannot grow the thing you are
-    /// waiting for — so that comes back immediately rather than after a budget
+    /// waiting for, so that comes back immediately rather than after a budget
     /// spent proving it.
     WaitFor {
         // No `--role` here, unlike the action verbs. Their `--selector` names
-        // *a handle on one element*; this one is a **condition** — "wait until
-        // something matches" — and the two happen to share a spelling. A role
+        // *a handle on one element*; this one is a *condition*, "wait until
+        // something matches", and the two happen to share a spelling. A role
         // locator here would read as the first and behave as the second.
         /// A CSS selector that must match at least one element.
         #[arg(long, value_name = "CSS")]
@@ -612,7 +612,7 @@ enum SessionVerb {
     ///
     /// The handle an agent already has. A snapshot line reads
     /// `- button "Sign in" [ref=e3]`, and `find --role button --name "Sign in"`
-    /// addresses the same element in the same words — through the same
+    /// addresses the same element in the same words. Through the same
     /// computation that printed them, so the two cannot disagree.
     ///
     /// More stable than a CSS selector against generated markup, where the
@@ -772,7 +772,7 @@ enum SessionVerb {
 struct SessionArgs {
     /// The file a `serve` wrote its control port into. Defaults to
     /// $H5I_BROWSER_CONTROL_FILE, then to the control file beside
-    /// $H5I_BROWSER_STREAM_FILE — so inside a box these verbs need no flags.
+    /// $H5I_BROWSER_STREAM_FILE, so inside a box these verbs need no flags.
     #[arg(long, value_name = "PATH")]
     control_file: Option<PathBuf>,
 
@@ -780,10 +780,10 @@ struct SessionArgs {
     #[arg(long, conflicts_with = "control_file")]
     port: Option<u16>,
 
-    /// The session's Unix control socket, when it has one. **Unix only.**
+    /// The session's Unix control socket, when it has one. Unix only.
     ///
     /// Preferred over a port whenever it is set, because the arrangement that
-    /// needs it — a session in a box — is the one where a port cannot work.
+    /// needs it, a session in a box, is the one where a port cannot work.
     /// Defaults to $H5I_BROWSER_CONTROL_SOCKET.
     #[arg(long, value_name = "PATH")]
     control_socket: Option<PathBuf>,
@@ -803,7 +803,7 @@ struct NetArgs {
     #[arg(long)]
     no_loopback: bool,
 
-    /// Grant every remote origin. **For instruments, not for agents.**
+    /// Grant every remote origin. For instruments, not for agents.
     ///
     /// The corpus and the reliability sweep point this engine at the open web
     /// and measure what pages ask for; an allowlist built one URL at a time
@@ -812,7 +812,7 @@ struct NetArgs {
     ///
     /// It widens the *name* check only. A public name that resolves into
     /// private space is still refused, a page from the web still may not reach
-    /// loopback, and a box's own egress enforcement is untouched — this cannot
+    /// loopback, and a box's own egress enforcement is untouched. This cannot
     /// widen that. Every run in this mode says so on the placement line and in
     /// `doctor`.
     #[arg(long)]
@@ -824,9 +824,9 @@ struct NetArgs {
 
     /// Mirror the cookie jar to a file, and read it at start.
     ///
-    /// **Off unless h5i names one**, and it belongs here rather than on `serve`
-    /// because the jar is the broker's, beside the policy and the receipts —
-    /// in split mode the renderer has no jar to mirror, and this is the one
+    /// Off unless h5i names one, and it belongs here rather than on `serve`
+    /// because the jar is the broker's, beside the policy and the receipts.
+    /// In split mode the renderer has no jar to mirror, and this is the one
     /// argument list both halves parse.
     ///
     /// This is what makes `h5i browser open --restore` able to carry a login
@@ -848,7 +848,7 @@ struct NetArgs {
     /// `native` (the default) answers as h5i and answers truthfully. `privacy`
     /// is still h5i with the patch version and the host's time zone pinned, so
     /// one install stops being distinguishable from another. A `compatible`
-    /// identity claims a different browser — and is **refused** if this engine
+    /// identity claims a different browser, and is *refused* if this engine
     /// cannot back everything it declares, rather than applied in part.
     ///
     /// It belongs here, beside the cookie jar and for the same reason: this is
@@ -904,11 +904,11 @@ struct ViewArgs {
 
     /// How long a page's script may run, in seconds. 0 keeps the default.
     ///
-    /// **For instruments.** The default ceiling stops a runaway page, and a
+    /// For instruments. The default ceiling stops a runaway page, and a
     /// conformance harness is where a runaway and a merely slow page are hard
     /// to tell apart: `html/dom/idlharness` legitimately needs about twenty
     /// seconds to parse the IDL and build its 6,408 tests, lands on the
-    /// twenty-second default, and then reports nothing at all — so a score
+    /// twenty-second default, and then reports nothing at all, so a score
     /// swings by 1,896 subtests depending on how loaded the machine was. A run
     /// that depends on that is not a measurement.
     ///
@@ -920,7 +920,7 @@ struct ViewArgs {
     /// Install the WebIDL member decoration: enumerable interface members, and
     /// the brand check that makes an accessor reached on a prototype throw.
     ///
-    /// **For instruments.** `idlharness` checks both on every member of every
+    /// For instruments. `idlharness` checks both on every member of every
     /// interface; a page reads `el.href` and never asks whether the descriptor
     /// is enumerable. Installing it rebuilds every descriptor of every interface
     /// prototype, which measured 15 ms of the 83 ms a script realm cost, on
@@ -950,7 +950,7 @@ struct ViewArgs {
     #[arg(long, default_value_t = 500)]
     max_snapshot_lines: usize,
 
-    /// Run the page's own JavaScript. **Limited preview** — see the README for
+    /// Run the page's own JavaScript. *Limited preview*. See the README for
     /// what is and is not implemented.
     ///
     /// Off by default on purpose. With script off, page-borne prompt injection
@@ -987,7 +987,7 @@ where
 /// Layout recurses over the tree, and how deeply it may do so before the
 /// process is gone was, until now, whatever `ulimit -s` happened to say. That
 /// is not a property this engine should inherit: a box can set it, a thread
-/// pool can set it, and the failure is not a refusal but a `SIGSEGV` — no
+/// pool can set it, and the failure is not a refusal but a `SIGSEGV`, no
 /// panic, no page, no receipts, and no session left to say what happened.
 ///
 /// [`crate::engine::MAX_ELEMENT_DEPTH`] is the bound on the *input*, and this
@@ -1002,7 +1002,7 @@ const ENGINE_STACK_BYTES: usize = 64 * 1024 * 1024;
 ///
 /// A thread rather than `main` itself, because a process's main stack size is
 /// set by the loader from `RLIMIT_STACK` and cannot be raised from inside it.
-/// Everything the engine does happens on this thread — `Page` is `!Send` and is
+/// Everything the engine does happens on this thread: `Page` is `!Send` and is
 /// created here, so nothing crosses back.
 ///
 /// If the thread cannot be started, the work happens here instead: a host too
@@ -1043,7 +1043,7 @@ where
 /// Two processes by default: a broker that decides and records, and a renderer
 /// that parses the page. `Whole` is the shape the engine had before the split,
 /// kept because a host where the second process cannot be started is a host
-/// that should still be able to read a page — and because being able to run
+/// that should still be able to read a page, and because being able to run
 /// both shapes is what makes them comparable. See [`crate::ipc`].
 #[cfg_attr(not(unix), allow(dead_code))]
 enum Half {
@@ -1067,14 +1067,14 @@ where
     dispatch(cli.command, &half)
 }
 
-/// Decide which half this process is, and — when it is the broker — never come
+/// Decide which half this process is, and, when it is the broker, never come
 /// back.
 fn half_for(cli: &Cli, argv: &[std::ffi::OsString]) -> Result<Half, H5iError> {
     if cli.brokered {
         return renderer_half();
     }
     // Only the two commands that load a page have a broker to split from. The
-    // rest — `capabilities`, `doctor`, the session verbs, `replay` — either
+    // rest (`capabilities`, `doctor`, the session verbs, `replay`) either
     // answer from this process or talk to a session that already exists.
     let Some(net) = cli.command.net() else {
         return Ok(Half::Whole);
@@ -1094,7 +1094,7 @@ fn renderer_half() -> Result<Half, H5iError> {
 /// There is no renderer half where there is no split.
 ///
 /// The transport is a socket pair a child inherits, which is a Unix
-/// arrangement, so everywhere else the engine runs as one process — the way it
+/// arrangement, so everywhere else the engine runs as one process. The way it
 /// always did. A `--brokered` here is a flag h5i itself would never pass on
 /// this platform, and saying so beats adopting whatever standard input happens
 /// to be.
@@ -1110,7 +1110,7 @@ fn renderer_half() -> Result<Half, H5iError> {
 /// Build the broker, start the renderer under it, and serve until it exits.
 ///
 /// Returns only when the renderer could not be started at all, and then the
-/// engine runs as one process and **says so**. A sandbox nobody can see is
+/// engine runs as one process and *says so*. A sandbox nobody can see is
 /// indistinguishable from one that was never applied, and the same is true of
 /// a split.
 #[cfg(unix)]
@@ -1233,7 +1233,7 @@ impl Command {
 ///
 /// Split from [`load`] so a batch of pages shares one of these. The broker
 /// carries the connection pool and the cookie jar, and the factory carries the
-/// font set — all three are per-*session* facts, and building them per page
+/// font set. All three are per-*session* facts, and building them per page
 /// meant a run over twenty URLs re-read the font files twenty times and threw
 /// away every keep-alive connection between them.
 /// The broker this process would build for itself.
@@ -1244,8 +1244,8 @@ impl Command {
 /// The identity this session presents, resolved and held to its own claims.
 ///
 /// Coherence is checked here and capability is not, because the two questions
-/// belong to different places. Whether an identity contradicts *itself* — a
-/// Windows agent string over a `MacIntel` platform — is a fact about the file
+/// belong to different places. Whether an identity contradicts *itself*, a
+/// Windows agent string over a `MacIntel` platform, is a fact about the file
 /// and is wrong in front of any engine, so it is settled before a client is
 /// built from it. Whether *this* engine can back what it declares depends on
 /// `--script`, which is not in this argument list; [`factory_for`] settles that.
@@ -1331,8 +1331,8 @@ fn local_broker(net: &NetArgs) -> Result<Arc<crate::net::LocalBroker>, H5iError>
             );
         }
         // Said, not swallowed. A row the jar refused is one no server could
-        // have set — a cookie widened to a public suffix, a `__Host-` name
-        // without the flags that name means — and a login that is missing
+        // have set (a cookie widened to a public suffix, a `__Host-` name
+        // without the flags that name means) and a login that is missing
         // because of one should say so rather than look like a login that was
         // never saved.
         if loaded.refused > 0 {
@@ -1351,7 +1351,7 @@ fn factory_for(half: &Half, net: &NetArgs, view: &ViewArgs) -> Result<PageFactor
     // The identity's door, and it is here because here is where the two halves
     // of the question meet: the identity comes from `net`, and whether this
     // engine can stand behind it depends on `--script`, which comes from
-    // `view`. Refused rather than trimmed to fit — an agent string claiming
+    // `view`. Refused rather than trimmed to fit. An agent string claiming
     // Chrome in front of an engine with no client hints is more detectable than
     // no claim at all, so a partial application would be worse than nothing.
     #[cfg(feature = "identity")]
@@ -1451,7 +1451,7 @@ fn serve(
     let defaulted = chosen.is_none();
     let control_file = chosen.or_else(default_control_file);
 
-    // Created 0700 before anything is advertised into it — but **only** the
+    // Created 0700 before anything is advertised into it, but *only* the
     // directory this binary chose. `session_port` already exempts a path
     // someone typed on the same principle, and applying the check here anyway
     // broke a documented invocation: SKILL.md tells an agent to give each
@@ -1556,17 +1556,17 @@ fn at_json(at: &SessionArgs) -> bool {
 /// Resolve the "`@ref` and a value, or a locator and the value" shape.
 ///
 /// Both positionals are optional to clap and checked here, because clap refuses
-/// an optional positional before a required one — and with a locator the ref is
+/// an optional positional before a required one, and with a locator the ref is
 /// genuinely absent. The check gives a better message than clap's would anyway:
 /// it can say which of the forms was half-used, and name the value the verb was
 /// actually after.
 ///
-/// `located` covers `--selector` **and** `--role`. It used to be `--selector`
+/// `located` covers `--selector` *and* `--role`. It used to be `--selector`
 /// alone, and `--role` additionally conflicted with the positional, so
 /// `set-checked --role checkbox true` was rejected by clap before this could
 /// see it: the flag existed on three verbs and could not be used on any of
-/// them, while `find` and `click` — which take one positional, so a locator
-/// simply replaces it — worked and were the only forms documented.
+/// them, while `find` and `click` (which take one positional, so a locator
+/// simply replaces it) worked and were the only forms documented.
 ///
 /// One function rather than four copies, because four copies is where the four
 /// error messages drift apart.
@@ -1738,7 +1738,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             let (reference, state) =
                 two_positionals("set-checked", "`true` or `false`", selector.is_some() || role.is_some(), reference, checked)?;
             // Parsed here rather than by clap, because the positional had to be
-            // a string for the reasons `two_positionals` explains — and a
+            // a string for the reasons `two_positionals` explains, and a
             // typo'd state should say what it should have been rather than
             // silently meaning `false`.
             let checked = match state.trim().to_ascii_lowercase().as_str() {
@@ -1832,8 +1832,8 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         }
     };
 
-    // The socket wins when there is one. It is only ever set deliberately —
-    // by a flag or by h5i inside a box — and in a box it is the only channel
+    // The socket wins when there is one. It is only ever set deliberately,
+    // by a flag or by h5i inside a box, and in a box it is the only channel
     // that reaches the session at all.
     let reply = match session_socket(at) {
         #[cfg(unix)]
@@ -1989,7 +1989,7 @@ fn session_port(at: &SessionArgs) -> Result<u16, H5iError> {
     };
 
     // Absence first, and privacy second. The other order made the *first* thing
-    // a new standalone user ever sees — running a verb before `serve` — a
+    // a new standalone user ever sees, running a verb before `serve`, a
     // warning about credentials being redirected to somebody else's listener,
     // when the real answer is "nothing is running yet". A missing directory is
     // not a suspicious one.
@@ -2019,9 +2019,9 @@ fn session_port(at: &SessionArgs) -> Result<u16, H5iError> {
 
 /// Where a session advertises itself when nothing else says.
 ///
-/// **Per-user, and never a shared directory.** The file holds a port number,
-/// and a port number is enough to point `session type` — with a substituted
-/// credential in it — at somebody else's listener. On a multi-user host a
+/// Per-user, and never a shared directory. The file holds a port number,
+/// and a port number is enough to point `session type`, with a substituted
+/// credential in it, at somebody else's listener. On a multi-user host a
 /// default under `/tmp` would make that a one-line attack, so there is no
 /// fallback to one: `$XDG_RUNTIME_DIR` first (per-user and 0700 by
 /// convention), then a directory under `$HOME`, and then nothing rather than
@@ -2033,8 +2033,8 @@ fn default_control_file() -> Option<PathBuf> {
 /// Whether a directory is ours alone.
 ///
 /// Ownership and mode rather than a list of bad paths. Blacklisting `/tmp`
-/// looked sufficient until a test set `HOME=/tmp` — which happens for real
-/// daemons — and the default landed under a world-writable parent anyway.
+/// looked sufficient until a test set `HOME=/tmp`, which happens for real
+/// daemons, and the default landed under a world-writable parent anyway.
 /// A rule about the directory itself does not have that class of hole.
 ///
 /// Non-Unix has no cheap equivalent, so it answers yes: `LOCALAPPDATA` is
@@ -2124,7 +2124,7 @@ fn default_session_dir() -> Option<PathBuf> {
 /// The control file that belongs to a given stream file.
 ///
 /// Derived rather than configured so that a box which sets only
-/// `H5I_BROWSER_STREAM_FILE` — which is what h5i injects today — still gets a
+/// `H5I_BROWSER_STREAM_FILE`, which is what h5i injects today, still gets a
 /// drivable session. A second variable h5i would also have to learn to set is a
 /// second thing that can be forgotten, and the failure would be a session that
 /// looks live and cannot be driven.
@@ -2134,7 +2134,7 @@ fn control_file_beside(stream_file: &Path) -> PathBuf {
 
 fn build_policy(net: &NetArgs) -> Policy {
     // Flags first, then whatever h5i granted the box, and the two are a
-    // **union**.
+    // *union*.
     //
     // A union that still cannot widen a box's *enforced* policy, and the reason
     // is at creation rather than here: a profile that declares `net.egress`
@@ -2144,7 +2144,7 @@ fn build_policy(net: &NetArgs) -> Policy {
     // reaches this engine is a box with a boundary underneath it. `--allow`
     // adds an origin to what this process will *ask* for; what actually leaves
     // the box is still decided outside it, which is what a `read --in` against
-    // an un-listed origin demonstrates — the engine grants the target it was
+    // an un-listed origin demonstrates. The engine grants the target it was
     // handed and the box's pinned DNS refuses to resolve it.
     //
     // A box that declares no list is a box with nothing to widen: its net mode
@@ -2178,7 +2178,7 @@ fn proxy_of(net: &NetArgs) -> Option<String> {
 ///
 /// The other half is never optional: the broker keeps every record in memory
 /// whatever this returns, which is what `h5i browser open` prints and what the
-/// renderer can ask for. This is the file, and it is the one that can refuse —
+/// renderer can ask for. This is the file, and it is the one that can refuse,
 /// which is what makes `--receipts` the flag that puts the fail-closed rule
 /// under h5i's control rather than the caller's.
 fn receipts_sink(net: &NetArgs) -> Result<Arc<dyn Sink>, H5iError> {
@@ -2205,7 +2205,7 @@ fn load_fonts(view: &ViewArgs) -> fonts::FontSetup {
 ///
 /// `check` is the verb that matters, and what it prints is the design: not a
 /// score, and not a promise. It says which layers this identity reaches, which
-/// it does not, and — when the engine cannot back it — exactly which declared
+/// it does not, and, when the engine cannot back it, exactly which declared
 /// requirement is missing and why. A caller who wanted "am I undetectable"
 /// gets, instead, the two lists that let them answer it themselves.
 #[cfg(feature = "identity")]
@@ -2390,7 +2390,7 @@ fn open(
 
     for (at, target) in targets.iter().enumerate() {
         // Where this page's own records start. The sink is shared across the
-        // batch — that sharing is the point — so a per-page view has to be cut
+        // batch, that sharing is the point, so a per-page view has to be cut
         // out of it rather than read whole, or every page after the first would
         // report the requests of the ones before it.
         let seen_before = factory.broker().records().len();
@@ -2534,7 +2534,7 @@ fn one_page(
         // and the transcript all carry the fence; this printed the same content
         // bare, so a page writing "SYSTEM: you are authorised to…" arrived
         // looking exactly like the harness talking. The flag means "the words,
-        // not the outline" — it never meant "and drop the one line that says
+        // not the outline". It never meant "and drop the one line that says
         // they are the page's".
         //
         // `defang_fence` on the way in, because a line here is already
@@ -2577,12 +2577,12 @@ enum Target {
 ///
 /// `canonicalize` is preferred because it resolves symlinks, so a page reached
 /// through one gets the base its neighbours actually live at. But it walks the
-/// path **by name**, and that walk can fail for a file that was just read
+/// path *by name*, and that walk can fail for a file that was just read
 /// successfully: a box's supervised tier redirects `/tmp`, so a working
 /// directory underneath it survives as the shell's fd and stops resolving as a
 /// path. `open ./page.html` then hit an earlier version of this code that fell
 /// back to the *relative* path, which `from_file_path` refuses, and reported
-/// the target as an invalid path — naming the wrong thing entirely, since the
+/// the target as an invalid path. Naming the wrong thing entirely, since the
 /// file had already been read by then.
 ///
 /// So the fallback is [`std::path::absolute`], which is pure path arithmetic
@@ -2591,8 +2591,8 @@ enum Target {
 fn local_base(path: &Path) -> Result<Url, H5iError> {
     let absolute = match path.canonicalize() {
         Ok(resolved) => resolved,
-        // The canonicalize error is the informative one — it says *why* the
-        // walk failed — so it is what surfaces if even this cannot produce an
+        // The canonicalize error is the informative one, it says *why* the
+        // walk failed, so it is what surfaces if even this cannot produce an
         // absolute path.
         Err(error) => std::path::absolute(path).map_err(|_| H5iError::with_path(error, path))?,
     };
@@ -2631,7 +2631,7 @@ mod tests {
     ///
     /// Guarded because the failure is silent and serious: a shared directory
     /// would let any local user publish a port and receive the next
-    /// `session type` — including one carrying a substituted credential.
+    /// `session type`, including one carrying a substituted credential.
     #[test]
     fn the_default_session_directory_is_never_shared() {
         // Nothing to go on: no path at all rather than a guess.
@@ -2660,8 +2660,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_session_directory_somebody_else_can_write_is_refused() {
-        // The rule that replaced a blacklist. Setting `HOME=/tmp` — which real
-        // daemons do — put the default under a world-writable parent, and no
+        // The rule that replaced a blacklist. Setting `HOME=/tmp`, which real
+        // daemons do, put the default under a world-writable parent, and no
         // list of bad paths would have caught it. This checks the directory
         // instead, which does not have that class of hole.
         use std::os::unix::fs::PermissionsExt;
@@ -2692,7 +2692,7 @@ mod tests {
         // SKILL.md tells an agent to give each concurrent session its own
         // `--control-file`. Applying the private-directory rule to a path
         // somebody typed made `serve --control-file /tmp/a.control` abort on
-        // `/tmp` being mode 1777, before it opened anything — a documented
+        // `/tmp` being mode 1777, before it opened anything. A documented
         // invocation refused by a guard meant for the path nobody chose.
         //
         // `session_port` already drew that line; this is the same line on the
@@ -2806,7 +2806,7 @@ mod tests {
         // redirects `/tmp`, so a cwd underneath it reads fine through the
         // shell's fd and fails to resolve by name. `canonicalize` fails on a
         // path that does not resolve, and the old fallback handed
-        // `from_file_path` a relative path, which it refuses — turning a
+        // `from_file_path` a relative path, which it refuses. Turning a
         // readable page into "invalid path". Nothing here may depend on the
         // path existing.
         let missing = Path::new("./no-such-dir-b7f1/page.html");
@@ -2894,8 +2894,8 @@ mod tests {
     /// clap asserts its own invariants at parser-construction time, and one of
     /// them is that an optional positional may not precede a required one.
     /// Teaching `type` a `--selector` made its ref optional while its text was
-    /// still required, so **every** `session type` invocation panicked before
-    /// parsing anything — in a debug build, which is what the tests run.
+    /// still required, so *every* `session type` invocation panicked before
+    /// parsing anything. In a debug build, which is what the tests run.
     ///
     /// Nothing caught it: the verb tests drive `control_verb` directly, and the
     /// parse test above happened not to list `type`. This builds the whole

@@ -126,7 +126,7 @@ impl Client {
     /// Handshake, then ask what this machine can do right now.
     ///
     /// The capability report is validated here, on receipt, and a report that
-    /// fails validation is an error rather than a stored value — R13.1's
+    /// fails validation is an error rather than a stored value. R13.1's
     /// "hostile capability values are clamped or refused, never stored".
     pub fn probe(&self) -> Result<Probed, ClientError> {
         let mut session = Session::open(&*self.transport, self.deadlines)?;
@@ -142,7 +142,7 @@ impl Client {
     ///
     /// `bundle` is `None` for an empty source. When it is `Some`, its bytes go
     /// out as `DATA` frames after the request and before `DATA_DONE`, on the
-    /// same channel — the transfer is part of this RPC rather than a second one
+    /// same channel. The transfer is part of this RPC rather than a second one
     /// that could arrive without it.
     ///
     /// The policy digest the worker echoes is checked here, not merely logged:
@@ -200,7 +200,7 @@ impl Client {
     ///
     /// Returns once the command has finished. The `EXEC_STARTED` frame is
     /// waited for first, which is what separates "it spawned" from "here is
-    /// what it printed" — a spawn failure is reported as one rather than as an
+    /// what it printed". A spawn failure is reported as one rather than as an
     /// empty result.
     pub fn exec(&self, request: &ExecRequest) -> Result<ExecOutput, ClientError> {
         let mut session = Session::open(&*self.transport, self.deadlines)?;
@@ -315,7 +315,7 @@ impl Session {
             h5i_version: env!("CARGO_PKG_VERSION").to_string(),
         };
         // A write failure here is nearly always the peer having already exited
-        // — ssh refusing to authenticate, or no h5i on the far side — so the
+        // (ssh refusing to authenticate, or no h5i on the far side) so the
         // stderr tail is the whole diagnosis and a bare EPIPE is none of it.
         if writer.write(FrameKind::Hello.as_u8(), &proto::encode(&hello)?).is_err() {
             let stderr = channel.stderr_tail();

@@ -14,11 +14,11 @@
 //! box-claimed *and* best-effort, since attach races and buffer limits leave
 //! gaps. A viewer rendering those alike would report coverage it does not have.
 //!
-//! **Correlation is carried, never guessed.** [`ViewerEvent::caused_by`] is set
+//! Correlation is carried, never guessed. [`ViewerEvent::caused_by`] is set
 //! only where the source carries the link. Nothing infers causation from
 //! timestamps; a UI drawing an arrow on that basis is inventing evidence.
 //!
-//! **Time is when h5i read the record**, not when the box produced it: the
+//! Time is when h5i read the record, not when the box produced it: the
 //! request log carries a sequence number and no clock, so an event time would be
 //! fabricated. Ordering comes from [`EventLog`]'s monotonic `id`.
 
@@ -59,7 +59,7 @@ pub enum Grade {
     /// The record is a precondition of the act: no record, no act. The light
     /// engine's request log is the case that motivated the variant.
     FailClosed,
-    /// Observed with known gaps — Chromium's Fetch lane, a drain that ran after
+    /// Observed with known gaps. Chromium's Fetch lane, a drain that ran after
     /// the fact, anything that can miss an event without noticing.
     BestEffort,
 }
@@ -74,7 +74,7 @@ impl Grade {
 }
 
 /// Why the engine asked for a URL. Mirrors `h5i-browser-light`'s `Initiator`
-/// **by value, not by import**: the log is a box-written artifact, so it is
+/// by value, not by import: the log is a box-written artifact, so it is
 /// parsed as untrusted input rather than deserialized into the producer's own
 /// type. An initiator this build does not know becomes [`Initiator::Other`]
 /// rather than dropping the row.
@@ -108,7 +108,7 @@ impl Initiator {
 }
 
 /// What happened. One variant per pane the browser terminal draws, because a
-/// pane with no event kind behind it is a layout waiting for a source — the
+/// pane with no event kind behind it is a layout waiting for a source. The
 /// mistake M11 recorded when it did not build a network pane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -152,7 +152,7 @@ pub enum EventKind {
     /// began writing.
     ///
     /// Host-observed, because h5i noticed it about the box rather than being
-    /// told. It exists so a restart **looks like a restart**: without it the
+    /// told. It exists so a restart looks like a restart: without it the
     /// reader silently resumes numbering and a viewer holding an old cursor
     /// swallows the head of the new session, reporting a quiet page where there
     /// was a busy one. That is the failure this whole module is arranged to
@@ -160,7 +160,7 @@ pub enum EventKind {
     SessionReset { source: String },
     /// Who is driving the browser, and from when.
     ///
-    /// **Host-observed.** h5i wrote the lock; it was not told about it. That is
+    /// Host-observed. h5i wrote the lock; it was not told about it. That is
     /// what makes a handover the one row in an audit that does not depend on
     /// the engine's own account, and it is why it is a row at all rather than a
     /// field on the session: "a human was at the controls between these two
@@ -172,9 +172,9 @@ pub enum EventKind {
     },
     /// An outside program h5i ran on this session's behalf, and what came of it.
     ///
-    /// **Host-observed, and it is the row that keeps the request log honest.**
+    /// Host-observed, and it is the row that keeps the request log honest.
     /// A helper makes its own network connections, from a process the engine
-    /// never sees — so its fetches are not in `h5i browser requests`, and the
+    /// never sees, so its fetches are not in `h5i browser requests`, and the
     /// invariant that log carries ("a request that is not here did not happen")
     /// would quietly become false if a helper's traffic went unrecorded
     /// anywhere. It does not become false, because the helper is not the
@@ -182,7 +182,7 @@ pub enum EventKind {
     /// was told to do, so a reader can see the boundary rather than having to
     /// know about it.
     ///
-    /// `argv` is what was actually executed, credentials excluded — h5i builds
+    /// `argv` is what was actually executed, credentials excluded. H5i builds
     /// it, so this is a fact rather than the helper's account of itself.
     Helper {
         name: String,
@@ -213,7 +213,7 @@ pub enum EventKind {
 pub enum ConsoleLevel {
     Warning,
     Error,
-    /// An uncaught exception or a navigation that failed — the page itself
+    /// An uncaught exception or a navigation that failed. The page itself
     /// went wrong, rather than something it printed.
     PageError,
 }
@@ -257,11 +257,11 @@ pub struct Draft {
     pub key: Option<Key>,
     /// The key of the event that caused this one.
     pub caused_by: Option<Key>,
-    /// When the **source** says this happened, when the source says anything.
+    /// When the *source* says this happened, when the source says anything.
     ///
     /// Deliberately separate from `observed_at`, which is when h5i read the row
     /// and is the only timestamp a viewer should order on. This is the box's
-    /// own clock, which h5i cannot check — so it is carried as a claim, labelled
+    /// own clock, which h5i cannot check, so it is carried as a claim, labelled
     /// as one, and used only where a claim is the best there is: ordering the
     /// engine's two logs against each other inside one session.
     pub claimed_at: Option<String>,
@@ -298,7 +298,7 @@ pub struct ViewerEvent {
     /// Monotonic within a log. The viewer's cursor, and the only ordering
     /// anything should rely on.
     pub id: u64,
-    /// When **h5i read this**, RFC3339. Not when the box produced it — see the
+    /// When h5i read this, RFC3339. Not when the box produced it. See the
     /// module docs.
     pub observed_at: String,
     pub lane: Lane,
@@ -318,7 +318,7 @@ pub struct ViewerEvent {
 /// A bounded, append-only view of one box's browser session.
 ///
 /// Bounded because a page that loads a thousand subresources must not become a
-/// thousand rows the console has to hold forever, and **counted** because a cap
+/// thousand rows the console has to hold forever, and *counted* because a cap
 /// that drops silently reports a quiet session where there was a loud one.
 #[derive(Debug, Clone)]
 pub struct EventLog {
@@ -335,8 +335,8 @@ pub struct EventLog {
     ///
     /// Kept beside `keys` rather than replacing it, because eviction is
     /// ordered: the deque says which key leaves next, and the map answers
-    /// `find_key`. An evicted entry is removed from the map **only when the map
-    /// still points at the id being evicted** — otherwise a key reused by a
+    /// `find_key`. An evicted entry is removed from the map only when the map
+    /// still points at the id being evicted. Otherwise a key reused by a
     /// later event would lose its live mapping when its older twin aged out.
     by_key: std::collections::HashMap<Key, u64>,
     capacity: usize,
@@ -382,8 +382,8 @@ impl EventLog {
         self.events.is_empty()
     }
 
-    /// Append a batch, resolving correlation **within the batch and against
-    /// what is already held**.
+    /// Append a batch, resolving correlation within the batch and against
+    /// what is already held.
     ///
     /// Two-pass rather than one: a draft may be caused by another draft in the
     /// same batch that has not been given an id yet (a response and its request
@@ -405,7 +405,7 @@ impl EventLog {
                 // `pop_front`, not `remove(0)`. Both halves of this loop used to
                 // be linear in the cap and are driven by a log the *box* writes,
                 // so one poll over the 8 MiB `grown()` will read cost a measured
-                // 127 ms shifting the vector and 125 ms scanning it — on a
+                // 127 ms shifting the vector and 125 ms scanning it. On a
                 // console that polls on a timer. 0.2 ms and O(1) now.
                 if self.keys.len() > self.capacity
                     && let Some((old_key, old_id)) = self.keys.pop_front()
@@ -449,7 +449,7 @@ impl EventLog {
 /// Trim a box-supplied string to something a pane can hold, and strip the
 /// control and bidi characters that would otherwise repaint the viewer's own
 /// chrome. The web console renders text nodes rather than markup, so this is
-/// defence in depth there — and the *only* defence for the terminal viewer
+/// defence in depth there, and the *only* defence for the terminal viewer
 /// reading the same stream (M11b), which is why it happens here at ingest and
 /// not in either renderer.
 fn clean(s: &str) -> String {
@@ -463,7 +463,7 @@ fn clean(s: &str) -> String {
 /// Parse `h5i-browser-light`'s request log (`H5I_BROWSER_RECEIPTS`, one JSON
 /// object per line) into request and response events.
 ///
-/// **Box-claimed and fail-closed.** The file is written inside the box, so a box
+/// Box-claimed and fail-closed. The file is written inside the box, so a box
 /// that wanted to lie could; and the engine will not fetch what it cannot
 /// record, so within that trust boundary there is no request missing from it.
 /// Both facts travel with every row.
@@ -471,7 +471,7 @@ fn clean(s: &str) -> String {
 /// Defensive throughout, because this is untrusted input from a box that may be
 /// mid-write: a line that is not JSON, an object missing its sequence number, or
 /// a phase this build does not know is skipped rather than failing the read. A
-/// half-written trailing line is the ordinary case, not an error — the engine
+/// half-written trailing line is the ordinary case, not an error. The engine
 /// appends while the console polls.
 pub fn ingest_request_log(text: &str) -> Vec<Draft> {
     ingest_request_log_with(text, &std::collections::BTreeMap::new())
@@ -532,7 +532,7 @@ pub fn ingest_request_log_with(
                 .claimed_at(v.get("at").and_then(serde_json::Value::as_str));
                 draft.key = Some(Key::Request(seq));
                 // Only where the engine actually said so. Nothing here infers a
-                // link from timing — a request that merely happened near an
+                // link from timing. A request that merely happened near an
                 // action is not a request that action caused.
                 if let Some(action_seq) = caused_by_action.get(&seq) {
                     draft.caused_by = Some(Key::LightAction(*action_seq));
@@ -586,7 +586,7 @@ pub fn ingest_request_log_with(
 
 /// Turn the mediator's records into agent-action and policy events.
 ///
-/// **Host-observed.** h5i sat on the daemon's control socket and watched each
+/// Host-observed. h5i sat on the daemon's control socket and watched each
 /// verb go past ([`crate::browser_proxy`]), so unlike everything else here these
 /// rows do not depend on the box's word. Best-effort as coverage, though, and
 /// for a structural reason worth keeping in front of the reader: the mediator is
@@ -624,7 +624,7 @@ pub fn ingest_actions(actions: &[crate::browser_proxy::ActionRecord]) -> Vec<Dra
 
 /// Turn a run's drained page evidence into console events.
 ///
-/// **Box-claimed and best-effort**, both by construction: the drain runs after
+/// Box-claimed and best-effort, both by construction: the drain runs after
 /// the fact and asks the page what it remembers, so anything the page dropped
 /// before the drain reached it is gone. [`crate::receipt::BrowserEvidence`]'s
 /// own `truncated` flag is surfaced as an event rather than a field, so a flood
@@ -674,14 +674,14 @@ pub fn ingest_evidence(evidence: &crate::receipt::BrowserEvidence) -> Vec<Draft>
     drafts
 }
 
-/// Parse the light engine's own action log — what the box says it was asked to
+/// Parse the light engine's own action log. What the box says it was asked to
 /// do, as opposed to what h5i watched cross a socket.
 ///
-/// **Box-claimed, always.** The engine writes this from inside the box, and no
+/// Box-claimed, always. The engine writes this from inside the box, and no
 /// arrangement of files could make that host-observed: h5i sits on no socket
 /// between an agent and this engine, because the engine *is* the browser. The
-/// rows are still worth showing — an empty pane for a session an agent is
-/// driving is a worse lie than a row that says who is claiming it — and the
+/// rows are still worth showing, an empty pane for a session an agent is
+/// driving is a worse lie than a row that says who is claiming it, and the
 /// grade travels with each one so a reader can weigh it.
 ///
 /// Only `result` lines become rows. The `request` line that precedes each one
@@ -695,8 +695,8 @@ pub fn ingest_light_actions(text: &str) -> Vec<Draft> {
 /// receipt.
 ///
 /// The map is filled here and read by [`ingest_request_log_with`], which is
-/// possible because the poller reads the action log before the request log —
-/// the one ordering dependency in this module, and the reason it is stated in
+/// possible because the poller reads the action log before the request log.
+/// The one ordering dependency in this module, and the reason it is stated in
 /// `poll`'s own comment.
 pub fn ingest_light_actions_with(
     text: &str,
@@ -745,7 +745,7 @@ pub fn ingest_light_actions_with(
         .claimed_at(v.get("at").and_then(serde_json::Value::as_str));
         if let Some(action_seq) = action_seq {
             draft.key = Some(Key::LightAction(action_seq));
-            // "This click, these receipts" — stamped by the engine, which is
+            // "This click, these receipts". Stamped by the engine, which is
             // the only component that knows the causal fact, and joined here
             // against the request log's own numbering.
             for request_seq in v
@@ -781,8 +781,8 @@ pub fn ingest_actions_log(text: &str) -> Vec<Draft> {
 /// Held by the console across polls rather than rebuilt per request, and the
 /// reason is a defect the first version of this reader shipped with. It
 /// re-parsed every source on every poll and numbered events from 1 each time,
-/// which is stable only while the files grow by appending — and they do not.
-/// **Every run clears the box's private `/tmp`** (`prepare_private_tmp`), so a
+/// which is stable only while the files grow by appending, and they do not.
+/// Every run clears the box's private `/tmp` (`prepare_private_tmp`), so a
 /// second browser run starts the request log over at zero bytes, the numbering
 /// restarts with it, and a console tab holding a cursor from the first run
 /// silently drops the head of the second. A viewer under-reporting a session is
@@ -791,12 +791,12 @@ pub fn ingest_actions_log(text: &str) -> Vec<Draft> {
 ///
 /// Holding the position turns that into its opposite: ids never restart, a
 /// shortened file is *detected*, and the restart is emitted as
-/// [`EventKind::SessionReset`] — a row a human can see. It also stops the
+/// [`EventKind::SessionReset`]. A row a human can see. It also stops the
 /// console re-reading and re-parsing whole files once a second.
 #[derive(Debug)]
 pub struct BoxStream {
     log: EventLog,
-    /// Byte offset just past the last **complete** line consumed. A trailing
+    /// Byte offset just past the last *complete* line consumed. A trailing
     /// partial line is deliberately not consumed: the engine appends while this
     /// reads, so a half-written line is the ordinary case and re-reading it next
     /// poll is how it gets picked up whole.
@@ -827,10 +827,10 @@ impl BoxStream {
 
     /// Fold in whatever the sources have produced since the last call.
     ///
-    /// Four sources, read in a fixed order — mediated actions, the light
+    /// Four sources, read in a fixed order. Mediated actions, the light
     /// engine's own actions, its request log, then the page evidence carried on
     /// receipts. The first two never both exist: a box runs one engine.
-    /// **That order is the read order, not a timeline**: the sources share no
+    /// That order is the read order, not a timeline: the sources share no
     /// clock (the request log carries a sequence number and no timestamp), so
     /// interleaving them by time would mean inventing one. Within a source the
     /// order is the source's own, which is the ordering that means something.
@@ -907,7 +907,7 @@ struct Growth {
 /// Most bytes one poll will read out of a growing log.
 ///
 /// Two of the three logs live under `<env>/tmp`, which is one of the two paths a
-/// box can write — and the console polls them on a timer. A bare `read_to_end`
+/// box can write, and the console polls them on a timer. A bare `read_to_end`
 /// there is the box choosing how much memory the *console* allocates: a
 /// four-gigabyte `browser-requests.jsonl` is a four-gigabyte read on the next
 /// poll. Nothing is lost by pacing it, because the offset advances by exactly
@@ -916,7 +916,7 @@ const MAX_GROWTH_PER_POLL: u64 = 8 * 1024 * 1024;
 
 /// Read the complete lines `path` has grown by since `*offset`, advancing it.
 ///
-/// `None` when there is nothing new to fold in — no file, no growth, or growth
+/// `None` when there is nothing new to fold in, no file, no growth, or growth
 /// that does not yet contain a line terminator.
 ///
 /// Reads bytes rather than a `String` and cuts at the last newline before
@@ -924,14 +924,14 @@ const MAX_GROWTH_PER_POLL: u64 = 8 * 1024 * 1024;
 /// first would either fail or silently corrupt the tail. Cutting at a newline
 /// guarantees whole lines, which are whole characters.
 ///
-/// Bounded per call — see [`MAX_GROWTH_PER_POLL`].
+/// Bounded per call. See [`MAX_GROWTH_PER_POLL`].
 fn grown(path: &std::path::Path, offset: &mut u64) -> Option<Growth> {
     use std::io::{Read, Seek, SeekFrom};
 
     let Ok(meta) = std::fs::metadata(path) else {
         // A file that was there and is not any more is a restart. Report it
-        // once — the next poll starts from zero and picks up whatever replaces
-        // it — rather than staying silent about a session that ended.
+        // once, the next poll starts from zero and picks up whatever replaces
+        // it, rather than staying silent about a session that ended.
         if *offset > 0 {
             *offset = 0;
             return Some(Growth {
@@ -1118,7 +1118,7 @@ mod tests {
     #[test]
     fn the_cap_counts_what_it_drops() {
         // A cap that drops silently reports a quiet session where there was a
-        // loud one — the same rule BrowserEvidence's `truncated` flag follows.
+        // loud one. The same rule BrowserEvidence's `truncated` flag follows.
         let mut log = EventLog::new(2);
         let drafts: Vec<Draft> = (0..5)
             .map(|i| {
@@ -1255,7 +1255,7 @@ mod tests {
 
     /// The key table is rebuilt on every poll from a log the *box* writes, and
     /// both of its operations were linear in the cap. Measured at the real
-    /// sizes — 100k drafts against a cap of 4000 — `Vec::remove(0)` cost 127 ms
+    /// sizes, 100k drafts against a cap of 4000, `Vec::remove(0)` cost 127 ms
     /// and the newest-first scan another 125 ms, per poll, on a console that
     /// polls on a timer. The deque and the index are 0.2 ms and O(1).
     ///
@@ -1286,7 +1286,7 @@ mod tests {
 
         // Exactly enough to evict the *older* twin and no more: the deque holds
         // both `Request(7)` entries plus three, so one `pop_front` takes the
-        // older. The mapping the newer one owns must survive that — the
+        // older. The mapping the newer one owns must survive that. The
         // invariant a plain `remove` on eviction would break. (Pushing one more
         // would age the newer twin out too, which is correct and a different
         // case; the last assertion covers it.)
@@ -1475,7 +1475,7 @@ mod tests {
     fn the_light_engines_own_actions_are_box_claimed_not_host_observed() {
         // The whole point of the second source. These rows come from inside the
         // box, so labelling them host-observed would claim a guarantee that
-        // nothing provides — there is no socket between an agent and this
+        // nothing provides. There is no socket between an agent and this
         // engine for h5i to sit on.
         let drafts = ingest_light_actions(
             r#"{"seq":0,"phase":"request","verb":"click","target":"@e1"}

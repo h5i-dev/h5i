@@ -14,9 +14,9 @@
 //!   "fields": { ... }}]                  scoped to it
 //! ```
 //!
-//! One rule is worth copying exactly, and it is about failure. **An empty array
+//! One rule is worth copying exactly, and it is about failure. An empty array
 //! is a valid result; a schema where every top-level key came back null is a
-//! mistake the caller should hear about.** The first says there were no rows,
+//! mistake the caller should hear about. The first says there were no rows,
 //! the second says your selectors do not match this page, and answering the
 //! second with a tidy object full of nulls is a wrong answer that looks right.
 //! It comes back as an error naming the two verbs that would show the model what
@@ -39,13 +39,13 @@ const ROOT: usize = 0;
 /// One field of a schema.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Field {
-    /// `"h1"` — the first match's text.
+    /// `"h1"`: the first match's text.
     Text(String),
-    /// `["h1"]` — every match's text.
+    /// `["h1"]`: every match's text.
     TextAll(String),
-    /// `{"selector": "a", "attr": "href"}` — an attribute of the first match.
+    /// `{"selector": "a", "attr": "href"}`: an attribute of the first match.
     Attr { selector: String, attr: String },
-    /// `[{"selector": "li", "fields": {…}}]` — one object per match.
+    /// `[{"selector": "li", "fields": {…}}]`: one object per match.
     Objects {
         selector: String,
         limit: Option<usize>,
@@ -373,7 +373,7 @@ mod tests {
             json!({"items": [{"selector": "li", "limit": 2, "fields": {"t": ":scope"}}]}),
         );
         // `:scope` is only meaningful for an attr read; as a text selector it
-        // matches nothing, which is fine — the row count is what is under test.
+        // matches nothing, which is fine. The row count is what is under test.
         let rows = got.expect("matched")["items"].as_array().unwrap().len();
         assert_eq!(rows, 2);
     }

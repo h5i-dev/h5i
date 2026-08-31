@@ -3,7 +3,7 @@
 //! This is the only place the two halves meet. `h5i-core` owns the box
 //! lifecycle and knows nothing about SSH or frames; `h5i-runner` owns the
 //! protocol and knows nothing about manifests. The binary is above both, which
-//! is where a dependency between them would otherwise have to go — and where
+//! is where a dependency between them would otherwise have to go, and where
 //! it would eventually become a cycle, since a later milestone will want the
 //! worker reaching for receipts and export.
 
@@ -43,7 +43,7 @@ impl PairedRunner {
     ///
     /// The worker refuses too, and its refusal is the enforcement (ROADMAP.md
     /// R7). This one exists so the message arrives before a bundle is built and
-    /// sent, and so it can name what the runner *does* offer — which the client
+    /// sent, and so it can name what the runner *does* offer, which the client
     /// knows from its cached probe and the worker would have to be asked for.
     pub fn check_supports(&self, isolation: &str) -> anyhow::Result<()> {
         let Some(caps) = self.record.cached_capabilities() else {
@@ -75,7 +75,7 @@ impl PairedRunner {
     /// The manifest pins a host-key hash, and this compares it against the
     /// runner that answers to that *name* now. A name re-paired to different
     /// hardware would otherwise send a box's commands to a machine that has
-    /// never seen it — which is exactly the failure that made identity
+    /// never seen it, which is exactly the failure that made identity
     /// cryptographic in the first place (ROADMAP.md R6).
     pub fn check_identity(&self, m: &h5i_core::env::EnvManifest) -> anyhow::Result<()> {
         let Some(recorded) = &m.runner_id else {

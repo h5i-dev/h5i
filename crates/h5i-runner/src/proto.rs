@@ -7,16 +7,16 @@
 //!
 //! Two rules run through everything here.
 //!
-//! **`HELLO` is static, `PROBE` is dynamic, and neither does the other's job**
+//! `HELLO` is static, `PROBE` is dynamic, and neither does the other's job
 //! (ROADMAP.md R5). The handshake carries what cannot change while a worker
-//! binary sits on disk — the protocol version, the h5i version, the
-//! architecture. Everything that drifts between one minute and the next — how
+//! binary sits on disk. The protocol version, the h5i version, the
+//! architecture. Everything that drifts between one minute and the next (how
 //! much memory is free, whether podman is installed today, which tiers actually
-//! verify — belongs to [`Capabilities`] and arrives only in answer to a
+//! verify) belongs to [`Capabilities`] and arrives only in answer to a
 //! `PROBE`. A field in the wrong one of those two is a field that goes stale in
 //! a cache and lies later.
 //!
-//! **Identity never rides in a frame.** `runner_id` is computed on the client
+//! Identity never rides in a frame. `runner_id` is computed on the client
 //! from the host key SSH verified against the pinned `known_hosts`
 //! ([`crate::identity`]). [`HelloAck::runner_id_echo`] exists so a mismatch can
 //! be *noticed*, and is never the source of the value: what a peer asserts
@@ -376,8 +376,8 @@ impl Capabilities {
     /// or refused and *never stored*, which is this function. The distinction
     /// it draws: a number that is merely implausible gets clamped, because a
     /// runner with a broken `/proc` should still be usable; a value that would
-    /// change a *decision* — an isolation tier this h5i does not have a name
-    /// for, an OS that is not Linux — is refused, because storing it would mean
+    /// change a *decision* (an isolation tier this h5i does not have a name
+    /// for, an OS that is not Linux) is refused, because storing it would mean
     /// a later create consults a capability list that means nothing.
     pub fn sanitized(mut self) -> Result<Self, ProtoError> {
         self.arch = clean_field("arch", &self.arch)?;
@@ -502,7 +502,7 @@ impl Default for LeaseSpec {
 #[serde(rename_all = "kebab-case")]
 pub enum SourceKind {
     /// A `git bundle` follows as `DATA` frames. The bundle *is* the base
-    /// identity — verifiable on receipt — which is why R7 chose it over a tar.
+    /// identity, verifiable on receipt, which is why R7 chose it over a tar.
     GitBundle,
     /// Nothing follows. An empty box, for a `--new` source.
     Empty,
@@ -551,7 +551,7 @@ pub struct CreateRequest {
     pub lease: LeaseSpec,
     /// Digest of the resolved policy. The worker echoes it in
     /// [`CreateResult::policy_digest`] and the host refuses to mark the box
-    /// live unless it matches — which turns "the worker silently enforced an
+    /// live unless it matches, which turns "the worker silently enforced an
     /// older policy" from a possibility into a detected fault.
     pub policy_digest: String,
     /// The resolved policy itself, opaque to this protocol.
@@ -607,7 +607,7 @@ impl CreateResult {
     /// Make a worker's answer safe to store and print.
     ///
     /// The runner is the machine this design agreed might be compromised, so
-    /// everything it says about itself is peer data — the same category as a
+    /// everything it says about itself is peer data. The same category as a
     /// manifest pulled from someone else's clone, and handled the same way.
     /// Without this, a `workspace` path full of escape sequences reaches a
     /// terminal and a `box_id` of unbounded length reaches a receipt.
@@ -630,7 +630,7 @@ impl ExecStarted {
     ///
     /// `timeout_secs` is clamped for a sharper reason: the client arms its own
     /// watchdog from it, so an unclamped `u64::MAX` is a peer choosing how long
-    /// we wait — which is to say, forever. A number a peer supplies is never a
+    /// we wait, which is to say, forever. A number a peer supplies is never a
     /// clock; it is a claim about a clock, and it is bounded by ours.
     pub fn sanitized(mut self) -> Result<Self, ProtoError> {
         self.cwd = clean_field("working directory", &self.cwd)?;
@@ -643,7 +643,7 @@ impl ExportResult {
     pub fn sanitized(self) -> Result<Self, ProtoError> {
         check_id("box id", &self.box_id)?;
         // These two are compared against what actually arrives, so a bad value
-        // fails that comparison rather than being trusted — but they are also
+        // fails that comparison rather than being trusted, but they are also
         // displayed, and an object id that is not one is worth refusing where
         // it is cheap.
         check_hex("tip commit", &self.tip_commit, 40, 64)?;
@@ -906,7 +906,7 @@ pub struct ExitMsg {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_rss_kb: Option<i64>,
     /// What the runner's egress proxy saw. Observed outside the box by an h5i
-    /// we authenticated — the `runner-observed` lane (ROADMAP.md R10).
+    /// we authenticated. The `runner-observed` lane (ROADMAP.md R10).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress: Option<serde_json::Value>,
     /// True when output was cut at [`MAX_EXEC_OUTPUT`]. Said rather than
@@ -934,9 +934,9 @@ impl ExportRequest {
 
 /// What the box has become, and how to get it.
 ///
-/// The bundle is **thin**: it carries `base..tip` and needs the base, which
+/// The bundle is *thin*: it carries `base..tip` and needs the base, which
 /// this side already has because it sent it. That keeps an export proportional
-/// to the work done rather than to the repository's history — the create
+/// to the work done rather than to the repository's history. The create
 /// direction cannot do the same, because the far side starts with nothing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportResult {
@@ -960,7 +960,7 @@ impl ExitMsg {
     ///
     /// `EgressSummary.hosts[].host` is an arbitrary string from a machine the
     /// threat model says may be compromised, and the producer-side cap on how
-    /// many there are is a producer-side cap — it binds the honest worker and
+    /// many there are is a producer-side cap. It binds the honest worker and
     /// not the other kind. Nothing renders those strings today, which is why
     /// this is consistency rather than a hole; a receipt is a durable record,
     /// and what goes into one should be bounded when it is written rather than
@@ -1011,7 +1011,7 @@ impl ErrorMsg {
         let tail = tail.into();
         let mut start = tail.len().saturating_sub(MAX_LOG_TAIL);
         // Slicing a `String` at a byte offset panics unless it is a character
-        // boundary, and this offset is arithmetic on a length — a log whose
+        // boundary, and this offset is arithmetic on a length. A log whose
         // 16 KiB mark lands mid-character would take the process down. Walk
         // forward to the next boundary instead: losing up to three bytes off
         // the front of a log tail costs nothing.
@@ -1039,7 +1039,7 @@ impl ErrorMsg {
 /// One function so the pair cannot drift: a digest computed over anything but
 /// the value actually sent is a check that passes while meaning nothing. The
 /// worker recomputes the same digest from what arrives, and only three fields
-/// of a `ResolvedPolicy` serialise — none of them a host path — so the two
+/// of a `ResolvedPolicy` serialise, none of them a host path, so the two
 /// sides have to agree (ROADMAP.md R7).
 pub fn policy_fields(
     policy: &h5i_sandbox::sandbox_policy::ResolvedPolicy,
@@ -1208,7 +1208,7 @@ fn truncate(s: &str, max: usize) -> String {
 ///
 /// No negotiation: the lower version governs. A worker too old to meet
 /// [`MIN_PROTOCOL_VERSION`] fails here, at the handshake, with the numbers in
-/// the message — not later, in the middle of a create, as a mysterious unknown
+/// the message, not later, in the middle of a create, as a mysterious unknown
 /// frame.
 pub fn agreed_protocol(ours: u16, theirs: u16) -> Result<u16, ProtoError> {
     let agreed = ours.min(theirs);
@@ -1384,7 +1384,7 @@ mod tests {
     fn a_log_tail_cut_mid_character_does_not_panic() {
         // The cut is arithmetic on a byte length, so a log whose boundary lands
         // inside a multi-byte character would panic the process that built the
-        // message — on the worker, while reporting somebody else's error.
+        // message. On the worker, while reporting somebody else's error.
         for pad in 0..8 {
             let long = "x".repeat(MAX_LOG_TAIL + pad) + "日本語のエラー";
             let e = ErrorMsg::new(ErrorCode::Internal, "boom").with_log_tail(long);
@@ -1400,8 +1400,8 @@ mod tests {
 
     #[test]
     fn a_log_tail_keeps_its_end_and_is_bounded() {
-        // The tail is what matters — the failure is at the end of the log, not
-        // the start — and it is the one peer-supplied string allowed to be big.
+        // The tail is what matters (the failure is at the end of the log, not
+        // the start) and it is the one peer-supplied string allowed to be big.
         let long = "x".repeat(MAX_LOG_TAIL * 2) + "THE ACTUAL FAILURE";
         let e = ErrorMsg::new(ErrorCode::Internal, "create failed").with_log_tail(long);
         let tail = e.log_tail.as_deref().unwrap();
@@ -1613,7 +1613,7 @@ mod tests {
 
     #[test]
     fn a_hostile_runners_answers_are_refused_before_they_are_stored() {
-        // Everything a runner says about itself is peer data — the same
+        // Everything a runner says about itself is peer data. The same
         // category as a manifest pulled from someone else's clone. These are
         // the fields that reach a receipt and a terminal.
         let good = CreateResult {

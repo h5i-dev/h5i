@@ -1,7 +1,7 @@
 //! Who a runner is.
 //!
 //! A name is a label, and a label can be re-pointed at different hardware
-//! tomorrow. `runner_id` is the SHA-256 of the runner's SSH **host key**, which
+//! tomorrow. `runner_id` is the SHA-256 of the runner's SSH *host key*, which
 //! is the thing SSH already authenticates on every connection and the thing our
 //! pinned `known_hosts` already refuses to let change silently. Binding a box
 //! to that binds it to a machine (ROADMAP.md R6, and the decision it closed in
@@ -121,7 +121,7 @@ impl HostKey {
     /// The `known_hosts` line to pin this key against one host.
     ///
     /// The host pattern includes the port when it is not 22, in OpenSSH's
-    /// bracket form, because that is how OpenSSH looks the entry up — a pinned
+    /// bracket form, because that is how OpenSSH looks the entry up. A pinned
     /// key filed under the wrong pattern is a pin that silently never matches.
     pub fn known_hosts_line(&self, host: &str, port: Option<u16>) -> String {
         let pattern = match port {
@@ -138,7 +138,7 @@ impl HostKey {
 /// like an algorithm is how a comment or a stray token gets read as a key.
 ///
 /// `rsa-sha2-256`/`rsa-sha2-512` are deliberately absent. They are *signature*
-/// algorithm names — a `known_hosts` line's key type is always `ssh-rsa` — so
+/// algorithm names, a `known_hosts` line's key type is always `ssh-rsa`, so
 /// accepting them meant that if one ever appeared it would be written back into
 /// a `known_hosts` line OpenSSH does not recognise as a key type: a pin that
 /// silently never matches.
@@ -334,7 +334,7 @@ mod tests {
         let scan = format!("h ssh-ed25519 {ED25519}\nh ssh-ed25519 {other}\n");
         assert!(preferred_host_key(&scan).is_err());
 
-        // The same key twice is not a conflict — a scan may legitimately repeat.
+        // The same key twice is not a conflict. A scan may legitimately repeat.
         let dup = format!("h ssh-ed25519 {ED25519}\nh ssh-ed25519 {ED25519}\n");
         assert!(preferred_host_key(&dup).is_ok());
     }

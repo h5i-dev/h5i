@@ -9,15 +9,15 @@
 //!
 //! The design notes that drove the rule choices:
 //!
-//! - **Each rule is anchored on a known prefix or structure.** Prefix-anchored
+//! - Each rule is anchored on a known prefix or structure. Prefix-anchored
 //!   rules (`AKIA…`, `ghp_…`, `sk-ant-…`) have effectively zero false
 //!   positives because the prefix only appears in real credentials.
-//! - **A path allowlist prunes lockfiles, vendor trees, fonts, binaries, and
-//!   well-known test-fixture directories before regex matching.** These are
+//! - A path allowlist prunes lockfiles, vendor trees, fonts, binaries, and
+//!   well-known test-fixture directories before regex matching. These are
 //!   the biggest sources of FPs in any secret scanner.
-//! - **A per-line stoplist suppresses obvious placeholders** (`your-key-here`,
+//! - A per-line stoplist suppresses obvious placeholders (`your-key-here`,
 //!   `<INSERT_KEY>`, `EXAMPLE`, `xxxx…`, `${VAR}`).
-//! - **An entropy floor on the generic rule** catches the long tail of
+//! - An entropy floor on the generic rule catches the long tail of
 //!   opaque credentials without firing on every `key = "config"` line.
 
 use std::path::Path;
@@ -34,7 +34,7 @@ struct SecretRule {
     /// Compiled regex (one-time init).
     pattern: &'static str,
     /// Optional capture group index whose value must clear an entropy floor.
-    /// `None` means "any match counts" — used for prefix-anchored rules
+    /// `None` means "any match counts". Used for prefix-anchored rules
     /// that are already low-FP.
     entropy_group: Option<usize>,
     /// Minimum Shannon entropy (bits/char) on the captured group. Only
@@ -46,7 +46,7 @@ struct SecretRule {
     ///
     /// All entries MUST be lowercase: the scanner lowercases the line once
     /// and compares against these as-is. Keeping the pre-filter strictly
-    /// looser than the regex is required for correctness — false positives
+    /// looser than the regex is required for correctness. False positives
     /// here just trigger a wasted regex run; false negatives would hide a
     /// real finding.
     keywords: &'static [&'static str],
@@ -66,7 +66,7 @@ pub struct SecretFinding {
 }
 
 /// Rule pack. Order matters only insofar as we report the first match per
-/// line — most specific rules (prefix-anchored) come before the entropy
+/// line. Most specific rules (prefix-anchored) come before the entropy
 /// fallback so we attribute findings correctly.
 const RULES: &[SecretRule] = &[
     // ── Cloud / provider keys (prefix-anchored, near-zero FP) ─────────────
@@ -141,7 +141,7 @@ const RULES: &[SecretRule] = &[
     SecretRule {
         id: "JWT",
         description: "JSON Web Token",
-        // header.payload.signature — three Base64url segments
+        // header.payload.signature. Three Base64url segments
         pattern: r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b",
         entropy_group: None,
         min_entropy: 0.0,
@@ -293,7 +293,7 @@ const STOPLIST: &[&str] = &[
     "h5i-allow",
 ];
 
-/// Path allowlist — files that almost always contain false positives
+/// Path allowlist. Files that almost always contain false positives
 /// (lockfiles, vendor trees, font/image binaries, h5i fixtures, the
 /// gitleaks rule pack itself).
 const PATH_ALLOWLIST: &[&str] = &[
@@ -355,7 +355,7 @@ const TEST_FILE_SUFFIXES: &[&str] = &[
     "test_secrets.rs",
 ];
 
-/// File basenames that define the rule pack itself — scanning them is a
+/// File basenames that define the rule pack itself. Scanning them is a
 /// self-inflicted false positive. Add new detector-defining files here.
 const RULE_DEFINITION_FILES: &[&str] = &[
     "secrets.rs",
@@ -395,7 +395,7 @@ pub fn is_path_allowlisted(path: &str) -> bool {
 }
 
 /// Returns `true` if any keyword in `keywords` appears in `lowered`.
-/// Empty `keywords` slice means "no pre-filter — always run the regex".
+/// Empty `keywords` slice means "no pre-filter. Always run the regex".
 fn keywords_match(keywords: &[&str], lowered: &str) -> bool {
     keywords.is_empty() || keywords.iter().any(|k| lowered.contains(*k))
 }
@@ -446,7 +446,7 @@ where
     }
     let mut out = Vec::new();
     for (n, line) in lines {
-        // Lower-case the line once per iteration — shared by both the
+        // Lower-case the line once per iteration. Shared by both the
         // stoplist and the per-rule keyword pre-filter.
         let lowered = line.to_ascii_lowercase();
         if STOPLIST.iter().any(|s| lowered.contains(s)) {
@@ -510,7 +510,7 @@ const REDACTION_MARKER: &str = "‹redacted›";
 /// in published output (e.g. a PR comment or a pulled message body).
 ///
 /// Differences from [`scan_lines`], which exists to *report* findings:
-/// - There is no path argument and no path allowlist — the caller is redacting
+/// - There is no path argument and no path allowlist. The caller is redacting
 ///   arbitrary untrusted text (a message body), not a file, so "skip lockfiles"
 ///   does not apply.
 /// - It redacts *every* matching rule on a line, not just the first, because a
@@ -523,7 +523,7 @@ const REDACTION_MARKER: &str = "‹redacted›";
 /// Line endings and a trailing newline are kept byte-for-byte. `lines()` would
 /// fold `\r\n` into `\n` and drop a trailing newline, which mattered little
 /// while redaction was conditional but rewrites every receipt now that it is
-/// unconditional — and `raw_oid`/`raw_size` are supposed to describe the bytes
+/// unconditional, and `raw_oid`/`raw_size` are supposed to describe the bytes
 /// the run actually produced.
 pub fn redact_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -551,15 +551,15 @@ pub fn redact_text(text: &str) -> String {
 /// Redaction is a publication safety control, so it deliberately diverges from
 /// detection in two fail-closed ways:
 ///
-/// - **No [`STOPLIST`] early-return.** In detection the stoplist suppresses
+/// - No [`STOPLIST`] early-return. In detection the stoplist suppresses
 ///   placeholder false positives (`your-key-here`, `EXAMPLE`). Applied to
 ///   redaction it would be *fail-open*: a line like `example token ghp_<real>`
-///   contains `example`, so the whole line — real credential included — would be
+///   contains `example`, so the whole line, real credential included, would be
 ///   emitted verbatim. We accept the occasional redacted placeholder instead.
-/// - **Every match of every rule is scrubbed**, not just the first per rule, so
+/// - Every match of every rule is scrubbed, not just the first per rule, so
 ///   two distinct credentials of the same type on one line are both removed.
 ///
-/// Matches are collected as byte spans, merged, and the line rebuilt — overlaps
+/// Matches are collected as byte spans, merged, and the line rebuilt. Overlaps
 /// across rules collapse to a single marker.
 fn redact_line(line: &str) -> String {
     let lowered = line.to_ascii_lowercase();
@@ -839,8 +839,8 @@ mod tests {
 
     #[test]
     fn keywords_match_empty_means_always_run() {
-        // Catch-all rules like GENERIC_HIGH_ENTROPY use an empty keyword list
-        // — the helper must signal "yes run me" so the regex still gets a chance.
+        // Catch-all rules like GENERIC_HIGH_ENTROPY use an empty keyword list.
+        // The helper must signal "yes run me" so the regex still gets a chance.
         assert!(keywords_match(&[], "anything at all"));
     }
 
@@ -880,7 +880,7 @@ mod tests {
 
     #[test]
     fn postgres_rejects_low_entropy_password() {
-        // "password" has Shannon entropy ~2.75 — still above 2.5. Use a more
+        // "password" has Shannon entropy ~2.75. Still above 2.5. Use a more
         // clearly low-entropy value to verify the entropy gate kicks in.
         let f = scan("url = postgres://app:aaaa@host/db");
         assert!(
@@ -921,7 +921,7 @@ mod tests {
     #[test]
     fn http_basic_auth_url_fires() {
         let f = scan("curl -X POST https://svcacct:K7zR3mE9wQv2N8pX@api.example.org/v1");
-        // The line contains "example", which is on the global STOPLIST — that
+        // The line contains "example", which is on the global STOPLIST. That
         // suppression is correct (test fixtures use example.{com,org} on purpose).
         assert!(
             f.is_empty(),

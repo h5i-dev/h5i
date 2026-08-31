@@ -6,8 +6,8 @@
 //! `Content-Length\u{0c}`, a bare CR in a response header, a second
 //! `Content-Length` beside a `Transfer-Encoding`. That is a good way to find
 //! the bugs somebody can imagine, and a bad way to find the rest. This module
-//! generates heads instead — from a grammar seeded with the nastiest tokens the
-//! previous rounds turned up, plus mutation and plain noise — and asserts the
+//! generates heads instead (from a grammar seeded with the nastiest tokens the
+//! previous rounds turned up, plus mutation and plain noise) and asserts the
 //! invariants the rest of the crate is entitled to assume.
 //!
 //! Deterministic on purpose. A fuzzer that finds a failure CI cannot reproduce
@@ -15,7 +15,7 @@
 //! failure prints the seed that produced it. `H5I_FUZZ_ROUNDS` turns the same
 //! test into a soak.
 
-/// xorshift64*. Small, no dependency, and identical on every platform — which
+/// xorshift64*. Small, no dependency, and identical on every platform, which
 /// is the only property that matters here.
 pub struct Rng(u64);
 
@@ -81,7 +81,7 @@ const NAMES: &[&str] = &[
     "Set-Cookie",
     // The decisions the generator never offered a single input to. `Origin`
     // and the fetch metadata are what `gate::is_cross_origin` reads, and
-    // `Service-Worker` is the whole of the registration refusal — three of the
+    // `Service-Worker` is the whole of the registration refusal. Three of the
     // four newest branches in the gate, exercised until now only by the cases
     // somebody thought of.
     "Origin",
@@ -181,7 +181,7 @@ const TARGETS: &[&str] = &[
     "/a?h5ix=1",
     // The parameter name as a framework reads it rather than as h5i writes
     // it. `%68%35%69` is `h5i` after decoding, and the strip compared the raw
-    // text — so this spelling carried the credential into the box untouched.
+    // text, so this spelling carried the credential into the box untouched.
     "/a?%68%35%69=deadbeefdeadbeefdeadbeefdeadbeef",
     "/a?h%35i=deadbeefdeadbeefdeadbeefdeadbeef&b=2",
     "/a?%68%35%69",
@@ -216,16 +216,16 @@ const METHODS: &[&str] = &[
     "GETGETGETGETGETGETGETGETGETGETGET",
 ];
 
-/// Line endings, sampled **once per head** rather than once per line.
+/// Line endings, sampled once per head rather than once per line.
 ///
 /// Sampled per line, with four of the five illegal, acceptance decayed as
 /// (1/5)^(headers+1): measured against the real parser, 1.88% of heads got
-/// past `gate::parse`, and of two million heads **zero** carried both framings
+/// past `gate::parse`, and of two million heads *zero* carried both framings
 /// and about 157 carried a share cookie. The generator was emitting
 /// `Content-Length\u{0c}` and obs-folds in more than half of all heads and the
 /// parser was rejecting every one of them on line discipline before the
-/// assertions ran. So the test's headline property — the credential never
-/// reaches the box — was being checked on roughly one input per run, and the
+/// assertions ran. So the test's headline property, the credential never
+/// reaches the box, was being checked on roughly one input per run, and the
 /// two-framings assertion on none at all.
 ///
 /// A whole head in one ending is also the realistic shape: a client that emits
@@ -282,7 +282,7 @@ pub fn request_head(rng: &mut Rng) -> String {
     }
     out.push_str("\r\n");
     // Most heads are left alone. Mutation is what makes the nasty ones, and it
-    // is also what makes them unparseable — mutating every head meant the
+    // is also what makes them unparseable. Mutating every head meant the
     // parser rejected almost all of them and the assertions past it ran on
     // roughly one input per run.
     if rng.chance(3) {
@@ -386,7 +386,7 @@ pub fn chunked_body(rng: &mut Rng) -> String {
         out.push_str(size);
         out.push_str(eol);
         // Data of whatever length the generator felt like, which is usually
-        // *not* the declared size — a body whose framing lies is the case that
+        // *not* the declared size. A body whose framing lies is the case that
         // matters, and h5i must stop where the framing says rather than where
         // the data does.
         let n = if rng.chance(3) {
@@ -469,14 +469,14 @@ fn floor_char(s: &str, mut i: usize) -> usize {
 /// Behind `p2p` because a ticket is: it carries the addressing of an iroh
 /// endpoint, and the parser these exercise is only compiled with that feature.
 /// Built unconditionally, they were dead code in a
-/// `--no-default-features` build — which is one of the two clippy runs CI does
+/// `--no-default-features` build, which is one of the two clippy runs CI does
 /// with `-D warnings`, and the one no local check here had ever run.
 ///
 /// A ticket is the one thing on the joiner's side that arrives entirely from
 /// somebody else and is pasted in by hand. Hand-written review of it has
-/// already found two real defects — an address filter that caught one spelling
+/// already found two real defects (an address filter that caught one spelling
 /// of loopback out of four, and no cap on how many places one ticket could aim
-/// at — so it is worth generating rather than only imagining.
+/// at) so it is worth generating rather than only imagining.
 #[cfg(feature = "p2p")]
 const TICKET_ADDRS: &[&str] = &[
     r#"{"Ip":"127.0.0.1:2375"}"#,

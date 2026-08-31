@@ -5,13 +5,13 @@
 //! clicking a prototype. This transport trades the property P2P has for the one
 //! it does not: anybody with the link can open it in any browser.
 //!
-//! What it costs, stated in the receipt rather than only in the docs. **TLS
-//! terminates at Cloudflare**, so this path is not end to end and Cloudflare can
+//! What it costs, stated in the receipt rather than only in the docs. TLS
+//! terminates at Cloudflare, so this path is not end to end and Cloudflare can
 //! read the traffic; usually an acceptable trade for an agent-built prototype
 //! and never ours to assume, so [`crate::bridge::render_receipt`] writes it into
-//! the export. **`cloudflared` is somebody else's binary**, neither shipped nor
-//! pinned, and its absence is a failure that names the alternative. **Quick
-//! tunnels are explicitly not a production service**: Cloudflare caps
+//! the export. `cloudflared` is somebody else's binary, neither shipped nor
+//! pinned, and its absence is a failure that names the alternative. Quick
+//! tunnels are explicitly not a production service: Cloudflare caps
 //! concurrency and does not support server-sent events on them.
 //!
 //! What does not change is the bridge underneath. The URL carries a token
@@ -50,7 +50,7 @@ pub struct Tunnel {
 impl Tunnel {
     /// A tunnel whose `cloudflared` has already exited, for tests that need a
     /// `Setup` and not a network. Spawning `true` rather than faking the field
-    /// keeps `stop()` on its real path — killing a child that is already gone
+    /// keeps `stop()` on its real path. Killing a child that is already gone
     /// is exactly what a tunnel teardown does when `cloudflared` died first.
     #[cfg(test)]
     pub fn already_gone_for_tests() -> Tunnel {
@@ -94,7 +94,7 @@ impl Tunnel {
 /// Strict about what it will accept: the host must be a `trycloudflare.com`
 /// subdomain made of the characters a hostname is allowed to have. This is a
 /// URL we are about to print and tell someone to open, and `cloudflared`'s
-/// output is a log format rather than an interface — a looser match would let a
+/// output is a log format rather than an interface. A looser match would let a
 /// change in its banner, or anything that got into its logs, choose what we
 /// hand a person.
 pub fn extract_url(line: &str) -> Option<String> {
@@ -124,12 +124,12 @@ pub fn extract_url(line: &str) -> Option<String> {
 /// A bound on what is *kept*, never on what is read. Bounding the read with
 /// `take()` made `Take` report EOF at its limit, which ended the drain task,
 /// closed the pipe's read end, and gave `cloudflared` an EPIPE that Go turns
-/// into a fatal signal — so a healthy share died as soon as its subprocess had
+/// into a fatal signal, so a healthy share died as soon as its subprocess had
 /// logged a megabyte. That is verbatim the failure the drain's own comment
 /// warns about, reintroduced by the fix for unbounded line buffering.
 const MAX_CLOUDFLARED_LINE: usize = 64 * 1024;
 
-/// Kill `target` when `watch` dies — Darwin's answer to `PR_SET_PDEATHSIG`.
+/// Kill `target` when `watch` dies. Darwin's answer to `PR_SET_PDEATHSIG`.
 ///
 /// The hazard is the one the Linux arm describes above and it is not smaller
 /// here: `kill_on_drop` is a destructor, `SIGKILL` skips destructors, and a
@@ -140,7 +140,7 @@ const MAX_CLOUDFLARED_LINE: usize = 64 * 1024;
 /// Darwin has no `PR_SET_PDEATHSIG`, and the difference is not just spelling:
 /// pdeathsig is something a process asks *for itself*, so Linux can set it in
 /// the child between fork and exec. Nothing can ask that on behalf of a program
-/// h5i does not compile. So the job goes to a third process — a watchdog that
+/// h5i does not compile. So the job goes to a third process. A watchdog that
 /// waits on `kqueue` for either process to exit and kills `target` if `watch`
 /// went first.
 ///
@@ -148,7 +148,7 @@ const MAX_CLOUDFLARED_LINE: usize = 64 * 1024;
 /// cannot skip it, because it is not running any of the share's code and does
 /// not die with it. It is reparented and keeps waiting.
 ///
-/// **Both** pids are registered, and that is what makes it safe rather than
+/// *Both* pids are registered, and that is what makes it safe rather than
 /// merely prompt. A watchdog that waited only on `watch` would, after
 /// `cloudflared` had exited normally and its pid had been recycled, wake up and
 /// `SIGKILL` whatever innocent process now holds that number. Registering
@@ -165,8 +165,8 @@ pub(crate) fn arm_parent_death_kill(watch: libc::pid_t, target: libc::pid_t) {
     if pid != 0 {
         // Parent, including the fork having failed. A share whose watchdog
         // could not start is a share with the protection Linux had before
-        // `PR_SET_PDEATHSIG` — `kill_on_drop` still covers every ordinary
-        // ending — so this is not worth refusing to serve over.
+        // `PR_SET_PDEATHSIG`, `kill_on_drop` still covers every ordinary
+        // ending, so this is not worth refusing to serve over.
         return;
     }
     unsafe {
@@ -219,7 +219,7 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
     // And a second, stronger rope. `kill_on_drop` runs a destructor, which a
-    // `SIGKILL` of this process skips entirely — so a killed share left
+    // `SIGKILL` of this process skips entirely, so a killed share left
     // `cloudflared` alive for another ten to twenty seconds with its public
     // `trycloudflare.com` hostname still registered and still pointing at
     // `http://127.0.0.1:<port>`. That port is in the ephemeral range and has
@@ -227,8 +227,8 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
     // it is on the public internet under a hostname h5i minted.
     //
     // `PR_SET_PDEATHSIG` is the kernel doing it instead. Precisely: when the
-    // *thread* that forked this child exits, the child gets the signal —
-    // pdeathsig is thread-scoped, not process-scoped. That is safe here only
+    // *thread* that forked this child exits, the child gets the signal.
+    // Pdeathsig is thread-scoped, not process-scoped. That is safe here only
     // because `run::serve` drives everything through `Runtime::block_on`, so
     // this fork happens on the main thread and that thread's life is the
     // process's. Moving `serve_async` behind a `tokio::spawn` or a
@@ -239,7 +239,7 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
         // Read before the fork. The first version of this compared
         // `getppid() == 1`, which is folklore and wrong in both directions: it
         // misses a parent that died into a `PR_SET_CHILD_SUBREAPER` reaper
-        // (a `systemd --user` session is one), and — much worse — it fires
+        // (a `systemd --user` session is one), and, much worse, it fires
         // when h5i legitimately *is* pid 1, which is every `docker run image
         // h5i box share --tunnel`. There the child `_exit(0)`d before exec,
         // std read a zero-length error pipe as a successful exec, and the
@@ -253,7 +253,7 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
                 return Err(std::io::Error::last_os_error());
             }
             // A parent that died between the fork and the prctl leaves the
-            // child reparented, and the signal will never come — so ask
+            // child reparented, and the signal will never come, so ask
             // whether we are still the child of who forked us.
             if libc::getppid() != parent {
                 libc::_exit(0);
@@ -278,7 +278,7 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
     // The same rope, tied the only way Darwin lets you tie it: no
     // `PR_SET_PDEATHSIG`, so a third process holds it. Armed after the spawn
     // because it needs `cloudflared`'s pid, which is the one thing the Linux
-    // arm does not need — that one runs *inside* the child, before its exec.
+    // arm does not need. That one runs *inside* the child, before its exec.
     #[cfg(target_os = "macos")]
     if let Some(pid) = child.id() {
         arm_parent_death_kill(unsafe { libc::getpid() }, pid as libc::pid_t);
@@ -289,8 +289,8 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
         .take()
         .ok_or_else(|| H5iError::Metadata("cloudflared produced no output to read".into()))?;
     // Capped. `lines()` accumulates until it sees a newline, and a
-    // `cloudflared` that writes without one — or a different binary of that
-    // name — grows one `String` without limit: a fake writing 150 MiB with no
+    // `cloudflared` that writes without one, or a different binary of that
+    // name, grows one `String` without limit: a fake writing 150 MiB with no
     // newline took this process from 25 MB to 178 MB of RSS in two seconds,
     // and it would have kept going for the whole URL timeout. h5i neither
     // ships nor pins that binary, so what it does is not h5i's to assume.
@@ -298,13 +298,13 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
 
     // Kept, so the reason it failed can be repeated. `cloudflared` prints why
     // it is unhappy and this used to read that line, discard it, and then tell
-    // the operator to "run it once by hand to see what it says" — having
+    // the operator to "run it once by hand to see what it says". Having
     // already been told.
     let mut last_said: Option<String> = None;
     let found = tokio::time::timeout(URL_TIMEOUT, async {
         let mut buf = vec![0u8; 8 * 1024];
         // At most one line's worth is held at a time, and something longer
-        // than a line is treated as one — a subprocess that never emits a
+        // than a line is treated as one. A subprocess that never emits a
         // newline cannot make this grow.
         let mut pending = String::new();
         loop {
@@ -336,12 +336,12 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
         Ok(Some(url)) => {
             // Keep reading. Dropping the pipe here closes its read end, and the
             // next time `cloudflared` fills the kernel buffer and writes it
-            // takes an EPIPE — which Go turns into a fatal signal on fd 2. A
+            // takes an EPIPE, which Go turns into a fatal signal on fd 2. A
             // tunnel that dies mid-share for that reason would report nothing
             // at all, so the lines are consumed and discarded for as long as it
             // runs.
             // Consumed and discarded for as long as `cloudflared` runs, with no
-            // ceiling of its own — a ceiling here is exactly what closes the
+            // ceiling of its own. A ceiling here is exactly what closes the
             // pipe and kills it.
             tokio::spawn(async move {
                 let mut sink = vec![0u8; 8 * 1024];
@@ -356,7 +356,7 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
         Ok(None) => {
             // Whether it is actually gone is checked rather than assumed. This
             // arm is reached whenever the pipe ends, and a pipe can end on a
-            // read error with the child alive and well — at which point
+            // read error with the child alive and well. At which point
             // "`cloudflared` exited" is a sentence about a running process,
             // and the operator goes looking for a crash that did not happen.
             let how = if matches!(child.try_wait(), Ok(None)) {
@@ -389,8 +389,8 @@ enum NoUrl {
 /// Its own function so it can be tested. `start` runs the real `cloudflared`
 /// from `PATH`, so nothing in the suite could reach these three sentences, and
 /// two of the three were wrong for a round each without a test noticing: one
-/// announced that a live child had exited, and the other — the arm a blocked
-/// or throttled network actually reaches — threw away the reason `cloudflared`
+/// announced that a live child had exited, and the other, the arm a blocked
+/// or throttled network actually reaches, threw away the reason `cloudflared`
 /// had just printed and offered a guess about outbound access in its place.
 fn no_url(how: NoUrl, said: Option<&str>) -> H5iError {
     let opening = match how {
@@ -424,7 +424,7 @@ const BUSY_BODY: &str = "This share is busy right now. Wait a moment and reload 
 
 /// Built rather than written out, because a hand-counted `Content-Length` is a
 /// truncated page waiting for somebody to edit the sentence. Written out once
-/// anyway, and wrong by two bytes within the hour — hence one builder for both.
+/// anyway, and wrong by two bytes within the hour. Hence one builder for both.
 fn plain_response(status: &str, extra: &str, body: &str) -> String {
     format!(
         "HTTP/1.1 {status}\r\n\
@@ -461,23 +461,23 @@ pub fn invite_url(origin: &str, secret: &str) -> String {
 /// this machine.
 pub async fn serve(bridge: Arc<Bridge>, listener: tokio::net::TcpListener) -> Result<(), H5iError> {
     // One entry per grant, because a tunnel genuinely cannot tell two browsers
-    // apart — the peers it sees are Cloudflare's. Counting per grant is the
+    // apart. The peers it sees are Cloudflare's. Counting per grant is the
     // finest honest granularity, and the receipt says so rather than implying
     // a precision the transport does not have.
     let peers: Arc<Mutex<HashMap<String, crate::bridge::PeerId>>> = Default::default();
 
     // A ceiling on connections this front will hold, which is a different
     // number from `Bridge::admit`'s: that one is taken *after* authorization
-    // and bounds sockets into the box. Everything before it — the head read,
-    // its buffers, the task — is available to anyone who can reach the tunnel
+    // and bounds sockets into the box. Everything before it (the head read,
+    // its buffers, the task) is available to anyone who can reach the tunnel
     // URL, which is public by construction.
     let slots = Arc::new(tokio::sync::Semaphore::new(MAX_PENDING));
     loop {
         let sock = match listener.accept().await {
             Ok((sock, _)) => sock,
             // Not `continue`: tokio only clears a listener's readiness on
-            // `WouldBlock`, so a persistent error — `EMFILE` is the one that
-            // actually happens — returns immediately every time and turns this
+            // `WouldBlock`, so a persistent error, `EMFILE` is the one that
+            // actually happens, returns immediately every time and turns this
             // into a busy loop that never recovers. Pausing gives descriptors a
             // chance to come back and keeps the share responsive if they do.
             Err(e) => {
@@ -518,12 +518,12 @@ pub async fn serve(bridge: Arc<Bridge>, listener: tokio::net::TcpListener) -> Re
 /// the first thing that grant has done.
 ///
 /// One entry per grant, because a tunnel genuinely cannot tell two browsers
-/// apart — the peers it sees are Cloudflare's.
+/// apart. The peers it sees are Cloudflare's.
 ///
 /// The map is taken with a poison recovery, not an `expect`, and the reason is
 /// the one `Bridge::tally` gives: `peer_joined` runs while this lock is held, so
 /// an `expect` would turn a single panic under it into a front where *every
-/// later connection* dies at the same line — a share that answers resets and
+/// later connection* dies at the same line. A share that answers resets and
 /// says nothing about why. The map is a `grant id → PeerId` lookup with no
 /// invariant across entries; a recovered one is at worst missing a row, which
 /// costs a receipt line and no access.
@@ -566,7 +566,7 @@ async fn handle(
     let (head, rest) = match http_front::read_head(&mut sock).await {
         Ok(pair) => pair,
         // A head this share would not read is the same fact as a head the gate
-        // refuses, one step earlier — and it used to be the one thing a receipt
+        // refuses, one step earlier, and it used to be the one thing a receipt
         // could not mention. A 32 KB header block, or a TLS hello sent to the
         // plaintext front, left no trace at all.
         Err(http_front::NoHead::Refused) => {
@@ -583,13 +583,13 @@ async fn handle(
     // grant let this connection in.
     let mut grant = None;
     // Whether a credential was presented at all. `authorize` records its own
-    // refusals, so counting every `401` here logged a revoked ticket twice —
-    // once truthfully and once as "unknown" — in the one number the receipt
+    // refusals, so counting every `401` here logged a revoked ticket twice,
+    // once truthfully and once as "unknown", in the one number the receipt
     // sells as ingress evidence.
     let mut presented = false;
     // Kept, because two of the five refusals are not about the visitor at all.
-    // The gate answers every one of them with the same `401` on purpose — a
-    // prober must not learn whether a ticket is unknown, expired or revoked —
+    // The gate answers every one of them with the same `401` on purpose (a
+    // prober must not learn whether a ticket is unknown, expired or revoked)
     // but "the share has ended" and "this machine cannot read its own grant
     // table" are facts about *this side*, and a browser told to go and ask for
     // a new invite will come back with one that fails identically.
@@ -618,7 +618,7 @@ async fn handle(
         // The tunnel front is on the *sharer's* machine, in front of their own
         // box, reached over a public hostname with a cookie jar of its own.
         // Nothing else has written to that jar, so there is nothing to tell
-        // apart — see `gate::AppCookies`, which exists for the one case where
+        // apart. See `gate::AppCookies`, which exists for the one case where
         // that is not true.
         None,
     );
@@ -632,9 +632,9 @@ async fn handle(
             // the share having stopped.
             //
             // Keyed on the typed reason, not on the rendered status text. The
-            // block below already learned that lesson — "by its own typed
+            // block below already learned that lesson, "by its own typed
             // reason rather than by reading the status back out of the bytes we
-            // just rendered" — and these two were left testing
+            // just rendered", and these two were left testing
             // `starts_with("HTTP/1.1 401")`, which is the same recovery by a
             // different spelling. It is correct today and it is correct by
             // coincidence: `Refusal::status` and `refusal_response`'s format
@@ -673,7 +673,7 @@ async fn handle(
             // Every refusal that is not about a credential, by its own typed
             // reason rather than by reading the status back out of the bytes
             // we just rendered. The status test reached the `400`s and left
-            // both `403`s counted nowhere — so a session consisting entirely
+            // both `403`s counted nowhere, so a session consisting entirely
             // of foreign-origin requests carrying the share cookie, or of
             // service-worker registrations, reported no turned-away activity
             // at all, in the one lane whose job is to say who was turned away
@@ -697,7 +697,7 @@ async fn handle(
             // peer who opened the link and then read nothing used to leave the
             // receipt saying nobody came.
             if let Some(g) = &grant {
-                // Registered, and its bytes counted — but *not* counted as a
+                // Registered, and its bytes counted, but *not* counted as a
                 // connection. A redirect never reaches the box, and the
                 // receipt's connection count is documented as connections into
                 // it. Saying "somebody arrived" and "somebody reached the dev
@@ -767,14 +767,14 @@ async fn handle(
             Err(e) => {
                 // Answered rather than dropped. A closed socket renders in a
                 // browser as "the connection was reset", which tells the
-                // visitor nothing about a dev server that is simply not up —
+                // visitor nothing about a dev server that is simply not up,
                 // and the joiner's proxy has answered this case since it was
                 // written.
                 let body = unreachable_response();
                 bridge.peer_bytes(id, body.len() as u64, 0);
                 // Stamped, like every other path that answers a visitor. Left
                 // out, a peer whose most recent request received this `502`
-                // kept the activity time of some earlier one — and for a
+                // kept the activity time of some earlier one, and for a
                 // cookie-authenticated visitor whose every request failed this
                 // way, the receipt showed them as still connected at the end
                 // of the share.
@@ -806,8 +806,8 @@ async fn handle(
     let (to_box, to_peer) = counts.read();
     bridge.peer_bytes(id, to_peer, to_box);
     // Stamped when the connection *finishes*, not when it starts. The tunnel
-    // has no close to observe — a visitor is a grant, and their connections
-    // come and go — so this is the only thing that can bound how long they
+    // has no close to observe (a visitor is a grant, and their connections
+    // come and go) so this is the only thing that can bound how long they
     // were inside. Stamped at the start it turned "held for the whole six-hour
     // share" into "held for one second" for the archetypal case: a page whose
     // hot-reload socket stays open for ninety minutes. Underreporting how long
@@ -838,8 +838,8 @@ mod tests {
     #[test]
     fn only_a_quick_tunnel_host_is_accepted_as_one() {
         // `cloudflared`'s log format is not an interface, and its output is not
-        // all ours. A looser match would let a banner change — or anything that
-        // got into its logs — choose the URL we hand a person to open.
+        // all ours. A looser match would let a banner change, or anything that
+        // got into its logs, choose the URL we hand a person to open.
         for line in [
             "INF Visit https://developers.cloudflare.com/argo-tunnel for docs",
             "INF see https://example.test/",
@@ -869,9 +869,9 @@ mod tests {
     #[tokio::test]
     async fn what_the_box_receives_is_what_the_client_sent_except_for_the_rewrites() {
         // A differential check rather than a list of cases somebody thought of.
-        // The proxy is entitled to change exactly three things on the way in —
-        // strip the share cookie, replace the connection-lifetime headers, and
-        // refuse what it will not parse — and everything else about a request
+        // The proxy is entitled to change exactly three things on the way in
+        // (strip the share cookie, replace the connection-lifetime headers, and
+        // refuse what it will not parse) and everything else about a request
         // should reach the box as sent. Nothing verified that: the tests here
         // assert about particular headers, so a rewrite that quietly dropped,
         // reordered or re-cased an unrelated one would pass all of them.
@@ -938,7 +938,7 @@ mod tests {
             // Compared as a *sequence*, not as a set. Two `contains` loops
             // caught a dropped or re-cased header and nothing else: mutating
             // the rewrite to emit every header twice, or in reverse order,
-            // left both of them green. Duplication is the worse miss — a
+            // left both of them green. Duplication is the worse miss. A
             // rewrite that doubled a `Content-Length` is the smuggling shape
             // this crate spends most of its budget refusing.
             let owned = |l: &&str| {
@@ -1025,8 +1025,8 @@ mod tests {
     async fn what_the_visitor_receives_is_what_the_box_sent_except_for_the_rewrites() {
         // The other half of the differential. The proxy may replace the
         // connection-lifetime headers and drop a share cookie the box tried to
-        // set; everything else the app chose — its content type, its caching,
-        // its own cookies, its security headers — has to arrive, or the page
+        // set; everything else the app chose (its content type, its caching,
+        // its own cookies, its security headers) has to arrive, or the page
         // the visitor sees is not the page the app served.
         let port = header_rich_server();
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1163,7 +1163,7 @@ mod tests {
         assert!(receipt.contains(&format!("{N} connections")), "{receipt}");
         // Deliberately not asserting per-connection bytes: the receipt renders
         // one line per *peer* with aggregate counts, and all forty of these
-        // are one peer — so one connection reporting and thirty-nine
+        // are one peer, so one connection reporting and thirty-nine
         // reporting nothing produces an identical line. The first version of
         // this test claimed otherwise. What is checkable is that the aggregate
         // is too large to have come from one of them.
@@ -1217,14 +1217,14 @@ mod tests {
         // The response-smuggling shape from the box's side. If the front
         // forwarded everything the box wrote rather than exactly the length it
         // declared, the bytes after the body would be read by the visitor's
-        // client as a *second* response — one the app appended itself, on a
+        // client as a *second* response. One the app appended itself, on a
         // connection the visitor believes belongs to the page they asked for.
         // Nothing tested this: every framing test so far has been about the
         // head, and this is about what happens after it.
         //
         // Verified by construction, and the construction is worth recording:
-        // the length is clamped in *two* places — once for the bytes that
-        // arrived in the same read as the head, once for the relay loop — and
+        // the length is clamped in *two* places (once for the bytes that
+        // arrived in the same read as the head, once for the relay loop) and
         // removing either alone leaves the other covering it for this input.
         // Only removing both makes this test fail. So it pins the property
         // rather than one of the two implementations of it.
@@ -1252,7 +1252,7 @@ mod tests {
             !got.contains("OWNED"),
             "the box smuggled a second response past the declared length: {got}"
         );
-        // And the padding after it is gone too — the visitor gets the body and
+        // And the padding after it is gone too. The visitor gets the body and
         // then the connection ends, which is what `Content-Length: 10` means.
         assert!(!got.contains("xxxx"), "{got}");
 
@@ -1266,14 +1266,14 @@ mod tests {
     /// stalled relays open at once and then waits on the scheduler to hand a
     /// slot back. In isolation on macOS it passes every time (15 for 15). Run
     /// as part of the whole suite, where a couple of hundred other tests are
-    /// competing for the same machine, it failed about one run in twelve — and
+    /// competing for the same machine, it failed about one run in twelve, and
     /// still one in fifteen after the poll budget was tripled to fifteen
     /// seconds, which is long past the point where a longer wait is a fix
     /// rather than a way of not looking.
     ///
     /// So it stays on the platform where it is stable rather than becoming the
-    /// flaky test everybody learns to re-run. What it covers — `over_capacity`,
-    /// the `503`, and the slot coming back — is platform-independent logic that
+    /// flaky test everybody learns to re-run. What it covers (`over_capacity`,
+    /// the `503`, and the slot coming back) is platform-independent logic that
     /// Linux CI checks on every push. The gap is honest and it is narrow: no
     /// *behaviour* is unverified on macOS, only this timing-sensitive way of
     /// verifying it.
@@ -1282,7 +1282,7 @@ mod tests {
     async fn a_share_at_its_ceiling_says_so_and_keeps_the_ones_it_has() {
         // Nothing tested this. `over_capacity` is the one counter that says a
         // share was hammered, and every test that exercised the sentence built
-        // the `Summary` by hand — so the increment, the `503`, and the release
+        // the `Summary` by hand, so the increment, the `503`, and the release
         // of a slot afterwards were all unverified.
         let port = stalling_server();
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1329,7 +1329,7 @@ mod tests {
         .await;
         assert!(over.starts_with("HTTP/1.1 503 "), "{over}");
 
-        // And it is recorded as load, not as a credential problem — the two
+        // And it is recorded as load, not as a credential problem. The two
         // mean opposite things about what happened to this share.
         bridge.write_receipt();
         let receipt = receipt_of(dir.path());
@@ -1364,7 +1364,7 @@ mod tests {
     /// `cloudflared` is not needed and deliberately not used: the thing under
     /// test is "when that pid dies, kill this one", and `/bin/sleep` states it
     /// without a network, a Cloudflare account, or a binary this repo does not
-    /// ship. The Linux arm cannot be tested this way at all — `PR_SET_PDEATHSIG`
+    /// ship. The Linux arm cannot be tested this way at all: `PR_SET_PDEATHSIG`
     /// is set by the child on itself, so there is nothing to point at a pid of
     /// our choosing.
     #[cfg(target_os = "macos")]
@@ -1378,11 +1378,11 @@ mod tests {
                 .expect("spawn a stand-in process")
         }
 
-        /// Whether the process has exited — asked through `try_wait`, not
+        /// Whether the process has exited. Asked through `try_wait`, not
         /// through `kill(pid, 0)`.
         ///
         /// That distinction cost an hour. These stand-ins are children of the
-        /// **test** process, so a killed one becomes a zombie until it is
+        /// *test* process, so a killed one becomes a zombie until it is
         /// reaped, and a zombie answers `kill(pid, 0)` with success. The first
         /// version of these tests asked that way and reported that the watchdog
         /// had failed to kill anything, while it had in fact killed it every
@@ -1448,7 +1448,7 @@ mod tests {
             let _ = target.wait();
             std::thread::sleep(Duration::from_millis(300));
 
-            // Now the parent goes. Nothing should be signalled — and the proof
+            // Now the parent goes. Nothing should be signalled, and the proof
             // available to a test is that the watchdog has already exited, so
             // there is nothing left to signal anybody.
             unsafe { libc::kill(ppid as libc::pid_t, libc::SIGKILL) };
@@ -1491,9 +1491,9 @@ mod tests {
     #[test]
     fn every_no_url_message_repeats_what_cloudflared_said() {
         // The reason `cloudflared` prints is the whole diagnosis, and only one
-        // of the three ways this can fail was repeating it. The timeout arm —
-        // the one a blocked or throttled network reaches, which is the common
-        // case — said "quick tunnels need outbound network access" and threw
+        // of the three ways this can fail was repeating it. The timeout arm
+        // (the one a blocked or throttled network reaches, which is the common
+        // case) said "quick tunnels need outbound network access" and threw
         // the actual line away.
         let said = Some("failed to create tunnel: 403 from api.trycloudflare.com");
         for how in [NoUrl::Exited, NoUrl::WentQuiet, NoUrl::TimedOut] {
@@ -1541,12 +1541,12 @@ mod tests {
     // `cloudflared` is a plain reverse proxy into this listener, so everything
     // between it and the dev server can be tested by connecting to the listener
     // directly. That covers the gate, the grant table, the dialer and the byte
-    // pump — every part of the tunnel path except Cloudflare itself.
+    // pump. Every part of the tunnel path except Cloudflare itself.
 
     use crate::session::{self, ShareSession};
 
     /// A stand-in for the dev server in a box. Answers one canned response per
-    /// connection. Never joined — see the note in `p2p`'s equivalent.
+    /// connection. Never joined. See the note in `p2p`'s equivalent.
     fn fake_dev_server() -> u16 {
         use std::io::{Read, Write};
         let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -1620,7 +1620,7 @@ mod tests {
     /// is what most tests should use. A `let _ =` here hid a real defect for a
     /// whole round: closing a socket with unread request bytes queued makes the
     /// kernel send an RST, which tells the peer's stack to throw away its
-    /// receive buffer — so the response *was* written, `out` kept the bytes
+    /// receive buffer, so the response *was* written, `out` kept the bytes
     /// that arrived before the error, and the assertion passed in exactly the
     /// scenario where a browser shows "connection reset".
     async fn request_raw(
@@ -1641,7 +1641,7 @@ mod tests {
         request_raw(addr, head).await.0
     }
 
-    /// Like `request`, and insists the connection ended cleanly — no reset.
+    /// Like `request`, and insists the connection ended cleanly, no reset.
     async fn request_strict(addr: std::net::SocketAddr, head: &str) -> String {
         let (body, read) = request_raw(addr, head).await;
         read.expect("the connection was reset rather than closed");
@@ -1683,7 +1683,7 @@ mod tests {
             "the invite request reached the box"
         );
 
-        // With the cookie, it reaches the dev server — and the dev server never
+        // With the cookie, it reaches the dev server, and the dev server never
         // sees the credential that admitted the visitor.
         let served = request(
             addr,
@@ -1787,7 +1787,7 @@ mod tests {
     ///
     /// Quiescence was defined by the sixty-four `Bridge::admit` permits, and a
     /// handler paused in `read_head`, in parsing, or in authorization holds
-    /// none of them — so `quiesce` acquired all sixty-four immediately, marked
+    /// none of them, so `quiesce` acquired all sixty-four immediately, marked
     /// the receipt settled, and returned while such a handler was still live.
     /// On Ctrl-C or a transport failure the record is merely `winding_up` and
     /// its grants are still there, so the handler could then resume,
@@ -1842,7 +1842,7 @@ mod tests {
     /// both `403`s counted nowhere. Those two are the gate refusing a
     /// foreign-origin browser request that arrived with the share cookie
     /// attached, and refusing a service worker registration that would keep
-    /// control of the joiner's loopback origin after the share ended — at
+    /// control of the joiner's loopback origin after the share ended. At
     /// least as relevant to an ingress receipt as an unparsable head. A
     /// session made entirely of them reported no turned-away activity at all,
     /// under a heading that describes itself as the account of connections
@@ -1920,7 +1920,7 @@ mod tests {
     /// gate, and the head reader refuses several shapes before the gate ever
     /// sees them: a header block past `MAX_HEAD`, bytes that are not UTF-8, a
     /// head the peer stops feeding. Every one of them was dropped with no
-    /// response and no line anywhere — so the largest smuggling-shaped probe a
+    /// response and no line anywhere, so the largest smuggling-shaped probe a
     /// public share can be sent was the one its receipt could not mention.
     ///
     /// And the other half, which is why this is two answers and not one: a peer
@@ -1981,7 +1981,7 @@ mod tests {
         serving.abort();
     }
 
-    /// A dev server that does **not** honour `Connection: close`: it answers
+    /// A dev server that does *not* honour `Connection: close`: it answers
     /// keep-alive and stays open. Records every request head it sees.
     fn stubborn_keepalive_server() -> (u16, Arc<Mutex<Vec<String>>>) {
         use std::io::{Read, Write};
@@ -2045,7 +2045,7 @@ mod tests {
     /// `Transfer-Encoding: chunked` was classified as "until the box closes",
     /// and this file already treats a server that ignores `Connection: close`
     /// as a supported case. Against one, the browser had a complete response
-    /// in hand while the relay waited out `RESPONSE_IDLE` — five minutes with
+    /// in hand while the relay waited out `RESPONSE_IDLE`. Five minutes with
     /// the `Bridge::admit` permit still held. Sixty-four requests and the share
     /// answers `busy` for that whole interval; a steady trickle keeps it there.
     /// The existing stubborn-keepalive coverage used a `Content-Length`, whose
@@ -2065,7 +2065,7 @@ mod tests {
         // The assertion is the *timing*, not just the bytes. Without the
         // terminator scan the relay waits for a close this server will never
         // send, so the visitor's connection stays open until `RESPONSE_IDLE`
-        // five minutes later — the test client's own five-second read timeout
+        // five minutes later. The test client's own five-second read timeout
         // is what would end it, which is why this measures rather than trusts.
         let started = std::time::Instant::now();
         let got = request_strict(addr, &req).await;
@@ -2094,7 +2094,7 @@ mod tests {
         // The control this feature rests on, tested against the case that
         // breaks the polite version of it: a dev server that ignores
         // `Connection: close`. The box runs agent-written code, so asking it to
-        // hang up is a request, not a guarantee — the proxy has to stop reading
+        // hang up is a request, not a guarantee. The proxy has to stop reading
         // the client itself.
         let (port, seen) = stubborn_keepalive_server();
         let dir = tempfile::tempdir().expect("tempdir");
@@ -2137,7 +2137,7 @@ mod tests {
         // The box may ignore `Connection: close`, so the proxy cannot wait for
         // it to hang up. If nobody watched the client either, a quiet
         // connection would hold one of the share's slots until the grant
-        // expired — up to a day.
+        // expired. Up to a day.
         let (port, _seen) = stubborn_keepalive_server();
         let dir = tempfile::tempdir().expect("tempdir");
         let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
@@ -2163,7 +2163,7 @@ mod tests {
             drop(c);
         }
 
-        // The slot has to come back. All 64 of them, in fact — if the
+        // The slot has to come back. All 64 of them, in fact, if the
         // connection were still holding one, only 63 would be free.
         //
         // Polled rather than slept, with a budget far past what this ever
@@ -2194,7 +2194,7 @@ mod tests {
         // The liveness bug this closes: the proxy stops reading the client
         // after one request, so a response telling the client "keep this
         // connection and send me another" produced a connection the client
-        // believed reusable and that answered nothing — an intermittent hang,
+        // believed reusable and that answered nothing. An intermittent hang,
         // and a 502 for every POST a client will not retry.
         let (port, _seen) = stubborn_keepalive_server();
         let dir = tempfile::tempdir().expect("tempdir");
@@ -2300,7 +2300,7 @@ mod tests {
         serving.abort();
     }
 
-    /// A dev server that answers before reading the body and hangs up — a size
+    /// A dev server that answers before reading the body and hangs up. A size
     /// limit, or auth that rejects before parsing. The commonest reason a box
     /// closes its read side mid-request.
     fn early_rejecting_server() -> u16 {
@@ -2364,7 +2364,7 @@ mod tests {
         serving.abort();
     }
 
-    /// The same rejection, from a server that does **not** hang up.
+    /// The same rejection, from a server that does *not* hang up.
     ///
     /// The existing coverage uses a server that closes, which is the one shape
     /// the old code could notice: a failed write into the box was the signal.
@@ -2405,7 +2405,7 @@ mod tests {
         // what a paused upload looks like. The box has already answered `413`.
         //
         // The body was forwarded to completion before anything read the box, so
-        // the only thing that ended this was `BODY_IDLE` thirty seconds later —
+        // the only thing that ended this was `BODY_IDLE` thirty seconds later,
         // and it ended it by *replacing* the box's answer with h5i's own `408`.
         // The visitor was told their upload timed out for a request the app had
         // already refused, and the app's reason never reached them.
@@ -2638,7 +2638,7 @@ mod tests {
     #[tokio::test]
     async fn a_refusal_reaches_a_visitor_who_was_still_uploading() {
         // The refusal paths are where a peer is *most* likely to still be
-        // sending — it declared a body and we refused part-way through it — so
+        // sending, it declared a body and we refused part-way through it, so
         // they are where a reset would most reliably destroy the answer. Only
         // two of the seven close paths had the drain when this was written.
         let port = fake_dev_server();
@@ -2653,8 +2653,8 @@ mod tests {
         // Genuinely still uploading. The first version of this test sent its
         // whole (short) body in one write, so `read_head` had already consumed
         // every byte of it into userspace and the peer had stopped: the
-        // precondition it was written for — bytes queued in the kernel when the
-        // socket closes — never existed, and it passed with the drain deleted.
+        // precondition it was written for, bytes queued in the kernel when the
+        // socket closes, never existed, and it passed with the drain deleted.
         let anon = refused_mid_upload(
             addr,
             "POST / HTTP/1.1\r\nHost: t\r\nContent-Length: 900000\r\n\r\n",
@@ -2680,7 +2680,7 @@ mod tests {
     /// Send a head, then keep pushing body bytes until the far side answers.
     ///
     /// The point is that the peer is *still sending* when the refusal is
-    /// written and when the socket closes — which is the state a drain exists
+    /// written and when the socket closes, which is the state a drain exists
     /// for, and which a single `write_all` of a short body does not produce.
     async fn refused_mid_upload(addr: std::net::SocketAddr, head: &str) -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -2731,13 +2731,13 @@ mod tests {
     async fn a_big_response_reaches_a_client_that_pipelined_another_request() {
         // Two things at once, and both were broken. The share serves exactly
         // one request per connection, so a keep-alive client's follow-up sits
-        // unread — and the relay loop, which reads and discards whatever the
+        // unread, and the relay loop, which reads and discards whatever the
         // peer says, has to keep delivering the response it is in the middle
         // of rather than treating the peer's traffic as a reason to stop.
         //
         // Written first as a test for the linger drain, asserting that the
         // close did not reset the connection. It passed with that drain
-        // deleted, so the claim was wrong and the name went with it — see
+        // deleted, so the claim was wrong and the name went with it. See
         // `finish_with`. What it does discriminate is the megabytes.
         const BODY: usize = 8 * 1024 * 1024;
         let port = big_server(BODY);
@@ -2800,7 +2800,7 @@ mod tests {
     #[tokio::test]
     async fn an_upgrade_the_box_never_answers_gets_a_readable_refusal() {
         // This returned with nothing written at all, so the visitor's WebSocket
-        // failed with a bare close and no status — which a browser reports as
+        // failed with a bare close and no status, which a browser reports as
         // "closed before receiving a handshake response", a sentence that says
         // nothing about where the fault is. Every other silent box gets a 502.
         let port = silent_server();
@@ -2829,7 +2829,7 @@ mod tests {
     async fn a_client_that_half_closes_still_gets_its_whole_response() {
         // Sending a request and then shutting down the write side is legal
         // HTTP/1.1 and is what anything built out of one write and one read
-        // does — `printf ... | nc`, a CI scraper, `curl -T-`. That EOF was read
+        // does: `printf ... | nc`, a CI scraper, `curl -T-`. That EOF was read
         // as "the visitor left", so the relay stopped on the spot and those
         // clients got the first read of a download and a clean close, with
         // nothing recorded anywhere.
@@ -2902,7 +2902,7 @@ mod tests {
     }
 
     /// Promises a hundred bytes, sends ten, and then holds the connection open
-    /// without ever finishing — so only the *visitor* can end it.
+    /// without ever finishing, so only the *visitor* can end it.
     fn stalling_server() -> u16 {
         use std::io::{Read, Write};
         let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");

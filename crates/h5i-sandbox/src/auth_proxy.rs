@@ -1,30 +1,30 @@
-//! Host-side **credential-injecting** egress proxy (see
+//! Host-side *credential-injecting* egress proxy (see
 //! `docs/credential-proxy-design.md`): what lets an agent box authenticate to
 //! its provider API without the long-lived token ever entering the box.
 //!
 //! The [`crate::container`] egress proxy tunnels TLS and so can never inject an
 //! `Authorization` header. This one terminates the box-to-proxy hop in cleartext
 //! on host loopback and re-originates a fresh TLS request upstream. The agent
-//! gets a base-URL override and a **dummy** token; the genuine one lives only in
+//! gets a base-URL override and a *dummy* token; the genuine one lives only in
 //! this process's memory.
 //!
 //! All fail-closed:
 //!
-//! - **Token never in the box.** The real credential is resolved from h5i's own
+//! - Token never in the box. The real credential is resolved from h5i's own
 //!   host environment and handed to the upstream request, never an env var,
 //!   mount or argv in the box.
-//! - **No SSRF.** The origin is pinned to [`RuntimeProxy::upstream_host`] and the
+//! - No SSRF. The origin is pinned to [`RuntimeProxy::upstream_host`] and the
 //!   box's `Host` is discarded. Ignoring the authority is not sufficient: the
 //!   target is appended to that origin, and one not beginning with `/` extends
 //!   the *authority* rather than the path, so `@evil.example/v1` makes the
 //!   pinned name mere userinfo. The target must be origin-form
 //!   ([`is_origin_form`]), and the assembled URL is re-parsed and required to
 //!   resolve to the pinned origin before a byte is sent.
-//! - **DNS-rebinding resistant.** The host is resolved and pinned once at spawn.
-//! - **Loopback plus shared secret.** Other host processes can reach loopback
+//! - DNS-rebinding resistant. The host is resolved and pinned once at spawn.
+//! - Loopback plus shared secret. Other host processes can reach loopback
 //!   too, so the credential is injected only for a request presenting the
 //!   per-run dummy token.
-//! - **Never logs the token or bodies.** [`Credential`]'s `Debug` is redacted.
+//! - Never logs the token or bodies. [`Credential`]'s `Debug` is redacted.
 //!
 //! The forwarder uses `reqwest` (blocking + rustls) so TLS, chunked decoding and
 //! SSE come from a vetted client rather than hand-rolled.
@@ -41,9 +41,9 @@ use crate::sandbox_policy::AgentRuntime;
 /// The wire form a credential is injected as.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CredHeader {
-    /// `x-api-key: <value>` — Anthropic Console API keys.
+    /// `x-api-key: <value>`: Anthropic Console API keys.
     XApiKey,
-    /// `Authorization: Bearer <value>` — OAuth tokens (Anthropic + OpenAI).
+    /// `Authorization: Bearer <value>`: OAuth tokens (Anthropic + OpenAI).
     Bearer,
 }
 
@@ -93,11 +93,11 @@ pub fn runtime_proxy(rt: AgentRuntime) -> RuntimeProxy {
 }
 
 /// A non-empty, non-whitespace host env var, or `None`.
-/// Read a credential from the host environment, **trimmed**.
+/// Read a credential from the host environment, *trimmed*.
 ///
 /// Trimming is not cosmetic: `export TOKEN="$(cat ~/key)"` carries a trailing
-/// newline, `HeaderValue` rejects it, and `send()` then fails for every request
-/// — surfacing as a permanent 502 whose cause is deliberately not printed (the
+/// newline, `HeaderValue` rejects it, and `send()` then fails for every request.
+/// Surfacing as a permanent 502 whose cause is deliberately not printed (the
 /// right call for an upstream error, wrong for a local one). The sibling
 /// `engage_grant_at` already trimmed; this path did not.
 fn nonempty_env(key: &str) -> Option<String> {
@@ -110,7 +110,7 @@ fn nonempty_env(key: &str) -> Option<String> {
 /// Resolve the genuine upstream credential from *h5i's own* host environment,
 /// in the same precedence the runtime's own CLI uses. `None` (the common case
 /// today) means no host-side credential is available, so the caller leaves the
-/// box on its existing (in-box login) path rather than engaging the proxy — we
+/// box on its existing (in-box login) path rather than engaging the proxy. We
 /// never *downgrade* an active protection, but we also never break a working
 /// interactive-login flow that has no host token to broker.
 pub fn resolve_credential(rt: AgentRuntime) -> Option<Credential> {
@@ -156,7 +156,7 @@ impl Drop for AuthProxyHandle {
 /// Largest request body the proxy will buffer, in bytes.
 ///
 /// `Content-Length` is attacker-controlled (the box sends it), so the buffer
-/// must be sized from a constant rather than from the header — allocating
+/// must be sized from a constant rather than from the header. Allocating
 /// `Content-Length` bytes on trust lets a prompt-injected box exhaust *host*
 /// memory with a single request. 32 MiB is comfortably above the largest real
 /// request these APIs accept (a message with inline images).
@@ -173,7 +173,7 @@ const MAX_IN_FLIGHT: usize = 64;
 const MAX_CONSECUTIVE_ACCEPT_ERRORS: usize = 256;
 
 /// Holds one of the [`MAX_IN_FLIGHT`] concurrent-forward slots and releases it
-/// on drop — including when the worker unwinds.
+/// on drop, including when the worker unwinds.
 ///
 /// The count is the only thing standing between the box and an unbounded number
 /// of host threads, so releasing it has to be unconditional. A bare
@@ -194,7 +194,7 @@ struct ProxyState {
     /// `https://api.anthropic.com` in production, an `http://127.0.0.1:<port>`
     /// origin in tests. Kept as a `Url` rather than a string because it is the
     /// reference every outgoing request is checked against (see
-    /// [`handle_client`]) — a comparison a string cannot make.
+    /// [`handle_client`]). A comparison a string cannot make.
     upstream: reqwest::Url,
     /// The single upstream host, forced as the outgoing `Host` header.
     upstream_host: String,
@@ -213,9 +213,9 @@ struct ProxyState {
 /// forwards to the runtime's HTTPS API host, DNS-pinned.
 /// Resolve a profile-declared grant into a live proxy.
 ///
-/// The credential is read from `credential_env` **on the host** and never
+/// The credential is read from `credential_env` on the host and never
 /// leaves it: the box is handed the proxy's origin and a per-run token, and the
-/// proxy adds the real header on the way out. Fail-closed — a grant whose
+/// proxy adds the real header on the way out. Fail-closed. A grant whose
 /// environment variable is unset is an error, not a box that silently talks to
 /// the upstream unauthenticated.
 pub fn engage_grant(
@@ -274,8 +274,8 @@ pub fn engage_grant_at(
 
 /// A live proxy for one profile-declared grant.
 pub struct GrantEngagement {
-    /// Hold for the box's lifetime; dropping it shuts the proxy — and the only
-    /// in-memory copy of the credential — down.
+    /// Hold for the box's lifetime; dropping it shuts the proxy, and the only
+    /// in-memory copy of the credential, down.
     pub handle: AuthProxyHandle,
     /// Box env additions: the base-URL override and `NO_PROXY`.
     pub box_env: Vec<(String, String)>,
@@ -343,7 +343,7 @@ fn spawn_to_upstream(
         // per-connection and per-host conditions that say nothing about the
         // listener: `ECONNABORTED` when a client RSTs between SYN and accept,
         // `EMFILE`/`ENFILE` under fd pressure. Treating any of them as fatal
-        // killed the accept loop for good — and with it the box's only
+        // killed the accept loop for good, and with it the box's only
         // authenticated egress for the rest of its life, since all it holds is
         // the dummy. Both are triggerable by any local process (connect, then
         // reset), which is precisely the actor the token gate exists for, so
@@ -359,7 +359,7 @@ fn spawn_to_upstream(
                         break;
                     }
                     // The accepted socket may arrive non-blocking (see
-                    // `handle_client`, which is where that is corrected — at the
+                    // `handle_client`, which is where that is corrected: at the
                     // point the blocking reads are actually made).
                     let state = state.clone();
                     // Bound concurrent forwards: the box is a single client, and
@@ -384,15 +384,15 @@ fn spawn_to_upstream(
                     }
                     // The release is a guard, not a statement after the call.
                     // Decrementing at the end of the closure leaks the slot on
-                    // any path that does not reach it — a panic in
+                    // any path that does not reach it (a panic in
                     // `handle_client`, or a `spawn` that never runs the closure
-                    // at all — and a leaked slot is permanent: after
+                    // at all) and a leaked slot is permanent: after
                     // MAX_IN_FLIGHT of them the proxy answers 503 forever and
                     // the box loses authenticated egress for good.
                     let slot = InFlightSlot(state.clone());
                     // `Builder::spawn`, not `thread::spawn`: the latter
                     // *panics* when the OS refuses a thread, and that panic is
-                    // in the accept loop — so the one condition `MAX_IN_FLIGHT`
+                    // in the accept loop, so the one condition `MAX_IN_FLIGHT`
                     // exists to bound would end the loop anyway, and the box
                     // would lose authenticated egress for good. The slot goes
                     // with the closure that was never run.
@@ -430,7 +430,7 @@ pub const LOOPBACK_HOST: &str = "127.0.0.1";
 /// Box env additions that point the agent at the proxy: the base-URL override,
 /// the per-run dummy token, and a `NO_PROXY` that excludes the proxy's own
 /// address so the base URL is dialed directly (not re-wrapped through the egress
-/// CONNECT proxy). All non-secret — safe to pass by value.
+/// CONNECT proxy). All non-secret. Safe to pass by value.
 pub fn box_env(rt: AgentRuntime, port: u16, client_token: &str) -> Vec<(String, String)> {
     box_env_at(rt, SLIRP_GATEWAY_HOST, port, client_token)
 }
@@ -467,7 +467,7 @@ struct ParsedReq {
     content_length: usize,
     /// The client framed its body with `Transfer-Encoding` rather than
     /// `Content-Length`. This proxy reads a `Content-Length`-framed body only,
-    /// so such a request must be refused rather than forwarded — see
+    /// so such a request must be refused rather than forwarded. See
     /// [`handle_client`].
     chunked: bool,
 }
@@ -493,11 +493,11 @@ fn is_stripped_request_header(name: &str) -> bool {
     )
 }
 
-/// Is `target` a safe **origin-form** request target (`/v1/messages?beta=1`)?
+/// Is `target` a safe *origin-form* request target (`/v1/messages?beta=1`)?
 ///
 /// This is the SSRF gate, and it is load-bearing rather than cosmetic. The
 /// outgoing URL is the pinned origin with this string appended, and a URL's
-/// authority runs until the first `/` — so a target that does not start with
+/// authority runs until the first `/`, so a target that does not start with
 /// `/` can extend the *authority* instead of the path. The sharp case is
 /// userinfo: `@evil.example/v1/messages` turns
 /// `https://api.anthropic.com` + target into
@@ -505,7 +505,7 @@ fn is_stripped_request_header(name: &str) -> bool {
 /// `evil.example` and whose userinfo is the name we thought we had pinned. The
 /// proxy would then open TLS to the attacker (SNI and certificate validation
 /// following the *attacker's* name, so any ordinary certificate satisfies it)
-/// and attach the real credential — the exact exfiltration the credential proxy
+/// and attach the real credential. The exact exfiltration the credential proxy
 /// exists to prevent.
 ///
 /// Origin-form is also all these SDKs ever send, so nothing legitimate is lost.
@@ -597,7 +597,7 @@ fn read_head(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
     // Bounded overall, not just per read(). The socket's read timeout bounds a
     // single syscall, so a client dribbling one header byte just under that
     // interval held its in-flight slot indefinitely. Sixty-four such clients
-    // — any local process, which is the actor the token gate exists for —
+    // (any local process, which is the actor the token gate exists for)
     // exhausted MAX_IN_FLIGHT and the agent's own API call got a 503 for the
     // life of the box, with no fallback because its only credential is the
     // dummy.
@@ -634,7 +634,7 @@ enum Drain {
     /// on a worker thread, where the sole thing held is that worker's own
     /// in-flight slot.
     Waiting,
-    /// Take what the kernel has already buffered and return — never park on the
+    /// Take what the kernel has already buffered and return. Never park on the
     /// peer. For the one refusal written *on the accept loop*.
     Buffered,
 }
@@ -642,12 +642,12 @@ enum Drain {
 /// Answer with a bare status and close.
 ///
 /// Every refusal path in this module lands here, and each one refuses *before*
-/// the request body has been read — so the socket still holds bytes the peer
+/// the request body has been read, so the socket still holds bytes the peer
 /// sent. Closing on unread data makes the kernel send an RST, which discards
 /// the response we just wrote: the client sees `ECONNRESET`, not the `413`/`411`
 /// that says what it did wrong. A short bounded drain lets the status actually
-/// arrive. Bounded in both bytes and time because the data is attacker-supplied
-/// — the point is to be polite, not to read whatever the peer feels like
+/// arrive. Bounded in both bytes and time because the data is attacker-supplied.
+/// The point is to be polite, not to read whatever the peer feels like
 /// sending.
 fn write_status(client: &mut TcpStream, code: u16, reason: &str) {
     write_status_draining(client, code, reason, Drain::Waiting);
@@ -661,7 +661,7 @@ fn write_status(client: &mut TcpStream, code: u16, reason: &str) {
 /// accept loop for the whole window, once per excess connection. The loop is
 /// the proxy's only way to pick up the connections that would *free* the slots
 /// the 503 is about, so waiting on the box's slowest peer to answer "too many
-/// requests" is exactly backwards — and losing the accept loop is the outcome
+/// requests" is exactly backwards, and losing the accept loop is the outcome
 /// [`MAX_IN_FLIGHT`] and the accept-error retry above both exist to prevent.
 /// That path drains non-blocking instead: the request head is already in the
 /// receive buffer in the ordinary case, so the refusal still lands rather than
@@ -679,7 +679,7 @@ fn write_status_draining(client: &mut TcpStream, code: u16, reason: &str, drain:
             let _ = client.set_read_timeout(Some(DRAIN_TIMEOUT));
         }
         // `WouldBlock` the moment the socket is empty, which the loop below
-        // treats as end-of-drain — so no read can outlast what is already here.
+        // treats as end-of-drain, so no read can outlast what is already here.
         Drain::Buffered => {
             let _ = client.set_nonblocking(true);
         }
@@ -718,7 +718,7 @@ fn is_stripped_response_header(name: &str) -> bool {
 fn handle_client(mut client: TcpStream, state: &ProxyState) -> std::io::Result<()> {
     // `read_head` and the `read_exact` below are blocking reads, so say so
     // rather than assume it. The listener is non-blocking (the accept loop polls
-    // `stop`) and on macOS — BSD `accept`, where Linux uses `accept4` — the
+    // `stop`) and on macOS (BSD `accept`, where Linux uses `accept4`) the
     // accepted socket *inherits* that flag. Left inherited, any read that has to
     // wait for the next packet fails with `WouldBlock`, and a well-formed
     // request is answered `400`: a request body only has to exceed one segment
@@ -758,8 +758,8 @@ fn handle_client(mut client: TcpStream, state: &ProxyState) -> std::io::Result<(
 
     // Only `Content-Length` framing is read below, and `transfer-encoding` is
     // stripped on the way out. A chunked request therefore had its body silently
-    // dropped and was re-originated upstream — with the real credential attached
-    // — as a bodyless request. Refuse instead: a credential-injecting proxy must
+    // dropped and was re-originated upstream, with the real credential attached,
+    // as a bodyless request. Refuse instead: a credential-injecting proxy must
     // never send a request that is not the one the client asked for, and the
     // caller gets a status it can act on rather than an upstream 400.
     if req.chunked {
@@ -776,7 +776,7 @@ fn handle_client(mut client: TcpStream, state: &ProxyState) -> std::io::Result<(
 
     // Build the upstream request against the PINNED origin, injecting the
     // genuine credential. The target was already checked to be origin-form; the
-    // parse below is the second, independent check — whatever the concatenation
+    // parse below is the second, independent check. Whatever the concatenation
     // produced, it must still resolve to exactly the origin we pinned at spawn,
     // with no userinfo. Two cheap checks guard the one irreversible act this
     // process performs: handing the real credential to whoever answers.
@@ -816,7 +816,7 @@ fn handle_client(mut client: TcpStream, state: &ProxyState) -> std::io::Result<(
     let mut resp = match builder.send() {
         Ok(r) => r,
         Err(_) => {
-            // Never surface the upstream error text — it can echo request detail.
+            // Never surface the upstream error text. It can echo request detail.
             write_status(&mut client, 502, "Bad Gateway");
             return Ok(());
         }
@@ -889,7 +889,7 @@ pub struct Engagement {
     /// from its per-env HOME copy. Read by `supervisor::run_supervised` on the
     /// kernel-tier targets (Linux x86_64/aarch64, macOS); the container tier
     /// ignores it. On any other target that reader is `cfg`-compiled out, so the
-    /// field is legitimately unread — allow it there (the `cfg` mirrors the
+    /// field is legitimately unread. Allow it there (the `cfg` mirrors the
     /// reader's gate).
     #[cfg_attr(
         not(any(
@@ -902,7 +902,7 @@ pub struct Engagement {
 }
 
 /// Decide + spawn the credential-injecting proxy for a run. Shared by both the
-/// container and supervised backends (their only difference is `tier_ok` —
+/// container and supervised backends (their only difference is `tier_ok`:
 /// whether the box can reach the host proxy on this tier).
 ///
 /// `Ok(None)` means the proxy does not apply: opted out, an unsupported tier, a
@@ -919,7 +919,7 @@ pub fn engage(profile_name: &str, tier_ok: bool) -> Result<Option<Engagement>, H
 }
 
 /// [`engage`] for a backend whose box reaches the host proxy at `host` rather
-/// than the slirp gateway — the macOS Seatbelt tiers, where the box shares the
+/// than the slirp gateway. The macOS Seatbelt tiers, where the box shares the
 /// host's loopback instead of living in its own network namespace.
 pub fn engage_at(
     profile_name: &str,
@@ -1187,7 +1187,7 @@ mod tests {
     ///
     /// The accept loop polls a non-blocking listener, and on macOS (BSD
     /// `accept`; Linux's `accept4` differs) the accepted socket inherits that
-    /// flag — so `read_head`/`read_exact` returned `WouldBlock` the moment a
+    /// flag, so `read_head`/`read_exact` returned `WouldBlock` the moment a
     /// request spanned more than one read, and a well-formed call was answered
     /// `400`. Every real prompt is larger than one segment, and this proxy is
     /// the *primary* egress path on the macOS supervised tier.
@@ -1276,7 +1276,7 @@ mod tests {
     /// A chunked request must be refused, not silently re-originated bodyless
     /// with the real credential attached. Only `Content-Length` framing is read,
     /// and `transfer-encoding` is stripped on the way out, so forwarding one
-    /// sent upstream a request the client never made — authenticated with the
+    /// sent upstream a request the client never made. Authenticated with the
     /// genuine token.
     #[test]
     fn a_chunked_request_is_refused_and_never_reaches_upstream() {
@@ -1313,7 +1313,7 @@ mod tests {
     /// The over-capacity `503` is written on the accept thread, so its drain
     /// must never wait on the peer. A box that holds the [`MAX_IN_FLIGHT`] slots
     /// and then connects without ever closing would otherwise park the accept
-    /// loop for the whole drain window on every excess connection — and that
+    /// loop for the whole drain window on every excess connection, and that
     /// loop is the only way the proxy picks up the connections that free those
     /// slots, so the refusal would cost the box the authenticated egress the
     /// bound exists to protect.
@@ -1366,7 +1366,7 @@ mod tests {
     }
 
     /// The refusal message must name the variable [`opted_out`] actually reads.
-    /// It named `H5I_NO_AUTH_PROXY`, which nothing in the tree consults — so the
+    /// It named `H5I_NO_AUTH_PROXY`, which nothing in the tree consults, so the
     /// one escape hatch offered by a fail-closed error did nothing.
     #[test]
     fn the_opt_out_named_in_the_refusal_is_the_one_that_works() {
@@ -1482,7 +1482,7 @@ mod tests {
 
     /// SSRF + injection + response-header hardening: the proxy must ignore the
     /// client's `Host`, force the pinned upstream host, preserve the path (query
-    /// included), inject an **x-api-key** credential, and strip upstream framing
+    /// included), inject an *x-api-key* credential, and strip upstream framing
     /// headers on the way back.
     #[test]
     fn forces_upstream_host_injects_api_key_and_strips_framing() {
@@ -1542,7 +1542,7 @@ mod tests {
 
     /// The SSRF gate, as a table. A URL's authority ends at the first `/`, so a
     /// target that does not start with one can rewrite the host it is appended
-    /// to — `@evil/…` most sharply, via userinfo.
+    /// to: `@evil/…` most sharply, via userinfo.
     #[test]
     fn only_origin_form_targets_are_accepted() {
         for good in ["/", "/v1/messages", "/v1/models?limit=5", "/a/b?q=x&y=z#frag"] {
@@ -1568,7 +1568,7 @@ mod tests {
     /// per-run token must not be able to aim the *real* credential at a host of
     /// its choosing. The rogue upstream here stands in for an attacker-controlled
     /// domain (which, having an ordinary valid certificate for its own name,
-    /// would satisfy TLS verification — the pinned name is not what gets
+    /// would satisfy TLS verification: the pinned name is not what gets
     /// checked once the URL's host has moved).
     #[test]
     fn a_userinfo_target_cannot_redirect_the_credential() {
@@ -1649,7 +1649,7 @@ mod tests {
     fn malformed_request_after_auth_is_rejected() {
         let cred = Credential { header: CredHeader::Bearer, value: "R".into() };
         let handle = spawn_to_upstream(
-            "http://127.0.0.1:1".into(), // never contacted — request is rejected first
+            "http://127.0.0.1:1".into(), // never contacted; request is rejected first
             "pinned.example".into(),
             cred,
             "dummy-tok".into(),

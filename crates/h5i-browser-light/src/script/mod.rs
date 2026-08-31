@@ -39,11 +39,11 @@ const PRELUDE: &str = include_str!("prelude.js");
 
 /// The pieces of the prelude a page has to *ask* for.
 ///
-/// **What this is worth changed, and it is worth less than it was.** Parse and
+/// What this is worth changed, and it is worth less than it was. Parse and
 /// compile were 67 ms of the 83 a realm cost and were paid by every page; they
 /// are now paid once per thread (see [`compiled_prelude`]) and a later realm
 /// spends under a microsecond there. What a tier still saves per page is the
-/// *running* of its code — building its classes and prototypes — which is
+/// *running* of its code, building its classes and prototypes, which is
 /// 12.4 ms for the whole 273 KiB core, so roughly 45 µs per KiB rather than the
 /// ~150 µs per KiB it was when the parse was in the number too.
 ///
@@ -54,11 +54,11 @@ const PRELUDE: &str = include_str!("prelude.js");
 /// changed parse time by nothing measurable, so the documentation is free and
 /// only what the parser tokenises is not. So a surface most pages never touch
 /// lives in its own file, is not given to the parser with the core, and arrives
-/// when something reads the name it defines — see `lazyGlobals` in the core
+/// when something reads the name it defines. See `lazyGlobals` in the core
 /// prelude, which installs the getter that calls back into [`load_tier`].
 ///
 /// The bar for moving something here is that a page which *does* use it pays
-/// slightly more (one extra parse of a small file, on every realm that asks —
+/// slightly more (one extra parse of a small file, on every realm that asks:
 /// tiers are not shared the way the core is) and a page which does not pays
 /// nothing. That trade only holds while the tier is genuinely optional:
 /// anything the first paint of an ordinary page touches belongs in the core.
@@ -75,8 +75,8 @@ const TIERS: &[(&str, &str)] = &[
 /// Reached from JavaScript as `__h5iTier("name")`. Evaluating into the same
 /// realm rather than a fresh one is the whole point: a tier finishes building
 /// the object model the core started, so it needs the core's interfaces, and it
-/// reaches them through `__h5iInternals` rather than through a shared closure —
-/// a separately parsed source has no way into the core's scope.
+/// reaches them through `__h5iInternals` rather than through a shared closure.
+/// A separately parsed source has no way into the core's scope.
 fn load_tier(
     _this: &boa_engine::JsValue,
     args: &[boa_engine::JsValue],
@@ -112,9 +112,9 @@ thread_local! {
     /// The context it was compiled against is kept with it, and is deliberately
     /// a plain one: no host, no document, no broker. It exists to own the realm
     /// the compiler resolved names against and nothing else, so holding it for
-    /// the life of the thread cannot pin a page's DOM — which storing the
+    /// the life of the thread cannot pin a page's DOM, which storing the
     /// *first page's* context here would have done.
-    /// **Deliberately holds nothing that will be dropped.** See
+    /// Deliberately holds nothing that will be dropped. See
     /// [`PreludeTemplate`].
     static PRELUDE_TEMPLATE:
         std::cell::RefCell<Option<std::mem::ManuallyDrop<PreludeTemplate>>> =
@@ -125,8 +125,8 @@ thread_local! {
 ///
 /// # Why this is never dropped
 ///
-/// It holds `Gc` handles, and freeing those needs Boa's garbage-collected heap
-/// — which lives in a thread-local of its own (`BOA_GC`). Rust does not specify
+/// It holds `Gc` handles, and freeing those needs Boa's garbage-collected heap,
+/// which lives in a thread-local of its own (`BOA_GC`). Rust does not specify
 /// the order thread-local destructors run in, so a thread ending could destroy
 /// that heap first and leave this dropping handles into freed memory. It does
 /// exactly that, reproducibly, and the symptom is not a panic but
@@ -137,7 +137,7 @@ thread_local! {
 /// why it appeared only once the compile moved into the navigation. Building a
 /// realm touches Boa's heap before it touches this, so its destructor was
 /// registered first and ran last, and everything was fine. Warming touches this
-/// one first, inverting the order — and warming before a realm exists is the
+/// one first, inverting the order, and warming before a realm exists is the
 /// whole point of the overlap (§B15.12a).
 ///
 /// Wrapping it in `ManuallyDrop` means this thread-local has no drop glue at
@@ -193,7 +193,7 @@ fn compiled_prelude() -> Result<boa_engine::Script, String> {
 /// Speculative by nature: this is called while a navigation is in flight, before
 /// anyone knows whether the page has any script at all, because that is the only
 /// window in which the compile overlaps anything (§B15.12a). A page that turns
-/// out to have no script has thrown the work away — which is why the caller is
+/// out to have no script has thrown the work away, which is why the caller is
 /// careful about *when* it speculates, and why the compile is only ever paid
 /// once per thread however many times this is called.
 ///
@@ -236,7 +236,7 @@ impl RealmCost {
 /// What a stack frame inside this engine's own prelude is called.
 ///
 /// The prelude was the one source evaluated without a path, so any frame in it
-/// read `unknown at :1598:24` — and a bug in *our* DOM implementation looked
+/// read `unknown at :1598:24`, and a bug in *our* DOM implementation looked
 /// exactly like a bug in the page's bundle. It took three sites failing
 /// identically to notice. A frame that names this file is a bug report against
 /// this engine, and it should say so.
@@ -246,7 +246,7 @@ const PRELUDE_PATH: &str = "<h5i browser prelude>";
 /// as cut off.
 ///
 /// Raised from two seconds once there was a real bound to lean on. Virtual time
-/// is free — advancing it costs only the work the page actually does — so this
+/// is free, advancing it costs only the work the page actually does, so this
 /// number was never protecting against a slow page, it was standing in for a
 /// wall-clock guard that did not exist. [`JOB_QUEUE_BUDGET`] is that guard now.
 ///
@@ -267,7 +267,7 @@ const TICK_MS: u64 = 16;
 /// Separate from [`SETTLE_BUDGET_MS`] because that budget is virtual: it counts
 /// the time a page's timers believe has passed, and advancing it costs nothing.
 /// A network round trip costs what it costs, and a page that fetches its content
-/// is not idle while it waits — settling it early would report an empty page as
+/// is not idle while it waits. Settling it early would report an empty page as
 /// finished. Bounded all the same: a server that never answers must not become
 /// this engine hanging.
 const NETWORK_BUDGET_MS: u64 = 10_000;
@@ -279,7 +279,7 @@ const NETWORK_POLL_MS: u64 = 2;
 /// How deep script may recurse before the engine stops it.
 ///
 /// Boa's default is 512 frames, which a production bundle exceeds during its
-/// own initialisation — deeply nested module factories and framework internals
+/// own initialisation. Deeply nested module factories and framework internals
 /// get there without anything being wrong. Next.js's chunk hit it while merely
 /// starting up, and the page reported a runtime limit instead of rendering.
 ///
@@ -292,7 +292,7 @@ const RECURSION_LIMIT: usize = 4_000;
 ///
 /// Raised with the recursion limit, and it has to be: the default 10240 slots
 /// runs out at roughly 800 frames, so raising the frame count alone changed
-/// nothing — the *stack* limit was what a deep call actually hit. Each frame
+/// nothing. The *stack* limit was what a deep call actually hit. Each frame
 /// costs several slots, so this is sized to the frame budget above with room
 /// for the locals a real function holds.
 const STACK_SIZE_LIMIT: usize = 128 * 1024;
@@ -304,8 +304,8 @@ const STACK_SIZE_LIMIT: usize = 128 * 1024;
 /// that loops forever would hang this engine indefinitely, and an agent waiting
 /// on it has no way to tell that from a slow page.
 ///
-/// Generous — a real page parsing or laying out its own data can legitimately
-/// iterate millions of times — but finite, because "always returns" is a
+/// Generous, a real page parsing or laying out its own data can legitimately
+/// iterate millions of times, but finite, because "always returns" is a
 /// property worth more than the last page that needed one more round. A page
 /// that trips it still renders what it managed, and the limit is *reported*, so
 /// a thin outline is explained rather than mysterious.
@@ -313,7 +313,7 @@ const STACK_SIZE_LIMIT: usize = 128 * 1024;
 /// Worth being exact about what this does not do: it bounds one loop, not total
 /// work. Boa exposes no wall-clock interrupt, so a page with a thousand slow
 /// loops is still slow, and a caller that cannot wait must impose its own
-/// timeout — the corpus harness does. Raising this to 50 million turned a site
+/// timeout. The corpus harness does. Raising this to 50 million turned a site
 /// that returned in three minutes into one that had not returned in four.
 const LOOP_ITERATION_LIMIT: u64 = 5_000_000;
 
@@ -326,7 +326,7 @@ const LOOP_ITERATION_LIMIT: u64 = 5_000_000;
 ///
 /// This is the wall-clock bound the other limits could not provide. A module
 /// graph evaluates entirely inside `run_jobs`, so neither the settle budget nor
-/// the script-phase budget ever got a turn — lit.dev spent **seven minutes**
+/// the script-phase budget ever got a turn. Lit.dev spent *seven minutes*
 /// there. Boa checks a cancellation token between jobs, and a watchdog thread
 /// sets it, because by the time the deadline matters this thread is the one
 /// that is stuck.
@@ -357,7 +357,7 @@ const JOB_QUEUE_BUDGET: Duration = Duration::from_secs(15);
 /// whose `getTimezoneOffset` says -480 is on the American west coast whatever
 /// its headers claim. Left to the host clock, every h5i session discloses the
 /// machine it runs on; that is what `privacy` exists to stop, and it can only
-/// be stopped here — patching `Date.prototype.getTimezoneOffset` from the
+/// be stopped here. Patching `Date.prototype.getTimezoneOffset` from the
 /// prelude would leave `toString`, `toLocaleString` and the date parser
 /// computing from the real zone and disagreeing with it.
 ///
@@ -366,7 +366,7 @@ const JOB_QUEUE_BUDGET: Duration = Duration::from_secs(15);
 /// zone is always a fixed offset.
 struct Hooks {
     /// `None` in every build without identities, and in every session whose
-    /// identity declares no zone — which is `native`, the default. The whole
+    /// identity declares no zone, which is `native`, the default. The whole
     /// field is absent without the feature, so the clock reaches Boa's own
     /// default with nothing in front of it.
     #[cfg(feature = "identity")]
@@ -432,12 +432,12 @@ enum Ready<'a> {
 ///
 /// Four outcomes, kept apart because they ask the caller for different things.
 /// `Met` is the answer. `Quiescent` means the page has nothing left to run, so
-/// waiting longer cannot change anything — a different fact from `Budget`,
+/// waiting longer cannot change anything. A different fact from `Budget`,
 /// which means time ran out with work still pending and the condition might
 /// yet have come true.
 ///
 /// `Periodic` is the one the others hid. A page whose only remaining work is a
-/// loop that re-arms itself — an animation frame, a poll, a carousel — is
+/// loop that re-arms itself (an animation frame, a poll, a carousel) is
 /// neither finished nor converging. Reporting it as `Quiescent` would claim
 /// nothing can change, which is false, because the loop runs and can touch the
 /// DOM. Reporting it as `Budget` claims the page was on its way somewhere and
@@ -456,7 +456,7 @@ pub enum WaitEnd {
     /// The budget ran out with work still pending.
     Budget,
     /// The page has only self-rescheduling work left. It is not converging, so
-    /// waiting is not a strategy — but it is not finished either.
+    /// waiting is not a strategy, but it is not finished either.
     Periodic,
 }
 
@@ -570,11 +570,11 @@ pub struct RealmOptions {
     /// the brand check that makes an accessor reached on the prototype object
     /// itself throw rather than run against nothing.
     ///
-    /// **For instruments.** `idlharness` checks both on every member of every
+    /// For instruments. `idlharness` checks both on every member of every
     /// interface, and nothing else does: a page reads `el.href`, it does not
     /// ask whether the descriptor is enumerable. Installing it walks every own
     /// property of every interface prototype and rebuilds each descriptor with
-    /// two closures, which measured **15 ms of the 83 ms** a realm cost — paid
+    /// two closures, which measured 15 ms of the 83 ms a realm cost. Paid
     /// by every page, observed by one harness.
     ///
     /// Not the `get x`/`set x` accessor naming, which reads as the third thing
@@ -600,14 +600,14 @@ pub struct Script {
     /// it was loaded under.
     ///
     /// The name travels with the promise because a failure reported as "module
-    /// failed" names nothing — the same anonymity §8.3 removed from script
+    /// failed" names nothing. The same anonymity §8.3 removed from script
     /// errors, one level up. An agent cannot act on it and neither can we.
     pending_modules: Vec<(String, boa_engine::object::builtins::JsPromise)>,
 
     /// Set from a watchdog thread to make the job queue give up.
     ///
     /// The engine has to come back. Boa checks this between jobs, which covers
-    /// the case that actually bites — a module graph is many jobs, and lit.dev
+    /// the case that actually bites. A module graph is many jobs, and lit.dev
     /// spent seven minutes in one `run_jobs` call working through one.
     cancel: std::sync::Arc<portable_atomic::AtomicBool>,
 
@@ -668,7 +668,7 @@ impl Script {
         // Boa's default recursion ceiling is low enough that a real production
         // bundle hits it: Next.js's chunk exceeded it while merely initialising,
         // and the page reported "exceeded maximum number of recursive calls"
-        // instead of rendering. Raised, not removed — the limit is what stops a
+        // instead of rendering. Raised, not removed. The limit is what stops a
         // runaway page from taking the stack with it, and this engine runs
         // untrusted script inside a box with a memory ceiling.
         context
@@ -728,10 +728,10 @@ impl Script {
         // Parse and compile were 67 ms of the 83 a realm cost (§B8.9), paid
         // again by every page for a source that never changes. They are now
         // paid by the first page a renderer serves and by no other, taking a
-        // later realm to ~15 ms — the largest saving this engine has taken.
+        // later realm to ~15 ms. The largest saving this engine has taken.
         //
         // The sibling item, reusing the *realm* across navigations, stays
-        // refused — see `Page::run_scripts`. This is not that. Only the
+        // refused. See `Page::run_scripts`. This is not that. Only the
         // instructions are shared; every page still gets its own realm, its own
         // globals and its own prototypes, and nothing a page did is reachable
         // from the next one. See `bind_to_realm` in our Boa fork for what makes
@@ -774,7 +774,7 @@ impl Script {
     /// Run one script, under a name that will appear in its stack trace.
     ///
     /// The name matters more than it looks. Boa 0.21 reports a position per
-    /// frame, but the *path* comes from the source it was given — and a source
+    /// frame, but the *path* comes from the source it was given, and a source
     /// built from bytes has none, so every frame read `unknown at :2:18`. A line
     /// number with no file is barely better than no line number when a page has
     /// nine scripts.
@@ -825,7 +825,7 @@ impl Script {
                     // Through `JsError` rather than by stringifying the thrown
                     // value: the value renders as "TypeError: ..." and stops
                     // there, while the error carries the stack trace Boa 0.21
-                    // records — which is the whole reason for being on 0.21.
+                    // records, which is the whole reason for being on 0.21.
                     let text = boa_engine::JsError::from_opaque(reason).to_string();
                     crate::script::host::push_console(
                 &mut self.host.console.borrow_mut(),
@@ -869,7 +869,7 @@ impl Script {
     /// "Run until settled" is a subsystem rather than a phrase
     /// (roadmap-history.md §12.4).
     /// The loop drains promise jobs, then any timer now due on the virtual
-    /// clock, then repeats — because a timer can queue a promise and a promise
+    /// clock, then repeats, because a timer can queue a promise and a promise
     /// can set a timer. It stops when a round does nothing, or when the budget
     /// is spent, and the difference is reported rather than hidden. A snapshot
     /// that quietly returned early is a wrong answer that looks like a right one.
@@ -896,8 +896,8 @@ impl Script {
     /// clock; re-ask after the last `run_queued_jobs`; `max` then `min` rather
     /// than `clamp`). A second copy would start correct and drift.
     ///
-    /// The rule borrowed from Lightpanda's `Runner`: **resolve when there is
-    /// nothing left to wait on**, even when the condition never came true.
+    /// The rule borrowed from Lightpanda's `Runner`: resolve when there is
+    /// nothing left to wait on, even when the condition never came true.
     /// Spinning to a timeout on a page that has gone quiet tells the caller
     /// nothing it did not already know, a whole budget later.
     pub fn settle_until(&mut self, ready: &mut dyn FnMut() -> bool) -> Waited {
@@ -920,7 +920,7 @@ impl Script {
         let budget = self.job_budget;
         // `with_job_deadline` returns (closure result, deadline fired), and the
         // closure itself returns (settled, met). Destructured in one pattern so
-        // the two bools cannot be read in the wrong order — which is exactly
+        // the two bools cannot be read in the wrong order, which is exactly
         // what a two-step destructure did on the first attempt, reporting every
         // met condition as a blown budget.
         let ((settled, met), cut_short) =
@@ -1012,7 +1012,7 @@ impl Script {
             // Frames that arrived since the last round become events here.
             //
             // Counted as work, so a message that landed gets the page another
-            // round to react to it — and a socket that is merely *open* does
+            // round to react to it, and a socket that is merely *open* does
             // not, which is what keeps a page holding one from being reported
             // as permanently busy. The interval precedent applies: a perpetual
             // thing that counts as pending makes every page that has one look
@@ -1037,8 +1037,8 @@ impl Script {
                 // A page waiting on the network is not idle, and this is checked
                 // before the clock moves rather than only when no timer is
                 // armed. Advancing virtual time while a request is in the air
-                // fires the very timeouts pages arm *against* the network —
-                // testharness arms one on every file, so every test that
+                // fires the very timeouts pages arm *against* the network.
+                // Testharness arms one on every file, so every test that
                 // fetched timed itself out the instant its request was sent.
                 // Wait in *real* time, since a round trip does not care about
                 // our virtual clock.
@@ -1065,7 +1065,7 @@ impl Script {
                 // A *wait* may be waiting on a socket, which is the one thing
                 // in this engine that arrives on real time rather than virtual.
                 //
-                // A plain settle must still terminate here — an open socket is
+                // A plain settle must still terminate here. An open socket is
                 // not pending work, and treating it as such would make every
                 // page holding one report as permanently busy. But a wait on
                 // such a page should give the wire its chance, or `wait_for`
@@ -1094,7 +1094,7 @@ impl Script {
                     // A reply that arrived in *this* pass resolved a promise,
                     // and the continuation it queued has not run yet. Returning
                     // here would report the page settled with its own `.then`
-                    // still pending — which is exactly what a synchronous fetch
+                    // still pending, which is exactly what a synchronous fetch
                     // used to hide, because it resolved during `eval` and the
                     // loop's first `run_jobs` picked the callback up.
                     self.run_queued_jobs();
@@ -1130,7 +1130,7 @@ impl Script {
                 // Stepping 16ms at a time was not just slow, it was a wall. A
                 // test harness that arms a ten-second timeout puts its timer at
                 // exactly the settle budget, and the budget check below fired
-                // before `run_due_timers` ever saw a clock that large — so the
+                // before `run_due_timers` ever saw a clock that large, so the
                 // timer never ran, the harness never timed itself out, and the
                 // page reported *nothing at all*. That was the single largest
                 // silent-failure bucket in WPT (§12.4).
@@ -1138,7 +1138,7 @@ impl Script {
                 // `max` then `min`, not `clamp`: `clamp` panics when its lower
                 // bound exceeds its upper one, and here it can. A timer due
                 // within one tick of the budget leaves `clock + TICK_MS` past
-                // `SETTLE_BUDGET_MS`, and the engine aborted — taking the page,
+                // `SETTLE_BUDGET_MS`, and the engine aborted. Taking the page,
                 // the snapshot and the receipts with it, which is the failure
                 // `insert_before` was hardened against three commits ago. Found
                 // by review, reproduced with a 9,999ms timer and a 20,000ms one.
@@ -1188,12 +1188,12 @@ impl Script {
         // waits for.
         //
         // It used to sleep 20 ms between checks, so a page that settled in 50 µs
-        // — which is most pages, most of the time — then sat in `join` until the
-        // watchdog next woke up. **A 20 ms tax on every settle**, and on every
+        // (which is most pages, most of the time) then sat in `join` until the
+        // watchdog next woke up. A 20 ms tax on every settle, and on every
         // agent `wait` besides, spent asleep. It read as script time in the
         // profile and was not: the settle loop ran one round costing 50 µs
         // inside a phase that measured 20.4 ms. It was intermittent, too, which
-        // is the worst way for a cost to present — a plain race between the body
+        // is the worst way for a cost to present. A plain race between the body
         // and the watchdog's first check, so half the runs looked fine.
         let done = std::sync::Arc::new((
             std::sync::Mutex::new(false),
@@ -1246,8 +1246,8 @@ impl Script {
     /// Run the microtask queue, reporting anything that escaped it.
     ///
     /// Boa 0.21 returns a result here where 0.19 returned nothing. An error
-    /// reaching this point is one no `.catch` handled — an unhandled rejection,
-    /// or a job that threw — and it was previously invisible in both engines:
+    /// reaching this point is one no `.catch` handled (an unhandled rejection,
+    /// or a job that threw) and it was previously invisible in both engines:
     /// 0.19 could not tell us, and swallowing it now would keep a page looking
     /// like it worked when part of it did not.
     fn run_queued_jobs(&mut self) {
@@ -1309,8 +1309,8 @@ impl Script {
 
     /// Turn arrived socket frames into page events, and say how many.
     ///
-    /// The Rust-side check first is not premature. This runs on **every settle
-    /// round of every page**, and almost no page opens a socket — so without it
+    /// The Rust-side check first is not premature. This runs on every settle
+    /// round of every page, and almost no page opens a socket, so without it
     /// the whole corpus pays an `eval` per round for a feature it never uses.
     /// Measured: the library suite went 8.3s to 16.1s with the eval
     /// unconditional, and back with this guard.
@@ -1328,7 +1328,7 @@ impl Script {
     ///
     /// Reported in the snapshot, because a page with a live socket is a page
     /// whose content can change between two reads without the agent having done
-    /// anything — which is the one thing that makes a session here
+    /// anything, which is the one thing that makes a session here
     /// non-deterministic, and it should not be silent.
     pub fn open_sockets(&mut self) -> usize {
         // Answered from the Rust side, which is where the sockets actually
@@ -1387,7 +1387,7 @@ impl Script {
     ///
     /// A setter rather than a constructor argument because a realm is built
     /// from a tree and a base URL, and the encoding belongs to the *response*
-    /// those came from — several callers have a tree without ever having had
+    /// those came from. Several callers have a tree without ever having had
     /// bytes.
     pub fn set_encoding(&mut self, encoding: &'static encoding_rs::Encoding) {
         *self.host.encoding.borrow_mut() = encoding;
@@ -1488,7 +1488,7 @@ impl Script {
 
         // A global the page expected because a script we refused would have
         // defined it is not a binding this engine lacks. The corpus reported
-        // `$` twice and it was jQuery from a denied CDN — listing that beside
+        // `$` twice and it was jQuery from a denied CDN. Listing that beside
         // real gaps invites building something nobody asked for. Say what
         // actually happened instead.
         let (first, count) = {

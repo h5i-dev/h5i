@@ -1,7 +1,7 @@
 //! The wire between the two halves.
 //!
-//! A **broker** holds the policy, receipts, jar, budget and secrets; a
-//! **renderer** parses the page and holds none of them. The renderer reaches the
+//! A *broker* holds the policy, receipts, jar, budget and secrets; a
+//! *renderer* parses the page and holds none of them. The renderer reaches the
 //! broker through [`crate::broker::Broker`], and this is that trait over a
 //! socket. The broker is the parent and spawns the renderer with the socket as
 //! its standard input, so no library passes it and no port exists.
@@ -14,7 +14,7 @@
 //! base64 in the JSON would cost a third again in bytes on the path a page's
 //! images take.
 //!
-//! **What a hostile renderer can do is the whole security argument.** It cannot
+//! What a hostile renderer can do is the whole security argument. It cannot
 //! edit the policy, silence the receipt sink, read an `HttpOnly` cookie, reach
 //! the network without a decision record, or touch an ungranted credential. It
 //! can claim any origin as the asker (`Fetch::document` drives the loopback and
@@ -209,7 +209,7 @@ fn read_frame(input: &mut impl Read) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
 ///
 /// Every method is a round trip. Calls are multiplexed rather than serialized:
 /// the script realm starts several fetches at once and a lock held across a
-/// whole request would turn them back into a queue — and worse, would let one
+/// whole request would turn them back into a queue, and worse, would let one
 /// slow fetch stall the drain of a socket that was answering fine.
 pub struct BrokerClient {
     /// A handle to itself, for the two operations that hand back something the
@@ -223,7 +223,7 @@ pub struct BrokerClient {
     /// Whether this session has any credential at all, asked once.
     ///
     /// Redaction runs over every string in every control reply, and with no
-    /// secrets configured it is provably a no-op — `Secrets::redact` iterates
+    /// secrets configured it is provably a no-op: `Secrets::redact` iterates
     /// the values it holds, and there are none. Without this that no-op cost
     /// two copies of a whole snapshot reply across the socket, on every verb,
     /// for the overwhelmingly common session that named no credential.
@@ -238,7 +238,7 @@ pub struct BrokerClient {
     /// It cannot change while the session runs: the broker takes it when it is
     /// built and offers no operation that would replace it. Caching it here is
     /// what keeps "one identity" true across the process split rather than
-    /// merely claimed — every realm this renderer builds answers from the one
+    /// merely claimed. Every realm this renderer builds answers from the one
     /// value the broker sent, not from a constant compiled into this half.
     #[cfg(feature = "identity")]
     identity: std::sync::OnceLock<Arc<crate::identity::Identity>>,
@@ -248,7 +248,7 @@ pub struct BrokerClient {
 ///
 /// `std::process::exit` is the wrong tool here and the difference is not
 /// theoretical. It runs the atexit handlers and flushes stdio on its way out,
-/// and both take locks — so a thread calling it while *another* thread is deep
+/// and both take locks, so a thread calling it while *another* thread is deep
 /// in allocation gets to wait for that thread, which is precisely the thread we
 /// have given up on. Measured: with the renderer's main thread spinning inside
 /// layout, this path printed "so it is stopping" and then did not stop. Six of
@@ -256,8 +256,8 @@ pub struct BrokerClient {
 /// holding a core.
 ///
 /// `_exit` skips all of it and returns the descriptor to the kernel. Nothing is
-/// lost: there is no result to flush on this path — the broker that would have
-/// received one is gone — and the line above went to stderr, which Rust does
+/// lost: there is no result to flush on this path, the broker that would have
+/// received one is gone, and the line above went to stderr, which Rust does
 /// not buffer.
 pub(crate) fn stop_now(code: i32) -> ! {
     #[cfg(unix)]
@@ -339,7 +339,7 @@ impl BrokerClient {
         // it, but somebody will, and adopting a terminal as the protocol means
         // the first fetch blocks on a read from the keyboard with no
         // explanation. `local_addr` is the cheapest question that distinguishes
-        // a socket from everything else — it answers `ENOTSOCK` for a tty, a
+        // a socket from everything else. It answers `ENOTSOCK` for a tty, a
         // pipe or a file.
         let is_socket = socket.local_addr().is_ok();
         let reader = socket.try_clone().map_err(|e| {
@@ -375,7 +375,7 @@ impl BrokerClient {
     /// Ask, and hand back the receiver rather than waiting on it.
     ///
     /// Split out of [`Self::ask`] so a caller with something useful to do can
-    /// do it while the broker works — the renderer compiling its prelude during
+    /// do it while the broker works. The renderer compiling its prelude during
     /// a navigation, which is the only reason this exists. See
     /// `Broker::send_while`.
     ///
@@ -606,10 +606,10 @@ impl Broker for BrokerClient {
 
     /// Asked once, and cached for the life of this client.
     ///
-    /// The identity cannot change while a session runs — that is the whole
-    /// point of it — so a second ask could only ever get the same answer.
+    /// The identity cannot change while a session runs, that is the whole
+    /// point of it, so a second ask could only ever get the same answer.
     ///
-    /// **Only an answer is cached.** A broker that has ended takes this
+    /// Only an answer is cached. A broker that has ended takes this
     /// renderer with it (`over` calls `stop_now` on that path), so the fallback
     /// is very nearly unreachable; caching it anyway would mean one failed ask
     /// pinning the page to `native` for the rest of the session while the
@@ -637,8 +637,8 @@ impl Broker for BrokerClient {
         }) {
             Some(Said::Resolved(resolved)) => resolved,
             // The text unchanged, and nothing claimed as used. A placeholder
-            // that resolved to nothing is already a case this engine handles —
-            // it is left as written — so a broker that cannot answer degrades
+            // that resolved to nothing is already a case this engine handles,
+            // it is left as written, so a broker that cannot answer degrades
             // into it rather than into a value nobody checked.
             _ => Resolved {
                 text: text.to_string(),
@@ -681,8 +681,8 @@ impl BrokerClient {
     ///
     /// Fails *towards* asking: a broker that cannot answer is treated as
     /// holding one, so an unanswered question costs a round trip rather than a
-    /// skipped redaction. It is also not cached in that case — `set` is only
-    /// reached on a real answer — so a transient failure does not turn
+    /// skipped redaction. It is also not cached in that case, `set` is only
+    /// reached on a real answer, so a transient failure does not turn
     /// redaction off for the rest of the session.
     fn holds_a_secret(&self) -> bool {
         if let Some(known) = self.has_secrets.get() {
@@ -773,11 +773,11 @@ fn serve_over(
 
     // The read loop ended, which means the renderer is gone. From here the
     // broker's only remaining job is to reap it and exit with its status, and
-    // **nothing in this function may block that.**
+    // nothing in this function may block that.
     //
     // A renderer that has gone away takes its connections with it: nothing can
     // drain them, and a socket nobody reads is a server left talking to itself.
-    // So they are closed — on a thread of their own, and nobody waits for it.
+    // So they are closed. On a thread of their own, and nobody waits for it.
     // `Socket::close` takes the same lock a `send` holds, and a send into a
     // peer that has stopped reading blocks for as long as the peer likes; doing
     // this inline would hand a hostile server the ability to keep a session's
@@ -808,7 +808,7 @@ fn serve_over(
 /// The wire, in every form it takes here. `ChannelClose` is on the list for a
 /// reason that is easy to miss: closing a socket sends a close frame and takes
 /// the same lock a `send` holds, so a peer that has stopped reading can stall
-/// it — and answered on the reading thread, that would stop the broker serving
+/// it, and answered on the reading thread, that would stop the broker serving
 /// *anything* until the peer relented.
 fn slow(ask: &Ask) -> bool {
     matches!(
@@ -966,7 +966,7 @@ pub fn splitting() -> bool {
 ///
 /// `argv` is the engine's own command line, program name included: the child runs
 /// the same command this process was given, with the flag that says which half
-/// it is. Passing the arguments through unchanged is deliberate — two halves
+/// it is. Passing the arguments through unchanged is deliberate. Two halves
 /// that parsed different command lines would be two engines that could disagree
 /// about what was asked for.
 #[cfg(unix)]
@@ -1010,7 +1010,7 @@ mod tests {
     /// A client and a broker in one process, talking over two pipes.
     ///
     /// Pipes rather than a socket pair, so the framing is exercised on a
-    /// transport with no message boundaries of its own — which is what a
+    /// transport with no message boundaries of its own, which is what a
     /// stream socket is too, and what a protocol that read one message per
     /// `read` would get away with here and fail on under load.
     fn paired() -> (Arc<BrokerClient>, Arc<LocalBroker>, std::thread::JoinHandle<()>) {
@@ -1051,7 +1051,7 @@ mod tests {
     #[test]
     fn a_refusal_crosses_the_wire_as_a_refusal() {
         let (client, broker, _served) = paired();
-        // The allowlist is empty, so this is denied — and the point is that the
+        // The allowlist is empty, so this is denied, and the point is that the
         // *broker* denied it: the renderer asked, and what came back is the
         // refusal plus a receipt written on the far side.
         let url = Url::parse("https://denied.test/page").expect("url");
@@ -1090,7 +1090,7 @@ mod tests {
     fn secrets_resolve_on_the_broker_side() {
         let (client, _broker, _served) = paired();
         // Nothing is set in this process's environment, so the placeholder
-        // resolves to nothing and is left as written — the documented shape for
+        // resolves to nothing and is left as written. The documented shape for
         // a name that means nothing here.
         let resolved = client.substitute("$H5I_SECRET_NOTHING");
         assert_eq!(resolved.text, "$H5I_SECRET_NOTHING");
@@ -1101,7 +1101,7 @@ mod tests {
     fn a_broker_that_went_away_refuses_rather_than_hangs() {
         // A client whose broker never answers: the read end sees EOF the
         // moment the write end is dropped. A renderer must not park on an
-        // answer that is not coming — in the real one this is fatal and the
+        // answer that is not coming. In the real one this is fatal and the
         // process stops, which is why the refusal has to be reachable at all.
         let (reader, writer) = std::io::pipe().expect("pipe");
         drop(writer);
@@ -1142,7 +1142,7 @@ mod tests {
         // The half of "does not hang" that a check on entry cannot cover: this
         // caller was already parked when the broker went away. It is woken by
         // the reply thread dropping every waiting sender, and if that stopped
-        // happening the renderer would sit on an answer that cannot come — with
+        // happening the renderer would sit on an answer that cannot come, with
         // no timeout anywhere in this protocol to rescue it.
         let (reader, writer) = std::io::pipe().expect("pipe");
         let client = BrokerClient::over(Box::new(reader), Box::new(Discard), false);
@@ -1194,8 +1194,8 @@ mod tests {
 
         // Registration and the `gone` check share a lock, so this cannot land
         // in a map that has already been cleared. The transport would accept
-        // the write — `Discard` always does, and so does a socket whose peer
-        // has gone but whose buffer has room — so nothing else would catch it.
+        // the write (`Discard` always does, and so does a socket whose peer
+        // has gone but whose buffer has room) so nothing else would catch it.
         let url = Url::parse("https://docs.test/").expect("url");
         let outcome = client.send(&Fetch::get(&url, Initiator::Navigation));
         assert!(!outcome.is_ok(), "{outcome:?}");
@@ -1210,7 +1210,7 @@ mod tests {
         // In one process this was ownership: the page's map held the only
         // `Socket` a caller could reach, and dropping it shut the connection
         // down. Across the boundary the socket belongs to the broker and the
-        // page holds an id, so the same property has to be *sent* — which is
+        // page holds an id, so the same property has to be *sent*, which is
         // what `RemoteChannel::drop` does. Without it a page that navigated
         // away would leave the broker holding an open socket, reading frames
         // and receipting them, for a document that no longer exists.
@@ -1313,7 +1313,7 @@ mod tests {
         // The value of the overlap is entirely in *when* the work happens: a
         // closure run before the request went out would pass any ordering check
         // made on this side and buy nothing at all. So the claim is checked from
-        // the server's end — the closure is not allowed to finish until the
+        // the server's end. The closure is not allowed to finish until the
         // server has actually read the request off the socket.
         use std::io::{BufRead, BufReader, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -1422,9 +1422,9 @@ mod tests {
 
     #[test]
     fn a_body_crosses_in_both_directions() {
-        // Bodies travel beside the message rather than inside it — base64 in
+        // Bodies travel beside the message rather than inside it, base64 in
         // the JSON would pay a third again in bytes on exactly the path a
-        // page's images take — so the framing carries two lengths and two
+        // page's images take, so the framing carries two lengths and two
         // buffers. This is the test that the second buffer is wired to the
         // right end at both ends.
         let (port, server) = echo_server();

@@ -5,14 +5,14 @@
 //! That makes the ordinal safe, not durable: a recorded session made of ordinals
 //! replays into a different page.
 //!
-//! So each ref also carries the **simplest CSS selector whose first match is
-//! that element**, built the way Lightpanda's `SelectorPath` builds one: start
+//! So each ref also carries the simplest CSS selector whose first match is
+//! that element, built the way Lightpanda's `SelectorPath` builds one: start
 //! from the element's own segment; if that is not already unique-first, walk
-//! ancestors and prepend one **only when it shrinks the match count**, since an
+//! ancestors and prepend one only when it shrinks the match count, since an
 //! ancestor that narrows nothing is length with no information; then fall back
 //! to a strict `a > b > c` chain.
 //!
-//! **Every candidate is verified with the same matcher the action verbs use.** A
+//! Every candidate is verified with the same matcher the action verbs use. A
 //! generated selector the engine's own `querySelectorAll` would resolve
 //! differently is worse than no selector, because it looks like a handle.
 //!
@@ -38,8 +38,8 @@ const MAX_ANCESTORS: usize = 32;
 ///
 /// Every candidate here is verified with a full-document query, and a snapshot
 /// mints a selector for *every* ref it serves. The candidates repeat heavily
-/// across siblings — fifty rows in a table share every ancestor segment above
-/// the row — so without this the same query runs once per ref that shares it.
+/// across siblings, fifty rows in a table share every ancestor segment above
+/// the row, so without this the same query runs once per ref that shares it.
 ///
 /// Correct only for as long as the document does not change, which is why it is
 /// created per snapshot rather than held on the session: a cache that outlived
@@ -65,7 +65,7 @@ impl Cache {
         &self.seen[selector]
     }
 
-    /// Whether this selector's **first** match is the node we want.
+    /// Whether this selector's *first* match is the node we want.
     ///
     /// First, not "is among", because that is what an action does with a
     /// selector: `querySelector` semantics. A selector that matches the target

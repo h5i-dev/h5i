@@ -1,6 +1,6 @@
 //! Getting the code there, and proving it arrived intact.
 //!
-//! The unit is a **git bundle** rather than a tar (ROADMAP.md R7). A tar of a
+//! The unit is a *git bundle* rather than a tar (ROADMAP.md R7). A tar of a
 //! working tree is a pile of bytes whose only identity is a hash we invented; a
 //! bundle carries the commit, so the base the box was built from is a fact git
 //! itself can check, and `git bundle verify` is a structural check nobody had
@@ -14,7 +14,7 @@
 //! branch in the user's repository, which is a side effect on the thing we are
 //! only supposed to be reading.
 //!
-//! **Bundles here carry full history.** `git bundle create` grew rev-list
+//! Bundles here carry full history. `git bundle create` grew rev-list
 //! arguments but not `--depth` (checked against git 2.43), so a shallow bundle
 //! is not available and this module does not pretend otherwise. For a large
 //! repository that is a real cost, and it is the first thing to revisit when
@@ -45,7 +45,7 @@ pub enum SourceError {
     #[error("git {argv} failed:\n{stderr}")]
     Git { argv: String, stderr: String },
 
-    /// libgit2, used wherever the repository's own configuration is hostile —
+    /// libgit2, used wherever the repository's own configuration is hostile,
     /// which is anywhere inside a box's workspace.
     #[error("git object store: {0}")]
     Git2(#[from] git2::Error),
@@ -260,9 +260,9 @@ pub fn materialize(bundle: &Path, work: &Path, base_commit: &str) -> Result<(), 
 
 /// Commit whatever the box has now, and bundle it for the trip home.
 ///
-/// **This must never invoke the git CLI inside the box's repository.** The
+/// This must never invoke the git CLI inside the box's repository. The
 /// box owns `work/.git/config`, and git executes `core.fsmonitor` and
-/// `filter.<name>.clean` out of it — so `git add` in that tree is arbitrary
+/// `filter.<name>.clean` out of it, so `git add` in that tree is arbitrary
 /// command execution as the runner user, which is a complete escape from the
 /// box this whole design exists to contain. `core.hooksPath=/dev/null` does
 /// not cover it; neither does anything else that can be passed on a command
@@ -274,7 +274,7 @@ pub fn materialize(bundle: &Path, work: &Path, base_commit: &str) -> Result<(), 
 /// v2 bundle format is a short text header and a pack, which is a small price
 /// for not having to ask what else git runs from a file the box can write.
 ///
-/// The bundle is thin — `base..tip` — because the receiving side already has
+/// The bundle is thin, `base..tip`, because the receiving side already has
 /// the base: it is the machine that sent it.
 ///
 /// A box with nothing new in it still gets a bundle and an honest
@@ -343,23 +343,23 @@ pub fn export_bundle(work: &Path, base_commit: &str, out: &Path) -> Result<Expor
 /// Open the box's repository, and refuse one that is not where it claims.
 ///
 /// Moving off the git CLI closed the half of the hostile-config class that
-/// *executes* commands. It did not close the half that **redirects**, and
+/// *executes* commands. It did not close the half that *redirects*, and
 /// libgit2 honours both mechanisms:
 ///
 /// - `core.worktree` points the repository's working directory somewhere else,
 ///   so `add_all` stages that path instead. A box setting it to another box's
 ///   workspace gets that box's files packed into its own export bundle and
-///   shipped to the owner's machine — every file the runner user can read,
+///   shipped to the owner's machine. Every file the runner user can read,
 ///   with nothing downstream to catch it: the quarantine checks path shape and
 ///   size, the descendant check passes because the parent really is this box's
 ///   HEAD, and the tree digest matches because the runner announced its own
 ///   tree. `core.worktree = /` is the same mechanism as a denial of service.
-/// - A `.git` **file** containing `gitdir: <elsewhere>` makes this repository
+/// - A `.git` *file* containing `gitdir: <elsewhere>` makes this repository
 ///   be a different repository, so the export's carrier commit lands in it and
 ///   moves *its* HEAD.
 ///
 /// libgit2's owner check is no help: every box on a runner runs as the same
-/// unix user. So the invariant is asserted directly — this repository's git
+/// unix user. So the invariant is asserted directly. This repository's git
 /// directory and working directory must both be inside the box.
 fn open_box_repo(work: &Path) -> Result<git2::Repository, SourceError> {
     let repo = git2::Repository::open(work).map_err(SourceError::Git2)?;
@@ -393,7 +393,7 @@ fn open_box_repo(work: &Path) -> Result<git2::Repository, SourceError> {
 /// Write a v2 git bundle of `base..tip` by hand.
 ///
 /// `git bundle create` would be shorter and would mean running the CLI in a
-/// repository whose configuration the box controls — see [`export_bundle`].
+/// repository whose configuration the box controls. See [`export_bundle`].
 /// The format is small enough to write directly:
 ///
 /// ```text
@@ -416,7 +416,7 @@ fn write_thin_bundle(
         std::fs::create_dir_all(parent).map_err(|e| SourceError::io(parent, e))?;
     }
 
-    // The objects reachable from the tip and not from the base — the same set
+    // The objects reachable from the tip and not from the base. The same set
     // `git bundle create base..tip` would pack.
     let mut walk = repo.revwalk().map_err(SourceError::Git2)?;
     walk.push(tip).map_err(SourceError::Git2)?;
@@ -440,7 +440,7 @@ fn write_thin_bundle(
 
     // Streamed, not buffered. Collecting the pack into a `Vec` first meant a
     // box that filled its own disk OOM-killed the worker instead of being
-    // refused — the client's size check runs on the far side, after the
+    // refused. The client's size check runs on the far side, after the
     // allocation has already happened here.
     let mut wrote = Err(None);
     builder
@@ -730,7 +730,7 @@ mod tests {
 
     #[test]
     fn an_empty_source_is_still_a_repository() {
-        // Everything later in the pipeline — a diff, an export — needs one.
+        // Everything later in the pipeline (a diff, an export) needs one.
         let dir = tempfile::tempdir().unwrap();
         let work = dir.path().join("empty");
         materialize_empty(&work).expect("init");
@@ -1055,7 +1055,7 @@ mod redirection_tests {
 
     /// Moving off the git CLI stopped the box *executing* commands through its
     /// own config. It did not stop the box *redirecting* the export, and
-    /// libgit2 honours `core.worktree` too — so a box could stage another box's
+    /// libgit2 honours `core.worktree` too, so a box could stage another box's
     /// workspace into its own bundle and have it shipped to the owner.
     #[test]
     fn a_box_cannot_point_its_export_at_another_boxs_files() {

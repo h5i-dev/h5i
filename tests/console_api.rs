@@ -1,17 +1,17 @@
 //! End-to-end tests for the box console (`h5i ui`).
 //!
-//! The unit tests in `crates/h5i-core/src/server.rs` cover the pure decisions —
+//! The unit tests in `crates/h5i-core/src/server.rs` cover the pure decisions,
 //! who is authorized, what a receipt adds up to. They cannot catch the failures
 //! that actually take a dashboard down: a route path that no longer matches its
 //! handler's extractor, a gate layered so it never runs, a handler that panics
 //! on a repository with no boxes, an embedded bundle that is really the
 //! build-script stub. Those need the server up and something talking to it.
 //!
-//! So these drive the **compiled binary**, not the router: spawn `h5i ui` in a
+//! So these drive the *compiled binary*, not the router: spawn `h5i ui` in a
 //! throwaway repository, read the URL it prints, and speak HTTP/1.1 at it over
 //! a socket. That covers the CLI wiring, the token print, the gate, the
 //! embedded assets and the JSON in one pass, and it needs no HTTP client
-//! dependency to do it — the same reason `crates/h5i-core/src/view.rs` writes
+//! dependency to do it. The same reason `crates/h5i-core/src/view.rs` writes
 //! its own requests.
 //!
 //! Gated on the `web` feature: without it there is no `ui` subcommand to spawn.
@@ -65,7 +65,7 @@ impl Repo {
 
     /// Hermetic: a fixed agent identity, and the workspace tier pinned so box
     /// creation never probes the host. These tests are about the HTTP surface,
-    /// not about confinement — the kernel tiers are `env_integration.rs`'s job.
+    /// not about confinement. The kernel tiers are `env_integration.rs`'s job.
     fn env(&self) -> [(&'static str, &'static str); 2] {
         [
             ("H5I_AGENT", "tester"),
@@ -92,7 +92,7 @@ fn ok(cmd: &mut Command) {
 
 struct Console {
     child: Child,
-    /// `127.0.0.1:<port>` — also the `Host` header and the self-origin.
+    /// `127.0.0.1:<port>`: also the `Host` header and the self-origin.
     addr: String,
     token: String,
 }
@@ -104,7 +104,7 @@ impl Console {
     /// command binds the listener *before* it prints (that is why
     /// `Console::bind` and `Console::serve` are separate), so by the time the
     /// URL exists the socket is listening and a connection can only queue in
-    /// the accept backlog — never be refused.
+    /// the accept backlog. Never be refused.
     fn start(repo: &Repo) -> Console {
         let mut child = Command::new(H5I)
             .args(["ui", "--port", "0"])
@@ -147,7 +147,7 @@ impl Console {
 
         // Keep draining stdout for the life of the console. Dropping the read
         // end here would close the pipe, and the next line the command prints
-        // (it prints two more after the URL) would kill it — which surfaces as
+        // (it prints two more after the URL) would kill it, which surfaces as
         // a connection reset three assertions later, only when the machine is
         // busy enough for the ordering to flip. Detached: the reader ends when
         // `Drop` kills the child and the pipe closes.
@@ -330,7 +330,7 @@ fn the_console_has_no_way_to_change_anything() {
 
     // Read-only is the console's central claim, and it is only true as long as
     // no route answers a mutating method. 405 means the router knows the path
-    // and refuses the verb — which is the assertion, not 404.
+    // and refuses the verb, which is the assertion, not 404.
     for method in ["POST", "PUT", "PATCH", "DELETE"] {
         let reply = ui.request(
             method,
@@ -356,7 +356,7 @@ fn an_empty_repository_renders_an_empty_fleet_rather_than_failing() {
     assert_eq!(boxes.status, 200);
     assert_eq!(boxes.json().as_array().expect("an array").len(), 0);
 
-    // A host report is available before any box exists — it is the top strip,
+    // A host report is available before any box exists. It is the top strip,
     // and a fleet of zero is exactly when someone reads it.
     let probe = ui.get_authed("/api/probe");
     assert_eq!(probe.status, 200);
@@ -484,8 +484,8 @@ fn the_binary_carries_a_real_console_and_not_the_build_scripts_stub() {
     let html = page.text();
 
     // The stub `build.rs` writes when H5I_SKIP_WEB_BUILD is set says so in as
-    // many words. A binary serving it would look completely healthy — 200, a
-    // page, no error anywhere — which is exactly why it is asserted against.
+    // many words. A binary serving it would look completely healthy (200, a
+    // page, no error anywhere) which is exactly why it is asserted against.
     assert!(
         !html.contains("console bundle not built"),
         "this binary embeds the build-script stub, not the console. Build the \
@@ -519,8 +519,8 @@ fn the_binary_carries_a_real_console_and_not_the_build_scripts_stub() {
 fn the_console_ships_the_same_fence_the_engine_prints() {
     // The engine wraps page content before it reaches a *model*, because that
     // is the moment attacker-controlled text meets something deciding what to
-    // do next. The console showed the same text — page URLs, console output,
-    // policy subjects, the rendered frame — to a *person*, with no boundary at
+    // do next. The console showed the same text (page URLs, console output,
+    // policy subjects, the rendered frame) to a *person*, with no boundary at
     // all, which left the human reader with less framing than the model got.
     //
     // Asserted against the served bundle rather than the source, because a

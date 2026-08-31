@@ -4,11 +4,11 @@
 //! its transcript behind the player's JSON API instead, reachable only by a
 //! program that knows that API. yt-dlp is that program, and this module runs it.
 //!
-//! **Why a lane and not a feature.** The engine's log claims a request not in it
+//! Why a lane and not a feature. The engine's log claims a request not in it
 //! did not happen, which holds because the engine *is* the HTTP client. A helper
 //! opens its own sockets, so its fetches cannot appear there, and writing them
 //! in anyway would dress an observation up as a decision record. They stay out
-//! and get recorded elsewhere: a **host-observed** row in
+//! and get recorded elsewhere: a *host-observed* row in
 //! [`bs::HELPERS_FILE`](h5i_core::browser_session::HELPERS_FILE) naming the
 //! program and the exact argv h5i built.
 //!
@@ -38,7 +38,7 @@ pub const NAME: &str = "yt-dlp";
 ///
 /// The two paths a package manager and a `pip install --user` land in. Absolute
 /// rather than relative, so a `yt-dlp` in the working directory is never what
-/// runs — this module execs a program named by a flag, and picking one up from
+/// runs. This module execs a program named by a flag, and picking one up from
 /// wherever h5i happens to be standing is how that becomes a way to run
 /// something else entirely.
 const FALLBACKS: &[&str] = &["/usr/local/bin/yt-dlp", "/usr/bin/yt-dlp"];
@@ -61,7 +61,7 @@ const BUDGET: Duration = Duration::from_secs(120);
 ///
 /// Two readers. A slow or rate-limited link where two minutes is genuinely not
 /// enough, and a test that needs the stop path to happen this second rather
-/// than in two minutes — which is the only way to exercise it at all, and it
+/// than in two minutes, which is the only way to exercise it at all, and it
 /// went untested until it was.
 ///
 /// Clamped rather than trusted: zero would stop every run before it began, and
@@ -124,7 +124,7 @@ pub struct Outcome {
 
 /// Read a transcript with the helper.
 ///
-/// `url` is the media to read. It is **not** navigated to first, which is the
+/// `url` is the media to read. It is *not* navigated to first, which is the
 /// one place this lane's flags differ in meaning from the engine's: the engine
 /// reads the page it is on, and the helper reads a URL directly, so moving the
 /// session to a page nobody is going to read would be a page load spent on
@@ -133,7 +133,7 @@ pub struct Outcome {
 ///
 /// The three facts this lane takes from a session and no others: an id to name
 /// the workspace and the log, a placement to run in, and a lane to report
-/// honestly. Naming them makes the second case expressible — a `--via` run with
+/// honestly. Naming them makes the second case expressible. A `--via` run with
 /// a `--url` needs no page, so it needs no session, and demanding one was a
 /// requirement of the code rather than of the design.
 pub enum Site<'a> {
@@ -194,11 +194,11 @@ pub fn transcript(
     let work = workspace(root, site)?;
     scrub(&work)?;
 
-    // The default is written down once, here, and used for **both** the pattern
+    // The default is written down once, here, and used for *both* the pattern
     // yt-dlp is given and the file chosen out of what comes back. Deriving it
     // twice is what went wrong the first time this ran against a real video.
     //
-    // **Exact, not a prefix.** yt-dlp matches `--sub-langs` with a regex
+    // Exact, not a prefix. yt-dlp matches `--sub-langs` with a regex
     // `fullmatch`, so `en` means `en` and `en.*` means every tag beginning with
     // it. Against YouTube that widening is not a convenience, it is three
     // downloads instead of one: a video's `en.*` is `en` plus `en-de` and
@@ -216,7 +216,7 @@ pub fn transcript(
     //
     // There used to be an `--all` here that dropped `--write-auto-subs` so that
     // yt-dlp's `all` would not expand to the several hundred languages YouTube
-    // machine-translates into — and then a second invocation to put the
+    // machine-translates into, and then a second invocation to put the
     // automatic track back for a video that had no authored one, because
     // otherwise `--all` returned less than passing no flag. Two passes, a
     // shared byte budget, a per-track label and a dropped-track note, all to
@@ -228,13 +228,13 @@ pub fn transcript(
 
     let mut note = describe(&read, want, status, &said);
     // The box's own receipt for this run, when there is one. It is the
-    // strongest evidence this lane produces — a row h5i wrote from outside the
-    // helper, naming the policy the run was subject to — so the reply points at
+    // strongest evidence this lane produces (a row h5i wrote from outside the
+    // helper, naming the policy the run was subject to) so the reply points at
     // it rather than leaving the two records to be matched by time.
     //
-    // **Appended exactly here, and nowhere else.** `record` used to add one
+    // Appended exactly here, and nowhere else. `record` used to add one
     // too, which is how a reordering put `Box receipt 4f2a91be. Box receipt
-    // 4f2a91be.` in the audit — a doubled evidence claim in the lane whose
+    // 4f2a91be.` in the audit. A doubled evidence claim in the lane whose
     // whole value is that its claims are exact. Two places that decorate one
     // string is a bug waiting for an edit; one place cannot double it, and the
     // row and the reply now say the same sentence for the same reason.
@@ -310,7 +310,7 @@ fn literal_prefix(pattern: &str) -> &str {
 /// The scheme check is the whole of it, and it is not decoration: `--via` names
 /// a program that takes a URL, and a `file://` or a shell-shaped string reaching
 /// it is the difference between fetching a page and reading the host. The host
-/// allowlist is deliberately **not** applied here — this lane's containment is
+/// allowlist is deliberately *not* applied here. This lane's containment is
 /// the session's placement, which [`transcript`] documents, and pretending to a
 /// policy check that the engine and not this module owns would be worse than
 /// having none.
@@ -330,11 +330,11 @@ fn check_url(raw: &str) -> anyhow::Result<String> {
 
 /// Start from a directory this run just made, or refuse.
 ///
-/// **Not a tidy-up.** [`collect`] reads whatever `.vtt` and `.info.json` it
+/// Not a tidy-up. [`collect`] reads whatever `.vtt` and `.info.json` it
 /// finds here and reports it as the transcript, so anything left in this
 /// directory by anyone becomes an answer h5i hands a model with an `evidence:`
 /// line and a box receipt beside it. The directory is host-global on a
-/// workspace-tier box — that box's `/tmp` *is* the host's — so on a shared
+/// workspace-tier box, that box's `/tmp` *is* the host's, so on a shared
 /// machine any other user can create it first, plant a file, and make it
 /// undeletable.
 ///
@@ -369,10 +369,10 @@ fn scrub(work: &Workspace) -> anyhow::Result<()> {
 /// Where the helper writes, in both views of the filesystem.
 #[derive(Debug)]
 struct Workspace {
-    /// The directory as **this machine** sees it, which is where the output is
+    /// The directory as *this machine* sees it, which is where the output is
     /// read back from.
     host: PathBuf,
-    /// The output template as the **helper** sees it. The same directory for a
+    /// The output template as the *helper* sees it. The same directory for a
     /// host session, and the box's own path for a boxed one.
     in_helper: String,
 }
@@ -381,7 +381,7 @@ struct Workspace {
 ///
 /// For a host session that is the session directory, which h5i already owns.
 /// For a boxed one it is beside the control socket in the box's `/tmp`, whose
-/// two views the session record already carries — `control.file` is the box's
+/// two views the session record already carries: `control.file` is the box's
 /// and `control.witness` is this machine's. Deriving them here rather than
 /// re-computing the box's tmp mapping is the same rule the rest of this file
 /// follows: two places that must agree about a path are two places that can
@@ -390,7 +390,7 @@ struct Workspace {
 ///
 /// For a host session that is the session directory, which h5i already owns.
 /// For a boxed one it is beside the control socket in the box's `/tmp`, whose
-/// two views the session record already carries — `control.file` is the box's
+/// two views the session record already carries: `control.file` is the box's
 /// and `control.witness` is this machine's. Deriving them here rather than
 /// re-computing the box's tmp mapping is the same rule the rest of this file
 /// follows: two places that must agree about a path are two places that can
@@ -402,7 +402,7 @@ struct Workspace {
 ///
 /// A bare `helper` is unique per session on the host, where the parent is the
 /// session's own directory. In a box it is not: the parent is the box's `/tmp`,
-/// and on a workspace-tier box that is the **host's** `/tmp`, so every box on
+/// and on a workspace-tier box that is the *host's* `/tmp`, so every box on
 /// the machine and every process on it would share one `/tmp/helper`. Two boxes
 /// reading transcripts at once would clear each other's output mid-run, and
 /// anything a third party left there would be read as this run's answer.
@@ -457,7 +457,7 @@ fn workspace(root: &Path, site: &Site) -> anyhow::Result<Workspace> {
             //
             // The message does not name a cause it cannot check. It used to say
             // "keeps its /tmp inside its image", which is one of the two and
-            // reads as a fact about the tier — wrong, and confidently so, for a
+            // reads as a fact about the tier. Wrong, and confidently so, for a
             // workspace box whose record simply has no witness in it.
             let on_host = session
                 .control
@@ -492,8 +492,8 @@ fn workspace(root: &Path, site: &Site) -> anyhow::Result<Workspace> {
 fn build_argv(url: &str, langs: &str, out: &str) -> Vec<String> {
     let mut argv: Vec<&str> = vec![
         // Nothing from a config file. A `~/.config/yt-dlp/config` could
-        // otherwise add flags h5i did not choose — a proxy, a cookie file, a
-        // post-processor — which would make the argv this module records an
+        // otherwise add flags h5i did not choose (a proxy, a cookie file, a
+        // post-processor) which would make the argv this module records an
         // incomplete account of what actually ran.
         "--ignore-config",
         // The media is never fetched. This lane reads what was *said*, and a
@@ -561,9 +561,9 @@ fn run(
             // Asked before the run, the way [`locate`] asks on the host, and
             // for the same reason: a box with no yt-dlp in it otherwise
             // produced `failed: it said nothing`. `h5i box run` fails to exec
-            // the program and says so on **its** stderr, which [`complaint`]
-            // deliberately does not read — it holds h5i's receipt line, not the
-            // helper's words — so the one fact the caller needed was the one
+            // the program and says so on *its* stderr, which [`complaint`]
+            // deliberately does not read (it holds h5i's receipt line, not the
+            // helper's words) so the one fact the caller needed was the one
             // thing discarded. `sh` answers 127 for a command it cannot find.
             if !present_in_box(name)? {
                 anyhow::bail!(
@@ -601,7 +601,7 @@ fn run(
 
     // Output to files rather than pipes, then poll: a pipe would have to be
     // drained on another thread to avoid filling and deadlocking the child,
-    // and the files are wanted anyway — a helper that failed is a helper whose
+    // and the files are wanted anyway. A helper that failed is a helper whose
     // stderr somebody is about to want.
     let mut child = command.spawn().map_err(|e| {
         anyhow::anyhow!("could not start `{NAME}`: {e}")
@@ -617,7 +617,7 @@ fn run(
                 let _ = child.wait();
                 // Stopped, not failed. A run killed at the budget has usually
                 // written some of what it was asked for, and this used to
-                // return an error and throw all of it away — the same mistake
+                // return an error and throw all of it away. The same mistake
                 // as reading yt-dlp's exit code instead of reading the
                 // directory, and made in the one place where the caller has
                 // already waited two minutes for the answer.
@@ -644,7 +644,7 @@ fn run(
 
 /// The banner `h5i box run` puts between a child's two streams.
 ///
-/// It merges them: the child's stderr arrives on `box run`'s **stdout**, after
+/// It merges them: the child's stderr arrives on `box run`'s *stdout*, after
 /// this line, and `box run`'s own stderr carries only its receipt.
 const BOX_RUN_STDERR_BANNER: &str = "----- stderr -----";
 
@@ -654,7 +654,7 @@ const BOX_RUN_STDERR_BANNER: &str = "----- stderr -----";
 /// cosmetic. On the host the child's stderr is the child's stderr. Inside a box
 /// it is not: `h5i box run` folds it into its own stdout under
 /// [`BOX_RUN_STDERR_BANNER`] and keeps stderr for its receipt line, so reading
-/// stderr there yields `◈ receipt … · exit 1 · wall 3ms` — h5i's own
+/// stderr there yields `◈ receipt … · exit 1 · wall 3ms`. H5i's own
 /// bookkeeping, handed to a caller as the reason yt-dlp failed. It says nothing
 /// about the failure and it reads as though h5i were the thing that broke.
 fn complaint(placement: &bs::Placement, work: &Workspace) -> String {
@@ -684,7 +684,7 @@ fn complaint(placement: &bs::Placement, work: &Workspace) -> String {
 fn box_receipt(site: &Site, work: &Workspace) -> Option<String> {
     // Only where there *is* a box. On the host, `stderr.log` is yt-dlp's own
     // stderr, and any line of it carrying `receipt ` and eight hex digits would
-    // have this claim a box receipt for a run that never entered one — a false
+    // have this claim a box receipt for a run that never entered one. A false
     // evidence claim, in the one lane whose entire value is evidence honesty.
     if !matches!(site.placement(), bs::Placement::Box { .. }) {
         return None;
@@ -777,8 +777,8 @@ struct Read {
 /// Read back what the helper left behind.
 ///
 /// `want` is the language the caller asked for. yt-dlp is given a *pattern*
-/// (`en.*`), so more than one file can legitimately arrive — `en` and `en-orig`
-/// both match — and picking the alphabetically first would hand back the
+/// (`en.*`), so more than one file can legitimately arrive, `en` and `en-orig`
+/// both match, and picking the alphabetically first would hand back the
 /// machine transcription when the author's own captions are sitting beside it.
 fn collect(dir: &Path, want: Option<&str>, max_bytes: usize) -> Read {
     let mut read = Read::default();
@@ -836,8 +836,8 @@ fn collect(dir: &Path, want: Option<&str>, max_bytes: usize) -> Read {
         // From the info file's two lists, not from the filename.
         //
         // The marker in a filename only appears on a *translated* automatic
-        // track (`en-orig`, `a.en`). The case this lane exists to serve — a
-        // video with automatic captions and no authored ones — gets written as
+        // track (`en-orig`, `a.en`). The case this lane exists to serve, a
+        // video with automatic captions and no authored ones, gets written as
         // plain `<id>.en.vtt`, identical to an authored track. Reading the name
         // therefore said `automatic: false` exactly where the warning matters
         // most, and dropped "machine-transcribed, names are frequently wrong"
@@ -873,8 +873,8 @@ fn tags(value: &Value) -> Vec<String> {
 ///
 /// From the info file's two lists, not from the filename. The marker in a
 /// filename only appears on a *translated* automatic track (`en-orig`, `a.en`);
-/// the case this lane exists to serve — a video with automatic captions and no
-/// authored ones — is written as plain `<id>.en.vtt`, identical to an authored
+/// the case this lane exists to serve, a video with automatic captions and no
+/// authored ones, is written as plain `<id>.en.vtt`, identical to an authored
 /// track. A tag in both lists is the author's own, because that is the one
 /// yt-dlp writes when both exist.
 fn is_automatic(read: &Read, tag: &str) -> bool {
@@ -896,10 +896,10 @@ fn tag_of(path: &Path) -> Option<String> {
 
 /// One line saying what came of the run, for the audit row and the reply.
 ///
-/// **What arrived decides, not the exit code.** yt-dlp exits non-zero if any
+/// What arrived decides, not the exit code. yt-dlp exits non-zero if any
 /// part of a run failed, and a run that wrote the transcript and then hit a 429
 /// on something else is a run that answered the question. Reporting that as a
-/// failure would send a caller retrying work it already has — while a caller
+/// failure would send a caller retrying work it already has, while a caller
 /// who is *not* told about the partial failure cannot explain the missing title
 /// beside it, so the note carries both.
 fn describe(read: &Read, want: &str, status: Option<i32>, stderr: &str) -> String {
@@ -945,14 +945,14 @@ fn describe(read: &Read, want: &str, status: Option<i32>, stderr: &str) -> Strin
 
     // A clean run that matched nothing. The two answers a caller has to be able
     // to tell apart are "this video has no captions" and "it has captions, in
-    // tags you did not ask for" — so the tags it *does* have are named, and so
+    // tags you did not ask for", so the tags it *does* have are named, and so
     // is the flag that widens the match.
     if read.authored.is_empty() && read.automatic_tags.is_empty() {
         return "this video has no subtitles at all, in any language".to_string();
     }
     // The authored tags in full, the machine ones as a count. YouTube lists
     // several hundred of the latter and they sort ahead of everything useful,
-    // so a sample of them is a sample of `aa-de, ab-de, af-de` — noise in the
+    // so a sample of them is a sample of `aa-de, ab-de, af-de`. Noise in the
     // place where the answer should be.
     let mut have = Vec::new();
     if !read.authored.is_empty() {
@@ -976,7 +976,7 @@ fn describe(read: &Read, want: &str, status: Option<i32>, stderr: &str) -> Strin
 ///
 /// One shape across both lanes on purpose. An agent that has learned to read a
 /// transcript should not have to learn a second reading for the same question
-/// asked a different way — what differs is `source` and `evidence`, which is
+/// asked a different way. What differs is `source` and `evidence`, which is
 /// exactly the part that *should* differ and the part it must not miss.
 fn render(url: &str, site: &Site, read: &Read, note: &str) -> Value {
     let track = json!({
@@ -1018,7 +1018,7 @@ fn render(url: &str, site: &Site, read: &Read, note: &str) -> Value {
 
 /// What saw this lane's traffic, said without rounding up.
 ///
-/// **Branching on the session's lane, not on its placement**, and that
+/// Branching on the session's lane, not on its placement, and that
 /// distinction is the whole of this function. Being in a box is not the same as
 /// being behind a boundary: [`bs::Session::lane_for`] awards `HostObserved`
 /// only for enforcement outside the engine, an egress allowlist the box applies
@@ -1106,7 +1106,7 @@ fn text(url: &str, site: &Site, read: &Read, note: &str) -> String {
     if !read.automatic_tags.is_empty() {
         // "automatic captions", not "machine translations": the list holds both
         // a video's own machine transcript and YouTube's translations of it,
-        // and naming it after the second kind mislabels the first — which is
+        // and naming it after the second kind mislabels the first, which is
         // the one a caller actually wants when there are no authored captions.
         out.push_str(&format!(
             "automatic captions available: {} tag(s)\n",
@@ -1202,8 +1202,8 @@ mod tests {
     }
 
     /// yt-dlp is given a pattern, so more than one file legitimately arrives.
-    /// Taking the alphabetically first hands back `en-orig` — the machine
-    /// transcription — while the author's own `en` captions sit beside it.
+    /// Taking the alphabetically first hands back `en-orig`, the machine
+    /// transcription, while the author's own `en` captions sit beside it.
     #[test]
     fn the_requested_language_wins_over_whatever_sorted_first() {
         let dir = std::env::temp_dir().join(format!("h5i-helper-test-{}", std::process::id()));
@@ -1335,7 +1335,7 @@ mod tests {
     /// A run with no session is a run this lane can do, and it says so.
     ///
     /// `--url` names the media and this lane renders no page, so a session was
-    /// never contributing anything here but a placement — and requiring one
+    /// never contributing anything here but a placement, and requiring one
     /// meant `h5i browser transcript --via yt-dlp --url <a video>` answered
     /// with the closing note of whatever session had last been open, which had
     /// nothing to do with the question asked.
@@ -1432,7 +1432,7 @@ mod tests {
     /// Being in a box is not the same as being behind a boundary. On Linux
     /// today the tiers that enforce egress cannot hold a resident browser
     /// session at all, so every boxed session is on a tier that confines files
-    /// and environment and not network — and the first version of this claimed
+    /// and environment and not network, and the first version of this claimed
     /// the boundary for all of them.
     #[test]
     fn a_box_without_an_egress_boundary_is_not_reported_as_having_one() {
@@ -1611,7 +1611,7 @@ mod tests {
     ///
     /// The caller decorates the note with the box receipt; `record` used to as
     /// well, so a reordering put the claim in the audit row twice. This reads
-    /// the row back off disk rather than rebuilding the string locally — the
+    /// the row back off disk rather than rebuilding the string locally. The
     /// first attempt at this test asserted that one append produces one match,
     /// which was true before the fix as well and guarded nothing.
     #[test]
@@ -1733,7 +1733,7 @@ mod tests {
     /// `--lang` is a regex to yt-dlp and a literal here, and the escape hatch
     /// this lane prints by name is `--lang 'en.*'`. Without the literal head,
     /// no tag equals or starts with `en.*`, selection falls through to whatever
-    /// sorted first, and `-` sorts before `.` — so following the tool's own
+    /// sorted first, and `-` sorts before `.`, so following the tool's own
     /// advice returned `en-de`, a translation of a translation.
     #[test]
     fn a_regex_language_still_chooses_the_right_file() {
@@ -1759,7 +1759,7 @@ mod tests {
 
     /// A video with automatic captions and no authored ones gets them written
     /// as plain `<id>.en.vtt`, which the filename cannot distinguish from an
-    /// author's track — so the "machine-transcribed" warning went missing on
+    /// author's track, so the "machine-transcribed" warning went missing on
     /// exactly the transcript that needed it.
     #[test]
     fn an_automatic_only_track_is_labelled_from_the_info_file() {
@@ -1855,8 +1855,8 @@ mod tests {
         assert_eq!(tag_of(Path::new("/t/noextension")), None);
     }
 
-    /// A failure is a result and is described as one. The alternative — an
-    /// empty transcript with no reason — reads as a video that said nothing.
+    /// A failure is a result and is described as one. The alternative, an
+    /// empty transcript with no reason, reads as a video that said nothing.
     #[test]
     fn a_failed_run_reports_the_helpers_own_last_word() {
         let read = Read::default();

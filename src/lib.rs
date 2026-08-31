@@ -1,4 +1,4 @@
-//! `h5i` — a disposable, confined development environment for coding agents.
+//! `h5i`: a disposable, confined development environment for coding agents.
 //!
 //! The library owns the whole CLI: the top-level `Cli`/`Commands` parse, the
 //! argument bootstrap, and the dispatch into `cli/`, where every noun's clap
@@ -32,8 +32,8 @@ pub enum Commands {
     /// Disposable, confined development boxes. `h5i box` with no verb creates
     /// one from the current repository; `h5i box --help` has the verb table.
     ///
-    /// `box` is the noun the whole product uses — the docs, the skill and the
-    /// errors all say "a box" — so the command says it too. `dev` is kept as a
+    /// `box` is the noun the whole product uses (the docs, the skill and the
+    /// errors all say "a box") so the command says it too. `dev` is kept as a
     /// hidden alias for one release, like `env` before it.
     #[command(alias = "dev")]
     Box(BoxArgs),
@@ -46,13 +46,13 @@ pub enum Commands {
     },
 
     /// Open the box console in a browser: one read-only screen over the whole
-    /// fleet — what each box is, what its policy actually allows, what ran
+    /// fleet. What each box is, what its policy actually allows, what ran
     /// inside it, and what pressed on a boundary.
     ///
     /// The server is loopback-only and every route is a GET, so the console can
     /// watch boxes but never drive them: `shell`, `run`, `export` and `apply`
     /// stay here in the CLI. The URL carries a token minted for this session
-    /// and held in memory only — no box can read it.
+    /// and held in memory only, no box can read it.
     #[cfg(feature = "web")]
     Ui {
         /// Port to bind on 127.0.0.1. `0` asks the OS for a free one.
@@ -68,8 +68,8 @@ pub enum Commands {
     /// Hidden because it is not the interface: `h5i browser` is, and it is what
     /// knows about session names, placement, the control lock and the audit.
     /// This is what `h5i browser` execs itself as to render a page, and it is
-    /// documented so that anyone who genuinely wants the engine on its own —
-    /// a one-shot render, the font `doctor`, the engine's own skill — can
+    /// documented so that anyone who genuinely wants the engine on its own
+    /// (a one-shot render, the font `doctor`, the engine's own skill) can
     /// reach it without a second binary to install.
     #[command(name = "__engine", hide = true, disable_help_flag = true)]
     #[cfg(feature = "browser")]
@@ -84,7 +84,7 @@ pub enum Commands {
     /// A session holds the page, the cookie jar, the request log and the policy
     /// until it is closed. Every request is checked against that policy and
     /// written down before it reaches the wire, and the engine refuses the
-    /// fetch when it cannot write the record — so a request that is not in
+    /// fetch when it cannot write the record, so a request that is not in
     /// `h5i browser requests` did not happen.
     ///
     /// `open` makes a session and every verb that follows acts on it, so
@@ -106,7 +106,7 @@ pub enum Commands {
     ///
     /// Connects peer to peer, end-to-end encrypted, and serves their dev server
     /// on this machine's loopback. The local URL carries its own token, minted
-    /// here — the ticket's secret is never handed to a browser.
+    /// here. The ticket's secret is never handed to a browser.
     ///
     /// What you are opening is somebody else's agent's code. Treat it like any
     /// link a colleague sends you.
@@ -117,7 +117,7 @@ pub enum Commands {
         /// `/proc/<pid>/cmdline` is world-readable on an ordinary Linux box
         /// and this process runs for the whole session, so a ticket passed as
         /// an argument is legible to every other user on the machine for as
-        /// long as you are joined — and a ticket is the whole authorization.
+        /// long as you are joined, and a ticket is the whole authorization.
         /// `pbpaste | h5i join -` keeps it out of the process table and out
         /// of your shell history.
         #[arg(value_name = "TICKET")]
@@ -131,7 +131,7 @@ pub enum Commands {
         /// browser's cookie jar is scoped by host and ignores the port. On
         /// `127.0.0.1` the jar is shared with every local service you run, so
         /// the token this proxy sets is sent to any of them you visit while
-        /// joined — and that token reaches the box. macOS configures only
+        /// joined, and that token reaches the box. macOS configures only
         /// `127.0.0.1` on `lo0`, so this is the macOS answer unless you add an
         /// address yourself (`sudo ifconfig lo0 alias 127.0.0.2`).
         ///
@@ -142,7 +142,7 @@ pub enum Commands {
         shared_jar: bool,
         /// Serve on this loopback address instead of a random `127.x.y.z`.
         ///
-        /// The address is bound exactly — no fallback — and only loopback
+        /// The address is bound exactly, no fallback, and only loopback
         /// (`127.0.0.0/8`) is accepted. This is the WSL answer: Windows
         /// forwards only `127.0.0.1` into the VM, so the private address a
         /// join normally picks binds fine and is then unreachable from a
@@ -155,8 +155,8 @@ pub enum Commands {
 
     /// Run boxes on another Linux machine you own.
     ///
-    /// A runner is a second machine — a spare laptop, a lab box, a VM, a small
-    /// server — that h5i reaches over SSH. The repository, the policy, the
+    /// A runner is a second machine (a spare laptop, a lab box, a VM, a small
+    /// server) that h5i reaches over SSH. The repository, the policy, the
     /// credentials and the patch gate all stay on this machine; what moves is
     /// the execution, onto hardware whose compromise you have priced in.
     ///
@@ -282,7 +282,7 @@ impl BoxArgs {
             ),
         };
         // clap covers `--from` with `--pr`/`--new`, but a URL source becomes
-        // `clone` only here, after validation — and a detached box never reads
+        // `clone` only here, after validation, and a detached box never reads
         // `from`. Refuse rather than accept a pin and drop it.
         if self.from.is_some() && clone.is_some() {
             anyhow::bail!(
@@ -406,7 +406,7 @@ fn maybe_version_json(argv: &[String]) {
 /// Compiled feature flags for this binary, sorted so JSON output is diffable.
 // One cfg-gated `push` per feature, so a new feature is a one-line addition.
 // clippy sees `Vec::new()` + `push` and suggests `vec![]`, but the pushes are
-// conditional — collapsing them would reintroduce paired cfg/cfg(not) bindings.
+// conditional. Collapsing them would reintroduce paired cfg/cfg(not) bindings.
 #[allow(clippy::vec_init_then_push)]
 fn compiled_features() -> Vec<&'static str> {
     #[allow(unused_mut)]
@@ -635,8 +635,8 @@ mod tests {
 
     #[test]
     fn the_status_lines_egress_summary_says_localhost_rather_than_none() {
-        // An empty allowlist still leaves loopback open — that is how the dev
-        // server is reachable — so "none" would overstate the confinement in
+        // An empty allowlist still leaves loopback open, that is how the dev
+        // server is reachable, so "none" would overstate the confinement in
         // the one place a human wants a one-word answer.
         use cli::boxes::egress_summary;
         assert_eq!(egress_summary(&[]), "localhost");

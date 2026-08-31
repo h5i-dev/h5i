@@ -5,11 +5,11 @@
 //! rather than inventing a second, friendlier default. Two rules are worth
 //! stating because they are where "allowlist" usually leaks:
 //!
-//! - **Every redirect hop is checked**, not just the first. An allowed origin
+//! - Every redirect hop is checked, not just the first. An allowed origin
 //!   that 302s to a denied one is a denial, and the hop is recorded. A proxy
 //!   watching CONNECT lines cannot see that decision; here it is the same code
 //!   path as the original request.
-//! - **The navigation target is not implicitly trusted for subresources.**
+//! - The navigation target is not implicitly trusted for subresources.
 //!   Asking to open a page grants that page's origin (you named it) and
 //!   nothing else, so a docs page cannot quietly pull a tracker from a third
 //!   party.
@@ -59,7 +59,7 @@ pub struct Policy {
     /// on the same host a downgrade the allowlist waved through.
     wildcards: BTreeSet<String>,
     allow_loopback: bool,
-    /// Every remote origin is granted. **For instruments, not for agents.**
+    /// Every remote origin is granted. For instruments, not for agents.
     ///
     /// The corpus (§B8) and the reliability sweep (§B19.4) point this engine at
     /// the open web and measure what a page *asks for*. An allowlist built one
@@ -71,12 +71,12 @@ pub struct Policy {
     ///
     /// Three properties keep this from being a hole:
     ///
-    /// * **It widens the name check only.** [`Self::check_address`] is
+    /// * It widens the name check only. [`Self::check_address`] is
     ///   untouched, so a public name that resolves into private space is still
     ///   refused. This grants the open web, not the network.
-    /// * **Loopback still follows the document rule** in [`Self::check_from`]:
+    /// * Loopback still follows the document rule in [`Self::check_from`]:
     ///   a page from the web may not reach the dev server, whatever this says.
-    /// * **It is visible.** [`Self::allows_any_remote`] is what the doctor line
+    /// * It is visible. [`Self::allows_any_remote`] is what the doctor line
     ///   and the placement line read, so a run in this mode says so rather than
     ///   looking like a run with a very long allowlist.
     ///
@@ -94,7 +94,7 @@ impl Default for Policy {
             wildcards: BTreeSet::new(),
             // Loopback is the agent's own dev server. It never appears in an
             // egress allowlist and is the whole point of a dev loop, so it is
-            // opt-out rather than opt-in — matching the sandbox's own handling.
+            // opt-out rather than opt-in. Matching the sandbox's own handling.
             allow_loopback: true,
             any_remote: false,
             max_redirects: 5,
@@ -210,14 +210,14 @@ impl Policy {
     /// exists for one reason: loopback. Loopback is reachable by default because
     /// the box's dev server is the whole point of a browser box, and it bypasses
     /// the egress proxy for the same reason. Once script runs, that combination
-    /// is a read primitive — a page from the open web could `fetch` the dev
+    /// is a read primitive. A page from the open web could `fetch` the dev
     /// server, read the source the agent is working on, and post it to any
     /// allowed host, with the box's outer enforcement never seeing it.
     ///
     /// So loopback is reachable *from a loopback document*. A page the dev
     /// server served may talk to the dev server; a page from the web may not.
-    /// `None` is a document with no origin of its own — a local file, or the
-    /// engine acting on the agent's explicit instruction — and is trusted,
+    /// `None` is a document with no origin of its own (a local file, or the
+    /// engine acting on the agent's explicit instruction) and is trusted,
     /// because the agent naming a URL is not the same as a page reaching for one.
     pub fn check_from(&self, url: &Url, document: Option<&Url>) -> Verdict {
         if self.allow_loopback && url.host_str().is_some_and(is_loopback) {
@@ -245,7 +245,7 @@ impl Policy {
     /// went, and the two are not the same question: DNS answers can change
     /// between the check and the connection, and an allowed name that resolves
     /// into loopback or private space is the classic rebinding move. A
-    /// name-level allowlist cannot see it — by the time the address exists the
+    /// name-level allowlist cannot see it. By the time the address exists the
     /// decision has already been made.
     ///
     /// The rule is narrow on purpose. Reaching an internal address is fine when
@@ -267,7 +267,7 @@ impl Policy {
         // allowlist decided about, so it is not a rebinding: the caller asked
         // for this address by name and the allowlist answered about it.
         //
-        // **`any_remote` deliberately does not answer here.** The instrument
+        // `any_remote` deliberately does not answer here. The instrument
         // mode grants the open web, and an RFC 1918 literal is not the open
         // web; letting the blanket grant reach one would turn a measurement
         // flag into a private-network flag, which is a different decision and
@@ -348,7 +348,7 @@ impl Policy {
             return Verdict::Allow;
         }
 
-        // A wildcard grants the host and anything under it — but only on the
+        // A wildcard grants the host and anything under it, but only on the
         // scheme and port it was granted for, so it is compared as an origin
         // with the host part relaxed, not as a bare hostname.
         let host_lower = host.to_ascii_lowercase();
@@ -452,7 +452,7 @@ fn normalize_origin(input: &str) -> Option<String> {
     // exemption. The scheme differs; what is being decided does not."
     //
     // Nothing implemented that promise. A remote `ws://` on an allowed origin
-    // came back "could not derive an origin from `ws://…`" — a denial with the
+    // came back "could not derive an origin from `ws://…`". A denial with the
     // wrong reason, which sends whoever reads it looking for a malformed URL
     // instead of at their allowlist. It stayed hidden because the proxy rule in
     // `wsclient` refuses remote sockets first inside a box, and outside one
@@ -562,7 +562,7 @@ mod tests {
         let policy = Policy::new().allow("https://docs.example.com");
         let url = Url::parse("https://docs.example.com/page").unwrap();
 
-        // The name itself is fine — that is the point.
+        // The name itself is fine. That is the point.
         assert!(policy.check(&url).is_allowed());
 
         for addr in [
@@ -655,7 +655,7 @@ mod tests {
 
     /// A socket address is judged as its HTTP twin. The promise was in
     /// `check`'s documentation and nothing implemented it, so an allowed
-    /// remote socket was denied for "could not derive an origin" — a refusal
+    /// remote socket was denied for "could not derive an origin". A refusal
     /// whose reason pointed at the URL when the answer was the allowlist.
     #[test]
     fn a_socket_address_is_judged_as_its_http_twin() {

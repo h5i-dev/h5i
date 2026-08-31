@@ -232,8 +232,8 @@ impl Agent {
     }
 
     /// Dispatch buffered calls one at a time. Invalid calls (undeclared name,
-    /// mangled arguments) are answered guest-side with an error tool result —
-    /// recoverable, like hax's unknown-tool error output (src/agent_tool.h)
+    /// mangled arguments) are answered guest-side with an error tool result.
+    /// Recoverable, like hax's unknown-tool error output (src/agent_tool.h)
     /// and mini's FormatError feedback loop. `fresh_turn` is true right after
     /// an assistant reply so the format-error counter is updated once per turn.
     fn dispatch_next(&mut self, fresh_turn: bool) -> Effect {
@@ -721,7 +721,7 @@ mod tests {
     #[test]
     fn call_id_mismatch_is_fatal() {
         // A misrouting host is a protocol violation, not model confusion
-        // (thread post 12) — never fed back into model history.
+        // (thread post 12). Never fed back into model history.
         let (mut agent, _) = start();
         let _ = agent.handle(envelope("", &[("c1", "read_file", r#"{"path":"a"}"#)]));
         let effect = agent.handle(Event::ToolFinished {

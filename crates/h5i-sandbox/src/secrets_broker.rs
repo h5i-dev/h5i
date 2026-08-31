@@ -1,14 +1,14 @@
 //! Host-side secrets broker (`docs/secrets-broker-design.md`).
 //!
-//! Resolves a profile's [`SecretGrant`]s from host-side sources at **run time**
+//! Resolves a profile's [`SecretGrant`]s from host-side sources at *run time*
 //! (never at policy load) and materializes them for injection into the env's
-//! child process — capability-scoped, audited, redacted, and **fail-closed**:
+//! child process. Capability-scoped, audited, redacted, and *fail-closed*:
 //! a declared grant that cannot be resolved or delivered aborts the run rather
 //! than running with the credential silently absent.
 //!
 //! The broker never writes a value to the policy, the manifest, or any git ref.
 //! It records only the grant id, source, injection method, ttl, and a value
-//! **fingerprint** (sha256 prefix). File-injected secrets are written `0600`
+//! *fingerprint* (sha256 prefix). File-injected secrets are written `0600`
 //! outside `$WORK` and unlinked when the [`Brokered`] guard drops.
 
 use std::path::{Path, PathBuf};
@@ -34,7 +34,7 @@ pub struct Brokered {
     _temp: TempFiles,
 }
 
-// Hand-written, value-free Debug — a derived one would print the secret values
+// Hand-written, value-free Debug. A derived one would print the secret values
 // held in `env`/`redactions`. Only counts and grant names are shown.
 impl std::fmt::Debug for Brokered {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -46,7 +46,7 @@ impl std::fmt::Debug for Brokered {
     }
 }
 
-/// Audit record for one delivered grant — everything but the value.
+/// Audit record for one delivered grant. Everything but the value.
 pub struct GrantRecord {
     pub name: String,
     pub source: String,
@@ -68,7 +68,7 @@ impl GrantRecord {
     }
 }
 
-/// Unlinks file-injected secrets when dropped — including on error/panic, so a
+/// Unlinks file-injected secrets when dropped, including on error/panic, so a
 /// materialized secret never outlives the run.
 struct TempFiles(Vec<PathBuf>);
 impl Drop for TempFiles {
@@ -79,7 +79,7 @@ impl Drop for TempFiles {
     }
 }
 
-/// `fp:<12 hex>` of a value under a per-repository key — lets a reviewer confirm
+/// `fp:<12 hex>` of a value under a per-repository key. Lets a reviewer confirm
 /// "same token across runs" without ever seeing it. Public so `env secrets` can
 /// fingerprint a dry-run resolution.
 ///
@@ -121,7 +121,7 @@ fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
 ///
 /// Per repository rather than per run, because the whole point of the
 /// fingerprint is comparing one run against another. It is not a secret whose
-/// loss is catastrophic — it only makes the fingerprints grindable again — but
+/// loss is catastrophic, it only makes the fingerprints grindable again, but
 /// it is written owner-only and never leaves the host.
 pub fn fingerprint_key(h5i_root: &Path) -> Result<Vec<u8>, H5iError> {
     let path = h5i_root.join("secrets-fp.key");
@@ -157,7 +157,7 @@ pub fn fingerprint_key(h5i_root: &Path) -> Result<Vec<u8>, H5iError> {
 
 /// Wall-clock timeout for a `command:` secret extractor.
 const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-/// Max stdout captured from a `command:` extractor (1 MiB) — a credential is
+/// Max stdout captured from a `command:` extractor (1 MiB). A credential is
 /// small; anything larger is a bug or an attempt to exhaust memory.
 const COMMAND_OUTPUT_CAP: usize = 1024 * 1024;
 
@@ -205,8 +205,8 @@ fn run_command_bounded(
 
     // Drain stdout on a thread so a child that fills the pipe can't deadlock
     // while we poll for exit/timeout. Keep reading to EOF (so the child never
-    // blocks on a full pipe) but RETAIN only up to the cap, discarding the rest
-    // — bounded memory regardless of how much the child emits. Returns the
+    // blocks on a full pipe) but RETAIN only up to the cap, discarding the rest.
+    // Bounded memory regardless of how much the child emits. Returns the
     // retained bytes plus whether the cap was exceeded.
     let mut stdout = child.stdout.take().expect("piped stdout");
     let reader = std::thread::spawn(move || {
@@ -311,7 +311,7 @@ fn read_file_capped(path: &str, name: &str, cap: usize) -> Result<String, H5iErr
 /// and process env (both injectable in tests). Fail-closed on missing/empty.
 ///
 /// `allow_command` gates the `command:` extractor, which executes arbitrary code
-/// **on the host, outside the sandbox** (Codex). It is off unless the env's
+/// on the host, outside the sandbox (Codex). It is off unless the env's
 /// pinned, tamper-evident policy opts in (`allow_command_extractors = true`), so
 /// a credential source can never be turned into a host-code-exec channel without
 /// an explicit, digested grant.
@@ -329,7 +329,7 @@ pub fn resolve_value(grant: &SecretGrant, allow_command: bool) -> Result<String,
         // reason: the source is repo-supplied policy, a credential is small, and
         // `read_to_string` on `file:/dev/zero` is an unbounded allocation on the
         // host at box-create time. Fail-closed past the cap rather than
-        // truncating — half a credential is not a credential.
+        // truncating. Half a credential is not a credential.
         read_file_capped(path, &grant.name, COMMAND_OUTPUT_CAP)?
             .trim_end_matches(['\n', '\r'])
             .to_string()
@@ -421,8 +421,8 @@ pub fn broker(
 /// Write a secret to `secret_dir/<name>` with mode `0600` (dir `0700`).
 ///
 /// Fail-closed against a pre-planted path. `inject=file` is only permitted on
-/// the workspace tier, which applies no kernel confinement, so the box — or any
-/// same-uid process — can create `<env>/secrets/<name>` before the run. Without
+/// the workspace tier, which applies no kernel confinement, so the box, or any
+/// same-uid process, can create `<env>/secrets/<name>` before the run. Without
 /// `O_NOFOLLOW|O_EXCL` the open would follow a symlink and write the plaintext
 /// credential to its target, and `mode()` is ignored for a file that already
 /// exists, so a pre-created 0644 file would keep those permissions. `TempFiles`
@@ -433,7 +433,7 @@ fn write_secret_file(secret_dir: &Path, name: &str, value: &str) -> Result<PathB
     {
         use std::os::unix::fs::PermissionsExt;
         // The symlink check comes *first*. `set_permissions` follows links, so
-        // running it before the check chmods whatever the link points at — a
+        // running it before the check chmods whatever the link points at. A
         // write to an attacker-chosen path taken on the way to deciding we
         // would not write to it.
         if std::fs::symlink_metadata(secret_dir)
@@ -500,7 +500,7 @@ mod tests {
         std::os::unix::fs::symlink(&stolen, secrets.join("DEPLOY_KEY")).unwrap();
 
         let err = write_secret_file(&secrets, "DEPLOY_KEY", "s3cret").map(|_| ());
-        // Either refused, or replaced with a fresh 0600 regular file — never
+        // Either refused, or replaced with a fresh 0600 regular file. Never
         // written through to the link's target.
         assert!(
             !stolen.exists(),
@@ -812,7 +812,7 @@ mod tests {
 
     #[test]
     fn command_extractor_times_out_fail_closed() {
-        // A hanging extractor must not block forever — killed at the deadline.
+        // A hanging extractor must not block forever. Killed at the deadline.
         let err = run_command_bounded(
             "sleep 30",
             "T",

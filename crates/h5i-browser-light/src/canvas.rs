@@ -4,15 +4,15 @@
 //! functions and Obscura's `DOMSnapshot` invents geometry, because neither has a
 //! rasteriser. This engine does. `blitz-paint` over `vello_cpu` already turns
 //! the page into pixels on the CPU, and `vello_cpu` is a general 2D rasteriser a
-//! canvas can use directly, so a canvas here **draws** and shows up in a
+//! canvas can use directly, so a canvas here *draws* and shows up in a
 //! screenshot.
 //!
 //! The rule this is built around is roadmap-history.md §B8.4: *missing APIs are
 //! named, never stubbed silently.* A page that draws its content on a canvas and
 //! comes back blank, with nothing saying why, is indistinguishable from a page
-//! that drew nothing. So what is implemented **rasterises** (paths, rectangles,
+//! that drew nothing. So what is implemented *rasterises* (paths, rectangles,
 //! arcs, fills, strokes, transforms, the state stack, `toDataURL`) and what is
-//! not is **reported by name** through the same `unsupported()` channel as every
+//! not is reported by name through the same `unsupported()` channel as every
 //! other missing Web API, appearing in the snapshot's note. Text, gradients,
 //! patterns, shadows, `drawImage`, `clip` and the `ImageData` operations are on
 //! that list today.
@@ -47,7 +47,7 @@ const MAX_SIDE: u32 = 8192;
 /// make as many `<canvas>` elements as it likes, so fifty of them at the
 /// maximum side is twelve gigabytes and the session is killed by the kernel
 /// rather than by any decision this engine made. The same class of defect as
-/// the `Max-Age` overflow — a number off the page deciding whether the agent
+/// the `Max-Age` overflow. A number off the page deciding whether the agent
 /// driving the engine keeps running.
 ///
 /// 256 MiB, which is exactly one canvas at the maximum side: the largest thing
@@ -155,7 +155,7 @@ impl Canvas {
     /// Note that the page now holds this surface.
     ///
     /// Cleared after compositing rather than after drawing, so a page whose
-    /// canvas has not moved since the last pass costs nothing — and a page that
+    /// canvas has not moved since the last pass costs nothing, and a page that
     /// draws in a loop composites once per settle rather than once per call.
     pub fn mark_composited(&mut self) {
         self.dirty = false;
@@ -714,7 +714,7 @@ impl Canvases {
         self.by_node.values().map(|c| c.pixels.len()).sum()
     }
 
-    /// The canvas for a node, at the size the element asks for — or the reason
+    /// The canvas for a node, at the size the element asks for, or the reason
     /// it may not have one.
     ///
     /// The refusal is a value rather than a clamp. A canvas silently smaller

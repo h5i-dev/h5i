@@ -1,9 +1,9 @@
-//! macOS confinement: the **Seatbelt** backend for the `process` and
+//! macOS confinement: the *Seatbelt* backend for the `process` and
 //! `supervised` tiers, counterpart to the Linux stack in [`crate::sandbox`].
 //!
 //! macOS has no Landlock, seccomp, namespaces, cgroups or nftables. It has
 //! Seatbelt, default-deny over every operation class at once and able to
-//! **subtract**, which Landlock cannot. Subtraction earns its keep in one place,
+//! *subtract*, which Landlock cannot. Subtraction earns its keep in one place,
 //! the agent-config lockdown: `$WORK` read-write with `$WORK/.claude` unwritable
 //! is one rule here and a bind plus remount-ro in a private mount namespace on
 //! Linux.
@@ -12,12 +12,12 @@
 //! |---------------------------|--------------------------------|------------------------------------------------|
 //! | filesystem allowlist      | Landlock                       | SBPL `(deny default)` + `file-read*`/`file-write*` |
 //! | subtracting from a grant  | impossible (bind + remount-ro) | one `(deny …)` rule, last match wins            |
-//! | syscall deny-list         | seccomp-bpf                    | **absent**                                      |
+//! | syscall deny-list         | seccomp-bpf                    | *absent*                                      |
 //! | egress allowlist          | netns + nftables + slirp4netns | loopback-only + host allowlist proxy            |
 //! | net deny                  | empty network namespace        | `(deny network*)`                               |
 //! | pid isolation             | PID namespace + private procfs | partial: `(deny process-info*)` for non-self    |
 //! | per-env path redirects    | bind mounts in a mount ns      | symlinks + runtime env vars (see [`plan`])      |
-//! | memory cap                | cgroup `memory.max` + rlimit   | **not enforceable** (see [`RESOURCE_NOTE`])     |
+//! | memory cap                | cgroup `memory.max` + rlimit   | *not enforceable* (see [`RESOURCE_NOTE`])     |
 //! | cpu / fsize / nproc caps  | rlimits                        | rlimits (same)                                  |
 //!
 //! [`probe`] reports that right-hand column honestly, so a caller adapts to what
@@ -47,7 +47,7 @@ pub const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 
 /// Why a memory cap is not claimed on macOS. `RLIMIT_AS`/`RLIMIT_RSS` are the
 /// same resource on Darwin and the kernel does not enforce either against
-/// mmap-backed allocation, which is where every modern runtime's heap lives —
+/// mmap-backed allocation, which is where every modern runtime's heap lives,
 /// so setting it would produce a limit that silently does nothing. A real
 /// memory cap on macOS needs the container tier (the VM has cgroups).
 pub const RESOURCE_NOTE: &str =
@@ -64,7 +64,7 @@ pub const RESOURCE_NOTE: &str =
 pub struct SeatbeltCaps {
     /// `/usr/bin/sandbox-exec` exists and is executable.
     pub present: bool,
-    /// A trivial command actually ran under a `(deny default)` profile — the
+    /// A trivial command actually ran under a `(deny default)` profile. The
     /// functional check, not just the binary being on disk.
     pub functional: bool,
     /// Why it isn't usable, when it isn't.
@@ -156,7 +156,7 @@ const SELF_TEST_PROFILE: &str =
 pub struct SeatbeltOptions {
     /// Loopback ports of h5i's own host-side proxies (the egress allowlist proxy
     /// and/or the credential-injecting auth proxy). When non-empty the box may
-    /// dial exactly these `127.0.0.1` ports and nothing else — that is how the
+    /// dial exactly these `127.0.0.1` ports and nothing else. That is how the
     /// `supervised` tier gets a real domain allowlist on macOS.
     pub proxy_ports: Vec<u16>,
     /// Interactive agent session: adds the agent-config write lockdown.
@@ -167,7 +167,7 @@ pub struct SeatbeltOptions {
 }
 
 /// The macOS translation of one resolved policy: the SBPL text plus the two
-/// things that stand in for Linux's bind mounts — symlinks and runtime env
+/// things that stand in for Linux's bind mounts. Symlinks and runtime env
 /// vars. See [`plan`].
 #[derive(Debug, Clone, Default)]
 pub struct SeatbeltPlan {
@@ -192,7 +192,7 @@ pub struct SeatbeltPlan {
 
 /// Structural read grants every macOS process needs before it can even start:
 /// the dyld shared cache, the system frameworks, and the paths `execve` walks.
-/// These are not policy — they are the macOS equivalent of the implicit `/proc`
+/// These are not policy. They are the macOS equivalent of the implicit `/proc`
 /// re-grant the Linux path performs inside the PID namespace, and they carry no
 /// user data.
 const MACOS_SYSTEM_READ: &[&str] = &[
@@ -237,8 +237,8 @@ const MACOS_DEVELOPER_DIRS: &[&str] = &[
 
 /// Read grants for the active Xcode / Command Line Tools toolchain.
 ///
-/// Not a convenience. On macOS the tools in `/usr/bin` — `git`, `python3`,
-/// `clang`, `make` — are *shims*: each one loads `libxcrun.dylib` from the
+/// Not a convenience. On macOS the tools in `/usr/bin` (`git`, `python3`,
+/// `clang`, `make`) are *shims*: each one loads `libxcrun.dylib` from the
 /// active developer directory and re-execs the real binary from there. Granting
 /// `/usr/bin` alone therefore buys nothing, and a box denied this path could not
 /// run `git` at all:
@@ -328,8 +328,8 @@ const MACOS_DEV_WRITE: &[&str] = &[
 /// default)` already blocks them, but the base profile allows `sysctl-read`
 /// wholesale (runtimes read `hw.*` constantly), so these are subtracted back
 /// out. This is the macOS stand-in for the Linux private-procfs jail: it is what
-/// stops a box from reading h5i's own environment — and therefore the operator's
-/// secrets — out from under the `env.pass` allowlist.
+/// stops a box from reading h5i's own environment, and therefore the operator's
+/// secrets, out from under the `env.pass` allowlist.
 const SYSCTL_PROCESS_LEAKS: &[&str] = &["kern.procargs", "kern.procargs2"];
 
 /// Escape a string for an SBPL literal. SBPL string syntax is Scheme's: double
@@ -350,10 +350,10 @@ fn sbpl_escape(s: &str) -> String {
 /// Every path Seatbelt might see for `path`.
 ///
 /// This matters more on macOS than it looks. Seatbelt matches against the
-/// **resolved** path, and the macOS root is full of firmlinks: `/tmp`, `/var`
+/// *resolved* path, and the macOS root is full of firmlinks: `/tmp`, `/var`
 /// and `/etc` all resolve under `/private`. A `(subpath "/tmp")` rule alone
 /// therefore matches nothing at all for a file the process opened as
-/// `/tmp/x` — the check sees `/private/tmp/x`. Emitting both forms is what
+/// `/tmp/x`: the check sees `/private/tmp/x`. Emitting both forms is what
 /// makes the profile actually enforce what it says.
 fn path_aliases(path: &str) -> Vec<String> {
     let mut out = vec![path.to_string()];
@@ -378,7 +378,7 @@ fn path_aliases(path: &str) -> Vec<String> {
 /// Render one `(<verb> (subpath "…") …)` rule, expanding firmlink aliases.
 /// Returns `None` when there is nothing to emit, so callers never write an
 /// empty rule (SBPL rejects `(allow file-read*)` with an empty filter list only
-/// in some macOS versions — an empty rule is also just noise).
+/// in some macOS versions: an empty rule is also just noise).
 fn rule(verb: &str, kind: &str, paths: &[String]) -> Option<String> {
     let mut seen = BTreeSet::new();
     for p in paths {
@@ -417,8 +417,8 @@ fn expand_home(path: &str, home: Option<&Path>) -> Option<String> {
 ///
 /// [`expand_home`] answers `None` for a `~`-relative path when `HOME` is unset,
 /// and [`build_profile`] then simply leaves it out of the deny block. For a
-/// *grant* that is fail-closed — the box loses access it was offered. For a
-/// **deny** it is fail-open, and this is the one file whose header says
+/// *grant* that is fail-closed. The box loses access it was offered. For a
+/// *deny* it is fail-open, and this is the one file whose header says
 /// `fs.deny` is "genuinely enforced" here rather than being the lint it is on
 /// Linux: a profile granting `/Users/dev` and denying `~/.ssh` handed the box
 /// the key material, and `validate_profile`'s containment lint did not catch it
@@ -438,8 +438,8 @@ fn unexpandable_denies(p: &crate::sandbox_policy::Profile, home: Option<&Path>) 
 
 /// Build the SBPL profile for `policy` running in `work`.
 ///
-/// Rule order is load-bearing: SBPL is **last match wins**, so the file is laid
-/// out as base allows → policy grants → network → **denies last**. That is what
+/// Rule order is load-bearing: SBPL is last match wins, so the file is laid
+/// out as base allows → policy grants → network → *denies last*. That is what
 /// lets `fs.deny` be genuinely enforced here when on Linux it is only a lint.
 pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOptions) -> String {
     let p = &policy.profile;
@@ -469,7 +469,7 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
     s.push_str("(allow process-info-pidinfo (target same-sandbox))\n");
     // Path resolution needs metadata on every ancestor of a granted path.
     // Granting it globally leaks directory existence and timestamps, never
-    // content — the same trade Chromium's renderer profile makes.
+    // content. The same trade Chromium's renderer profile makes.
     s.push_str("(allow file-read-metadata)\n");
     s.push_str("(allow sysctl-read)\n");
     // dyld, malloc, notifyd, the bootstrap server. Restricting this to a service
@@ -498,7 +498,7 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
     }
     // The root directory itself, and *only* itself. Process startup reads `/`,
     // and no `(subpath "/usr")`-style grant covers it, so without this the box
-    // gets `deny(1) file-read-data /` and dies before main() — silently, since
+    // gets `deny(1) file-read-data /` and dies before main(). Silently, since
     // Seatbelt reports denials only to the system log.
     //
     // `literal`, emphatically not `subpath`: `(subpath "/")` would grant the
@@ -546,7 +546,7 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
     }
     // The per-env backings for private paths / HOME state are already on
     // `fs_write` (core rewrites the grant to the backing), so they need no
-    // special case here — only the *redirect* does, which `plan` handles.
+    // special case here. Only the *redirect* does, which `plan` handles.
     if let Some(b) = &policy.cache_write {
         writes.push(b.backing.display().to_string());
     }
@@ -556,7 +556,7 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
     // `file-write*` and `file-read*` are independent operation classes in SBPL:
     // granting write does NOT confer read. Landlock's `AccessFs::from_all` does
     // both at once, so a policy's `fs.write` entry means read-write everywhere
-    // else in h5i, and it must mean the same here — otherwise a box could write
+    // else in h5i, and it must mean the same here. Otherwise a box could write
     // its own cache and not read it back.
     if let Some(r) = rule("allow file-write* file-read*", "subpath", &writes) {
         s.push_str(&r);
@@ -571,7 +571,7 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
         s.push('\n');
     }
     // Terminals: an interactive session inherits the operator's, and a program
-    // in the box may allocate its own pty pair — neither lives under any path
+    // in the box may allocate its own pty pair. Neither lives under any path
     // grant. A captured run reaches none of this: it gets `setsid`, so it has no
     // controlling terminal and `/dev/tty` cannot be opened at all.
     //
@@ -596,7 +596,7 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
     // empty): it is the node a program actually opens, it is granted by literal
     // in `MACOS_DEV_NODES`/`MACOS_DEV_WRITE`, and a reader comparing the three
     // rules should see one node set rather than have to derive it. `/dev/ptmx`
-    // is not optional — `^/dev/pty…$` does not match it (`ptm` ≠ `pty`) — and
+    // is not optional, `^/dev/pty…$` does not match it (`ptm` ≠ `pty`), and
     // without it `posix_openpt`'s `TIOCPTYGRANT`/`TIOCPTYUNLK` fail, so a box
     // could open a pty master and never unlock its slave.
     //
@@ -629,12 +629,12 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
     // TIOCSTI (`_IOW('t', 114, char)` = 0x80017472) pushes a byte into the
     // terminal's *input* queue rather than reading or writing it. An interactive
     // session shares the operator's terminal, so a box able to issue it would be
-    // typing at the host shell — a command that runs outside the box, after the
+    // typing at the host shell. A command that runs outside the box, after the
     // session ends. The tty grant above is what puts that ioctl in reach, so the
     // subtraction ships with it. (Darwin appears to refuse TIOCSTI under a
     // deny-default profile even without this rule; containment must not rest on
     // an observation of undocumented behaviour, and this is the same residual
-    // the Linux tier notes at its own shared-tty comment — there it is the
+    // the Linux tier notes at its own shared-tty comment: there it is the
     // kernel's CONFIG_LEGACY_TIOCSTI default that closes it. A pty proxy, which
     // would stop handing the box the operator's terminal at all, is the airtight
     // fix on both.)
@@ -702,7 +702,7 @@ fn network_rules(policy: &ResolvedPolicy, opts: &SeatbeltOptions) -> String {
     }
 
     // Serving is not egress. A dev server in the box must be able to bind
-    // loopback and accept the host's connection — on Linux that happens inside
+    // loopback and accept the host's connection. On Linux that happens inside
     // the box's own netns; here it is the host's loopback, so it is spelled out.
     s.push_str("(allow network-bind (local ip \"localhost:*\"))\n");
     s.push_str("(allow network-inbound (local ip \"localhost:*\"))\n");
@@ -710,7 +710,7 @@ fn network_rules(policy: &ResolvedPolicy, opts: &SeatbeltOptions) -> String {
     // The box's own browser, and nothing else on loopback. The arms below refuse
     // loopback wholesale because here it is the *host's*; this lets exactly the
     // one port h5i told Chrome to listen on through, and leaves every other
-    // loopback service — h5i's own proxies included — as unreachable as before.
+    // loopback service, h5i's own proxies included, as unreachable as before.
     let mut ports: Vec<u16> = policy.loopback_ports.clone();
     ports.sort_unstable();
     ports.dedup();
@@ -734,8 +734,8 @@ fn network_rules(policy: &ResolvedPolicy, opts: &SeatbeltOptions) -> String {
             } else {
                 // The supervised tier's egress allowlist: the ONLY outbound
                 // destinations are h5i's own proxies, which enforce the domain
-                // list and are DNS-pinned. The box needs no DNS of its own — the
-                // proxy resolves — so name resolution is denied too, which is a
+                // list and are DNS-pinned. The box needs no DNS of its own, the
+                // proxy resolves, so name resolution is denied too, which is a
                 // stronger position than the Linux nftables path.
                 let mut ports: Vec<u16> = opts.proxy_ports.clone();
                 ports.sort_unstable();
@@ -760,18 +760,18 @@ fn network_rules(policy: &ResolvedPolicy, opts: &SeatbeltOptions) -> String {
 /// macOS has no unprivileged bind mount and no mount namespace, so each redirect
 /// is re-expressed as whichever of these preserves its *purpose*:
 ///
-/// - **private paths** (`target/`, `.next/`) exist so concurrent envs of one
+/// - *private paths* (`target/`, `.next/`) exist so concurrent envs of one
 ///   repo don't fight over a single build-cache inode. A symlink from the
 ///   worktree path to the per-env backing achieves exactly that; the backing is
 ///   already the granted path.
-/// - **HOME state** (`~/.claude`, `~/.codex`) exists so boxes don't race on
+/// - *HOME state* (`~/.claude`, `~/.codex`) exists so boxes don't race on
 ///   shared credential/session files. Both runtimes honour an explicit config
 ///   directory (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), which points them at the
-///   per-env copy without touching the real one — and the real one is denied
+///   per-env copy without touching the real one, and the real one is denied
 ///   outright by [`build_profile`].
-/// - **private `/tmp`** becomes `TMPDIR`, which every well-behaved macOS program
+/// - *private `/tmp`* becomes `TMPDIR`, which every well-behaved macOS program
 ///   honours (it is where the OS puts the per-user temp dir anyway).
-/// - **read-only caches** need no redirect at all: the grant is read-only
+/// - *read-only caches* need no redirect at all: the grant is read-only
 ///   because nothing grants write to it.
 ///
 /// Anything that does not fit one of those lands in [`SeatbeltPlan::unmapped`]
@@ -780,7 +780,7 @@ pub fn plan(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOptions) -> Sea
     // NOTE: the `/usr/bin` tool shims cache their toolchain lookup in the
     // *host's* per-user temp dir, located with `confstr(_CS_DARWIN_USER_TEMP_DIR)`
     // rather than `TMPDIR`, so the box's redirect cannot move it and the write is
-    // denied — every shimmed `git`/`python3` call prints "couldn't create cache
+    // denied. Every shimmed `git`/`python3` call prints "couldn't create cache
     // file … (errno=Operation not permitted)" on stderr. The command still
     // succeeds. No variable is set to suppress it: `XCRUN_NO_CACHE=1` reaches the
     // child and changes nothing, and granting write into the host's shared temp
@@ -807,7 +807,7 @@ pub fn plan(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOptions) -> Sea
             Some(".codex") => env.push(("CODEX_HOME".into(), backing)),
             // `~/.claude.json` lives beside `~/.claude`, and setting
             // `CLAUDE_CONFIG_DIR` is expected to move it along with the
-            // directory — so no separate redirect is emitted. Not verified on a
+            // directory, so no separate redirect is emitted. Not verified on a
             // real Mac. If it turns out Claude still reads the real
             // `~/.claude.json`, the failure is loud and safe rather than quiet:
             // the real path is denied by the profile (core rewrote the grant to
@@ -847,7 +847,7 @@ pub fn plan(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOptions) -> Sea
 
 /// Materialize the plan's symlinks. Fail-closed in both directions: a redirect
 /// we set out to make and could not is an error rather than a silent run against
-/// the shared path — and a redirect that would **destroy** existing work is also
+/// the shared path, and a redirect that would *destroy* existing work is also
 /// an error rather than a silent `rm -rf`.
 ///
 /// That second guard is the one Linux does not need. A bind mount merely
@@ -857,7 +857,7 @@ pub fn plan(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOptions) -> Sea
 /// comment, and anything with contents in it stops the run.
 fn apply_symlinks(plan: &SeatbeltPlan) -> Result<(), H5iError> {
     for (link, target) in &plan.symlinks {
-        // Already pointing where it should — envs are re-run constantly.
+        // Already pointing where it should. Envs are re-run constantly.
         if std::fs::read_link(link).is_ok_and(|existing| existing == *target) {
             continue;
         }
@@ -896,7 +896,7 @@ fn apply_symlinks(plan: &SeatbeltPlan) -> Result<(), H5iError> {
         }
         // Create the parents component by component rather than with
         // `create_dir_all`, which would happily follow a repo-planted symlink
-        // at any level and plant this redirect — a box-writable path — outside
+        // at any level and plant this redirect, a box-writable path, outside
         // the workspace entirely.
         let rel = link.strip_prefix(&plan.work).map_err(|_| {
             H5iError::Metadata(format!(
@@ -998,7 +998,7 @@ impl Drop for ProfileFile {
 /// with the environment allowlist, the plan's redirect vars, and the rlimits
 /// applied in `pre_exec`.
 ///
-/// The returned [`ProfileFile`] must be held until the child has been spawned —
+/// The returned [`ProfileFile`] must be held until the child has been spawned:
 /// `sandbox-exec` reads it at startup, and dropping it early would delete the
 /// profile out from under the exec.
 pub fn build_confined_command(
@@ -1043,7 +1043,7 @@ pub fn build_confined_command(
     cmd.arg("-f").arg(profile_file.path()).arg("--");
     cmd.args(argv).current_dir(&work);
 
-    // Environment allowlist — nothing inherited wholesale, same rule as Linux.
+    // Environment allowlist. Nothing inherited wholesale, same rule as Linux.
     cmd.env_clear();
     for key in &p.env_pass {
         if let Ok(v) = std::env::var(key) {
@@ -1064,7 +1064,7 @@ pub fn build_confined_command(
     let cpu = p.cpu_secs;
     let interactive = opts.interactive;
 
-    // Only raw syscalls here — this runs in a forked child of a multi-threaded
+    // Only raw syscalls here. This runs in a forked child of a multi-threaded
     // process, so nothing may allocate or take a lock (the same discipline the
     // Linux path keeps).
     unsafe {
@@ -1078,11 +1078,11 @@ pub fn build_confined_command(
                 return Err(Error::last_os_error());
             }
             // Deliberately NOT setting RLIMIT_NPROC. On Darwin it caps
-            // processes per **real uid**, not per process tree, so a per-box
+            // processes per *real uid*, not per process tree, so a per-box
             // `max_procs` of 256 is really a cap on everything the operator is
             // running. On any Mac with a browser open the box then cannot fork
             // at all, and the failure surfaces as `fork: Resource temporarily
-            // unavailable` from the shell — a confusing error a long way from
+            // unavailable` from the shell. A confusing error a long way from
             // its cause. A limit that constrains the host instead of the box is
             // worse than no limit, so `max_procs` is reported as unenforceable
             // here (see RESOURCE_NOTE) rather than applied.
@@ -1154,7 +1154,7 @@ pub fn run_interactive(
 }
 
 /// Long-lived background service at the macOS kernel tiers: no wall clock, own
-/// session so a later `killpg` reaps the tree. Returns the child pid — which is
+/// session so a later `killpg` reaps the tree. Returns the child pid, which is
 /// the workload's own, because `sandbox-exec` `execve`s rather than forking.
 pub fn spawn_background(
     policy: &ResolvedPolicy,
@@ -1174,7 +1174,7 @@ pub fn spawn_background(
         .map_err(|e| H5iError::Metadata(format!("confined service failed to start: {e}")))?;
     let pid = child.id();
     // A captured run holds the profile file until the child exits; a service
-    // outlives this call, so the file has to be released here — but not
+    // outlives this call, so the file has to be released here, but not
     // immediately. `spawn` returns once `sandbox-exec` has *exec'd*; reading and
     // applying the profile happens just after that, concurrently with us. Hand
     // the guard to a detached thread that outwaits the window, so the caller
@@ -1285,7 +1285,7 @@ mod tests {
     /// The deny block is what makes `fs.deny` real on macOS rather than the
     /// lint it is on Linux, and a `~`-relative entry with no `$HOME` to resolve
     /// it against was simply left out of it. A profile granting `/Users/dev`
-    /// and denying `~/.ssh` therefore handed the box the key material —
+    /// and denying `~/.ssh` therefore handed the box the key material:
     /// `validate_profile`'s containment lint misses it for the same reason (its
     /// `expand_tilde` leaves the path unexpanded too, so the prefix test finds
     /// no overlap).
@@ -1342,7 +1342,7 @@ mod tests {
         let s = build_profile(&p, Path::new("/w"), &opts());
         assert!(!s.contains("(allow network-outbound)"), "{s}");
         assert!(!s.contains("(allow network-outbound (remote ip"), "{s}");
-        // Serving still works — that is not egress.
+        // Serving still works. That is not egress.
         assert!(s.contains("(allow network-bind (local ip \"localhost:*\"))"));
     }
 
@@ -1463,7 +1463,7 @@ mod tests {
         // Every node the interactive session already holds read/write on, and no
         // other: an ioctl grant wider than the path grant it accompanies would
         // be reach this rule never intended to add. `/dev/ptmx` is the one that
-        // needs naming — `^/dev/pty…$` does not match it (`ptm` ≠ `pty`), and it
+        // needs naming: `^/dev/pty…$` does not match it (`ptm` ≠ `pty`), and it
         // is granted by literal above for the same reason.
         let rule = s[ioctl..].lines().next().unwrap();
         for f in [
@@ -1510,7 +1510,7 @@ mod tests {
         // which process startup needs. `(allow file-read* (subpath "/"))`
         // grants the entire filesystem and quietly turns the sandbox into
         // nothing. One word apart, so assert the difference rather than trust
-        // it — a fix for "the box will not start" is exactly the situation in
+        // it. A fix for "the box will not start" is exactly the situation in
         // which someone reaches for the wrong one.
         for claim in [IsolationClaim::Process, IsolationClaim::Supervised] {
             let s = build_profile(&policy(claim), Path::new("/Users/dev/w"), &opts());
@@ -1540,7 +1540,7 @@ mod tests {
     #[test]
     fn the_generated_profile_is_pure_ascii() {
         // Not a style rule. libsandbox's SBPL parser is C, and a non-ASCII byte
-        // anywhere in the profile — including inside a comment — makes it
+        // anywhere in the profile, including inside a comment, makes it
         // `abort()`, so `sandbox-exec` dies on SIGABRT having printed nothing
         // at all. A single em dash in the generated header was enough to make
         // every macOS run fail silently, and nothing about the failure pointed
@@ -1736,7 +1736,7 @@ mod tests {
 
     /// `private_paths` and the worktree are both repo-supplied. A branch that
     /// ships `a` as a symlink to somewhere outside the workspace would, with
-    /// `create_dir_all`, have h5i plant the redirect at the link's target — a
+    /// `create_dir_all`, have h5i plant the redirect at the link's target. A
     /// box-writable path on the operator's filesystem, e.g. a directory on
     /// their PATH. Refuse instead of following it.
     #[test]
@@ -1775,7 +1775,7 @@ mod tests {
 
     /// SBPL is Scheme: an unbalanced paren means `sandbox-exec` rejects the
     /// whole profile, and the run then fails with a parse error rather than
-    /// running unconfined — but it fails for every box, so catch it here. Only
+    /// running unconfined, but it fails for every box, so catch it here. Only
     /// parens outside string literals count (a path may legitimately contain one).
     fn parens_balanced(s: &str) -> bool {
         let mut depth: i32 = 0;
@@ -1856,7 +1856,7 @@ mod tests {
     //
     // Every denial below is paired with a positive control in the *same* run.
     // Without that, a sandbox so broken that nothing runs at all reads as a
-    // clean pass — the failure mode most likely to be mistaken for success.
+    // clean pass. The failure mode most likely to be mistaken for success.
 
     /// Shared setup: a worktree and the built-in `process` policy over it.
     #[cfg(target_os = "macos")]
@@ -2005,13 +2005,13 @@ mod tests {
     /// When a run under the real profile dies, say what would have saved it.
     ///
     /// Bisecting *forms* was the wrong tool and gave a misleading answer, for a
-    /// reason worth recording: macOS **kills** a process whose exec or library
+    /// reason worth recording: macOS *kills* a process whose exec or library
     /// mapping the profile denies, so "died on a signal" does not distinguish
     /// "the profile is invalid" from "the profile compiled and forbade
     /// something the program needed". A prefix carrying `(allow process-exec*)`
     /// but no read grants dies exactly like a malformed profile does, which is
-    /// how `(allow process-exec*)` — plainly valid, and accepted on its own by
-    /// the construct check — got fingered as the culprit.
+    /// how `(allow process-exec*)` (plainly valid, and accepted on its own by
+    /// the construct check) got fingered as the culprit.
     ///
     /// So probe from the other side. Append a candidate permission to the real
     /// profile and see whether the run starts working. Whatever repairs it names
@@ -2033,7 +2033,7 @@ mod tests {
         // Guessing roots did not converge: a blanket `(allow file-read*)`
         // repairs the run but no single root does, so either several paths are
         // missing or the denied operation is not subpath-expressible. Stop
-        // guessing and read the denial out of the system log — macOS records
+        // guessing and read the denial out of the system log. MacOS records
         // every one of them, it just does not put them on stderr, which is the
         // whole reason this has been so opaque.
         let denials = recent_sandbox_denials();
@@ -2057,7 +2057,7 @@ mod tests {
     ///
     /// This is the diagnostic that was missing all along. A Seatbelt denial is
     /// reported to the unified log as `deny(1) <operation> <path>` and to
-    /// nowhere else — not stderr, not an exit code — so a confined program that
+    /// nowhere else (not stderr, not an exit code) so a confined program that
     /// dies gives no clue on its own. Reading the log turns "it died silently"
     /// into the exact operation and file.
     #[cfg(target_os = "macos")]
@@ -2113,7 +2113,7 @@ mod tests {
             .arg("/usr/bin/true")
             // The real path runs in $WORK, which is granted. Matching it here
             // keeps the cwd from becoming a difference between probe and
-            // reality — otherwise a root containing the test's own cwd would
+            // reality. Otherwise a root containing the test's own cwd would
             // look like the missing grant.
             .current_dir(cwd)
             .stdout(std::process::Stdio::null())
@@ -2140,7 +2140,7 @@ mod tests {
 
     /// Isolate "SBPL rejected the profile" from "the profile was fine and the
     /// command died". Those two look identical from a failed run, and telling
-    /// them apart is the difference between a syntax bug and a grant bug — so
+    /// them apart is the difference between a syntax bug and a grant bug, so
     /// this asserts the narrower property (the parser accepts what we generate)
     /// and surfaces `sandbox-exec`'s own diagnostic when it does not.
     #[test]
@@ -2158,7 +2158,7 @@ mod tests {
         // profile with it. Checking only the captured shape would leave every
         // interactive box shell resting on `String::contains`.
         // The interactive lockdown comes from `config_lock_paths(work, home)`,
-        // which lists only paths that *exist* — so `home: None` (or a home with
+        // which lists only paths that *exist*, so `home: None` (or a home with
         // nothing in it) yields an empty lockdown and the rules production
         // actually generates never reach the parser. Create both scopes.
         let home = work.join("home");
@@ -2266,7 +2266,7 @@ mod tests {
         // Distinct from the exec test above, which only runs shell builtins and
         // so never forks. `max_procs` used to be applied as RLIMIT_NPROC, which
         // on Darwin is scoped to the whole uid rather than to this process
-        // tree — so on a machine where the operator already had a few hundred
+        // tree, so on a machine where the operator already had a few hundred
         // processes the box could not fork at all, and said so only as
         // `fork: Resource temporarily unavailable`. Anything real the box does
         // (a compiler, a test runner, a package manager) forks constantly.
@@ -2332,7 +2332,7 @@ mod tests {
         // A listener on host loopback. Deliberately loopback rather than a real
         // host: it needs no network in CI, and it is the case that actually
         // differs from Linux (a macOS box shares the host's loopback, so the
-        // profile has to deny dialing it — a Linux box gets a private one).
+        // profile has to deny dialing it: a Linux box gets a private one).
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
 

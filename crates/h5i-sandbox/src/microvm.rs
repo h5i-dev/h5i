@@ -1,8 +1,8 @@
 //! The `isolation=microvm` backend: an environment's command inside a
-//! **hardware-isolated microVM** via [microsandbox](https://microsandbox.dev)
+//! *hardware-isolated microVM* via [microsandbox](https://microsandbox.dev)
 //! (`msb`), with `net.egress` enforced in the VM's own network stack.
 //!
-//! `container.rs` enforces egress at **L7**, which blocks `curl`/`pip`/`npm`
+//! `container.rs` enforces egress at *L7*, which blocks `curl`/`pip`/`npm`
 //! honouring `HTTP(S)_PROXY` and nothing else. Two things change here: the
 //! boundary is a virtual machine with its own kernel, so a kernel exploit is
 //! contained by the hypervisor rather than by the kernel it just subverted; and
@@ -20,7 +20,7 @@
 //! read-only managed-settings mount carrying the `wrap-bash` hook) works as it
 //! does under `container`.
 //!
-//! **Secrets never enter the host argv.** `msb --env` takes `KEY=VALUE`, and a
+//! Secrets never enter the host argv. `msb --env` takes `KEY=VALUE`, and a
 //! credential in `msb run`'s argv is published to every local user through
 //! `/proc/<pid>/cmdline`. So no environment goes on the command line at all:
 //! [`preload_script`] writes a `0600` script host-side and registers it with
@@ -53,7 +53,7 @@ const PRELOAD_SCRIPT_NAME: &str = "h5i-env";
 /// profile, a hook, and a persona file all mean the same path on both.
 const WORK_MOUNT: &str = "/work";
 
-/// Capture spool for in-box `h5i capture run` — identical to the container
+/// Capture spool for in-box `h5i capture run`. Identical to the container
 /// tier's `/.h5i/spool`, so the in-box side needs no per-tier knowledge.
 const SPOOL_MOUNT: &str = "/.h5i/spool";
 
@@ -62,7 +62,7 @@ const INBOX_MOUNT: &str = "/.h5i/inbox";
 
 /// Where a background service's log lands inside the guest.
 ///
-/// **Logs only, never the service records.** The records
+/// Logs only, never the service records. The records
 /// (`<env_dir>/services/<name>.json`) carry the pid the host later signals, and
 /// a box able to rewrite one could set `runtime: host` with a pid of its
 /// choosing and have `service_stop` `killpg` an arbitrary process group on the
@@ -70,11 +70,11 @@ const INBOX_MOUNT: &str = "/.h5i/inbox";
 /// bytes, and the records stay where the box cannot reach them.
 const SERVICES_MOUNT: &str = "/.h5i/services";
 
-/// Where per-run material staged by the host lands inside a **warm** guest.
+/// Where per-run material staged by the host lands inside a *warm* guest.
 ///
 /// A reused guest cannot carry per-run secrets the way a one-shot run does:
 /// `--script-path` is create-time, and the brokered credentials it would carry
-/// are minted per run. `msb exec --env KEY=VALUE` is not an option either — it
+/// are minted per run. `msb exec --env KEY=VALUE` is not an option either. It
 /// is the `/proc/<pid>/cmdline` exposure this module exists to avoid. So the
 /// warm path mounts one small host-owned directory read-write and stages the
 /// same generated script into it per run, keeping values out of argv exactly as
@@ -91,7 +91,7 @@ pub const NO_REUSE_ENV: &str = "H5I_MICROVM_NO_REUSE";
 /// into a stopped guest costs a full boot and leaves it stopped again, so
 /// [`ensure_guest`] starts it explicitly rather than letting exec do it. The
 /// timeout exists because a guest with no bound is a guest that outlives the
-/// laptop lid closing — `msb` ships no default of its own.
+/// laptop lid closing: `msb` ships no default of its own.
 const GUEST_IDLE_TIMEOUT: &str = "30m";
 
 /// `msb` accepts names well past this; the cap keeps a guest name readable in
@@ -112,14 +112,14 @@ pub struct Runtime {
 
 /// Cheap presence check: is the `msb` binary on PATH at all? Used for
 /// discoverability hints that need "is microsandbox installed?" and not "can
-/// this host actually boot a microVM?" — the latter is [`probe`].
+/// this host actually boot a microVM?". The latter is [`probe`].
 pub fn msb_present() -> bool {
     msb_version().is_some()
 }
 
 /// Detect a usable microVM runtime: an `msb` new enough for this adapter's flag
-/// set **and** a host that can actually run a VM. Returns `None` when either
-/// half is missing — this tier is never approximated.
+/// set *and* a host that can actually run a VM. Returns `None` when either
+/// half is missing. This tier is never approximated.
 ///
 /// Memoized in-process (both halves are cheap: one `msb --version` exec and a
 /// `stat`, so unlike the container tier's ~1.3s `podman info` there is nothing
@@ -133,7 +133,7 @@ pub fn probe() -> Option<Runtime> {
     PROBE.get_or_init(probe_uncached).clone()
 }
 
-/// Uncached [`probe`] — the **diagnostic** path, mirroring
+/// Uncached [`probe`]. The *diagnostic* path, mirroring
 /// [`crate::container::probe_fresh`]. `env probe`, `env capabilities` and the
 /// console's `/api/probe` describe the host as it is *now*, so they must not be
 /// served the memo an earlier caller filled in.
@@ -187,7 +187,7 @@ pub fn parse_version(text: &str) -> Option<(u64, u64)> {
 
 /// Why this host cannot run a microVM, or `None` when it can. Separated from
 /// [`probe`] so `env probe`/`doctor` can say *what* is missing instead of a bare
-/// "microvm unavailable" — the difference between "install msb" and "enable
+/// "microvm unavailable". The difference between "install msb" and "enable
 /// nested virtualization", which are very different afternoons.
 pub fn virtualization_detail() -> Option<String> {
     #[cfg(target_os = "linux")]
@@ -239,7 +239,7 @@ pub enum NetPlan {
     None,
     /// Unfiltered outbound (`net.mode = host`).
     Host,
-    /// Default-deny egress plus these `--net-rule` tokens — the real allowlist.
+    /// Default-deny egress plus these `--net-rule` tokens. The real allowlist.
     Allow(Vec<String>),
 }
 
@@ -247,14 +247,14 @@ pub enum NetPlan {
 ///
 /// h5i spells an allowlist entry `host`, `host:port`, `.suffix` or `*.suffix`;
 /// microsandbox spells a rule `<action>[:<direction>]@<target>[:<proto>[:<ports>]]`.
-/// The mapping is deliberately conservative — an entry we cannot translate
+/// The mapping is deliberately conservative. An entry we cannot translate
 /// *exactly* is an error, never a rule that quietly allows more (or less) than
 /// the policy says:
 ///
 /// - `example.com`      → `allow@example.com`                (any proto, any port)
 /// - `example.com:443`  → `allow@example.com:tcp:443`
-/// - `.example.com`     → `allow@domain=example.com` **and** `allow@suffix=example.com`
-///   — h5i's wildcard matches the apex as well as subdomains, and microsandbox's
+/// - `.example.com`     → `allow@domain=example.com` *and* `allow@suffix=example.com`:
+///   h5i's wildcard matches the apex as well as subdomains, and microsandbox's
 ///   `suffix=` target covers only the subdomain half, so both tokens are emitted.
 /// - a bare IP or CIDR passes through as its own target.
 ///
@@ -264,7 +264,7 @@ pub enum NetPlan {
 /// box denied `wikipedia.org` still cannot. An explicit `allow@dns` was emitted
 /// here until it turned out `msb` 0.6.8 rejects the token outright ("the `dns`
 /// target supports `tcp`, `udp`, or `any`, not `dns`"), which failed *every*
-/// microvm run carrying an allowlist — the default agent profiles included.
+/// microvm run carrying an allowlist. The default agent profiles included.
 ///
 /// Fail-closed rejections: an entry carrying `,` or `@` (which would split or
 /// re-target the token), and a single-label wildcard such as `.com` (which
@@ -303,7 +303,7 @@ pub fn egress_rule_tokens(egress: &[String]) -> Result<Vec<String>, H5iError> {
 // ─── environment preload (keeping values out of argv) ───────────────────────
 
 /// A generated preload script and the host path it lives at. Dropping the guard
-/// removes the file — the values inside outlive neither the run nor a crash any
+/// removes the file. The values inside outlive neither the run nor a crash any
 /// longer than they must.
 pub struct PreloadScript {
     pub path: PathBuf,
@@ -318,8 +318,8 @@ impl Drop for PreloadScript {
 /// Render the preload script: `export` one line per variable, then `exec "$@"`
 /// so argv, stdin, the TTY and the exit code all pass through untouched.
 ///
-/// Values are single-quoted with the POSIX `'\''` escape, which is total — there
-/// is no byte a shell single-quoted string cannot carry — so a credential
+/// Values are single-quoted with the POSIX `'\''` escape, which is total, there
+/// is no byte a shell single-quoted string cannot carry, so a credential
 /// containing quotes, `$`, backticks or newlines survives verbatim and cannot
 /// break out into command position. Pure, so the quoting rule is unit-tested.
 pub fn preload_script(env: &[(String, String)]) -> String {
@@ -334,7 +334,7 @@ pub fn preload_script(env: &[(String, String)]) -> String {
 /// A background service needs this: it is started by a shell that must source
 /// the values, delete the file, and only then detach the service, so the
 /// credentials exist on disk for the length of one exec rather than for the
-/// life of the service. `exec "$@"` would be wrong there — the sourcing shell
+/// life of the service. `exec "$@"` would be wrong there. The sourcing shell
 /// has more to do afterwards.
 pub fn env_exports(env: &[(String, String)]) -> String {
     let mut s = String::from(
@@ -351,7 +351,7 @@ pub fn env_exports(env: &[(String, String)]) -> String {
 /// Write the preload script for this run under the env directory with `0600`
 /// permissions.
 ///
-/// Unlike the container tier's shim this is **not** best-effort: it carries the
+/// Unlike the container tier's shim this is *not* best-effort: it carries the
 /// profile's `env.pass` allowlist and every brokered secret, so a box that
 /// silently ran without it would be a box missing its credentials and its
 /// `H5I_ENV_*` wiring. Any failure is an error.
@@ -360,7 +360,7 @@ fn write_preload(work: &Path, env: &[(String, String)]) -> Result<PreloadScript,
     write_env_script(&dir, "preload", env)
 }
 
-/// `<env_dir>/microvm` — where this tier stages host-side material for a box.
+/// `<env_dir>/microvm`: where this tier stages host-side material for a box.
 fn microvm_dir(work: &Path) -> Result<PathBuf, H5iError> {
     let env_dir = work.parent().ok_or_else(|| {
         H5iError::Metadata(format!(
@@ -371,7 +371,7 @@ fn microvm_dir(work: &Path) -> Result<PathBuf, H5iError> {
     Ok(env_dir.join("microvm"))
 }
 
-/// `<env_dir>/microvm/run` — the per-run staging directory mounted read-write
+/// `<env_dir>/microvm/run`: the per-run staging directory mounted read-write
 /// into a warm guest at [`RUN_MOUNT`]. Separate from [`microvm_dir`] because
 /// *this* one is visible to the box, and nothing else h5i keeps under the env
 /// directory should be.
@@ -383,9 +383,9 @@ fn run_stage_dir(work: &Path) -> Result<PathBuf, H5iError> {
 ///
 /// [`PreloadScript`]'s `Drop` is the normal cleanup and it cannot cover SIGKILL,
 /// a `panic = "abort"` build, or an OOM. That was harmless while the directory
-/// was never mounted — on the one-shot path the script reached the runtime over
-/// a config fd. The warm path mounts it into a guest that now **outlives the
-/// run**, so a crashed `box run` would otherwise leave its brokered credentials
+/// was never mounted. On the one-shot path the script reached the runtime over
+/// a config fd. The warm path mounts it into a guest that now outlives the
+/// run, so a crashed `box run` would otherwise leave its brokered credentials
 /// readable by that box's long-lived services indefinitely, including after the
 /// credential was rotated host-side.
 ///
@@ -406,7 +406,7 @@ fn sweep_stale_env_scripts(stage: &Path) {
     }
 }
 
-/// `<env_dir>/microvm/service-logs` — mounted read-write into the guest at
+/// `<env_dir>/microvm/service-logs`: mounted read-write into the guest at
 /// [`SERVICES_MOUNT`]. Under the microvm staging directory rather than beside
 /// the service *records*, which the box must never be able to rewrite.
 fn service_log_dir(work: &Path) -> Result<PathBuf, H5iError> {
@@ -427,7 +427,7 @@ fn write_env_script(
     write_env_script_with(dir, prefix, env, preload_script)
 }
 
-/// [`write_env_script`], with the caller choosing how the script is rendered —
+/// [`write_env_script`], with the caller choosing how the script is rendered:
 /// [`preload_script`] to wrap a command, [`env_exports`] to be sourced.
 fn write_env_script_with(
     dir: &Path,
@@ -436,7 +436,7 @@ fn write_env_script_with(
     render: fn(&[(String, String)]) -> String,
 ) -> Result<PreloadScript, H5iError> {
     std::fs::create_dir_all(dir).map_err(|e| H5iError::with_path(e, dir))?;
-    // pid **and** sequence, matching `SandboxGuard::new`: a pid alone repeats
+    // pid *and* sequence, matching `SandboxGuard::new`: a pid alone repeats
     // across invocations, and two runs inside one process would share a name.
     let path = dir.join(format!(
         "{prefix}-{}-{}.sh",
@@ -445,8 +445,8 @@ fn write_env_script_with(
     ));
     // Created `0600` *before* anything is written to it. `fs::write` would make
     // the file at the umask default and only then chmod it, leaving a window in
-    // which any local user could read the brokered secrets this script carries —
-    // the very exposure the module avoids by keeping them out of argv, so the
+    // which any local user could read the brokered secrets this script carries.
+    // The very exposure the module avoids by keeping them out of argv, so the
     // same threat model applies here.
     #[cfg(unix)]
     {
@@ -528,7 +528,7 @@ fn push_mount_set(
     a.push("--workdir".into());
     a.push(WORK_MOUNT.into());
 
-    // Warm dependency caches, read-only at the package manager's own path — a
+    // Warm dependency caches, read-only at the package manager's own path. A
     // cache a box could write is a mutable surface shared between boxes.
     for b in &policy.ro_binds {
         a.push("--mount-dir".into());
@@ -571,7 +571,7 @@ fn push_mount_set(
 
     // Managed-settings injection: the box's own root cannot rewrite a read-only
     // mount, and Claude will not let a session disable a *managed* hook from
-    // user config — so in-box observation cannot be silenced from inside.
+    // user config, so in-box observation cannot be silenced from inside.
     // microsandbox's guest init creates the parent directory and the bind
     // target, so the path need not exist in the image.
     if let Some(ms) = managed_settings {
@@ -631,7 +631,7 @@ fn push_net(a: &mut Vec<String>, net: &NetPlan) {
     }
 }
 
-/// Build the `msb run` argv for `plan` under `policy`. Pure — no process is
+/// Build the `msb run` argv for `plan` under `policy`. Pure, no process is
 /// spawned and no file is written, so the security-critical flag set is
 /// unit-tested directly.
 ///
@@ -673,7 +673,7 @@ pub fn build_run_argv(rt: &Runtime, policy: &ResolvedPolicy, work: &Path, plan: 
         a.push("--rlimit".into());
         a.push(format!("cpu={secs}"));
     }
-    // Wall clock, captured runs only — an interactive session is bounded by the
+    // Wall clock, captured runs only. An interactive session is bounded by the
     // operator, not a timer (same rule as every other tier).
     if plan.tty.is_none() {
         a.push("--timeout".into());
@@ -711,7 +711,7 @@ pub fn build_run_argv(rt: &Runtime, policy: &ResolvedPolicy, work: &Path, plan: 
 pub struct CreatePlan<'a> {
     /// Resolved base image (`container.image` in the profile).
     pub image: &'a str,
-    /// Guest name — see [`guest_name`], which ties it to the create argv.
+    /// Guest name. See [`guest_name`], which ties it to the create argv.
     pub name: &'a str,
     /// Networking for this box.
     pub net: &'a NetPlan,
@@ -719,7 +719,7 @@ pub struct CreatePlan<'a> {
     /// [`RUN_MOUNT`]. This is the warm path's replacement for `--script-path`.
     pub run_stage: &'a Path,
     /// Host directory a background service's log is written into, mounted
-    /// read-write at [`SERVICES_MOUNT`]. Logs only — see that constant.
+    /// read-write at [`SERVICES_MOUNT`]. Logs only. See that constant.
     pub service_logs: &'a Path,
     /// Managed-settings.json to mount read-only, as on the one-shot path.
     ///
@@ -769,14 +769,14 @@ pub fn build_create_argv(
     // Service logs. Mounted unconditionally, even for a box that declares no
     // service, and that is deliberate: this argv *is* the guest's identity, so
     // a mount that appeared only when a service started would give the box a
-    // second guest and reap the first — killing whatever was already running
+    // second guest and reap the first. Killing whatever was already running
     // in it. Every entry point must build the same argv or none of them share
     // a guest.
     a.push("--mount-dir".into());
     a.push(format!("{}:{SERVICES_MOUNT}:rw", plan.service_logs.display()));
 
     // The VM's own memory. A hard ceiling, not a cgroup the guest can pressure
-    // its way around — and paid once per box here rather than once per command.
+    // its way around, and paid once per box here rather than once per command.
     if let Some(bytes) = p.mem_bytes {
         a.push("--memory".into());
         a.push(format!("{}M", (bytes / (1024 * 1024)).max(1)));
@@ -811,7 +811,7 @@ pub struct ExecPlan<'a> {
     ///
     /// False for a service launcher. rlimits are inherited across `setsid` and
     /// `exec`, so a CPU bound meant for one command would follow the detached
-    /// service and `SIGXCPU` it once it had accumulated that much CPU — a dev
+    /// service and `SIGXCPU` it once it had accumulated that much CPU. A dev
     /// server dying hours later with nothing to explain it. The kernel tiers
     /// deliberately give services no wall or CPU bound either; a service is
     /// bounded by the operator, not by a per-command timer.
@@ -837,7 +837,7 @@ pub fn build_exec_argv(rt: &Runtime, policy: &ResolvedPolicy, plan: &ExecPlan) -
     // Per-process limits are per *command*: two commands in one warm guest each
     // get the profile's ceiling, which is what they would have got from two
     // one-shot runs. Skipped for a service launcher, whose limits would be
-    // inherited by the service it detaches — see [`ExecPlan::bounded`].
+    // inherited by the service it detaches. See [`ExecPlan::bounded`].
     if plan.bounded {
         if let Some(n) = p.max_procs {
             a.push("--rlimit".into());
@@ -847,7 +847,7 @@ pub fn build_exec_argv(rt: &Runtime, policy: &ResolvedPolicy, plan: &ExecPlan) -
             a.push("--rlimit".into());
             a.push(format!("cpu={secs}"));
         }
-        // Wall clock, captured runs only — an interactive session is bounded by
+        // Wall clock, captured runs only. An interactive session is bounded by
         // the operator, not a timer (same rule as every other tier).
         if plan.tty.is_none() {
             a.push("--timeout".into());
@@ -866,7 +866,7 @@ pub fn build_exec_argv(rt: &Runtime, policy: &ResolvedPolicy, plan: &ExecPlan) -
     // staging mount is host-owned and need not carry the execute bit.
     a.push("/bin/sh".into());
     // `SHELL_DIRECT` means the caller's argv is already shell text that sources
-    // whatever environment it needs — the service launcher, which must delete
+    // whatever environment it needs. The service launcher, which must delete
     // the credential file before it detaches.
     if plan.env_script != SHELL_DIRECT {
         a.push(plan.env_script.to_string());
@@ -880,7 +880,7 @@ pub fn build_exec_argv(rt: &Runtime, policy: &ResolvedPolicy, plan: &ExecPlan) -
 ///
 /// `msb` requires a name to start alphanumeric and rejects `/`, which every box
 /// id contains (`env/human/slug`). Anything outside `[a-z0-9]` becomes `-`,
-/// runs collapse, and the result is trimmed and capped — this half only has to
+/// runs collapse, and the result is trimmed and capped. This half only has to
 /// be recognisable in `msb list`, since the digest that follows is what makes
 /// the name *correct*.
 pub fn sanitize_label(raw: &str) -> String {
@@ -907,8 +907,8 @@ pub fn sanitize_label(raw: &str) -> String {
 
 /// The name of the warm guest for this box under this configuration.
 ///
-/// `h5i-<label>-<12 hex>`, where the hex is a SHA-256 over the **create argv
-/// itself**. That choice is the whole reuse-safety argument, so it is worth
+/// `h5i-<label>-<12 hex>`, where the hex is a SHA-256 over the create argv
+/// itself. That choice is the whole reuse-safety argument, so it is worth
 /// stating plainly: the guest's mounts, image, memory and egress rules are
 /// fixed when it is created, and the create argv is exactly the list of those
 /// things. Hashing it means a box whose profile, allowlist, image, or mount set
@@ -955,21 +955,21 @@ pub fn guest_name(work: &Path, create_argv: &[String]) -> String {
 /// What `msb` says about a guest we might reuse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuestState {
-    /// No such guest — create it.
+    /// No such guest. Create it.
     Absent,
-    /// It exists but is not running. **Start it explicitly**: an `msb exec`
+    /// It exists but is not running. Start it explicitly: an `msb exec`
     /// into a stopped guest boots it, runs, and stops it again, so it costs a
     /// full boot *and* leaves the next command to pay the same. See
     /// `docs/benchmarks/microvm-boot.md`.
     Stopped,
-    /// Running — exec straight into it, which is the ~9 ms path this whole
+    /// Running. Exec straight into it, which is the ~9 ms path this whole
     /// milestone exists to reach.
     Running,
     /// The runtime could not be asked, or did not answer in time.
     ///
-    /// Emphatically **not** [`GuestState::Absent`]. Treating "I do not know"
+    /// Emphatically *not* [`GuestState::Absent`]. Treating "I do not know"
     /// as "there is none" leads to `msb create --replace`, which destroys a
-    /// guest that may be running a dev server — so one flaky `msb list` would
+    /// guest that may be running a dev server, so one flaky `msb list` would
     /// silently kill a service while the run that caused it carried on. The
     /// caller fails instead.
     Unknown,
@@ -986,7 +986,7 @@ pub enum GuestState {
 pub fn parse_guest_state(json: &str, name: &str) -> GuestState {
     // Output we cannot read is not an empty list. `msb list` printing a banner,
     // a warning, or a future `{"sandboxes": […]}` wrapper would otherwise mean
-    // "no guest" — and `ensure_guest` answers that with `create --replace`,
+    // "no guest", and `ensure_guest` answers that with `create --replace`,
     // destroying a live guest and every service in it, on every command.
     // Only a well-formed array that does not mention this name is `Absent`.
     let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
@@ -1097,8 +1097,8 @@ fn check_mount_paths(policy: &ResolvedPolicy, work: &Path) -> Result<(), H5iErro
     Ok(())
 }
 
-/// A named `msb` sandbox whose persisted state is removed when the run ends —
-/// on success, on error, and on a wall-clock kill alike.
+/// A named `msb` sandbox whose persisted state is removed when the run ends.
+/// On success, on error, and on a wall-clock kill alike.
 ///
 /// The name is what makes cleanup possible at all (it is how a hung run gets
 /// force-stopped), but `msb` keeps *named* sandboxes around to be inspected,
@@ -1122,7 +1122,7 @@ impl SandboxGuard {
             ),
         };
         // Drop alone cannot cover SIGKILL, SIGTERM, or a panic=abort build, and
-        // a *named* msb sandbox survives us — unlike the container tier, which
+        // a *named* msb sandbox survives us. Unlike the container tier, which
         // has `--rm` as a backstop. Leave a marker so a later run can reap what
         // an abnormal exit left behind.
         if let Some(m) = marker_path(&g.name) {
@@ -1157,16 +1157,16 @@ fn remove_named(bin: &str, name: &str) {
 /// this was: joining an empty component yields a trailing separator, and
 /// `parent()` then walks up *past* the marker directory to the temp directory
 /// itself. The sweep consequently scanned `/tmp` for names that only ever exist
-/// one level down, so it matched nothing and reaped nothing — silently, since
+/// one level down, so it matched nothing and reaped nothing. Silently, since
 /// every step of it is best-effort.
 ///
-/// **Per user, not per host.** These markers decide which VMs get destroyed, so
+/// Per user, not per host. These markers decide which VMs get destroyed, so
 /// a directory shared between logins is the wrong place for them. On a shared
 /// Linux box the old `/tmp/h5i-msb-live` belonged to whoever ran the tier
 /// first: everyone else's marker writes then failed silently (so their guests
 /// were never reaped), and worse, their sweeps *read the first user's markers*
 /// and saw `exists() == false` for a workspace under a home directory they
-/// cannot traverse — concluding that a live box was gone and removing its VM.
+/// cannot traverse. Concluding that a live box was gone and removing its VM.
 /// `$XDG_RUNTIME_DIR` is per-user and `0700` by definition; without one, the
 /// uid keeps the fallback distinct and [`ensure_private_dir`] refuses to use a
 /// path somebody else got to first.
@@ -1199,7 +1199,7 @@ fn current_uid() -> u32 {
 /// Create `dir` mode `0700` if absent, then confirm it is a real directory this
 /// user owns and nobody else can write to.
 ///
-/// Returning `false` costs a sweep — guests leak until the box is removed —
+/// Returning `false` costs a sweep, guests leak until the box is removed,
 /// which is the safe direction: acting on another user's markers is how a live
 /// VM gets destroyed by mistake. The check is `symlink_metadata`, so a symlink
 /// planted at the path is rejected rather than followed.
@@ -1228,8 +1228,8 @@ fn ensure_private_dir(dir: &Path) -> bool {
 }
 
 /// Say so once. A marker directory we cannot use means this box's VM will
-/// outlive its policy — the one consequence of the sweep not running that an
-/// operator would want to know about — and saying it per run would be noise.
+/// outlive its policy, the one consequence of the sweep not running that an
+/// operator would want to know about, and saying it per run would be noise.
 ///
 /// Unix only: the only ownership/permission check that can reject a directory
 /// lives in [`ensure_private_dir`]'s `cfg(unix)` arm, so on Windows this has no
@@ -1256,7 +1256,7 @@ fn marker_path(name: &str) -> Option<PathBuf> {
 /// The gate between a directory listing and `msb remove --force <name>`. Both
 /// name forms this module produces are `h5i-` followed by lowercase
 /// alphanumerics and dashes ([`SandboxGuard::new`] and [`guest_name`]), so
-/// anything else in the marker directory is not ours to act on — and a name
+/// anything else in the marker directory is not ours to act on, and a name
 /// that could be read as a flag can never reach the runtime's argv.
 fn is_h5i_sandbox_name(name: &str) -> bool {
     name.strip_prefix("h5i-").is_some_and(|rest| {
@@ -1271,15 +1271,15 @@ fn is_h5i_sandbox_name(name: &str) -> bool {
 ///
 /// Two kinds of marker, because there are two kinds of guest:
 ///
-/// - **One-shot** (`h5i-<pid>-<seq>`, empty marker). Keyed on the pid in the
+/// - *One-shot* (`h5i-<pid>-<seq>`, empty marker). Keyed on the pid in the
 ///   name: a marker whose process is gone can only be a leftover, because a
 ///   live run holds its own marker until Drop removes it.
-/// - **Warm** (`h5i-<label>-<digest>`, marker holds the workspace path). These
+/// - *Warm* (`h5i-<label>-<digest>`, marker holds the workspace path). These
 ///   outlive their process deliberately, so a pid says nothing. The box's
 ///   existence is the signal: once its workspace is gone, so is any reason to
 ///   keep a VM configured for it.
 ///
-/// Best-effort throughout — a failed sweep must never turn a good run into an
+/// Best-effort throughout. A failed sweep must never turn a good run into an
 /// error.
 pub fn reap_orphaned_sandboxes(bin: &str) {
     for (name, owner) in live_markers() {
@@ -1292,7 +1292,7 @@ pub fn reap_orphaned_sandboxes(bin: &str) {
             // merely on the marker body being unreadable. A *warm* marker whose
             // body failed to read falls through to here, and a box label whose
             // first segment happens to be digits (an agent directory named
-            // numerically → `h5i-2-web-abc123`) would parse as pid 2 — reaping
+            // numerically → `h5i-2-web-abc123`) would parse as pid 2. Reaping
             // a live box's guest, and every service in it, if pid 2 is gone.
             None => match one_shot_pid(&name) {
                 Some(pid) => pid != std::process::id() as i32 && !pid_alive(pid),
@@ -1368,7 +1368,7 @@ impl Drop for SandboxGuard {
 
 // ─── warm guest lifecycle ───────────────────────────────────────────────────
 
-/// Ask `msb` whether `name` exists and is running. One `list` call — measured at
+/// Ask `msb` whether `name` exists and is running. One `list` call. Measured at
 /// ~7.5 ms, the same order as the exec it guards, which is why the caller makes
 /// exactly one of these per command rather than one per decision.
 fn guest_state(bin: &str, name: &str) -> GuestState {
@@ -1380,7 +1380,7 @@ fn guest_state(bin: &str, name: &str) -> GuestState {
         }
         // A runtime that cannot answer, exits non-zero, or overruns the
         // deadline has told us nothing. Reporting `Absent` here would send the
-        // caller into `create --replace` and destroy a live guest — and adding
+        // caller into `create --replace` and destroy a live guest, and adding
         // the deadline made that *more* reachable, not less.
         _ => GuestState::Unknown,
     }
@@ -1390,7 +1390,7 @@ fn guest_state(bin: &str, name: &str) -> GuestState {
 ///
 /// The `Stopped` branch is the one that matters and the one measurement
 /// corrected: `msb exec` will auto-start a stopped guest, but it boots it, runs
-/// the command, and stops it again — ~236 ms, and the next command pays it too.
+/// the command, and stops it again. ~236 ms, and the next command pays it too.
 /// An explicit `start` costs ~143 ms once and leaves the guest running for
 /// every command after.
 fn ensure_guest(
@@ -1456,7 +1456,7 @@ fn ensure_guest(
 ///
 /// The one-shot guard writes an empty marker and is reaped by the pid in its
 /// name. A warm guest deliberately outlives the process that made it, so its
-/// marker carries the **workspace path** instead: the box's existence, not a
+/// marker carries the *workspace path* instead: the box's existence, not a
 /// pid, is what says whether the guest is still wanted.
 fn write_marker(name: &str, work: &Path) {
     if let Some(m) = marker_path(name) {
@@ -1469,7 +1469,7 @@ fn write_marker(name: &str, work: &Path) {
 
 /// Remove any other warm guest belonging to this box.
 ///
-/// Called when a box resolves to a new guest name — which happens exactly when
+/// Called when a box resolves to a new guest name, which happens exactly when
 /// its image, mounts, memory or egress rules changed, since the name is a hash
 /// of those. The old guest is not merely wasteful: it is a VM still configured
 /// under the policy the box no longer has.
@@ -1534,7 +1534,7 @@ pub fn remove_guest_for_workspace(work: &Path) {
 /// Write the managed-settings.json (carrying the unkillable `wrap-bash`
 /// observation hook) under the env dir, to be mounted read-only into the guest.
 /// Best-effort: `None` (injection skipped, session otherwise unaffected) on any
-/// I/O failure or a path the spec syntax cannot carry — an unobserved session is
+/// I/O failure or a path the spec syntax cannot carry. An unobserved session is
 /// still a correctly *confined* session.
 fn prepare_managed_settings(work: &Path, content: &str) -> Option<PathBuf> {
     let dir = work.parent()?.join("managed");
@@ -1550,7 +1550,7 @@ fn prepare_managed_settings(work: &Path, content: &str) -> Option<PathBuf> {
 ///
 /// [`ExecOutcome::egress`] is always `None`: the allowlist is enforced by the
 /// VM's network stack, which drops packets rather than reporting them. See the
-/// module docs — stronger enforcement, and no tally to pretend otherwise with.
+/// module docs. Stronger enforcement, and no tally to pretend otherwise with.
 pub fn run(
     policy: &ResolvedPolicy,
     work: &Path,
@@ -1571,7 +1571,7 @@ pub fn run(
 /// - [`NO_REUSE_ENV`], the operator's escape hatch and the way to get a
 ///   pristine guest per command.
 /// - A run carrying `cache_write`. It is the one run whose mount set differs
-///   from the box's — `h5i box cache refresh` and nothing else — and letting it
+///   from the box's, `h5i box cache refresh` and nothing else, and letting it
 ///   define the box's guest would either give every later command a writable
 ///   cache mount it should not have, or make the two configurations evict each
 ///   other's guest on every alternation. A one-shot guest is both correct and
@@ -1608,7 +1608,7 @@ fn warm_create_plan<'a>(
 /// both conclude there is no guest and both `create --replace` it.
 ///
 /// Blocking, and best-effort: if the lock file cannot be made, the work still
-/// happens — an unserialized create is worse than a refused command only in a
+/// happens. An unserialized create is worse than a refused command only in a
 /// race, whereas refusing outright is worse always.
 struct GuestLock {
     #[cfg(unix)]
@@ -1646,7 +1646,7 @@ impl GuestLock {
 /// A box's warm guest, ready to exec into.
 struct WarmGuest {
     rt: Runtime,
-    /// The guest's `msb` name — a hash of the argv that created it.
+    /// The guest's `msb` name. A hash of the argv that created it.
     name: String,
     /// Host directory this run may stage material into, visible at
     /// [`RUN_MOUNT`].
@@ -1655,10 +1655,10 @@ struct WarmGuest {
 
 /// Resolve, create or start the box's guest, and hand back what an exec needs.
 ///
-/// **The only place a create argv is built**, and that is the point rather than
+/// The only place a create argv is built, and that is the point rather than
 /// tidiness: the argv *is* the guest's identity, so `box run`, `box shell` and
 /// a service launch must produce a byte-identical one or they will each create
-/// their own guest and reap the others' — taking any service running in them
+/// their own guest and reap the others'. Taking any service running in them
 /// with it. One construction site makes that impossible to get wrong.
 fn ensure_warm_guest(policy: &ResolvedPolicy, work: &Path) -> Result<WarmGuest, H5iError> {
     let rt = runtime_or_refuse()?;
@@ -1703,7 +1703,7 @@ fn ensure_warm_guest(policy: &ResolvedPolicy, work: &Path) -> Result<WarmGuest, 
     // Serialize guest creation for this box, and only that.
     //
     // Two processes that both see no guest both issue `create --replace` under
-    // the same name, and the loser's guest — with whatever was running in it —
+    // the same name, and the loser's guest, with whatever was running in it,
     // is destroyed. This lock lives here rather than in the callers because the
     // race is here: `box run`, `box shell` and a service launch all pass
     // through, and the alternative (the box's writer lock) is held by a whole
@@ -1756,19 +1756,19 @@ fn run_warm(
 // ─── background services ────────────────────────────────────────────────────
 
 /// Start `argv` as a detached service inside the box's warm guest, returning
-/// the **guest** pid of its session leader and the guest it runs in.
+/// the *guest* pid of its session leader and the guest it runs in.
 ///
-/// The returned pid is meaningless on this host — it names a process in the
+/// The returned pid is meaningless on this host. It names a process in the
 /// guest's pid namespace, where a number equal to some host pid is a
 /// coincidence, not a relationship. Callers must record which world it belongs
 /// to and never hand it to `kill(2)`; [`service_alive`] and [`service_signal`]
 /// are the only things that may interpret it.
 ///
-/// The launcher shell sources this run's env script and **deletes it before
-/// detaching**, so the credentials exist on disk for the length of one exec
+/// The launcher shell sources this run's env script and deletes it before
+/// detaching, so the credentials exist on disk for the length of one exec
 /// rather than for the life of the service. `setsid` makes the service a
-/// session leader, so signalling `-pid` later reaps its whole descendant tree —
-/// the same property `spawn_background` gets from `setsid` + `killpg` on the
+/// session leader, so signalling `-pid` later reaps its whole descendant tree.
+/// The same property `spawn_background` gets from `setsid` + `killpg` on the
 /// kernel tiers.
 pub fn spawn_background(
     policy: &ResolvedPolicy,
@@ -1805,12 +1805,12 @@ pub fn spawn_background(
     // No pidfile, and no fd gymnastics: `$!` is the service.
     //
     // `setsid` only forks when it is already a process-group leader, and a
-    // background job in a non-interactive shell is not one — so it `setsid()`s
+    // background job in a non-interactive shell is not one, so it `setsid()`s
     // in place and `$!` names the session leader itself. That was verified on
     // this runtime rather than assumed, because an earlier reading of it was
     // wrong: a broken liveness check (exec'ing `kill`, which is a builtin) made
     // a perfectly good pid look dead and sent this down a detour through a
-    // pidfile — which had to live in a mounted directory, where any process in
+    // pidfile, which had to live in a mounted directory, where any process in
     // the box could win a race and choose the pid the host records.
     //
     // The session id is reported alongside and checked, so a shell that *does*
@@ -1854,7 +1854,7 @@ pub fn spawn_background(
         },
     );
     // Bounded like every other call into the runtime. The launcher exits as
-    // soon as it has the pid, so overrunning means the runtime is stuck — and
+    // soon as it has the pid, so overrunning means the runtime is stuck, and
     // an unbounded wait here hangs `box service start` with no way out.
     let mut cmd = std::process::Command::new(&exec_argv[0]);
     cmd.args(&exec_argv[1..]);
@@ -1890,7 +1890,7 @@ pub fn spawn_background(
         )));
     }
     // Both lines arrive on the same pipe, from the same exec, so they describe
-    // the same life of the guest — read separately, a restart in between would
+    // the same life of the guest. Read separately, a restart in between would
     // pair a new boot with a pid from the old one. Tagged rather than
     // positional because the launcher and the detached shell write
     // independently and either may land first.
@@ -1922,7 +1922,7 @@ pub fn spawn_background(
     };
     // The recorded pid is later used as a process *group* to signal, so it has
     // to be the session leader. An empty session also lands here, which is what
-    // a service that died before the launcher could look at it produces — worth
+    // a service that died before the launcher could look at it produces. Worth
     // failing on rather than recording.
     if sid_text != pid_text {
         stop_group(&rt, &name, pid);
@@ -1933,8 +1933,8 @@ pub fn spawn_background(
         )));
     }
 
-    // A service that dies on its first breath — a port already bound, a missing
-    // interpreter — would otherwise be reported as started, and the failure
+    // A service that dies on its first breath (a port already bound, a missing
+    // interpreter) would otherwise be reported as started, and the failure
     // would only surface later as a record naming a dead pid. Give it a moment,
     // then insist it is still there.
     std::thread::sleep(SERVICE_SETTLE);
@@ -1954,7 +1954,7 @@ pub fn spawn_background(
 /// How long a service is given to fail before it is called started.
 const SERVICE_SETTLE: Duration = Duration::from_millis(300);
 
-/// Is guest pid `pid` its own session leader — i.e. does the process group
+/// Is guest pid `pid` its own session leader. I.e. does the process group
 /// `-pid` names belong to it?
 ///
 /// `sed`/`cut` rather than a positional field, for the reason the launcher
@@ -1980,8 +1980,8 @@ fn stop_group(rt: &Runtime, sandbox: &str, pid: u32) {
 
 /// The last few lines of a service's log, for an error message.
 ///
-/// Every byte here was written *inside the box* — it is the service's own
-/// stdout — and this string goes straight to the operator's terminal through
+/// Every byte here was written *inside the box*, it is the service's own
+/// stdout, and this string goes straight to the operator's terminal through
 /// `Error: …`. So it is sanitised on the way out and bounded on the way in:
 ///
 /// * A control sequence in a log line repaints the terminal it is printed on.
@@ -2037,26 +2037,26 @@ fn read_tail(path: &Path, cap: u64) -> String {
 }
 
 /// The pid a launcher recorded into the service log, for cleaning up after a
-/// start that failed **after** the service had already detached.
+/// start that failed *after* the service had already detached.
 ///
-/// Without this, a host-side failure past the point of no return — the launcher
-/// exec timing out, say — leaves the service running in a guest that outlives
+/// Without this, a host-side failure past the point of no return (the launcher
+/// exec timing out, say) leaves the service running in a guest that outlives
 /// the command, invisible to `service status` and unreachable by
 /// `service stop`, with a retry starting a second copy beside it.
-/// This marker is **guest-writable**, and that is the whole reason for the
+/// This marker is *guest-writable*, and that is the whole reason for the
 /// checks on it. The log is a mounted file the service itself writes to; a
 /// service that prints its own `#h5i-pid` line wins, because the last one is
 /// the one read. So the number that comes back here is a hint from inside the
-/// box, and it is used to send a signal to a process *group* — the same hazard
+/// box, and it is used to send a signal to a process *group*. The same hazard
 /// that kept the pid out of a pidfile a few screens up, arriving through the
 /// log instead.
 ///
 /// `-1` as a process group means "every process the caller can signal", so an
 /// unchecked marker of `1` turns a failed `service start` into `kill -KILL -1`
 /// as root inside the guest. Anything below 2 is refused here, and
-/// `reap_detached` confirms the pid is a session leader — the launcher's own
+/// `reap_detached` confirms the pid is a session leader (the launcher's own
 /// invariant, which the success path in `start_service` already checks and this
-/// path did not — before signalling.
+/// path did not) before signalling.
 ///
 /// What is left is that a box can *hide* the real pid by appending a marker of
 /// its own, which loses the orphan this function exists to reap. That is a
@@ -2114,7 +2114,7 @@ pub fn service_state(sandbox: &str, pid: u32, boot: &str) -> Option<bool> {
     }
     // A guest keeps its name across `stop`/`start`, and its pids restart from 1
     // when it boots again. So a record saying "pid 42" can match a *different*
-    // process in the guest's next life — h5i would refuse to start a service
+    // process in the guest's next life. H5i would refuse to start a service
     // that is dead, and `service stop` would `kill -TERM -42` an unrelated
     // process group. The boot id makes the two lives distinguishable.
     match guest_boot_id(&rt, sandbox) {
@@ -2124,15 +2124,15 @@ pub fn service_state(sandbox: &str, pid: u32, boot: &str) -> Option<bool> {
         Some(_) => return Some(false),
         None => return None,
     }
-    // Through `sh -c`, because `kill` is a **shell builtin**: a slim image has
+    // Through `sh -c`, because `kill` is a *shell builtin*: a slim image has
     // no `/bin/kill`, so exec'ing it directly returns 127 and every service
-    // would read as dead — and, on the signalling path below, would never
+    // would read as dead, and, on the signalling path below, would never
     // actually be stopped.
     //
     service_pid_state(&rt, sandbox, pid)
 }
 
-/// Just "does this pid exist in that guest" — one exec, no guest-state or
+/// Just "does this pid exist in that guest". One exec, no guest-state or
 /// boot-id round trips.
 ///
 /// For polling a service as it shuts down, where the caller has *already*
@@ -2142,8 +2142,8 @@ pub fn service_state(sandbox: &str, pid: u32, boot: &str) -> Option<bool> {
 pub fn service_pid_running(rt: &Runtime, sandbox: &str, pid: u32) -> bool {
     // Collapsing here is deliberate and safe: the only caller is the shutdown
     // poll, where "could not ask" simply ends the wait early and the KILL that
-    // follows is harmless. Anything that *decides* something — whether to
-    // signal at all, whether a record may be deleted — must use
+    // follows is harmless. Anything that *decides* something (whether to
+    // signal at all, whether a record may be deleted) must use
     // [`service_pid_state`] instead.
     service_pid_state(rt, sandbox, pid).unwrap_or(false)
 }
@@ -2152,14 +2152,14 @@ pub fn service_pid_running(rt: &Runtime, sandbox: &str, pid: u32) -> bool {
 /// asked.
 ///
 /// This distinction is the whole point of `service_state`, and collapsing it
-/// here once already turned a hung `msb exec` into "the service is dead" —
+/// here once already turned a hung `msb exec` into "the service is dead",
 /// which makes `service_stop` skip its signal and delete the record anyway,
 /// leaving a live dev server in the guest that nothing on the host can reach.
 pub fn service_pid_state(rt: &Runtime, sandbox: &str, pid: u32) -> Option<bool> {
-    // `kill -0` alone is not liveness: it succeeds on a **zombie**, and a
+    // `kill -0` alone is not liveness: it succeeds on a *zombie*, and a
     // service that exits inside a guest stays one until something reaps it.
     // Guest init reparents it to pid 1 and may never do so, so a finished dev
-    // server would read as running forever — `service status` reporting a
+    // server would read as running forever: `service status` reporting a
     // corpse as healthy, `service start` refusing because of it, and
     // `service stop` waiting out its whole grace period before sending a
     // pointless KILL. Seen in exactly that order before this line existed.
@@ -2192,7 +2192,7 @@ pub fn runtime() -> Option<Runtime> {
     probe()
 }
 
-/// This guest's boot identity — the kernel's own, so it changes on every boot
+/// This guest's boot identity. The kernel's own, so it changes on every boot
 /// and cannot be confused with the sandbox's name, which survives a restart.
 ///
 /// `None` when the runtime could not be asked, which the callers propagate as
@@ -2229,7 +2229,7 @@ fn guest_sh(bin: &str, sandbox: &str, script: &str) -> bool {
 /// How long a question to the runtime may take before we stop waiting.
 const GUEST_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// How long creating or starting a guest may take. Generous — a cold boot is
+/// How long creating or starting a guest may take. Generous. A cold boot is
 /// hundreds of milliseconds, but a host under load is not a failure.
 const GUEST_LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -2237,8 +2237,8 @@ const GUEST_LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(180);
 /// it overran and was killed.
 ///
 /// Every call into the runtime goes through this. `msb exec` has been observed
-/// to hang indefinitely — rarely, and still undiagnosed
-/// (`docs/benchmarks/microvm-boot.md`) — and these calls sit behind
+/// to hang indefinitely (rarely, and still undiagnosed
+/// (`docs/benchmarks/microvm-boot.md`)) and these calls sit behind
 /// `box service status` and `box run`, so an unbounded one hangs the CLI with
 /// no way out but Ctrl-C.
 fn run_bounded(
@@ -2286,14 +2286,14 @@ pub fn service_signal(sandbox: &str, pid: u32, sig: &str) {
     let Some(rt) = probe() else {
         return;
     };
-    // `-{pid}` is the process *group* — the service was `setsid`'d precisely so
+    // `-{pid}` is the process *group*. The service was `setsid`'d precisely so
     // this reaps its whole tree, as `killpg` does on the kernel tiers. Via
     // `sh -c` for the same builtin reason as [`service_alive`].
     guest_sh(&rt.bin, sandbox, &format!("kill -{sig} -{pid}"));
 }
 
 /// Sentinel for [`ExecPlan::env_script`] meaning "run the command directly,
-/// with no per-run env wrapper" — used by the service launcher, which sources
+/// with no per-run env wrapper". Used by the service launcher, which sources
 /// its own environment.
 const SHELL_DIRECT: &str = "";
 
@@ -2359,8 +2359,8 @@ fn run_one_shot(
     })
 }
 
-/// The **agent-in-box** path: run `argv` (a shell or a coding agent) inside the
-/// microVM with stdio inherited — a real interactive session whose every command
+/// The *agent-in-box* path: run `argv` (a shell or a coding agent) inside the
+/// microVM with stdio inherited. A real interactive session whose every command
 /// is confined by the VM boundary and the netstack allowlist. Captures nothing
 /// and applies no wall clock; the operator owns the session.
 pub fn run_interactive(
@@ -2377,7 +2377,7 @@ pub fn run_interactive(
 }
 
 /// The warm agent-in-box path: exec a session into the box's own guest, so the
-/// shell shares state with the box's captured runs — which is what every other
+/// shell shares state with the box's captured runs, which is what every other
 /// tier already does, and why 9. calls per-command amnesia an artifact.
 fn run_interactive_warm(
     policy: &ResolvedPolicy,
@@ -2389,7 +2389,7 @@ fn run_interactive_warm(
     use std::io::IsTerminal;
     // Not injected on this path, and the guest's identity is why: the mount is
     // create-time, so a session that added it would resolve to a *different*
-    // guest than `box run` uses, and creating it would reap the other — killing
+    // guest than `box run` uses, and creating it would reap the other. Killing
     // any service running there. The only caller passes `None` today anyway
     // (deliberately, see `env::shell`); re-enabling it means designing it into
     // the create argv for every entry point, not just this one.
@@ -2399,7 +2399,7 @@ fn run_interactive_warm(
     let script = write_env_script(&stage, "env", &guest_env(policy, injected_env))?;
     let guest_script = guest_script_path(&script.path)?;
 
-    // Only ask for a pseudo-TTY when we have one on both ends — msb rejects
+    // Only ask for a pseudo-TTY when we have one on both ends. Msb rejects
     // `--tty` under a pipe, which would turn a CI `env shell` into a hard error.
     let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     let exec_argv = build_exec_argv(
@@ -2449,7 +2449,7 @@ fn run_interactive_one_shot(
         (false, Some(content)) => prepare_managed_settings(work, content),
         _ => None,
     };
-    // Only ask for a pseudo-TTY when we have one on both ends — msb rejects
+    // Only ask for a pseudo-TTY when we have one on both ends. Msb rejects
     // `--tty` under a pipe, which would turn a CI `env shell` into a hard error.
     let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     // Sweep leftovers from an h5i that died without running Drop.
@@ -2499,15 +2499,15 @@ fn guest_env(policy: &ResolvedPolicy, injected_env: &[(String, String)]) -> Vec<
     env
 }
 
-/// Spawn `msb exec`, stream output, and enforce the wall clock — the warm-path
+/// Spawn `msb exec`, stream output, and enforce the wall clock. The warm-path
 /// twin of [`wait_vm`], differing in exactly one way that matters.
 ///
-/// **It never removes the sandbox.** `wait_vm` does, because there the guest
+/// It never removes the sandbox. `wait_vm` does, because there the guest
 /// belongs to the one command it was booted for. Here the guest belongs to the
 /// *box*: destroying it on a timeout would take out a session, a dev server, or
 /// a concurrent command that has nothing to do with the run that overran.
 /// `msb exec --timeout` already bounds the guest-side command, so this deadline
-/// is the host-side backstop for a client that hangs — which has been observed,
+/// is the host-side backstop for a client that hangs, which has been observed,
 /// rarely and undiagnosed, and is exactly why the backstop exists.
 fn wait_exec(
     mut cmd: std::process::Command,
@@ -2541,11 +2541,11 @@ fn wait_exec(
                     timed_out = true;
                     let _ = child.kill();
                     let _ = child.wait();
-                    // Return **without joining**, for the reason `run_bounded`
+                    // Return *without joining*, for the reason `run_bounded`
                     // gives: if anything the killed client left behind still
                     // holds the pipe's write end, joining blocks forever and
-                    // `box run` hangs past its own wall clock with no error —
-                    // the exact failure this deadline exists to prevent.
+                    // `box run` hangs past its own wall clock with no error.
+                    // The exact failure this deadline exists to prevent.
                     return Ok(ExecOutcome {
                         stdout: Vec::new(),
                         stderr: b"(output dropped: the microVM exec overran its deadline)\n"
@@ -2739,7 +2739,7 @@ mod tests {
         let secret = "SUPER_SECRET_VALUE";
         let script = write_preload(&work, &[("TOKEN".into(), secret.into())]).unwrap();
 
-        // The mode must be 0600 as observed, and — the actual point — it must
+        // The mode must be 0600 as observed, and, the actual point, it must
         // never have been anything else, so it has to be set at creation rather
         // than chmod'd afterwards.
         let mode = std::fs::metadata(&script.path).unwrap().permissions().mode() & 0o777;
@@ -2758,7 +2758,7 @@ mod tests {
     #[test]
     fn an_out_of_range_port_is_refused_not_widened() {
         // `.ok()` here used to drop the parse failure, leaving `port = None` and
-        // emitting `allow@example.com` — every port, when the entry asked for
+        // emitting `allow@example.com`: every port, when the entry asked for
         // one. A fail-closed module must not resolve "cannot translate" to
         // "allow more".
         for entry in ["example.com:99999", "example.com:65536", "example.com:0x1"] {
@@ -2929,7 +2929,7 @@ mod tests {
         assert!(window(&a, "--net-default-egress").contains(&"deny"));
         assert!(window(&a, "--net-default-ingress").contains(&"deny"));
         assert_eq!(window(&a, "--net-rule"), vec!["allow@pypi.org"]);
-        // Never the container tier's proxy env — there is no proxy here, and a
+        // Never the container tier's proxy env. There is no proxy here, and a
         // stale HTTP_PROXY would make the box look filtered when it is not.
         assert!(!a.iter().any(|x| x.contains("HTTP_PROXY")), "{a:?}");
         // And never microsandbox's rebind-protection escape hatch.
@@ -3431,7 +3431,7 @@ mod tests {
             parse_guest_state(r#"[{"name":"other","status":"Running"}]"#, "g"),
             GuestState::Absent
         );
-        // Unreadable in various ways — none of these may read as "no guest".
+        // Unreadable in various ways. None of these may read as "no guest".
         assert_eq!(parse_guest_state("", "g"), GuestState::Unknown);
         assert_eq!(parse_guest_state("not json", "g"), GuestState::Unknown);
         assert_eq!(parse_guest_state(r#"{"name":"g"}"#, "g"), GuestState::Unknown);
@@ -3443,7 +3443,7 @@ mod tests {
     }
 
     /// "Could not ask" and "not running" must stay distinguishable, because
-    /// `service_stop` deletes the record after deciding — and deleting it on a
+    /// `service_stop` deletes the record after deciding, and deleting it on a
     /// transient failure orphans a service that is still running.
     #[test]
     fn a_runtime_that_cannot_answer_is_not_the_same_as_a_dead_guest() {
@@ -3454,7 +3454,7 @@ mod tests {
             parse_guest_state(r#"[{"name":"g","status":"Stopped"}]"#, "g"),
             GuestState::Stopped
         );
-        // Both of those are *answers* — the guest is gone or halted, so
+        // Both of those are *answers*. The guest is gone or halted, so
         // anything inside it is too, and `service_state` maps them to
         // `Some(false)`. Output we could not read is not an answer.
         for text in ["", "not json", r#"{"name":"g"}"#] {
@@ -3467,7 +3467,7 @@ mod tests {
     }
 
     /// `kill -0` succeeds on a zombie, and a service that exits inside a guest
-    /// stays one until something reaps it — which guest init may never do. Left
+    /// stays one until something reaps it, which guest init may never do. Left
     /// at `kill -0`, a finished dev server read as running forever: status
     /// reported a corpse as healthy, `start` refused because of it, and `stop`
     /// waited out its whole grace period before a pointless KILL.
@@ -3533,7 +3533,7 @@ mod tests {
     // ─── warm guests: marker bookkeeping ────────────────────────────────────
 
     /// A warm guest outlives its process on purpose, so the pid rule that reaps
-    /// one-shot guests must not touch it — the box's existence is the signal.
+    /// one-shot guests must not touch it. The box's existence is the signal.
     #[test]
     fn a_warm_marker_records_its_box_and_a_one_shot_marker_does_not() {
         let tmp = tempfile::tempdir().unwrap();
@@ -3594,7 +3594,7 @@ mod tests {
         assert!(tail.lines().count() >= 4, "{tail:?}");
     }
 
-    /// Nothing bounds the size of that file — the box writes it. Reading all of
+    /// Nothing bounds the size of that file. The box writes it. Reading all of
     /// it to print five lines is a host-side OOM a box can ask for.
     #[test]
     fn a_service_log_the_box_grew_is_read_by_the_tail_only() {
@@ -3602,7 +3602,7 @@ mod tests {
         // the last `cap` bytes lands in the middle of the giant line and drops
         // that partial, so the tail is the three short lines and nothing else.
         // Reading the file whole would make the giant line a *complete* line
-        // and put all of it in the five the error message prints — which is the
+        // and put all of it in the five the error message prints, which is the
         // difference this asserts on, since "the read stopped early" is not
         // otherwise visible from the outside.
         let mut text = "x".repeat(SERVICE_LOG_TAIL_BYTES as usize + 4096);
@@ -3629,7 +3629,7 @@ mod tests {
     /// The pid marker lives in the log, so the box writes it: the service's own
     /// stdout lands in the same file, and the *last* marker is the one read.
     /// `stop_group` turns that number into `kill -KILL -<pid>`, and `-1` is
-    /// "every process the caller can signal" — as root, inside the guest.
+    /// "every process the caller can signal", as root, inside the guest.
     #[test]
     fn a_forged_pid_marker_cannot_aim_the_cleanup_at_init() {
         for forged in ["#h5i-pid 0", "#h5i-pid 1", "#h5i-pid -1", "#h5i-pid nonsense"] {
@@ -3643,14 +3643,14 @@ mod tests {
         // A real one still comes back, or the cleanup this exists for is gone.
         let (_tmp, work) = with_service_log("starting\n#h5i-pid 4242\nlistening\n");
         assert_eq!(logged_service_pid(&work, "svc"), Some(4242));
-        // And the newest marker wins, which is what makes it forgeable at all —
-        // asserted so the reap-vs-hide tradeoff in the doc stays honest.
+        // And the newest marker wins, which is what makes it forgeable at all.
+        // Asserted so the reap-vs-hide tradeoff in the doc stays honest.
         let (_tmp, work) = with_service_log("#h5i-pid 4242\n#h5i-pid 77\n");
         assert_eq!(logged_service_pid(&work, "svc"), Some(77));
     }
 
     /// Every warm entry point must build the same create argv, or each creates
-    /// its own guest and reaps the others' — killing any service running there.
+    /// its own guest and reaps the others'. Killing any service running there.
     #[test]
     fn every_entry_point_describes_the_same_guest() {
         let pol = policy();
@@ -3712,7 +3712,7 @@ mod tests {
     }
 
     /// `SHELL_DIRECT` means the argv is already shell text that sources its own
-    /// environment — the service launcher. Anything else is wrapped.
+    /// environment. The service launcher. Anything else is wrapped.
     #[test]
     fn exec_runs_a_launcher_directly_and_a_command_through_its_env_script() {
         let direct = build_exec_argv(
@@ -3784,7 +3784,7 @@ mod tests {
         assert!(box_is_gone(&missing), "a removed box is gone");
 
         // A path whose parent denies traversal reports NotFound through
-        // `exists()` but errors with PermissionDenied through metadata — the
+        // `exists()` but errors with PermissionDenied through metadata. The
         // case that had one user's sweep destroying another user's guests.
         #[cfg(unix)]
         {

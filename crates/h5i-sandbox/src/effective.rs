@@ -20,7 +20,7 @@
 //!
 //! Every `serde(skip)` field of [`ResolvedPolicy`] is either in the dump or
 //! excluded here by name (§P1's exit criterion): the bind lists, readonly mode
-//! and egress extras are **in** it; `box_git` is container mounts whose kernel
+//! and egress extras are *in* it; `box_git` is container mounts whose kernel
 //! -tier paths already appear under `landlock`; `env_capture_spool` and
 //! `env_inbox` are container plumbing the kernel tiers reach through recorded fs
 //! grants; `hosts_services` is a microvm idle-stop hint; `egress_proxy_port` is
@@ -37,7 +37,7 @@ use crate::sandbox_policy::{IsolationClaim, NetMode, Profile, ResolvedPolicy};
 /// File name of the dump, beside `policy.resolved.toml` in the env dir.
 pub const EFFECTIVE_CONFIG_FILE: &str = "policy.effective.json";
 
-/// Version of this schema. Bump on any field change — the digest is pinned in
+/// Version of this schema. Bump on any field change. The digest is pinned in
 /// capture records, and a reader must know what it is hashing.
 pub const EFFECTIVE_SCHEMA: u32 = 1;
 
@@ -154,7 +154,7 @@ pub struct RlimitsEffective {
 }
 
 /// Resolution metadata: facts about the *policy*, not kernel rules. `fs_deny`
-/// lives here and nowhere else — Landlock is allowlist-only, and `fs_deny` is
+/// lives here and nowhere else. Landlock is allowlist-only, and `fs_deny` is
 /// a preflight refusal condition on resolution, so a theorem about it can only
 /// ever be "resolution refuses", never "the kernel denies" (§P1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,7 +164,7 @@ pub struct ResolutionMeta {
 }
 
 /// The effective configuration of one kernel-tier invocation. Field order is
-/// the canonical serialization order — digest stability depends on it, exactly
+/// the canonical serialization order. Digest stability depends on it, exactly
 /// as with [`Profile`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EffectiveConfig {
@@ -186,7 +186,7 @@ pub struct EffectiveConfig {
 }
 
 impl EffectiveConfig {
-    /// Canonical JSON — the exact bytes [`Self::write_to`] persists and
+    /// Canonical JSON. The exact bytes [`Self::write_to`] persists and
     /// [`Self::digest`] hashes.
     pub fn to_json(&self) -> Result<String, H5iError> {
         serde_json::to_string_pretty(self)
@@ -221,7 +221,7 @@ fn lossy(p: &Path) -> String {
 
 /// Compute the effective configuration for one invocation. This is the single
 /// source `build_confined_command` builds its Landlock path sets and bind
-/// lists from — change enforcement here, never beside it.
+/// lists from. Change enforcement here, never beside it.
 ///
 /// `work` must already be canonicalized (the caller does, before Landlock).
 /// `landlock_abi` is the probed ABI the ruleset will be built against.
@@ -237,7 +237,7 @@ pub fn compute_effective(
 
     // Mirrors build_confined_command exactly: rw = $WORK (unless readonly) +
     // fs.write; ro = fs.read (+ $WORK when readonly); grants whose paths do
-    // not exist on this host are skipped — the fail-closed direction.
+    // not exist on this host are skipped. The fail-closed direction.
     let mut rw: Vec<String> = Vec::new();
     if !ro_work {
         rw.push(lossy(work));
@@ -357,8 +357,8 @@ pub fn compute_effective(
 }
 
 /// Re-derive the declared read/write grant paths from the policy the same way
-/// [`compute_effective`] does, **minus the exists-filter** (which only removes).
-/// The validator checks the effective grants are a subset of these — so a
+/// [`compute_effective`] does, minus the exists-filter (which only removes).
+/// The validator checks the effective grants are a subset of these, so a
 /// legitimate box always passes, and only a divergence between the resolver's
 /// output and the declared intent (a bug) is caught. ROADMAP §P2.
 pub fn declared_grants(policy: &ResolvedPolicy, work: &Path) -> (Vec<String>, Vec<String>) {
@@ -408,7 +408,7 @@ pub fn validate_effective(
         // Check the landlock grants AND every bind's source and target. A grant
         // is the user's own declaration, but a bind whose mountpoint or source
         // lies beneath the worktree and resolves out through a planted symlink
-        // is the runc-class escape (§P3) — the config-lock and private binds
+        // is the runc-class escape (§P3). The config-lock and private binds
         // sit under $WORK, so their paths are exactly where a previous run's
         // agent could redirect. `symlink_escapes` ignores paths outside the
         // worktree, so h5i's managed dirs (cache, home-state) are not
@@ -444,7 +444,7 @@ fn scopes_overlap(a: &str, b: &str) -> bool {
 
 /// One direction of the cross-box interference condition: a path `writer`
 /// may write and `reader` may read. Returns the first witnessing (write
-/// grant, read grant) pair, or `None` — and `None` is the strong answer: a
+/// grant, read grant) pair, or `None`, and `None` is the strong answer: a
 /// clean check in BOTH directions means neither box can write a path the
 /// other reads through their Landlock-granted filesystems. The claim's scope
 /// is exactly the grant lists: binds, the network, and anything outside the
@@ -463,7 +463,7 @@ pub fn interferes(
     None
 }
 
-/// The canonical captured-run shape per kernel tier — what `env create` dumps
+/// The canonical captured-run shape per kernel tier. What `env create` dumps
 /// before any run exists. `None` for the tiers this schema does not describe
 /// (workspace runs unconfined; Seatbelt, container and microvm enforce through
 /// other mechanisms).
@@ -554,7 +554,7 @@ mod tests {
 
     /// Drift guard (§P2, review #2): `compute_effective`'s output must satisfy
     /// `validate_effective`, so `declared_grants` and `compute_effective` stay
-    /// in sync — if one grows a grant source the other forgets, this fails.
+    /// in sync, if one grows a grant source the other forgets, this fails.
     /// Exercises the production validator entry point in CI, where the opt-in
     /// gate never runs it.
     #[test]
@@ -630,8 +630,8 @@ mod tests {
         let (w, r) = interferes(&a, &b).expect("shared writable path must fire");
         assert_eq!(w, shared);
         assert_eq!(r, shared);
-        // Disjoint worktrees, no shared grants: clean in both directions —
-        // the precondition of the machine-checked noninterference theorem.
+        // Disjoint worktrees, no shared grants: clean in both directions.
+        // The precondition of the machine-checked noninterference theorem.
         let da = eff("work-c", &[]);
         let db = eff("work-d", &[]);
         assert!(interferes(&da, &db).is_none());

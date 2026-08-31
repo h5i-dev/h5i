@@ -46,7 +46,7 @@ pub enum Initiator {
     ///
     /// Its own name in the receipt rather than `subresource`, because an
     /// auditor asking "did this page pull in another *document*" is asking a
-    /// different question from "did it load its stylesheet" — a frame is the
+    /// different question from "did it load its stylesheet". A frame is the
     /// one subresource whose content is someone else's whole page.
     Frame,
     /// A hop the server asked for via `Location`.
@@ -67,7 +67,7 @@ pub struct RequestRecord {
     pub seq: u64,
     /// When the engine wrote this row, RFC3339.
     ///
-    /// **The engine's own claim**, not an observation. A reader outside the box
+    /// The engine's own claim, not an observation. A reader outside the box
     /// has no way to check the box's clock, so this is what orders the engine's
     /// two logs against each other and what a host-side reader labels as a
     /// claim when it puts them beside rows h5i wrote itself.
@@ -109,7 +109,7 @@ pub struct RequestRecord {
     pub duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// How many cookies this request carried. **A count, never a value.** The
+    /// How many cookies this request carried. A count, never a value. The
     /// log is read by people and shipped in exports, and a credential in a
     /// receipt is a credential in a bug report.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -221,7 +221,7 @@ impl JsonlSink {
 /// names every verb the agent ran, which together are a complete account of
 /// what the agent was doing. h5i writes them into the session directory, and a
 /// boxed session's directory is under a `/tmp` the `agent` profile shares with
-/// the host — so the umask's 0644 published the account to anything on the
+/// the host, so the umask's 0644 published the account to anything on the
 /// machine. The mode is set at creation, so there is no window in which the
 /// file exists and is readable; an existing file is narrowed too, because a log
 /// that was created wide does not become safe by being appended to.
@@ -238,7 +238,7 @@ fn open_owner_only(path: &Path) -> Result<File, H5iError> {
     {
         use std::os::unix::fs::PermissionsExt;
         // `mode` applies only when the file is created. A log left behind by an
-        // earlier session — a `--restore`, a crash — keeps whatever it had.
+        // earlier session (a `--restore`, a crash) keeps whatever it had.
         let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     }
     Ok(file)
@@ -262,7 +262,7 @@ impl Sink for JsonlSink {
 /// A sink that accepts everything and keeps nothing.
 ///
 /// Not the same as having no sink. The broker always has one, and the
-/// fail-closed rule is about what happens when a sink *refuses* — this one
+/// fail-closed rule is about what happens when a sink *refuses*. This one
 /// never does. It is what a session without `--receipts` writes to: the
 /// broker's own in-memory log is still kept, and still printed at the end.
 pub struct NullSink;
@@ -425,12 +425,12 @@ mod tests {
 ///
 /// A *separate* record from [`RequestRecord`], and a separate lane, because
 /// they answer different questions with different evidence. A request row is
-/// what crossed the wire; this is what the agent asked for. Correlating the two
-/// — which click caused which fetch — is not attempted here: the link has to be
+/// what crossed the wire; this is what the agent asked for. Correlating the two,
+/// which click caused which fetch, is not attempted here: the link has to be
 /// stamped by whoever knows it, and inferring it from adjacency in a file would
 /// be inventing evidence.
 ///
-/// Written by the engine, inside the box, so this lane is **box-claimed**. h5i
+/// Written by the engine, inside the box, so this lane is *box-claimed*. h5i
 /// sits on no socket between an agent and this engine, because there is none:
 /// the engine *is* the browser. Anything reading these rows should weigh them
 /// as the box's own account.
@@ -452,7 +452,7 @@ pub struct ActionRecord {
     pub url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Receipt sequence numbers written **while this verb ran**.
+    /// Receipt sequence numbers written while this verb ran.
     ///
     /// The differentiator, and the field a reviewer joins against the request
     /// log's own numbering: not "a request happened somewhere in this session"
@@ -461,9 +461,9 @@ pub struct ActionRecord {
     ///
     /// Deliberately a *window*, and named as one. The engine could only claim
     /// strict causation for the one path that dispatches a script event and
-    /// gets a list back; every other verb that moves the page — `navigate`, a
+    /// gets a list back; every other verb that moves the page (`navigate`, a
     /// click that follows an href, `submit`, a `wait_for` that lets a pending
-    /// load finish — produces fetches it never enumerates. A window covers all
+    /// load finish) produces fetches it never enumerates. A window covers all
     /// of them, and its one weakness is stated rather than hidden: the page
     /// thread owns the session, but a viewer's own traffic can land inside the
     /// window and be attributed to a verb that did not ask for it.
@@ -511,13 +511,13 @@ impl ActionLog {
 
     /// Record that a verb is about to run, and return its sequence number.
     ///
-    /// Before, not after, and the failure is propagated: **no record, no
-    /// action**, the same rule the request log enforces for fetches. Recording
+    /// Before, not after, and the failure is propagated: no record, no
+    /// action, the same rule the request log enforces for fetches. Recording
     /// afterwards would make a full disk into an agent that acts invisibly,
     /// which is precisely the silent under-reporting this log exists to end.
     ///
     /// Worth being exact about what that buys, since the lane is box-claimed:
-    /// it is a guarantee against *accident* — a bad path, a full disk, a
+    /// it is a guarantee against *accident*. A bad path, a full disk, a
     /// permission the box does not have. It is not a guarantee against a box
     /// that has decided to lie, and nothing written inside the box could be.
     pub fn begin(&self, verb: &str, target: Option<&str>) -> Result<u64, H5iError> {
@@ -647,7 +647,7 @@ mod action_log_tests {
 
     #[test]
     fn an_unwritable_log_refuses_rather_than_recording_nothing() {
-        // No record, no action — the same rule the request log enforces for
+        // No record, no action. The same rule the request log enforces for
         // fetches. A directory where the file should be is the cheapest way to
         // make the open fail without depending on permissions.
         let dir = tempfile::tempdir().expect("tempdir");

@@ -2,7 +2,7 @@
 //!
 //! Pure, in the sense that matters: no I/O, no clock, no privileges, no
 //! kernel. [`Engine::observe`] is a fold over events and [`Engine::finish`]
-//! reads the accumulator out. That is not tidiness for its own sake — it is
+//! reads the accumulator out. That is not tidiness for its own sake. It is
 //! the only way this layer can be tested at all, because attaching a probe
 //! needs capabilities no CI runner grants, and a detection engine nobody can
 //! test is a detection engine nobody should believe.
@@ -18,7 +18,7 @@
 //! are unfollowed, `..` is unresolved, a relative path is relative to a
 //! directory fd this probe does not know, and in principle the bytes can
 //! change between the read and the kernel's use of them. So a path-matching
-//! rule is a **heuristic over caller-supplied strings** and is documented as
+//! rule is a heuristic over caller-supplied strings and is documented as
 //! one (ROADMAP.md D13.3). That is the price of a CO-RE-free probe, and it is
 //! the right price for an observation-only lane: a false positive costs a
 //! reviewer a glance, and the alternative costs every user a BTF toolchain.
@@ -215,7 +215,7 @@ pub fn rule(id: &str) -> Option<&'static RuleSpec> {
     RULES.iter().find(|r| r.id == id)
 }
 
-/// Resolve a selector list — rule ids, family names, or `*` — into the set of
+/// Resolve a selector list (rule ids, family names, or `*`) into the set of
 /// rule ids it enables.
 ///
 /// Unknown selectors are returned separately rather than ignored: a typo in a
@@ -443,7 +443,7 @@ impl Engine {
         let path = ev.path.clone();
 
         // Fileless execution: the descriptor was made by this process and is
-        // now what it is running. Both halves are needed — a `/proc/self/fd/N`
+        // now what it is running. Both halves are needed. A `/proc/self/fd/N`
         // exec on its own is an ordinary way to run a downloaded script.
         let is_fd_exec = path.starts_with("/proc/self/fd/")
             || (path.starts_with("/proc/") && path.contains("/fd/"))
@@ -547,7 +547,7 @@ impl Engine {
     }
 
     /// Is `path` inside `root`? False when `root` is empty, which is what an
-    /// unconfigured context looks like — a rule must never fire on "everything
+    /// unconfigured context looks like. A rule must never fire on "everything
     /// is inside nothing".
     fn under(&self, path: &str, root: &str) -> bool {
         if root.is_empty() {
@@ -629,7 +629,7 @@ fn looks_like_download_pipe(cmd: &str) -> bool {
 ///
 /// The string came out of a box. It reaches a terminal (the CLI), an HTML page
 /// (the console) and a git ref (the export), so the control sequences go
-/// first — the same treatment every other box-written string in h5i gets, via
+/// first. The same treatment every other box-written string in h5i gets, via
 /// the same helper.
 fn sanitize(s: &str) -> String {
     let cleaned = h5i_error::redact::sanitize_display(s);

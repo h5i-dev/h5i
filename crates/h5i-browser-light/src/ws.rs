@@ -7,11 +7,11 @@
 //!
 //! Two rules the h5i viewers depend on, both easy to get wrong:
 //!
-//! - **A server never masks.** h5i-core's client fails the connection outright
+//! - A server never masks. h5i-core's client fails the connection outright
 //!   on a masked server frame, so masking here is not a compatibility quirk,
 //!   it is a disconnect.
-//! - **Nothing follows the handshake's blank line except the first frame
-//!   byte.** A stray newline is read as the start of a frame and the viewer
+//! - Nothing follows the handshake's blank line except the first frame
+//!   byte. A stray newline is read as the start of a frame and the viewer
 //!   hangs with no error, which is exactly the CRLF bug the web viewer already
 //!   hit once.
 
@@ -30,7 +30,7 @@ const MAX_MESSAGE: usize = 1 << 20;
 
 /// Cap on the whole upgrade request. `read_line` grows its `String` until it
 /// meets a newline, so a client that opens a socket and sends bytes without one
-/// is an unbounded allocation on this side — and the handshake happens before
+/// is an unbounded allocation on this side, and the handshake happens before
 /// anything about the peer has been established.
 const MAX_HANDSHAKE: u64 = 32 * 1024;
 
@@ -161,7 +161,7 @@ pub fn read_message(reader: &mut impl Read) -> Result<Incoming, H5iError> {
         let opcode = head[0] & 0x0F;
         let masked = head[1] & 0x80 != 0;
         // Carried as `u64` until it has been checked against the cap. Casting
-        // first and checking after truncates on a 32-bit target — a declared
+        // first and checking after truncates on a 32-bit target. A declared
         // length of 2^32+1 became 1, the cap waved it through, and the reader
         // then sat one byte into a payload the peer is still sending, reading
         // its own body as frame headers.
@@ -223,12 +223,12 @@ pub fn read_message(reader: &mut impl Read) -> Result<Incoming, H5iError> {
 
         // Control frames are never fragmented and may interleave a fragmented
         // data message (RFC 6455 §5.4). At a message boundary we surface them
-        // so the caller can pong; *between* fragments we must not — returning
+        // so the caller can pong; *between* fragments we must not. Returning
         // here would discard `assembled` and corrupt the message into its tail
         // alone. We cannot pong from inside this read, so an interleaved ping
         // is skipped and reassembly continues: preserving the in-flight
         // message beats answering one keep-alive, and a dropped ping is benign
-        // for these short sessions. Close always surfaces — discarding a
+        // for these short sessions. Close always surfaces. Discarding a
         // partial message on close is correct.
         let at_boundary = assembled.is_empty() && message_opcode.is_none();
         match opcode {
@@ -338,7 +338,7 @@ mod tests {
     #[test]
     fn a_ping_between_fragments_does_not_corrupt_the_message() {
         // RFC 6455 allows a control frame between fragments. It must not throw
-        // away the fragment already assembled — the whole message must survive.
+        // away the fragment already assembled. The whole message must survive.
         let mut frame = Vec::new();
         // Fragment 1: text, FIN clear.
         frame.extend_from_slice(&[0x01, 4]);
@@ -369,7 +369,7 @@ mod tests {
 
     /// RFC 6455 §5.5: a control frame is never fragmented and never carries
     /// more than 125 bytes. A fragmented `Ping` was answered as a whole message
-    /// and left the next read starting on a continuation frame — the stream and
+    /// and left the next read starting on a continuation frame. The stream and
     /// the reader no longer agreeing about where a frame begins.
     #[test]
     fn a_control_frame_that_breaks_the_rules_fails_the_connection() {

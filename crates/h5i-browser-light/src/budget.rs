@@ -1,12 +1,12 @@
 //! What one page is allowed to spend before the engine stops answering it.
 //!
-//! Every other limit is **per request**: a response size cap, a redirect count,
+//! Every other limit is *per request*: a response size cap, a redirect count,
 //! a timeout. None bounds a page that makes *many* requests, so a script in a
 //! loop, each fetch individually well-behaved, could keep the engine busy
 //! indefinitely. The receipts would faithfully record all ten thousand, and
 //! recording a runaway is not bounding it.
 //!
-//! **Per navigation, not per session**, because of who is spending. A page
+//! Per navigation, not per session, because of who is spending. A page
 //! fetching in a loop is untrusted code the engine cannot otherwise stop. An
 //! agent navigating twenty times is the principal exercising its own authority,
 //! and bounding that would be the engine deciding how much work its operator may
@@ -15,7 +15,7 @@
 //! the failure it would prevent belongs to the thing driving the engine rather
 //! than to a page inside it.
 //!
-//! **Exceeding is a refusal, not a crash.** The next request is denied and
+//! Exceeding is a refusal, not a crash. The next request is denied and
 //! recorded as denied with `budget-exceeded`. The page sees a failed fetch,
 //! which pages handle; the agent sees it in the request log and the snapshot's
 //! notes. Nothing is torn down, because a page that spent its allowance has
@@ -55,7 +55,7 @@ impl Default for Limits {
             max_requests: 500,
             max_wire_bytes: 64 * 1024 * 1024,
             // Higher than the wire ceiling, because decoding legitimately
-            // expands — and still bounded, because that is the direction a
+            // expands, and still bounded, because that is the direction a
             // compression bomb pushes.
             max_decoded_bytes: 256 * 1024 * 1024,
             max_network_time: Duration::from_secs(60),
@@ -121,7 +121,7 @@ impl Budget {
     ///
     /// Checked *before* the wire, so an over-budget request is refused rather
     /// than made and then complained about. The request counter is incremented
-    /// here — a request that is about to be attempted has been spent, whatever
+    /// here. A request that is about to be attempted has been spent, whatever
     /// its outcome, or a page whose every fetch fails would have an unlimited
     /// number of them.
     pub fn claim_request(&self) -> Result<(), Exceeded> {
@@ -230,8 +230,8 @@ mod millis {
 
 /// A wall-clock bound on one navigation, from the first byte to the last.
 ///
-/// The per-phase budgets this engine already had — a request timeout, a script
-/// phase budget — each bound their own step and none of them bounds the whole.
+/// The per-phase budgets this engine already had (a request timeout, a script
+/// phase budget) each bound their own step and none of them bounds the whole.
 /// A page that spends thirty seconds on the network *and* twenty in its script
 /// is inside every limit and has still taken the better part of a minute.
 ///
@@ -271,17 +271,17 @@ impl Deadline {
 
 /// The stop of last resort, for the half of this engine no deadline reaches.
 ///
-/// Every other ceiling here guards the **script realm**: `--script-seconds`
+/// Every other ceiling here guards the *script realm*: `--script-seconds`
 /// bounds the script phase, the loop-iteration limit bounds one `for`, the job
 /// deadline bounds the queue. All three work by asking Boa to stop between
 /// pieces of work it is doing. None of them can do anything about a *layout*
-/// that never returns, because no script is running while layout walks the tree
-/// — and layout is native code with no interruption point in it at all.
+/// that never returns, because no script is running while layout walks the tree,
+/// and layout is native code with no interruption point in it at all.
 ///
-/// That gap was not theoretical. A cyclic tree — reachable, at the time, from
-/// `document.body.appendChild(new Text("x"))` — sent blitz walking for ever at
+/// That gap was not theoretical. A cyclic tree (reachable, at the time, from
+/// `document.body.appendChild(new Text("x"))`) sent blitz walking for ever at
 /// 100% of a core, straight through a 45-second navigation budget and a
-/// 60-second script budget, for **seven hours**. The tree cannot go cyclic any
+/// 60-second script budget, for *seven hours*. The tree cannot go cyclic any
 /// more, but "no ceiling at all covers half the engine" is the condition that
 /// turned one bug into seven hours, and it is worth closing on its own.
 ///
@@ -292,7 +292,7 @@ impl Deadline {
 /// page rather than in total.
 ///
 /// The margin is wide on purpose. This is not a tighter version of the
-/// navigation budget — that one reports a page as unfinished and hands back
+/// navigation budget. That one reports a page as unfinished and hands back
 /// what rendered, which is a useful answer. Reaching *this* one ends the
 /// process, so it must be somewhere no page that is merely slow can arrive.
 pub struct HardStop {
@@ -358,7 +358,7 @@ mod tests {
         // open past its ceiling exits 71 and says why.
         //
         // What this pins is the part that would be catastrophic to get wrong in
-        // the opposite direction — a guard that fired on a page which had
+        // the opposite direction. A guard that fired on a page which had
         // already finished would take down a working engine, and it would do it
         // rarely enough to be blamed on anything else.
         for _ in 0..64 {

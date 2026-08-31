@@ -48,7 +48,7 @@ fn store_owner_hint(_h5i_root: &Path) -> String {
 
 /// Turn an I/O error on the h5i data store into an actionable message when it's
 /// a permission failure. A raw "Permission denied" deep in a sharded object
-/// path — classically the store left root-owned by an earlier `sudo` run — is a
+/// path, classically the store left root-owned by an earlier `sudo` run, is a
 /// notorious head-scratcher; spell out the likely cause and the one-line repair.
 /// Non-permission errors pass through with plain path context.
 pub fn store_io_error(h5i_root: &Path, path: &Path, source: std::io::Error) -> H5iError {

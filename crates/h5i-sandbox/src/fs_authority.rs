@@ -1,7 +1,7 @@
 //! The filesystem-authority validator (ROADMAP.md §P2). Given the shipped
 //! plan's grant lists and the measured world, it re-derives the authority the
 //! plan installs and checks it is a subset of what the declared policy
-//! authorized — translation validation on the resolver's output, catching a
+//! authorized. Translation validation on the resolver's output, catching a
 //! `compute_effective` bug the way translation validation catches a compiler
 //! bug. A worktree path that resolves out through a planted symlink is
 //! reported as a boundary signal beside the verdict.
@@ -9,9 +9,9 @@
 //! Pure and cross-platform apart from [`symlink_escapes`], which measures the
 //! host. Fully opt-in: see [`enforce_enabled`].
 
-/// Whether the filesystem-authority validator runs at all. **Fully opt-in**:
-/// unset means the validator never executes — no computation, no host
-/// measurement, no manifest field, no gate — so default behavior is exactly as
+/// Whether the filesystem-authority validator runs at all. *Fully opt-in*:
+/// unset means the validator never executes (no computation, no host
+/// measurement, no manifest field, no gate) so default behavior is exactly as
 /// before this code existed. Set `H5I_FS_AUTHORITY_ENFORCE=1` to compute the
 /// verdict at box create and run, record it, and fail closed on a violation
 /// (ROADMAP.md §P2: earn trust before it gates by default).
@@ -53,7 +53,7 @@ fn subset(sub: &[String], sup: &[String]) -> bool {
     sub.iter().all(|s| sup.contains(s))
 }
 
-/// **The per-run translation validator** (ROADMAP.md §P2): re-check the
+/// The per-run translation validator (ROADMAP.md §P2): re-check the
 /// shipped effective grants against the declared policy, independently of the
 /// resolver that produced them.
 ///
@@ -86,8 +86,8 @@ pub fn validate_grants(
 
 /// Which of `paths`, resolved on the host, escape the managed worktree through
 /// a symlink? A path at or above `work` is the user's declared choice and is
-/// not second-guessed; a path **beneath** `work` whose canonical form leaves
-/// `work` is the planted-symlink escape (§P3) — the previous run's agent
+/// not second-guessed; a path *beneath* `work` whose canonical form leaves
+/// `work` is the planted-symlink escape (§P3). The previous run's agent
 /// redirected a worktree path out. Callers pass the landlock grants and the
 /// bind sources/mountpoints; paths outside the worktree (h5i's managed cache
 /// and home-state dirs) are ignored by construction. Returns the offenders.
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn validate_grants_rejects_undeclared_write() {
-        // A write grant the policy never declared writable — a compute bug.
+        // A write grant the policy never declared writable. A compute bug.
         let v = validate_grants(
             &[],
             &["/work".to_string()],

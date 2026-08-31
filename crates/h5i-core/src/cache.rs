@@ -7,10 +7,10 @@
 //!
 //! The shape keeps the boundary intact:
 //!
-//! * One cache per project **and ecosystem**, keyed by a digest of that
+//! * One cache per project *and ecosystem*, keyed by a digest of that
 //!   ecosystem's lockfiles. A different lockfile is a different cache, so a box
 //!   never sees packages resolved for someone else's dependency set.
-//! * Caches are mounted **read only** into a box. Every package manager falls
+//! * Caches are mounted *read only* into a box. Every package manager falls
 //!   back to fetching what it cannot find, so a read-only cache is a speed
 //!   feature with no correctness cost.
 //! * Writing to a cache happens only in [`refresh`], which runs the ecosystem's
@@ -117,7 +117,7 @@ pub fn lock_key(workdir: &Path, eco: &Ecosystem) -> Option<String> {
     use std::io::Read;
 
     // Streamed, not buffered. A lockfile lives in `$WORK`, which is the box's
-    // own writable workspace, and this runs on every box run — so
+    // own writable workspace, and this runs on every box run, so
     // `std::fs::read` was the box choosing how much memory the host allocates
     // to compute a *digest*. Feeding the same bytes in the same order gives the
     // same digest, so no existing cache key changes.
@@ -216,15 +216,15 @@ pub fn prepare(h5i_root: &Path, eco: &Ecosystem, key: &str) -> Result<PathBuf, H
     Ok(dir)
 }
 
-/// Populate `eco`'s cache by running its fetch step in a box with **no agent
-/// in it**, with that one cache writable and nothing else changed.
+/// Populate `eco`'s cache by running its fetch step in a box with no agent
+/// in it, with that one cache writable and nothing else changed.
 ///
 /// This is the only writer. An agent session never gets a cache read-write, so
 /// a cache can never become a channel between boxes or a place one leaves
 /// something for the next to pick up. The box is removed whether the fetch
 /// worked or not: a failed refresh must not leave a box behind.
 ///
-/// Returns the cache directory and the fetch's exit code — a non-zero exit is
+/// Returns the cache directory and the fetch's exit code. A non-zero exit is
 /// reported rather than swallowed, because a half-populated cache that claims
 /// success is worse than a cold one.
 pub fn refresh(
@@ -314,7 +314,7 @@ fn box_target(eco: &Ecosystem) -> Option<PathBuf> {
 ///
 /// A real dependency tree is deep but finite. A symlink loop is not, and while
 /// the growing path eventually trips `ENAMETOOLONG` and ends the recursion on
-/// its own — measured, rather than assumed — that is hundreds of levels of
+/// its own (measured, rather than assumed) that is hundreds of levels of
 /// pointless `read_dir` first, and it is the filesystem's limit doing the job
 /// rather than this function's.
 const MAX_CACHE_DEPTH: usize = 64;
@@ -323,10 +323,10 @@ fn dir_bytes(path: &Path) -> u64 {
     dir_bytes_within(path, 0)
 }
 
-/// Total bytes under `path`, **without following symlinks**.
+/// Total bytes under `path`, without following symlinks.
 ///
 /// `DirEntry::metadata` follows them, and this walks a directory a package
-/// manager populated — `npm` plants symlinks in `node_modules` as a matter of
+/// manager populated: `npm` plants symlinks in `node_modules` as a matter of
 /// course, and a package tarball may carry any link it likes. So a link pointing
 /// anywhere else had `h5i box cache list` walking, and reporting the size of, a
 /// tree outside the cache entirely; a link pointing at an ancestor had it
@@ -452,7 +452,7 @@ mod tests {
     }
 
     /// `DirEntry::metadata` follows symlinks, and this walks a directory a
-    /// package manager populated — `npm` plants links in `node_modules` as a
+    /// package manager populated: `npm` plants links in `node_modules` as a
     /// matter of course. A link out of the cache had the walk leave it entirely
     /// and report somebody else's bytes; a link back into it had the walk repeat
     /// the same subtree until the path grew too long for the filesystem.

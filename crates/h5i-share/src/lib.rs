@@ -1,4 +1,4 @@
-//! `h5i box share` — letting one other person try the web app in a box.
+//! `h5i box share`: letting one other person try the web app in a box.
 //!
 //! Everything else h5i does is about what leaves a box. This is the one path
 //! that lets something in.
@@ -44,8 +44,8 @@ pub mod dialer;
 mod fuzz;
 pub mod gate;
 pub mod http_front;
-// Whose port is this? The macOS half of "the only route in goes to the box" —
-// on Linux a namespace makes it true by construction, and here it is
+// Whose port is this? The macOS half of "the only route in goes to the box".
+// On Linux a namespace makes it true by construction, and here it is
 // established by observation. The rule it applies is pure and compiled
 // everywhere; the questions it asks Darwin are not.
 pub mod owner;

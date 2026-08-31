@@ -6,19 +6,19 @@
 //! hot-module-reload channel is a WebSocket, so the place this engine alone can
 //! reach was also the place it rendered a half-built page.
 //!
-//! **`ws://` and `wss://`.** The old refusal said `wss://` needed a raw TLS
+//! `ws://` and `wss://`. The old refusal said `wss://` needed a raw TLS
 //! stream the HTTP client does not expose, which was true of `reqwest` and had
 //! been generalised into a property of the engine. A socket that owns its
 //! transport needs nothing from the HTTP client, and this one carries `rustls`
 //! directly. The policy path is untouched: check, receipt, then dial.
 //!
-//! **Loopback only whenever an egress proxy is configured.** A raw socket does
+//! Loopback only whenever an egress proxy is configured. A raw socket does
 //! not go through the proxy `reqwest` was given, and inside a box that proxy is
 //! how the sandbox's allowlist stays in the path, so a non-loopback socket is
 //! refused whenever `$H5I_EGRESS_PROXY` is set. Loopback is exempt because the
 //! proxy already excludes it, so nothing in the path is bypassed.
 //!
-//! **Every frame is receipted.** The receipt is not an observation of the
+//! Every frame is receipted. The receipt is not an observation of the
 //! network, it *is* the network, so a socket open ten minutes carrying four
 //! hundred messages cannot be receipted at the handshake alone: that is the
 //! CONNECT-gate blindness this engine exists to remove. Each frame is written as
@@ -39,8 +39,8 @@ use crate::ws::{self, Incoming};
 
 /// The bytes underneath a socket, plain or encrypted.
 ///
-/// One type so that everything above it — the handshake, the frame reader, the
-/// masked writer — is written once rather than twice. The difference between
+/// One type so that everything above it (the handshake, the frame reader, the
+/// masked writer) is written once rather than twice. The difference between
 /// `ws://` and `wss://` should be a field, not a parallel code path, because a
 /// parallel path is where the two drift and only one of them keeps getting the
 /// receipt rule right.
@@ -49,13 +49,13 @@ use crate::ws::{self, Incoming};
 ///
 /// A plain `TcpStream` can be `try_clone`d, so the reader thread and the writer
 /// each get their own handle and never contend. A TLS *connection* is one piece
-/// of state — sequence numbers, keys, the record buffer — and cannot be split
+/// of state (sequence numbers, keys, the record buffer) and cannot be split
 /// that way, so both sides share it under a mutex.
 ///
 /// That would deadlock on its own: the reader blocks in `read`, holding the
 /// lock, and a `send` waits behind it forever. The fix is the read timeout set
 /// in [`Socket::open`] for TLS sockets. The reader wakes every so often, finds
-/// nothing, drops the lock, and goes round again — so a writer always gets in
+/// nothing, drops the lock, and goes round again, so a writer always gets in
 /// within one timeout. The cost is a wakeup a few times a second on an idle
 /// socket, which is what a lock-free design would have spent on a second
 /// connection.
@@ -187,7 +187,7 @@ fn tls_config() -> Arc<rustls::ClientConfig> {
 ///
 /// `read_line` grows a `String` until it meets a newline, so a server that
 /// answers `101` and then sends bytes without one is an unbounded allocation on
-/// this side — and a server that sends short header lines forever is a loop
+/// this side, and a server that sends short header lines forever is a loop
 /// that never ends. The server half of this protocol bounds its own handshake
 /// (`ws::MAX_HANDSHAKE`); the client half read the answer of whatever it had
 /// just dialled with no bound at all, which is the wrong way round: the answer
@@ -200,15 +200,15 @@ const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10
 
 /// How many undelivered messages a socket may hold.
 ///
-/// A **bounded** channel, which is a stronger statement than the cap this used
+/// A *bounded* channel, which is a stronger statement than the cap this used
 /// to apply on the way out. The old shape trimmed an unbounded queue when the
-/// page happened to drain it — but the page only drains at a settle, and a
+/// page happened to drain it, but the page only drains at a settle, and a
 /// resident session is idle between verbs by design, so a chatty socket grew
 /// without limit in exactly the case the cap was written for.
 ///
 /// Bounded, the reader thread blocks instead, TCP back-pressures the server, and
 /// nothing is silently lost. That also removes a drop counter which, because it
-/// only ever increased, made every later drain report an error event — and an
+/// only ever increased, made every later drain report an error event, and an
 /// event delivered every round is a page the settle loop can never call idle.
 const MAX_QUEUED: usize = 512;
 
@@ -272,7 +272,7 @@ impl Socket {
         let seq = broker.authorise_socket(url, document)?;
 
         // What the page will name itself as. A document with no origin of its
-        // own — a `file:` page — sends the literal `null`, which is what the
+        // own, a `file:` page, sends the literal `null`, which is what the
         // spec says and what a server has to allow deliberately rather than by
         // accident.
         let origin = document.map(|doc| match crate::cors::Origin::of(doc) {
@@ -286,8 +286,8 @@ impl Socket {
         // lookup. `Policy::check_address` decided about *these*; resolving the
         // name again here would reopen exactly the window the pinning resolver
         // closes for the HTTP client, and this is the one client that does its
-        // own connecting. `None` only when nothing is pinned at all — an egress
-        // proxy in the path — and a proxied session reaches loopback only.
+        // own connecting. `None` only when nothing is pinned at all, an egress
+        // proxy in the path, and a proxied session reaches loopback only.
         let sock = match broker.approved_addresses(host) {
             Some(addrs) => connect_to_any(&addrs)
                 .map_err(|e| format!("could not reach {host}:{port}: {e}"))?,
@@ -313,7 +313,7 @@ impl Socket {
         //
         // This was a bug before it was a design note. A `BufReader` reads
         // ahead, so the one used for the handshake headers had already pulled
-        // the server's first data frame into its buffer — and dropping it threw
+        // the server's first data frame into its buffer, and dropping it threw
         // that frame away. A server that greets on connect (which is what a
         // hot-reload channel does) looked like a server that never spoke.
         let reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
@@ -421,7 +421,7 @@ pub enum Direction {
     /// Its own variant because the receipt has to say what actually crossed the
     /// wire. An `EventSource` opened as `SSE-OPEN` and then recorded every
     /// event as `WS-RECV`, which describes a WebSocket frame on a connection
-    /// that is not one — a log that misdescribes the protocol, in an engine
+    /// that is not one. A log that misdescribes the protocol, in an engine
     /// whose claim is that the log is the truth about the wire.
     StreamReceive,
 }
@@ -499,8 +499,8 @@ fn read_loop(
 /// `read_line` with a cap, because the peer chooses when the newline arrives.
 ///
 /// Reads a byte at a time, which is what a `BufReader` makes cheap and what
-/// keeps the reader's buffered bytes — the first frame of the stream, which
-/// [`Socket::open`] documents must not be dropped — exactly where they were.
+/// keeps the reader's buffered bytes (the first frame of the stream, which
+/// [`Socket::open`] documents must not be dropped) exactly where they were.
 fn read_line_capped(reader: &mut BufReader<Wire>, out: &mut String) -> std::io::Result<usize> {
     let mut bytes: Vec<u8> = Vec::new();
     loop {
@@ -527,8 +527,8 @@ fn read_line_capped(reader: &mut BufReader<Wire>, out: &mut String) -> std::io::
 
 /// Connect to the first of the approved addresses that answers.
 ///
-/// A name can resolve to several addresses and only some of them be reachable
-/// — an IPv6 record on a host with no IPv6 route is the ordinary case — so
+/// A name can resolve to several addresses and only some of them be reachable,
+/// an IPv6 record on a host with no IPv6 route is the ordinary case, so
 /// trying one and giving up would make a working site look down. Every address
 /// here has already been through [`crate::policy::Policy::check_address`];
 /// which of them answers is a reachability question, not a policy one.
@@ -573,8 +573,8 @@ fn handshake(
     // does not apply to a WebSocket, so `Origin` is the *only* thing a server
     // has to tell a page's socket from a program's. Omitting it made every
     // socket this engine opened on a page's behalf look like a non-browser
-    // client, which is precisely the shape a cross-site WebSocket hijack takes
-    // — the server's one defence, silently unarmed. Absent for a socket the
+    // client, which is precisely the shape a cross-site WebSocket hijack takes.
+    // The server's one defence, silently unarmed. Absent for a socket the
     // agent named itself, because there is no document behind that one.
     let origin_line = match origin {
         Some(origin) => format!("Origin: {origin}\r\n"),
@@ -794,7 +794,7 @@ mod tests {
     /// The address behind the name is checked on this path too.
     ///
     /// `pin_addresses` used to return early for `ws`/`wss`, so
-    /// `Policy::check_address` — the rebinding and private-space guard — never
+    /// `Policy::check_address`, the rebinding and private-space guard, never
     /// ran on the one client that does its own `TcpStream::connect`. The
     /// instrument mode makes the gap visible without a DNS server: it grants
     /// every remote *name* and deliberately grants no private address, so a
@@ -820,7 +820,7 @@ mod tests {
 
     /// The server half of this protocol bounds its own handshake; the client
     /// half read the answer of whatever it had just dialled with no bound at
-    /// all — which is the wrong way round, because the answer is the part
+    /// all, which is the wrong way round, because the answer is the part
     /// written by someone else. A server that answers `101` and then sends
     /// bytes without a newline is an unbounded allocation on this side.
     #[test]
@@ -863,7 +863,7 @@ mod tests {
 
     /// A page's socket names the page. CORS does not reach a WebSocket, so
     /// `Origin` is the only thing a server has to tell a page's socket from a
-    /// program's — and this engine used to send none, which unarmed the one
+    /// program's, and this engine used to send none, which unarmed the one
     /// defence a WebSocket server has against a cross-site hijack.
     #[test]
     fn a_socket_opened_by_a_page_carries_the_page_origin() {

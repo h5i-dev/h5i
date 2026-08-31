@@ -4,8 +4,8 @@
 //! `User-Agent` and `Accept-Language` it sent, the `navigator` object it
 //! exposes, the `screen` geometry it reports, and the offset `Date` computes
 //! local time from. Before this module those four answers came from four
-//! different places — a `const` in [`crate::net`], an object literal in
-//! `prelude.js`, nothing at all, and the host's own clock — and nothing kept
+//! different places (a `const` in [`crate::net`], an object literal in
+//! `prelude.js`, nothing at all, and the host's own clock) and nothing kept
 //! them from disagreeing. Disagreement is the *only* thing a fingerprinting
 //! script needs: it does not have to know what h5i is to notice that the
 //! browser claiming Windows on the wire reports `MacIntel` in script.
@@ -19,7 +19,7 @@
 //! ## The three modes, and why not a `--stealth` flag
 //!
 //! `--stealth` would be one boolean standing for two strategies that pull in
-//! opposite directions — W3C's fingerprinting guidance separates them for the
+//! opposite directions. W3C's fingerprinting guidance separates them for the
 //! same reason. Shrinking the surface and enlarging the anonymity set are
 //! different things, and a flag that means both means neither:
 //!
@@ -34,7 +34,7 @@
 //! ## What a compatible identity does not get to pretend
 //!
 //! An identity declares [`Identity::requires`], and an identity requiring
-//! something [`crate::Capabilities`] does not have is **refused** rather than
+//! something [`crate::Capabilities`] does not have is *refused* rather than
 //! partly applied. That is the whole design: a half-applied Chrome identity is
 //! worse than none, because it puts a Chrome agent string in front of a
 //! browser with no `navigator.userAgentData` behind it, and the *absence* is
@@ -121,7 +121,7 @@ impl Family {
 
 /// The operating system an identity claims to run on.
 ///
-/// [`Os::Undeclared`] is not "unknown" — it is the honest answer for an engine
+/// [`Os::Undeclared`] is not "unknown". It is the honest answer for an engine
 /// that is not pretending to be a desktop browser on any particular system, and
 /// it is what `native` and `privacy` use. It is only valid for [`Family::H5i`]:
 /// a browser claiming to be Firefox has an operating system, and refusing to
@@ -181,7 +181,7 @@ impl Os {
 
     /// Whether a browser on this system is a phone or tablet browser.
     ///
-    /// `None` where it is genuinely a choice — a Linux browser may be either,
+    /// `None` where it is genuinely a choice. A Linux browser may be either,
     /// and Android's own tablet build sets `mobile` false.
     fn implies_mobile(self) -> Option<bool> {
         match self {
@@ -196,10 +196,10 @@ impl Os {
 ///
 /// Declared by the identity, checked against [`crate::Capabilities`], and the
 /// reason a `compatible` identity can be refused before a single byte moves.
-/// **Every name is spelled out rather than derived.** `rename_all` produced
+/// Every name is spelled out rather than derived. `rename_all` produced
 /// `web-gl2`, `java-script` and `web-sockets`, which are not what
 /// [`Requirement::as_str`] prints and so not what `identity check` told anyone
-/// to write — a file copied from the output it was given would not parse. One
+/// to write. A file copied from the output it was given would not parse. One
 /// name per variant, in one place, and the test below holds the two together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Requirement {
@@ -287,9 +287,9 @@ impl Requirement {
 /// A time zone this engine can answer for, coherently, in every place a page
 /// can ask.
 ///
-/// **Fixed-offset zones only, and that is a refusal rather than a shortcut.**
-/// A page reads local time two ways — `Date.prototype.getTimezoneOffset` and
-/// `Intl.DateTimeFormat().resolvedOptions().timeZone` — and a browser whose two
+/// Fixed-offset zones only, and that is a refusal rather than a shortcut.
+/// A page reads local time two ways, `Date.prototype.getTimezoneOffset` and
+/// `Intl.DateTimeFormat().resolvedOptions().timeZone`, and a browser whose two
 /// answers disagree is caught by the first fingerprinting script that checks.
 /// This engine has no time zone database, so for a zone that observes daylight
 /// saving it could only pin one offset and be wrong for half the year. Naming
@@ -308,7 +308,7 @@ pub struct TimeZone {
 
 /// Every zone this engine can back, with the offset it holds all year.
 ///
-/// Each one is here because it does not observe daylight saving — Japan and
+/// Each one is here because it does not observe daylight saving. Japan and
 /// Korea never have, India and the Gulf never have, and Brazil stopped in 2019.
 /// A zone that is missing is missing because adding it would mean shipping a
 /// rule that changes twice a year.
@@ -422,7 +422,7 @@ pub struct Locale {
     pub languages: Vec<String>,
     /// The zone `Date` computes local time from.
     ///
-    /// `None` means undeclared, and undeclared means the host's — which is what
+    /// `None` means undeclared, and undeclared means the host's, which is what
     /// `native` does, and which is exactly the value `privacy` exists to pin.
     #[serde(default)]
     pub timezone: Option<TimeZone>,
@@ -433,7 +433,7 @@ pub struct Locale {
 /// A header cap, and therefore a *coherence* cap. `Accept-Language` carries a
 /// descending q-value ladder and browsers stop at ten; carrying more would mean
 /// either a q below 0.1 or a header no browser sends. So the list is capped at
-/// what the header can say — because the alternative, discovered by testing it,
+/// what the header can say, because the alternative, discovered by testing it,
 /// is that an identity declaring twelve languages was admitted, sent ten on the
 /// wire, and reported twelve from `navigator.languages`. That is the exact
 /// disagreement between the wire and the page this module exists to prevent,
@@ -447,14 +447,14 @@ impl Locale {
     /// with `navigator.languages` is the single cheapest cross-layer check a
     /// server can run: it sees the header, its script sees the array.
     ///
-    /// The q-value ladder is the shape browsers actually send — 1.0 implied for
-    /// the first, then descending by 0.1 — and it stops at 0.1 rather than going
+    /// The q-value ladder is the shape browsers actually send (1.0 implied for
+    /// the first, then descending by 0.1) and it stops at 0.1 rather than going
     /// negative, because no browser sends more than ten.
     pub fn accept_language(&self) -> String {
         self.languages
             .iter()
-            // Unreachable for an admitted identity — `incoherences` refuses a
-            // longer list — and kept so this can never silently disagree with
+            // Unreachable for an admitted identity, `incoherences` refuses a
+            // longer list, and kept so this can never silently disagree with
             // `navigator.languages` if that check is ever loosened.
             .take(MAX_LANGUAGES)
             .enumerate()
@@ -481,7 +481,7 @@ impl Locale {
 pub struct Screen {
     pub width: u32,
     pub height: u32,
-    /// `screen.availWidth` — the display less any system chrome.
+    /// `screen.availWidth`: the display less any system chrome.
     pub avail_width: u32,
     pub avail_height: u32,
     /// `screen.colorDepth` and `screen.pixelDepth`, which are the same number
@@ -891,7 +891,7 @@ impl Identity {
     ///
     /// The two failures are reported separately because they call for different
     /// responses: an incoherent identity is a file to fix, and an unmet
-    /// requirement is an engine that cannot honour it — the same file may be
+    /// requirement is an engine that cannot honour it. The same file may be
     /// perfectly good in front of a real-browser backend.
     pub fn admit(&self, caps: &crate::Capabilities) -> Result<(), H5iError> {
         let found = self.incoherences();
@@ -1004,7 +1004,7 @@ pub fn native() -> Identity {
         locale: Locale {
             // Two entries, and the second is a correction rather than an
             // addition. The wire has always said `en-US,en;q=0.9` while
-            // `navigator.languages` said `["en-US"]` — the two answers to one
+            // `navigator.languages` said `["en-US"]`: the two answers to one
             // question, from two places, disagreeing by exactly the amount a
             // cross-layer check looks for. Building the header from this list
             // is what makes that impossible to write again; reproducing the
@@ -1022,11 +1022,11 @@ pub fn native() -> Identity {
 /// Two values and no more, because two is what actually distinguishes one h5i
 /// from another today:
 ///
-/// - **The patch version**, which splits every h5i user into cohorts by
+/// - The patch version, which splits every h5i user into cohorts by
 ///   release date. Reduced to the major, so an install that has not updated
 ///   looks like one that has. Chrome did the same thing to its own agent
 ///   string for the same reason.
-/// - **The host's time zone**, which is a region, read through `Date` by any
+/// - The host's time zone, which is a region, read through `Date` by any
 ///   page that asks. Pinned to UTC.
 ///
 /// `hardwareConcurrency` is left at 1 rather than raised to a "typical" number:
@@ -1071,11 +1071,11 @@ pub fn privacy() -> Identity {
 /// A Firefox identity this engine can actually back, end to end.
 ///
 /// Firefox rather than Chrome for one reason that decides the whole thing:
-/// **Firefox sends no client hints**. Chrome has sent `Sec-CH-UA` on every
+/// Firefox sends no client hints. Chrome has sent `Sec-CH-UA` on every
 /// request since it shortened its agent string, and exposes
 /// `navigator.userAgentData` to match; an engine with neither cannot claim
 /// Chrome without the absence being the giveaway. Firefox's identity surface is
-/// the agent string, `navigator`, `screen` and the locale — which is exactly
+/// the agent string, `navigator`, `screen` and the locale, which is exactly
 /// the set this module covers.
 ///
 /// It is still not Firefox on the wire: the ClientHello and the HTTP/2 SETTINGS
@@ -1241,7 +1241,7 @@ mod tests {
     #[test]
     fn a_chrome_claim_is_refused_rather_than_half_applied() {
         let chrome = chrome_windows();
-        // Coherent as a description — nothing in the file contradicts anything
+        // Coherent as a description. Nothing in the file contradicts anything
         // else in it. It is the *engine* that cannot stand behind it.
         assert!(chrome.incoherences().is_empty());
 
@@ -1419,7 +1419,7 @@ mod tests {
     #[test]
     fn more_languages_than_a_header_can_carry_are_refused() {
         // Found by running it: twelve declared, ten on the wire, twelve in
-        // `navigator.languages`. Admitted, and incoherent — by this module's
+        // `navigator.languages`. Admitted, and incoherent. By this module's
         // own accessor, which is the worst place for it to come from.
         let mut identity = firefox_linux();
         identity.locale.languages = (0..12).map(|n| format!("l{n}")).collect();

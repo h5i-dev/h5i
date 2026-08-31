@@ -3,13 +3,13 @@
 //! Placement is a second axis beside the isolation tier a box already declares
 //! (ROADMAP.md R1): the tier says how the box is confined, this says which
 //! machine confines it. The two are orthogonal, and nothing here changes what a
-//! box is *allowed* to do — only which machine an escape would reach.
+//! box is *allowed* to do. Only which machine an escape would reach.
 //!
-//! **This module deliberately knows nothing about SSH, frames, or the runner
-//! protocol.** It is a trait and two plain structs. The implementation lives
+//! This module deliberately knows nothing about SSH, frames, or the runner
+//! protocol. It is a trait and two plain structs. The implementation lives
 //! above, in the binary, over `h5i-runner`. That is a layering decision with a
 //! reason: `h5i-runner` already depends on `h5i-sandbox`, and a later milestone
-//! may well want it to reach `h5i-core` for receipts or export — so a
+//! may well want it to reach `h5i-core` for receipts or export, so a
 //! dependency in this direction would be a cycle waiting to happen. A trait
 //! costs one indirection and makes the remote path testable in this crate with
 //! a fake that opens no connection at all.
@@ -80,7 +80,7 @@ pub struct RemoteExec<'a> {
 /// What a remote command did.
 ///
 /// The same facts a local run produces, so the receipt written from it is the
-/// same shape — the difference is the lane it is filed under, not the evidence
+/// same shape. The difference is the lane it is filed under, not the evidence
 /// itself (ROADMAP.md R10).
 #[derive(Debug, Clone)]
 pub struct RemoteExecResult {
@@ -135,9 +135,9 @@ pub trait RemoteRunner {
 
 /// The receipt lane a remote execution is filed under.
 ///
-/// **Not** one of `server::HOST_OBSERVED_LANES`, and that is the whole point
+/// *Not* one of `server::HOST_OBSERVED_LANES`, and that is the whole point
 /// (ROADMAP.md R10). This was observed from outside the box, by an h5i we
-/// authenticated over a channel with a pinned host key — which is strictly
+/// authenticated over a channel with a pinned host key, which is strictly
 /// more than the box could forge, and strictly less than something this machine
 /// watched itself. Folding it into host-observed would overclaim; calling it
 /// box-claimed would underclaim.
@@ -170,8 +170,8 @@ pub fn remote_box_id(manifest_id: &str) -> String {
         .collect();
     // Bounded well under the protocol's limit, leaving room for the suffix.
     let readable: String = readable.chars().take(80).collect();
-    // Sixteen hex, not eight. A collision cannot corrupt anything — the runner
-    // refuses a second box under a taken name whose request digest differs —
+    // Sixteen hex, not eight. A collision cannot corrupt anything, the runner
+    // refuses a second box under a taken name whose request digest differs,
     // but it *can* deny service to a box whose slug someone else chose, and a
     // 32-bit suffix is within reach of someone who can pick slugs. The extra
     // eight characters cost nothing anyone reads.
@@ -195,7 +195,7 @@ pub(crate) mod fake {
         pub created: Mutex<Vec<(String, String)>>,
         /// Every command it was asked to run.
         pub execed: Mutex<Vec<Vec<String>>>,
-        /// When set, the digest to answer with instead of the one sent — for
+        /// When set, the digest to answer with instead of the one sent. For
         /// exercising the check that a runner enforced the policy it was given.
         pub lie_with_digest: Option<String>,
         pub fail_with: Option<String>,

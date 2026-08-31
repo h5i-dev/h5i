@@ -2,8 +2,8 @@
 //!
 //! Loading a BPF program and attaching it to a tracepoint requires `CAP_BPF`
 //! and `CAP_PERFMON`, which no CI runner grants and which an ordinary
-//! development machine does not give a `cargo test`. So this suite **skips
-//! loudly** rather than failing, and prints exactly why: a test that silently
+//! development machine does not give a `cargo test`. So this suite skips
+//! loudly rather than failing, and prints exactly why: a test that silently
 //! passes on a host that could not run it is worse than one that is not there.
 //!
 //! To run it for real:
@@ -48,7 +48,7 @@ macro_rules! skip_unless_live {
 /// rule, and find that rule in the block.
 ///
 /// `openat` of a credential path is used rather than anything exotic, because
-/// it exercises the whole chain — the process-tree scope admitting a
+/// it exercises the whole chain. The process-tree scope admitting a
 /// descendant, the in-kernel prefix filter letting the path through, the ring
 /// buffer, the decoder, and the rule.
 #[test]

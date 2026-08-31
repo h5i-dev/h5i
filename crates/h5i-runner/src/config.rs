@@ -1,6 +1,6 @@
 //! Where a paired runner is remembered.
 //!
-//! **Host-scoped, never in the repo** (ROADMAP.md R6). `.h5i/env.toml` is
+//! Host-scoped, never in the repo (ROADMAP.md R6). `.h5i/env.toml` is
 //! checked in and describes what a box may do; which machines *this* developer
 //! can reach is a fact about this machine, and it lives beside the user egress
 //! allowlist, under the user config dir, for the same reason that one does: a
@@ -11,7 +11,7 @@
 //! ```text
 //! ~/.config/h5i/runners/<name>/
 //!   runner.toml       the record below
-//!   id_ed25519        the pair key, 0600 — this key and no other
+//!   id_ed25519        the pair key, 0600. This key and no other
 //!   id_ed25519.pub
 //!   known_hosts       the one host key pinned at pair time
 //!   capabilities.json the last PROBE, cached for error messages
@@ -136,7 +136,7 @@ impl RunnerRecord {
 
     /// The last capability report, if one was ever stored.
     ///
-    /// A **cache**, and treated as one everywhere it is read: `create` checks
+    /// A *cache*, and treated as one everywhere it is read: `create` checks
     /// against it for a good error message, and the worker refusing at create
     /// time is the enforcement (ROADMAP.md R7).
     pub fn cached_capabilities(&self) -> Option<Capabilities> {
@@ -273,7 +273,7 @@ pub fn remove(name: &str) -> Result<PathBuf, ConfigError> {
 ///
 /// The pair key lives in one of these. Written to a temporary file and renamed,
 /// so a reader never sees a half-written record, and created with the narrow
-/// mode from the start rather than widened-then-narrowed — a key that is
+/// mode from the start rather than widened-then-narrowed. A key that is
 /// world-readable for a millisecond is a key that was world-readable.
 pub fn write_private(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
     if let Some(parent) = path.parent() {
@@ -309,8 +309,8 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
 /// `create_dir_all` then `chmod` leaves a window at `0777 & ~umask`, and under
 /// a permissive umask that window is a place to pre-create a symlink where the
 /// pair key is about to be written. It is the same argument `write_private`
-/// already makes about files — "a key that is world-readable for a millisecond
-/// is a key that was world-readable" — applied to the directory holding it.
+/// already makes about files, "a key that is world-readable for a millisecond
+/// is a key that was world-readable", applied to the directory holding it.
 ///
 /// Every ancestor h5i creates gets the same mode, because the *names* of the
 /// paired runners are worth as little to leak as their keys.

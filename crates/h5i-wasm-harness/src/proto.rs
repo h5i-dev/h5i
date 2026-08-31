@@ -157,7 +157,7 @@ pub fn resume_json(agent: &mut Agent, input: &str) -> String {
 }
 
 /// Deterministic transcript: no timestamps, no floats-from-clock, insertion-
-/// ordered objects only — required so native and wasm runs can be diffed
+/// ordered objects only. Required so native and wasm runs can be diffed
 /// byte-for-byte in the equivalence test.
 pub fn dump_json(agent: &Agent) -> String {
     Value::obj(vec![

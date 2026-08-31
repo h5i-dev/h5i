@@ -1,5 +1,5 @@
 //! Real-FS tool executors for the `h5i-agent` host. Semantics and output wording are
-//! the reference the wasm hosts must match — an equivalence check diffs full
+//! the reference the wasm hosts must match. An equivalence check diffs full
 //! transcript dumps of the same scripted session run natively and as wasm.
 //!
 //! Path confinement: reject (not rewrite) absolute paths and any traversal that
@@ -68,7 +68,7 @@ pub fn run(workdir: &Path, name: &str, args: &Value) -> Result<String, String> {
         }
         "bash" => {
             // Only reachable when --bash declared the tool. cwd is the workdir,
-            // which is a working directory, not a jail — real confinement is the
+            // which is a working directory, not a jail. Real confinement is the
             // h5i sandbox's job.
             let out = std::process::Command::new("bash")
                 .arg("-c")

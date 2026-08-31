@@ -13,7 +13,7 @@
 //! since threading a depth through the walk and never applying it flattens the
 //! structure that made the list worth keeping.
 //!
-//! **The fence applies.** The snapshot's unforgeability rests on no page-derived
+//! The fence applies. The snapshot's unforgeability rests on no page-derived
 //! value spanning a line, which markdown cannot promise: a paragraph may be long
 //! and a `<pre>` may contain anything. So the marker is defanged over the
 //! finished document instead. A page that writes the closing marker into its own
@@ -246,8 +246,8 @@ impl Writer {
 
             "pre" => {
                 self.blank();
-                // Newlines are preserved here — a code block collapsed to one
-                // line is not a code block — so `escape` cannot be used, and a
+                // Newlines are preserved here, a code block collapsed to one
+                // line is not a code block, so `escape` cannot be used, and a
                 // page whose `<pre>` contains ``` would otherwise close the
                 // fence early and have everything after it read as markdown
                 // structure. That is exactly the forged structure `escape`

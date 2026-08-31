@@ -1,11 +1,11 @@
 //! The worker: one process per RPC, speaking frames on its own stdio.
 //!
 //! This is what an SSH forced command runs. It is stateless across invocations
-//! by design (ROADMAP.md R3) — box state lives in the container runtime and the
+//! by design (ROADMAP.md R3). Box state lives in the container runtime and the
 //! state dir, never in a resident daemon, because there is no daemon. Nothing
 //! listens on any interface, of any kind, ever.
 //!
-//! **Nothing but frames may reach stdout.** A stray `println!` in this path is
+//! Nothing but frames may reach stdout. A stray `println!` in this path is
 //! not a cosmetic bug, it is a corrupt stream: the client would read the text
 //! as a length prefix. Diagnostics go to stderr, which the client captures and
 //! puts in its error messages.
@@ -181,7 +181,7 @@ enum Disposition {
     /// else on the same channel.
     Answer(ErrorMsg),
     /// Answer and stop. For anything that means the peer is not speaking this
-    /// protocol — an unknown frame type, a frame out of order, a payload that
+    /// protocol. An unknown frame type, a frame out of order, a payload that
     /// is not what its type says. Continuing would be guessing.
     Fatal(ErrorMsg),
     /// A framing failure partway through an RPC. Nothing is written back: we
@@ -201,7 +201,7 @@ pub fn serve<R: Read, W: Write>(
     worker: &mut Worker,
 ) -> Result<(), ServeError> {
     // A control session is small. The budget is the receiver's, and it bounds
-    // a peer that decides to talk forever — the frame cap alone does not.
+    // a peer that decides to talk forever. The frame cap alone does not.
     let limits = Limits::control();
     let mut frames = FrameReader::new(reader, limits);
     let mut out = FrameWriter::new(writer, limits);
@@ -412,7 +412,7 @@ pub fn serve_stdio(_worker: &mut Worker) -> Result<(), ServeError> {
 /// stops talking into an ordinary end of stream, which every reader above
 /// already handles.
 ///
-/// **It reads the descriptor directly, with no buffering layer underneath.**
+/// It reads the descriptor directly, with no buffering layer underneath.
 /// Not a performance choice: `FrameReader` does its own buffering, and wrapping
 /// a `BufReader` here is a deadlock. `poll` asks the *kernel* whether bytes are
 /// available, so a reader holding the next frame in a userspace buffer reports
@@ -461,7 +461,7 @@ impl Read for IdleTimeout<'_> {
                 let e = std::io::Error::last_os_error();
                 // Interrupted: poll again. `Ok(0)` would be read as a clean end
                 // of stream by every caller above and would silently truncate
-                // the session — a signal is not a hangup.
+                // the session. A signal is not a hangup.
                 if e.kind() == std::io::ErrorKind::Interrupted {
                     continue;
                 }
@@ -493,7 +493,7 @@ const EXEC_DEFAULT_SECS: u64 = 300;
 /// checkout and the object store.
 ///
 /// Deliberately modest. The job is to refuse a create onto a disk that is
-/// already nearly full, not to decide how much room a build deserves — a
+/// already nearly full, not to decide how much room a build deserves. A
 /// runner with a gigabyte free is a small runner, not a broken one.
 const HEADROOM_MB: u64 = 256;
 
@@ -507,7 +507,7 @@ const MAX_BOXES: usize = 64;
 /// The worker had no clock at all, and the client's watchdog is not a
 /// substitute: a peer that opens a session, declares a frame and then trickles
 /// one byte an hour costs a worker process, an sshd session, the buffer for the
-/// declared frame, and — inside an exec or an export — a held box lock that
+/// declared frame, and, inside an exec or an export, a held box lock that
 /// blocks every export of that box until the process dies.
 ///
 /// Generous, because it bounds *silence between frames* rather than a command's
@@ -527,7 +527,7 @@ const IDLE_SECS: u64 = 300;
 /// facts and the client can clear its handshake clock before starting the long
 /// one.
 ///
-/// **Output arrives at the end, not progressively.** `sandbox::run_with_env` is
+/// Output arrives at the end, not progressively. `sandbox::run_with_env` is
 /// the same function the local path calls and it captures rather than streams,
 /// so this milestone gets the exit code, the timings and the egress evidence
 /// across correctly, and a long build says nothing until it finishes. Making it
@@ -687,7 +687,7 @@ fn handle_exec<W: Write>(
 
 /// Hand back what the box has become.
 ///
-/// Exclusive, because an export beside a running command reads a torn tree —
+/// Exclusive, because an export beside a running command reads a torn tree,
 /// and a torn tree that passes the receiving side's scans is worse than a
 /// refused request (ROADMAP.md R8).
 fn handle_export<W: Write>(
@@ -787,7 +787,7 @@ fn load_policy(
 /// The order is the whole design (ROADMAP.md R7):
 ///
 /// 1. Validate the request, so nothing peer-supplied becomes a path first.
-/// 2. Check the tier against what this runner advertises — a capability it
+/// 2. Check the tier against what this runner advertises. A capability it
 ///    lacks is a refusal naming the capability, never a quiet downgrade (R1).
 /// 3. Decide the idempotent case *before* building anything: a matching
 ///    request digest returns the existing box, a differing one is a conflict.
@@ -889,8 +889,8 @@ fn handle_create<R: Read>(
     })?;
 
     // The tier the request *declares* and the tier the policy *is* must be the
-    // same tier. Nothing dispatches on `req.isolation` — `run_with_env`
-    // dispatches on `policy.claim` — so without this the capability gate above
+    // same tier. Nothing dispatches on `req.isolation`, `run_with_env`
+    // dispatches on `policy.claim`, so without this the capability gate above
     // guards a field that decides nothing: a create could declare `container`,
     // be recorded and displayed as `container`, and run every command through
     // `run_unconfined`.
@@ -912,8 +912,8 @@ fn handle_create<R: Read>(
             format!("the policy in this create is not one h5i can read: {e}"),
         ))
     })?;
-    // Nothing dispatches on `req.isolation` — `run_with_env` dispatches on
-    // `policy.claim` — so without this the capability gate above guards a field
+    // Nothing dispatches on `req.isolation`, `run_with_env` dispatches on
+    // `policy.claim`, so without this the capability gate above guards a field
     // that decides nothing: a create could declare `container`, be recorded and
     // displayed as `container`, and run every command through `run_unconfined`.
     if resolved.claim.as_str() != req.isolation {
@@ -1041,7 +1041,7 @@ fn receive_source<R: Read>(
     // Its own budget: a bundle is megabytes and the handshake that preceded it
     // was bytes.
     frames.begin_rpc(transfer_limits());
-    // Restored on **every** way out of this function, not only the successful
+    // Restored on *every* way out of this function, not only the successful
     // one. A budget widened for a transfer and left behind by an early return
     // governs the rest of the session, and a create that fails its digest check
     // is the cheapest way for a peer to arrange that.
@@ -1563,7 +1563,7 @@ mod tests {
     fn a_create_whose_declared_tier_is_not_its_policys_tier_is_refused() {
         // The capability gate checks `req.isolation`; `run_with_env` dispatches
         // on `policy.claim`. If those may differ, the gate guards a field that
-        // decides nothing — a box could be declared, recorded and displayed as
+        // decides nothing. A box could be declared, recorded and displayed as
         // `container` and run every command unconfined.
         let dir = tempfile::tempdir().unwrap();
         let mut req = create_request("liar", "op1", &"a".repeat(64));
@@ -1841,7 +1841,7 @@ mod worker_fuzz {
     }
 
     /// The worker's whole loop, fed nonsense, must always end in an answer or
-    /// an error — never a panic and never a hang.
+    /// an error. Never a panic and never a hang.
     ///
     /// This is the loop an SSH forced command hands untrusted bytes to. Every
     /// individual guard is unit-tested above; this asks whether the *state

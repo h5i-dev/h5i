@@ -3,7 +3,7 @@
 //! An example rather than a subcommand: the page is build output, not a thing
 //! a user runs. `h5i man` used to print it, which put a roff generator and
 //! `clap_mangen` in everybody's binary to serve a file the project can simply
-//! publish — `curl -fsSL https://h5i.dev/man/man1/h5i.1`. Rendering here keeps
+//! publish: `curl -fsSL https://h5i.dev/man/man1/h5i.1`. Rendering here keeps
 //! "never drifts from the actual commands" property (it reads the real
 //! `Cli::command()`) and keeps `clap_mangen` in dev-dependencies.
 //!
@@ -36,7 +36,7 @@ fn render_man_page<W: std::io::Write>(w: &mut W) -> std::io::Result<()> {
 
 /// Transliterate typographic Unicode in generated roff to ASCII or roff escapes
 /// so the man page renders cleanly under `-Tascii` (existing `\fB`/`\-`/`\(aq`
-/// escapes pass through untouched — only non-ASCII scalars are rewritten).
+/// escapes pass through untouched: only non-ASCII scalars are rewritten).
 fn sanitize_roff(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {

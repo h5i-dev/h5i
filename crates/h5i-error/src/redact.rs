@@ -2,8 +2,8 @@
 //!
 //! [`sanitize_display`] and [`sanitize_block`] neutralise terminal control
 //! sequences at the boundary where box-written or externally-fetched data
-//! reaches a host-side surface. The other half of that defense — scrubbing
-//! secrets out of anything about to be *stored* — is `h5i_core::secrets`,
+//! reaches a host-side surface. The other half of that defense, scrubbing
+//! secrets out of anything about to be *stored*, is `h5i_core::secrets`,
 //! applied by `h5i_core::receipt::append` before anything is written, and it
 //! needs more than an error crate should carry.
 //!
@@ -37,7 +37,7 @@ pub fn sanitize_display(s: &str) -> String {
 /// [`sanitize_display`] for text that is *meant* to have lines.
 ///
 /// The single-line form folds `\n` into a space, which is right for a slug or a
-/// status line and destroys a captured command's output — so a payload that
+/// status line and destroys a captured command's output, so a payload that
 /// needed sanitising was left unsanitised instead, because the only tool
 /// available would have run it all together. This sanitises each line and keeps
 /// the breaks, so a recorded log stays a log while the escape sequences that
@@ -59,8 +59,8 @@ pub fn sanitize_block(s: &str) -> String {
 
 /// Bidirectional formatting characters, which reorder the text *around* them.
 ///
-/// These are not control characters — `char::is_control` is false for every one
-/// of them — so the pass above lets them through, and they are the sharpest
+/// These are not control characters, `char::is_control` is false for every one
+/// of them, so the pass above lets them through, and they are the sharpest
 /// remaining tool for spoofing a rendered string. `http://evil.com/` followed
 /// by an override and a reversed string displays as some other host entirely,
 /// with no escape sequence involved anywhere. That matters most in the terminal
@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn a_block_keeps_its_lines_and_loses_its_escapes() {
         // The single-line form folds `\n` into a space, which makes a captured
-        // log unreadable — so a payload that needed sanitising was printed raw
+        // log unreadable, so a payload that needed sanitising was printed raw
         // instead. This keeps the shape and drops the sequences.
         let log = "building\n\u{1b}[2Jerror: \u{1b}[31mfailed\u{1b}[0m\ndone";
         let safe = sanitize_block(log);

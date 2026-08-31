@@ -9,7 +9,7 @@
 //! ```
 //!
 //! The model names a credential, the engine resolves it on the way to the field,
-//! and the reply echoes the **placeholder**. The value never enters the model's
+//! and the reply echoes the *placeholder*. The value never enters the model's
 //! context, so it cannot be repeated back, logged, or carried onward. LOGIN mode
 //! is the other answer and has a hole this does not: it withholds the agent's
 //! reads but not the *frames*, and the viewer socket is inside the box.
@@ -21,7 +21,7 @@
 //! allowlist fails closed.
 //!
 //! Anything written back out goes through [`Secrets::redact`], which iterates
-//! **longest value first**: with one secret a substring of another, replacing
+//! longest value first: with one secret a substring of another, replacing
 //! the shorter first leaves the longer one's tail in the clear.
 
 use std::collections::BTreeMap;
@@ -89,7 +89,7 @@ impl Secrets {
 
     /// Resolve `$H5I_SECRET_*` placeholders, reporting which were used.
     ///
-    /// A placeholder naming something that is not set is left **as written**
+    /// A placeholder naming something that is not set is left *as written*
     /// rather than replaced with an empty string. Typing an empty password into
     /// a login form produces a failed login that looks like a wrong password,
     /// which is a confusing way to learn that a variable was misspelled; the
@@ -144,7 +144,7 @@ impl Secrets {
     ///
     /// Longest value first. With `H5I_SECRET_A=hunter` and
     /// `H5I_SECRET_B=hunter2`, replacing `A` first turns `hunter2` into
-    /// `$H5I_SECRET_A2` and leaves the `2` in the clear — a partial disclosure
+    /// `$H5I_SECRET_A2` and leaves the `2` in the clear. A partial disclosure
     /// that looks like a successful redaction.
     pub fn redact(&self, text: &str) -> String {
         let mut pairs: Vec<(&String, &String)> = self
@@ -250,7 +250,7 @@ mod tests {
     fn redaction_takes_the_longest_value_first() {
         // The subtle one. With a short secret that is a prefix of a long one,
         // replacing the short one first leaves the tail of the long one in the
-        // clear — a partial disclosure that looks like a successful redaction.
+        // clear. A partial disclosure that looks like a successful redaction.
         let s = Secrets::from_pairs(&[
             ("H5I_SECRET_SHORT", "hunter"),
             ("H5I_SECRET_LONG", "hunter2"),

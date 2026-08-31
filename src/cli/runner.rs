@@ -1,12 +1,12 @@
-//! `h5i runner` — the CLI over `h5i-runner`.
+//! `h5i runner`: the CLI over `h5i-runner`.
 //!
 //! The library decides policy and moves bytes; every word the user reads lives
 //! here, next to the rest of the CLI's voice. Same split as `share.rs`.
 //!
 //! What R13.1 built is pairing and probing. The design is ROADMAP.md R1 to
-//! R13, and the sentence the rest of it hangs on: **a runner requires Linux and
+//! R13, and the sentence the rest of it hangs on: a runner requires Linux and
 //! the h5i protocol, and everything past that is an advertised capability that
-//! is refused when absent, never silently weakened.**
+//! is refused when absent, never silently weakened.
 
 use std::path::Path;
 use std::process::Command;
@@ -114,7 +114,7 @@ pub enum RunnerCommands {
     /// Reap what the leases say is over.
     ///
     /// Every worker invocation already sweeps before doing its own work, so
-    /// this is for reaping on demand — and, with `--all`, for emptying a runner
+    /// this is for reaping on demand, and, with `--all`, for emptying a runner
     /// whatever its leases say.
     Gc {
         name: String,
@@ -412,8 +412,8 @@ fn setup_ssh(record: &RunnerRecord, remote_command: &str) -> anyhow::Result<Comm
         .arg("-o")
         .arg("StrictHostKeyChecking=yes")
         // The one thing that must not be defaulted from a config file here.
-        // This path deliberately keeps `~/.ssh/config` — it uses the user's own
-        // credentials and may need their ProxyJump — but forwarding an agent to
+        // This path deliberately keeps `~/.ssh/config`, it uses the user's own
+        // credentials and may need their ProxyJump, but forwarding an agent to
         // a machine whose key was scanned seconds ago hands it to whatever
         // answered.
         .arg("-o")
@@ -459,7 +459,7 @@ fn resolve_worker_path(record: &RunnerRecord) -> anyhow::Result<String> {
 
     let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
     // The leading `/` is load-bearing, not tidiness. This string comes from the
-    // far side, and it becomes the last positional argument to `ssh` — which
+    // far side, and it becomes the last positional argument to `ssh`, which
     // keeps parsing options after the destination, so a value beginning with
     // `-` would be an option rather than a command, and `-oProxyCommand=…` is
     // an option that runs a command *here*. A single line, absolute, is the

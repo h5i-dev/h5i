@@ -1,4 +1,4 @@
-//! End-to-end host loop over the JSON boundary — the same `init` / `step` /
+//! End-to-end host loop over the JSON boundary. The same `init` / `step` /
 //! `dump` string interface the wasm module exposes, driven by a scripted mock
 //! model and an in-memory VFS. This is the native half of the cross-host
 //! equivalence idea: the wasm module, fed the identical scripted session,

@@ -20,7 +20,7 @@ pub mod quarantine;
 pub mod receipt;
 pub mod redact;
 pub mod refstore;
-// The box console (`h5i ui`) — a read-only HTTP view of the fleet. Optional:
+// The box console (`h5i ui`). A read-only HTTP view of the fleet. Optional:
 // `--no-default-features` drops it, and with it axum, tokio, the embedded
 // bundle, and the build script's dependency on Node.
 #[cfg(feature = "web")]
@@ -52,17 +52,17 @@ pub use h5i_sandbox::{
 // on macOS/other targets in the cross-check job.
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub use h5i_sandbox::seccomp_notify;
-/// The kernel tiers' effective-config dump (ROADMAP.md §P1) — Linux only.
+/// The kernel tiers' effective-config dump (ROADMAP.md §P1). Linux only.
 #[cfg(target_os = "linux")]
 pub use h5i_sandbox::effective;
 /// The filesystem-authority validator (ROADMAP.md §P2).
 pub use h5i_sandbox::fs_authority;
-/// The macOS Seatbelt backend — compiled on every Unix target so its pure
+/// The macOS Seatbelt backend. Compiled on every Unix target so its pure
 /// SBPL generator is testable from the Linux job.
 #[cfg(unix)]
 pub use h5i_sandbox::seatbelt;
-/// The runtime-detection lane (ROADMAP.md D1–D14). Re-exported unconditionally
-/// — every build has to be able to read a receipt written by one that had the
-/// collector — while the collector itself is behind this crate's `bpf`
+/// The runtime-detection lane (ROADMAP.md D1–D14). Re-exported unconditionally,
+/// every build has to be able to read a receipt written by one that had the
+/// collector, while the collector itself is behind this crate's `bpf`
 /// feature.
 pub use h5i_bpf as bpf;

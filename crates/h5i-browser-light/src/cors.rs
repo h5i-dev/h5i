@@ -9,16 +9,16 @@
 //!
 //! Enforced:
 //!
-//! * **Same-origin** is unrestricted, which is the point of an origin.
-//! * **Cross-origin `no-cors`** may be sent and its response is opaque: no
+//! * *Same-origin* is unrestricted, which is the point of an origin.
+//! * *Cross-origin `no-cors`* may be sent and its response is opaque: no
 //!   status, no headers, no body. That is what makes an `<img>` safe.
-//! * **Cross-origin `cors`** sends `Origin`, preflights when not simple, and
+//! * *Cross-origin `cors`* sends `Origin`, preflights when not simple, and
 //!   exposes the response only if the server named this origin back. Headers are
 //!   filtered to the safelist plus `Access-Control-Expose-Headers`.
-//! * **Credentials** need the server to opt in twice, `Allow-Credentials: true`
+//! * *Credentials* need the server to opt in twice, `Allow-Credentials: true`
 //!   *and* an explicit origin echo, since `*` with credentials is the
 //!   misconfiguration this catches.
-//! * **A redirect re-evaluates all of it**, so a third origin yields an opaque
+//! * A redirect re-evaluates all of it, so a third origin yields an opaque
 //!   `null` origin and a server cannot launder a read by bouncing it.
 //!
 //! No `Access-Control-Max-Age` cache: a preflight per request is one fewer piece
@@ -39,7 +39,7 @@ pub struct Origin {
 impl Origin {
     /// The origin of a URL, or `None` for one that has none.
     ///
-    /// `file:` and `data:` have no origin worth comparing — every `file:` URL
+    /// `file:` and `data:` have no origin worth comparing. Every `file:` URL
     /// would otherwise be same-origin with every other, which is the historic
     /// hole that made local pages dangerous. `None` here means "opaque", and
     /// an opaque origin is same-origin with nothing, not with everything.
@@ -177,7 +177,7 @@ const SAFELISTED_REQUEST_HEADERS: &[&str] = &[
 
 /// `Content-Type` values that do not trigger a preflight.
 ///
-/// `application/json` is deliberately **not** here, which surprises people and
+/// `application/json` is deliberately *not* here, which surprises people and
 /// is the point: a JSON POST is exactly the shape a CSRF attack takes, so the
 /// spec makes it ask permission first.
 const SAFELISTED_CONTENT_TYPES: &[&str] = &[

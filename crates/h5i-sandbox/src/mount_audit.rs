@@ -3,12 +3,12 @@
 //! supervisor reads the child's `/proc/<pid>/mountinfo` and diffs the realized
 //! mounts against the plan (the `EffectiveConfig` binds): a bind that did not
 //! land where planned, or a read-only overlay realized read-write, is the
-//! shape of the runc 2025 mount-swap / masked-path CVEs — detected here and
+//! shape of the runc 2025 mount-swap / masked-path CVEs. Detected here and
 //! failed closed, rather than trusted.
 //!
 //! Honest bounds (§P3): `mountinfo` exposes mount topology and flags, not the
 //! installed Landlock ruleset or seccomp filter, and a symlink race that leaves
-//! topology unchanged is not visible here — those are prevented by construction
+//! topology unchanged is not visible here. Those are prevented by construction
 //! (§P4), and this audit is the net under that discipline, not a substitute.
 //!
 //! The parse and diff are pure (they take the `mountinfo` text), so they are
@@ -29,8 +29,8 @@ pub struct ExpectedMount {
 pub enum MountMismatch {
     /// The plan expected a mount at `target`, but `mountinfo` has none there.
     Missing { target: String },
-    /// The plan required `target` read-only, but it was realized read-write —
-    /// the dangerous case (a failed remount or a swapped source).
+    /// The plan required `target` read-only, but it was realized read-write.
+    /// The dangerous case (a failed remount or a swapped source).
     WritableButExpectedRo { target: String },
 }
 
@@ -58,7 +58,7 @@ struct Realized {
 /// comma list whose first element is `ro` or `rw`. Octal escapes in the mount
 /// point (`\040` etc.) are left as-is: the plan's targets are h5i-created and
 /// escape-free, and a mount point that needed escaping would simply not match a
-/// plan target — the fail-closed direction.
+/// plan target. The fail-closed direction.
 fn parse_line(line: &str) -> Option<Realized> {
     let mut it = line.split_whitespace();
     let mount_point = it.nth(4)?.to_string();
@@ -73,8 +73,8 @@ fn parse_mountinfo(text: &str) -> Vec<Realized> {
     text.lines().filter_map(parse_line).collect()
 }
 
-/// **The audit**: diff the plan against realized `mountinfo`. Returns every
-/// mismatch — a planned mount missing, or a planned read-only mount realized
+/// *The audit*: diff the plan against realized `mountinfo`. Returns every
+/// mismatch. A planned mount missing, or a planned read-only mount realized
 /// writable. An empty result means the realized mount topology is consistent
 /// with the plan for the audited targets.
 ///

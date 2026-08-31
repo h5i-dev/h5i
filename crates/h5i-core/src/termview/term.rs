@@ -54,7 +54,7 @@ pub struct Size {
 /// Ask the terminal how big it is.
 ///
 /// `TIOCGWINSZ` reports the window in pixels as well as in cells, which is the
-/// only portable way to learn a cell's pixel size — and without that the image
+/// only portable way to learn a cell's pixel size, and without that the image
 /// cannot be given a cell box that preserves its aspect ratio. Terminals that
 /// leave the pixel fields at zero are handled by the caller
 /// ([`super::image::fit`]), not papered over here.
@@ -78,7 +78,7 @@ impl Size {
     /// `TIOCGWINSZ` succeeding and reporting zeroes is not hypothetical: a pty
     /// opened without a window size does exactly that, which is what `script`
     /// and several CI harnesses produce. Taking it literally is a quiet wrong
-    /// answer of the worst kind — the page gets scaled to fit one cell, the
+    /// answer of the worst kind. The page gets scaled to fit one cell, the
     /// viewer draws a single pixel, and nothing anywhere reports a problem.
     /// Found by running the viewer under `script` against a live box, where it
     /// dutifully transmitted a 1×1 image.
@@ -104,8 +104,8 @@ pub fn is_tty(fd: RawFd) -> bool {
 
 /// Wait until `fd` has input, or the timeout expires.
 ///
-/// The render loop needs to do things on a clock — refresh the status line,
-/// notice a resize, notice that another process took the control lock — so it
+/// The render loop needs to do things on a clock (refresh the status line,
+/// notice a resize, notice that another process took the control lock) so it
 /// cannot simply block on a read. Returns true when there is input to read.
 pub fn wait_readable(fd: RawFd, timeout: std::time::Duration) -> bool {
     let mut pfd = libc::pollfd {
@@ -128,8 +128,8 @@ impl Guard {
     /// Enter raw mode on the alternate screen.
     ///
     /// Raw mode disables the signal characters too, so `Ctrl-C` becomes a
-    /// keystroke rather than a signal. That is required — a page under test may
-    /// well bind it — and it is why the viewer must always keep a key of its
+    /// keystroke rather than a signal. That is required, a page under test may
+    /// well bind it, and it is why the viewer must always keep a key of its
     /// own that leaves ([`super::input`]).
     pub fn enter(fd: RawFd) -> std::io::Result<Guard> {
         if !is_tty(fd) {
@@ -184,7 +184,7 @@ impl Guard {
 
 impl Drop for Guard {
     fn drop(&mut self) {
-        // Every mode this guard turned on, turned off — in the reverse order,
+        // Every mode this guard turned on, turned off. In the reverse order,
         // and unconditionally. A `?` anywhere in here would be a terminal left
         // broken because the restore itself had a bad day.
         let mut out = std::io::stdout();
@@ -269,7 +269,7 @@ mod tests {
     fn a_terminal_that_reports_no_size_still_gets_a_drawable_one() {
         // A pty opened without a window size reports zeroes, and `TIOCGWINSZ`
         // succeeds while doing it. Taken literally the viewer scales the page
-        // into one cell and draws a single pixel, with no error anywhere —
+        // into one cell and draws a single pixel, with no error anywhere,
         // which is exactly what it did under `script` against a live box.
         let none = Size::default().or_fallback();
         assert_eq!((none.cols, none.rows), (80, 24));

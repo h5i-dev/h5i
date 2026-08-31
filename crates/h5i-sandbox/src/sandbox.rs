@@ -1,25 +1,25 @@
-//! h5i's own confinement for the `process` isolation tier — plus the policy
+//! h5i's own confinement for the `process` isolation tier, plus the policy
 //! model shared by every tier (docs/environments-design.md §5–§7).
 //!
 //! Design (mirrors a minimal, embedded Sandlock):
-//!   - **Policy** comes from a checked-in `.h5i/env.toml` profile (fail-closed
+//!   - *Policy* comes from a checked-in `.h5i/env.toml` profile (fail-closed
 //!     defaults when absent). A profile requests a *minimum* isolation claim;
 //!     the resolved claim is recorded in the env manifest and every capture.
-//!   - **Capability probing**: hosts vary wildly (this matters — Landlock may
+//!   - *Capability probing*: hosts vary wildly (this matters, Landlock may
 //!     be compiled out, userns may be disabled). We probe what the kernel
-//!     actually supports and **refuse** (never silently downgrade) when the
+//!     actually supports and *refuse* (never silently downgrade) when the
 //!     requested claim cannot be satisfied.
-//!   - **Enforcement** (Linux, `process` tier v1, static — no supervisor):
+//!   - *Enforcement* (Linux, `process` tier v1, static, no supervisor):
 //!     Landlock filesystem allowlist (`$WORK` rw + ro system paths), a seccomp
 //!     deny-list of dangerous syscalls, `unshare(CLONE_NEWUSER|CLONE_NEWNET)`
 //!     for `net.mode = deny`, `PR_SET_NO_NEW_PRIVS`, and rlimits with a
 //!     wall-clock kill. Domain egress allowlists (`net.egress`) need the
-//!     seccomp-notify supervisor or a container backend and therefore **fail
-//!     closed** under the static `process` tier.
+//!     seccomp-notify supervisor or a container backend and therefore fail
+//!     closed under the static `process` tier.
 //!
 //! Cross-platform honesty: the kernel tiers run on Linux (this module) and on
 //! macOS via Seatbelt ([`crate::seatbelt`]), which is a *different* mechanism
-//! with a different residual set — [`capabilities_report`] states which one a
+//! with a different residual set: [`capabilities_report`] states which one a
 //! given host actually gets. Windows is explicitly not claimed (§5).
 
 use serde::{Deserialize, Serialize};
@@ -71,27 +71,27 @@ pub const POLICY_FILE: &str = ".h5i/env.toml";
 // helpers moved to src/sandbox_policy.rs.
 
 /// Agent config paths whose mutation could disable the in-box observation hook,
-/// locked **read-only** (bind + remount,ro) inside the box's mount namespace
+/// locked *read-only* (bind + remount,ro) inside the box's mount namespace
 /// for interactive agent sessions. Landlock is allowlist-only and cannot
 /// subtract a writable child from a granted parent, so this mount-level lock is
 /// how the kernel tiers make config immutable in-box without a managed-settings
-/// tier (which they can't reach — `/etc/claude-code` can't be created from the
+/// tier (which they can't reach: `/etc/claude-code` can't be created from the
 /// userns).
 ///
 /// Two shapes, by scope:
-/// - **Project scope (`$WORK/.claude`, `$WORK/.codex`) — the whole directory.**
+/// - Project scope (`$WORK/.claude`, `$WORK/.codex`): the whole directory.
 ///   A read-only directory blocks both editing existing config *and creating*
 ///   `settings.local.json` (the `disableAllHooks` create-bypass that per-file
 ///   pinning can't stop). Safe to lock: agents read project config but don't
 ///   write it at runtime.
-/// - **User scope — the single settings file only** (`~/.claude/settings.json`,
+/// - User scope: the single settings file only (`~/.claude/settings.json`,
 ///   `~/.codex/config.toml`). `~/.claude` itself must stay writable (the agent
 ///   stores session state there), and locking the whole dir would brick the
 ///   runtime. There is no `~/.claude/settings.local.json` in Claude's
 ///   precedence chain, and the Codex `[features] hooks=false` kill switch lives
 ///   only in `config.toml`, so pinning the one file closes user scope.
 ///
-/// Only **existing** paths are returned — a bind needs an existing target. An
+/// Only *existing* paths are returned. A bind needs an existing target. An
 /// absent project config dir is a documented residual: the agent could create
 /// `$WORK/.claude` and a local-scope `disableAllHooks`. Closing that would mean
 /// shadowing the (possibly absent) dir, which the tee-shim floor covers instead.
@@ -136,7 +136,7 @@ struct PolicyFileToml {
     #[serde(default)]
     profile: BTreeMap<String, ProfileToml>,
     /// Repo-level `[container] image = "…"`: the default base image for every
-    /// profile that doesn't declare its own `container.image` — so one line
+    /// profile that doesn't declare its own `container.image`, so one line
     /// makes the built-in agent profiles (which can't know your image) usable
     /// at the container tier. Declaring it also makes `container` a candidate
     /// for the isolation auto-pick (strongest-runnable).
@@ -187,10 +187,10 @@ struct ProfileToml {
     /// changing engine changes what a page can do.
     #[serde(default)]
     engine: Option<String>,
-    /// `[profile.X.browser]` — what the box may do with the browser.
+    /// `[profile.X.browser]`: what the box may do with the browser.
     #[serde(default)]
     browser: BrowserToml,
-    /// `[profile.X.detect]` — the runtime-detection lane (ROADMAP.md D11).
+    /// `[profile.X.detect]`: the runtime-detection lane (ROADMAP.md D11).
     #[serde(default)]
     detect: DetectToml,
 }
@@ -198,7 +198,7 @@ struct ProfileToml {
 /// `[profile.X.detect] enabled = true`.
 ///
 /// Every field is `Option`, and omitting one inherits the base rather than
-/// resetting it — the same rule `net.egress` and `net.unix` follow, so a
+/// resetting it. The same rule `net.egress` and `net.unix` follow, so a
 /// partial overlay can never quietly *widen* or *narrow* what it did not
 /// mention.
 #[derive(Debug, Default, Deserialize)]
@@ -246,7 +246,7 @@ struct FsToml {
 #[serde(deny_unknown_fields)]
 struct NetToml {
     mode: Option<String>,
-    /// `None` (key omitted) inherits the builtin base's egress — so a partial
+    /// `None` (key omitted) inherits the builtin base's egress, so a partial
     /// `[profile.agent-claude]` overlay keeps its API allowlist. An explicit
     /// `egress = []` opts out (deny).
     egress: Option<Vec<String>>,
@@ -284,7 +284,7 @@ struct EnvVarsToml {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ShellToml {
-    /// `[profile.X.shell] rcfile = ".h5i/box.bashrc"` — a custom bash rcfile for
+    /// `[profile.X.shell] rcfile = ".h5i/box.bashrc"`: a custom bash rcfile for
     /// interactive `env shell`, relative to `$WORK`. Unset → generated plain rc.
     rcfile: Option<String>,
 }
@@ -438,7 +438,7 @@ pub fn load_profile(
                 // Omitted → inherit the builtin base (a partial
                 // `[profile.agent-claude]` keeps its Anthropic egress instead of
                 // silently bricking the agent); explicit `egress = []` opts out.
-                // Note the inherited list still hits the tier lint below — an
+                // Note the inherited list still hits the tier lint below. An
                 // agent overlay pinned to process/workspace is now *refused*
                 // (fail-closed) rather than left egressless.
                 net_egress: t.net.egress.unwrap_or(base.net_egress),
@@ -498,7 +498,7 @@ pub fn load_profile(
                 // Trimmed on the way in, so what enforcement matches is what
                 // validation checked. Validating `entry.trim()` while storing
                 // the raw string meant `deny = [" evaluate "]` passed create
-                // and then matched no action — the exact fail-open the
+                // and then matched no action. The exact fail-open the
                 // validator exists to prevent.
                 browser_deny: t
                     .browser
@@ -541,8 +541,8 @@ pub fn load_profile(
 }
 
 /// What isolation the caller requested for `env create`: a specific claim
-/// (fail-closed — refused, never downgraded, if the host can't satisfy it), or
-/// `Auto` — pick the strongest tier the host can actually run.
+/// (fail-closed (refused, never downgraded, if the host can't satisfy it), or
+/// `Auto`) pick the strongest tier the host can actually run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IsolationRequest {
     Auto,
@@ -567,15 +567,15 @@ fn profile_declared_isolation(repo_workdir: &Path, name: &str) -> Result<Option<
 }
 
 /// Pick the isolation tier for `env create` when none is pinned explicitly: the
-/// **strongest** tier the host can actually run for this profile
+/// *strongest* tier the host can actually run for this profile
 /// (`container > supervised > process > workspace`), so the default is
 /// secure-by-default and always works. Each candidate is gated by the *same*
 /// checks `create` applies (`resolve` + `verify_exec`), so a picked tier is
-/// guaranteed runnable — never a tier that would then fail at run time.
+/// guaranteed runnable. Never a tier that would then fail at run time.
 ///
 /// `force_probe = false` (the CLI default, no `--isolation`) honors a tier the
 /// profile explicitly declares; `force_probe = true` (`--isolation auto`)
-/// re-probes regardless. Explicit `--isolation <tier>` never reaches here — it
+/// re-probes regardless. Explicit `--isolation <tier>` never reaches here. It
 /// stays fail-closed.
 ///
 /// `image_override` is the caller-supplied container image (`env create
@@ -592,7 +592,7 @@ pub fn effective_auto(
             return Ok(c);
         }
         // An explicit org/user default (`H5I_DEFAULT_ISOLATION`) pins the tier
-        // without probing — set it to opt a whole clone into a fixed tier.
+        // without probing. Set it to opt a whole clone into a fixed tier.
         // `--isolation auto` (force_probe) ignores it and re-probes.
         if let Ok(v) = std::env::var("H5I_DEFAULT_ISOLATION") {
             let v = v.trim();
@@ -629,31 +629,31 @@ pub fn effective_auto(
 }
 
 /// Fail-closed policy lints (§7). These reject *policies*, before any env is
-/// created — never silently weaken them.
+/// created. Never silently weaken them.
 /// Validate a container image reference before it becomes an argument.
 ///
-/// The image is repo-supplied — `[container] image` in `.h5i/env.toml`, the same
-/// untrusted file every other policy field comes from — and it reaches two
+/// The image is repo-supplied (`[container] image` in `.h5i/env.toml`, the same
+/// untrusted file every other policy field comes from) and it reaches two
 /// places where its bytes are syntax rather than data:
 ///
-/// * **Podman's positional argument.** `podman run <flags> <image> <argv…>` has
+/// * Podman's positional argument. `podman run <flags> <image> <argv…>` has
 ///   no `--` before the image, so a reference beginning with `-` is parsed as a
 ///   flag and `argv[0]` becomes the image instead. That mostly self-destructs
 ///   (the run fails for want of an image), but "mostly" is not a property to
 ///   rest a containment boundary on, and it costs one character to remove.
-/// * **`--mount type=image,source=<image>,destination=…`**, where a comma ends
+/// * *`--mount type=image,source=<image>,destination=…`*, where a comma ends
 ///   the value and starts an option. `private_paths` already refuses a comma at
 ///   policy load for exactly this reason; the image was the field that did not.
 ///
-/// The charset is every byte a real reference uses — registry host, path,
-/// `:tag`, `@sha256:…`, and the `oci-archive:` / `docker-archive:` transports —
+/// The charset is every byte a real reference uses (registry host, path,
+/// `:tag`, `@sha256:…`, and the `oci-archive:` / `docker-archive:` transports)
 /// and nothing else. Whitespace, quotes, commas and control characters are not
 /// image references.
 pub fn validate_image(image: &str) -> Result<(), H5iError> {
     let bad = |why: &str| {
         // `{:?}`, not `{}`: the value is going to a terminal and the thing
         // wrong with it may be a control character. Rust's `Debug` for `str`
-        // escapes those, which is the whole requirement here — and this crate
+        // escapes those, which is the whole requirement here, and this crate
         // sits below `h5i-core`, so `redact::sanitize_display` is not reachable.
         Err(H5iError::Metadata(format!(
             "container image {image:?} {why} — an image reference is a registry path, an \
@@ -680,7 +680,7 @@ pub fn validate_image(image: &str) -> Result<(), H5iError> {
 /// against.
 ///
 /// The lint below is the *only* thing standing between a grant and a denied
-/// child inside it — Landlock has no deny rules, so `fs.deny` is a preflight
+/// child inside it. Landlock has no deny rules, so `fs.deny` is a preflight
 /// refusal on Linux and nothing else. With `$HOME` unset, `expand_tilde` leaves
 /// `~/.ssh` as that literal string, `canonicalize` fails, and the prefix test
 /// compares it against `/Users/dev` and finds no overlap: a profile granting a
@@ -753,7 +753,7 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     // proxy wiring: `env.pass` is applied after it, so the host's value would
     // win and the box would route around the allowlist. Refused at load, so the
     // author is told rather than silently getting a wider box. (Harmless with
-    // no `net.egress` — there is no proxy to shadow — so it is not refused
+    // no `net.egress`, there is no proxy to shadow, so it is not refused
     // there.)
     if p.scopes_egress()
         && let Some(bad) = p
@@ -805,7 +805,7 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
                 g.name
             )));
         }
-        // A command: source executes host-side code outside the sandbox — refuse
+        // A command: source executes host-side code outside the sandbox. Refuse
         // it at policy-load unless the profile explicitly opts in, so the gate is
         // pinned in the (tamper-evident) digest, not just enforced at run time.
         if src.starts_with("command:") && !p.allow_command_extractors {
@@ -828,7 +828,7 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     }
     // Persona sources are read from the worktree at `env create` and baked into
     // PERSONA.md. Pin them inside `$WORK` (fail-closed): no absolute paths, no
-    // `..` escape — the same containment the `[shell] rcfile` gets.
+    // `..` escape. The same containment the `[shell] rcfile` gets.
     for src in &p.persona {
         let rel = Path::new(src);
         if src.is_empty() || rel.is_absolute() {
@@ -862,7 +862,7 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     }
     // Nothing below can reason about a `~` it cannot resolve, and the lint that
     // follows is the *only* thing standing between a grant and a denied child
-    // inside it — Landlock has no deny rules, so `fs.deny` is a preflight
+    // inside it. Landlock has no deny rules, so `fs.deny` is a preflight
     // refusal on Linux and nothing else.
     //
     // With `$HOME` unset, `expand_tilde` leaves `~/.ssh` as the literal string
@@ -890,8 +890,8 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     // must never contain a denied child.
     //
     // Compare on *resolved* paths, not on expanded text. Landlock grants follow
-    // symlinks — the builder opens the grant path and hands the result to
-    // `path_beneath_rules` — so a grant of `~/work-tools` on a host where that
+    // symlinks, the builder opens the grant path and hands the result to
+    // `path_beneath_rules`, so a grant of `~/work-tools` on a host where that
     // is a symlink to `$HOME` really grants the whole home directory. A textual
     // prefix check never saw `~/.ssh` underneath it and let the policy load.
     // Canonicalization is best-effort: a path that does not exist yet cannot be
@@ -931,7 +931,7 @@ pub(crate) const EGRESS_READY_TIMEOUT_MS: libc::c_int = 15_000;
 /// Largest amount of one captured child stream h5i will hold in memory.
 ///
 /// The box decides how much it writes, and every tier drained its stdout and
-/// stderr with a bare `read_to_end` — an unbounded host allocation driven by the
+/// stderr with a bare `read_to_end`: an unbounded host allocation driven by the
 /// confined process. `yes` inside a box with the default wall clock is tens of
 /// gigabytes of host RAM before anything stops it, and the receipt store's own
 /// 4 MiB cap is applied long after the bytes have already been buffered.
@@ -940,7 +940,7 @@ pub(crate) const EGRESS_READY_TIMEOUT_MS: libc::c_int = 15_000;
 /// "allocating on trust lets a prompt-injected box exhaust *host* memory". It is
 /// the same principle and it belongs on the same side of the boundary.
 ///
-/// Generous — sixteen times what a receipt will store — so nothing a real build
+/// Generous, sixteen times what a receipt will store, so nothing a real build
 /// or test suite prints comes near it.
 pub(crate) const MAX_CAPTURED_STREAM: usize = 64 * 1024 * 1024;
 
@@ -981,7 +981,7 @@ pub(crate) fn drain_capped(mut pipe: impl std::io::Read) -> Vec<u8> {
     buf
 }
 
-/// 16 hex chars of OS entropy — enough that no other local user can guess or
+/// 16 hex chars of OS entropy. Enough that no other local user can guess or
 /// pre-plant a scratch path before we create it.
 fn random_suffix() -> Result<String, H5iError> {
     let mut raw = [0u8; 8];
@@ -1002,7 +1002,7 @@ fn random_suffix() -> Result<String, H5iError> {
 /// a child then `execve`s `nft -f` on with CAP_NET_ADMIN: an attacker-supplied
 /// ruleset becomes the box's entire L3/L4 egress policy.
 ///
-/// So: an unguessable name, and `mkdir(0700)` — which fails if the path exists,
+/// So: an unguessable name, and `mkdir(0700)`, which fails if the path exists,
 /// and sets the mode atomically rather than leaving a window at the umask
 /// default.
 pub fn private_scratch_dir(prefix: &str) -> Result<PathBuf, H5iError> {
@@ -1028,7 +1028,7 @@ pub fn private_scratch_dir(prefix: &str) -> Result<PathBuf, H5iError> {
 /// (the macOS redirect, which puts a symlink there).
 ///
 /// `validate_private_paths` rejects a leading `/`, `..` and `,`, but it never
-/// *resolves* the path — and both `private_paths` and the worktree contents are
+/// *resolves* the path, and both `private_paths` and the worktree contents are
 /// repo-supplied. A branch shipping `a` as a symlink to `$HOME` turns a
 /// perfectly valid `a/bin` entry into a write outside `$WORK`: on Linux
 /// `create_dir_all` makes the mountpoint at the link's target and the bind
@@ -1131,7 +1131,7 @@ fn validate_private_paths(p: &Profile) -> Result<(), H5iError> {
             )));
         }
     }
-    // No overlap: listing both `a` and `a/b` is an error — the first bind would
+    // No overlap: listing both `a` and `a/b` is an error. The first bind would
     // shadow the second's mountpoint.
     for i in 0..norm.len() {
         for j in 0..norm.len() {
@@ -1194,7 +1194,7 @@ pub fn parse_wall(s: &str) -> Result<Duration, H5iError> {
 // ─── capability probing (§5, mandatory) ─────────────────────────────────────
 
 /// What this host's kernel actually supports. Probed at env creation and
-/// before every confined run — never assumed.
+/// before every confined run. Never assumed.
 #[derive(Debug, Clone, Serialize)]
 pub struct HostCaps {
     pub os: String,
@@ -1205,7 +1205,7 @@ pub struct HostCaps {
     pub userns: bool,
     /// seccomp-bpf filters.
     pub seccomp: bool,
-    /// macOS **Seatbelt** is present and functionally applying profiles — the
+    /// macOS *Seatbelt* is present and functionally applying profiles. The
     /// kernel-tier mechanism on Darwin, where Landlock/seccomp/userns are all
     /// absent. Always `false` on Linux, so the two mechanisms are never confused
     /// for one another in a manifest or a capability report.
@@ -1246,35 +1246,35 @@ impl HostCaps {
     }
 }
 
-/// Can a box push characters into the **input** queue of the terminal it shares
+/// Can a box push characters into the *input* queue of the terminal it shares
 /// with the operator (`TIOCSTI`)? An interactive session at a kernel tier keeps
-/// the caller's session and controlling terminal — that is what makes job
-/// control work — so this is a real residual of the shared tty. Reported by
+/// the caller's session and controlling terminal, that is what makes job
+/// control work, so this is a real residual of the shared tty. Reported by
 /// `box probe` and disclosed in the manual's Limits.
 ///
 /// The two platforms answer from different places, and that asymmetry is why
-/// this takes both the probed host **and** the tier rather than collapsing to a
+/// this takes both the probed host *and* the tier rather than collapsing to a
 /// constant:
 ///
-/// - **Linux**: `dev.tty.legacy_tiocsti`, a kernel-global property that is the
-///   same at every tier — h5i's seccomp policy does not filter `ioctl`, so the
+/// - *Linux*: `dev.tty.legacy_tiocsti`, a kernel-global property that is the
+///   same at every tier. H5i's seccomp policy does not filter `ioctl`, so the
 ///   kernel's own setting is the whole answer. 6.2 made TIOCSTI disableable
-///   (`CONFIG_LEGACY_TIOCSTI`, default **`y`** upstream) and exposed this
+///   (`CONFIG_LEGACY_TIOCSTI`, default *`y`* upstream) and exposed this
 ///   sysctl; a missing file means an older kernel, where it cannot be closed.
-/// - **macOS**: a property of the Seatbelt **profile**, which subtracts that one
-///   ioctl from the tty grant (`seatbelt::build_profile`) — so it holds exactly
+/// - *macOS*: a property of the Seatbelt *profile*, which subtracts that one
+///   ioctl from the tty grant (`seatbelt::build_profile`), so it holds exactly
 ///   where a profile is applied. `isolation=workspace` applies none by design,
 ///   and a host whose Seatbelt is unusable applies none either; in both cases
 ///   nothing stands between the box and the operator's terminal, and answering
 ///   "blocked" from a compile-time `cfg` would assert what this cannot know.
 ///
-/// Fails **open** throughout: anything we cannot positively establish is
+/// Fails *open* throughout: anything we cannot positively establish is
 /// reported as injectable, because telling an operator a door is shut when we
 /// could not check is worse than telling them to look.
 ///
 /// This never gates a tier. A stock kernel would otherwise stop being able to
 /// run a box at all, and the shared terminal is a disclosed limit, not a
-/// regression — so it informs the operator instead of refusing on their behalf.
+/// regression, so it informs the operator instead of refusing on their behalf.
 pub fn tty_input_injection(caps: &HostCaps, claim: IsolationClaim) -> bool {
     // These tiers give the box a terminal of its own (Podman's `-t`, the guest's
     // console) rather than the operator's, so its input queue is its own too.
@@ -1314,7 +1314,7 @@ fn tty_injection_from_sysctl(v: Option<&str>) -> bool {
 /// Process-wide memoization of the host capability probe. Kernel features
 /// (Landlock ABI, unprivileged userns, seccomp) and the rootless-Podman probe
 /// are effectively immutable for the life of a process, yet `probe_host` is
-/// called many times per `env create`/`run` — the tier auto-pick re-probes per
+/// called many times per `env create`/`run`. The tier auto-pick re-probes per
 /// candidate, and `create` resolves the policy several times over. The Podman
 /// branch alone spawns `podman info` (~1s+ on rootless), so an uncached default
 /// `env create` ran ~9 probes (~12s of pure `podman info`). Memoizing collapses
@@ -1323,10 +1323,10 @@ fn tty_injection_from_sysctl(v: Option<&str>) -> bool {
 static HOST_CAPS: OnceLock<HostCaps> = OnceLock::new();
 static HOST_CAPS_KERNEL: OnceLock<HostCaps> = OnceLock::new();
 
-/// Full host probe **including** the rootless-Podman runtime. Detecting Podman
+/// Full host probe *including* the rootless-Podman runtime. Detecting Podman
 /// shells out to `podman info` (~1s on rootless), so this is reserved for paths
 /// that actually consult a container tier (the container family resolve arm, the
-/// `env probe`/doctor diagnostics, the MCP capability report). Memoized — see
+/// `env probe`/doctor diagnostics, the MCP capability report). Memoized. See
 /// [`probe_host_kernel`] for why the common kernel-tier path must avoid it.
 pub fn probe_host() -> HostCaps {
     HOST_CAPS
@@ -1339,7 +1339,7 @@ pub fn probe_host() -> HostCaps {
         .clone()
 }
 
-/// Uncached full probe — the **diagnostic** path.
+/// Uncached full probe. The *diagnostic* path.
 ///
 /// Bypasses both the in-process memo and the per-boot Podman probe cache, so a
 /// report describes the host as it is now rather than as the first caller found
@@ -1356,17 +1356,17 @@ pub fn probe_host_fresh() -> HostCaps {
     caps
 }
 
-/// Kernel-only probe: Landlock/userns/seccomp, but **not** the ~1s Podman
+/// Kernel-only probe: Landlock/userns/seccomp, but *not* the ~1s Podman
 /// shell-out (`container_runtime` and `microvm_runtime` are left `None`).
 /// `resolve` only reads those inside the container/microvm arms (after the image
-/// check), and `supervisor::probe` only reads the kernel bits — so every
+/// check), and `supervisor::probe` only reads the kernel bits, so every
 /// non-image-backed claim can probe with this and skip `podman info` entirely.
 /// Memoized separately from the full probe so the two never cross-trigger.
 pub fn probe_host_kernel() -> HostCaps {
     HOST_CAPS_KERNEL.get_or_init(probe_host_kernel_uncached).clone()
 }
 
-/// Cheap "is Podman installed?" check for discoverability hints — runs only
+/// Cheap "is Podman installed?" check for discoverability hints. Runs only
 /// `podman --version` (~tens of ms), not the full rootless `podman info` probe
 /// (~1s). Use when a hint just needs binary presence, not full container-tier
 /// readiness (that's [`probe_host`]'s `container_runtime`).
@@ -1374,7 +1374,7 @@ pub fn podman_present() -> bool {
     crate::container::podman_present()
 }
 
-/// Cheap "is microsandbox installed?" check for discoverability hints — runs
+/// Cheap "is microsandbox installed?" check for discoverability hints. Runs
 /// only `msb --version`, not the virtualization check. Use when a hint just
 /// needs binary presence, not full microvm-tier readiness (that's
 /// [`probe_host`]'s `microvm_runtime`).
@@ -1384,7 +1384,7 @@ pub fn msb_present() -> bool {
 
 /// Why the `microvm` tier is unavailable on this host, naming the specific
 /// missing half (no `msb`, an `msb` too old, or no virtualization). For
-/// diagnostics — `env doctor`/`env probe` — that must be actionable rather than
+/// diagnostics, `env doctor`/`env probe`, that must be actionable rather than
 /// merely negative.
 pub fn microvm_unavailable_detail() -> String {
     crate::microvm::unavailable_detail()
@@ -1418,7 +1418,7 @@ const AUTO_TIERS: [IsolationClaim; 4] = [
 ];
 
 /// Support for one isolation claim on this host: can its policy be *resolved*
-/// (`satisfiable`), and — for the kernel tiers — does a confined command
+/// (`satisfiable`), and, for the kernel tiers, does a confined command
 /// actually *exec* here (`runnable`, the functional `verify_exec` self-test)?
 #[derive(Debug, Clone, Serialize)]
 pub struct ClaimSupport {
@@ -1434,7 +1434,7 @@ pub struct ClaimSupport {
     pub note: Option<&'static str>,
 }
 
-/// Machine-readable answer to "what can h5i actually enforce here?" — the
+/// Machine-readable answer to "what can h5i actually enforce here?". The
 /// structured form of `h5i box probe`, so a downstream product adapts to the
 /// real host instead of regex-scraping a log line. Backs `env capabilities
 /// [--json]`.
@@ -1449,13 +1449,13 @@ pub struct CapabilitiesReport {
     pub seatbelt: bool,
     /// Which mechanism backs the kernel tiers here: `landlock+seccomp`,
     /// `seatbelt`, or `none`. Read this rather than inferring from
-    /// `landlock_abi` — a Mac confines with neither Landlock nor seccomp.
+    /// `landlock_abi`: a Mac confines with neither Landlock nor seccomp.
     pub mechanism: &'static str,
     /// A syscall-level deny-list is enforced (Linux seccomp-bpf). macOS has no
     /// equivalent, so the tiers there rest on the filesystem/network policy
     /// alone; a caller reasoning about untrusted *native* code needs to know.
     pub syscall_filter: bool,
-    /// A **memory** cap is enforceable. Distinguished from `resource_limits`
+    /// A *memory* cap is enforceable. Distinguished from `resource_limits`
     /// because Darwin enforces cpu/fsize/procs rlimits but no memory cap at all
     /// (see `seatbelt::RESOURCE_NOTE`).
     pub memory_limit: bool,
@@ -1464,18 +1464,18 @@ pub struct CapabilitiesReport {
     /// `None` when it is absent, too old, or the host cannot virtualize.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub microvm_runtime: Option<String>,
-    /// A **domain allowlist** for egress can be *enforced* here. The container
+    /// A *domain allowlist* for egress can be *enforced* here. The container
     /// tier's DNS-pinned proxy enforces it at L7 and the microvm tier's netstack
     /// rules enforce it by address; the kernel tiers can deny-all but never
     /// allowlist, so this tracks whether either of those runtimes is present.
     pub egress_enforced: bool,
-    /// The allowlist above is enforced **by address** (L3/L4), not by a proxy the
+    /// The allowlist above is enforced *by address* (L3/L4), not by a proxy the
     /// box could decline to use. True only for the microvm tier. Distinguished
     /// from `egress_enforced` because it is exactly the difference a caller
     /// running genuinely untrusted code needs to know about: an L7 proxy stops
     /// `curl` and does not stop a raw socket.
     pub egress_enforced_l3: bool,
-    /// Resource limits (mem / procs / wall / cpu) can be enforced — true when
+    /// Resource limits (mem / procs / wall / cpu) can be enforced. True when
     /// any confined tier beyond `workspace` runs here (kernel rlimits or the
     /// container runtime's cgroup limits).
     pub resource_limits: bool,
@@ -1486,7 +1486,7 @@ pub struct CapabilitiesReport {
 
 /// Probe the host and evaluate every isolation claim, mirroring the auto-pick
 /// (`resolve` + functional `verify_exec`) used by `env create`. Shells out to
-/// `podman info` once (via [`probe_host`]) — reserve for diagnostic paths.
+/// `podman info` once (via [`probe_host`]). Reserve for diagnostic paths.
 pub fn capabilities_report() -> CapabilitiesReport {
     capabilities_report_from(probe_host())
 }
@@ -1505,7 +1505,7 @@ fn capabilities_report_from(caps: HostCaps) -> CapabilitiesReport {
 
     // Kernel tiers: resolve the built-in `probe` profile, then run the functional
     // exec self-test (`verify_exec` is a no-op for every tier except Process, so
-    // Workspace/Supervised are gated by `resolve` alone — exactly as auto-pick).
+    // Workspace/Supervised are gated by `resolve` alone: exactly as auto-pick).
     for claim in [
         IsolationClaim::Workspace,
         IsolationClaim::Process,
@@ -1561,7 +1561,7 @@ fn capabilities_report_from(caps: HostCaps) -> CapabilitiesReport {
         runnable: None,
         note: Some("external backend (not in this build)"),
     });
-    // microVM tier: gated by microsandbox's `msb` **and** host virtualization;
+    // microVM tier: gated by microsandbox's `msb` *and* host virtualization;
     // like container, a concrete run also needs a profile image, so it isn't
     // exec-tested here.
     let microvm_ok = caps.microvm_runtime.is_some();
@@ -1592,7 +1592,7 @@ fn capabilities_report_from(caps: HostCaps) -> CapabilitiesReport {
     // guest's whole address space, so it is a hard cap on every host.
     let memory_limit = container_ok || microvm_ok || (caps.os != "macos" && confined_tier_runs);
     // A domain allowlist is enforced by the container tier's DNS-pinned proxy,
-    // by the microvm tier's netstack rules, and — on macOS — by the supervised
+    // by the microvm tier's netstack rules, and, on macOS, by the supervised
     // tier, whose Seatbelt profile leaves the box no outbound route except that
     // same proxy on loopback.
     let supervised_runs = claims
@@ -1625,7 +1625,7 @@ fn capabilities_report_from(caps: HostCaps) -> CapabilitiesReport {
 /// `enforce:` label, which is a claim about the host, not about the file the
 /// numbers came from. Darwin has no cgroups, does not enforce `RLIMIT_AS`
 /// against the mmap'd heap every modern runtime uses, and scopes `RLIMIT_NPROC`
-/// to the whole uid rather than to one box — so [`crate::seatbelt`] deliberately
+/// to the whole uid rather than to one box, so [`crate::seatbelt`] deliberately
 /// applies neither, and printing them unqualified stated a containment property
 /// the host does not have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1651,7 +1651,7 @@ pub fn limit_support(claim: IsolationClaim) -> LimitSupport {
         // No confinement at all: `run_unconfined` sets a wall-clock deadline and
         // applies nothing else.
         IsolationClaim::Workspace => both(false),
-        // Image-backed tiers cap both in the runtime itself — `--memory` +
+        // Image-backed tiers cap both in the runtime itself: `--memory` +
         // `--pids-limit` for Podman, `--memory` + `--rlimit nproc` for `msb`,
         // where the memory figure is the guest's entire address space.
         IsolationClaim::Container | IsolationClaim::HardenedContainer | IsolationClaim::Microvm => {
@@ -1661,8 +1661,8 @@ pub fn limit_support(claim: IsolationClaim) -> LimitSupport {
         // actually delegated to this user), nothing usable on Darwin.
         //
         // Asked per limit, not once for both. cgroup delegation is per
-        // controller — `Delegate=memory` without `pids` is a real systemd
-        // configuration — and answering `procs` with the memory probe's result
+        // controller, `Delegate=memory` without `pids` is a real systemd
+        // configuration, and answering `procs` with the memory probe's result
         // printed a process cap as enforced on a host that had silently not
         // applied it.
         IsolationClaim::Process | IsolationClaim::Supervised => {
@@ -1773,7 +1773,7 @@ fn probe_userns() -> bool {
 /// Why Seatbelt is unusable, for the macOS refusal message.
 ///
 /// `resolve` is platform-independent code that branches on `caps.os` at
-/// *runtime*, so it is compiled for every target — including ones where the
+/// *runtime*, so it is compiled for every target, including ones where the
 /// `seatbelt` module does not exist (it is `cfg(unix)`, since it needs
 /// `std::os::unix`). This wrapper is what keeps that runtime branch from
 /// becoming a compile-time dependency on a Unix-only module.
@@ -1787,8 +1787,8 @@ fn seatbelt_detail() -> Option<String> {
     None
 }
 
-/// Resolve `profile` against what `caps` says the host supports. Refuses —
-/// never silently downgrades — when the requested minimum claim cannot be
+/// Resolve `profile` against what `caps` says the host supports. Refuses,
+/// never silently downgrades, when the requested minimum claim cannot be
 /// satisfied (§5 "Capability probing + fail-closed").
 pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5iError> {
     validate_profile(profile)?;
@@ -1799,7 +1799,7 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
             if caps.os == "macos" {
                 // Darwin's kernel tier is Seatbelt. It is a different mechanism
                 // with a different residual set (no syscall filter, no memory
-                // cap — see `seatbelt::RESOURCE_NOTE`), which `env probe`
+                // cap: see `seatbelt::RESOURCE_NOTE`), which `env probe`
                 // reports; what it must not be is a silent downgrade, so an
                 // unusable Seatbelt refuses here exactly as a missing Landlock
                 // does on Linux.
@@ -1845,10 +1845,10 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
         }
         IsolationClaim::Container => {
             // Rootless Podman adapter (opt-in shell-out). Require an image AND
-            // the runtime — fail closed, never silently downgrade. Validate the
+            // the runtime. Fail closed, never silently downgrade. Validate the
             // declared config (image) BEFORE probing host capability (podman):
             // a missing image is a static profile error, true regardless of the
-            // host, so reporting it first keeps the error host-independent — a
+            // host, so reporting it first keeps the error host-independent. A
             // box (or CI) without podman still gets the actionable
             // "set container.image" message rather than a podman-not-found one.
             if profile.image.is_none() {
@@ -1904,7 +1904,7 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
             // known slirp gateway; a microVM's guest has its own loopback and its
             // own per-sandbox subnet, so the same URL resolves to nothing inside
             // it. Refuse the combination rather than hand the box an origin it
-            // cannot dial — a grant that silently fails to authenticate is worse
+            // cannot dial. A grant that silently fails to authenticate is worse
             // than one that never started.
             if !profile.auth.is_empty() {
                 return Err(H5iError::Metadata(format!(
@@ -1925,8 +1925,8 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
         }
         IsolationClaim::Supervised => {
             // The keystone safety property: refuse unless the ENTIRE mediation
-            // stack probes green on this host. Never downgrade to a weaker tier
-            // — an unsatisfiable supervised claim is an *impossible* claim, not
+            // stack probes green on this host. Never downgrade to a weaker tier.
+            // An unsatisfiable supervised claim is an *impossible* claim, not
             // a degraded pass (docs/supervisor-design.md).
             let probe = crate::supervisor::probe();
             if !probe.usable {
@@ -1955,8 +1955,8 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
 // `ExecOutcome` moved to src/sandbox_policy.rs (re-exported above).
 
 /// Validate `argv` against the policy's `tools` allowlist. When the list is
-/// non-empty, the command's program (argv[0], by basename) MUST be listed —
-/// defense in depth so a profile can pin exactly which executables an
+/// non-empty, the command's program (argv[0], by basename) MUST be listed.
+/// Defense in depth so a profile can pin exactly which executables an
 /// environment may launch. An empty list means "unrestricted" (the default).
 fn check_tool_allowlist(policy: &ResolvedPolicy, argv: &[String]) -> Result<(), H5iError> {
     let tools = &policy.profile.tools;
@@ -1986,7 +1986,7 @@ pub fn run(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<Exec
 
 /// Like [`run`], plus `injected_env` (the secrets broker's resolved grants)
 /// applied to the child *after* the `env.pass` allowlist. The values are not
-/// part of the policy and never serialized — they only reach the child process.
+/// part of the policy and never serialized. They only reach the child process.
 pub fn run_with_env(
     policy: &ResolvedPolicy,
     work: &Path,
@@ -2012,10 +2012,10 @@ pub fn run_with_env(
     }
 }
 
-/// Spawn `argv` as a long-lived **background** process under the env's
+/// Spawn `argv` as a long-lived *background* process under the env's
 /// confinement, with stdout+stderr redirected to `log` and stdin `/dev/null`.
 /// Returns the child PID. Unlike [`run_with_env`] it does NOT wait or apply a
-/// wall-clock kill — a service is operator-bounded (stopped explicitly). The
+/// wall-clock kill. A service is operator-bounded (stopped explicitly). The
 /// child gets its own session/process group so a later `killpg` reaps the whole
 /// tree. v1 supports the workspace and process tiers; supervised/container
 /// services are a documented follow-up (Idea 3.5).
@@ -2111,7 +2111,7 @@ fn spawn_background_confined(
 
 /// macOS process-tier background spawn. `sandbox-exec` `execve`s the workload
 /// rather than forking it, so the returned pid *is* the service and stays
-/// `killpg`-able — the same guarantee the Linux no-pidns path gives.
+/// `killpg`-able. The same guarantee the Linux no-pidns path gives.
 #[cfg(target_os = "macos")]
 fn spawn_background_confined(
     policy: &ResolvedPolicy,
@@ -2146,11 +2146,11 @@ fn spawn_background_confined(
     ))
 }
 
-/// The **agent-in-box** entry point: run `argv` (a shell or a coding agent)
-/// interactively under the env's confinement. stdio is **inherited** (a real
+/// The *agent-in-box* entry point: run `argv` (a shell or a coding agent)
+/// interactively under the env's confinement. stdio is *inherited* (a real
 /// session, not captured), nothing is recorded per-command, and the child's exit
 /// code is returned. Confinement comes from the box itself, so whatever the
-/// agent spawns inside is contained by construction — the enforcement no longer
+/// agent spawns inside is contained by construction. The enforcement no longer
 /// depends on the agent choosing to wrap each command.
 pub fn run_interactive(
     policy: &ResolvedPolicy,
@@ -2158,8 +2158,8 @@ pub fn run_interactive(
     argv: &[String],
     injected_env: &[(String, String)],
     // Pre-generated managed-settings.json content (the wrap-bash observation
-    // hook), built host-side by `hooks` and injected at the container tier —
-    // threaded through so this crate never depends on core to generate it.
+    // hook), built host-side by `hooks` and injected at the container tier.
+    // Threaded through so this crate never depends on core to generate it.
     managed_settings_content: Option<&str>,
 ) -> Result<InteractiveOutcome, H5iError> {
     if argv.is_empty() {
@@ -2229,7 +2229,7 @@ fn interactive_unconfined(
 
 /// Interactive process tier: the shared confinement (Landlock + seccomp + ns +
 /// rlimits + cgroup) with stdio inherited. The profile's wall-clock is *not*
-/// applied — an interactive session is bounded by the operator, not a timer.
+/// applied. An interactive session is bounded by the operator, not a timer.
 #[cfg(target_os = "linux")]
 fn interactive_confined(
     policy: &ResolvedPolicy,
@@ -2260,7 +2260,7 @@ fn interactive_confined(
 
 /// macOS interactive process tier. `interactive = true` adds the agent-config
 /// write lockdown and the pty grants, and keeps the caller's session so job
-/// control works — the same two adjustments the Linux path makes.
+/// control works. The same two adjustments the Linux path makes.
 #[cfg(target_os = "macos")]
 fn interactive_confined(
     policy: &ResolvedPolicy,
@@ -2296,12 +2296,12 @@ fn apply_injected_env(cmd: &mut std::process::Command, injected_env: &[(String, 
 /// secrets layered on top (so a grant is never shadowed by a passed-through
 /// host var).
 ///
-/// **Every tier goes through this, `workspace` included.** That tier applies no
+/// Every tier goes through this, `workspace` included. That tier applies no
 /// kernel confinement, which is a reason to skip the *sandbox*, not a reason to
 /// skip the allowlist: `env_pass` is part of the resolved policy, it is covered
 /// by the pinned digest, and `box status` shows it to a reviewer as the
 /// environment that was enforced. A tier that quietly handed the child the
-/// operator's whole environment — every API token in their shell — would make
+/// operator's whole environment, every API token in their shell, would make
 /// that display say something untrue, which is the one failure this codebase
 /// keeps refusing to ship. It also read strangely from inside: background
 /// services at the workspace tier already got the allowlist while captured runs
@@ -2320,17 +2320,17 @@ fn apply_env_allowlist(
     apply_injected_env(cmd, injected_env);
 }
 
-/// For an **agent-in-box** profile, signal Claude Code that uid 0 inside the box
+/// For an *agent-in-box* profile, signal Claude Code that uid 0 inside the box
 /// is a sandbox artifact, not real root, so `--dangerously-skip-permissions`
 /// works. The egress tiers map the agent to root-*in-userns* (it needs
 /// `CAP_NET_ADMIN` to survive `execve` for `nft`; see the uid_map in
 /// `run_confined`/the supervisor), and Claude's guard refuses
 /// `--dangerously-skip-permissions` on a bare `getuid()==0`. `IS_SANDBOX=1`
-/// skips only that root check — it grants the agent **no** new capability (the
+/// skips only that root check. It grants the agent *no* new capability (the
 /// box already pins it to our real unprivileged host uid, with zero host
 /// privilege). Scoped to agent profiles so ordinary confined runs don't inherit
 /// a sandbox signal they don't need. A caller-supplied / broker `IS_SANDBOX`
-/// (or any host one passed via `env.pass`) wins — we only set the default.
+/// (or any host one passed via `env.pass`) wins. We only set the default.
 fn augment_injected_env(
     policy: &ResolvedPolicy,
     injected_env: &[(String, String)],
@@ -2354,15 +2354,15 @@ static VERIFIED_EXEC_POLICIES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new(
 
 /// Functionally verify the resolved policy can actually *execute* a command on
 /// this host. Capability bits (Landlock + user namespaces + seccomp present)
-/// are necessary but **not sufficient**: a hardened kernel can satisfy every
-/// bit yet still deny `exec` under the full confinement stack — notably
+/// are necessary but *not sufficient*: a hardened kernel can satisfy every
+/// bit yet still deny `exec` under the full confinement stack. Notably
 /// AppArmor-restricted unprivileged user namespaces on Ubuntu 24.04 (and the
 /// GitHub-Actions runners built on it), where `unshare(CLONE_NEWUSER)` succeeds
 /// but the resulting namespace is too restricted to run a program.
 ///
 /// For non-`process` claims this is a no-op. For `process`, it runs a trivial
 /// `true` inside a throwaway directory under the *same* confinement the
-/// environment will use (the tool allowlist is bypassed — the probe command is
+/// environment will use (the tool allowlist is bypassed: the probe command is
 /// ours, not the user's). Returning an error lets `env create` fail closed with
 /// a clear message instead of letting every later `env run` die on EACCES.
 pub fn verify_exec(policy: &ResolvedPolicy) -> Result<(), H5iError> {
@@ -2408,7 +2408,7 @@ pub fn verify_exec(policy: &ResolvedPolicy) -> Result<(), H5iError> {
     }
 }
 
-/// `workspace` tier: no kernel confinement (trusted), but still scoped — runs
+/// `workspace` tier: no kernel confinement (trusted), but still scoped. Runs
 /// in the env worktree with the wall-clock limit applied so a hung command
 /// cannot wedge `h5i box run` forever.
 fn run_unconfined(
@@ -2435,10 +2435,10 @@ fn run_unconfined(
     wait_with_deadline(cmd, policy.profile.wall(), argv, None)
 }
 
-/// The child-side handles for the `supervised` **egress allowlist** (increment
-/// 2). When `build_confined_command` is given one, the child — while it still
+/// The child-side handles for the `supervised` *egress allowlist* (increment
+/// 2). When `build_confined_command` is given one, the child, while it still
 /// holds `CAP_NET_ADMIN`/`CAP_SYS_ADMIN` in its own user namespace and *before*
-/// Landlock/seccomp lock it down — pins DNS via a private `/etc/hosts` and
+/// Landlock/seccomp lock it down, pins DNS via a private `/etc/hosts` and
 /// installs the nftables default-drop allowlist in its netns, after a host-side
 /// helper (the `slirp4netns` uplink) signals readiness. Every field is built
 /// pre-fork and is `Send`; the child touches them with raw syscalls only (no
@@ -2463,15 +2463,15 @@ pub(crate) struct EgressJail {
 ///
 /// Called by the PID-namespace supervisor immediately after its `fork`, and the
 /// reason is subtle enough to be worth stating: `Command::spawn` hands the child
-/// a `CLOEXEC` status pipe and returns only once **every** copy of that pipe's
+/// a `CLOEXEC` status pipe and returns only once *every* copy of that pipe's
 /// write end is closed. The workload's copy closes at `execve`, but the
-/// supervisor — forked from the same child, and never exec'ing — keeps its copy
+/// supervisor (forked from the same child, and never exec'ing) keeps its copy
 /// for the whole run. A supervisor that holds it makes `spawn()` block until the
 /// workload exits, which in turn means the stdout/stderr drain threads (started
 /// after `spawn` returns) never run: any command whose output fills the 64 KiB
 /// pipe deadlocks, and the wall-clock deadline is not armed until after the run
-/// it was meant to bound. The supervisor needs no inherited descriptor — it
-/// waits, mirrors an exit code, and dies — so it drops all of them.
+/// it was meant to bound. The supervisor needs no inherited descriptor (it
+/// waits, mirrors an exit code, and dies) so it drops all of them.
 ///
 /// Allocation-free and async-signal-safe (raw syscalls only), as everything on
 /// the post-fork path must be.
@@ -2481,7 +2481,7 @@ pub(crate) struct EgressJail {
 /// owns no other users of those descriptors.
 #[cfg(target_os = "linux")]
 unsafe fn close_inherited_fds() {
-    // Safety: discharged by this function's own contract — the caller promises
+    // Safety: discharged by this function's own contract. The caller promises
     // no other user of these descriptors exists in the forked child.
     unsafe {
         // close_range(2) is Linux 5.9+; Landlock needs 5.13+, so on any host that
@@ -2537,13 +2537,13 @@ fn fmt_u32(mut v: u32, buf: &mut [u8; 24]) -> &[u8] {
 /// `open`/`write`/`close` a small procfs control file with raw syscalls.
 ///
 /// The allocation-free equivalent of `std::fs::write`, which converts the path
-/// to a `CString` and so allocates — see [`fmt_u32`] for why that matters here.
+/// to a `CString` and so allocates. See [`fmt_u32`] for why that matters here.
 ///
 /// # Safety
 /// `path` must be a valid NUL-terminated C string.
 #[cfg(target_os = "linux")]
 unsafe fn write_proc_file(path: *const libc::c_char, bytes: &[u8]) -> Result<(), std::io::Error> {
-    // Safety: discharged by this function's own contract — the caller promises
+    // Safety: discharged by this function's own contract. The caller promises
     // `path` is a valid NUL-terminated C string.
     let fd = unsafe { libc::open(path, libc::O_WRONLY | libc::O_CLOEXEC) };
     if fd < 0 {
@@ -2560,7 +2560,7 @@ unsafe fn write_proc_file(path: *const libc::c_char, bytes: &[u8]) -> Result<(),
     Ok(())
 }
 
-/// Build a fully-confined `std::process::Command` for `argv` — the **shared**
+/// Build a fully-confined `std::process::Command` for `argv`. The *shared*
 /// confinement core used by both the `process` tier ([`run_confined`]) and the
 /// `supervised` tier ([`crate::supervisor::run`]). Keeping this in one place
 /// means the security-critical setup (Landlock + seccomp deny-list + namespaces
@@ -2569,19 +2569,19 @@ unsafe fn write_proc_file(path: *const libc::c_char, bytes: &[u8]) -> Result<(),
 /// - `force_netns`: always create a fresh network namespace (the `supervised`
 ///   tier does; the `process` tier only when `net.mode = deny`).
 /// - `notify_sock`: when `Some`, the child additionally installs a
-///   seccomp **user-notification** filter and hands the listener fd to this
+///   seccomp *user-notification* filter and hands the listener fd to this
 ///   `AF_UNIX` socket via `SCM_RIGHTS` (the `supervised` socket gate). The
 ///   notify filter stacks *after* the deny-list, and seccomp action precedence
 ///   (ERRNO > USER_NOTIF > ALLOW) makes them compose correctly.
 /// - `egress`: when `Some`, install the netns egress allowlist (see [`EgressJail`]).
 /// - `pidns`: when `true`, run the workload in a fresh PID namespace with a
-///   private procfs (design §5 "PID view"), so it cannot see — or read
-///   `/proc/<pid>/environ` of — host processes. Implemented by forking inside
+///   private procfs (design §5 "PID view"), so it cannot see, or read
+///   `/proc/<pid>/environ` of, host processes. Implemented by forking inside
 ///   `pre_exec`: the parent becomes a thin supervisor that mirrors the workload's
 ///   exit, the child is PID 1 of the new namespace. The `process` tier sets this;
 ///   `supervised` does not yet (it has its own model).
 /// - `cgroup_procs`: path to the run cgroup's `cgroup.procs`. Only consulted when
-///   `pidns` is set — the supervisor writes the *workload's* pid there so the
+///   `pidns` is set. The supervisor writes the *workload's* pid there so the
 ///   cgroup's `memory.max`/accounting bind the real process, not the supervisor.
 #[cfg(target_os = "linux")]
 #[allow(clippy::too_many_arguments)] // the security-critical setup is intentionally one audited fn
@@ -2616,12 +2616,12 @@ pub(crate) fn build_confined_command(
     // the Landlock path sets and the bind lists, so the serialized dump and
     // the enforcement are the same values by construction. The semantics
     // (grants: rw on $WORK + fs.write, ro on fs.read; a missing path skips
-    // the grant, which narrows the sandbox — the fail-closed direction; a
+    // the grant, which narrows the sandbox (the fail-closed direction; a
     // readonly observer session moves `$WORK` from the rw set to the ro set)
-    // live in that function now — change enforcement there, never beside it.
+    // live in that function now) change enforcement there, never beside it.
     // The effective-config layer serializes paths as UTF-8. A path this
     // host cannot represent as UTF-8 would round-trip through the dump
-    // mangled and then fail closed in *confusing* ways — a silently skipped
+    // mangled and then fail closed in *confusing* ways. A silently skipped
     // worktree grant (`path_beneath_rules` drops unopenable paths), a bind
     // mount aimed at a path that does not exist. Refuse explicitly instead:
     // same fail-closed direction, a legible error.
@@ -2657,7 +2657,7 @@ pub(crate) fn build_confined_command(
     };
     let eff = crate::effective::compute_effective(policy, &work, abi_int, &shape);
     // The filesystem-authority gate (ROADMAP §P2), fully opt-in: it does not
-    // run — no host measurement, no cost, no behavior change — unless
+    // run (no host measurement, no cost, no behavior change) unless
     // `H5I_FS_AUTHORITY_ENFORCE=1`. When on, re-check the effective config
     // against the declared policy at this single spawn chokepoint (so a run
     // cannot bypass it) and fail closed on a violation; `confined()` is an
@@ -2681,7 +2681,7 @@ pub(crate) fn build_confined_command(
         }
     }
     // Persist at the apply seam, before anything is spawned: the file records
-    // what this invocation is about to enforce. Fail-closed — an env that
+    // what this invocation is about to enforce. Fail-closed. An env that
     // asked for the record does not run without it.
     if let Some(out) = &policy.effective_out {
         eff.write_to(out)?;
@@ -2695,8 +2695,8 @@ pub(crate) fn build_confined_command(
             RulesetCreatedAttr,
         };
         Ruleset::default()
-            // Fail closed: if the kernel can't enforce what we handle, error —
-            // never a silent partial sandbox.
+            // Fail closed: if the kernel can't enforce what we handle, error.
+            // Never a silent partial sandbox.
             .set_compatibility(CompatLevel::HardRequirement)
             .handle_access(AccessFs::from_all(abi))
             .and_then(|r| r.create())
@@ -2708,7 +2708,7 @@ pub(crate) fn build_confined_command(
     // ── seccomp deny-list program (compiled pre-fork) ──
     let bpf = seccomp_deny_program()?;
 
-    // The netns decision also comes from the effective config — one formula,
+    // The netns decision also comes from the effective config. One formula,
     // two readers, exactly like the path sets and bind lists above. A second
     // spelling of `net_mode == Deny || force_netns` here would be the drift
     // the apply-seam rule exists to prevent.
@@ -2730,7 +2730,7 @@ pub(crate) fn build_confined_command(
 
     // Bind lists, from the effective config, pre-resolved to CStrings so the
     // post-fork child does no allocation when mounting them. `eff.binds` is in
-    // apply order (config-lock, private, home-state, cache-ro, cache-rw — the
+    // apply order (config-lock, private, home-state, cache-ro, cache-rw: the
     // child's steps 1d–1h) and carries the semantics each kind documents in
     // `effective.rs`; a non-empty list forces a mount namespace below.
     let bind_pairs = |kind: crate::effective::BindKind| -> Vec<(std::ffi::CString, std::ffi::CString)> {
@@ -2758,7 +2758,7 @@ pub(crate) fn build_confined_command(
     // uid/gid map contents, rendered HERE rather than post-fork. The egress path
     // execs `nft` and so needs root-in-userns (capabilities only survive execve
     // for uid 0); every other tier keeps the 1:1 map. Both forms are known
-    // pre-fork, so the child writes bytes and allocates nothing — see
+    // pre-fork, so the child writes bytes and allocates nothing. See
     // [`fmt_u32`] for why that matters.
     let (uid_map, gid_map) = if egress.is_some() {
         (format!("0 {uid} 1"), format!("0 {gid} 1"))
@@ -2769,7 +2769,7 @@ pub(crate) fn build_confined_command(
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(&work);
 
-    // Environment allowlist — nothing inherited wholesale (§7) — plus the
+    // Environment allowlist, nothing inherited wholesale (§7), plus the
     // brokered secrets layered on top.
     apply_env_allowlist(&mut cmd, p, injected_env);
 
@@ -2779,17 +2779,17 @@ pub(crate) fn build_confined_command(
             use std::io::Error;
 
             // 0. New session/process group so the wall-clock kill can reap the
-            //    WHOLE tree (killpg), not just the direct child — a confined
+            //    WHOLE tree (killpg), not just the direct child. A confined
             //    command must not be able to leave runaway descendants behind.
             //    Interactive (agent-in-box) sessions skip this: setsid detaches
             //    the child from the controlling terminal, which breaks job
             //    control and every TUI ("cannot set terminal process group").
-            //    They keep the caller's session — exactly how a nested shell
-            //    runs — and have no wall-clock kill (operator-bounded), so the
+            //    They keep the caller's session, exactly how a nested shell
+            //    runs, and have no wall-clock kill (operator-bounded), so the
             //    killpg guarantee isn't needed. The residual is TIOCSTI
             //    keystroke injection through the shared tty. Kernel 6.2 made it
-            //    *disableable* — CONFIG_LEGACY_TIOCSTI, and the
-            //    `dev.tty.legacy_tiocsti` sysctl — but upstream defaults that
+            //    *disableable* (CONFIG_LEGACY_TIOCSTI, and the
+            //    `dev.tty.legacy_tiocsti` sysctl) but upstream defaults that
             //    option to `y`, so whether the door is shut is the host's
             //    choice, not ours. h5i reads the sysctl and reports it
             //    (`tty_input_injection`) rather than assuming a hardened
@@ -2813,7 +2813,7 @@ pub(crate) fn build_confined_command(
                 // /proc without touching the host. The userns in the same call
                 // grants the CAP_SYS_ADMIN it needs, unprivileged.
                 //
-                // CLONE_NEWPID is deliberately NOT requested here — it is
+                // CLONE_NEWPID is deliberately NOT requested here. It is
                 // unshared later, immediately before the fork that uses it (1c).
                 // A PID namespace claims the *next* child as its init, and on the
                 // egress path (1b) that child is the short-lived `nft` helper:
@@ -2840,7 +2840,7 @@ pub(crate) fn build_confined_command(
             }
             // The maps were rendered pre-fork (see `uid_map`/`gid_map` above);
             // raw writes here keep this path allocation-free. `setgroups=deny`
-            // must land before `gid_map`, and `gid_map` before `uid_map` — the
+            // must land before `gid_map`, and `gid_map` before `uid_map`. The
             // kernel refuses the group map otherwise. The map points back at our
             // real host uid either way, so files created in $WORK stay ours.
             write_proc_file(c"/proc/self/setgroups".as_ptr(), b"deny")?;
@@ -2852,11 +2852,11 @@ pub(crate) fn build_confined_command(
             //     this is the window to: tell the host helper our pid (it spawns
             //     the slirp4netns uplink for this netns), pin DNS via a private
             //     /etc/hosts, install the nftables default-drop allowlist, and
-            //     wait for the uplink before continuing. Raw syscalls only — no
+            //     wait for the uplink before continuing. Raw syscalls only, no
             //     allocation in this forked child.
             if let Some(eg) = &egress {
                 use std::ptr::null;
-                // (a0) A private mount namespace for the pinned /etc/hosts —
+                // (a0) A private mount namespace for the pinned /etc/hosts.
                 //      unshared *after* the user ns is fully set up (maps written).
                 if libc::unshare(libc::CLONE_NEWNS) != 0 {
                     return Err(Error::other(format!("egress: unshare NEWNS: {}", Error::last_os_error())));
@@ -2895,12 +2895,12 @@ pub(crate) fn build_confined_command(
                     return Err(Error::other("nft egress ruleset failed to apply (fail-closed)"));
                 }
                 // (d) Wait for slirp4netns to configure the uplink, so the
-                //     program never races a not-yet-ready interface — but with
+                //     program never races a not-yet-ready interface, but with
                 //     a DEADLINE. A bare read here hung forever whenever the
                 //     helper exited without signalling (slirp failed to spawn,
                 //     or tap0 never appeared within its poll budget): the write
                 //     end lives on the parent's live `EgressNetns`, so no EOF
-                //     ever arrives, and `spawn()` blocks the caller with it —
+                //     ever arrives, and `spawn()` blocks the caller with it.
                 //     before the run's wall clock has been armed.
                 //
                 //     `poll` is async-signal-safe and allocates nothing, which
@@ -2928,11 +2928,11 @@ pub(crate) fn build_confined_command(
             //     the parent becomes a thin supervisor that mirrors the workload's
             //     fate to the h5i waiter; the child is PID 1 of the new namespace.
             //     A private procfs is mounted so the workload cannot enumerate, or
-            //     read /proc/<pid>/environ of, host processes — notably this h5i
+            //     read /proc/<pid>/environ of, host processes. Notably this h5i
             //     process, which holds the operator's environment (defeating the
             //     env.pass allowlist). Raw syscalls + one File::open only.
             if pidns {
-                // Claim the PID namespace now — after the egress helper has come
+                // Claim the PID namespace now, after the egress helper has come
                 // and gone (see the CLONE_NEWNS note in step 1), and immediately
                 // before the fork that becomes its init.
                 if libc::unshare(libc::CLONE_NEWPID) != 0 {
@@ -2948,7 +2948,7 @@ pub(crate) fn build_confined_command(
                     // (the cgroup handle is opened fresh).
                     close_inherited_fds();
                     // Move the *workload* into the run cgroup (so memory.max +
-                    // accounting bind it, not us — it was forked before the
+                    // accounting bind it, not us: it was forked before the
                     // host-side cgroup write, which only sees us).
                     if let Some(cpath) = &cgroup_procs_c {
                         let fd = libc::open(cpath.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
@@ -3022,7 +3022,7 @@ pub(crate) fn build_confined_command(
             }
 
             // 1d. Config lockdown (interactive agent sessions). Bind each agent
-            //     config path read-only so the in-box agent cannot edit it — and,
+            //     config path read-only so the in-box agent cannot edit it, and,
             //     for the project-scope DIRECTORIES, cannot create new files in it
             //     (e.g. a `settings.local.json` carrying `disableAllHooks`). This
             //     runs in our private mount namespace (forced above), before
@@ -3056,7 +3056,7 @@ pub(crate) fn build_confined_command(
 
             // 1e. Private-path binds (Idea 3). Bind each per-env backing dir
             //     over its workspace-relative path so concurrent envs of the
-            //     same repo see distinct inodes — no cross-env `flock`/`fcntl`
+            //     same repo see distinct inodes, no cross-env `flock`/`fcntl`
             //     or single-writer-cache contention (Cargo `target/`, Next
             //     `.next/dev/lock`, …). Read-write (unlike the ro config
             //     lockdown above); same private mount ns, before Landlock. The
@@ -3081,7 +3081,7 @@ pub(crate) fn build_confined_command(
             // 1f. HOME-state redirect binds (#1). Bind each per-env credential copy
             //     over the agent runtime's real `~/.claude`/`~/.claude.json`/`~/.codex`
             //     so in-box writes (session history, refreshed tokens) land in the
-            //     env's own copy — concurrent agent boxes never race the shared real
+            //     env's own copy. Concurrent agent boxes never race the shared real
             //     files, and the real HOME is never written. Same private mount ns,
             //     before Landlock; the backing copy is separately Landlock-granted
             //     rw host-side (it was pushed onto fs_write). Fail-closed.
@@ -3159,14 +3159,14 @@ pub(crate) fn build_confined_command(
                 // RLIMIT_DATA, not RLIMIT_AS. RLIMIT_AS caps *virtual address
                 // space*, which modern runtimes over-reserve by design: V8/Node
                 // maps a ~1TiB PROT_NONE heap-sandbox cage at startup, Go reserves
-                // large arenas — none of it resident. An AS cap rejects those
+                // large arenas. None of it resident. An AS cap rejects those
                 // reservations and the process aborts at trivial RSS ("JavaScript
                 // heap out of memory" at ~100MiB). RLIMIT_DATA caps the writable
                 // data segment (brk + writable-anonymous mmaps, Linux >=4.7), so
                 // it bounds actual heap growth without counting PROT_NONE
                 // reservations (is_data_mapping() requires VM_WRITE). This is the
                 // rlimit-tier fallback; cgroup `memory.max` (when the host
-                // delegates one — see cgroup.rs) is the accurate whole-subtree
+                // delegates one: see cgroup.rs) is the accurate whole-subtree
                 // RSS cap layered on top.
                 let lim = libc::rlimit { rlim_cur: bytes, rlim_max: bytes };
                 if libc::setrlimit(libc::RLIMIT_DATA, &lim) != 0 {
@@ -3180,14 +3180,14 @@ pub(crate) fn build_confined_command(
                 }
             }
             if let Some(bytes) = fsize {
-                // Cap any single file the command writes — a disk-bomb backstop.
+                // Cap any single file the command writes. A disk-bomb backstop.
                 let lim = libc::rlimit { rlim_cur: bytes, rlim_max: bytes };
                 if libc::setrlimit(libc::RLIMIT_FSIZE, &lim) != 0 {
                     return Err(Error::last_os_error());
                 }
             }
             if let Some(secs) = cpu {
-                // Hard CPU-time cap (SIGKILL at the hard limit) — a kernel
+                // Hard CPU-time cap (SIGKILL at the hard limit). A kernel
                 // backstop to the host-side wall-clock kill.
                 let lim = libc::rlimit { rlim_cur: secs, rlim_max: secs };
                 if libc::setrlimit(libc::RLIMIT_CPU, &lim) != 0 {
@@ -3197,14 +3197,14 @@ pub(crate) fn build_confined_command(
             let core = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
             let _ = libc::setrlimit(libc::RLIMIT_CORE, &core);
 
-            // 3. No new privileges — required by Landlock, and blocks setuid
+            // 3. No new privileges: required by Landlock, and blocks setuid
             //    escalation on its own.
             if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
                 return Err(Error::last_os_error());
             }
 
             // 4. Landlock filesystem allowlist. Fail closed if not fully
-            //    enforced — which is what the comment always said and what the
+            //    enforced, which is what the comment always said and what the
             //    check did not do: it refused `NotEnforced` and let
             //    `PartiallyEnforced` through. That middle state is the one worth
             //    refusing. It means the box is confined by some of the access
@@ -3296,7 +3296,7 @@ fn run_confined(
     } else {
         // Under the PID-namespace jail the workload runs as a grandchild of a thin
         // supervisor, so `wait4`'s rusage is the supervisor's, not the workload's.
-        // Without a cgroup we cannot attribute rss/cpu — report unknown rather
+        // Without a cgroup we cannot attribute rss/cpu. Report unknown rather
         // than a misleading figure. The in-child rlimits still *enforce* the caps.
         outcome.max_rss_kb = None;
         outcome.cpu_ms = 0;
@@ -3368,9 +3368,9 @@ fn run_confined(
 /// The `_` arm caps at `V5`, which is the newest this crate knows. That is the
 /// conservative direction for *this* ruleset and worth naming as a residual:
 /// a kernel newer than the crate is asked for V5's access rights, so anything
-/// Landlock learned after V5 is simply not handled. It costs nothing today —
-/// `AccessFs` has not grown since ABI 5 (`IOCTL_DEV`); ABI 6 and later added
-/// scopes and TCP network rights, neither of which this ruleset uses — but the
+/// Landlock learned after V5 is simply not handled. It costs nothing today
+/// (`AccessFs` has not grown since ABI 5 (`IOCTL_DEV`); ABI 6 and later added
+/// scopes and TCP network rights, neither of which this ruleset uses) but the
 /// arm silently absorbs a future `AccessFs` bit, so a `landlock` upgrade is a
 /// reason to come back here rather than a routine bump.
 fn landlock_abi_for(probed: i32) -> landlock::ABI {
@@ -3385,7 +3385,7 @@ fn landlock_abi_for(probed: i32) -> landlock::ABI {
 
 /// The curated set of syscall numbers the deny-list blocks (returns EPERM).
 ///
-/// This is the security contract — kept as its own function so a unit test can
+/// This is the security contract. Kept as its own function so a unit test can
 /// assert the security-critical members are present without a kernel. Every
 /// entry is an administrative / introspection / namespace / fs-handle syscall
 /// that a build or test workload never legitimately issues, so a blanket EPERM
@@ -3453,7 +3453,7 @@ fn denied_syscalls() -> Vec<libc::c_long> {
         // filesystem-wide change notification
         libc::SYS_fanotify_init,
         libc::SYS_fanotify_mark,
-        // io_uring — a large, repeatedly-exploited kernel attack surface that
+        // io_uring. A large, repeatedly-exploited kernel attack surface that
         // also bypasses seccomp for the operations it submits; build/test
         // workloads don't need it, so deny the whole interface.
         libc::SYS_io_uring_setup,
@@ -3466,10 +3466,10 @@ fn denied_syscalls() -> Vec<libc::c_long> {
     denied
 }
 
-/// The seccomp **deny-list** (v1, §5): dangerous administrative / introspection
+/// The seccomp *deny-list* (v1, §5): dangerous administrative / introspection
 /// syscalls return EPERM; everything else is allowed. A default-deny allowlist
 /// is a later hardened profile. Known gap (documented, not hidden): `clone`
-/// with CLONE_NEWUSER is not arg-filtered in v1 — `unshare` is denied, and
+/// with CLONE_NEWUSER is not arg-filtered in v1: `unshare` is denied, and
 /// no_new_privs + Landlock still bound what a fresh namespace could reach.
 #[cfg(target_os = "linux")]
 fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
@@ -3501,14 +3501,14 @@ fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
 ///
 /// Linux only, like `seccompiler` and its caller.
 ///
-/// On x86_64, x32 reports `AUDIT_ARCH_X86_64` in `seccomp_data.arch` — so
-/// seccompiler's own arch check passes — but ORs `X32_SYSCALL_BIT` into `nr`.
+/// On x86_64, x32 reports `AUDIT_ARCH_X86_64` in `seccomp_data.arch`, so
+/// seccompiler's own arch check passes, but ORs `X32_SYSCALL_BIT` into `nr`.
 /// Every syscall-number comparison in the compiled deny-list therefore misses,
 /// and an x32 `mount`/`ptrace`/`unshare` falls through to the default Allow.
 /// seccompiler has no knob for this, so the guard is prepended to the compiled
 /// program: BPF jumps are relative, so shifting the original block is safe.
 ///
-/// Architecture-independent by construction — no aarch64 syscall number comes
+/// Architecture-independent by construction, no aarch64 syscall number comes
 /// near `0x4000_0000`, so the comparison never fires there.
 #[cfg(target_os = "linux")]
 fn prepend_x32_guard(program: seccompiler::BpfProgram) -> seccompiler::BpfProgram {
@@ -3535,7 +3535,7 @@ fn prepend_x32_guard(program: seccompiler::BpfProgram) -> seccompiler::BpfProgra
 }
 
 /// Spawn `cmd`, stream stdout/stderr off-thread, and enforce `wall` as a hard
-/// deadline (SIGKILL). stdin is closed — env runs are non-interactive by
+/// deadline (SIGKILL). stdin is closed. Env runs are non-interactive by
 /// construction so a confined process can't block on a prompt forever.
 pub(crate) fn wait_with_deadline(
     mut cmd: std::process::Command,
@@ -3553,7 +3553,7 @@ pub(crate) fn wait_with_deadline(
 
     // Move the child into its cgroup as early as possible (best-effort): write
     // its pid to the cgroup's `cgroup.procs`. There's a sub-millisecond window
-    // between spawn and this write where the child is not yet limited — accepted
+    // between spawn and this write where the child is not yet limited. Accepted
     // for v1 (CLONE_INTO_CGROUP would close it but isn't exposed by std).
     if let Some(procs) = cgroup_procs {
         let _ = std::fs::write(procs, child.id().to_string());
@@ -3583,7 +3583,7 @@ pub(crate) fn wait_with_deadline(
 /// (peak RSS + CPU time). Returns `(exit_code, timed_out, cpu_ms, max_rss_kb)`.
 ///
 /// `wall = None` disables the deadline (interactive sessions are bounded by
-/// the operator, not a timer — and, having skipped `setsid`, they have no
+/// the operator, not a timer, and, having skipped `setsid`, they have no
 /// dedicated process group to `killpg`).
 #[cfg(unix)]
 pub(crate) fn wait_loop(
@@ -3615,7 +3615,7 @@ pub(crate) fn wait_loop(
             if e.raw_os_error() == Some(libc::EINTR) {
                 continue;
             }
-            // Lost the child (e.g. ECHILD) — fall back to std's bookkeeping.
+            // Lost the child (e.g. ECHILD). Fall back to std's bookkeeping.
             let code = child.wait().ok().and_then(|s| s.code());
             return (code, timed_out, 0, None);
         }
@@ -3640,10 +3640,10 @@ fn cpu_ms(u: &libc::rusage) -> u128 {
 }
 
 /// Peak RSS in KiB, normalising the one `rusage` field whose unit POSIX never
-/// fixed: Linux (and the BSDs) report `ru_maxrss` in kilobytes, **Darwin reports
-/// it in bytes**. Taking the raw value there over-reported every receipt by
+/// fixed: Linux (and the BSDs) report `ru_maxrss` in kilobytes, Darwin reports
+/// it in bytes. Taking the raw value there over-reported every receipt by
 /// 1024×, so a `pwd` claimed 1.1 GiB and a 512 MiB allocation claimed a
-/// terabyte — numbers that then travelled into export reports.
+/// terabyte. Numbers that then travelled into export reports.
 #[cfg(unix)]
 fn maxrss_kb(u: &libc::rusage) -> i64 {
     if cfg!(target_vendor = "apple") {
@@ -3938,7 +3938,7 @@ isolation = "process"
 "a/b" = { kind = "cache" }
 "#;
         assert!(load_from_str(overlap, "dev", None).is_err());
-        // Comma (unsupported by the container mount syntax) — fail closed at
+        // Comma (unsupported by the container mount syntax). Fail closed at
         // load, not silently skipped later.
         let comma = r#"
 [profile.dev]
@@ -4001,18 +4001,18 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
 
     /// The deny-list is a security *contract*: removing any of these syscalls
     /// silently widens the sandbox. This asserts membership directly (no kernel
-    /// needed), so dropping e.g. `SYS_mount` or `SYS_ptrace` fails the build —
-    /// the weak old test only checked the program compiled and that libc still
+    /// needed), so dropping e.g. `SYS_mount` or `SYS_ptrace` fails the build.
+    /// The weak old test only checked the program compiled and that libc still
     /// exported the constants, which would NOT catch a deletion from the list.
     /// Live, capability-gated: the ruleset `resolve_process`/`resolve_supervised`
-    /// build must come back **fully** enforced on a kernel that has Landlock.
+    /// build must come back *fully* enforced on a kernel that has Landlock.
     ///
     /// `restrict_self` reports three states, and the one in the middle is the
     /// dangerous one: `PartiallyEnforced` means the box is confined by some of
     /// the access rights that were asked for and not the others, which is a
     /// sandbox whose shape nobody wrote down. `CompatLevel::HardRequirement` is
-    /// set precisely so that cannot happen — it turns an unsupported right into
-    /// an error while the ruleset is still being built — and this is that claim
+    /// set precisely so that cannot happen, it turns an unsupported right into
+    /// an error while the ruleset is still being built, and this is that claim
     /// checked against a real kernel rather than against the crate's docs.
     ///
     /// Forked, because `restrict_self` cannot be undone: the confinement would
@@ -4033,7 +4033,7 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
                 RulesetAttr, RulesetCreatedAttr, RulesetStatus,
             };
             // The same construction the real path uses, with `/` standing in
-            // for the grants — what is under test is the enforcement status,
+            // for the grants. What is under test is the enforcement status,
             // not which paths were granted.
             let code = (|| -> Option<i32> {
                 let status = Ruleset::default()
@@ -4094,7 +4094,7 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
             // path-confinement bypass via fs handles
             ("open_by_handle_at", libc::SYS_open_by_handle_at),
             ("name_to_handle_at", libc::SYS_name_to_handle_at),
-            // io_uring — large, repeatedly-exploited surface that also bypasses seccomp
+            // io_uring. Large, repeatedly-exploited surface that also bypasses seccomp
             ("io_uring_setup", libc::SYS_io_uring_setup),
             ("io_uring_enter", libc::SYS_io_uring_enter),
             ("io_uring_register", libc::SYS_io_uring_register),
@@ -4197,7 +4197,7 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         assert!(p.fs_write.iter().any(|s| s == "~/.claude"));
         assert!(!p.fs_write.iter().any(|s| s == "~/.codex"), "no cross-runtime state");
         assert!(p.fs_write.iter().any(|s| s == "/tmp"));
-        // Own API egress only — not OpenAI's.
+        // Own API egress only, not OpenAI's.
         assert!(p.net_egress.iter().any(|s| s == "api.anthropic.com"));
         assert!(!p.net_egress.iter().any(|s| s == "api.openai.com"), "no cross-runtime egress");
         assert!(p.env_pass.iter().any(|k| k == "TERM"));
@@ -4258,7 +4258,7 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         // Agent-in-box profiles map the agent to root-in-userns on the egress
         // tiers, so Claude's `getuid()==0` guard would refuse
         // `--dangerously-skip-permissions`. `IS_SANDBOX=1` is injected to skip
-        // only that check (no new capability) — for every agent profile/runtime.
+        // only that check (no new capability). For every agent profile/runtime.
         for name in ["agent", "agent-claude", "agent-codex"] {
             let p = Profile::builtin(name, IsolationClaim::Supervised);
             let policy = ResolvedPolicy::new(p.isolation, p);
@@ -4285,7 +4285,7 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
 
     #[test]
     fn injected_is_sandbox_is_not_overridden() {
-        // A caller-supplied / broker IS_SANDBOX wins — we only set the default,
+        // A caller-supplied / broker IS_SANDBOX wins. We only set the default,
         // and never duplicate the key.
         let p = Profile::builtin("agent-claude", IsolationClaim::Supervised);
         let policy = ResolvedPolicy::new(p.isolation, p);
@@ -4315,7 +4315,7 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         // Without the auth host an agent box is a one-session box: the seeded
         // credential copy expires, the silent refresh has nowhere to go, and the
         // in-box login that should repopulate it cannot complete either (the
-        // paste comes back "invalid token"). Regression guard — the API host
+        // paste comes back "invalid token"). Regression guard. The API host
         // alone looks sufficient right up until a session outlives its token.
         let dir = tempfile::tempdir().unwrap();
         for (name, auth_host, foreign) in [
@@ -4348,7 +4348,7 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
     #[test]
     fn agent_profile_refuses_tiers_that_cannot_enforce_egress() {
         // Fail-closed: the agent profile carries net.egress, which the static
-        // process tier (and below) cannot enforce — refuse, never weaken.
+        // process tier (and below) cannot enforce. Refuse, never weaken.
         let dir = tempfile::tempdir().unwrap();
         for tier in [IsolationClaim::Workspace, IsolationClaim::Process] {
             let err = load_profile(dir.path(), "agent", Some(tier)).unwrap_err();
@@ -4359,7 +4359,7 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
     #[test]
     fn user_defined_agent_profile_merges_over_agent_builtin() {
         // A partial [profile.agent-claude] keeps the agent-in-box grants as its
-        // base — including net.egress when the overlay omits it (an agent box
+        // base, including net.egress when the overlay omits it (an agent box
         // that silently lost its API allowlist would be bricked, not safer).
         let toml_text = r#"
 [profile.agent-claude]
@@ -4378,7 +4378,7 @@ resources = { mem = "2G" }
 
     #[test]
     fn explicit_empty_egress_opts_out_of_the_builtin_allowlist() {
-        // `egress = []` is a deliberate opt-out — kept empty, never re-widened.
+        // `egress = []` is a deliberate opt-out. Kept empty, never re-widened.
         let toml_text = r#"
 [profile.agent-claude]
 isolation = "supervised"
@@ -4524,7 +4524,7 @@ container.image = "localhost/mine:2"
     #[test]
     fn effective_auto_honors_a_declared_tier_without_probing() {
         // A profile that explicitly declares `workspace` must resolve to exactly
-        // that under the default (non-forced) path — deterministic, no host probe.
+        // that under the default (non-forced) path. Deterministic, no host probe.
         let dir = tmp_repo(Some("[profile.default]\nisolation = \"workspace\"\n"));
         assert_eq!(
             effective_auto(dir.path(), "default", false, None).unwrap(),
@@ -4535,7 +4535,7 @@ container.image = "localhost/mine:2"
     #[test]
     fn effective_auto_never_picks_an_unrunnable_tier() {
         // The core invariant of secure-by-default: whatever auto picks (host
-        // dependent) MUST pass the very checks `create` applies — so a default
+        // dependent) MUST pass the very checks `create` applies, so a default
         // env never fails at run time. Forced probe, no declared tier.
         let dir = tmp_repo(None);
         let tier = effective_auto(dir.path(), "default", true, None).unwrap();
@@ -4545,7 +4545,7 @@ container.image = "localhost/mine:2"
             let pol = resolve(&p, &probe_host()).expect("auto-picked tier must resolve");
             verify_exec(&pol).expect("auto-picked tier must verify-exec");
         }
-        // And it is never weaker than workspace is meaningless — just assert it's
+        // And it is never weaker than workspace is meaningless. Just assert it's
         // a real claim (the match is exhaustive, so reaching here means it's one).
         let _ = tier;
     }
@@ -4553,7 +4553,7 @@ container.image = "localhost/mine:2"
     #[test]
     fn effective_auto_skips_container_without_an_image() {
         // The bare default has no container image, so auto must NOT pick
-        // `container` (resolve refuses imageless container) — it lands on a
+        // `container` (resolve refuses imageless container). It lands on a
         // kernel tier or workspace instead.
         let dir = tmp_repo(None);
         let tier = effective_auto(dir.path(), "default", true, None).unwrap();
@@ -4615,7 +4615,7 @@ source = "http://evil/steal"
         // $WORK writable, no secrets/egress by default.
         let p = Profile::builtin("p", IsolationClaim::Supervised);
         assert_eq!(p.net_mode, NetMode::Deny);
-        // $WORK plus the write-granted sinks (/dev/null, /dev/zero) — no other
+        // $WORK plus the write-granted sinks (/dev/null, /dev/zero), no other
         // host paths are writable.
         assert_eq!(p.fs_write, vec!["$WORK", "/dev/null", "/dev/zero"]);
         assert!(p.net_egress.is_empty());
@@ -4629,7 +4629,7 @@ source = "http://evil/steal"
     #[test]
     fn fs_deny_lint_rejects_granted_parent_of_denied_child() {
         // Granting $HOME while denying ~/.ssh is unenforceable under Landlock
-        // (allowlist-only) — the policy must be refused, not weakened.
+        // (allowlist-only). The policy must be refused, not weakened.
         let home = std::env::var("HOME").unwrap_or_else(|_| "/home/x".into());
         let toml_text = format!(
             r#"
@@ -4644,7 +4644,7 @@ fs.deny = ["~/.ssh"]
     }
 
     /// The lint is the only thing standing between a grant and a denied child
-    /// inside it — Landlock has no deny rules, so `fs.deny` is a preflight
+    /// inside it. Landlock has no deny rules, so `fs.deny` is a preflight
     /// refusal on Linux and nothing else. With `$HOME` unset it compared the
     /// literal string `~/.ssh` against `/Users/dev`, found no overlap, and let
     /// the policy load with the key material inside the grant.
@@ -4653,7 +4653,7 @@ fs.deny = ["~/.ssh"]
     /// tests as threads in one process, so a `remove_var` here is a `remove_var`
     /// for every test that happens to be running beside it.
     /// The box decides how much it writes, and every tier drained its output
-    /// with a bare `read_to_end` — an unbounded host allocation driven by the
+    /// with a bare `read_to_end`: an unbounded host allocation driven by the
     /// confined process. `yes` inside a box is tens of gigabytes of host RAM
     /// before the wall clock stops it, and the receipt store's own cap is
     /// applied long after the bytes are already buffered.
@@ -4808,7 +4808,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     #[test]
     fn resolve_refuses_unimplemented_backends() {
         // `hardened-container` (gVisor/Kata) still has no adapter. `microvm`
-        // does — see `resolve_microvm_requires_image_and_runtime`.
+        // does. See `resolve_microvm_requires_image_and_runtime`.
         let p = Profile::builtin("default", IsolationClaim::HardenedContainer);
         let err = resolve(&p, &caps(Some(5), true, true)).unwrap_err();
         assert!(err.to_string().contains("backend"), "{err}");
@@ -4835,7 +4835,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
 
     #[test]
     fn resolve_microvm_requires_image_and_runtime() {
-        // A missing image is a *static* profile error — true on every host — so
+        // A missing image is a *static* profile error, true on every host, so
         // it is reported before the host probe, and a box or a CI runner with no
         // virtualization still gets the message it can act on.
         let bare = Profile::builtin("default", IsolationClaim::Microvm);
@@ -4923,7 +4923,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     fn resolve_process_on_macos_rests_on_seatbelt_not_landlock() {
         let p = Profile::builtin("default", IsolationClaim::Process);
         // A Mac has no Landlock, no seccomp and no userns, and must not be
-        // judged by them — Seatbelt is its kernel tier.
+        // judged by them. Seatbelt is its kernel tier.
         assert!(
             resolve(&p, &mac_caps(true)).is_ok(),
             "a usable Seatbelt satisfies the process claim on macOS"
@@ -4935,7 +4935,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     }
 
     /// An interactive box shell shares the operator's terminal, so whether a box
-    /// can type into it is a disclosed limit — and on Linux it is the *host's*
+    /// can type into it is a disclosed limit, and on Linux it is the *host's*
     /// setting. Report it wrong in the safe direction and an operator trusts a
     /// door that is open, so the unreadable case must read as injectable.
     #[test]
@@ -4956,14 +4956,14 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     /// macOS answers from the Seatbelt *profile*, so the answer is tier-shaped:
     /// the subtraction exists only where a profile is applied. Reporting one
     /// constant for the host would claim the door is shut on exactly the paths
-    /// that apply no profile — the direction the fail-open rule forbids.
+    /// that apply no profile. The direction the fail-open rule forbids.
     #[test]
     fn tty_injection_on_macos_follows_the_profile_not_the_platform() {
         // A kernel tier on a working Seatbelt: the profile subtracts it.
         assert!(!tty_input_injection(&mac_caps(true), IsolationClaim::Process));
         assert!(!tty_input_injection(&mac_caps(true), IsolationClaim::Supervised));
 
-        // `workspace` runs unconfined by design — no profile, no subtraction.
+        // `workspace` runs unconfined by design, no profile, no subtraction.
         assert!(
             tty_input_injection(&mac_caps(true), IsolationClaim::Workspace),
             "an unconfined session applies no profile; nothing subtracts TIOCSTI"
@@ -4976,7 +4976,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         );
 
         // The image-backed tiers hand the box its own terminal, so its input
-        // queue is its own — true whatever the host underneath.
+        // queue is its own. True whatever the host underneath.
         for claim in [
             IsolationClaim::Container,
             IsolationClaim::HardenedContainer,
@@ -5047,7 +5047,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     /// The PID-namespace tiers fork a thin supervisor inside `pre_exec`, and that
     /// supervisor inherits std's `CLOEXEC` spawn-status pipe. Until it dropped
     /// that descriptor, `Command::spawn` did not return until the workload had
-    /// already exited — so the stdout drain threads started too late and any
+    /// already exited, so the stdout drain threads started too late and any
     /// command whose output exceeded the 64 KiB pipe buffer deadlocked forever.
     /// Well over one pipe buffer, and it must come back whole.
     #[cfg(target_os = "linux")]
@@ -5118,7 +5118,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let out = run(&policy, dir.path(), &["sh".into(), "-c".into(), "sleep 0.2".into()]).unwrap();
         assert_eq!(out.exit_code, Some(0));
         assert!(out.wall_ms >= 150, "wall_ms should reflect the ~200ms sleep: {}", out.wall_ms);
-        // On Linux wait4 fills ru_maxrss (KiB) — a real process is > 0.
+        // On Linux wait4 fills ru_maxrss (KiB). A real process is > 0.
         #[cfg(target_os = "linux")]
         assert!(out.max_rss_kb.unwrap_or(0) > 0, "expected a peak RSS reading");
     }
@@ -5137,7 +5137,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     }
 
     /// `env_pass` is digested policy and `box status` reports it as enforced, so
-    /// every tier has to honour it — including `workspace`, where nothing else is
+    /// every tier has to honour it, including `workspace`, where nothing else is
     /// confined and the operator's shell is therefore at its most exposed.
     #[test]
     fn the_env_allowlist_is_enforced_at_the_workspace_tier_too() {
@@ -5219,7 +5219,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         assert_eq!(ct.satisfiable, r.container_runtime.is_some());
         // A domain allowlist is enforced by the container tier's DNS-pinned
         // proxy, by the microvm tier's netstack rules, and on macOS also by the
-        // supervised tier — whose Seatbelt profile leaves the box no outbound
+        // supervised tier. Whose Seatbelt profile leaves the box no outbound
         // route except that same proxy. The Linux kernel tiers can deny all but
         // never allowlist, so they do not count towards this.
         let supervised_runs = r

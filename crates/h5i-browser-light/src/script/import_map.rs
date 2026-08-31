@@ -2,8 +2,8 @@
 //!
 //! [`super::modules::resolve`] refuses a bare specifier, because a loader that
 //! rewrites `import "lodash"` to `https://esm.sh/lodash` has turned one line of
-//! page script into a request to a third party **the engine chose**. An import
-//! map is different: **the page declares the mapping**, so `esm.sh` appears in a
+//! page script into a request to a third party the engine chose. An import
+//! map is different: the page declares the mapping, so `esm.sh` appears in a
 //! receipt because the document said so in markup the parser already read.
 //!
 //! The refusal keeps its target. A bare specifier with no map is still an error

@@ -9,11 +9,11 @@
 //!
 //! Two rules keep that worth something:
 //!
-//! * **Everything the box supplies is sanitized before it is drawn.** The URL
+//! * Everything the box supplies is sanitized before it is drawn. The URL
 //!   arrives over the WebSocket, so it is page-influenced text going to a
-//!   terminal — the exact shape of thing [`crate::redact::sanitize_display`]
+//!   terminal. The exact shape of thing [`crate::redact::sanitize_display`]
 //!   exists for, escape sequences and bidi overrides alike.
-//! * **The origin is never the part that gets truncated.** A status line too
+//! * The origin is never the part that gets truncated. A status line too
 //!   narrow for the whole URL has to drop something, and dropping the *end* of
 //!   the host is precisely the attack: `https://bank.example.evil.test/…`
 //!   shortened from the right reads as `https://bank.example…`. The origin is
@@ -106,8 +106,8 @@ const URL_PRIO: u8 = 2;
 /// The order things are surrendered in is a judgement about what this row is
 /// *for*. Which box, and where the page is, are useful. Which mode the viewer
 /// is in and who holds the control lock are the reason a human looks up here at
-/// all — someone about to type a password needs to know whether their keys are
-/// going to the page — so those never give way, whatever else has to.
+/// all, someone about to type a password needs to know whether their keys are
+/// going to the page, so those never give way, whatever else has to.
 fn compose(s: &Status, width: usize) -> String {
     let mut segs: Vec<Seg> = Vec::new();
     let seg = |prio, text: String| Seg {
@@ -280,7 +280,7 @@ mod tests {
     fn the_mode_and_the_lock_holder_survive_every_width() {
         // Someone about to type a password looks up here to find out whether
         // their keys are going to the page. That answer is the last thing the
-        // row is allowed to drop, however narrow the pane — and a long box id
+        // row is allowed to drop, however narrow the pane, and a long box id
         // must not be able to push it off the end.
         let mut s = status();
         s.box_id = "env/claude/a-very-long-branch-name-for-this-box".into();
@@ -376,7 +376,7 @@ mod tests {
     #[test]
     fn a_stalled_stream_and_page_errors_are_reported_rather_than_hidden() {
         // A frozen frame is indistinguishable from a static page, so the row
-        // has to say which it is — otherwise the honest failure mode of this
+        // has to say which it is. Otherwise the honest failure mode of this
         // viewer is "everything looks fine".
         let mut s = status();
         s.streaming = false;

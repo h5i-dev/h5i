@@ -4,14 +4,14 @@
 //! UTF-8, which is right for most of the web and wrong for the part of it that
 //! predates it. A page served as `euc-jp` came out as replacement characters,
 //! `document.characterSet` did not exist, and a link's query string was
-//! percent-encoded from the wrong bytes — so an agent reading a legacy Japanese
+//! percent-encoded from the wrong bytes, so an agent reading a legacy Japanese
 //! page got the wrong answer and was told nothing.
 //!
 //! Two things follow from a document's encoding, and both are here:
 //!
-//! * **Decoding the bytes.** [`sniff`] works out which encoding, [`decode`]
+//! * Decoding the bytes. [`sniff`] works out which encoding, [`decode`]
 //!   applies it.
-//! * **Encoding a URL's query.** The URL Standard says a query is encoded with
+//! * Encoding a URL's query. The URL Standard says a query is encoded with
 //!   the *document's* encoding rather than UTF-8, and that a code point the
 //!   encoding cannot represent becomes an HTML numeric character reference.
 //!   [`encode_query`] does that.
@@ -32,11 +32,11 @@ const PRESCAN_LIMIT: usize = 1024;
 
 /// Work out a document's encoding, in the order the HTML standard says.
 ///
-/// A BOM wins outright — it is unambiguous and overrides everything, including
+/// A BOM wins outright. It is unambiguous and overrides everything, including
 /// a `<meta>` that disagrees with it. Then the transport's `Content-Type`,
 /// because the server is better informed than the markup. Then the markup's own
 /// declaration. Then, for an undeclared document, UTF-8 if the bytes are valid
-/// UTF-8 and windows-1252 if they are not — see the body for why that asymmetry
+/// UTF-8 and windows-1252 if they are not. See the body for why that asymmetry
 /// is the right way round.
 pub fn sniff(bytes: &[u8], content_type: Option<&str>) -> &'static Encoding {
     if let Some((encoding, _)) = Encoding::for_bom(bytes) {
@@ -56,21 +56,21 @@ pub fn sniff(bytes: &[u8], content_type: Option<&str>) -> &'static Encoding {
     // only the first, which destroyed exactly the documents this module exists
     // to rescue.
     //
-    // Valid UTF-8 is taken as UTF-8 — the detection every browser performs, and
+    // Valid UTF-8 is taken as UTF-8. The detection every browser performs, and
     // right for almost every undeclared page written this century.
     //
     // Anything else falls back to windows-1252 rather than to UTF-8, and the
     // reason is asymmetry of damage. A windows-1252 page read as UTF-8 has
-    // every high byte replaced by U+FFFD and **the text is gone**: `café naïve`
+    // every high byte replaced by U+FFFD and the text is gone: `café naïve`
     // became `caf<?> na<?>ve`, where Chromium reads it correctly. A UTF-8 page
-    // read as windows-1252 is mojibake but lossless — every byte maps to some
+    // read as windows-1252 is mojibake but lossless. Every byte maps to some
     // character, and nothing is destroyed. Given a guess has to be made, the
     // recoverable wrong answer is the better one, and it is also what a browser
     // would show the person the agent is reporting to.
     // Detection only fires on bytes that *demonstrate* UTF-8. A document of
     // pure ASCII is valid UTF-8 and equally valid windows-1252 and decodes
     // identically either way, so nothing observable turns on it except the
-    // label — and a browser reports the fallback there. Claiming UTF-8 for
+    // label, and a browser reports the fallback there. Claiming UTF-8 for
     // ASCII would differ from Chromium for no benefit.
     let has_multibyte = bytes.iter().any(|byte| *byte >= 0x80);
     if has_multibyte && std::str::from_utf8(bytes).is_ok() {
@@ -96,7 +96,7 @@ fn charset_from_content_type(header: &str) -> Option<&str> {
 /// The HTML prescan: look for a `<meta>` that declares an encoding.
 ///
 /// Deliberately a scan over bytes rather than a parse. The whole point of this
-/// step is that it runs *before* there is a parser — the parser cannot start
+/// step is that it runs *before* there is a parser. The parser cannot start
 /// until it knows how to decode the bytes it would be parsing.
 ///
 /// Both spellings are recognised: the modern `<meta charset=…>` and the legacy
@@ -175,7 +175,7 @@ pub fn decode(bytes: &[u8], encoding: &'static Encoding) -> String {
 ///
 /// The URL Standard encodes a query with the document's encoding rather than
 /// UTF-8, and a code point that encoding cannot represent becomes an HTML
-/// numeric character reference — so `丂` in a euc-jp document comes out as
+/// numeric character reference, so `丂` in a euc-jp document comes out as
 /// `%26%2319970%3B`, which is `&#19970;` with its own punctuation already
 /// percent-encoded.
 ///
@@ -192,8 +192,8 @@ pub fn encode_query(query: &str, encoding: &'static Encoding) -> String {
     // are not in the query percent-encode set, so they would pass through and
     // the answer would be `&%2319970;`.
     //
-    // The URL Standard appends `%26%23`, the decimal value, and `%3B` — the
-    // reference already percent-encoded — precisely so a generated reference
+    // The URL Standard appends `%26%23`, the decimal value, and `%3B`, the
+    // reference already percent-encoded, precisely so a generated reference
     // cannot be mistaken for a real separator. Only the encoder API reports
     // *which* code point was unmappable, so only it can do that.
     let mut encoder = encoding.new_encoder();
@@ -285,7 +285,7 @@ mod tests {
         // with the browser is the point.
         let mut late = vec![b' '; PRESCAN_LIMIT + 64];
         late.extend_from_slice(b"<meta charset=\"euc-jp\">");
-        // Falls back rather than honouring it — and the fallback for ASCII is
+        // Falls back rather than honouring it, and the fallback for ASCII is
         // windows-1252, the same answer a browser gives.
         assert_eq!(sniff(&late, None), encoding_rs::WINDOWS_1252);
     }

@@ -1,6 +1,6 @@
 //! Compile the eBPF probe, when this host can.
 //!
-//! The build is deliberately **soft**. A missing or BPF-incapable `clang` does
+//! The build is deliberately *soft*. A missing or BPF-incapable `clang` does
 //! not fail the build; it leaves the object out, and the loader then reports
 //! `unavailable: built without the eBPF object` at run time rather than
 //! pretending it collected nothing. That keeps `cargo build` working for a
@@ -13,7 +13,7 @@
 //! worst of both worlds: a `runtime` block that always says `unavailable` and
 //! a reader who takes that for a quiet box.
 //!
-//! The released binaries do **not** carry the probe today, and that is stated
+//! The released binaries do *not* carry the probe today, and that is stated
 //! rather than left to be discovered: the release matrix cross-builds musl
 //! targets inside containers that have no LLVM, and `h5i box detect probe`
 //! reports the consequence in one line with the command that fixes it
@@ -146,8 +146,8 @@ fn strip_dwarf(clang: &Path, obj: &Path) {
 
 /// Find a clang that can actually emit BPF.
 ///
-/// Presence is not the question — a clang built without the BPF backend
-/// compiles the file and then fails at codegen — so each candidate is asked to
+/// Presence is not the question, a clang built without the BPF backend
+/// compiles the file and then fails at codegen, so each candidate is asked to
 /// compile an empty translation unit for the BPF target before it is trusted.
 fn find_clang() -> Option<PathBuf> {
     let mut names: Vec<String> = Vec::new();

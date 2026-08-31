@@ -7,22 +7,22 @@
 //! *tier* without the box: the Landlock scoping, seccomp filter and rlimits of
 //! `isolation = process`, built from a profile rather than a repository.
 //!
-//! It contains the **consequences** of a compromised engine: the filesystem it
+//! It contains the *consequences* of a compromised engine: the filesystem it
 //! reaches, the environment it reads, what it can allocate, and the escalation
 //! surface seccomp denies. It does not stop the engine starting a program, which
 //! is survivable because Landlock's domain is inherited across `execve` and
 //! cannot be relaxed.
 //!
-//! It does not contain the **connection**. A browser needs the network, so a
+//! It does not contain the *connection*. A browser needs the network, so a
 //! compromised engine keeps the host's reachability, and the policy deciding
 //! which origins is in-process and therefore past it. Containing that needs a
 //! boundary outside the engine: `--in` a box whose tier enforces egress, or the
-//! broker/renderer split. **Nothing here upgrades the request lane**; a
+//! broker/renderer split. Nothing here upgrades the request lane; a
 //! process-tier session stays `engine-claimed`.
 //!
 //! Where Landlock, seccomp or user namespaces are missing (hardened kernels,
 //! AppArmor, CI containers, macOS, Windows) the session runs unconfined and
-//! **says so**, on the summary line and in the record. A sandbox nobody can see
+//! *says so*, on the summary line and in the record. A sandbox nobody can see
 //! is indistinguishable from one that was never applied.
 
 use std::path::{Path, PathBuf};
@@ -73,7 +73,7 @@ impl Default for Confinement {
 /// sandbox the environment is cleared, so `$HOME` is gone and the engine's own
 /// discovery would skip every personal directory whether or not Landlock
 /// granted it. So h5i computes the list, grants exactly it, and passes exactly
-/// it back as `--font-dir` — one list, used for both, because a grant and a
+/// it back as `--font-dir`: one list, used for both, because a grant and a
 /// search path that are derived separately are two things that can disagree.
 ///
 /// Only directories that exist. A grant for a path that is not there is skipped
@@ -118,7 +118,7 @@ pub struct Wants<'a> {
     /// control file, its logs, its cookie jar, its artifacts.
     pub session_dir: &'a Path,
     /// Extra directories the engine must be able to read. Fonts the caller
-    /// named explicitly, mostly — the system font path is already covered by
+    /// named explicitly, mostly. The system font path is already covered by
     /// the profile's defaults, but `~/.fonts` is not, because nothing under
     /// `$HOME` is granted by default and that is the rule worth keeping.
     pub reads: &'a [PathBuf],
@@ -140,7 +140,7 @@ pub struct Wants<'a> {
     /// naming: [`sandbox::spawn_background`] applies no clock at all, so a
     /// resident session passes `0` and is bounded by `--expires-in` instead.
     /// [`sandbox::run`] passes the value straight to a deadline, where `0` is
-    /// a deadline that has *already passed* — a run-to-completion read that
+    /// a deadline that has *already passed*. A run-to-completion read that
     /// left this at `0` would be killed before it fetched anything.
     pub wall_secs: u64,
 }
@@ -149,7 +149,7 @@ pub struct Wants<'a> {
 ///
 /// `Err` is reserved for a policy that could not be resolved at all. A host that
 /// simply lacks the kernel features answers `Ok(None)` with a reason, because
-/// that is not a failure of the request — it is an answer about the machine.
+/// that is not a failure of the request. It is an answer about the machine.
 /// What came of asking for confinement.
 pub enum Outcome {
     /// A policy that resolved and ran.
@@ -233,7 +233,7 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
     }
     // Read-only, and not attacker-chosen: a font the user installed is not the
     // page's font. The ones a page supplies arrive over `@font-face`, go through
-    // the broker, and are parsed either way — granting these adds no new
+    // the broker, and are parsed either way. Granting these adds no new
     // parser input, only the faces someone meant to have.
     for dir in fonts {
         p.fs_read.push(dir.display().to_string());
@@ -249,7 +249,7 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
         p.fs_read.push(path.display().to_string());
     }
 
-    // **Not** an exec denial, because there is none to make here. `tools` gates
+    // *Not* an exec denial, because there is none to make here. `tools` gates
     // the *initial* command and an empty list means no restriction at all;
     // `execve` is not on the seccomp deny list, which covers privilege
     // escalation and kernel surface rather than process creation.
@@ -257,7 +257,7 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
     // What makes that acceptable is Landlock's own rule: the domain is
     // inherited across `execve` and cannot be relaxed. A compromised engine can
     // start a shell, and the shell reads and writes exactly what the engine
-    // could — nothing. The containment is the filesystem domain, not a list of
+    // could. Nothing. The containment is the filesystem domain, not a list of
     // permitted programs, and saying otherwise would be a claim the mechanism
     // does not make.
     //
@@ -273,20 +273,20 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
     // for a session started with `--secret`.
     //
     // A box gets both from `merge_secret_grants` when its `env.toml` is loaded.
-    // A session has no `env.toml` — it has no repository at all — so the grants
+    // A session has no `env.toml`, it has no repository at all, so the grants
     // are assembled here, from the same list, and the broker resolves them at
     // spawn time like any other run's.
     //
-    // The grant's **name is the variable the child will see**, so it keeps the
+    // The grant's name is the variable the child will see, so it keeps the
     // `H5I_SECRET_` prefix: `inject = env` injects `(name, value)`, and the
     // engine substitutes from exactly that namespace. A grant named `ACME_PASS`
     // would arrive as `ACME_PASS` and `$H5I_SECRET_ACME_PASS` would resolve to
-    // nothing — the failure this exists to end.
+    // nothing. The failure this exists to end.
     //
     // `inject` is left at its default of `env`, which is the only one reachable
     // here: `broker` refuses `inject = file` off the workspace tier, and a
     // session is process tier. That refusal is load-bearing rather than
-    // incidental — a file-injected secret is unlinked when the `Brokered` guard
+    // incidental. A file-injected secret is unlinked when the `Brokered` guard
     // drops, and `h5i browser open` returns while the session keeps running.
     p.secret_grants = grants_for(wants.secrets);
 
@@ -306,8 +306,8 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
 ///
 /// One formula, two readers: [`profile_for`] declares these on the profile, and
 /// the caller brokers them at spawn time. A session that runs unconfined has no
-/// profile to read them off — the host could not confine, or the caller said
-/// not to — and deriving them a second way there is how the two would come to
+/// profile to read them off (the host could not confine, or the caller said
+/// not to) and deriving them a second way there is how the two would come to
 /// disagree about which credential a session was promised.
 pub fn grants_for(names: &[String]) -> Vec<SecretGrant> {
     names
@@ -325,8 +325,8 @@ pub fn grants_for(names: &[String]) -> Vec<SecretGrant> {
 ///
 /// `/etc` is granted to every confined profile, so on most hosts this finds
 /// nothing and returns empty. But `/etc/resolv.conf` is a symlink on more
-/// machines than one would like — WSL points it at `/mnt/wsl/resolv.conf`,
-/// `resolvconf` and `systemd-resolved` at somewhere under `/run` — and a
+/// machines than one would like (WSL points it at `/mnt/wsl/resolv.conf`,
+/// `resolvconf` and `systemd-resolved` at somewhere under `/run`) and a
 /// Landlock grant follows the link to a path the domain never granted.
 ///
 /// The failure that causes is worth spelling out, because it is the reason this
@@ -516,9 +516,9 @@ mod tests {
     }
 
     /// A font directory must never decide whether there is a sandbox. The
-    /// second attempt exists for one case that really happens — `~/.fonts` as a
+    /// second attempt exists for one case that really happens (`~/.fonts` as a
     /// symlink resolving somewhere the policy denies, which makes the whole
-    /// policy unresolvable — and it gives up the personal directories rather
+    /// policy unresolvable) and it gives up the personal directories rather
     /// than the confinement.
     #[test]
     fn the_fallback_gives_up_fonts_rather_than_the_sandbox() {

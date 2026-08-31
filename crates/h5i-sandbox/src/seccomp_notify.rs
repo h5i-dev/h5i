@@ -2,14 +2,14 @@
 //! (`docs/supervisor-design.md`, phase B).
 //!
 // Some primitives here (the GET_NOTIF_SIZES ABI check, the notify-serve loop)
-// are deferred-tier scaffolding not yet wired into a live dispatch path — the
+// are deferred-tier scaffolding not yet wired into a live dispatch path. The
 // supervised execve-notify integration is a documented follow-up. They are
 // intentionally retained, so allow dead_code at the module scope rather than
 // deleting fail-closed plumbing we will need.
 #![allow(dead_code)]
 //!
 //! A filter installed with `SECCOMP_FILTER_FLAG_NEW_LISTENER` returns a
-//! **listener fd**; the supervisor (h5i) reads `socket()` notifications on it and
+//! *listener fd*; the supervisor (h5i) reads `socket()` notifications on it and
 //! replies allow (`CONTINUE`) or deny (`errno`) per [`crate::supervisor`]'s
 //! default-deny gate. This module is the careful, fail-closed plumbing:
 //!
@@ -17,7 +17,7 @@
 //!   `SECCOMP_GET_NOTIF_SIZES` (refuse on any mismatch),
 //! - a pure, unit-tested BPF program builder (notify on `socket`/`socketpair`,
 //!   allow everything else, kill on arch mismatch),
-//! - the notify loop, which **re-validates each notification id** before
+//! - the notify loop, which re-validates each notification id before
 //!   replying (TOCTOU/stale-id safety) and treats every error as fail-closed.
 //!
 //! Supports x86_64 and aarch64; other arches make the supervisor probe report
@@ -82,7 +82,7 @@ const BPF_W: u16 = 0x00;
 const BPF_ABS: u16 = 0x20;
 const BPF_JMP: u16 = 0x05;
 const BPF_JEQ: u16 = 0x10;
-/// `A >= K` — used to catch the x32 syscall-number range in one comparison.
+/// `A >= K`: used to catch the x32 syscall-number range in one comparison.
 const BPF_JGE: u16 = 0x30;
 const BPF_K: u16 = 0x00;
 const BPF_RET: u16 = 0x06;
@@ -100,7 +100,7 @@ fn jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
 
 /// Build the filter that NOTIFYs on `socket`/`socketpair`, ALLOWs everything
 /// else, and KILLs on an unexpected architecture (fail-closed). Returns a
-/// fixed-size **stack** array so [`install_listener`] is allocation-free and
+/// fixed-size *stack* array so [`install_listener`] is allocation-free and
 /// therefore async-signal-safe in a `fork`ed child; a `Vec` would risk a
 /// malloc-lock deadlock when the parent is multithreaded. Pure, and structurally
 /// unit-tested.
@@ -115,8 +115,8 @@ fn jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
 ///
 /// It does not apply here, which is why `CONTINUE` is sound in this tier:
 /// `socket(domain, type, protocol)` and the first three arguments of
-/// `socketpair` are **scalars the kernel already captured into the
-/// notification** when it trapped. They are register values, so no other thread
+/// `socketpair` are scalars the kernel already captured into the
+/// notification when it trapped. They are register values, so no other thread
 /// can change them and the decision and the syscall see the same bytes.
 ///
 /// Adding a comparison for anything taking a pointer, `connect`, `bind` or
@@ -152,7 +152,7 @@ pub fn build_socket_notify_program() -> [SockFilter; 10] {
         // 4: x32 → kill (idx 9). See X32_SYSCALL_BIT: x32 passes the arch guard
         //    above but carries different syscall numbers, so without this the
         //    `nr` comparisons below miss and instruction 7 ALLOWs an unmediated
-        //    socket(2). The notify handler cannot help — no notification is
+        //    socket(2). The notify handler cannot help, no notification is
         //    ever generated.
         jump(BPF_JMP | BPF_JGE | BPF_K, X32_SYSCALL_BIT, 4, 0),
         // 5: nr == socket → NOTIFY (idx 8)
@@ -274,18 +274,18 @@ pub fn validate_notif_sizes() -> Result<(), H5iError> {
 
 // ─── install (child side) ─────────────────────────────────────────────────────
 
-/// Install the socket-notify filter on the **current** thread/process and return
+/// Install the socket-notify filter on the *current* thread/process and return
 /// the listener fd (`SECCOMP_FILTER_FLAG_NEW_LISTENER`). Caller must have already
 /// set `no_new_privs`. Intended to run in the child just before it hands the fd
 /// to the supervisor and execs. Returns the raw fd or an errno.
 ///
 /// # Safety
-/// Installs a seccomp filter on the calling process — irreversible for its
+/// Installs a seccomp filter on the calling process. Irreversible for its
 /// lifetime. Call only in a child you intend to supervise.
 pub unsafe fn install_listener() -> Result<RawFd, i32> {
     let prog = build_socket_notify_program();
     let fprog = SockFprog { len: prog.len() as u16, filter: prog.as_ptr() };
-    // Safety: discharged by this function's own contract — the caller promises
+    // Safety: discharged by this function's own contract. The caller promises
     // this is a child it intends to supervise. `fprog` outlives the call.
     let fd = unsafe {
         libc::syscall(
@@ -314,13 +314,13 @@ pub struct ServeStats {
 }
 
 /// Serve notifications on `listener` until `stop` is set (the supervised process
-/// has exited — the caller sets it after `waitpid`). The listener is driven
+/// has exited: the caller sets it after `waitpid`). The listener is driven
 /// non-blocking via `poll()` so the loop can observe `stop` even when no
-/// notification is pending — otherwise a final blocking `RECV` would wait
+/// notification is pending. Otherwise a final blocking `RECV` would wait
 /// forever after the last syscall and deadlock the supervisor.
 ///
 /// For each `socket`/`socketpair` notification: apply [`decide_socket`],
-/// **re-validate the id immediately before replying** (stale-id/TOCTOU guard),
+/// re-validate the id immediately before replying (stale-id/TOCTOU guard),
 /// and reply (`CONTINUE` for allow, `-errno` for deny). A stale id is skipped;
 /// an unexpected error is fail-closed (we stop serving, so the tracee blocks on
 /// its unanswered notify and the run ends rather than proceeding unmediated).
@@ -342,7 +342,7 @@ pub fn serve(listener: RawFd, unix_granted: bool, stop: &std::sync::atomic::Atom
 }
 
 /// The production-correct lifecycle: serve notifications until the supervised
-/// process exits, observed via its **pidfd** (no `waitpid`/stop-flag race — the
+/// process exits, observed via its *pidfd* (no `waitpid`/stop-flag race: the
 /// loop self-terminates). `pidfd` becomes readable when the child exits; on that
 /// signal we drain any final pending notifications and return. The listener and
 /// pidfd are both polled, so a blocked `RECV` can never strand the supervisor.
@@ -362,7 +362,7 @@ pub fn serve_with_pidfd(listener: RawFd, pidfd: RawFd, unix_granted: bool) -> Se
             }
             break; // poll itself failed → fail-closed
         }
-        // Handle exactly ONE notification per wakeup — only when poll confirms
+        // Handle exactly ONE notification per wakeup. Only when poll confirms
         // the listener is readable. We must never call RECV speculatively: the
         // seccomp listener does not reliably honor O_NONBLOCK, so a RECV with
         // nothing pending would *block* and strand the supervisor.
@@ -385,7 +385,7 @@ pub fn serve_with_pidfd(listener: RawFd, pidfd: RawFd, unix_granted: bool) -> Se
     stats
 }
 
-/// Is a notification pending on `listener` right now? (Zero-timeout poll — used
+/// Is a notification pending on `listener` right now? (Zero-timeout poll: used
 /// to guard `handle_one` so we never issue a blocking `RECV`.)
 fn listener_pending(listener: RawFd) -> bool {
     let mut pfd = libc::pollfd { fd: listener, events: libc::POLLIN, revents: 0 };
@@ -398,7 +398,7 @@ enum Flow {
     Handled,
     /// No notification was pending (`EAGAIN`).
     Idle,
-    /// An unexpected error — the supervisor must stop (fail-closed).
+    /// An unexpected error. The supervisor must stop (fail-closed).
     FailClosed,
 }
 
@@ -413,7 +413,7 @@ fn set_nonblocking(fd: RawFd) {
 /// by both serve loops so the security-critical decision/reply logic exists once.
 fn handle_one(listener: RawFd, unix_granted: bool, stats: &mut ServeStats) -> Flow {
     let mut req: SeccompNotif = unsafe { std::mem::zeroed() };
-    // `ioctl`'s request arg is `c_ulong` on glibc but `c_int` on musl — `as _`
+    // `ioctl`'s request arg is `c_ulong` on glibc but `c_int` on musl, `as _`
     // casts to whichever the target's signature expects (the 32-bit request
     // code's bit pattern is preserved either way).
     let rc = unsafe { libc::ioctl(listener, ioctl_recv() as _, &mut req as *mut SeccompNotif) };
@@ -429,7 +429,7 @@ fn handle_one(listener: RawFd, unix_granted: bool, stats: &mut ServeStats) -> Fl
     // socket/socketpair, but a security boundary must not trust impossible
     // inputs. An unexpected arch/nr is treated as deny, never continue.
     // args[0]=domain, args[1]=type, args[2]=protocol (socket & socketpair);
-    // socketpair gets its own gate (an anonymous AF_UNIX pair is allowed —
+    // socketpair gets its own gate (an anonymous AF_UNIX pair is allowed:
     // see `decide_socketpair`), socket stays on the default-deny gate.
     let (domain, ty, proto) =
         (req.data.args[0] as i32, req.data.args[1] as i32, req.data.args[2] as i32);
@@ -451,7 +451,7 @@ fn handle_one(listener: RawFd, unix_granted: bool, stats: &mut ServeStats) -> Fl
     }
 
     // Re-validate the id right before SEND: if the tracee died or the syscall
-    // was interrupted, the id is stale and SEND would mis-target — skip.
+    // was interrupted, the id is stale and SEND would mis-target. Skip.
     let valid = unsafe { libc::ioctl(listener, ioctl_id_valid() as _, &req.id as *const u64) } == 0;
     if !valid {
         return Flow::Handled; // consumed a notification (stale); keep draining
@@ -476,7 +476,7 @@ fn handle_one(listener: RawFd, unix_granted: bool, stats: &mut ServeStats) -> Fl
     Flow::Handled
 }
 
-/// Open a pidfd for `pid` (`pidfd_open(2)`) — readable when the process exits.
+/// Open a pidfd for `pid` (`pidfd_open(2)`). Readable when the process exits.
 pub fn pidfd_open(pid: libc::pid_t) -> std::io::Result<RawFd> {
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
     if fd < 0 {
@@ -495,7 +495,7 @@ pub fn pidfd_open(pid: libc::pid_t) -> std::io::Result<RawFd> {
 /// # Safety
 /// `sock` and `fd` must be valid open file descriptors.
 pub unsafe fn send_fd(sock: RawFd, fd: RawFd) -> std::io::Result<()> {
-    // Safety: discharged by this function's own contract — the caller promises
+    // Safety: discharged by this function's own contract. The caller promises
     // `sock` and `fd` are valid. `cmsg_buf` is 64 bytes, far more than the one
     // `SCM_RIGHTS` header plus fd written into it, so `CMSG_FIRSTHDR` is in
     // bounds and non-null.
@@ -532,7 +532,7 @@ pub unsafe fn send_fd(sock: RawFd, fd: RawFd) -> std::io::Result<()> {
 /// # Safety
 /// `sock` must be a valid connected `AF_UNIX` socket.
 pub unsafe fn recv_fd(sock: RawFd) -> std::io::Result<RawFd> {
-    // Safety: discharged by this function's own contract — the caller promises
+    // Safety: discharged by this function's own contract. The caller promises
     // `sock` is a valid connected socket. The cmsg is only dereferenced after
     // the null/type/length checks below.
     unsafe {
@@ -552,7 +552,7 @@ pub unsafe fn recv_fd(sock: RawFd) -> std::io::Result<RawFd> {
         if n != 1 {
             return Err(std::io::Error::other("fd handoff: unexpected payload length"));
         }
-        // Reject a truncated control message — a partial/forged ancillary buffer
+        // Reject a truncated control message. A partial/forged ancillary buffer
         // must never be mistaken for a valid fd (Codex hardening).
         if msg.msg_flags & (libc::MSG_CTRUNC | libc::MSG_TRUNC) != 0 {
             return Err(std::io::Error::other("fd handoff: truncated control message"));
@@ -581,8 +581,8 @@ mod tests {
     use super::*;
 
     /// x32 reports AUDIT_ARCH_X86_64, so the arch guard passes, but its syscall
-    /// numbers carry X32_SYSCALL_BIT and match none of the comparisons below —
-    /// the filter used to fall through to ALLOW and no notification was ever
+    /// numbers carry X32_SYSCALL_BIT and match none of the comparisons below.
+    /// The filter used to fall through to ALLOW and no notification was ever
     /// generated, so the handler's defence-in-depth re-check could not help.
     #[test]
     fn the_socket_gate_refuses_the_x32_abi() {
@@ -635,7 +635,7 @@ mod tests {
     /// Every allow this filter can produce is `CONTINUE`, which re-runs the
     /// real syscall after the verdict. That is only safe while every argument
     /// the verdict looks at is a scalar the kernel already copied into the
-    /// notification — a register, which no other thread can rewrite in the
+    /// notification. A register, which no other thread can rewrite in the
     /// meantime. `socket` and `socketpair` are such syscalls. `connect`,
     /// `bind` and `sendto` are not: their address argument is a pointer into
     /// the tracee's memory, and deciding on what it points at while replying
@@ -691,7 +691,7 @@ mod tests {
 
     // Live, capability-gated: only runs where the kernel supports user-notif.
     // Proves the default-deny socket gate actually denies a raw/packet socket
-    // and allows a boring inet socket — the real enforcement mechanism.
+    // and allows a boring inet socket. The real enforcement mechanism.
     #[test]
     fn live_socket_gate_denies_raw_allows_inet() {
         if !crate::supervisor::probe().components.iter().any(|c| c.name == "seccomp-user-notif" && c.ok)
@@ -838,7 +838,7 @@ mod tests {
             }
 
             // Parent/supervisor: open the child's pidfd, receive the listener,
-            // then serve until the pidfd reports the child exited — no stop flag.
+            // then serve until the pidfd reports the child exited, no stop flag.
             libc::close(sv[1]);
             let pidfd = pidfd_open(pid).expect("pidfd_open");
             let listener = recv_fd(sv[0]).expect("receive listener fd");

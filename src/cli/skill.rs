@@ -1,4 +1,4 @@
-//! `h5i skill` — write or print the agent skill the binary carries.
+//! `h5i skill`: write or print the agent skill the binary carries.
 
 use clap::Subcommand;
 use console::style;
