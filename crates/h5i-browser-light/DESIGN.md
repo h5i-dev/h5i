@@ -1,8 +1,7 @@
 # h5i-browser-light: design notes
 
-ROADMAP.md in the repository root is the authority on scope and order (§12 and
-§B1 to §B15). This file is the narrower one: why the engine is shaped the way it
-is, and what each shape cost.
+ROADMAP.md is the authority on scope and order (§12, §B1 to §B15). This file is
+narrower: why the engine is shaped the way it is, and what each shape cost.
 
 ---
 
@@ -12,22 +11,22 @@ A browser engine for AI agents that read thousands of pages at a time, or that
 open untrusted pages carrying prompt injections.
 
 h5i's egress proxy sees `CONNECT docs.example.com:443` and nothing more. CDP's
-Fetch domain can pause and record a request, but its coverage fails open: attach
-races, freshly created targets and workers, buffer limits and disconnects all
-leave gaps. Here the engine *is* the HTTP client, so:
+Fetch domain can pause and record a request, but fails open: attach races, fresh
+targets and workers, buffer limits and disconnects all leave gaps. Here the
+engine *is* the HTTP client, so:
 
-- No receipt, no request. The decision record is written before any bytes move.
-  A sink that refuses to record is a sink that refuses to fetch.
-- Every redirect hop is a decision. Redirects are followed by hand and each hop
-  is policy-checked, so an allowed origin cannot bounce to a denied one.
-- No JIT. A JIT is too much machinery to keep free of exploitable bugs.
+- No receipt, no request. The record is written before any bytes move, and a
+  sink that refuses to record refuses to fetch.
+- Every redirect hop is policy-checked, so an allowed origin cannot bounce to a
+  denied one.
+- No JIT. Too much machinery to keep free of exploitable bugs.
 
 ## Measurements
 
 Same machine (aarch64, WSL2), median of 7 interleaved runs after a discarded
-warm-up, loading a local `file://` page. Memory is the peak summed RSS across
-the whole process tree, sampled every 5 ms: `/usr/bin/time -v` reports only the
-largest single process and badly undercounts a multi-process browser.
+warm-up, on a local `file://` page. Memory is peak summed RSS across the process
+tree at 5 ms intervals; `/usr/bin/time -v` reports only the largest single
+process and badly undercounts a multi-process browser.
 
 | | small (1 KB, no script) | docs (22 KB, no script) | app (script-built, 400 elements) |
 | --- | --- | --- | --- |
@@ -35,48 +34,33 @@ largest single process and badly undercounts a multi-process browser.
 | chromium `headless_shell` | 172 ms / 456.8 MB | 176 ms / 461.5 MB | **176 ms** / 464.4 MB |
 | chromium (full) | 672 ms / 1150.7 MB | 758 ms / 1153.8 MB | 824 ms / 1150.6 MB |
 
-So against `headless_shell`: about 3x faster and 7-9x lighter on pages without
-script, and on a script-driven page slower on time and still 5x lighter. Both
-engines were checked to produce identical output on the script page before
-anything was timed.
+Both engines were checked to produce identical output on the script page before
+anything was timed. Caveats:
 
-Five caveats, because the numbers are flattering in one direction and
-unflattering in the other, and neither should be quoted alone:
-
-1. Cold start is included, and Chromium's process startup dominates its time
-   figure. It is *not* a steady-state rendering throughput comparison, and this
-   engine would not win one by that margin.
-2. On script-driven pages this engine is slower, and the third column is there
-   so that cannot be read past. Boa interprets where V8 compiles. Isolated:
+1. Cold start is included and dominates Chromium's time. Not a steady-state
+   throughput comparison.
+2. Script-driven pages are slower here, which is what the third column is for.
    `--script` costs nothing on a page with no script (46 ms against 45 ms), and
    44 ms -> 248 ms on the app page.
-3. Rendering here is software, not JIT-accelerated. Complex CSS narrows the time
-   gap.
-4. The memory figure is the one to trust most: it is a property of the
-   architecture (one process, no renderer, no GPU process) rather than of a
-   workload, and it holds across all three pages.
-5. These numbers replace an earlier table that claimed 5x faster and 15x lighter
-   (updated 2026/8/31). That measurement predates this engine having a
-   JavaScript engine at all; h5i's own memory has roughly doubled since (31 MB
-   -> 52-66 MB), which is what Boa and a 281 KiB prelude cost. The claim was not
-   wrong when it was made and is wrong now, which is the reason to date a
-   measurement.
+3. Rendering is software. Complex CSS narrows the gap.
+4. Trust memory most: it follows from the architecture (one process, no
+   renderer, no GPU process) rather than from a workload.
+5. These replace a table claiming 5x faster and 15x lighter, measured before
+   this engine had a JavaScript engine (updated 2026/8/31). Memory roughly
+   doubled since (31 MB -> 52-66 MB), which is what Boa and a 281 KiB prelude
+   cost. Date a measurement.
 
 ## What it is not
 
-Honest limits, because the claims above are security claims:
-
-- Not a Chromium replacement. Docs-grade pages are the compatibility bar. Send
+- Not a Chromium replacement. Docs-grade pages are the compatibility bar; send
   React/Vite apps, video, WebGL and authenticated sessions down the Chromium
   path.
-- JavaScript runs, and it is the slow half. Boa interprets where V8 compiles, so
-  a script-driven page is the one case `headless_shell` can be *faster* on.
-  Route by what a page costs, not by whether it has a `<script>` tag, and ask
-  `capabilities` rather than guessing: the §B6 refusals are still real, with no
-  workers, no second browsing context and no media pipeline.
-- Containment claims belong to the box. Run bare on a host there is no egress
-  proxy and no receipt store, and this is a light browser with a request log.
-  The guarantees come from running it inside an h5i box.
+- JavaScript runs, and it is the slow half, so a script-driven page is the one
+  case `headless_shell` can be *faster* on. Route by what a page costs, not by
+  whether it has a `<script>` tag, and ask `capabilities`: the §B6 refusals are
+  real, with no workers, no second browsing context, no media pipeline.
+- Containment claims belong to the box. Bare on a host there is no egress proxy
+  and no receipt store, and this is a light browser with a request log.
 
 ## Usage
 
@@ -101,14 +85,10 @@ h5i-browser-light doctor           # fonts, proxy, allowlist, client
 
 ### Refs, and the reading they came from
 
-A `@ref` names *a position in the snapshot that minted it*: `e1` is the first
-actionable thing in that walk, not a durable handle on an element. The action
-verbs each take a fresh snapshot to get a live node id, which is right on its
-own and was, on its own, a bug: if the page moved in between, `@e5` resolved to
-a *different element*, the click landed on it, and the reply said `ok`.
-
-So a ref is now honoured only against the reading it was served in. The session
-keeps the refs it last handed out and checks the one you name against them:
+A `@ref` names *a position in the snapshot that minted it*, not a durable
+handle, and is honoured only against the reading it was served in. Without that
+check a page that moved between the snapshot and the click resolved `@e5` to a
+different element, acted on it, and replied `ok`.
 
 ```
 $ h5i-browser-light session click @e2
@@ -117,53 +97,39 @@ $ h5i-browser-light session click @e2
           a button \"Add\". … Take a fresh `snapshot` and use its refs."}
 ```
 
-This is an equality check on one ref, not a proof that the document is
-unchanged: a page that mutates something the walk does not record still passes.
-What it catches is every case where the handle you hold has come to mean
-something else, which is the failure that used to be silent. Typing and
-scrolling do not renumber anything, so the login loop still runs without a
-re-read between steps.
+An equality check on one ref, not a proof the document is unchanged: a page that
+mutates something the walk does not record still passes. Typing and scrolling
+renumber nothing, so a login loop needs no re-read between steps.
 
 ### The durable handle
 
-`snapshot` now reports a `refs` array beside the outline:
+`snapshot` reports a `refs` array beside the outline, whose selector survives
+the reading `@e3` does not. That is what a recording replays into.
 
 ```json
 {"id": "e3", "role": "button", "name": "Sign in", "selector": "#go"}
 ```
 
-`@e3` is a position in *this* reading. The selector is a handle that survives
-one, which is what a recorded session needs to replay into and what an agent
-needs to come back to an element after a navigation.
+Built the way Lightpanda's is: the element's own segment, ancestors prepended
+only when they shrink the match count, then a strict `a > b > c` chain as a
+fallback. Ids are checked rather than trusted, since duplicate ids are legal and
+`#dup` names the first one. Every candidate is verified with the matcher the
+action verbs use; where nothing verifies the field is `null`, because a selector
+that resolves elsewhere looks like a handle and is not one.
 
-It is built the way Lightpanda's is: the element's own segment, then ancestors
-prepended only when they shrink the match count, then a strict `a > b > c` chain
-as a fallback. An id is checked rather than trusted, because duplicate ids are
-legal in the wild and `#dup` names the first one.
+Only `snapshot` computes selectors: a tree walk per ref in the action verbs
+would put the cost on every click.
 
-The part that makes it worth having is that every candidate is verified with the
-same matcher the action verbs use: `querySelector` semantics, first match must
-be the target. Where nothing verifies, the field is `null` rather than a guess:
-a selector that resolves elsewhere is worse than no selector, because it looks
-like a handle.
-
-Selectors are computed only by the `snapshot` verb. The action verbs take their
-own internal captures to get a live node id, and paying for a tree walk per ref
-on each of those would put the cost on every click.
-
-Not built: `:has()` disambiguation before falling back to `:nth-of-type`, which
-produces better selectors on generated markup. It needs `:has()` support in the
-borrowed selector parser, which is unverified here, and emitting selectors the
-matcher then rejects would produce exactly the plausible-looking handle this
-avoids.
+Not built: `:has()` disambiguation before `:nth-of-type`. It needs `:has()` in
+the borrowed selector parser, which is unverified here, and emitting selectors
+the matcher then rejects is the failure this avoids.
 
 ### When a verb refuses
 
-Every failure carries a machine-readable `code`, prose that names the recovery,
-and `retryable`, which says whether this is the caller's to fix at all. A
-selector a model can correct and an allowlist it cannot are different answers,
-and reporting the first the way the second is reported ends a self-correction
-loop instead of prompting it.
+Every failure carries a `code`, prose naming the recovery, and `retryable`,
+which says whether this is the caller's to fix at all. A selector a model can
+correct and an allowlist it cannot are different answers, and reporting the
+first like the second ends a self-correction loop instead of prompting it.
 
 | code | means |
 | --- | --- |
@@ -177,15 +143,14 @@ loop instead of prompting it.
 | `login-mode` | LOGIN mode is on and this verb reads the page |
 | `timeout` / `no-match` / `internal` | as named |
 
-The verbs themselves live in one table (`src/verbs.rs`) and every per-verb
-property is an exhaustive match on it, so a new verb does not compile until it
-has answered each question, including which verbs LOGIN mode admits, which was a
-two-literal string allowlist that a typo would have widened silently.
+The verbs live in one table (`src/verbs.rs`) and every per-verb property is an
+exhaustive match on it, so a new verb does not compile until it has answered
+each question, including which verbs LOGIN mode admits.
 
 ### The resident session
 
-`open` renders its own page and exits, so two `open`s share nothing. `serve`
-holds a page open and is the thing an agent drives:
+`open` renders its own page and exits. `serve` holds a page open and is the
+thing an agent drives:
 
 ```
 $ h5i-browser-light serve http://localhost:3000 &
@@ -193,45 +158,30 @@ $ h5i-browser-light session snapshot
 $ h5i-browser-light session click @e1
 ```
 
-Those verbs act on the same page the viewers are watching, which is what makes
-the live view show the page *the agent* is driving rather than the one the
-serving process happened to open. Several viewers and several control clients
-can be attached at once.
+Those verbs act on the page the viewers are watching, so the live view shows the
+page *the agent* is driving. Several viewers and control clients can attach at
+once. The control port is advertised beside the stream port (`<name>.control`
+next to `<name>.stream`), so inside a box these verbs need no flags.
 
-The control port is advertised beside the stream port (`<name>.control` next to
-`<name>.stream`), so inside a box, where h5i sets `H5I_BROWSER_STREAM_FILE`,
-these verbs need no flags.
-
-One constraint shapes all of this: `Page` is not `Send`. Blitz's `BaseDocument`
-holds an `Arc<dyn HtmlParserProvider>` and a `Box<dyn FontMetricsProvider>`, so
-there is no `Arc<Mutex<Session>>` to be had. The page has exactly one owning
-thread and everything else reaches it by channel, which is the right shape for a
-session with several drivers anyway, because it leaves no interleaving to reason
-about.
+`Page` is not `Send`: Blitz's `BaseDocument` holds an
+`Arc<dyn HtmlParserProvider>` and a `Box<dyn FontMetricsProvider>`, so there is
+no `Arc<Mutex<Session>>` to be had. One owning thread, everything else by
+channel, and no interleaving to reason about.
 
 ### What the agent did, recorded
 
-The console's *agent actions* pane is fed by the mediated socket h5i owns in
-front of agent-browser. There is no such socket here, because the engine *is*
-the browser, so before this the pane rendered empty for a session an agent was
-actively driving, which reads as "the agent did nothing". `serve` now writes its
-own action log (`$H5I_BROWSER_ACTIONS`, set for you inside a box), and the rows
-land in that pane marked box-claimed rather than host-observed, because that is
-what they are. Nothing written inside a box can be more than the box's own
-account, and the pane says so.
+`serve` writes its own action log (`$H5I_BROWSER_ACTIONS`, set for you inside a
+box), which feeds the console's *agent actions* pane. The rows are marked
+box-claimed rather than host-observed: unlike agent-browser, there is no
+mediating socket here, and nothing written inside a box can be more than the
+box's own account.
 
 Each verb is recorded *before* it runs and again after: no record, no action,
-the same rule the request log enforces for fetches. That is a guarantee against
-accident (a bad path, a full disk), not against a box that has decided to lie.
-
-It costs 7µs per verb, measured against the 42ms a single frame encode takes
-(debug build, same host): 0.017% of one frame, on a path that already does a
-policy check and a layout pass. Agent verbs arrive at agent pace.
+the rule the request log enforces for fetches. That guards against accident (a
+bad path, a full disk), not against a box that has decided to lie. It costs 7µs
+per verb against the 42ms a single frame encode takes.
 
 ### Logging in
-
-Typing and form submission arrived together, because a session you cannot type
-into stops at the first login form:
 
 ```
 $ h5i-browser-light session snapshot
@@ -244,15 +194,13 @@ $ h5i-browser-light session submit @e3
 url: http://localhost:8123/members
 ```
 
-Blitz owns the HTML form submission algorithm: what is in the entry list, how it
-is encoded, whether the method makes a query or a body. It dispatches the result
-to a navigation provider. This engine hands it a provider that *captures* the
-request instead of performing it, so the wire stays ours: a submission is
-policy-checked and receipted like any other request. File inputs are dropped
-rather than read, because filling one would mean this browser quietly acquiring
-the ability to read the box's filesystem.
+Blitz owns the form submission algorithm and dispatches the result to a
+navigation provider. This engine hands it one that *captures* the request
+instead of performing it, so a submission is policy-checked and receipted like
+any other. File inputs are dropped rather than read: filling one would mean this
+browser quietly acquiring the ability to read the box's filesystem.
 
-`type` replaces the field rather than appending, so retrying after a failed
+`type` replaces the field rather than appending, so a retry after a failed
 submit does not produce `alicealice`. The snapshot reads values back from the
 editor rather than the `value` attribute, or `type` then `snapshot` would look
 like it had silently failed.
@@ -265,15 +213,10 @@ $ h5i-browser-light session wait-for --text 'Signed in'
 $ h5i-browser-light session wait-for-script 'document.querySelectorAll("li").length > 3'
 ```
 
-Both reference engines wait on a wall clock with hard-coded fudge: a 500ms
-network-idle debounce in one; a 150ms quiet window, a 1s grace, a 500ms tail and
-a 5s deadline that marks the page idle even when the deadline is what ended it,
-in the other. The settle here runs on a *virtual* clock, which changes what this
-verb is.
-
-Because the settle runs a page to quiescence, a page's own `setTimeout(1000)`
-has already fired by the time any verb is served. So `wait_for` does not usually
-wait. It *answers*, with one of four outcomes:
+Both reference engines wait on a wall clock with hard-coded fudge. The settle
+here runs on a *virtual* clock, so a page's own `setTimeout(1000)` has already
+fired by the time any verb is served. `wait_for` does not usually wait. It
+*answers*:
 
 | `end` | means |
 | --- | --- |
@@ -282,28 +225,18 @@ wait. It *answers*, with one of four outcomes:
 | `periodic` | it is not, and the only work left re-arms itself, so the page is running but not arriving |
 | `budget` | it is not, and the page was still working towards something, so it may yet appear |
 
-The middle two are the ones worth having, and collapsing either into "timed out"
-is the lie this engine refuses elsewhere: a page that has finished and a page
-that was cut off are not the same fact. On a page with no script at all the
-answer comes back immediately, because nothing can put the element there.
+The middle two are the ones worth having. Collapsing either into "timed out" is
+the lie this engine refuses elsewhere: a page that finished and a page that was
+cut off are not the same fact. `periodic` exists because
+`requestAnimationFrame` is a `setTimeout` here, so an animation loop presented a
+fresh one-shot timer every frame and answered `budget` about a page that would
+still be looping tomorrow. Lightpanda's fix, adapted: the timers still *fire*,
+they stop *counting*. Not copied is folding this into `quiescent`, which would
+claim nothing can change when a repeating timer can change the DOM.
 
-`periodic` was the last of the four to exist, and its absence was a lie the
-other three told. `requestAnimationFrame` is a `setTimeout` here, so an
-animation loop presented a fresh one-shot timer every frame; the page never ran
-out of pending work, rode the whole ten-second budget, and answered `budget`
-("it may yet appear") about a page that would still be looping tomorrow.
-
-The fix is Lightpanda's, adapted. There, a task that reschedules itself never
-blocks completion and a timer chain stops blocking past a nesting depth of ten;
-here the timers still *fire*, they stop *counting*. What is not copied is the
-conclusion: folding this into `quiescent` would claim nothing can change, and a
-repeating timer can change the DOM. It is a fourth answer because it is a fourth
-fact.
-
-`wait_for_script` needs `--script` and says so as a routing answer rather than
-as a condition that failed. A condition that throws counts as *not yet*: a page
-mid-build throws on the way to values it has not made, and treating that as an
-error would make most useful conditions unwritable.
+`wait_for_script` needs `--script` and says so as a routing answer rather than a
+failed condition. A condition that throws counts as *not yet*: a page mid-build
+throws on the way to values it has not made.
 
 ### Reading a page cheaply
 
@@ -313,28 +246,22 @@ $ h5i-browser-light session extract '{"rows": [{"selector": "tr.item", "limit": 
     "fields": {"name": ".title", "url": {"selector": "a", "attr": "href"}}}]}'
 ```
 
-`markdown` is the page as a reader reads it: prose, emphasis, lists, tables, no
-`@ref` handles. The outline exists to be *acted on*; this exists to be *read*.
-Three details the reference implementation of this gets wrong and this one does
-not, each with a test: tables carry the `|---|---|` separator that makes them
-GFM, ordered lists carry their real numbers rather than `1.` repeated, and
-nested lists carry their indent.
+`markdown` is the page as a reader reads it, with no `@ref` handles: the outline
+is to be *acted on*, this is to be *read*. Three details with tests behind them:
+tables carry the `|---|---|` separator that makes them GFM, ordered lists carry
+their real numbers, and nested lists carry their indent.
 
 `extract` answers a schema instead of making a model transcribe prose. Keys are
-output names, values are selector specs: `"h1"` for the first match's text,
-`["a"]` for every match, `{"selector":"a","attr":"href"}` for an attribute
-(`href` and `src` come back absolute), and `[{"selector":"li","fields":{…}}]`
-for one object per match with sub-selectors scoped to it.
+output names, values selector specs: `"h1"` for the first match's text, `["a"]`
+for every match, `{"selector":"a","attr":"href"}` for an attribute (`href` and
+`src` come back absolute), `[{"selector":"li","fields":{…}}]` for one object per
+match with sub-selectors scoped to it.
 
-One rule matters more than the syntax. **An empty array is a result; a schema
-where nothing matched is an error.** "There were no rows" is something the page
-said; "none of your selectors match this page" is a mistake the caller should
-hear about, and answering it with a tidy object full of nulls would be a wrong
-answer that looks like a right one. The error names `snapshot` and `markdown` as
-the way to see what is actually there.
-
-Both are fenced, because both are page content reaching something that is about
-to decide what to do next.
+One rule matters more than the syntax: an empty array is a result, a schema
+where nothing matched is an error. "There were no rows" is the page's answer;
+"none of your selectors match" is the caller's mistake, and an object full of
+nulls would be a wrong answer that looks right. Both verbs are fenced, being
+page content reaching something about to decide what to do next.
 
 ### The request log, from inside the session
 
@@ -345,46 +272,36 @@ DENIED GET https://telemetry.example.com/collect
 $ h5i-browser-light session requests --since 41   # only what is new
 ```
 
-No other engine can answer this without qualifying it. Chromium's list is an
-observation of the network made from beside it and fails open. Obscura's CDP
-`Network.*` events are batched and emitted after navigation completes,
-reconstructed from a stored list, so anything watching live sees a compressed,
-out-of-time picture. Lightpanda has no equivalent. Here the engine *is* the HTTP
-client, so this is the decision record written before the bytes moved: if a
-request is not in the list, it did not happen.
+No other engine answers this without qualifying it: Chromium's list is an
+observation made from beside the network and fails open, Obscura's CDP events
+are batched after navigation completes, and Lightpanda has no equivalent. Here
+it is the decision record written before the bytes moved. If a request is not in
+the list, it did not happen.
 
 `denied` counts over the whole session rather than the `--since` window, because
-"nothing was refused" is a claim about the session and an agent that only ever
-asks for windows should still be able to make it.
+"nothing was refused" is a claim about the session.
 
 ### Cookies, and the narrowings that make them safe
 
 Cookies are the first thing this engine holds that is worth stealing, so the
-limits arrived with them rather than after:
+limits arrived with them:
 
-- `Domain` honoured, over a compiled-in public suffix list. This was refused
-  until the list arrived, and the stated cost was real: a site that logs you in
-  at `example.com` and serves from `www.example.com` did not stay logged in.
-  Four rules stand between that and the failure the refusal was avoiding, and a
-  cookie must pass all of them: the domain must not be a public suffix
-  (`Domain=co.uk` is refused), the setter must be within it on a label boundary
-  (`attackerexample.com` may not claim `example.com`, which a bare suffix test
-  would have allowed), an IP host may not widen at all, and `__Host-` forbids
-  the attribute outright.
-
-  The list is compiled in rather than fetched, so nothing here depends on the
-  network to decide where a credential may go, and it goes stale safely: the
-  list only grows, so an out-of-date copy refuses suffixes it has not heard of
-  rather than accepting them.
-- In memory, never on disk. The jar dies with the process; restarting the
-  session is a complete logout.
-- Never readable by the agent. No verb returns a value. `session status` reports
+- `Domain` honoured, over a compiled-in public suffix list. All four rules must
+  pass: the domain must not be a public suffix (`Domain=co.uk` is refused), the
+  setter must be within it on a label boundary (`attackerexample.com` may not
+  claim `example.com`, which a bare suffix test would have allowed), an IP host
+  may not widen at all, and `__Host-` forbids the attribute outright. The list
+  is compiled in rather than fetched, so nothing depends on the network to
+  decide where a credential may go, and it goes stale safely: it only grows, so
+  an old copy refuses suffixes it has not heard of.
+- In memory, never on disk. The jar dies with the process.
+- Never readable by the agent. No verb returns a value; `session status` reports
   a *count*, and the request log records how many cookies crossed rather than
   which, because a credential in a receipt is a credential in every export that
   receipt reaches.
-- *`Secure` enforced*, `__Secure-`/`__Host-` prefixes enforced at store time,
-  and a redirected POST is downgraded to a bodyless GET on 301/302/303 so a
-  password is not replayed to wherever a server points next.
+- `Secure` enforced, `__Secure-`/`__Host-` prefixes enforced at store time, and
+  a redirected POST downgraded to a bodyless GET on 301/302/303 so a password is
+  not replayed to wherever a server points next.
 
 ### Credentials the agent can use and cannot read
 
@@ -398,52 +315,43 @@ $ h5i-browser-light session type @e2 '$H5I_SECRET_ACME_PASS'
 
 The model names a credential, the engine resolves it on the way into the field,
 and the reply echoes the *placeholder*. The value never enters the model's
-context, so it cannot be repeated back, summarised, or carried into whatever the
-agent does next. `env` returns names and nothing else; no verb in this engine
-returns a credential's value. That is the same rule the cookie jar follows by
-reporting a count.
+context, so it cannot be repeated back, summarised, or carried into what the
+agent does next. No verb returns a credential's value.
 
-Only the `H5I_SECRET_` namespace is reachable, which is narrower than the scheme
-this borrows from. h5i already uses `H5I_*` for engine configuration
-(`H5I_EGRESS_PROXY`, `H5I_BROWSER_RECEIPTS`), and making those substitutable
-would let a page-bound `type` put the receipts path into a form. A denylist
-would work until somebody added a variable; a prefix allowlist fails closed.
+Only the `H5I_SECRET_` namespace is reachable. h5i already uses `H5I_*` for
+engine configuration, and making those substitutable would let a page-bound
+`type` put the receipts path into a form. A denylist works until somebody adds a
+variable; a prefix allowlist fails closed.
 
-Substitution happens for `type` and for nothing else, as a predicate on the verb
+Substitution happens for `type` and nothing else, as a predicate on the verb
 table rather than a decision at the call site. Resolving a placeholder into a
-selector, a URL or a wait condition would put the value somewhere it can be read
+selector, a URL or a wait condition would put the value where it can be read
 back: out of the DOM, out of the request log, out of an error message.
 
-This closed a hole that was not part of the feature. A password field's value
-was read straight back out by `snapshot`, which meant a credential typed by a
-*human* during LOGIN mode was readable by the agent the moment that mode ended.
-`input[type=password]` now reports a fixed-width mask instead of what it holds.
-Fixed width, because the real length is weak evidence but it is still evidence.
-Whether the field is filled is still visible, which is what an agent
-legitimately needs.
+`input[type=password]` reports a fixed-width mask rather than its value, which
+`snapshot` used to read straight back out: a credential a *human* typed during
+LOGIN mode was readable by the agent the moment the mode ended. Fixed width,
+because the real length is weak evidence but still evidence. Whether the field
+is filled stays visible.
 
-LOGIN mode (5.10) is half built, and the half matters. `session login` refuses
-every control verb that reads the page, so a credential typed during it is not
-in a snapshot the agent asked for. It does *not* withhold frames: the person
-typing has to see the page, and the viewer socket is inside the box, where there
-is no privilege boundary, so an agent that goes looking can attach to it and
-watch the same pixels. The mode refuses the documented path, which is the threat
-it was written for; it is not containment against an agent that is trying, and
-the refusal text says so rather than implying otherwise.
+LOGIN mode (5.10) is half built. `session login` refuses every control verb that
+reads the page, so a credential typed during it is not in a snapshot the agent
+asked for. It does *not* withhold frames: the person typing has to see the page,
+and the viewer socket is inside the box, where there is no privilege boundary.
+The mode refuses the documented path, which is the threat it was written for,
+and the refusal text says so rather than implying containment.
 
-Two verbs are allowed through it: `status`, so the agent can tell when the mode
-ends, and `login` itself. `status` reported the current URL, and `requests` is
-refused during a login because it "names URLs a login flow visited", and this
-named the one the flow is *on*: an OAuth callback carries its `code` in the
-query, a magic link and a password reset carry their token in the path. It
-reports the origin while the mode is on, which is what answers "am I still on
-the right site" without answering anything else.
+Two verbs pass through: `status`, so the agent can tell when the mode ends, and
+`login` itself. `requests` is refused during a login because it names URLs a
+login flow visited, and `status` used to name the one the flow is *on*: an OAuth
+callback carries its `code` in the query, a magic link and a password reset
+carry their token in the path. It reports the origin instead.
 
 ### JavaScript, as a limited preview
 
 Off by default. `--script` turns it on, and `capabilities --script` reports what
-that configuration can do, because what h5i routes on is whether *this*
-invocation runs script rather than whether the binary could.
+that configuration can do, because h5i routes on whether *this* invocation runs
+script rather than whether the binary could.
 
 ```
 $ h5i-browser-light serve http://localhost:3000 --script
@@ -452,11 +360,10 @@ $ h5i-browser-light session click @e1
  "settled":"settled after 0ms"}
 ```
 
-That reply is the point of the whole engine. The agent clicked, the page's own
-script ran, its `fetch` went through the same broker as everything else, the DOM
-changed, and the new item is in the next snapshot. The `requests` field is the
-causal link, stamped by the one component that knows it. The request log shows
-all three legs:
+That reply is the point of the whole engine. The agent clicked, the page's
+script ran, its `fetch` went through the same broker, the DOM changed, and the
+new item is in the next snapshot. `requests` is the causal link, stamped by the
+one component that knows it, and the log shows all three legs:
 
 ```
 200 navigation  /index.html
@@ -464,198 +371,152 @@ all three legs:
 200 subresource /api/item        <- what the click caused
 ```
 
-Script-initiated traffic being first-class evidence is the lane where every
-other engine is thinnest, and it is only available to an engine that *is* the
-HTTP client.
+Boa provides the language; the browser is ours. The Rust DOM is the single
+source of truth and every JS object naming a node wraps a `NodeId`, so the
+snapshot, the paint, the events and the script state cannot drift apart. The
+object model lives in a JavaScript prelude rather than in Rust, because
+listeners, timer callbacks and promise resolvers are GC-managed and the engine
+that owns their lifetime should keep owning it. The Rust surface underneath is
+about twenty primitives taking ids and strings.
 
-How it is built. Boa provides the language; the browser is ours. The Rust DOM is
-the single source of truth and every JS object naming a node is a wrapper over a
-`NodeId`, so the snapshot, the paint, the events and the script state cannot
-drift apart. The object model itself lives in a JavaScript prelude rather than
-in Rust, because event listeners, timer callbacks and promise resolvers are
-GC-managed and the engine that owns their lifetime should keep owning it. The
-Rust surface underneath is about twenty primitives taking ids and strings.
-
-Settling is reported, not guessed. "Run until settled" drains promise jobs and
-timers on a *virtual* clock, so a page's `setTimeout(1000)` costs an agent
-nothing and two runs of the same page settle identically. A page that never
-settles is cut off at a budget and says so, in the outline:
+Settling is reported, not guessed: "run until settled" drains promise jobs and
+timers on a *virtual* clock, so two runs settle identically, and a page that
+never settles is cut off at a budget and says so. Missing APIs are named, never
+stubbed silently, because that is the routing signal: without it an agent cannot
+tell an empty page from one that needed Chromium.
 
 ```
 note: still busy after 2000ms (1 timers pending) — this page had not finished
-```
-
-A snapshot that quietly returned early is a wrong answer that looks like a right
-one, so that line exists rather than the silence.
-
-Missing APIs are named, never stubbed silently. What the page asked for and did
-not get appears outside the fence, most-used first:
-
-```
 note: this page used Web APIs this engine does not have
       (Element.getBoundingClientRect x3, IntersectionObserver x1). What depends
       on them did not run; the chromium engine has them.
 ```
 
-That is the routing signal. Without it an agent cannot tell an empty page from
-one that needed the other engine.
-
-ES modules work, and `import "lodash"` does not become a request to a CDN. A
-bare specifier is refused by name, with what would have to exist instead,
-because a loader that silently rewrites one is an engine choosing destinations
-the page never named, inside a sandbox whose whole claim is that every request
-is policy-checked and receipted. Module fetches go through the same broker as
-everything else, carry the document origin, and appear in the request log.
+ES modules work, and `import "lodash"` does not become a request to a CDN: a
+bare specifier is refused by name, because a loader that rewrites one is an
+engine choosing destinations the page never named. Module fetches go through the
+same broker, carry the document origin, and appear in the request log.
 
 They are also `cors` requests, which a classic `<script src>` beside them is
-not. That difference is the spec's, and it is the whole of why JSONP exists.
+not; that difference is the spec's, and it is the whole of why JSONP exists.
 Fetching one the classic way meant a cross-origin module was parsed and
-*evaluated in the page's realm* without the server ever being asked, which is
-the one thing the CORS rule on module scripts exists to refuse. Both the static
-`type="module" src` and the dynamic `import()` ask now, with the same-origin
-credentials a module script without a `crossorigin` attribute gets.
+*evaluated in the page's realm* without the server ever being asked, the one
+thing the CORS rule on module scripts exists to refuse. Both `type="module" src`
+and dynamic `import()` ask now, with the same-origin credentials a module script
+without `crossorigin` gets.
 
 ### Live connections, and the caveat that travels with them
 
 `WebSocket` and `EventSource` are real objects over real connections, not names
-that answer feature detection. The rule this engine already had, *absent, not
-stubbed*, cost three sites their bundle when it was broken, so these arrive
-working or not at all, with tests asserting the shape a page checks against.
+that answer feature detection: the rule here is *absent, not stubbed*. They were
+built for reach rather than coverage. A cloud browser cannot open
+`localhost:3000`, and a dev server's hot-reload channel is a WebSocket, so the
+place this engine alone can reach was also the place it rendered a half-built
+page.
 
-The argument for building them is narrower than "pages use them". This engine's
-stated advantage is *reach*: a cloud browser cannot open `localhost:3000`, and
-for a coding agent that is most of what it needs to look at. A dev server's
-hot-reload channel is a WebSocket. So the place this engine alone can reach was
-also the place it rendered a half-built page.
+Every frame is receipted. Receipting the handshake alone would let the central
+claim quietly stop covering the bytes after it, exactly the CONNECT-gate
+blindness this engine exists to remove. Frames are ordinary request/response
+pairs with `WS-SEND`, `WS-RECV` or `SSE-RECV` as the method, so the console,
+`h5i box watch` and the export bundle show socket traffic unchanged.
 
-Every frame is receipted. A socket open for ten minutes carrying four hundred
-messages could be honoured by receipting the handshake alone, and then the
-central claim would quietly stop covering the bytes after it, which is exactly
-the CONNECT-gate blindness this engine exists to remove. Frames are written as
-ordinary request/response pairs with `WS-SEND`, `WS-RECV` or `SSE-RECV` as the
-method, each naming the protocol it actually was, so the console, `h5i box
-watch` and the export bundle show socket traffic with no changes to any of them.
+`wss://` works. The old refusal ("needs a raw TLS stream the HTTP client here
+does not expose") was true of `reqwest` and wrongly generalised into a property
+of the engine: a socket that owns its transport needs nothing from the HTTP
+client. It carries `rustls` directly, already in the tree through `reqwest`'s
+own TLS. One transport type serves both schemes, because a parallel path for the
+encrypted one is where the two drift and only one keeps getting the receipt rule
+right. The TLS half shares its connection between reader and writer under a lock
+(a TLS connection is one piece of state and cannot be `try_clone`d the way a
+`TcpStream` can) with a short read timeout so the reader drops the lock often
+enough for a send to get in.
 
-*`wss://` works*, and the reason it did not is worth recording because the
-reason was wrong. The refusal said it "needs a raw TLS stream the HTTP client
-here does not expose", which is true of `reqwest` and had been generalised into
-a property of the engine. It is not one: a socket that owns its transport needs
-nothing from the HTTP client. Lightpanda gets `wss://` free because its socket
-is a curl handle and curl carries the TLS; here the socket carries `rustls`
-directly, and both crates were already in the tree through `reqwest`'s own TLS,
-so this added a name to the manifest and no code to the build.
+The same-origin policy reaches both. `EventSource` is a `cors` request in every
+browser and this engine sent it as the agent's own: no `Origin`, no
+`Access-Control-Allow-Origin` check, session cookies attached, so two allowed
+origins and a script on either could open the other's stream and read it. It is
+a `cors` request now, and an answer that is not `text/event-stream` is refused:
+without that the line parser reads *any* body, and every line beginning `data:`
+in someone else's document is a message the page receives.
 
-One transport type serves both schemes, because a parallel path for the
-encrypted one is where the two drift and only one of them keeps getting the
-receipt rule right. The TLS half shares its connection between the reader thread
-and the writer under a lock (a TLS connection is one piece of state and cannot
-be `try_clone`d the way a `TcpStream` can) with a short read timeout that exists
-solely so the reader drops the lock often enough for a send to get in.
+CORS does not apply to a WebSocket, so `Origin` is the *only* thing a server has
+to tell a page's socket from a program's, and sending none is precisely the
+shape a cross-site WebSocket hijack takes. The handshake carries the document's
+origin now (`null` for a document that has none), and a socket the *agent* named
+carries none, because there is no document behind it. The address is checked
+too: the pinning resolver cannot reach a client that calls `TcpStream::connect`
+itself, so the socket asks for the addresses the policy already approved.
 
-And the same-origin policy reaches both. `EventSource` is a `cors` request in
-every browser and this engine sent it as if it were the agent's own: no `Origin`
-header, no `Access-Control-Allow-Origin` check on the answer, and the session's
-cookies attached. Two allowed origins and a script on either could open the
-other's stream and read it: the exact hole [`cors`](src/cors.rs) was written to
-close, on a second path that had grown its own fetch. It is planned as the
-`cors` request it is now, with same-origin credentials, and an answer that is
-not `text/event-stream` is refused, without which the line parser is a reader
-for *any* body and every line beginning `data:` in someone else's document is a
-message the page receives.
+One refusal stands: a remote socket is refused whenever an egress proxy is
+configured, `wss://` included. A raw socket would not go through the proxy, and
+inside a box that proxy is how the allowlist stays in the path. TLS buys no
+exemption: the objection was never that the bytes were readable, it was that the
+connection is not the proxy's to see. Loopback is exempt because the proxy
+already excludes it.
 
-A WebSocket is the other shape: CORS does not apply to one, so `Origin` is the
-*only* thing a server has to tell a page's socket from a program's. Sending none
-made every socket this engine opened on a page's behalf look like a non-browser
-client, which is precisely the shape a cross-site WebSocket hijack takes. The
-handshake carries the document's origin now (`null` for a document that has
-none), and a socket the *agent* named carries none, because there is no document
-behind that one. The address behind the name is checked here too: the pinning
-resolver cannot reach a client that calls `TcpStream::connect` itself, so the
-socket asks for the addresses the policy already approved and connects to those
-rather than resolving a second time.
+One caveat. A page holding a live connection is the one thing here that is *not*
+deterministic: messages arrive on wall-clock time, so two reads can differ
+without the agent having acted. `snapshot` and `status` report `open_sockets`.
+Delivery happens when a verb runs rather than the instant a frame lands, since
+the session has no pump at rest, which is what makes it free when nobody is
+driving. Reconnection is deliberately not built: an engine that silently
+re-dialled would make requests the agent never asked for.
 
-One refusal stands, by name:
+What is not there: `IntersectionObserver` and `ResizeObserver` report themselves
+missing; `fetch` is synchronous underneath, so two requests run in order rather
+than at once, and `AbortController` cannot cancel one in flight; no iframes,
+workers, WebGL or WebAssembly. Those are also what will stop React first: a
+production build is not yet verified (ROADMAP §12.4 sets that bar) and what runs
+today is a hand-written application of the shape above.
 
-- A remote socket is refused whenever an egress proxy is configured, `wss://`
-  included. A WebSocket is a raw socket and would not go through the proxy, and
-  inside a box that proxy is how the sandbox's allowlist stays in the path. TLS
-  buys no exemption here: the objection was never that the bytes were readable,
-  it was that the connection is not the proxy's to see. Loopback is exempt
-  because the proxy already excludes loopback, so nothing in the path is being
-  stepped around.
-
-And one honest caveat. A page holding a live connection is the one thing here
-that is *not* deterministic: messages arrive on wall-clock time, so two reads of
-that page can differ without the agent having acted. `snapshot` and `status`
-report `open_sockets` and say so. Delivery happens when a verb runs rather than
-the instant a frame lands, because the session has no pump at rest, which is
-what makes it cost nothing when nobody is driving it.
-
-Not built, deliberately: reconnection. An engine that silently re-dialled would
-be making requests the agent never asked for, and the receipt would show them
-arriving from nowhere.
-
-What is not there. `IntersectionObserver` and `ResizeObserver` report themselves
-as missing. `fetch` is synchronous underneath, so two requests run in order
-rather than at once, and `AbortController` cannot cancel one in flight. No
-iframes, workers, WebGL or WebAssembly.
-
-Not yet verified: a production React build. ROADMAP §12.4 sets that as the bar
-and it has not been cleared. What runs today is a hand-written application of
-the shape above. The gaps most likely to stop React first are the ones listed
-above, in that order.
-
-Boa is a fork at 0.22.0, pinned by revision. `boa_engine` and `boa_gc` are
-patched to `h5i-dev/boa` in the workspace `Cargo.toml`, one commit ahead of
-0.22.0 with `Script::bind_to_realm`, which compiles the prelude once and runs it
-in many realms. The old 0.19 pin, and the `icu_normalizer` range clash with
-parley that forced it, are gone: 0.22.0 resolved the clash, which is what
-`scripts/check_boa_release.sh` was written to catch. Patch both crates together,
-since this crate depends on `boa_gc` directly and a second copy would make the
-cancellation token two incompatible types with the same name.
+Boa is a fork at 0.22.0, pinned by revision: `boa_engine` and `boa_gc` are
+patched to `h5i-dev/boa` in the workspace `Cargo.toml`, one commit ahead with
+`Script::bind_to_realm`, which compiles the prelude once and runs it in many
+realms. The old 0.19 pin and the `icu_normalizer` clash with parley that forced
+it are gone, which is what `scripts/check_boa_release.sh` was written to catch.
+Patch both crates together: this crate depends on `boa_gc` directly, and a
+second copy would make the cancellation token two incompatible types with the
+same name.
 
 ### The snapshot is fenced
 
 Page content is wrapped in `--- BEGIN/END UNTRUSTED PAGE CONTENT ---` and
-labelled as data. This is the point where attacker-controlled text reaches a
-model that is deciding what to do next, and the engine's other defences do not
-cover it: `sanitize_display` protects a viewer's chrome, and running no script
-removes the commonest delivery *channel*. Neither says anything at the moment of
-reading.
+labelled as data. This is where attacker-controlled text reaches a model
+deciding what to do next, and the other defences do not cover it:
+`sanitize_display` protects a viewer's chrome, and running no script removes the
+commonest delivery *channel*. Neither says anything at the moment of reading.
 
 The fence rests on a tested property rather than a secret: no page-derived value
 may span a line, so a page that writes the closing marker into its own text gets
-it back as quoted content on a `- ` line. A marker written inline is replaced
-with `[fence marker removed]`, the only content this engine removes, and the
-words around it survive.
+it back as quoted content on a `- ` line. A marker written inline becomes
+`[fence marker removed]`, the only content this engine removes.
 
 ### The live view
 
-`serve` opens a WebSocket that speaks the format h5i's viewers already use, so
-`h5i box view` and `h5i box view --term` attach to this engine unchanged: base64
-JPEG frames in a JSON envelope, a `status` message carrying the viewport, and
-`config`/`ack` pacing. `--stream-file` writes the bound port where the viewers
-look for it (`<env>/tmp/agent-browser/*.stream`).
+`serve` opens a WebSocket speaking the format h5i's viewers already use, so `h5i
+box view` and `h5i box view --term` attach unchanged: base64 JPEG frames in a
+JSON envelope, a `status` message carrying the viewport, and `config`/`ack`
+pacing. `--stream-file` writes the bound port where the viewers look
+(`<env>/tmp/agent-browser/*.stream`).
 
-Frames are driven by change, not by a clock. Tier 1 runs no script, so nothing
-moves on its own: a frame is produced when a scroll actually moved or a
-navigation landed, and at rest the process is idle rather than re-encoding an
-identical JPEG thirty times a second. Scrolling (wheel, PageUp/Down, arrows,
-Home/End) and clicking a link both work; a click on a link the policy refuses
-returns a `page_error` and keeps the current page rather than going blank.
+Frames are driven by change, not by a clock: one is produced when a scroll
+actually moved or a navigation landed, and at rest the process is idle rather
+than re-encoding an identical JPEG thirty times a second. A click the policy
+refuses returns a `page_error` and keeps the current page rather than going
+blank.
 
 The allowlist is fail-closed: with no `--allow`, nothing remote is reachable.
-Loopback is allowed by default because it is the dev server; `--no-loopback`
-takes that away. `$H5I_EGRESS_PROXY` is picked up automatically so that inside a
-box the sandbox's own allowlist stays in the path.
+Loopback is allowed by default because it is the dev server, and `--no-loopback`
+takes that away. `$H5I_EGRESS_PROXY` is picked up automatically so the sandbox's
+own allowlist stays in the path.
 
 ### Fonts
 
-Fonts are discovered and registered at runtime rather than linked at build time:
-enabling Blitz's `system-fonts` would add a build-time dependency on
-libfontconfig, which breaks a hermetic build for a font list. A host with no
-fonts renders pages but draws no text, and `doctor` says so rather than leaving
-you with a blank screenshot. `--font-file` and `--font-dir` override the search.
+Fonts are discovered at runtime rather than linked at build time: Blitz's
+`system-fonts` would add a build-time dependency on libfontconfig, which breaks
+a hermetic build for a font list. A host with no fonts renders pages but draws
+no text, and `doctor` says so rather than leaving you a blank screenshot.
+`--font-file` and `--font-dir` override the search.
 
 ## Composition
 
@@ -670,51 +531,38 @@ Assembled, not written from scratch:
 | Text, fonts | `parley`, `fontique` |
 | Policy, receipts, HTTP | this crate |
 
-The parts that are ours are the parts that make it h5i's: the policy, the
-receipts, the fail-closed broker, and the agent-facing snapshot.
+Ours are the parts that make it h5i's: the policy, the receipts, the
+fail-closed broker, and the agent-facing snapshot.
 
 ## Status
 
-Tiers 1 and 2 of ROADMAP M10: static render, snapshot, screenshot, receipts, and
-a live view h5i's viewers can attach to. Plus the resident session and its verbs
-(ROADMAP §12.1), and JavaScript behind `--script`, described above. Tier 3,
-policy-gated script, is deliberately unbuilt; ROADMAP §12 is the plan and §12.5
-is what it costs.
+Tiers 1 and 2 of ROADMAP M10: static render, snapshot, screenshot, receipts, a
+live view h5i's viewers attach to, the resident session and its verbs (§12.1),
+and JavaScript behind `--script`. Tier 3, policy-gated script, is deliberately
+unbuilt; ROADMAP §12 is the plan and §12.5 is what it costs. Not yet done: the
+frame half of LOGIN mode, and file uploads, which are dropped rather than read.
 
-h5i can pin a box to this engine: `h5i box create --profile browser --engine
-h5i-light`, or `[profile.browser] engine = "h5i-light"`. A box pinned to it gets
-`H5I_BROWSER_ALLOW` (its own `net.egress`, so the engine's allowlist is the
-box's) and `H5I_BROWSER_RECEIPTS` (a path inside the box), and none of
-agent-browser's variables, which this engine would not read.
+Pin a box to this engine with `h5i box create --profile browser --engine
+h5i-light`, or `[profile.browser] engine = "h5i-light"`. Such a box gets
+`H5I_BROWSER_ALLOW` (its own `net.egress`) and `H5I_BROWSER_RECEIPTS` (a path
+inside the box), and none of agent-browser's variables.
 
 Driven against a real box on 2026-08-08: `h5i box view`'s forward and the
-console's frame relay both attach to an `h5i-light` box and render, input is
-dropped while the agent holds the control lock and flows once a human takes it,
-and a control-channel navigation reaches every attached viewer. Two defects came
-out of that run and are fixed: a relative path failed when the working directory
-could not be resolved by name, and `serve` accepted only one viewer at a time,
-so opening the console silently blocked `h5i box view`.
-
-Not yet done: the frame half of LOGIN mode, so a human taking over to type a
-password is protected from the agent's *reads* and not from an agent that
-attaches to the viewer socket; and no file uploads, which are dropped rather
-than read. Tier 3 (policy-gated script) remains deliberately unbuilt.
-
-`Domain` cookies were on this list and are now built, over a compiled-in public
-suffix list, so a cross-subdomain session persists.
+console's frame relay both attach and render, input is dropped while the agent
+holds the control lock and flows once a human takes it, and a control-channel
+navigation reaches every attached viewer.
 
 ### What a reading of Lightpanda changed, 2026-08-26
 
-ROADMAP §B16 is the write-up; what landed here is: the fourth wait outcome
-above; a snapshot that no longer lets a wrapper swallow the block beneath it;
-`--url` on the read verbs, so a look at a page is one round trip rather than
-two; `Domain` cookies; an address-level rebinding check, so the receipt cannot
-name a host the bytes never reached; record-and-replay over durable selectors; a
-real Canvas 2D; `wss://`; a `structured` verb; and a counter for verb names
-callers asked for and this engine does not have.
+ROADMAP §B16 is the write-up. What landed here: the fourth wait outcome above; a
+snapshot that no longer lets a wrapper swallow the block beneath it; `--url` on
+the read verbs; `Domain` cookies; an address-level rebinding check, so the
+receipt cannot name a host the bytes never reached; record-and-replay over
+durable selectors; a real Canvas 2D; `wss://`; a `structured` verb; and a
+counter for verb names callers asked for and this engine does not have.
 
 Three of those were *not* Lightpanda's ideas but its absences, found by reading
 its code beside ours: it fakes canvas with sixty-one silent no-ops, it pays
-wall-clock time for every timer, and it has no receipts at all. What the
-comparison was most useful for was the three costs it found in *our* load path,
-which are §B16.10's queue and are not built yet.
+wall-clock time for every timer, and it has no receipts. The comparison was most
+useful for the three costs it found in *our* load path, which are §B16.10's
+queue and are not built yet.
