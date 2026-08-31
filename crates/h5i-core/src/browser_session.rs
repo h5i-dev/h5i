@@ -3,24 +3,23 @@
 //! A session is the unit an agent talks to: one page state, one cookie jar, one
 //! request log, one policy. Nothing else about it is agent-facing.
 //!
-//! The opaque id (`br_7k2xqa`) is in the record, `--json` and receipts, because
-//! a durable reference must survive a rename, and is never typed. [`resolve`]
-//! has three layers, most to least explicit: `--session <name>`,
+//! The opaque id (`br_7k2xqa`) is in the record, `--json` and receipts, because a
+//! durable reference must survive a rename, and is never typed. [`resolve`] has
+//! three layers, most to least explicit: `--session <name>`,
 //! `$H5I_BROWSER_SESSION`, and the default session `open` set.
 //!
-//! The registry is host-owned, always, including for a session whose engine
-//! runs in a box. The engine's control file is enough to *reach* a session but
-//! not to *name* one, and letting the box own the record for boxed sessions
-//! splits every lookup in two.
+//! The registry is host-owned, always, including for a session whose engine runs
+//! in a box. The engine's control file is enough to *reach* a session but not to
+//! *name* one, and letting the box own the record for boxed sessions splits every
+//! lookup in two.
 //!
-//! Not under a git repository. Every other noun here is about a repository
-//! and a browser is not, so this lives in the user's state directory ([`root`]);
-//! `h5i browser open` in an empty directory has to work.
+//! Not under a git repository. Every other noun here is about a repository and a
+//! browser is not, so this lives in the user's state directory ([`root`]).
 //!
-//! Ids are never reused. Closing writes the ending into the record rather
-//! than deleting it, which keeps [`Session::state`] answerable and lets
-//! [`new_id`] reject any candidate whose directory exists. A stale id gets "this
-//! session ended, here is how", never a different session wearing its name.
+//! Ids are never reused. Closing writes the ending into the record rather than
+//! deleting it, which keeps [`Session::state`] answerable and lets [`new_id`]
+//! reject any candidate whose directory exists. A stale id gets "this session
+//! ended, here is how", never a different session wearing its name.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -70,8 +69,7 @@ pub const ACTIONS_FILE: &str = "actions.jsonl";
 /// program with its own network, so the engine's log cannot account for it and
 /// must not appear to: mixing the two would turn "a request that is not in
 /// `requests` did not happen" from a claim the engine can keep into one it
-/// cannot. Host-observed, so an auditor gets the stronger evidence grade on the
-/// one lane the engine cannot see.
+/// cannot.
 pub const HELPERS_FILE: &str = "helpers.jsonl";
 
 /// The session's cookie jar, mirrored by the engine and read by `--restore`.
@@ -243,13 +241,12 @@ impl State {
 
 /// How a verb reaches the engine.
 ///
-/// Two, because neither works everywhere. A loopback port is the simple case
-/// and needs no path short enough to be a socket address. A Unix socket is the
-/// only thing that works anywhere a network namespace is in play: a box's
-/// netns may have no usable loopback at all (`net.mode = deny` leaves nothing
-/// to dial), and every `h5i box run` gets a fresh one, so a port bound in one
-/// is unreachable from the next. A path survives both, because the box's
-/// filesystem is one filesystem across every run in it.
+/// Two, because neither works everywhere. A loopback port is the simple case and
+/// needs no path short enough to be a socket address. A Unix socket is the only
+/// thing that works anywhere a network namespace is in play: a box's netns may
+/// have no usable loopback at all, and every `h5i box run` gets a fresh one, so
+/// a port bound in one is unreachable from the next. A path survives both,
+/// because the box's filesystem is one filesystem across every run in it.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Channel {
@@ -332,15 +329,13 @@ pub struct Session {
     /// identity declared.
     ///
     /// Two fields rather than one for the reason the policy has a digest and a
-    /// name: the name is what someone typed and can be reused, the digest is
-    /// what was actually presented and cannot. A session opened with a hand
-    /// written identity file names a path that may have been edited since, so
-    /// the digest is the half an audit can rely on. Two sessions with the same
-    /// one showed the same browser to the same server.
+    /// name: the name is what someone typed and can be reused, the digest is what
+    /// was actually presented and cannot. A session opened with a hand-written
+    /// identity file names a path that may have been edited since, so the digest
+    /// is the half an audit can rely on.
     ///
-    /// `#[serde(default)]` on both, so a record written before identities
-    /// existed still reads. An empty digest is "not recorded", which is what
-    /// those sessions are, rather than a claim that they presented nothing.
+    /// `#[serde(default)]` on both, so a record written before identities existed
+    /// still reads. An empty digest is "not recorded".
     #[serde(default)]
     pub identity: String,
     #[serde(default)]
@@ -360,20 +355,19 @@ pub struct Session {
     /// can be confined; a boxed one is confined by its box.
     #[serde(default)]
     pub confinement: crate::browser_sandbox::Confinement,
-    /// The box h5i itself was running inside when this session was opened,
-    /// if any.
+    /// The box h5i itself was running inside when this session was opened, if
+    /// any.
     ///
-    /// Different from `placement`, and the difference is who is describing
-    /// what. `Placement::Box` means h5i, from outside, put the session in a box
-    /// it can see the policy of and carries every verb into. This means h5i was
+    /// Different from `placement`, and the difference is who is describing what.
+    /// `Placement::Box` means h5i, from outside, put the session in a box it can
+    /// see the policy of and carries every verb into. This means h5i was
     /// *already* in a box and opened a session beside itself.
     ///
-    /// Mechanically the second is a host session: same namespace, same
-    /// loopback, same registry, and the verbs go straight to the engine. What
-    /// it is not is uncontained, and a record that said "no containment beyond
-    /// the engine" there would be understating what is true. So the box is
-    /// named, and nothing more is claimed about it, because from inside, the
-    /// policy is sealed and h5i cannot read what its own boundary enforces.
+    /// Mechanically the second is a host session: same namespace, same loopback,
+    /// same registry, and the verbs go straight to the engine. What it is not is
+    /// uncontained, and a record saying "no containment beyond the engine" there
+    /// would understate what is true. So the box is named and nothing more is
+    /// claimed about it, because from inside the policy is sealed.
     #[serde(default)]
     pub enclosing_box: Option<String>,
     pub control: Control,
@@ -424,16 +418,14 @@ impl Session {
 
     /// The lane a placement can honestly claim.
     ///
-    /// Being in a box is not enough. A box whose policy lets the engine
-    /// reach the whole host network has nothing at its boundary to corroborate
-    /// what the engine says it fetched, so its lane is still the engine's own
-    /// account. What earns `HostObserved` is enforcement outside the engine:
-    /// an egress allowlist the box applies at its boundary, or a net mode that
-    /// lets nothing out at all.
+    /// Being in a box is not enough. A box whose policy lets the engine reach the
+    /// whole host network has nothing at its boundary to corroborate what the
+    /// engine says it fetched, so its lane is still the engine's own account. What
+    /// earns `HostObserved` is enforcement outside the engine: an egress allowlist
+    /// the box applies at its boundary, or a net mode that lets nothing out.
     ///
-    /// Getting this wrong in the generous direction is the one error this
-    /// product cannot afford. It is exactly the box-claimed row rendered as
-    /// host-observed that the lane split exists to prevent.
+    /// Getting this wrong in the generous direction is the one error this product
+    /// cannot afford.
     pub fn lane_for(placement: &Placement, boundary_enforced: bool) -> Lane {
         match placement {
             Placement::Host => Lane::EngineClaimed,
@@ -446,17 +438,16 @@ impl Session {
     ///
     /// Three answers, not two, and the third is the point: *unknown*.
     ///
-    /// The pid answers whenever h5i spawned something. For a boxed session
-    /// that is the `box run` carrying the engine, which dies with it. Failing
-    /// that, the control file as this machine sees it answers. Failing *that*,
-    /// on a tier whose `/tmp` is inside an image, nothing here can tell, and
-    /// this returns `true` rather than inventing a death: the verb about to be
-    /// sent will find out for certain, and reporting a live session dead is the
-    /// worse of the two errors.
+    /// The pid answers whenever h5i spawned something. For a boxed session that is
+    /// the `box run` carrying the engine, which dies with it. Failing that, the
+    /// control file as this machine sees it answers. Failing *that*, on a tier
+    /// whose `/tmp` is inside an image, nothing here can tell, and this returns
+    /// `true` rather than inventing a death: the verb about to be sent will find
+    /// out for certain, and reporting a live session dead is the worse error.
     ///
-    /// Deliberately not a network probe. A status listing that opened a socket
-    /// per row would make `h5i browser list` a thing that touches every session
-    /// it prints.
+    /// Deliberately not a network probe. A status listing that opened a socket per
+    /// row would make `h5i browser list` a thing that touches every session it
+    /// prints.
     pub fn probe(&self) -> bool {
         if !self.state.is_live() {
             return false;
@@ -521,16 +512,16 @@ pub fn sessions_dir(root: &Path) -> Result<PathBuf, H5iError> {
 
 /// `create_dir_all`, but the directories this crate makes are the owner's.
 ///
-/// A session directory holds the control socket, the cookie jar, the request
-/// log and the action log. The channel that *is* authority over the session,
-/// and a complete account of what the agent did with it. `create_dir_all`
-/// leaves the mode to the umask, which is 0755 on a default one, and the
-/// directory is not somewhere private: inside a box the browser state root is
-/// the box's own `/tmp`, which the `agent` profile shares with the host.
+/// A session directory holds the control socket, the cookie jar, the request log
+/// and the action log: the channel that *is* authority over the session, and a
+/// complete account of what the agent did with it. `create_dir_all` leaves the
+/// mode to the umask, which is 0755 on a default one, and the directory is not
+/// somewhere private: inside a box the browser state root is the box's own
+/// `/tmp`, which the `agent` profile shares with the host.
 ///
 /// The mode is set at creation rather than chmod'd afterwards, so there is no
 /// window in which the directory exists and is readable. Existing directories
-/// are left alone: a mode somebody chose is not this function's to overwrite.
+/// are left alone.
 fn create_private_dir_all(dir: &Path) -> Result<(), H5iError> {
     #[cfg(unix)]
     {
@@ -679,8 +670,7 @@ pub fn set_default(root: &Path, id: &str) -> Result<(), H5iError> {
 /// Used for one case only: the pointer names a record that is *gone*. A pointer
 /// to a session that merely *ended* is deliberately kept, because following it
 /// is what lets the next bare verb say "the session you were on was closed"
-/// instead of "no session is open". The first tells an agent what happened; the
-/// second reads like it never had one.
+/// instead of "no session is open".
 ///
 /// Conditional on the id, because closing a named session must not disturb a
 /// default someone else is using.
@@ -988,12 +978,11 @@ const MAX_DEPTH: usize = 64;
 /// Three things are removed, each for a different reason:
 ///
 /// * Escape sequences. `ESC` in a relayed string is a page rewriting the
-///   terminal it is printed to. Moving the cursor over the line above, hiding
-///   what it just did, or repainting a prompt. Nothing a browser has to say
-///   needs `ESC`, so it never survives.
-/// * Other control characters. They corrupt the transcript a human reads
-///   back, and `\r` alone is enough to overwrite a line. Tab and newline stay,
-///   because a page's text legitimately contains them.
+///   terminal it is printed to: moving the cursor over the line above, hiding
+///   what it just did, repainting a prompt. Nothing a browser has to say needs
+///   `ESC`.
+/// * Other control characters. They corrupt the transcript a human reads back,
+///   and `\r` alone is enough to overwrite a line. Tab and newline stay.
 /// * Size. Capped per string, per array and by depth, with the truncation
 ///   *stated in the value* rather than performed quietly. A silently shortened
 ///   answer is one an agent will reason about as if it were complete.
@@ -1180,16 +1169,14 @@ const AUDIT_CAPACITY: usize = 5000;
 /// Assemble the whole record of a session: what the agent asked for, what the
 /// engine decided, who was driving, and how it ended.
 ///
-/// The merge reuses [`crate::browser_events`], which is the same machinery the
-/// console renders from. That is deliberate and it is the point: two surfaces
-/// that each assemble their own view of one session are two surfaces that can
-/// disagree, and a disagreement between them is unfalsifiable for whoever is
-/// trying to review the session.
+/// The merge reuses [`crate::browser_events`], the same machinery the console
+/// renders from. That is the point: two surfaces that each assemble their own
+/// view of one session are two surfaces that can disagree, and a disagreement
+/// between them is unfalsifiable for whoever is trying to review the session.
 ///
-/// The lanes are not merged. The action and request logs are the engine's
-/// own account; the handovers and the lifecycle are h5i's, written from
-/// outside. Every row carries which, because a claim rendered as an observation
-/// is the one error this product cannot afford.
+/// The lanes are not merged. The action and request logs are the engine's own
+/// account; the handovers and the lifecycle are h5i's, written from outside.
+/// Every row carries which.
 pub fn audit(root: &Path, session: &Session) -> Audit {
     use crate::browser_events as ev;
 
@@ -1202,12 +1189,12 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
     // Straight off the session directory rather than out of `session.logs`: the
     // helper log is h5i's own, written beside the session by whoever ran the
     // helper, and it exists for sessions opened before this file did.
+    //
     // Not-found and unreadable are different facts and `Availability::of`
-    // collapses them, because `read_to_string(...).ok()` gives `None` for both.
-    // A session that never ran a helper must read as `Empty`, nothing of this
-    // kind happened, and a log this machine could not open must read as
-    // `Unavailable`, which is the one an auditor has to see. The path is the
-    // only thing that tells them apart.
+    // collapses them, because `read_to_string(...).ok()` gives `None` for both. A
+    // session that never ran a helper must read as `Empty`, and a log this
+    // machine could not open must read as `Unavailable`, which is the one an
+    // auditor has to see.
     let helpers_path = dir.join(HELPERS_FILE);
     // The *reason* the read failed, not `exists()`. `exists()` answers false
     // for any metadata error (an unreadable session directory, a stale mount)
@@ -1372,13 +1359,12 @@ pub fn record_helper(root: &Path, id: &str, row: &HelperRow) -> Result<(), H5iEr
 /// renders no page, so it needs no session, and a run with no session has no
 /// session directory to be recorded in. Without somewhere else to write, this
 /// lane's promise that *every* run is recorded would hold only for the runs
-/// that happened to have a session open, which is the kind of gap that is
-/// discovered by someone auditing a run that is not there.
+/// that happened to have a session open.
 ///
 /// At the root of the browser state directory, beside `sessions/`, because that
 /// is the scope of what it records. [`crate::browser_session::audit`] never
-/// reads it: a session's timeline must not carry runs that were not part of
-/// that session. `h5i browser audit --no-session` is what renders it.
+/// reads it: a session's timeline must not carry runs that were not part of that
+/// session.
 pub const SESSIONLESS_HELPERS_FILE: &str = "helpers.jsonl";
 
 /// Append one row for a run that had no session. See
@@ -1465,13 +1451,12 @@ impl Row {
 
     /// A row from one of the engine's logs.
     ///
-    /// It sorts on the engine's own claim, because that is the only clock that
-    /// can order the two engine logs against each other. What it is *stamped*
-    /// with is `read_at`, the moment h5i read the file, because `observed_at`
-    /// means "when h5i saw this" everywhere else in this module and an audit
-    /// must not be the one place it quietly means something else. A row with no
-    /// claim at all falls back to the session's start, which puts it at the top
-    /// rather than pretending to a position it cannot support.
+    /// It sorts on the engine's own claim, because that is the only clock that can
+    /// order the two engine logs against each other. What it is *stamped* with is
+    /// `read_at`, the moment h5i read the file, because `observed_at` means "when
+    /// h5i saw this" everywhere else in this module. A row with no claim at all
+    /// falls back to the session's start, which puts it at the top rather than
+    /// pretending to a position it cannot support.
     fn engine(started_at: &str, read_at: &str, draft: crate::browser_events::Draft) -> Row {
         let order = draft
             .claimed_at
