@@ -618,8 +618,31 @@ pub fn read(
                 }
             };
 
-            let outcome =
-                broker.fetch_from(&url, crate::receipt::Initiator::Subresource, document);
+            // A text track is a **CORS request** in a browser, and for exactly
+            // the reason it matters here: the track's *text* is read and handed
+            // to the agent as the transcript, so a cross-origin one is a
+            // cross-origin read of somebody else's document. Without this a
+            // page could point a `<track>` at any allowed origin and have the
+            // engine fetch it, decode it and put it in front of the model.
+            //
+            // `document` is `None` when the agent named the media itself, which
+            // is the agent exercising its own authority over a URL it chose —
+            // the same distinction `crate::cors::Requester` draws.
+            let outcome = match document {
+                Some(document) => broker.send_script(
+                    &url,
+                    "GET",
+                    &[],
+                    None,
+                    document,
+                    &[],
+                    crate::cors::Mode::Cors,
+                    crate::cors::Credentials::SameOrigin,
+                ),
+                None => {
+                    broker.fetch_from(&url, crate::receipt::Initiator::Subresource, None)
+                }
+            };
             let track = &mut media.tracks[index];
             track.fetched = true;
             track.seq = outcome.seq;

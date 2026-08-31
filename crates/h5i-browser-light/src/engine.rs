@@ -318,6 +318,9 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
     let mut failures: Vec<String> = Vec::new();
     let mut seen: Vec<usize> = Vec::new();
     let mut capped = false;
+    // Where each grafted document came from, for the note. See the note itself
+    // for why counting them was not enough.
+    let mut origins: Vec<String> = Vec::new();
 
     loop {
         // One frame per iteration: the graft invalidates any longer list of
@@ -353,7 +356,8 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
         };
 
         // `srcdoc` wins over `src`, per spec, and needs no fetch: it is inline
-        // content the parser already carried, like a `data:` URL.
+        // content the parser already carried, like a `data:` URL — and so has
+        // this page's own origin, which is why it contributes no name.
         let html = if let Some(inline) = srcdoc {
             inline
         } else {
@@ -399,6 +403,10 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
                 // flatten into an outline; saying so beats grafting bytes.
                 failures.push(format!("{resolved}: `{kind}` is not a document"));
                 continue;
+            }
+            match crate::cors::Origin::of(&outcome.final_url) {
+                Some(origin) => origins.push(origin.header()),
+                None => origins.push(outcome.final_url.to_string()),
             }
             let encoding = crate::encoding::sniff(&outcome.body, content_type.as_deref());
             crate::encoding::decode(&outcome.body, encoding)
@@ -477,12 +485,28 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
     }
 
     if loaded > 0 {
+        // **Named, not just counted.** A flattened frame is somebody else's
+        // document appearing inline in the agent's reading of this one, with
+        // nothing in the outline to say which lines came from where. For an
+        // engine whose claim is that a reader can tell where bytes came from,
+        // "three frames were loaded" is not that: a third party writing into
+        // the agent's reading of a page is a prompt-injection channel, and the
+        // one thing that makes it answerable is naming the origin.
+        let mut named = origins;
+        named.sort();
+        named.dedup();
+        let from = if named.is_empty() {
+            "written inline by this page".to_string()
+        } else {
+            format!("served by {}", named.join(", "))
+        };
         page.note(&format!(
-            "{loaded} frame(s) were loaded as content: each document was fetched through \
-             the policy (initiator `frame` in the request log) and appears in the outline \
-             below, flattened. Their scripts do not run ({stripped_scripts} stripped) and \
-             their styles do not apply — a frame here is content, not a second page — and \
-             `contentDocument` answers null."
+            "{loaded} frame(s) were loaded as content, {from}: each document was fetched \
+             through the policy (initiator `frame` in the request log) and appears in the \
+             outline below, flattened, so some of what follows is another origin's page \
+             rather than this one's. Their scripts do not run ({stripped_scripts} stripped) \
+             and their styles do not apply — a frame here is content, not a second page — \
+             and `contentDocument` answers null."
         ));
     }
     if capped {
@@ -1305,11 +1329,23 @@ impl Page {
                     };
                     // Document-scoped for the same reason the classic `src`
                     // above is: the URL is the page's choice and the body is
-                    // executed.
-                    let outcome = broker.fetch_from(
+                    // executed. **And CORS-checked, which the classic one is
+                    // not.** That difference is the spec's and it is the whole
+                    // of why JSONP exists: a classic script may be loaded
+                    // cross-origin without asking, a module script may not. This
+                    // fetched one with no CORS context, so a cross-origin module
+                    // was parsed and evaluated in this page's realm without the
+                    // server ever being asked — see `crate::script::modules`,
+                    // which had the same hole on the dynamic-import path.
+                    let outcome = broker.send_script(
                         &url,
-                        crate::receipt::Initiator::Subresource,
-                        Some(&document),
+                        "GET",
+                        &[],
+                        None,
+                        &document,
+                        &[],
+                        crate::cors::Mode::Cors,
+                        crate::cors::Credentials::SameOrigin,
                     );
                     if let Some(error) = outcome.error {
                         script.note_error(&format!("could not load {url}: {error}"));
@@ -3592,6 +3628,51 @@ mod frame_tests {
             carried, 0,
             "the previous origin's session rode along on a frame fetch: {:?}",
             broker.records()
+        );
+    }
+
+    /// A flattened frame is somebody else's document appearing inline in the
+    /// agent's reading of this one. Counting them was not enough: for an engine
+    /// whose claim is that a reader can tell where bytes came from, "three
+    /// frames were loaded" leaves a third party writing into the agent's
+    /// reading with no way to see whose words they are.
+    #[test]
+    fn the_note_names_the_origin_a_frames_content_came_from() {
+        let body = "<p>inner page</p>";
+        let port = one_shot_server(body);
+        let html = format!(
+            r#"<html><body><iframe src="http://127.0.0.1:{port}/inner"></iframe></body></html>"#
+        );
+        let broker =
+            crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+                .expect("broker");
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let factory =
+            PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+        let mut page = Page::from_bytes(
+            html.as_bytes(),
+            Some("text/html"),
+            &Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
+            broker.clone(),
+            factory.fonts(),
+            PageOptions::default(),
+        );
+        let dyn_broker: Arc<dyn Broker> = broker.clone();
+        load_frames(&mut page, &dyn_broker);
+        let page = factory.finish(page).expect("finish");
+
+        let note = page
+            .notes
+            .iter()
+            .find(|n| n.contains("loaded as content"))
+            .expect("the flattening is stated");
+        assert!(
+            note.contains(&format!("http://127.0.0.1:{port}")),
+            "the origin is named: {note}"
+        );
+        assert!(
+            note.contains("another origin's page"),
+            "and what that means is said: {note}"
         );
     }
 
