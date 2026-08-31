@@ -419,6 +419,11 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
         }
         {
             let mut doomed: Vec<usize> = Vec::new();
+            // Script that is not in a `<script>` element: the event-handler
+            // content attributes, and the `javascript:` URLs. See
+            // `defuse_attribute` for why removing the elements alone was only
+            // half the boundary.
+            let mut defused: Vec<(usize, blitz_dom::QualName)> = Vec::new();
             {
                 let doc = page.doc.borrow();
                 let mut stack = vec![frame_id];
@@ -435,15 +440,24 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
                             doomed.push(at);
                             continue;
                         }
+                        for attribute in el.attrs() {
+                            if defuse_attribute(attribute.name.local.as_ref(), &attribute.value) {
+                                stripped_scripts += 1;
+                                defused.push((at, attribute.name.clone()));
+                            }
+                        }
                     }
                     for child in node.children.clone() {
                         stack.push(child);
                     }
                 }
             }
-            if !doomed.is_empty() {
+            if !doomed.is_empty() || !defused.is_empty() {
                 let mut doc = page.doc.borrow_mut();
                 let mut mutator = doc.mutate();
+                for (id, name) in defused {
+                    mutator.clear_attribute(id, name);
+                }
                 for id in doomed {
                     mutator.remove_node(id);
                 }
@@ -475,6 +489,56 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
             failures.join("; ")
         ));
     }
+}
+
+/// Whether this attribute of a flattened frame's content is script.
+///
+/// Removing `<script>`, `<style>` and `<link>` was only half of §B21's
+/// boundary. An event-handler content attribute *is* script — the prelude
+/// compiles `on*` attributes into functions over the whole document, and does
+/// not know one subtree came from somewhere else — so a frame's `onclick`
+/// became a function running in the **host page's** realm, with the host's
+/// origin, the host's `document.cookie` and the host's fetch authority. That is
+/// exactly the two-origins-one-realm problem the frame boundary exists to
+/// refuse, and it was reachable by the agent doing the thing frames were
+/// reopened for: clicking something inside an embedded form.
+///
+/// `javascript:` in a URL attribute is the same script by another road, and is
+/// refused here for the same reason `load_frames` refuses a `javascript:` frame
+/// source by name.
+///
+/// The `on*` rule is a prefix rather than the enumerated list the prelude
+/// compiles from, deliberately: this is the boundary and that list is a
+/// feature, so a handler added there must not silently become one the frame
+/// gets to use.
+fn defuse_attribute(name: &str, value: &str) -> bool {
+    // Lowercased rather than compared as it arrives. The HTML parser hands
+    // back lowercase local names, but foreign content (SVG, MathML) keeps the
+    // case the document wrote, and a boundary that a page can step around by
+    // capitalising an attribute is not one.
+    let name = name.to_ascii_lowercase();
+    if name.len() > 2 && name.starts_with("on") {
+        return true;
+    }
+    matches!(
+        name.as_str(),
+        "href" | "src" | "action" | "formaction" | "data" | "xlink:href"
+    ) && is_javascript_url(value)
+}
+
+/// Whether a URL attribute names the `javascript:` scheme.
+///
+/// The comparison is on the value with ASCII whitespace and control characters
+/// removed, because the HTML parser strips those from a URL before resolving
+/// it: `java\tscript:alert(1)` is a `javascript:` URL, and a plain
+/// `starts_with` on the raw value is the classic way to miss one.
+fn is_javascript_url(value: &str) -> bool {
+    let cleaned: String = value
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace() && !c.is_control())
+        .collect();
+    cleaned.len() >= "javascript:".len()
+        && cleaned[.."javascript:".len()].eq_ignore_ascii_case("javascript:")
 }
 
 /// Whether to compile the browser prelude while this navigation is in flight.
@@ -3120,6 +3184,85 @@ mod frame_tests {
             "the flattening is stated, not silent: {:?}",
             page.notes
         );
+    }
+
+    /// §B21 says a flattened frame's scripts never run. Stripping `<script>`
+    /// was only half of it: an event-handler content attribute is script too,
+    /// and the prelude compiles those from the whole document — so a frame's
+    /// `onload` became a function running in the *host page's* realm, with the
+    /// host's origin, the host's `document.cookie` and the host's fetch
+    /// authority. That is the two-origins-one-realm problem the boundary
+    /// exists to refuse, reached through the one hole left in it.
+    #[test]
+    fn a_frames_inline_handlers_are_script_and_do_not_run_either() {
+        let broker = crate::net::LocalBroker::new(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+        )
+        .expect("broker");
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let options = PageOptions {
+            script: true,
+            ..PageOptions::default()
+        };
+        let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), options.clone());
+        let html = r#"<html><body><p id="mark">host</p>
+               <iframe srcdoc="<span id='trap' onclick='document.getElementById(&quot;mark&quot;).textContent = &quot;pwned&quot;'>inner</span>"></iframe>
+               </body></html>"#;
+        let mut page = Page::from_bytes(
+            html.as_bytes(),
+            Some("text/html"),
+            &Url::parse("https://host.example/").unwrap(),
+            broker.clone(),
+            factory.fonts(),
+            options,
+        );
+        let dyn_broker: Arc<dyn Broker> = broker.clone();
+        load_frames(&mut page, &dyn_broker);
+        let page = factory.finish(page).expect("finish");
+        let mut page = page;
+        let trap = page
+            .dom()
+            .borrow()
+            .query_selector_all("#trap")
+            .ok()
+            .and_then(|ids| ids.into_iter().next())
+            .expect("the frame content is in the tree");
+        page.dispatch_event(trap, "click");
+        let rendered = page.snapshot().render();
+        assert!(rendered.contains("inner"), "frame content missing:\n{rendered}");
+        assert!(
+            !rendered.contains("pwned"),
+            "a frame's inline handler ran in the host realm:\n{rendered}"
+        );
+    }
+
+    /// The same boundary, on the other road into it. A `javascript:` frame
+    /// *source* was already refused by name; a `javascript:` link inside the
+    /// flattened content was not, and clicking one is the same script in the
+    /// same realm.
+    #[test]
+    fn a_javascript_url_inside_a_frame_is_defused_however_it_is_spelled() {
+        assert!(is_javascript_url("javascript:alert(1)"));
+        assert!(is_javascript_url("JaVaScRiPt:alert(1)"));
+        // The parser strips ASCII whitespace and control characters from a URL
+        // before resolving it, so these are `javascript:` URLs too and a plain
+        // `starts_with` is how one gets missed.
+        assert!(is_javascript_url("  javascript:alert(1)"));
+        assert!(is_javascript_url("java\tscript:alert(1)"));
+        assert!(is_javascript_url("java\nscript:alert(1)"));
+        assert!(is_javascript_url("java\u{0}script:alert(1)"));
+        assert!(!is_javascript_url("https://example.com/javascript:x"));
+        assert!(!is_javascript_url("/not-javascript"));
+
+        assert!(defuse_attribute("onclick", "x()"));
+        assert!(defuse_attribute("ONLOAD", "x()"));
+        assert!(defuse_attribute("href", " javascript:x()"));
+        assert!(!defuse_attribute("href", "https://example.com/"));
+        // Not every short name beginning with `on` is a handler, and `on` is
+        // an attribute of its own on some elements.
+        assert!(!defuse_attribute("on", "x"));
     }
 
     #[test]
