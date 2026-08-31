@@ -62,17 +62,16 @@ pub struct AppState {
     pub repo_path: PathBuf,
     /// This session's token. Never written to disk.
     pub token: String,
-    /// One [`crate::browser_events::BoxStream`] per box the console has looked
-    /// at, kept for the life of the process.
+    /// One [`crate::browser_events::BoxStream`] per box the console has looked at,
+    /// kept for the life of the process.
     ///
     /// State in a server whose whole pitch is that it holds none takes a
     /// justification, and it is not caching: it is what makes the event ids
     /// stable. Rebuilding the stream per request renumbers from 1 over whatever
     /// the sources currently hold, and a run clears the box's `/tmp`, so a
-    /// viewer's cursor would silently swallow the next session (see `BoxStream`).
-    /// Bounded twice over (one entry per box *viewed*, each capped at
-    /// [`STREAM_CAP`] events) and it is derived from files on disk, so losing
-    /// it costs nothing but a re-read.
+    /// viewer's cursor would silently swallow the next session. Bounded twice
+    /// over, one entry per box *viewed* and each capped at [`STREAM_CAP`] events,
+    /// and derived from files on disk, so losing it costs nothing but a re-read.
     browser: Arc<std::sync::Mutex<std::collections::HashMap<String, crate::browser_events::BoxStream>>>,
     /// One live-view reader per box currently being watched. Separate from
     /// `browser` because their lifetimes differ: the event stream is cheap and
@@ -124,25 +123,23 @@ impl Refusal {
 /// The whole authorization decision, as a pure function of the four things it
 /// depends on, so it can be tested without a socket.
 ///
-/// `Origin` is checked first: a request from another origin is refused even
-/// when it somehow carries the right token, because at that point the token is
-/// the thing that has leaked and honouring it would be the bug.
-/// `sec_fetch_site` is every value of that header, because a second copy is a
-/// disagreement about where a request came from and this resolves it against
-/// the request. It closes the gap `Origin` alone cannot: `Origin` is not sent
-/// on a subresource GET at all, and the cookie is `SameSite=Strict`, which
-/// constrains cross-*site* requests only. Two loopback ports are different
-/// origins and the *same site*, so a page served by any other local service,
-/// `h5i join` puts somebody else's agent-written app on exactly such a port,
-/// could `<img src="http://127.0.0.1:<console>/api/…">` with this console's
-/// cookie attached and no `Origin` for the check above to look at. The module
-/// header's "foreign origins refused" was true of `fetch` and false of every
-/// markup-driven request.
+/// `Origin` is checked first: a request from another origin is refused even when
+/// it somehow carries the right token, because at that point the token is the
+/// thing that has leaked and honouring it would be the bug.
 ///
-/// A `cross-site` request that carries the token in the query is the
-/// printed invite link being followed, and is allowed for the same reason
-/// `h5i-share`'s gate allows it: the capability arrived with the request rather
-/// than out of the browser's jar. Nothing else gets the carve-out.
+/// `sec_fetch_site` is every value of that header, because a second copy is a
+/// disagreement about where a request came from. It closes the gap `Origin`
+/// alone cannot: `Origin` is not sent on a subresource GET at all, and the
+/// cookie is `SameSite=Strict`, which constrains cross-*site* requests only. Two
+/// loopback ports are different origins and the *same site*, so a page served by
+/// any other local service, and `h5i join` puts somebody else's agent-written
+/// app on exactly such a port, could `<img
+/// src="http://127.0.0.1:<console>/api/…">` with this console's cookie attached.
+///
+/// A `cross-site` request that carries the token in the query is the printed
+/// invite link being followed, and is allowed for the same reason `h5i-share`'s
+/// gate allows it: the capability arrived with the request rather than out of
+/// the browser's jar.
 pub fn authorize(
     query: Option<&str>,
     cookie_header: Option<&str>,
@@ -302,17 +299,16 @@ async fn asset(Path(path): Path<String>) -> Response {
 ///
 /// Every field is a count of something recorded. Nothing here is a model of
 /// intent, and the two `..._observed` counters exist so a reader can tell
-/// evidence h5i collected from evidence the box handed it.
-/// The lanes h5i itself writes, from the host, outside the box's reach.
-/// Anything else (`tee-shim`, `inbox-capture`, or a lane added later) is the
-/// box's own account and is counted as such.
-// The browser mediator is host-observed like the viewer: the records are
-// written by an h5i process sitting on the socket, not claimed by the box.
-// `share` is on this list because h5i owns both ends of the share bridge, the
-// box supplies none of it, and the box cannot suppress it. Leaving it off
-// inverted the badge: a box whose only receipt was a share read as having no
-// host-observed evidence at all, the grey "the box told us this" badge, for
-// the one lane the box cannot touch.
+/// evidence h5i collected from evidence the box handed it: the lanes h5i itself
+/// writes, from the host, outside the box's reach, against anything else
+/// (`tee-shim`, `inbox-capture`, or a lane added later) which is the box's own
+/// account.
+///
+/// The browser mediator is host-observed like the viewer: the records are
+/// written by an h5i process sitting on the socket. `share` is on this list
+/// because h5i owns both ends of the share bridge and the box cannot suppress
+/// it. Leaving it off inverted the badge: a box whose only receipt was a share
+/// read as having no host-observed evidence at all.
 const HOST_OBSERVED_LANES: [&str; 5] = [
     "host-env-run",
     "shell-egress",
@@ -343,17 +339,16 @@ pub struct Signals {
     pub host_observed: usize,
     /// Runs recorded by the in-box tee shim. The box's own account.
     pub box_claimed: usize,
-    /// Runs observed from outside the box, on a machine we do not own: a
-    /// runner (ROADMAP.md R10).
+    /// Runs observed from outside the box, on a machine we do not own: a runner
+    /// (ROADMAP.md R10).
     ///
     /// Its own count rather than folded into either neighbour, because it is
-    /// genuinely neither. The box could not forge these. The worker saw them
-    /// from outside it, and the channel they arrived on is authenticated with a
-    /// pinned host key. But this machine did not watch them either, so a
-    /// compromised runner could. Counting them as host-observed would overclaim
-    /// and counting them as box-claimed would underclaim; the honest reading is
-    /// that they collapse to box-claimed exactly when the runner host is
-    /// compromised, and the runner host is the machine chosen to be losable.
+    /// genuinely neither. The box could not forge these, the worker having seen
+    /// them from outside it over a channel authenticated with a pinned host key.
+    /// But this machine did not watch them either, so a compromised runner could.
+    /// The honest reading is that they collapse to box-claimed exactly when the
+    /// runner host is compromised, and the runner host is the machine chosen to
+    /// be losable.
     #[serde(default)]
     pub runner_observed: usize,
     /// Timestamp of the newest receipt.
@@ -399,12 +394,11 @@ pub struct Signals {
     /// Receipts whose kernel-observed lane actually watched the run
     /// (ROADMAP.md D10).
     ///
-    /// Its own count, beside `host_observed` rather than inside it, for the
-    /// same reason `runner_observed` is its own: they are different claims. A
+    /// Its own count, beside `host_observed` rather than inside it, for the same
+    /// reason `runner_observed` is its own: they are different claims. A
     /// host-observed run is one h5i was the parent of; a kernel-watched run is
-    /// one an eBPF collector saw from underneath. The second is strictly
-    /// harder for a box to defeat and strictly narrower in what it covers, and
-    /// collapsing them would lose both facts.
+    /// one an eBPF collector saw from underneath. The second is strictly harder
+    /// for a box to defeat and strictly narrower in what it covers.
     #[serde(default)]
     pub kernel_watched: usize,
     /// Receipts that carry a runtime block which observed nothing. The probe
@@ -1463,13 +1457,12 @@ mod tests {
 
     /// The gap `Origin` alone cannot close.
     ///
-    /// A markup-driven GET (`<img>`, `<script src>`, `<link>`) sends no
-    /// `Origin` at all, and the console's cookie is `SameSite=Strict`, which
-    /// constrains cross-*site* requests only. Two loopback ports are different
-    /// origins and the same site, so a page served by any other local service
-    /// (`h5i join` puts somebody else's agent-written app on exactly such a
-    /// port) reached this console with its cookie attached and nothing in the
-    /// head for the origin check to look at.
+    /// A markup-driven GET (`<img>`, `<script src>`, `<link>`) sends no `Origin`
+    /// at all, and the console's cookie is `SameSite=Strict`, which constrains
+    /// cross-*site* requests only. Two loopback ports are different origins and
+    /// the same site, so a page served by any other local service, and `h5i
+    /// join` puts somebody else's agent-written app on exactly such a port,
+    /// reached this console with its cookie attached.
     #[test]
     fn a_page_on_another_loopback_port_cannot_ride_the_console_cookie() {
         let tok = "0123456789abcdef";

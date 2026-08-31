@@ -16,12 +16,11 @@
 //! Persistence is opt-in. The jar dies with the process unless h5i passed
 //! `--cookie-jar`, the only caller of [`Jar::persist_to`]. The file is `0600`,
 //! written temp-then-rename, and rewritten on change rather than at exit,
-//! because `close` and `service_stop` SIGKILL the session. [`Jar::retain_origin`]
-//! keeps it to one origin, not a browsing history.
+//! because `close` and `service_stop` SIGKILL the session.
 //!
-//! Never readable by the agent. No verb returns a cookie value; the request
-//! log counts cookies rather than naming them. The persisted file is for the
-//! next engine via `--restore`.
+//! Never readable by the agent. No verb returns a cookie value; the request log
+//! counts cookies rather than naming them. The persisted file is for the next
+//! engine via `--restore`.
 
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -245,17 +244,16 @@ impl Jar {
         Ok(loaded)
     }
 
-    /// Merge a jar file's contents into this jar, dropping what has expired,
-    /// and what no server could have set.
+    /// Merge a jar file's contents into this jar, dropping what has expired, and
+    /// what no server could have set.
     ///
     /// The store path enforces four `Domain` rules, the two name prefixes and
     /// `SameSite=None` requires `Secure`; this path enforced none of them, so a
     /// jar file was believed about things the wire is not. A row saying
     /// `{"host": "com", "host_only": false}` widened one cookie to every `.com`
     /// host, `__Host-sid` could arrive without the flags that name means, and
-    /// `expires` was a number off a file added straight to `SystemTime`. The
-    /// same overflow the `Max-Age` path fixed with `checked_add`, on the path
-    /// that reads a file rather than a header.
+    /// `expires` was a number off a file added straight to `SystemTime`, the
+    /// same overflow the `Max-Age` path fixed with `checked_add`.
     ///
     /// That matters because the file is not this process's own. It lives in the
     /// session directory, which inside a box is under a `/tmp` the `agent`
@@ -471,23 +469,20 @@ impl Jar {
 
     /// Store a cookie *page script* set, through `document.cookie`.
     ///
-    /// Deliberately not [`Self::store`], which is what `write_cookie` called.
-    /// The wire and the script are not the same authority, and `HttpOnly` is the
-    /// whole statement of that difference, so a browser enforces two rules here
-    /// that the response path has no reason to:
+    /// Deliberately not [`Self::store`], which is what `write_cookie` called. The
+    /// wire and the script are not the same authority, and `HttpOnly` is the whole
+    /// statement of that difference, so a browser enforces two rules here that the
+    /// response path has no reason to:
     ///
-    /// * Script may not overwrite an `HttpOnly` cookie. Replacement goes
-    ///   through the same identity match as deletion, so `document.cookie =
-    ///   "sid=attacker"` replaced the server's `HttpOnly` session cookie and the
-    ///   jar then sent the attacker's value on the wire. Script could not *read*
-    ///   the credential and could substitute one, which is session fixation.
-    ///   and `document.cookie = "sid=; Max-Age=0"` was a logout the server never
-    ///   asked for. Honouring the flag on reads and not on writes is honouring
-    ///   half of it.
-    /// * **Script may not *set* `HttpOnly`.** RFC 6265 §8.6 says a
-    ///   set-cookie-string carrying that attribute from script is ignored
-    ///   entirely, which is the rule that stops script planting a cookie it can
-    ///   then hide behind.
+    /// * Script may not overwrite an `HttpOnly` cookie. Replacement goes through
+    ///   the same identity match as deletion, so `document.cookie = "sid=attacker"`
+    ///   replaced the server's `HttpOnly` session cookie and the jar then sent the
+    ///   attacker's value on the wire: script could not *read* the credential and
+    ///   could substitute one, which is session fixation. And `document.cookie =
+    ///   "sid=; Max-Age=0"` was a logout the server never asked for.
+    /// * Script may not *set* `HttpOnly`. RFC 6265 §8.6 says a set-cookie-string
+    ///   carrying that attribute from script is ignored entirely, the rule that
+    ///   stops script planting a cookie it can then hide behind.
     pub fn store_from_script(&self, url: &Url, header: &str) -> usize {
         self.store_at(url, [header], SystemTime::now(), Setter::Script)
     }
@@ -582,17 +577,16 @@ impl Jar {
 
     /// Drop everything when a navigation leaves the origin that set it.
     ///
-    /// The box replaces three of Chromium's four process-model reasons and not
-    /// the fourth: it protects the host from the box, and says nothing about two
-    /// origins sharing one address space. That did not matter until this engine
-    /// held cookies *and* ran script. It cannot be fixed without a process
-    /// split, so it is bounded instead. At any moment the jar holds only
-    /// cookies for the origin currently loaded, so a foreign origin's script
-    /// never runs alongside someone else's live session.
+    /// The box replaces three of Chromium's four process-model reasons and not the
+    /// fourth: it protects the host from the box, and says nothing about two origins
+    /// sharing one address space. That did not matter until this engine held cookies
+    /// *and* ran script. It cannot be fixed without a process split, so it is
+    /// bounded instead: at any moment the jar holds only cookies for the origin
+    /// currently loaded.
     ///
-    /// The cost is real and belongs next to the guarantee: a login does not
-    /// survive a redirect through another origin, so OAuth-style flows that
-    /// bounce via an identity provider will not stay signed in.
+    /// The cost is real and belongs next to the guarantee: a login does not survive
+    /// a redirect through another origin, so OAuth-style flows that bounce via an
+    /// identity provider will not stay signed in.
     ///
     /// Returns whether anything was dropped, so a caller can say so rather than
     /// leaving an agent to discover it by being logged out.
@@ -652,11 +646,10 @@ fn is_secure(url: &Url) -> bool {
 ///
 /// RFC 6265 makes a cookie-name a token and a cookie-octet everything except
 /// control characters, whitespace, `"`, `,`, `;` and `\\`. The wire path never
-/// sees a control character, HTTP header parsing rejects one before this does,
-/// but `document.cookie` is a string from page script, and a jar file is a
-/// string from a file. Both reached the `Cookie:` header unchecked, so one
-/// malformed cookie made *every* later request's header unparseable and the
-/// page lost the cookies that were fine along with the one that was not.
+/// sees a control character, HTTP header parsing rejecting one first, but
+/// `document.cookie` is a string from page script and a jar file is a string
+/// from a file. Both reached the `Cookie:` header unchecked, so one malformed
+/// cookie made *every* later request's header unparseable.
 fn is_wire_safe(name: &str, value: &str) -> bool {
     // Narrower than the grammar, deliberately. RFC 6265's cookie-octet also
     // excludes space, comma, quote and backslash, and refusing those would
@@ -877,19 +870,18 @@ fn parse_set_cookie(header: &str, host: &str, url: &Url, now: SystemTime) -> Opt
         }
     }
 
-    // Max-Age wins over Expires (RFC 6265 §5.2.2), and a non-positive one is
-    // an immediate deletion.
+    // Max-Age wins over Expires (RFC 6265 §5.2.2), and a non-positive one is an
+    // immediate deletion.
     //
     // `checked_add`, because `SystemTime + Duration` *panics* on overflow and
-    // the addend here is a number off the wire. `Max-Age=9223372036854775807`
-    // in a `Set-Cookie` aborted the engine. Any page the box's browser is
-    // pointed at could end the session with one response header, which is a
-    // page deciding whether the agent driving it keeps running.
+    // the addend here is a number off the wire.
+    // `Max-Age=9223372036854775807` in a `Set-Cookie` aborted the engine: any
+    // page the box's browser is pointed at could end the session with one
+    // response header.
     //
     // An expiry too far out to represent is stored as a session cookie rather
     // than clamped to some arbitrary date. In this jar the two are the same
-    // thing: nothing is persisted, so "until the process exits" is already the
-    // longest life a cookie can have (see the module docs).
+    // thing, since nothing is persisted.
     let expires = match max_age {
         Some(seconds) if seconds > 0 => now.checked_add(Duration::from_secs(seconds as u64)),
         Some(_) => Some(now),
