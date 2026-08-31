@@ -2640,6 +2640,51 @@ fn a_module_graph_loads_and_evaluates() {
     assert!(paths.contains(&"/lib/punctuation.js".to_string()), "{paths:?}");
 }
 
+/// A module script is a `cors` request in every browser — unlike a classic
+/// `<script src>`, which is why JSONP exists. This one had no CORS context at
+/// all: no `Origin`, no `Access-Control-Allow-Origin` check on the answer, and
+/// the body handed back with full exposure. So
+/// `import("https://other.example/x.js")` was a cross-origin body fetched,
+/// parsed and *evaluated in this page's realm*, which is the one thing the CORS
+/// rule on module scripts exists to refuse.
+#[test]
+fn a_cross_origin_module_needs_the_servers_permission() {
+    let (port, _asked) = module_server(vec![(
+        "/theirs.js",
+        "globalThis.__ran = 'foreign code in this realm';",
+    )]);
+
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    // A different port is a different origin, and the module server sends no
+    // `Access-Control-Allow-Origin`.
+    let base = url::Url::parse("http://127.0.0.1:1/").unwrap();
+
+    let page = factory.from_html(
+        &format!(
+            r#"<html><body><p id="out">before</p>
+               <script type="module">
+                 import('http://127.0.0.1:{port}/theirs.js')
+                   .then(() => {{ document.querySelector('#out').textContent = 'loaded'; }})
+                   .catch(() => {{ document.querySelector('#out').textContent = 'refused'; }});
+               </script></body></html>"#
+        ),
+        &base,
+    );
+
+    let rendered = page.snapshot().render();
+    assert!(
+        !rendered.contains("loaded"),
+        "a cross-origin module ran without the server allowing it:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("refused"),
+        "the page should see the refusal:\n{rendered}\nconsole: {:?}",
+        page.console()
+    );
+}
+
 #[test]
 fn a_module_imported_twice_is_fetched_once() {
     let (port, asked) = module_server(vec![
