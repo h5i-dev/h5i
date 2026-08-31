@@ -48,8 +48,8 @@ web = ["h5i-core/web"]
 #
 # What it is instead is a build-time convenience, and a measured one: the engine
 # is blitz + stylo + boa, and dropping it takes the graph from 455 crates to
-# 314. Someone spending the afternoon on boxes, the forum or the runner should
-# not pay for a browser they are not touching. That is the whole of the reason,
+# 314. Someone spending the afternoon on boxes or the runner should not pay for
+# a browser they are not touching. That is the whole of the reason,
 # and it is enough of one.
 #
 # Note that `ytdlp` implies it, which is correct — `--via` is a flag on

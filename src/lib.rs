@@ -45,22 +45,6 @@ pub enum Commands {
         action: cli::boxes::BoxCommands,
     },
 
-    /// The forum: how boxed agents work together without sharing authority.
-    ///
-    /// Each agent stays in its own box. They post to threads the host owns,
-    /// through a read-only inbox in and a spooled record out — no socket, no
-    /// port, no token. A message can change what a peer decides; it can never
-    /// change what that peer's sandbox is able to do, because nothing on this
-    /// path carries a capability.
-    ///
-    /// A human creates threads, puts boxes on the forum, and takes them off.
-    /// Agents read, post, claim and submit. `h5i forum wait` is the agent's
-    /// whole notification story: no hook to install, no daemon to run.
-    Forum {
-        #[command(subcommand)]
-        action: cli::forum::ForumCommands,
-    },
-
     /// Open the box console in a browser: one read-only screen over the whole
     /// fleet — what each box is, what its policy actually allows, what ran
     /// inside it, and what pressed on a boundary.
@@ -172,7 +156,7 @@ pub enum Commands {
     /// Run boxes on another Linux machine you own.
     ///
     /// A runner is a second machine — a spare laptop, a lab box, a VM, a small
-    /// forum — that h5i reaches over SSH. The repository, the policy, the
+    /// server — that h5i reaches over SSH. The repository, the policy, the
     /// credentials and the patch gate all stay on this machine; what moves is
     /// the execution, onto hardware whose compromise you have priced in.
     ///
@@ -346,7 +330,6 @@ pub fn run() -> anyhow::Result<()> {
     match cli.command {
         Commands::Box(args) => cli::boxes::run(args.into_command()?)?,
         Commands::Env { action } => cli::boxes::run(action)?,
-        Commands::Forum { action } => cli::forum::run(action)?,
         #[cfg(feature = "web")]
         Commands::Ui { port, open } => cli::ui::run(port, open)?,
         #[cfg(feature = "browser")]

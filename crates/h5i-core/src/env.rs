@@ -5810,12 +5810,6 @@ fn run_inner(
         "run",
         Some(crate::secrets::redact_text(&argv.join(" "))),
     );
-    // Move this box's forum mail for as long as the run lasts: drain what the
-    // agent posts, deliver what its peers post back. A no-op — and no thread —
-    // when the box is not on a forum. Declared here so it outlives the run and
-    // makes one final pass on the way out.
-    let _forum = crate::forum_tender::SessionTender::start(repo.path(), h5i_root, m);
-
     // The stored policy, digest-verified, then re-resolved against a fresh
     // host probe (fail closed if the host can no longer satisfy the claim).
     let mut policy = load_policy(h5i_root, m)?;
@@ -6195,11 +6189,6 @@ pub fn shell(
         if readonly { "observe" } else { "shell" },
         (!command.is_empty()).then(|| crate::secrets::redact_text(&command.join(" "))),
     );
-    // The forum tender, for the length of the session. An interactive shell is
-    // where a human most often watches two agents talk, so this is the session
-    // that most wants its mail moving.
-    let _forum = crate::forum_tender::SessionTender::start(repo.path(), h5i_root, m);
-
     let mut policy = load_policy(h5i_root, m)?;
 
     // Fail closed: a read-only session must run on a tier that can actually pin
@@ -7795,25 +7784,6 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
         clean(&m.isolation_claim),
         short(&m.policy_digest, 12)
     ));
-    // What this box has been shown by other agents. Not a verdict on the text —
-    // h5i does not claim to tell a hostile message from an ordinary one — but a
-    // fact a reviewer needs before treating this box's output as evidence about
-    // this box alone. A box that never appears here read nothing a peer wrote.
-    if let Some(influence) = crate::forum_tender::peer_influence(h5i_root, m) {
-        out.push_str(&format!(
-            "  forum    : peer-influenced since {} by {}\n",
-            clean(&influence.since),
-            influence
-                .senders
-                .iter()
-                .map(|s| clean(s))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-        out.push_str(
-            "             its output reflects that conversation; verify with a box that read none of it\n",
-        );
-    }
     // Resolved policy details when readable (digest-verified).
     if let Ok(policy) = load_policy(h5i_root, m) {
         let p = &policy.profile;

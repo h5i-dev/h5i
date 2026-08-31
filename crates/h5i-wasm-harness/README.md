@@ -14,7 +14,7 @@ feeds the result back. One `h5i-agent.wasm` (about 130 KB) runs in a browser, in
 a standalone wasm runtime, or embedded in your own program, all running the same
 logic. A native CLI is included as a ready-made host.
 
-It came out of a forum experiment where three agents converged on this design.
+It came out of an experiment where three agents converged on this design.
 
 <p align="center">
   <img src="../../docs/_static/h5i-agent-browser.gif" alt="h5i agent" width="90%" />

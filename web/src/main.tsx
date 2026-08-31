@@ -6,10 +6,8 @@ import "normalize.css/normalize.css";
 import "@blueprintjs/core/lib/css/blueprint.css";
 import "@blueprintjs/icons/lib/css/blueprint-icons.css";
 import "./theme.css";
-import "./forum.css";
 
 import { SandboxView } from "./SandboxView";
-import { ForumView } from "./ForumView";
 
 FocusStyleManager.onlyShowFocusOnTabs();
 
@@ -18,9 +16,8 @@ FocusStyleManager.onlyShowFocusOnTabs();
 // away: nothing should keep a live credential in scrollback, in a bookmark, or
 // in whatever the browser syncs.
 //
-// The fragment survives, because it names which surface to open and that is
-// worth putting in a message to a colleague. It never reaches the server
-// anyway, so it carries none of the same risk.
+// The fragment survives. It never reaches the server anyway, so it carries none
+// of the same risk.
 if (window.location.search.includes("token=")) {
   window.history.replaceState(
     {},
@@ -29,78 +26,18 @@ if (window.location.search.includes("token=")) {
   );
 }
 
-type Surface = "console" | "forum";
-
 /**
- * Two surfaces, one shell.
+ * One surface: the console.
  *
- * Not a router: there is one page, and adding a routing library to switch
- * between two panes would be more machinery than the choice deserves. The
- * surface is remembered so a reload lands where you were.
- *
- * They are deliberately not merged. The console answers "what is this box
- * doing"; the forum answers "what are these agents telling each other". They
- * look different because they *are* different instruments, and a reader should
- * know which one they are holding without reading a label.
+ * The shell is a flex column rather than a bare mount point because the
+ * console's own shell is `flex: 1` inside it, and the fleet/detail divider is a
+ * grid column rather than a border — a plain block here leaves both at content
+ * height and stops the divider halfway down the window.
  */
 function Shell() {
-  // The fragment wins over the remembered choice, so a URL can name a surface:
-  // `…/#forum` opens the forum whatever this browser was last looking at, which
-  // is what makes a link to it worth sending.
-  const [surface, setSurface] = React.useState<Surface>(() => {
-    const head = window.location.hash.replace(/^#/, "").split("/")[0];
-    if (head === "forum" || head === "console") return head;
-    return (localStorage.getItem("h5i.surface") as Surface) ?? "console";
-  });
-  const pick = (s: Surface) => {
-    setSurface(s);
-    localStorage.setItem("h5i.surface", s);
-    window.history.replaceState({}, "", `${window.location.pathname}#${s}`);
-  };
-  // `#forum/<thread>` opens straight into one conversation, which is the link
-  // worth sending to a colleague — "look at this thread", not "open the forum
-  // and find it".
-  const initialThread =
-    surface === "forum"
-      ? (window.location.hash.replace(/^#/, "").split("/")[1] ?? null)
-      : null;
   return (
     <div className="wb-shell">
-      <div className="wb-tabs" role="tablist" aria-label="surface">
-        {/* The wordmark names the product, so it lives with the switch between
-            its two screens rather than inside either one of them. */}
-        <span
-          className="wb-brand"
-          title="h5i — read-only · loopback only · lifecycle verbs stay in the CLI"
-        >
-          h5i
-        </span>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={surface === "console"}
-          className={`wb-tab for-console${surface === "console" ? " is-on" : ""}`}
-          onClick={() => pick("console")}
-        >
-          console
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={surface === "forum"}
-          className={`wb-tab for-forum${surface === "forum" ? " is-on" : ""}`}
-          onClick={() => pick("forum")}
-        >
-          forum
-        </button>
-      </div>
-      <div className="wb-surface">
-        {surface === "console" ? (
-          <SandboxView />
-        ) : (
-          <ForumView initialThread={initialThread} />
-        )}
-      </div>
+      <SandboxView />
     </div>
   );
 }

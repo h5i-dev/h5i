@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-08-21",
-      "dateModified": "2026-08-30",
+      "dateModified": "2026-08-31",
       "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -84,14 +84,6 @@
             "@type": "Answer",
             "text": "Only on the container tier. workspace is a worktree with no confinement, process and supervised are kernel-level confinement of a process tree, container is rootless Podman, and microvm boots a guest with its own kernel. h5i box probe reports which of them this host can actually run."
           }
-        },
-        {
-          "@type": "Question",
-          "name": "Why does the forum have no sender field?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Because a sender field would be a claim the agent writes about itself. The staged record carries a thread, a kind, a body and attachments; the host stamps identity, role, box and policy digest from the environment it found the record in. That is why forum read can print what the host knows above each post and what the agent claims inside it."
-          }
         }
       ]
     }
@@ -111,10 +103,10 @@
 </nav><main class="article-wrap"><article class="post">
 <header><div class="post-eyebrow">Essay / The loop &middot; 2026-08-21</div>
 <h1>Browse, contain, work, export, apply</h1><p class="post-deck">The loop is not five commands that happen to compose. It is one property expressed five times: at every step the record is written by something other than the thing being reviewed, and there is exactly one door out, operated by a person.</p>
-<div class="post-meta"><span>13 min read</span><span>Browser &middot; Box &middot; Forum &middot; Export</span></div></header>
+<div class="post-meta"><span>11 min read</span><span>Browser &middot; Box &middot; Export</span></div></header>
 
 <div class="callout"><strong>The claim.</strong> An agent session should be reviewable without trusting anything the agent wrote. That single requirement decides the whole shape: a request that is not in the log did not happen, and nothing comes out that a person has not read.</div>
-<figure class="feature-figure"><img src="/_static/agent-loop.svg" alt="Five steps left to right, browse, contain, work, confer and export, each with the record it leaves behind, above an output gate a person operates"><figcaption>Each step is chosen for what it leaves behind. The last one is the only path back to your repository.</figcaption></figure>
+<figure class="feature-figure"><img src="/_static/agent-loop.svg" alt="Four steps left to right, browse, contain, work and export, each with the record it leaves behind, above an output gate a person operates"><figcaption>Each step is chosen for what it leaves behind. The last one is the only path back to your repository.</figcaption></figure>
 <p>The familiar way to make an agent safe is to stand in front of it. A prompt before each command, an allowlist of tools, a rule file describing what it must not do. Then, at the end, the agent writes a summary of what it did and you read that.</p>
 <p>Both halves of that arrangement are authored inside the loop. The prompt is answered by a person who has seen a hundred of them that afternoon and is now answering by reflex. The summary is written by the subject of the review. Neither is dishonest. Both are simply the wrong observer.</p>
 <p>So the loop below is built around a different question. Not "what is the agent allowed to do", which is a policy question and a hard one, but "who wrote down what happened, and could the agent have changed it". Everything else follows.</p>
@@ -167,30 +159,7 @@ $ h5i box --new                      # empty; the agent builds from nothing</cod
 </div>
 <p><code>auto</code> is the default and picks the strongest tier this host can run. Naming a tier explicitly makes it <strong>fail closed</strong> rather than downgrade, which is the behaviour you want, because a silent downgrade puts a claim in the record the run never had.</p>
 <p>Adding <code>--in</code> to <code>h5i browser open</code> places the session from step 2 inside the box, and every verb works unchanged. What changes is the requests line: the egress allowlist is now enforced at the box boundary, outside the browser being described, so the lane goes from <code>engine-claimed</code> to <code>host-observed</code>. Being inside a box does not earn that on its own. A box whose policy lets the browser reach the whole network corroborates nothing, and h5i keeps calling that session <code>engine-claimed</code>.</p>
-<h2 id="forum">4. Put them on a forum</h2>
-<p>One box is a solved problem. The moment a second agent needs to see what the first found, the usual answer is a shared credential: an issue tracker, a chat API, a directory both can write. Each of those turns one compromised agent into two. h5i moves the information instead, and leaves the authority where it was.</p>
-<div class="terminal"><div class="terminal-bar"><span class="terminal-path">forum</span></div>
-<div class="terminal-body"><pre><code># the human, on the host
-$ h5i forum create "fix the auth refresh race" --ceiling agent
-$ h5i forum attach alpha --as alpha-worker  --role worker
-$ h5i forum attach beta  --as beta-reviewer --role reviewer
-
-# the agent, inside its box, with no forum credential to lose
-box$ h5i forum list                          # what is open
-box$ h5i forum read &lt;thread&gt;                 # read it, posts numbered
-box$ h5i forum post &lt;thread&gt; --kind FINDING "..."
-box$ h5i forum up 3                          # agree without restating
-box$ h5i forum wait                          # block until a peer replies</code></pre></div></div>
-<p>The <code>--ceiling</code> is the part to get right. It names a profile every participant must be confined <em>under</em>, and <code>attach</code> checks the box's enforced policy against it: the digest-verified <code>policy.resolved.toml</code>, not a worktree file an agent could have edited. Network mode and egress, secret grants, authenticated egress, filesystem read and write grants, AF_UNIX, loopback ports, host-side secret extractors. A box that exceeds any of them is <strong>refused</strong>. Silently re-confining it to fit would leave its operator believing it has authority it no longer has, and would make "attached" stop meaning "runs the way you configured it". <code>attach</code> also refuses a <code>workspace</code>-tier box outright, because that tier enforces nothing.</p>
-<p>Inside a box there is no forum to attack. The two forum-shaped holes both already existed: a read-only inbox the host rewrites, and the single writable spool that was already drained after every session. No socket, no port, no token. The staged record carries a thread, a kind, a body and attachments, and has <strong>no field for a sender</strong>. The host stamps identity, role, box and policy digest from the environment the record was found in, which is why <code>h5i forum read</code> can draw the host's knowledge above each fence and one agent's claim inside it.</p>
-<p>To bring in an agent on another machine, point the forum at a repository. Forum state is Git refs under an append-only union merge, so a deleted conversation returns from any honest clone on the next sync, and <code>--branch-refs</code> publishes it where the forge's branch protection applies. Posts that arrived from a machine this host cannot vouch for are labelled <code>peer-claimed</code> rather than <code>host-observed</code>, because a remote post's identity is testimony and not evidence.</p>
-<div class="terminal"><div class="terminal-bar"><span class="terminal-path">remote</span></div>
-<div class="terminal-body"><pre><code>$ h5i forum remote git@github.com:you/agent-forum.git
-$ h5i forum remote --branch-refs   # publish under refs/heads/h5i-forum/
-$ h5i forum status                 # threads, members, ceilings
-$ h5i forum revoke beta-reviewer   # leaves that box's inbox at once</code></pre></div></div>
-<p>Revocation is immediate, and refusals are recorded rather than swallowed. If a revoked box keeps staging posts, they land <em>carrying the refusal</em> instead of disappearing, and a refused post moves no state: a refused <code>CLAIM</code> claims nothing. A forum that silently drops what it refused teaches its readers that nothing was refused.</p>
-<h2 id="work">5. Work in it</h2>
+<h2 id="work">4. Work in it</h2>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">work</span></div>
 <div class="terminal-body"><pre><code>$ h5i box shell fix-auth
 box$ claude                          # or codex; this is the agent-in-box
@@ -205,7 +174,7 @@ box$ exit</code></pre></div></div>
 <div class="terminal-body"><pre><code>$ h5i box view fix-auth          # the box's page, on a loopback-only forward
 $ h5i box view fix-auth --term   # draw it in this terminal instead
 $ h5i ui                         # the whole fleet, read-only, every route a GET</code></pre></div></div>
-<h2 id="export">6. Export, read, apply</h2>
+<h2 id="export">5. Export, read, apply</h2>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">export</span></div>
 <div class="terminal-body"><pre><code>$ h5i box diff fix-auth                    # against the pinned base
 $ h5i box export fix-auth --out ./review
@@ -248,14 +217,13 @@ $ h5i box cache ls            # which are stale, and therefore unused</code></pr
 <h2 id="sources">Sources and further reading</h2>
 <ul>
 <li><a href="/blog/the-environment-is-the-sandbox/">The environment is the sandbox</a>, for why the unit of isolation is the whole development environment.</li>
-<li><a href="/blog/agents-share-information-never-permissions/">Agents share information, never permissions</a>, for the forum's design in full.</li>
 <li><a href="/blog/evidence-for-agent-work/">Evidence for agent work</a>, for what a receipt can and cannot settle.</li>
 <li><a href="/guides/first-box/">The first-box guide</a>, for running this loop once on a real repository.</li>
 <li><a href="/manual/#the-loop">The manual</a>, for every flag named above.</li>
 </ul>
-<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Do I have to use the browser step?</summary><div class="faq-answer">No. The five steps are independent commands, not a pipeline. Plenty of tasks are a box, a shell and an export. The browser step matters when the agent has to read the web, because that is the step where a page's content enters the session.</div></details><details class="faq-item"><summary>What is the difference between export and apply?</summary><div class="faq-answer">export writes patch.diff, report.md and receipt.json to a directory and touches nothing else, so you decide what happens next. apply lands the work directly on the parent repository and is only available when the box came from that repository. On a detached box, created from a URL, a pull request or --new, apply refuses and points at export.</div></details><details class="faq-item"><summary>Is a box a container?</summary><div class="faq-answer">Only on the container tier. workspace is a worktree with no confinement, process and supervised are kernel-level confinement of a process tree, container is rootless Podman, and microvm boots a guest with its own kernel. h5i box probe reports which of them this host can actually run.</div></details><details class="faq-item"><summary>Why does the forum have no sender field?</summary><div class="faq-answer">Because a sender field would be a claim the agent writes about itself. The staged record carries a thread, a kind, a body and attachments; the host stamps identity, role, box and policy digest from the environment it found the record in. That is why forum read can print what the host knows above each post and what the agent claims inside it.</div></details></div>
+<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Do I have to use the browser step?</summary><div class="faq-answer">No. The five steps are independent commands, not a pipeline. Plenty of tasks are a box, a shell and an export. The browser step matters when the agent has to read the web, because that is the step where a page's content enters the session.</div></details><details class="faq-item"><summary>What is the difference between export and apply?</summary><div class="faq-answer">export writes patch.diff, report.md and receipt.json to a directory and touches nothing else, so you decide what happens next. apply lands the work directly on the parent repository and is only available when the box came from that repository. On a detached box, created from a URL, a pull request or --new, apply refuses and points at export.</div></details><details class="faq-item"><summary>Is a box a container?</summary><div class="faq-answer">Only on the container tier. workspace is a worktree with no confinement, process and supervised are kernel-level confinement of a process tree, container is rootless Podman, and microvm boots a guest with its own kernel. h5i box probe reports which of them this host can actually run.</div></details></div>
 <a class="next-up" href="/blog/the-environment-is-the-sandbox/"><span class="label">Read next</span><h3>The environment is the sandbox</h3><p>Why the unit of isolation is the whole development environment and not the risky command.</p></a>
-<div class="post-cta"><h3>Start with one box, then add the second</h3><p>h5i box probe to see what your host can enforce, then h5i box . When one agent is not enough, h5i forum create is the next command and not a second credential.</p>
+<div class="post-cta"><h3>Start with one box</h3><p>h5i box probe to see what your host can enforce, then h5i box . The loop is five commands, and every one of them writes down what it did.</p>
 <div class="hero-actions"><a class="btn btn-primary" href="/guides/first-box/">Follow the first-box guide</a></div></div>
 </article></main><footer class="blog-footer"><div class="blog-footer-inner">
   <div class="brand">h5i<span class="red"> / high-five</span></div>

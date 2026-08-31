@@ -88,7 +88,6 @@
         "Five isolation tiers (workspace, process, supervised, container, microvm) that fail closed",
         "A network egress allowlist enforced outside the browser at L3/L4, or through an L7 proxy",
         "A disposable box holding the code, the toolchain, the dev server and the browser session",
-        "A Git-backed forum where boxed agents share threads and findings but never a credential",
         "An output gate: h5i box export writes a reviewable patch, a report and an execution receipt"
       ],
       "keywords": "browser for AI agents, agent browser, auditable browser, headless browser for AI agents, browser automation audit log, agentic browsing, fail-closed request log, egress allowlist, browser session isolation, human takeover, prompt injection containment, AI agent sandbox, microVM isolation, Claude Code, Codex",
@@ -193,7 +192,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css?v=16bf3ac0cf">
-  <link rel="stylesheet" href="/_static/console-mock.css?v=f390229c34">
+  <link rel="stylesheet" href="/_static/console-mock.css?v=d3dbcad9d5">
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://h5i.dev/features/"}]}
   </script>
@@ -404,7 +403,7 @@
     <div class="section-head reveal">
       <span class="section-tag">Use Cases</span>
       <h2 class="section-title">The box in action</h2>
-      <p class="section-sub">Five workflows where containment changes what is possible, not just what is safer.</p>
+      <p class="section-sub">Four workflows where containment changes what is possible, not just what is safer.</p>
       <div class="divider"></div>
     </div>
 
@@ -412,41 +411,6 @@
     <div class="usecase reveal">
       <div class="usecase-header">
         <div class="usecase-num">01</div>
-        <div>
-          <div class="usecase-title">Put two agents on one problem without pairing their authority</div>
-          <div class="usecase-sub">A worker and a reviewer, in separate boxes, on one thread. The forum is a Git ref the host owns; from inside a box it is not merely unwritable, it is invisible.</div>
-        </div>
-      </div>
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">~/my-project</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box create alpha --profile agent-claude</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i box create beta  --profile agent-codex</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i forum create "fix the auth refresh race" --ceiling agent</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i forum attach alpha --as alpha-worker  --role worker</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i forum attach beta  --as beta-reviewer --role reviewer</span>
-
-<span class="t-cmt"># inside alpha: it can say things, and it holds nothing to say them with</span>
-<span class="t-ai">box$</span> <span class="t-cmd">h5i forum post f04d --kind FINDING "the CAS at auth/refresh.rs:118 is not atomic"</span>
-<span class="t-ai">box$</span> <span class="t-cmd">ls ~/.git/refs/h5i/forum</span>
-<span class="t-red">ls: cannot access '/home/agent/.git/refs/h5i/forum': No such file or directory</span>
-
-<span class="t-cmt"># inside beta, a different box on a different profile, reading the same thread</span>
-<span class="t-ai">box$</span> <span class="t-cmd">h5i forum read f04d</span>
-<span class="t-out">  2. FINDING </span><span class="t-ai">alpha-worker (worker)</span><span class="t-out">  08-20 14:09</span>
-<span class="t-out">     box env/claude/alpha &#183; </span><span class="t-pass">host-observed</span>
-<span class="t-out">     &#9474; the CAS at auth/refresh.rs:118 is not atomic</span></pre></div>
-      </div>
-      <p style="margin-top:1rem;color:var(--text-dim);font-size:0.9rem">Neither box holds a forum credential, and neither wrote the identity line above the fence. <a href="/guides/run-a-forum/" style="color:var(--red-text)">Run a forum &#8594;</a></p>
-    </div>
-
-    <!-- 2 -->
-    <div class="usecase reveal">
-      <div class="usecase-header">
-        <div class="usecase-num">02</div>
         <div>
           <div class="usecase-title">Review a pull request by running it</div>
           <div class="usecase-sub">Checking out a stranger's branch used to mean handing its install scripts your shell. A detached box makes running it the cheap option instead of the risky one.</div>
@@ -476,7 +440,7 @@
     <!-- 2 -->
     <div class="usecase reveal">
       <div class="usecase-header">
-        <div class="usecase-num">03</div>
+        <div class="usecase-num">02</div>
         <div>
           <div class="usecase-title">Let an agent run with permissions off, safely</div>
           <div class="usecase-sub">Inside a box, permission mode is a convenience setting rather than a boundary. The boundary is the policy that was hashed before the box existed.</div>
@@ -504,7 +468,7 @@
     <!-- 3 -->
     <div class="usecase reveal">
       <div class="usecase-header">
-        <div class="usecase-num">04</div>
+        <div class="usecase-num">03</div>
         <div>
           <div class="usecase-title">Watch the page the agent is driving, then take over</div>
           <div class="usecase-sub">The stream port is never published. h5i enters the box's network namespace by pid, connects from inside, and hands the socket back out.</div>
@@ -531,7 +495,7 @@
     <!-- 4 -->
     <div class="usecase reveal">
       <div class="usecase-header">
-        <div class="usecase-num">05</div>
+        <div class="usecase-num">04</div>
         <div>
           <div class="usecase-title">Find out what this machine can actually enforce</div>
           <div class="usecase-sub">A functional self-test, not a feature probe. The required bits can all be present while a hardened kernel still denies confined exec.</div>

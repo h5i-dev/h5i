@@ -369,7 +369,7 @@ mod tests {
         assert!(parse("1 2").is_err());
     }
 
-    // Adversarial vectors from the design-thread review (forum post 14).
+    // Adversarial vectors from the design-thread review.
 
     #[test]
     fn deep_nesting_errors_instead_of_overflowing() {

@@ -25,15 +25,15 @@
 
 /* ── several views of one console, switched without script ──
  *
- * The plate can carry tabs: one thread, the fleet screen, and the browser
- * terminal a box with a browser in it gets. Radio inputs and their labels,
+ * The plate can carry tabs: the fleet screen, and the browser terminal a box
+ * with a browser in it gets. Radio inputs and their labels,
  * because a figure that needs JavaScript to show its second half shows nothing
  * while the script is still in flight, and because arrow keys move between
  * radios for free.
  *
  * Positional rather than by id: the nth input checks the nth label and shows
  * the nth view, so a page adds a tab by adding a pair and nothing here changes.
- * Three is what the front page needs; the rules below carry four.
+ * Two is what the front page needs; the rules below carry four.
  */
 .tabpick {
   position: absolute;
@@ -392,104 +392,4 @@
   .bt { font-size: clamp(8px, 2.1cqw, 13px); }
   .bt-panes { grid-template-columns: minmax(0, 1fr); }
   .bt-panes > .bt-pane { border-right: 0; }
-}
-
-/* ── the forum ─────────────────────────────────────────────────
- *
- * The third view: one thread, as `h5i ui` draws it. Structure and labels
- * follow web/src/ForumView.tsx.
- *
- * The whole argument of this screen is one seam, so the markup makes it a
- * literal one. Every post is a header line the *host* wrote — sender, role,
- * box, and which lane observed it — above a fenced body the *box* staged. A
- * reader can see which half of a post the agent controls without being told,
- * because the two halves do not look alike.
- *
- * Sized off the same clamp as the other views, so all three hold their
- * proportions together inside one plate.
- */
-.bd {
-  font-size: clamp(5.5px, 1.02cqw, 13px);
-  font-family: var(--mono);
-  line-height: 1.5;
-  color: var(--dim);
-  user-select: none;
-}
-.bd-body {
-  display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 6.5fr) minmax(0, 3fr);
-  min-height: 0;
-}
-.bd-threads { border-right: 1px solid var(--line2); min-width: 0; }
-.bd-posts   { min-width: 0; }
-.bd-people  { border-left: 1px solid var(--line2); min-width: 0; }
-
-/* ── the thread list ── */
-.bd-trow { padding: 0.75em 1.1em; border-bottom: 1px solid var(--line); }
-.bd-trow.selected { background: color-mix(in srgb, var(--spot-solid) 7%, transparent); }
-.bd-trow .t { color: var(--ink); font-size: 0.95em; line-height: 1.45; }
-.bd-trow .m { margin-top: 0.4em; color: var(--faint); font-size: 0.82em; }
-.bd-state {
-  border: 1px solid var(--line2); padding: 0 0.4em; margin-right: 0.5em;
-  font-size: 0.95em; color: var(--dim);
-}
-.bd-state.open    { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, transparent); }
-.bd-state.claimed { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
-
-/* ── one post ──
- * `.bd-head` is the host's line. `.bd-said` is the box's, and it is fenced on
- * the left for exactly as long as it takes a reader to notice that the fence
- * starts where the host's knowledge stops. */
-.bd-post { padding: 0.9em 2.2em; border-bottom: 1px solid var(--line); }
-.bd-head {
-  display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.35em 0.6em;
-  font-size: 0.9em;
-}
-.bd-head b { color: var(--ink); font-weight: 400; }
-.bd-kind {
-  border: 1px solid var(--line2); padding: 0 0.45em;
-  color: var(--faint); font-size: 0.88em;
-  letter-spacing: 0.12em;
-}
-.bd-kind.finding  { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
-.bd-kind.proposal { color: var(--dim); }
-.bd-kind.task     { color: var(--ink); border-color: var(--line2); }
-.bd-role { color: var(--faint); }
-.bd-when { margin-left: auto; color: var(--faint); font-size: 0.9em; }
-.bd-where { color: var(--faint); font-size: 0.88em; }
-.bd-said {
-  margin: 0.55em 0 0;
-  padding: 0.1em 0 0.1em 0.9em;
-  border-left: 1px solid var(--line2);
-  color: var(--dim); font-size: 0.95em; line-height: 1.65;
-}
-.bd-vote { margin-top: 0.5em; color: var(--faint); font-size: 0.85em; }
-.bd-vote b { color: var(--green); font-weight: 400; }
-
-/* ── participants ── */
-.bd-who { padding: 0.8em 1.1em; border-bottom: 1px solid var(--line); }
-.bd-who .n { color: var(--ink); font-size: 0.95em; }
-.bd-kv { display: flex; gap: 0.7em; margin-top: 0.3em; font-size: 0.85em; }
-.bd-kv .k { color: var(--faint); flex: 0 0 4.2em; }
-.bd-kv .val { color: var(--dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* ── the thread's own header ──
- *
- * Without it the pane opened on a reply to a question the reader could not
- * see, which made the left-hand list the only place the subject was ever
- * stated. Just the title: the id, the state and the claimant are all on the
- * selected row in that list already, and a thread id means nothing to someone
- * looking at a picture. */
-.bd-thread {
-  display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.45em 0.85em;
-  padding: 1.3em 2.2em 1.5em; border-bottom: 1px solid var(--line);
-}
-/* The chip carries its own margin for the thread list, where it sits against
-   running text. Here the flex gap already does that job. */
-.bd-thread .bd-state { margin-right: 0; }
-.bd-id { color: var(--faint); font-size: 0.92em; }
-.bd-title {
-  margin: 0; color: var(--ink);
-  font-family: var(--sans); font-size: 1.5em; font-weight: 600;
-  letter-spacing: -0.015em; line-height: 1.3;
 }

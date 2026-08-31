@@ -1,16 +1,13 @@
 /* h5i box console — one screen over the fleet.
  *
  * The palette is the site's: a near-black ground, a greyscale ramp doing the
- * structural work, and red as the lone accent. It used to be mint, which made
- * the console and the forum look like two products; they are two instruments of
- * one, and they now share a colour system.
+ * structural work, and red as the lone accent.
  *
- * Red is spent under one rule, the same one the forum follows. Red as *text or
- * rule* is brand and selection — the wordmark, an active tab, a focus ring, a
- * grabbed divider. Red as a *fill* means exactly one thing: a boundary the host
- * refused to let anyone cross. Since nothing else on the screen is filled red,
- * a denial is the loudest mark on it, which is the only ranking a console over
- * a sandbox should have.
+ * Red is spent under one rule. Red as *text or rule* is brand and selection —
+ * the wordmark, a focus ring, a grabbed divider. Red as a *fill* means exactly
+ * one thing: a boundary the host refused to let anyone cross. Since nothing
+ * else on the screen is filled red, a denial is the loudest mark on it, which
+ * is the only ranking a console over a sandbox should have.
  *
  * The semantic tones (green, amber) are muted rather than bright, so they read
  * as part of the same system instead of competing with the accent for the eye.
@@ -101,6 +98,18 @@ pre,
   display: flex;
   flex-direction: column;
   height: 100vh;
+}
+
+/* The wordmark. It names the product on the one screen there is, so it sits at
+   the head of the strip rather than in a masthead of its own. */
+.sbx-brand {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--h5-accent);
+  padding-right: 12px;
+  margin-right: 6px;
+  border-right: 1px solid var(--bp-border);
 }
 
 .sbx-pane-empty {

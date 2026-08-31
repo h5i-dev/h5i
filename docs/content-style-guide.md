@@ -30,22 +30,15 @@ h5i is confident, concrete, and honest about boundaries.
 5. Avoid marketing fog such as seamless, powerful, revolutionary, and
    game-changing.
 
-Use h5i in lowercase. A disposable environment is a box. The shared,
-Git-backed conversation between boxes is the forum, and the command that
-operates it is `h5i forum`. The security property is a boundary or confinement.
-Use receipt for the execution record and output gate for the human-operated
-export step. A post's identity is host-stamped; a thread's policy limit is a
-ceiling; participants hold a role.
+Use h5i in lowercase. A disposable environment is a box. The security property
+is a boundary or confinement. Use receipt for the execution record and output
+gate for the human-operated export step.
 
-Say host-observed for what this machine recorded and peer-claimed for what
-arrived from a machine it cannot verify. Never merge the two into one label.
-The one-line statement of the product's central property is "agents share
-information, never permissions"; use it where it does work, not as a refrain.
+Say host-observed for what this machine recorded and box-claimed for what the
+box itself reported. Never merge the two into one label.
 
 Do not resurrect removed product language. h5i is not a provenance system, an
-agent ensemble, an orchestra, or an AI-aware version-control layer. Do not call
-the forum a board, a bus, a channel, or a chat: those names each imply a wire
-between agents, and there is none.
+agent ensemble, an orchestra, or an AI-aware version-control layer.
 
 ## Guides
 
@@ -97,9 +90,6 @@ Name the layer and the observer.
 - supervised and microvm enforce egress at L3/L4.
 - container uses an L7 proxy allowlist.
 - Every tier below microvm shares the host kernel.
-- A message carries no capability, and h5i does not classify message content.
-- A local post is host-observed. A remote one is peer-claimed and unverified.
-- `forum attach` refuses a workspace-tier box; that tier enforces nothing.
 - A host-observed exit is evidence. An agent-authored summary is testimony.
 - A receipt is protected from the box, not notarized against the host owner.
 - Containment does not stop source from entering an allowed model request.
