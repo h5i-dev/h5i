@@ -1,7 +1,7 @@
 //! What this engine costs, measured rather than assumed.
 //!
-//! roadmap-history.md §B5 Tier 4. Nothing here had numbers after script landed: not
-//! the time to read a page, not the memory a page holds, and not the price of
+//! roadmap-history.md §B5 Tier 4. Nothing here had numbers after script landed:
+//! not the time to read a page, not the memory a page holds, and not the price of
 //! the reporting proxy that now sits in front of every DOM property read.
 //!
 //!     cargo run --release --example perf
@@ -256,7 +256,7 @@ fn main() {
     //
     // It found one. The deadline watchdog polled a flag every 20 ms and was
     // *joined*, so a settle that finished in 50 us then waited for a sleeping
-    // thread to notice. Up to 20 ms on every settle, and on every agent `wait`
+    // thread to notice: up to 20 ms on every settle, and on every agent `wait`
     // besides. It read as script time in a phase profile, and it was
     // intermittent, because whether the watchdog had reached its first sleep was
     // a race with the body finishing.
@@ -313,10 +313,10 @@ fn main() {
     //
     // This section is why the reporting moved. Every DOM property read used to
     // go through a `get` trap on a proxy in front of every wrapper, so that an
-    // unknown name could report itself. 799 ns of the 882 ns a *known*
-    // property cost, against 82 ns for a plain object. The reporting now sits
-    // at the end of the prototype chain instead, where only a read that missed
-    // arrives, and a known read never meets it.
+    // unknown name could report itself: 799 ns of the 882 ns a *known* property
+    // cost, against 82 ns for a plain object. The reporting now sits at the end
+    // of the prototype chain, where only a read that missed arrives, and a known
+    // read never meets it.
     println!();
     let url = url::Url::parse("https://bench.example/").unwrap();
     let (scripted, broker) = factory(true);

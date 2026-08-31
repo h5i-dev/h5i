@@ -14,15 +14,15 @@
 //! is the other answer and has a hole this does not: it withholds the agent's
 //! reads but not the *frames*, and the viewer socket is inside the box.
 //!
-//! Only `H5I_SECRET_*` is reachable. The whole `H5I_*` namespace would also
-//! carry engine configuration (`H5I_EGRESS_PROXY`, `H5I_BROWSER_RECEIPTS`), and
-//! a page-bound `type` putting the receipts path into a form is disclosure with
-//! no upside. A denylist would work until somebody added a variable; a prefix
+//! Only `H5I_SECRET_*` is reachable. The whole `H5I_*` namespace would also carry
+//! engine configuration (`H5I_EGRESS_PROXY`, `H5I_BROWSER_RECEIPTS`), and a
+//! page-bound `type` putting the receipts path into a form is disclosure with no
+//! upside. A denylist would work until somebody added a variable; a prefix
 //! allowlist fails closed.
 //!
 //! Anything written back out goes through [`Secrets::redact`], which iterates
-//! longest value first: with one secret a substring of another, replacing
-//! the shorter first leaves the longer one's tail in the clear.
+//! longest value first: with one secret a substring of another, replacing the
+//! shorter first leaves the longer one's tail in the clear.
 
 use std::collections::BTreeMap;
 

@@ -14,8 +14,8 @@
 //! the closing marker into its own `og:title`.
 //!
 //! This does not *validate*. A page claiming `"@type": "Product"` with no price
-//! is reported as it stands, because this is a reading of what the page said.
-//! Nor does it merge the formats: `json_ld`, `open_graph` and `meta` stay apart,
+//! is reported as it stands, because this is a reading of what the page said. Nor
+//! does it merge the formats: `json_ld`, `open_graph` and `meta` stay apart,
 //! because a page that disagrees with itself between two of them is telling an
 //! agent something.
 

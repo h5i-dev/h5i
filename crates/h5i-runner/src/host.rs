@@ -1,19 +1,17 @@
 //! What the worker can truthfully say about the machine it is running on.
 //!
-//! This is the source of [`crate::proto::Capabilities`], and the rule it works
-//! under is R1's: a runner requires Linux and the h5i protocol, and everything
-//! else is *advertised*. So the job here is to advertise only what has been
-//! established, and to say plainly, in [`crate::proto::Capabilities::notes`],
-//! what could not be established rather than reporting a confident `false`. A
-//! probe that silently reports `false` for something it merely could not
-//! measure is a probe that lies, and the whole placement decision downstream
-//! rests on this struct.
+//! This is the source of [`crate::proto::Capabilities`], and it works under R1's
+//! rule: a runner requires Linux and the h5i protocol, and everything else is
+//! *advertised*. So the job is to advertise only what has been established, and
+//! to say plainly, in [`crate::proto::Capabilities::notes`], what could not be
+//! established rather than reporting a confident `false`. A probe that silently
+//! reports `false` for something it merely could not measure is a probe that
+//! lies, and the whole placement decision downstream rests on this struct.
 //!
-//! The isolation list is the sharpest case. It is not "which kernel features
-//! are present": it is which tiers `h5i-sandbox` will actually *run*, taken
-//! from the same functional check the local auto-pick uses. This codebase has
-//! already paid once for the difference between "Landlock exists" and "a
-//! confined exec works".
+//! The isolation list is the sharpest case. It is not "which kernel features are
+//! present": it is which tiers `h5i-sandbox` will actually *run*, taken from the
+//! same functional check the local auto-pick uses. This codebase has already paid
+//! once for the difference between "Landlock exists" and "a confined exec works".
 
 use std::path::Path;
 
@@ -74,16 +72,16 @@ pub fn capabilities(state_dir: &Path) -> Capabilities {
 
 /// Which tiers this machine will actually run.
 ///
-/// The kernel tiers come from `capabilities_report_fresh`, which resolves a
-/// probe profile and then runs the functional exec self-test. The same gate
-/// `env create`'s auto-pick uses, so a tier advertised here is a tier that has
+/// The kernel tiers come from `capabilities_report_fresh`, which resolves a probe
+/// profile and then runs the functional exec self-test: the same gate `env
+/// create`'s auto-pick uses, so a tier advertised here is a tier that has
 /// demonstrably worked on this machine a moment ago. `_fresh` rather than the
 /// memoised form for the reason the local diagnostics use it: a report that is
 /// stale is a report that misleads about what the host can enforce.
 ///
-/// The container tier is the one entry that is *not* exec-verified here, and
-/// that gap is stated in a note rather than papered over: a functional container
-/// run needs an image, which is a create's business (R13.2), not a probe's.
+/// The container tier is the one entry that is *not* exec-verified here, and that
+/// gap is stated in a note rather than papered over: a functional container run
+/// needs an image, which is a create's business (R13.2), not a probe's.
 fn isolation_support(notes: &mut Vec<String>) -> (Vec<String>, bool) {
     let report = sandbox::capabilities_report_fresh();
     let mut tiers = Vec::new();

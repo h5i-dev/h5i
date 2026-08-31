@@ -7,13 +7,12 @@
 //!
 //! Two rules the h5i viewers depend on, both easy to get wrong:
 //!
-//! - A server never masks. h5i-core's client fails the connection outright
-//!   on a masked server frame, so masking here is not a compatibility quirk,
-//!   it is a disconnect.
-//! - Nothing follows the handshake's blank line except the first frame
-//!   byte. A stray newline is read as the start of a frame and the viewer
-//!   hangs with no error, which is exactly the CRLF bug the web viewer already
-//!   hit once.
+//! - A server never masks. h5i-core's client fails the connection outright on a
+//!   masked server frame, so masking here is a disconnect, not a compatibility
+//!   quirk.
+//! - Nothing follows the handshake's blank line except the first frame byte. A
+//!   stray newline is read as the start of a frame and the viewer hangs with no
+//!   error, which is exactly the CRLF bug the web viewer already hit once.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -222,14 +221,14 @@ pub fn read_message(reader: &mut impl Read) -> Result<Incoming, H5iError> {
         }
 
         // Control frames are never fragmented and may interleave a fragmented
-        // data message (RFC 6455 §5.4). At a message boundary we surface them
-        // so the caller can pong; *between* fragments we must not. Returning
+        // data message (RFC 6455 §5.4). At a message boundary we surface them so
+        // the caller can pong; *between* fragments we must not, since returning
         // here would discard `assembled` and corrupt the message into its tail
-        // alone. We cannot pong from inside this read, so an interleaved ping
-        // is skipped and reassembly continues: preserving the in-flight
-        // message beats answering one keep-alive, and a dropped ping is benign
-        // for these short sessions. Close always surfaces. Discarding a
-        // partial message on close is correct.
+        // alone. We cannot pong from inside this read, so an interleaved ping is
+        // skipped and reassembly continues: preserving the in-flight message
+        // beats answering one keep-alive, and a dropped ping is benign for these
+        // short sessions. Close always surfaces, and discarding a partial message
+        // on close is correct.
         let at_boundary = assembled.is_empty() && message_opcode.is_none();
         match opcode {
             0x8 => return Ok(Incoming::Close),
