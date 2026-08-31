@@ -1,29 +1,23 @@
 //! The `isolation=container` backend: run an environment's command inside a
-//! *rootless Podman* container, and, uniquely,
-//! enforce a `net.egress` *domain allowlist* that the static `process` tier
-//! cannot (docs/environments-design.md §5–§7, rollout phase 4).
+//! *rootless Podman* container and, uniquely, enforce a `net.egress` domain
+//! allowlist that the static `process` tier cannot
+//! (docs/environments-design.md §5–§7).
 //!
 //! Hardening (EscapeBench footguns, §2): `--rm`, `--cap-drop=ALL`,
-//! `--security-opt=no-new-privileges`, a read-only rootfs with a private
-//! `/tmp` tmpfs, `--userns=keep-id` so files in the bind-mounted workspace keep
-//! the caller's ownership, memory/pid limits, an env-var allowlist, and *never*
-//! a Docker socket mount. The container is an *opt-in adapter* that shells out
-//! to Podman if the user already has it. It adds no Rust dependency. Docker is
-//! intentionally not accepted in this phase: its daemon/socket model has a
-//! different trust boundary and is easy to misconfigure for agent workloads.
+//! `--security-opt=no-new-privileges`, a read-only rootfs with a private `/tmp`
+//! tmpfs, `--userns=keep-id` so bind-mounted workspace files keep the caller's
+//! ownership, memory/pid limits, an env-var allowlist, and *never* a Docker
+//! socket mount. An opt-in adapter that shells out to Podman, adding no Rust
+//! dependency. Docker is not accepted: its daemon/socket model has a different
+//! trust boundary and is easy to misconfigure for agent workloads.
 //!
-//! ### Egress enforcement. Honestly scoped
-//!
-//! When `net.egress` is non-empty, h5i resolves+pins the allowlisted domains to
-//! IPs at startup (kills DNS-rebinding) and runs a small HTTP/HTTPS CONNECT
-//! allowlist proxy on the host; the container is pointed at it via the
-//! `HTTP(S)_PROXY` env vars. This is *L7* enforcement: it blocks the dominant
-//! exfiltration path, `curl`/`wget`/`pip`/`npm`/`requests` to a non-allowlisted
-//! host, fail-closed (anything not on the list gets `403`). It does *not* by
-//! itself stop a process that ignores the proxy env and opens a raw connection
-//! to an arbitrary IP the rootless NAT permits; airtight L3/L4 egress filtering
-//! is the `hardened-container`/`microvm` tier (or the future seccomp-notify
-//! supervisor). We state this rather than pretend the box is sealed.
+//! Egress enforcement, honestly scoped. When `net.egress` is non-empty h5i
+//! resolves and pins the allowlisted domains to IPs at startup (killing DNS
+//! rebinding) and runs a small CONNECT allowlist proxy on the host, which the
+//! container reaches through `HTTP(S)_PROXY`. That is *L7*: it blocks the
+//! dominant exfiltration path fail-closed, but not a process that ignores the
+//! proxy env and opens a raw connection to any IP the rootless NAT permits.
+//! Airtight L3/L4 filtering is the `hardened-container`/`microvm` tier.
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Read, Write};
@@ -112,20 +106,15 @@ pub fn podman_present() -> bool {
     version_ok("podman")
 }
 
-/// Detect the only container runtime this phase supports: *rootless Podman*.
-/// Returns `None` when Podman is absent, broken, or running as root.
+/// Detect the only container runtime this phase supports, *rootless Podman*.
+/// `None` when Podman is absent, broken, or running as root.
 ///
-/// *Cached*. The underlying `podman info` costs ~1.3s, and `env run`/`env
-/// shell` pay it on every invocation. Two layers, both skippable with
-/// `H5I_NO_PROBE_CACHE=1`:
-/// - in-process `OnceLock` (a single h5i invocation never probes twice);
-/// - a per-boot file under `$XDG_RUNTIME_DIR/h5i/` (tmpfs: vanishes at
-///   reboot, the natural invalidation for a host-capability fact), validated
-///   against the resolved `podman` binary's path + mtime + size so an
-///   upgraded/moved Podman re-probes.
-///
-/// Only the *positive* result is cached: "no rootless podman" answers fast
-/// anyway and must self-heal the moment the user installs/fixes Podman.
+/// Cached, because `podman info` costs ~1.3s and every `env run`/`env shell`
+/// pays it. Two layers, both skippable with `H5I_NO_PROBE_CACHE=1`: an
+/// in-process `OnceLock`, and a per-boot file under `$XDG_RUNTIME_DIR/h5i/`
+/// validated against the resolved binary's path, mtime and size so an upgraded
+/// Podman re-probes. Only the *positive* result is cached: "no rootless
+/// podman" answers fast anyway and must self-heal when the user fixes Podman.
 pub fn probe() -> Option<Runtime> {
     if std::env::var_os("H5I_NO_PROBE_CACHE").is_some() {
         return probe_uncached();
@@ -147,14 +136,11 @@ pub fn probe() -> Option<Runtime> {
 }
 
 /// [`probe`] with both caches bypassed, for the diagnostic paths (`box probe`,
-/// `box capabilities`, the console's `/api/probe`) that must report the host as
-/// it is right now.
+/// `box capabilities`, `/api/probe`) that must report the host as it is now.
 ///
-/// A function rather than the `H5I_NO_PROBE_CACHE` environment variable: those
-/// callers used to set that variable at run time, which mutates process-global
-/// state shared with every other thread (unsound in a threaded program, and a
-/// side effect that outlived the one call that wanted it). The variable stays as
-/// an operator escape hatch. Read, never written.
+/// A function rather than the `H5I_NO_PROBE_CACHE` variable: setting that at
+/// run time mutates process-global state shared with every other thread. The
+/// variable stays as an operator escape hatch, read and never written.
 pub fn probe_fresh() -> Option<Runtime> {
     probe_uncached()
 }
@@ -283,12 +269,9 @@ struct AllowEntry {
 
 /// Parse one `net.egress` entry into `(host, wildcard, port)`, fail-closed.
 ///
-/// This is the single definition of the grammar. It used to exist twice, here
-/// and in `microvm::egress_rule_tokens`, and the copies drifted: the microvm
-/// side refused an out-of-range port, a single-label wildcard, an IPv6 literal
-/// and the reserved `,`/`@`, while this side silently widened or mangled all
-/// four. `example.com:99999` in particular became an *any-port* rule, the exact
-/// opposite of what the entry asked for.
+/// The single definition of the grammar. It used to exist twice, here and in
+/// `microvm::egress_rule_tokens`, and the copies drifted: `example.com:99999`
+/// became an *any-port* rule on this side, the exact opposite of the entry.
 ///
 /// `Ok(None)` is a blank entry (skip it); anything malformed is an error.
 pub fn parse_egress_rule(raw: &str) -> Result<Option<(String, bool, Option<u16>)>, H5iError> {
@@ -340,23 +323,18 @@ pub fn parse_egress_rule(raw: &str) -> Result<Option<(String, bool, Option<u16>)
              least two (e.g. '*.example.com', not '*.com'). Refusing (fail-closed)."
         )));
     }
-    // And the host has to be a host. Everything above constrains the
-    // *separators* (`,`, `@`, the colon, the wildcard prefix) and nothing
-    // constrained what was left, so any leftover string became a rule.
-    //
-    // That is where the two tiers stopped agreeing, which is the thing this
-    // function exists to prevent. A second colon that is not a port is kept as
-    // part of the host: `example.com:any` parses to the host
-    // `"example.com:any"`, which the container proxy compares against real
-    // hostnames and never matches, an inert rule, while the microvm tier
-    // emits it as the token `allow@example.com:any`, where the colon is
-    // microsandbox's *protocol* qualifier. One policy, denied on one tier and
-    // widened on the other.
+    // And the host has to be a host. Everything above constrains the separators
+    // and nothing constrained what was left, so any leftover string became a
+    // rule, which is where the two tiers stopped agreeing. A second colon that is
+    // not a port stays part of the host: `example.com:any` is inert against the
+    // container proxy's hostname comparison, while the microvm tier emits
+    // `allow@example.com:any`, where the colon is microsandbox's *protocol*
+    // qualifier. One policy, denied on one tier and widened on the other.
     //
     // A hostname, an IPv4 address or an IPv4 CIDR, and nothing else. A trailing
     // dot is refused rather than trimmed: `allows` trims it from the request
-    // host, so a rule carrying one matches nothing today, and trimming it here
-    // would turn a rule that never fired into one that does.
+    // host, so trimming here would turn a rule that never fired into one that
+    // does.
     if !is_rule_host(&host) {
         return Err(H5iError::Metadata(format!(
             "net.egress entry '{raw}' is not a hostname, an IPv4 address or a CIDR — refusing \
@@ -424,10 +402,10 @@ impl AllowEntry {
 /// Is this address one the box has no business reaching through the proxy?
 ///
 /// Used only where a destination could not be pinned. The proxy runs on the
-/// host with full host network access, so an unpinned name that resolves to
-/// loopback, a private range, or the cloud metadata link-local address turns
-/// the egress boundary into an SSRF gadget. `IpAddr::is_global` is still
-/// unstable, so the ranges are spelled out.
+/// host with full host network access, so an unpinned name resolving to
+/// loopback, a private range or the cloud metadata address turns the egress
+/// boundary into an SSRF gadget. `IpAddr::is_global` is still unstable, so the
+/// ranges are spelled out.
 fn is_internal(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(a) => {
@@ -464,19 +442,17 @@ fn is_internal(ip: &IpAddr) -> bool {
 pub const AGENT_CONFIG_RELS: [&str; 2] = [".claude/settings.json", ".codex/config.toml"];
 
 /// Resolve one agent config file into a mount source, refusing anything that is
-/// not a regular file that really lives inside `$WORK`.
+/// not a regular file really inside `$WORK`.
 ///
 /// `$WORK` holds the branch under review, so this path and every directory
-/// above it are supplied by the repository. `Path::exists()` follows symlinks
-/// and the *unresolved* path is what would reach the mount spec, which the
-/// kernel then resolves host-side: a branch shipping `.claude/settings.json`
-/// as a symlink to `~/.ssh` would have h5i mount that directory into the box.
-/// The exposure is created entirely by the mount. Left alone, the link dangles
-/// inside the box's mount namespace because the target is not in it.
+/// above it come from the repository. `Path::exists()` follows symlinks and
+/// the *unresolved* path is what reaches the mount spec, which the kernel then
+/// resolves host-side: a branch shipping `.claude/settings.json` as a symlink
+/// to `~/.ssh` would have h5i mount that directory into the box. The mount
+/// creates the exposure; left alone the link dangles inside the box's ns.
 ///
 /// `symlink_metadata` refuses a symlinked final component; canonicalizing and
-/// re-checking the prefix refuses a symlinked *ancestor*, which is the same
-/// trick one directory up.
+/// re-checking the prefix refuses a symlinked *ancestor*.
 pub fn agent_config_mount_source(work: &Path, rel: &str) -> Option<PathBuf> {
     let source = work.join(rel);
     if !std::fs::symlink_metadata(&source).is_ok_and(|md| md.file_type().is_file()) {
@@ -487,12 +463,12 @@ pub fn agent_config_mount_source(work: &Path, rel: &str) -> Option<PathBuf> {
     canon.starts_with(&canon_work).then_some(canon)
 }
 
-/// Combine the digested profile allowlist with the host-side user extras
-/// (`h5i box allow`) into the rule set the proxy enforces. Fail-closed
-/// widening rule: when the profile's own `net.egress` is empty (deny-all),
-/// the user extras are IGNORED. State outside the digested policy must never
-/// turn a no-network profile into a networked one; it may only add hosts to a
-/// profile that already opted into egress. Order-preserving, deduplicated.
+/// Combine the digested profile allowlist with the host-side user extras (`h5i
+/// box allow`) into the rule set the proxy enforces. Fail-closed widening
+/// rule: when the profile's own `net.egress` is empty (deny-all) the extras
+/// are IGNORED. State outside the digested policy may add hosts to a profile
+/// that already opted into egress, never turn a no-network profile into a
+/// networked one. Order-preserving, deduplicated.
 pub fn effective_egress(profile_egress: &[String], user_allow: &[String]) -> Vec<String> {
     if profile_egress.iter().all(|e| e.trim().is_empty()) {
         return Vec::new();
@@ -518,8 +494,7 @@ pub fn effective_egress(profile_egress: &[String], user_allow: &[String]) -> Vec
 /// if the proxy *dials* the pinned address. Matching a name and then calling
 /// `TcpStream::connect((host, port))` re-resolves, which is how an allowlisted
 /// domain under attacker DNS control used to reach host loopback or a metadata
-/// endpoint through a proxy that has full host network access. See
-/// [`AllowList::dial_addrs`].
+/// endpoint. See [`AllowList::dial_addrs`].
 #[derive(Debug, Clone, Default)]
 pub struct AllowList {
     entries: Vec<AllowEntry>,
@@ -566,12 +541,10 @@ impl AllowList {
     /// The addresses the proxy may dial for an already-[`allowed`](Self::allows)
     /// request. Empty means refuse.
     ///
-    /// Pinned addresses win, so the name the allowlist matched and the address
-    /// the socket reaches are decided by the *same* DNS answer. Only a wildcard
-    /// entry (or a host that would not resolve at startup) falls through to a
-    /// live lookup, and that answer is filtered to globally routable addresses:
-    /// without a pin there is nothing else standing between a rebound record
-    /// and the host's own loopback.
+    /// Pinned addresses win, so the name the allowlist matched and the address the
+    /// socket reaches come from the *same* DNS answer. Only a wildcard entry, or a
+    /// host that would not resolve at startup, falls through to a live lookup, and
+    /// that answer is filtered to globally routable addresses.
     pub fn dial_addrs(&self, host: &str, port: u16) -> Vec<std::net::SocketAddr> {
         let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
         if let Ok(ip) = h.parse::<IpAddr>() {
@@ -651,12 +624,10 @@ const MAX_CONSECUTIVE_ACCEPT_ERRORS: usize = 256;
 /// The count is the only thing between the box and an unbounded number of host
 /// threads, so the release has to be unconditional. A bare `fetch_sub` after
 /// the call is not: `splice` calls `std::thread::spawn`, which *panics* when
-/// the OS refuses a thread, and that is reachable from exactly the load this
-/// cap exists to bound. A leaked slot is permanent, and after
-/// `MAX_PROXY_CONNECTIONS` of them the proxy answers 503 for the life of the
-/// box, which, since the proxy is the box's only route out, is the box losing
-/// the network entirely. `auth_proxy::InFlightSlot` is the same guard for the
-/// same reason; this sibling never got it.
+/// the OS refuses a thread, exactly the load this cap exists to bound. A
+/// leaked slot is permanent, and after `MAX_PROXY_CONNECTIONS` of them the
+/// proxy answers 503 for the life of the box, which is the box losing the
+/// network. `auth_proxy::InFlightSlot` is the same guard for the same reason.
 struct ProxySlot(Arc<std::sync::atomic::AtomicUsize>);
 
 impl Drop for ProxySlot {
@@ -712,12 +683,12 @@ pub fn spawn_proxy(allow: AllowList) -> Result<ProxyHandle, H5iError> {
 
 /// [`spawn_proxy`] on a caller-chosen loopback port
 /// ([`ResolvedPolicy::egress_proxy_port`]: a box whose browser outlives the
-/// run needs the proxy to still be at the address that browser memorised).
+/// run needs the proxy still at the address that browser memorised).
 ///
 /// Falls back to an ephemeral port when the requested one cannot be bound: a
-/// squatted port is a reason to lose browser continuity, not a reason to refuse
-/// the run. The note says which one happened, because the symptom otherwise
-/// surfaces much later as a proxy error inside the box.
+/// squatted port is a reason to lose browser continuity, not to refuse the
+/// run. The note says which happened, since the symptom otherwise surfaces
+/// much later as a proxy error inside the box.
 pub fn spawn_proxy_on(allow: AllowList, want: Option<u16>) -> Result<ProxyHandle, H5iError> {
     let listener = match want {
         Some(p) => match TcpListener::bind(("127.0.0.1", p)) {
@@ -747,14 +718,12 @@ pub fn spawn_proxy_on(allow: AllowList, want: Option<u16>) -> Result<ProxyHandle
     // benefits from unbounded parallelism here.
     let live = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let join = std::thread::spawn(move || {
-        // `accept` reports per-connection and per-host conditions that say
-        // nothing about the listener: `ECONNABORTED` when a client RSTs between
-        // SYN and accept, `EMFILE`/`ENFILE` under fd pressure. Treating any of
-        // them as fatal ended the accept loop for good, and this proxy is the
-        // box's only route out, so that is the box losing the network. The
-        // listener is loopback and unauthenticated by design (see the note on
-        // `NetPlan::Proxy`), which means any local process could do it with a
-        // connect and a reset.
+        // `accept` reports per-connection conditions that say nothing about the
+        // listener: `ECONNABORTED` when a client RSTs between SYN and accept,
+        // `EMFILE`/`ENFILE` under fd pressure. Treating any as fatal ended the accept
+        // loop for good, and this proxy is the box's only route out. The listener is
+        // loopback and unauthenticated by design (see `NetPlan::Proxy`), so any local
+        // process could do it with a connect and a reset.
         let mut consecutive_errors = 0usize;
         while !stop_thread.load(Ordering::SeqCst) {
             match listener.accept() {
@@ -783,12 +752,10 @@ pub fn spawn_proxy_on(allow: AllowList, want: Option<u16>) -> Result<ProxyHandle
                         );
                         continue;
                     }
-                    // `Builder::spawn`, not `thread::spawn`: the latter
-                    // *panics* when the OS refuses a thread, and that panic is
-                    // in the accept loop, so the one condition the cap above
-                    // exists to bound would end the loop anyway, which is the
-                    // box losing the network. Refused with the same 503 as a
-                    // full slot table, and the guard hands the slot back.
+                    // `Builder::spawn`, not `thread::spawn`: the latter *panics* when the OS
+                    // refuses a thread, and that panic is in the accept loop, so the one
+                    // condition the cap above exists to bound would end the loop anyway.
+                    // Refused with the same 503 as a full slot table.
                     let spawned = std::thread::Builder::new().spawn(move || {
                         // Moved in, so the release happens on unwind too.
                         let _slot = slot;
@@ -830,8 +797,8 @@ pub fn spawn_proxy_on(allow: AllowList, want: Option<u16>) -> Result<ProxyHandle
 /// Bounded overall, not just per `read()`. The socket's read timeout bounds a
 /// single syscall, so a client dribbling one header byte just under that
 /// interval held its slot indefinitely, and sixty-four such connections take
-/// the box's only route out away from it. The listener is loopback and
-/// unauthenticated by design, so the actor need not even be the box.
+/// the box's only route out away. The listener is loopback and
+/// unauthenticated, so the actor need not be the box.
 fn read_head(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
     let deadline = std::time::Instant::now() + HEAD_DEADLINE;
     let mut buf = Vec::with_capacity(256);
@@ -888,20 +855,19 @@ fn parse_target(head: &[u8]) -> Option<(String, u16, bool)> {
 }
 
 /// The box env var naming h5i's host-side egress allowlist proxy, set by every
-/// tier that runs one (this one, and the macOS supervised tier) and by nothing
+/// tier that runs one (this one and the macOS supervised tier) and nothing
 /// else.
 ///
-/// It exists alongside `HTTPS_PROXY` rather than instead of it. The conventional
-/// vars are what proxy-respecting tooling reads, and they are also ordinary
-/// shell state a box's own rc or tooling may set for unrelated reasons, so a
+/// It exists alongside `HTTPS_PROXY` rather than instead of it. The
+/// conventional vars are what proxy-respecting tooling reads and are also
+/// ordinary shell state a box's rc may set for unrelated reasons, so a
 /// consumer that must know "is this address h5i's proxy?" (the browser shim,
-/// which has to pass Chrome an explicit `--proxy-server` because Chrome ignores
-/// the environment on macOS) cannot answer it from `HTTPS_PROXY`. This variable
-/// carries that fact under h5i's own name.
+/// which passes Chrome an explicit `--proxy-server` because Chrome ignores the
+/// environment on macOS) cannot answer from `HTTPS_PROXY`.
 ///
-/// Not a trust boundary: a box can set any variable in its own environment, and
-/// nothing here is authority. The policy grants the port the *host* bound, so a
-/// box that points its Chrome elsewhere reaches a port it is denied anyway.
+/// Not a trust boundary: a box can set any variable in its own environment.
+/// The policy grants the port the *host* bound, so a box that points its
+/// Chrome elsewhere reaches a port it is denied anyway.
 pub const EGRESS_PROXY_VAR: &str = "H5I_EGRESS_PROXY";
 
 /// Environment variables that carry the egress proxy wiring. A profile's
@@ -925,11 +891,10 @@ pub fn is_proxy_wiring_var(key: &str) -> bool {
         || PROXY_WIRING_VARS.iter().any(|v| key.eq_ignore_ascii_case(v))
 }
 
-/// How long a connection may take to finish sending its request head. It bounds
-/// only the head: a client that connects and says nothing must not hold a thread,
-/// but once the tunnel is up the relay has no clock of its own (see the reset
-/// below). Passed in rather than read here so the regression test for that reset
-/// can run in milliseconds instead of half a minute.
+/// How long a connection may take to finish sending its request head, and only
+/// the head: a client that connects and says nothing must not hold a thread,
+/// but once the tunnel is up the relay has no clock of its own. Passed in
+/// rather than read here so the regression test can run in milliseconds.
 const HEAD_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn handle_proxy_client(
@@ -940,14 +905,11 @@ fn handle_proxy_client(
 ) -> std::io::Result<()> {
     // Everything below reads with blocking calls, so say so rather than assume
     // it. The listener is non-blocking (the accept loop polls `stop`) and on
-    // macOS (BSD `accept`, where Linux uses `accept4`) the accepted socket
-    // *inherits* that flag. Left inherited, the first read that has to wait for
-    // a packet returns `WouldBlock`, the relay treats it as fatal and drops the
-    // connection: the box sees a CONNECT tunnel open with `200` and then reset
-    // mid-TLS-handshake, which reads like an upstream fault.
-    //
-    // `?`, not `let _ =`: silently continuing with a non-blocking socket
-    // reinstates that exact bug. Dropping the connection is the honest failure.
+    // macOS the accepted socket *inherits* that flag. Left inherited, the first
+    // read that waits for a packet returns `WouldBlock`, the relay treats it as
+    // fatal and drops the connection: the box sees a CONNECT tunnel open with
+    // `200` and then reset mid-TLS-handshake, which reads like an upstream fault.
+    // `?`, not `let _ =`: continuing with a non-blocking socket reinstates it.
     client.set_nonblocking(false)?;
     client.set_read_timeout(Some(head_timeout))?;
     let head = read_head(&mut client)?;
@@ -982,16 +944,13 @@ fn handle_proxy_client(
         // Replay the original request head to the origin server.
         upstream.write_all(&head)?;
     }
-    // The 30s timeout above bounds *head* parsing. A client that opens a
-    // connection and says nothing must not hold a thread. It must not survive
-    // into the tunnel: `splice` hands a `try_clone` of this socket to the
-    // client→upstream copy, and a clone shares `SO_RCVTIMEO`, so 30s of client
-    // silence would end that copy with a timeout error and shut the upstream
-    // write half down. Client silence is the normal state of a tunnel that is
-    // waiting for a response, so anything with a slow first byte (a streaming
-    // completion, an SSE subscription, a large clone over HTTPS) died at 30s
-    // mid-flight. Once the head is parsed, the relay's only clock is the
-    // caller's.
+    // The 30s timeout above bounds *head* parsing and must not survive into the
+    // tunnel: `splice` hands a `try_clone` of this socket to the client→upstream
+    // copy, and a clone shares `SO_RCVTIMEO`, so 30s of client silence would end
+    // that copy and shut the upstream write half down. Client silence is the
+    // normal state of a tunnel waiting for a response, so anything with a slow
+    // first byte (a streaming completion, an SSE subscription, a large clone over
+    // HTTPS) died at 30s mid-flight.
     client.set_read_timeout(None)?;
     splice(client, upstream);
     Ok(())
@@ -1003,11 +962,9 @@ fn splice(a: TcpStream, b: TcpStream) {
     let a2 = a1.try_clone();
     let b2 = b1.try_clone();
     if let (Ok(mut a2), Ok(mut b2)) = (a2, b2) {
-        // `Builder::spawn`, not `thread::spawn`: the latter *panics* when the
-        // OS refuses a thread. The in-flight guard means that unwind costs one
-        // connection rather than the slot, but a panic is still the wrong way
-        // to say "out of threads", and a half-open tunnel is not a tunnel, so
-        // the honest answer is to close both ends.
+        // `Builder::spawn`, not `thread::spawn`: the latter *panics* when the OS
+        // refuses a thread. A panic is the wrong way to say "out of threads", and a
+        // half-open tunnel is not a tunnel, so close both ends.
         let Ok(t) = std::thread::Builder::new().spawn(move || {
             let _ = std::io::copy(&mut a2, &mut b2);
             let _ = b2.shutdown(std::net::Shutdown::Write);
@@ -1024,18 +981,16 @@ fn splice(a: TcpStream, b: TcpStream) {
 
 /// How a container reaches h5i's *host-side* proxies (the egress allowlist
 /// proxy and the credential-injecting auth proxy). This differs by platform
-/// because the network topology between the box and h5i does:
+/// because the topology between box and h5i does:
 ///
-/// - *Linux*: Podman is rootless and local, so the container is one hop from
-///   h5i. `slirp4netns` with `allow_host_loopback` exposes the host's loopback,
-///   where the proxies listen, at the gateway address `10.0.2.2`. Note this is
-///   *not* `host.containers.internal`, which maps to a different gateway IP that
-///   does not forward to host loopback.
-/// - *macOS*: Podman runs in a `podman machine` VM, so there are two hops. The
-///   container's own `10.0.2.2` is the VM's loopback, where nothing of ours
-///   listens; the macOS host is reached through gvproxy at
-///   `host.containers.internal`, and the default machine network already routes
-///   there, so no `--network` override is wanted.
+/// - *Linux*: Podman is rootless and local, one hop. `slirp4netns` with
+///   `allow_host_loopback` exposes the host's loopback at the gateway address
+///   `10.0.2.2`. Not `host.containers.internal`, which maps to a different
+///   gateway IP that does not forward to host loopback.
+/// - *macOS*: Podman runs in a VM, so two hops. The container's own `10.0.2.2`
+///   is the VM's loopback, where nothing of ours listens; the macOS host is
+///   reached through gvproxy at `host.containers.internal`, which the default
+///   machine network already routes to.
 pub struct HostRoute {
     /// Value for `--network=…` on the proxy plan, when the platform needs one.
     pub network_arg: Option<&'static str>,
@@ -1081,8 +1036,8 @@ pub struct ShimPlan {
 /// In-container mountpoints for the shim machinery. `ORIG` is the container's
 /// own image self-mounted read-only, so the *unmodified* shell stays reachable
 /// at `/.h5i/orig/bin/sh` for any image. The shim is a `#!/.h5i/orig/bin/sh`
-/// script that uses only the image's own interpreter and utilities (no host
-/// binary enters the box, so there is no glibc/arch compatibility surface).
+/// script using only the image's own interpreter, so no host binary enters the
+/// box and there is no glibc/arch compatibility surface.
 const SHIM_ORIG_MOUNT: &str = "/.h5i/orig";
 const SHIM_SPOOL_MOUNT: &str = "/.h5i/spool";
 /// Per-env inbound mailbox, bind-mounted READ-ONLY (host fans messages in).
@@ -1092,16 +1047,13 @@ const ENV_INBOX_MOUNT: &str = "/.h5i/inbox";
 /// stdout/stderr of a non-interactive command-string invocation into the spool
 /// while preserving argv, stdin, the TTY decision, and the exit code.
 ///
-/// The command flag is detected by scanning argv for a short-option cluster
-/// ending in `c` (`-c`, `-lc`, `-ic`, `-lic`, …) rather than checking `$1`
-/// literally. Different runtimes spell it differently: Claude Code runs
-/// `bash -c`, Codex runs `bash -lc`. The command string is the argument that
-/// follows that flag. A leading non-`c` option (e.g. `bash -i -c …`) is skipped
-/// over; scanning stops at `--` or the first non-option (a `sh script.sh`
-/// invocation, which is not observed).
+/// The command flag is found by scanning argv for a short-option cluster
+/// ending in `c` (`-c`, `-lc`, `-ic`, …) rather than checking `$1`, because
+/// runtimes spell it differently: Claude Code runs `bash -c`, Codex `bash
+/// -lc`. Scanning stops at `--` or the first non-option.
 ///
-/// Every guard fails OPEN to `exec` of the real shell. Observation must never
-/// change what a command does or whether it runs. Pure; unit + live tested.
+/// Every guard fails OPEN to `exec` of the real shell: observation must never
+/// change what a command does or whether it runs.
 pub fn shim_script(orig_prefix: &str, spool_dir: &str) -> String {
     format!(
         r#"#!{orig}/bin/sh
@@ -1204,12 +1156,11 @@ fn prepare_shim(work: &Path) -> Option<ShimPlan> {
     Some(ShimPlan { shim, spool })
 }
 
-/// Write the managed-settings.json (carrying the unkillable wrap-bash
-/// observation hook) under the env dir, to be bind-mounted read-only into the
-/// box at [`crate::sandbox_policy::CLAUDE_MANAGED_SETTINGS_PATH`]. Best-effort: returns
-/// `None` (injection skipped, session otherwise unaffected) on any I/O failure
-/// or a path Podman's `--mount` syntax can't carry. Only the in-box Claude
-/// reads this file; it is inert for any other tooling.
+/// Write the managed-settings.json (carrying the unkillable wrap-bash hook)
+/// under the env dir, to be bind-mounted read-only into the box at
+/// [`crate::sandbox_policy::CLAUDE_MANAGED_SETTINGS_PATH`]. Best-effort:
+/// `None` on any I/O failure or a path Podman's `--mount` cannot carry. Only
+/// the in-box Claude reads it.
 fn prepare_managed_settings(work: &Path, content: &str) -> Option<PathBuf> {
     let env_dir = work.parent()?;
     let dir = env_dir.join("managed");
@@ -1319,11 +1270,10 @@ pub fn build_run_argv(
         "--read-only".into(),
         "--tmpfs".into(),
         "/tmp:rw,nosuid,nodev,size=256m".into(),
-        // Podman's default /dev/shm is 64 MiB, which a browser renderer eats
-        // through in one heavy page and then dies with a message that blames
-        // everything except the shared-memory segment. Size it from the
-        // policy's own memory limit (deterministic, so the argv stays pure and
-        // testable) and cap it at 1 GiB.
+        // Podman's default /dev/shm is 64 MiB, which a browser renderer eats through
+        // in one heavy page and then dies blaming everything except the shared-memory
+        // segment. Sized from the policy's own memory limit (deterministic, so the
+        // argv stays pure and testable) and capped at 1 GiB.
         "--shm-size".into(),
         format!("{}m", shm_size_mb(profile)),
         // The env workspace, mounted at /work (the in-box git plumbing below
@@ -1367,14 +1317,12 @@ pub fn build_run_argv(
             ));
         }
     }
-    // In-box git plumbing: every path mounted at its identical host path (the
-    // worktree's pointer files contain host-absolute paths). The list arrives
-    // parent-before-child (`refs` ro before its nested rw children) and is
-    // emitted in order. Mount targets that don't exist in the image are
-    // auto-created on the rootfs overlay, same as the shim mounts below.
-    // Podman's `--mount` syntax cannot carry a comma in a path: in that case
-    // skip the WHOLE set (a partially mounted .git is worse than the old
-    // fail-closed "not a git repository").
+    // In-box git plumbing: every path mounted at its identical host path, since
+    // the worktree's pointer files contain host-absolute paths. The list arrives
+    // parent-before-child and is emitted in order; missing targets are
+    // auto-created on the rootfs overlay. Podman's `--mount` syntax cannot carry
+    // a comma in a path, and there the WHOLE set is skipped: a partially mounted
+    // .git is worse than a fail-closed "not a git repository".
     if !box_git.is_empty()
         && !box_git
             .iter()
@@ -1389,11 +1337,10 @@ pub fn build_run_argv(
             ));
         }
     }
-    // Managed-settings injection: bind our wrap-bash hook read-only at Claude's
-    // managed-settings path. The in-box agent cannot write the (root-owned)
-    // path and cannot disable a managed hook from its own config, so in-box
-    // observation cannot be silenced. Podman auto-creates the nested target on
-    // the read-only rootfs overlay; the mount lives only in this box's ns.
+    // Managed-settings injection: bind the wrap-bash hook read-only at Claude's
+    // managed-settings path. The in-box agent cannot write the root-owned path
+    // and cannot disable a managed hook from its own config, so in-box
+    // observation cannot be silenced.
     if let Some(ms) = managed_settings
         && !ms.display().to_string().contains(',')
     {
@@ -1413,9 +1360,9 @@ pub fn build_run_argv(
     }
     // Observation shim (interactive only): the image self-mount keeps the real
     // shell reachable at /.h5i/orig for ANY image; the shim shadows /bin/sh and
-    // /bin/bash (on merged-usr images the bind lands on the resolved
-    // /usr/bin/* file, covering both spellings); the spool is the only extra
-    // writable surface, and its contents are treated as untrusted on ingest.
+    // /bin/bash (on merged-usr images the bind lands on the resolved /usr/bin/*
+    // file, covering both spellings); the spool is the only extra writable
+    // surface, and its contents are untrusted on ingest.
     if let Some(s) = shim {
         a.push("--mount".into());
         a.push(format!(
@@ -1454,11 +1401,10 @@ pub fn build_run_argv(
         ));
     }
     // Private-path binds (Idea 3): each per-env backing dir mounted rw over its
-    // workspace path inside the box (`/work/<rel>`), giving distinct inodes per
-    // env. Comma-bearing paths (which Podman's `--mount` syntax can't carry) are
-    // rejected upstream, fail-closed in `validate_private_paths` (rel) and
-    // `env::prepare_private_paths` (backing), so by here every bind is safe to
-    // emit; an enforcement feature must never silently drop a required bind.
+    // workspace path inside the box, giving distinct inodes per env.
+    // Comma-bearing paths are rejected upstream in `validate_private_paths` and
+    // `env::prepare_private_paths`, so by here every bind is safe to emit: an
+    // enforcement feature must never silently drop a required bind.
     for b in private_binds {
         let rel = b.rel.trim_matches('/');
         a.push("--mount".into());
@@ -1481,9 +1427,8 @@ pub fn build_run_argv(
     }
     // `resources.cpu` as a CPU-seconds budget has no podman equivalent (podman
     // caps *rate*, not total), and `--ulimit fsize` is the file-size cap. Map
-    // what maps; the caller reports the rest through `unmapped_resources`
-    // rather than letting a profile written to bound a runaway build quietly
-    // get no bound at all.
+    // what maps; the caller reports the rest through `unmapped_resources` rather
+    // than letting a profile written to bound a runaway build get no bound.
     if let Some(bytes) = profile.fsize_bytes {
         a.push("--ulimit".into());
         a.push(format!("fsize={bytes}"));
@@ -1499,22 +1444,19 @@ pub fn build_run_argv(
         }
         NetPlan::Proxy(port) => {
             // HONESTY: `allow_host_loopback=true` is what lets the box reach the
-            // host-side proxy at the gateway address, and it exposes every
-            // *other* host loopback service there too. Choosing the allowlist
-            // plan therefore widens the box's reach relative to plain rootless
-            // NAT, which is the opposite of how an allowlist reads.
+            // host-side proxy at the gateway address, and it exposes every *other* host
+            // loopback service there too. Choosing the allowlist plan therefore widens
+            // the box's reach relative to plain rootless NAT, the opposite of how an
+            // allowlist reads.
             //
-            // Two consequences worth naming: the box can reach `h5i ui`'s
-            // console API and any local database on 127.0.0.1, and it can reach
-            // another concurrent box's egress proxy, which has no client
-            // authentication. Borrowing that box's wider allowlist.
+            // The box can reach `h5i ui`'s console API and any local database on
+            // 127.0.0.1, and it can reach another concurrent box's egress proxy, which
+            // has no client authentication, borrowing that box's wider allowlist.
             //
-            // Not fixable at this layer: the proxy has to be reachable, and
-            // slirp4netns exposes loopback all-or-nothing. Narrowing it needs
-            // the proxy inside the box's network namespace instead. The
-            // supervised tiers already avoid it (nftables narrows the jail to
-            // the proxy port; Seatbelt refuses host loopback wholesale), and
-            // `announce_egress` states the caveat at session start.
+            // Not fixable at this layer: the proxy has to be reachable and slirp4netns
+            // exposes loopback all-or-nothing. Narrowing it needs the proxy inside the
+            // box's netns. The supervised tiers already avoid it, and `announce_egress`
+            // states the caveat at session start.
             if let Some(mode) = HOST_ROUTE.network_arg {
                 a.push(format!("--network={mode}"));
             }
@@ -1540,18 +1482,16 @@ pub fn build_run_argv(
         }
     }
 
-    // Env-var allowlist (nothing inherited wholesale). Pass by NAME only:
-    // Podman forwards each value from its own (h5i's) environment, so the
-    // value never lands in the container's argv, which is world-readable on a
-    // default host via `/proc/<podman-pid>/cmdline`. (`--env KEY=VALUE` would
-    // leak it there.)
+    // Env-var allowlist (nothing inherited wholesale). Pass by NAME only: Podman
+    // forwards each value from its own environment, so the value never lands in
+    // the container's argv, which is world-readable via
+    // `/proc/<podman-pid>/cmdline`.
     let proxied = matches!(net, NetPlan::Proxy(_));
     for key in &profile.env_pass {
-        // Podman applies `--env` in order, and the proxy wiring was pushed
-        // above. A profile passing HTTPS_PROXY or NO_PROXY through (plausible
-        // behind a corporate proxy, and repo-supplied like the rest of the
-        // policy) would otherwise replace h5i's value with the host's and
-        // egress unfiltered through the rootless NAT.
+        // Podman applies `--env` in order and the proxy wiring was pushed above. A
+        // profile passing HTTPS_PROXY or NO_PROXY through, plausible behind a
+        // corporate proxy and repo-supplied like the rest of the policy, would
+        // otherwise replace h5i's value with the host's and egress unfiltered.
         if proxied && is_proxy_wiring_var(key) {
             continue;
         }
@@ -1579,30 +1519,27 @@ pub fn build_run_argv(
 /// When a container run is an *agent-runtime* box on the egress-proxy net plan
 /// *and* a host-side credential is resolvable, spawn the credential-injecting
 /// [`crate::auth_proxy`] and return its handle plus the box env additions
-/// (base-URL override + per-run dummy token + `NO_PROXY`). The genuine token
-/// stays host-side in the proxy; the box never receives it. This is "option 2":
-/// the box can authenticate to its provider API without ever holding the token.
+/// (base-URL override, per-run dummy token, `NO_PROXY`). The genuine token
+/// stays host-side; the box authenticates to its provider without holding it.
 ///
-/// `Ok(None)` (keeping the box on its existing in-box-login path) when: the net
-/// plan has no proxy to reach the host loopback, the profile is not a known
-/// agent runtime, or no host credential is available. Those never break a
-/// working interactive-login flow that has no host token to broker.
+/// `Ok(None)`, keeping the box on its in-box-login path, when the net plan has
+/// no proxy to the host loopback, the profile is not a known agent runtime, or
+/// no host credential is available.
 ///
 /// A proxy that was supposed to start and could not is an `Err`, not a `None`:
 /// falling back would leave the real credential in the box while also widening
-/// its egress, which is the opposite of what this exists to do.
-/// A live credential proxy and the env additions the box needs to reach it.
+/// its egress.
 type AuthProxyEngagement = (crate::auth_proxy::AuthProxyHandle, Vec<(String, String)>);
 
 fn maybe_auth_proxy(
     profile: &Profile,
     net: &NetPlan,
 ) -> Result<Option<AuthProxyEngagement>, H5iError> {
-    // The box reaches the host proxy only on the egress-proxy net plan, and at
+    // The box reaches the host proxy only on the egress-proxy net plan, at
     // whichever address this platform routes to the host ([`HOST_ROUTE`]).
-    // `engage_at` handles opt-out + runtime + credential resolution; the
-    // container tier ignores the returned runtime (there is no per-env HOME copy
-    // to scrub: the rootfs never mounts host HOME).
+    // `engage_at` handles opt-out, runtime and credential resolution; the
+    // container tier ignores the returned runtime, since the rootfs never mounts
+    // host HOME and there is no per-env copy to scrub.
     let Some(e) = crate::auth_proxy::engage_at(
         &profile.name,
         matches!(net, NetPlan::Proxy(_)),
@@ -1642,13 +1579,12 @@ pub fn engage_auth_grants(
 /// Where a box on `claim` reaches a host-side grant proxy, or `None` when it
 /// cannot reach one at all.
 ///
-/// This used to be hard-wired to [`HOST_ROUTE`], which is the *container*
-/// answer. On macOS that is `host.containers.internal`, a podman-machine name
-/// that does not resolve inside a Seatbelt box sharing host loopback; and on
-/// Linux `supervised` the box lives in its own netns whose nftables set only
-/// ever opens the runtime auth-proxy port or `net.egress`, never a grant's
-/// port, so the connection is dropped whatever address it names. Saying so is
-/// better than engaging a proxy nothing can dial.
+/// Not [`HOST_ROUTE`], which is the *container* answer. On macOS that is
+/// `host.containers.internal`, a podman-machine name that does not resolve
+/// inside a Seatbelt box sharing host loopback; on Linux `supervised` the box
+/// lives in its own netns whose nftables set only opens the runtime
+/// auth-proxy port or `net.egress`, so the connection is dropped whatever
+/// address it names. Saying so beats engaging a proxy nothing can dial.
 pub fn grant_host_addr(claim: crate::sandbox_policy::IsolationClaim) -> Option<&'static str> {
     use crate::sandbox_policy::IsolationClaim;
     match claim {
@@ -1775,12 +1711,10 @@ pub fn run(
 }
 
 /// The *agent-in-box* path: run `argv` (a shell or a coding agent) inside the
-/// hardened rootless container with stdio *inherited*. A real interactive
-/// session whose every command is confined by the box (cap-drop, read-only
-/// rootfs, the `net.egress` allowlist). Unlike [`run`] it captures nothing and
-/// applies no wall-clock (the operator owns the session); it returns the child's
-/// exit code plus the egress proxy's allow/deny tally (the proxy is held for
-/// the whole session), so an interactive session leaves network evidence too.
+/// hardened rootless container with stdio *inherited*. Unlike [`run`] it
+/// captures nothing and applies no wall-clock, since the operator owns the
+/// session; it returns the child's exit code plus the egress proxy's
+/// allow/deny tally, so an interactive session leaves network evidence too.
 pub fn run_interactive(
     policy: &ResolvedPolicy,
     work: &Path,
@@ -2856,18 +2790,14 @@ mod tests {
 
         // Settle a possible ETXTBSY before the assertions start.
         //
-        // We just wrote a file and are about to exec it. `cargo test` runs the
-        // other tests in this binary on sibling threads, and any of them that
-        // spawns a process forks a child which inherits every open descriptor,
-        // including, if the fork lands in the window while `fs::write` still
-        // holds it, the write handle to this very file. Linux then refuses to
-        // exec it with ETXTBSY until that child reaches its own exec, a window
-        // of milliseconds. That made this test fail on CI for a reason that has
-        // nothing to do with the shim.
+        // We just wrote a file and are about to exec it. `cargo test` runs sibling
+        // tests on other threads, and any that spawns a process forks a child
+        // inheriting every open descriptor, including, if the fork lands while
+        // `fs::write` still holds it, the write handle to this file. Linux then
+        // refuses to exec it until that child reaches its own exec.
         //
         // `H5I_SHIM=1` marks the run as nested, which the shim passes through
-        // unobserved, so this warm-up writes no spool entry and the spool
-        // assertions below still count only what they mean to.
+        // unobserved, so this warm-up writes no spool entry.
         for attempt in 0..100 {
             match std::process::Command::new(&shim)
                 .args(["-c", ":"])
@@ -2969,11 +2899,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    // The argv-scan: different runtimes spell the command flag differently
-    // (Claude `bash -c`, Codex `bash -lc`). We assert only which invocations
-    // the shim *observes* (writes a `.cmd` for) and the command it extracted,
-    // not the output, so the dummy commands "failing" under the real shell is
-    // irrelevant; the `.cmd` is written before the real shell ever runs.
+    // The argv-scan: runtimes spell the command flag differently (Claude `bash
+    // -c`, Codex `bash -lc`). We assert only which invocations the shim
+    // *observes* and the command it extracted, not the output, so the dummy
+    // commands "failing" under the real shell is irrelevant.
     #[test]
     #[cfg(unix)]
     fn shim_detects_combined_c_flags_and_skips_non_commands() {
@@ -3185,15 +3114,13 @@ mod tests {
         );
     }
 
-    /// Bytes actually cross an established tunnel. The half the allow/deny test
-    /// above never reaches, because 403 and 502 both return before the relay.
+    /// Bytes actually cross an established tunnel, the half the allow/deny test
+    /// above never reaches because 403 and 502 both return before the relay.
     ///
-    /// It is worth a test of its own: the accept loop polls a non-blocking
-    /// listener, and on macOS the accepted socket inherits that flag, which made
-    /// the relay read `WouldBlock`, treat it as fatal and drop every tunnel the
-    /// moment it carried traffic. The gate verdicts stayed correct throughout,
-    /// so nothing here failed. The box just lost every connection mid-TLS.
-    /// Local origin only: no network, no DNS.
+    /// Worth its own test: the accept loop polls a non-blocking listener, and on
+    /// macOS the accepted socket inherits that flag, which made the relay read
+    /// `WouldBlock`, treat it as fatal and drop every tunnel the moment it carried
+    /// traffic. The gate verdicts stayed correct throughout.
     #[test]
     fn proxy_relays_bytes_over_an_established_tunnel() {
         use std::io::Read;
@@ -3239,12 +3166,11 @@ mod tests {
     /// An established tunnel has no read timeout of its own. The head timeout is
     /// set on the client socket, `splice` gives the client→upstream copy a
     /// `try_clone` of it, and a clone shares `SO_RCVTIMEO`, so leaving it set
-    /// ended that copy (and shut the upstream write half) after a plain silence
-    /// the length of the timeout. A tunnel waiting for a response *is* silent in
-    /// that direction, so every slow first byte died mid-flight.
+    /// ended that copy after a plain silence the length of the timeout. A tunnel
+    /// waiting for a response *is* silent in that direction.
     ///
-    /// Driven through `handle_proxy_client` directly with a short head timeout,
-    /// so the idle stretch is milliseconds rather than the real 30 seconds.
+    /// Driven through `handle_proxy_client` with a short head timeout, so the idle
+    /// stretch is milliseconds rather than 30 seconds.
     #[test]
     fn an_established_tunnel_survives_a_client_silence_longer_than_the_head_timeout() {
         use std::io::Read;
@@ -3299,10 +3225,9 @@ mod tests {
     ///
     /// That is what macOS hands the accept loop (BSD `accept` inherits the
     /// listener's flag; Linux's `accept4` does not), and it made every tunnel
-    /// reset the moment it carried traffic. A `WouldBlock` the relay treated as
-    /// fatal. Driven through `handle_proxy_client` with the flag set
-    /// deliberately, so the Darwin condition is reproduced on every platform
-    /// rather than tested only where the OS happens to create it.
+    /// reset the moment it carried traffic. Driven through `handle_proxy_client`
+    /// with the flag set deliberately, so the Darwin condition is reproduced on
+    /// every platform.
     #[test]
     fn a_socket_that_arrives_non_blocking_still_relays() {
         use std::io::Read;
@@ -3356,11 +3281,10 @@ mod tests {
     /// A browser that outlives the run memorised one proxy address, so the port
     /// has to be the caller's to choose.
     ///
-    /// The "free port" is found by bind-read-drop, so another test in this
-    /// binary can take it in the gap. That is a lost race, not a bug. Retried
-    /// rather than asserted once, so a green run stays green. The fallback half
-    /// has no such window (the port is held for the duration) and prints the
-    /// ephemeral-fallback note on success; that stderr line is expected here.
+    /// The "free port" is found by bind-read-drop, so another test in this binary
+    /// can take it in the gap: a lost race, not a bug, so it is retried rather
+    /// than asserted once. The fallback half has no such window and prints the
+    /// ephemeral-fallback note on success.
     #[test]
     fn proxy_binds_the_requested_port_and_falls_back_when_it_cannot() {
         let allow = || AllowList::parse(&["allowed.invalid".into()]).unwrap();
