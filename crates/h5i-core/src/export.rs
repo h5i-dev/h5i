@@ -51,13 +51,6 @@ pub struct ExportSummary {
     /// latest-record semantics, matching the console. A reviewer applying
     /// this bundle should know the box did not run alone.
     pub fs_overlap: Vec<String>,
-    /// Forum participants whose text was delivered into this box, if any.
-    ///
-    /// Not a judgement about that text. It answers the one question a reviewer
-    /// has to settle before reading the patch: is this the box's own work, or
-    /// the box's work after a conversation? Both are legitimate; only one of
-    /// them can be checked by re-running the box alone.
-    pub peer_influenced_by: Vec<String>,
     /// Browser sessions that ran inside this box, with their timelines written
     /// beside the patch. Empty when none did.
     pub browser_sessions: Vec<ExportedSession>,
@@ -289,9 +282,6 @@ pub fn export_with_remote(
         egress_denied,
         redactions,
         fs_overlap,
-        peer_influenced_by: crate::forum_tender::peer_influence(h5i_root, m)
-            .map(|i| i.senders)
-            .unwrap_or_default(),
         browser_sessions: sessions.clone(),
     };
 
@@ -476,14 +466,6 @@ fn report(
         out.push_str(&format!(
             "- writable-path overlap with other boxes (last run): {}\n",
             s.fs_overlap.join("; ")
-        ));
-    }
-    if !s.peer_influenced_by.is_empty() {
-        out.push_str(&format!(
-            "- **peer-influenced**: this box was shown text written by {} — \
-             its output reflects that conversation, so re-check the patch with a box \
-             that read none of it\n",
-            s.peer_influenced_by.join(", ")
         ));
     }
 
@@ -967,7 +949,6 @@ mod tests {
             egress_denied: 0,
             redactions: Vec::new(),
             fs_overlap: Vec::new(),
-            peer_influenced_by: Vec::new(),
         }
     }
 

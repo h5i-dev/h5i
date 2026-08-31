@@ -291,10 +291,7 @@ fn raw_path(env_dir: &Path, id: &str) -> PathBuf {
 /// Redact the decodable runs of a non-UTF-8 payload, preserving every other
 /// byte exactly. Splitting on the invalid sequences is what keeps a credential
 /// from hiding behind one stray byte.
-///
-/// `pub(crate)` for the forum, whose attachment kinds are all text and which
-/// therefore meets this case only when a caller hands it something that is not.
-pub(crate) fn redact_binary(raw: &[u8]) -> Vec<u8> {
+fn redact_binary(raw: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(raw.len());
     let mut rest = raw;
     loop {

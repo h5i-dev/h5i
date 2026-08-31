@@ -295,9 +295,12 @@ function TopStrip({
   return (
     <div className="sbx-strip">
       <div className="sbx-strip-group">
-        {/* No wordmark here: it moved to the shell's tab row, where it names the
-            product rather than this one screen of it. The strip is worth more
-            to the host claims. */}
+        <span
+          className="sbx-brand"
+          title="h5i — read-only · loopback only · lifecycle verbs stay in the CLI"
+        >
+          h5i
+        </span>
         <span className="sbx-strip-label">host</span>
         {probe ? (
           <>
