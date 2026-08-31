@@ -13,17 +13,16 @@
 //!                                 ◄── input ────── control lock ◄── terminal
 //! ```
 //!
-//! Nothing is bound. The socket comes back over `SCM_RIGHTS` from a fork
-//! that entered the box's namespaces, so it is a descriptor this process holds:
-//! nothing to connect to, nothing to authenticate. The trusted path runs both
-//! ways: the box supplies compressed pixels and nothing else, and every escape
-//! sequence is generated here (see [`kitty`]), so a box cannot reach the host's
-//! PTY even in principle. The status row cannot be painted over, the page
-//! being an image below row two while row one is [`status`], so a page cannot
-//! lie about which origin it is.
+//! Nothing is bound. The socket comes back over `SCM_RIGHTS` from a fork that
+//! entered the box's namespaces, so it is a descriptor this process holds. The
+//! trusted path runs both ways: the box supplies compressed pixels and nothing
+//! else, and every escape sequence is generated here (see [`kitty`]), so a box
+//! cannot reach the host's PTY even in principle. The status row cannot be
+//! painted over, the page being an image below row two while row one is
+//! [`status`].
 //!
 //! It is not a boundary of its own: it watches a box at whatever tier that box
-//! runs, and shrinking the watcher does not make a shared kernel unshared.
+//! runs.
 
 // Portable: these parse, encode and decode, and none of them touch a terminal.
 pub mod image;
@@ -103,15 +102,12 @@ pub struct Options {
 ///
 /// The advice is engine-specific because the command is: an `h5i-light` box has
 /// no agent-browser daemon to enable streaming on, and telling its owner to run
-/// `agent-browser stream enable` sends them to a CLI that will fail on a
-/// missing socket directory before it ever reaches the question they asked. The
-/// viewer stays engine-agnostic everywhere else; this is the one place the
-/// difference is the user's problem rather than ours.
+/// `agent-browser stream enable` sends them to a CLI that will fail on a missing
+/// socket directory before it reaches the question they asked.
 ///
 /// Unix-gated with the `run` that calls it, following this file's rule: the
-/// non-unix `run` is a stub that refuses before it could ever need advice about
-/// streaming, so an ungated helper here is dead code on Windows and `-D
-/// warnings` is right to say so.
+/// non-unix `run` is a stub that refuses before it could need advice about
+/// streaming.
 #[cfg(unix)]
 fn not_streaming_hint(engine: Option<&str>) -> String {
     match engine {
@@ -126,13 +122,12 @@ fn not_streaming_hint(engine: Option<&str>) -> String {
 
 /// The render loop's own clock.
 ///
-/// It is a type rather than two local variables so that the tick cannot be
-/// attached to the socket again by accident, which is what it was: the tick was
-/// whatever `recv_timeout` *expiring* meant, so a box sending frames faster than
-/// [`TICK`] suppressed it entirely. At the default 10 fps a frame lands every
-/// 100 ms and the 250 ms timeout never elapses, so the status line stopped
-/// refreshing, a resize went unnoticed and a lone Escape was never flushed.
-/// All of it on exactly the pages someone is watching because they are moving.
+/// A type rather than two local variables so the tick cannot be attached to the
+/// socket again by accident, which is what it was: the tick was whatever
+/// `recv_timeout` *expiring* meant, so a box sending frames faster than [`TICK`]
+/// suppressed it entirely. At the default 10 fps a frame lands every 100 ms and
+/// the 250 ms timeout never elapses, so the status line stopped refreshing, a
+/// resize went unnoticed and a lone Escape was never flushed.
 #[cfg(unix)]
 struct Ticker {
     /// When the next tick is owed.

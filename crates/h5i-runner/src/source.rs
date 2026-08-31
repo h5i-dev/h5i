@@ -3,22 +3,19 @@
 //! The unit is a *git bundle* rather than a tar (ROADMAP.md R7). A tar of a
 //! working tree is a pile of bytes whose only identity is a hash we invented; a
 //! bundle carries the commit, so the base the box was built from is a fact git
-//! itself can check, and `git bundle verify` is a structural check nobody had
-//! to write.
+//! itself can check.
 //!
 //! Neither side pollutes a branch namespace to do it. The client points a
 //! namespaced ref (`refs/h5i/bundle-src`) at the base commit for the length of
 //! one `git bundle create` and removes it; the worker fetches that ref out of
-//! the bundle into its own `h5i-base` branch. `git clone` cannot be used for
-//! this: it only sees `refs/heads/*`, so cloning would mean creating a real
-//! branch in the user's repository, which is a side effect on the thing we are
-//! only supposed to be reading.
+//! the bundle into its own `h5i-base` branch. `git clone` cannot be used: it
+//! only sees `refs/heads/*`, so cloning would mean creating a real branch in the
+//! user's repository.
 //!
-//! Bundles here carry full history. `git bundle create` grew rev-list
-//! arguments but not `--depth` (checked against git 2.43), so a shallow bundle
-//! is not available and this module does not pretend otherwise. For a large
-//! repository that is a real cost, and it is the first thing to revisit when
-//! the transfer becomes the slow part.
+//! Bundles here carry full history. `git bundle create` grew rev-list arguments
+//! but not `--depth` (checked against git 2.43), so a shallow bundle is not
+//! available. For a large repository that is a real cost, and the first thing to
+//! revisit when the transfer becomes the slow part.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -260,26 +257,23 @@ pub fn materialize(bundle: &Path, work: &Path, base_commit: &str) -> Result<(), 
 
 /// Commit whatever the box has now, and bundle it for the trip home.
 ///
-/// This must never invoke the git CLI inside the box's repository. The
-/// box owns `work/.git/config`, and git executes `core.fsmonitor` and
+/// This must never invoke the git CLI inside the box's repository. The box owns
+/// `work/.git/config`, and git executes `core.fsmonitor` and
 /// `filter.<name>.clean` out of it, so `git add` in that tree is arbitrary
-/// command execution as the runner user, which is a complete escape from the
-/// box this whole design exists to contain. `core.hooksPath=/dev/null` does
-/// not cover it; neither does anything else that can be passed on a command
-/// line, because the mechanism is configuration rather than a hook.
+/// command execution as the runner user: a complete escape from the box this
+/// design exists to contain. `core.hooksPath=/dev/null` does not cover it,
+/// because the mechanism is configuration rather than a hook.
 ///
-/// libgit2 implements neither of those, so the staging below goes through it.
-/// The bundle is then written from a packfile libgit2 builds, rather than by
-/// `git bundle create`, so the CLI never reads the hostile config at all. The
-/// v2 bundle format is a short text header and a pack, which is a small price
-/// for not having to ask what else git runs from a file the box can write.
+/// libgit2 implements neither, so the staging below goes through it. The bundle
+/// is then written from a packfile libgit2 builds, rather than by `git bundle
+/// create`, so the CLI never reads the hostile config at all.
 ///
-/// The bundle is thin, `base..tip`, because the receiving side already has
-/// the base: it is the machine that sent it.
+/// The bundle is thin, `base..tip`, because the receiving side already has the
+/// base: it is the machine that sent it.
 ///
-/// A box with nothing new in it still gets a bundle and an honest
-/// `has_changes: false`, because "the box did nothing" and "the export broke"
-/// must not look the same from the other end.
+/// A box with nothing new in it still gets a bundle and an honest `has_changes:
+/// false`, because "the box did nothing" and "the export broke" must not look
+/// the same from the other end.
 pub fn export_bundle(work: &Path, base_commit: &str, out: &Path) -> Result<Exported, SourceError> {
     let repo = open_box_repo(work)?;
     let base_oid = git2::Oid::from_str(base_commit).map_err(SourceError::Git2)?;
@@ -343,24 +337,22 @@ pub fn export_bundle(work: &Path, base_commit: &str, out: &Path) -> Result<Expor
 /// Open the box's repository, and refuse one that is not where it claims.
 ///
 /// Moving off the git CLI closed the half of the hostile-config class that
-/// *executes* commands. It did not close the half that *redirects*, and
-/// libgit2 honours both mechanisms:
+/// *executes* commands. It did not close the half that *redirects*, and libgit2
+/// honours both mechanisms:
 ///
 /// - `core.worktree` points the repository's working directory somewhere else,
 ///   so `add_all` stages that path instead. A box setting it to another box's
 ///   workspace gets that box's files packed into its own export bundle and
-///   shipped to the owner's machine. Every file the runner user can read,
-///   with nothing downstream to catch it: the quarantine checks path shape and
-///   size, the descendant check passes because the parent really is this box's
-///   HEAD, and the tree digest matches because the runner announced its own
-///   tree. `core.worktree = /` is the same mechanism as a denial of service.
-/// - A `.git` *file* containing `gitdir: <elsewhere>` makes this repository
-///   be a different repository, so the export's carrier commit lands in it and
-///   moves *its* HEAD.
+///   shipped to the owner's machine, with nothing downstream to catch it: the
+///   quarantine checks path shape and size, the descendant check passes because
+///   the parent really is this box's HEAD, and the tree digest matches because
+///   the runner announced its own tree.
+/// - A `.git` *file* containing `gitdir: <elsewhere>` makes this repository be a
+///   different repository, so the export's carrier commit lands in it and moves
+///   *its* HEAD.
 ///
-/// libgit2's owner check is no help: every box on a runner runs as the same
-/// unix user. So the invariant is asserted directly. This repository's git
-/// directory and working directory must both be inside the box.
+/// libgit2's owner check is no help: every box on a runner runs as the same unix
+/// user. So the invariant is asserted directly.
 fn open_box_repo(work: &Path) -> Result<git2::Repository, SourceError> {
     let repo = git2::Repository::open(work).map_err(SourceError::Git2)?;
     let want = work
@@ -393,8 +385,8 @@ fn open_box_repo(work: &Path) -> Result<git2::Repository, SourceError> {
 /// Write a v2 git bundle of `base..tip` by hand.
 ///
 /// `git bundle create` would be shorter and would mean running the CLI in a
-/// repository whose configuration the box controls. See [`export_bundle`].
-/// The format is small enough to write directly:
+/// repository whose configuration the box controls. See [`export_bundle`]. The
+/// format is small enough to write directly:
 ///
 /// ```text
 /// # v2 git bundle
@@ -405,7 +397,7 @@ fn open_box_repo(work: &Path) -> Result<git2::Repository, SourceError> {
 /// ```
 ///
 /// The prerequisite line is what makes it thin: the reader must already have
-/// that commit, which the receiving side does because it sent it.
+/// that commit.
 fn write_thin_bundle(
     repo: &git2::Repository,
     base: git2::Oid,
@@ -497,11 +489,9 @@ pub fn materialize_empty(work: &Path) -> Result<(), SourceError> {
 /// - `core.hooksPath` at an empty path, so a repository cannot run a hook. A
 ///   worker unpacking a bundle is the last place a repository-supplied script
 ///   should get to run.
-/// - `protocol.ext.allow=never`, because `ext::` is a command rather than a
-///   URL and the default refusal is configuration an operator may have
-///   overridden.
-/// - `--end-of-options` at every call site that passes a path, so a leading
-///   `-` is a filename rather than a flag.
+/// - `protocol.ext.allow=never`, because `ext::` is a command rather than a URL
+///   and the default refusal is configuration an operator may have overridden.
+/// - `--end-of-options` at every call site that passes a path.
 fn git(dir: &Path, args: &[&str]) -> Result<String, SourceError> {
     // These are *git* options and must precede the subcommand: `git fetch -c x`
     // is an unknown switch, not a configuration override. Putting them here
@@ -746,11 +736,10 @@ mod config_execution_tests {
     /// The box owns its own `.git/config`, so anything that reads it is a place
     /// the box can run a command on the runner.
     ///
-    /// This is not a hypothetical: the git CLI executes `core.fsmonitor` and
+    /// Not hypothetical: the git CLI executes `core.fsmonitor` and
     /// `filter.<name>.clean` from repository config, and the three hardening
-    /// flags this module used to rely on (`core.hooksPath`,
-    /// `protocol.ext.allow`, `transfer.fsckObjects`) cover none of them. Both
-    /// were demonstrated running as the runner user before this test existed.
+    /// flags this module used to rely on cover none of them. Both were
+    /// demonstrated running as the runner user before this test existed.
     #[test]
     fn staging_a_hostile_repository_runs_none_of_its_configured_commands() {
         let dir = tempfile::tempdir().expect("tempdir");
