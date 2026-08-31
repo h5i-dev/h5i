@@ -30,10 +30,6 @@ warm-up, loading a local `file://` page. Memory is the peak **summed** RSS acros
 the whole process tree, sampled every 5 ms: `/usr/bin/time -v` reports only the
 largest single process and badly undercounts a multi-process browser.
 
-Interleaved rather than run in blocks, because `perf/ab.py` records what happens
-otherwise — the second engine inherits a warm page cache and the comparison
-reads a number the mechanism cannot produce.
-
 | | small (1 KB, no script) | docs (22 KB, no script) | app (script-built, 400 elements) |
 | --- | --- | --- | --- |
 | h5i-browser-light | **46 ms / 51.7 MB** | **59 ms / 65.6 MB** | 248 ms / **87.4 MB** |
@@ -49,41 +45,35 @@ Five caveats, because the numbers are flattering in one direction and unflatteri
 in the other, and neither should be quoted alone:
 
 1. **Cold start is included**, and Chromium's process startup dominates its time
-   figure. That is the honest shape of a one-shot agent invocation, but it is
-   *not* a steady-state rendering throughput comparison, and this engine would
+   figure. It is *not* a steady-state rendering throughput comparison, and this engine would
    not win one by that margin.
 2. **On script-driven pages this engine is slower**, and the third column is
    there so that cannot be read past. Boa interprets where V8 compiles. Isolated:
    `--script` costs nothing on a page with no script (46 ms against 45 ms), and
-   44 ms -> 248 ms on the app page — the difference is JavaScript execution, all
-   of it.
+   44 ms -> 248 ms on the app page.
 3. Rendering here is software, not JIT-accelerated. Complex CSS narrows the time
    gap.
 4. The memory figure is the one to trust most: it is a property of the
    architecture (one process, no renderer, no GPU process) rather than of a
    workload, and it holds across all three pages.
 5. **These numbers replace an earlier table that claimed 5x faster and 15x
-   lighter.** That measurement predates this engine having a JavaScript engine at
-   all; h5i's own memory has roughly doubled since (31 MB -> 52-66 MB), which is
-   what Boa and a 281 KiB prelude cost. The claim was not wrong when it was made
-   and is wrong now, which is the reason to date a measurement.
+   lighter.** (updated 2026/8/31) That measurement predates this engine
+   having a JavaScript engine at all; h5i's own memory has roughly doubled
+   since (31 MB -> 52-66 MB), which is what Boa and a 281 KiB prelude cost.
+   The claim was not wrong when it was made and is wrong now, which is the
+   reason to date a measurement.
 
 ## What it is not
 
 Honest limits, because the claims above are security claims:
 
 - **Not a Chromium replacement.** Docs-grade pages are the compatibility bar.
-  React/Vite apps, video, WebGL and authenticated sessions belong on the
+  React/Vite apps, video, WebGL and authenticated sessions might be suitable for
   Chromium path.
-- **JavaScript runs, and it is the slow half.** This line used to read "No
-  JavaScript. Pages that render only via script will come back empty", and that
-  has not been true since the engine grew a Boa realm and a DOM prelude: the
-  script-built page in the table above renders correctly. What is true is that
-  Boa interprets where V8 compiles, so a script-driven page is the one case
-  `headless_shell` is *faster* on. Route by what a page costs, not by whether it
-  has a `<script>` tag — and ask `capabilities` rather than guessing, because
-  the §B6 refusals are still real: no workers, no second browsing context, no
-  media pipeline.
+- **JavaScript runs, and it is the slow half.**  Boa interprets where V8 compiles,
+- so a script-driven page is the one case `headless_shell` can be *faster* on. Route by what a page costs,
+  not by whether it has a `<script>` tag — and ask `capabilities` rather than guessing, because
+  the §B6 refusals are still real: no workers, no second browsing context, no media pipeline.
 - **Containment claims belong to the box.** Run bare on a host there is no
   egress proxy and no receipt store, and this is just a light browser with a
   request log. The guarantees are properties of running it inside an h5i box.
