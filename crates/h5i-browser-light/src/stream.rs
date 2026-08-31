@@ -1248,7 +1248,18 @@ fn control_verb_inner(
         Verb::Status => (
             json!({
                 "ok": true,
-                "url": session.page.url().to_string(),
+                // Where the session is — and only *which origin*, while a human
+                // is logging in. `requests` is refused during LOGIN because it
+                // "names URLs a login flow visited", and this named the one the
+                // flow is on right now: an OAuth callback carries its `code` in
+                // the query, a magic link and a password reset carry their token
+                // in the path. The origin is what an agent needs to know it is
+                // still on the right site; the rest is the credential.
+                "url": if session.login {
+                    login_safe_url(session.page.url())
+                } else {
+                    session.page.url().to_string()
+                },
                 "engine": "h5i-browser-light",
                 // How many, never which. An agent can see that it is logged in
                 // without being able to read the credential that makes it so,
@@ -2561,23 +2572,59 @@ fn resolve_ref(
 
 /// Whether two readings of a ref name the same thing.
 ///
-/// Compares identity, **not** `name`, and that distinction is the whole of it.
-/// `accessible_name` reports a text input's *current value* (and a password
-/// field's mask), so `type @e1 alice` changes `@e1`'s name from `username` to
-/// `alice` without renumbering anything. A full `RefEntry` equality therefore
-/// refused the second `type` on the same field — which is exactly the retry the
-/// README documents ("`type` replaces the field rather than appending, so
-/// retrying after a failed submit does not produce `alicealice`") and exactly
-/// what the skill promises when it says typing renumbers nothing.
+/// The id it was served under, the node it resolved to, its role, and — for a
+/// link — where it goes. A page that changed any of those changed the thing the
+/// agent read.
 ///
-/// What identifies a ref is where it sits and what it is: the id it was served
-/// under, the node it resolved to, its role, and — for a link — where it goes.
-/// A page that changed any of those changed the thing the agent read.
+/// **And its name, for the roles whose name the page writes.** Leaving the name
+/// out entirely was one step too far. The promise a ref makes is that a handle
+/// from an old reading is refused rather than acted on, and a page that renames
+/// a button from `Cancel` to `Confirm payment` between the snapshot and the
+/// click has changed exactly the thing the agent read it by — same node, same
+/// role, no href, and the old handle honoured. The refusal already names what
+/// the ref points at *now*, which turns that into the most useful message this
+/// session can send.
+///
+/// The exception is the two roles whose accessible name **is** the control's
+/// own value, and which the agent's own verbs change by design:
+/// [`crate::snapshot::accessible_name`] reports a text input's current text (a
+/// password's mask) and a `<select>`'s chosen option. Comparing those refused
+/// the second `type` on the same field — the retry the README documents, where
+/// "`type` replaces the field rather than appending, so retrying after a failed
+/// submit does not produce `alicealice`" — and the second `select` on the same
+/// dropdown. A button's label, a link's text and an image's alt are the
+/// author's, and no verb here rewrites one.
 fn same_target(before: &crate::snapshot::RefEntry, now: &crate::snapshot::RefEntry) -> bool {
     before.id == now.id
         && before.node_id == now.node_id
         && before.role == now.role
         && before.href == now.href
+        && (name_is_the_controls_own_value(&now.role) || before.name == now.name)
+}
+
+/// Whether this role's accessible name is the value the control holds rather
+/// than a label the author wrote.
+///
+/// The whole list, matched on the role strings
+/// [`crate::snapshot::role_for`] mints. `checkbox` and `radio` are deliberately
+/// *not* here: their name comes from a label or a `value` attribute, and
+/// `set-checked` does not touch either.
+fn name_is_the_controls_own_value(role: &str) -> bool {
+    matches!(role, "textbox" | "combobox")
+}
+
+/// A URL reduced to what it is safe to report while a human is logging in.
+///
+/// The origin, and nothing under it. A `file:` or otherwise origin-less URL has
+/// no origin to fall back to and is reported as the scheme alone, because the
+/// path is the part that carries the token.
+fn login_safe_url(url: &Url) -> String {
+    let origin = url.origin();
+    if origin.is_tuple() {
+        format!("{} (path withheld while login is on)", origin.ascii_serialization())
+    } else {
+        format!("{}: (withheld while login is on)", url.scheme())
+    }
 }
 
 /// A ref entry as one line of prose, safe to put in an error message.
@@ -4943,6 +4990,106 @@ mod tests {
         let (reply, _) = control_verb(&mut session, &json!({"verb": "requests"}));
         assert_eq!(reply["ok"], false, "{reply:?}");
         assert_eq!(reply["code"], "login-mode", "{reply:?}");
+    }
+
+    /// The other way a handle goes stale without renumbering: the page keeps
+    /// the node and rewrites the label. Same node id, same role, no href — so
+    /// the identity check passed and `click @e1` acted on a button the agent
+    /// had read as saying something else. A ref's promise is that a handle from
+    /// an old reading is refused rather than acted on, and the label is exactly
+    /// what the agent read it by.
+    #[test]
+    fn a_button_that_renamed_itself_under_the_agent_is_a_stale_ref() {
+        let mut session = scripted_session_with(
+            "<html><body>\
+             <button id='b' onclick=\"document.querySelector('#t').textContent = 'Confirm payment'\">Add</button>\
+             <button id='t'>Cancel</button>\
+             </body></html>",
+        );
+
+        let refs = serve_refs(&mut session);
+        let trigger = refs.iter().find(|r| r.name == "Add").expect("trigger").clone();
+        let target = refs.iter().find(|r| r.name == "Cancel").expect("target").clone();
+
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "click", "ref": trigger.id.clone()}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+
+        let after = session.page.snapshot();
+        let now = after.resolve(&target.id).expect("the id still resolves");
+        assert_eq!(
+            now.node_id, target.node_id,
+            "the fixture must keep the node, or this is the renumbering test again"
+        );
+        assert_eq!(now.name, "Confirm payment", "the fixture must rename it");
+
+        let (reply, changed) = control_verb(
+            &mut session,
+            &json!({"verb": "click", "ref": target.id.clone()}),
+        );
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert_eq!(reply["code"], "stale-ref", "{reply:?}");
+        assert!(!changed);
+        // And the refusal says what it is now, which is the whole value of it.
+        let text = reply["error"].as_str().unwrap();
+        assert!(text.contains("Confirm payment"), "{text:?}");
+    }
+
+    /// ...and the two roles whose name *is* the value are still exempt, or the
+    /// documented retry — type, fail, type again — would be refused.
+    #[test]
+    fn typing_twice_into_one_field_is_not_a_stale_ref() {
+        let mut session = session_with(
+            "<html><body><form>\
+             <input name='user' aria-label='user'>\
+             <select name='pick'><option>one</option><option>two</option></select>\
+             </form></body></html>",
+        );
+        let refs = serve_refs(&mut session);
+        let field = refs.iter().find(|r| r.role == "textbox").expect("a field").clone();
+        let picker = refs.iter().find(|r| r.role == "combobox").expect("a select").clone();
+
+        for value in ["alice", "bob"] {
+            let (reply, _) = control_verb(
+                &mut session,
+                &json!({"verb": "type", "ref": field.id.clone(), "text": value}),
+            );
+            assert_eq!(reply["ok"], true, "typing `{value}` was refused: {reply:?}");
+        }
+        for value in ["two", "one"] {
+            let (reply, _) = control_verb(
+                &mut session,
+                &json!({"verb": "select", "ref": picker.id.clone(), "option": value}),
+            );
+            assert_eq!(reply["ok"], true, "selecting `{value}` was refused: {reply:?}");
+        }
+    }
+
+    /// LOGIN mode refuses `requests` because it "names URLs a login flow
+    /// visited". `status` named the one the flow is on right now — and an OAuth
+    /// callback carries its `code` in the query, a magic link and a password
+    /// reset carry their token in the path.
+    #[test]
+    fn status_withholds_the_path_while_a_human_is_logging_in() {
+        let mut session = session_with("<html><body><p>x</p></body></html>");
+        let _ = control_verb(
+            &mut session,
+            &json!({"verb": "navigate", "url": "https://site.example/callback?code=s3cr3t"}),
+        );
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "login", "on": true}));
+        assert_eq!(reply["ok"], true, "{reply:?}");
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "status"}));
+        let url = reply["url"].as_str().unwrap_or_default();
+        assert!(!url.contains("s3cr3t"), "the token is in the status reply: {url}");
+        assert!(!url.contains("/callback"), "the path is in the status reply: {url}");
+
+        // And it comes back when the human hands the page over.
+        let _ = control_verb(&mut session, &json!({"verb": "login", "on": false}));
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "status"}));
+        assert!(reply["url"].as_str().unwrap_or_default().starts_with("http"));
     }
 
     #[test]
