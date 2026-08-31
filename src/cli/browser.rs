@@ -114,9 +114,11 @@ pub enum BrowserCommands {
         /// The box must already exist (`h5i box`). A box that declares an egress
         /// allowlist has a tier that enforces it, because creation is fail-closed
         /// on that combination, so the session's request lane becomes
-        /// host-observed. A box that declares none corroborates nothing and the
-        /// lane stays engine-claimed; `h5i browser status` prints which of the two
-        /// this session got. Note the standing Linux trade-off: the tiers that
+        /// host-observed: what it reached was also seen outside the engine. A
+        /// box that declares none corroborates nothing and the lane stays
+        /// engine-claimed. `h5i browser status` prints which of the two this
+        /// session got; read it rather than assuming the box earned the stronger
+        /// one. Note the standing Linux trade-off: the tiers that
         /// enforce egress cannot hold a resident session yet, so today that
         /// combination is `microvm`, or a one-shot `h5i browser read --in`.
         #[arg(long = "in", value_name = "BOX")]
@@ -170,7 +172,8 @@ pub enum BrowserCommands {
         /// with the patch version and the host's time zone pinned, so one install
         /// stops being distinguishable from another. A `compatible` identity
         /// claims a different browser, and the session is *refused* if this engine
-        /// cannot back everything that identity declares.
+        /// cannot back everything that identity declares, rather than started
+        /// with the claim half applied.
         ///
         /// `h5i browser identity list` names the built-ins, and `identity check`
         /// says what one covers, what it does not, and why it would be refused.

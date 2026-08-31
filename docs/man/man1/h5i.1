@@ -20,7 +20,7 @@ h5i\-box(1)
 Disposable, confined development boxes. `h5i box` with no verb creates one from the current repository; `h5i box \-\-help` has the verb table
 .TP
 h5i\-ui(1)
-Open the box console in a browser: one read\-only screen over the whole fleet \(em what each box is, what its policy actually allows, what ran inside it, and what pressed on a boundary
+Open the box console in a browser: one read\-only screen over the whole fleet. What each box is, what its policy actually allows, what ran inside it, and what pressed on a boundary
 .TP
 h5i\-browser(1)
 Browser sessions: open one, drive it, close it
@@ -102,10 +102,10 @@ Create a box explicitly. `h5i box [SOURCE]` is the short form and takes the same
 Base revision (default: HEAD). Pinned immutably
 .TP
 \fB\-\-pr\fR \fI<NUMBER|URL>\fR
-Base the env on a GitHub pull request (number, #number, or URL): fetches refs/pull/<n>/head from the remote, pins it as the immutable base, and points the env\*(Aqs parent branch at a local `pr/<n>` tracking branch \(em so propose/apply review the PR head, and apply prints the push\-back command. Needs only `git`; `gh` (optional) enriches the push\-back hint with the PR\*(Aqs head branch name
+Base the env on a GitHub pull request (number, #number, or URL): fetches refs/pull/<n>/head from the remote, pins it as the immutable base, and points the env\*(Aqs parent branch at a local `pr/<n>` tracking branch, so propose/apply review the PR head, and apply prints the push\-back command. Needs only `git`; `gh` (optional) enriches the push\-back hint with the PR\*(Aqs head branch name
 .TP
 \fB\-\-clone\fR \fI<URL>\fR
-Copy an external repository into the box instead of taking a worktree of this one. The box is **detached**: this repository is never touched, and `h5i box export` is the only way out
+Copy an external repository into the box instead of taking a worktree of this one. The box is *detached*: this repository is never touched, and `h5i box export` is the only way out
 .TP
 \fB\-\-new\fR
 Start from an empty box (a fresh repository with one empty commit), for letting an agent build something from nothing. Also detached
@@ -168,7 +168,7 @@ Environment name (slug, `agent/slug`, or full `env/agent/slug`)
 [\fICOMMAND\fR]
 The command to run, after `\-\-`
 .SH "H5I BOX SHELL"
-Open an interactive, confined session INSIDE the environment \(em the "agent-in-box". stdio is inherited (a real terminal), so every command the session spawns is contained by the box, not by the agent choosing to wrap each call. Defaults to a login shell when no command is given
+Open an interactive, confined session INSIDE the environment. The "agent-in-box". stdio is inherited (a real terminal), so every command the session spawns is contained by the box, not by the agent choosing to wrap each call. Defaults to a login shell when no command is given
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -288,7 +288,7 @@ Print help
 <\fINAME\fR>
 Box name or id
 .SH "H5I BOX CAPABILITIES"
-Machine-readable host enforcement report: isolation tier, egress-enforced yes/no, resource-limit support, and per-claim satisfiable/runnable \(em so a product can adapt to the real host without scraping `env probe` text
+Machine-readable host enforcement report: isolation tier, egress-enforced yes/no, resource-limit support, and per-claim satisfiable/runnable, so a product can adapt to the real host without scraping `env probe` text
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -373,7 +373,7 @@ Let one other person try this box's web app, from their own machine
 .SS OPTIONS
 .TP
 \fB\-\-port\fR \fI<PORT>\fR [default: 3000]
-The port inside the box \(em whatever the dev server in there binds.
+The port inside the box. Whatever the dev server in there binds.
 
 Not `0`: that is not a port a server can be listening on, and the same spelling means "pick a free one" on `h5i join`, which is the opposite.
 .TP
@@ -384,7 +384,7 @@ How long the ticket lasts: `30m`, `2h`, `90s`, or bare seconds. 24h max
 A name for the peer you are sending this to, for `status` and the receipt
 .TP
 \fB\-\-tunnel\fR
-Publish through a Cloudflare quick tunnel instead of peer to peer, so the other side needs no h5i \(em just a browser.
+Publish through a Cloudflare quick tunnel instead of peer to peer, so the other side needs no h5i. Just a browser.
 
 The trade is real and is recorded in the receipt: Cloudflare terminates TLS, so this path is not end\-to\-end encrypted.
 .TP
@@ -507,7 +507,7 @@ Print help
 <\fINAME\fR>
 
 .SH "H5I BOX SECRETS"
-List the secret grants an environment's policy declares, with a dry-run resolution status (never the value \(em only a fingerprint when resolvable)
+List the secret grants an environment's policy declares, with a dry-run resolution status (never the value: only a fingerprint when resolvable)
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -525,7 +525,7 @@ Print help
 <\fINAME\fR>
 
 .SH "H5I BOX SERVICE"
-Manage long-lived services declared in the env's `.h5i/env.toml` (`[service.<name>]`), confined and pid-tracked \(em no daemon
+Manage long-lived services declared in the env's `.h5i/env.toml` (`[service.<name>]`), confined and pid-tracked, no daemon
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -729,7 +729,7 @@ Print help
 <\fINAME\fR>
 
 .SH "H5I BOX COMPARE"
-Compare environments side by side \(em changes + latest run results (the "arena" reviewer comparison). Best on envs sharing one base
+Compare environments side by side. Changes + latest run results (the "arena" reviewer comparison). Best on envs sharing one base
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -771,7 +771,7 @@ Print help
 <\fINAME\fR>
 
 .SH "H5I BOX PROPOSE"
-Snapshot the worktree (mediated commit, path-allowlist enforced) and mark the box proposed \(em produces a review brief. Never writes the parent branch. `export` runs this as its freeze step
+Snapshot the worktree (mediated commit, path-allowlist enforced) and mark the box proposed. Produces a review brief. Never writes the parent branch. `export` runs this as its freeze step
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -804,7 +804,7 @@ Print help
 <\fINAME\fR>
 
 .SH "H5I BOX ABORT"
-Abort an environment \(em manifest and workspace preserved for forensics
+Abort an environment. Manifest and workspace preserved for forensics
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -924,7 +924,7 @@ Reclaim workspaces of applied/aborted environments (worktree prune). Manifests, 
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .SH "H5I UI"
-Open the box console in a browser: one read-only screen over the whole fleet \(em what each box is, what its policy actually allows, what ran inside it, and what pressed on a boundary
+Open the box console in a browser: one read-only screen over the whole fleet. What each box is, what its policy actually allows, what ran inside it, and what pressed on a boundary
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -976,7 +976,7 @@ Without this, `open` navigates the session it finds, because that is what openin
 \fB\-\-in\fR \fI<BOX>\fR
 Run the session inside this box instead of on this machine.
 
-The box must already exist (`h5i box`). A box that declares an egress allowlist has a tier that enforces it, because creation is fail\-closed on that combination, so the session\*(Aqs request lane becomes host\-observed: what it reached was also seen outside the engine. A box that declares none corroborates nothing, and the lane stays engine\-claimed. `h5i browser status` prints which of the two this session got; read it rather than assuming the box earned the stronger one. Note the standing Linux trade\-off: the tiers that enforce egress cannot hold a resident session yet, so today that combination is `microvm`, or a one\-shot `h5i browser read \-\-in`.
+The box must already exist (`h5i box`). A box that declares an egress allowlist has a tier that enforces it, because creation is fail\-closed on that combination, so the session\*(Aqs request lane becomes host\-observed: what it reached was also seen outside the engine. A box that declares none corroborates nothing and the lane stays engine\-claimed. `h5i browser status` prints which of the two this session got; read it rather than assuming the box earned the stronger one. Note the standing Linux trade\-off: the tiers that enforce egress cannot hold a resident session yet, so today that combination is `microvm`, or a one\-shot `h5i browser read \-\-in`.
 .TP
 \fB\-\-allow\fR \fI<ORIGIN>\fR
 Grant an origin. Repeatable. Without any, nothing remote is reachable except the URL\*(Aqs own origin
@@ -1004,7 +1004,7 @@ Not for `\-\-in`: a session in a box takes its credentials from that box\*(Aqs p
 \fB\-\-identity\fR \fI<NAME|PATH>\fR [default: native]
 Who this session says it is: a built\-in name, or a path to a TOML file.
 
-One identity, read by every layer that can be asked. `native` (the default) answers as h5i and answers truthfully. `privacy` is still h5i with the patch version and the host\*(Aqs time zone pinned, so one install stops being distinguishable from another. A `compatible` identity claims a different browser \(em and the session is **refused** if this engine cannot back everything that identity declares, rather than started with the claim half applied.
+One identity, read by every layer that can be asked. `native` (the default) answers as h5i and answers truthfully. `privacy` is still h5i with the patch version and the host\*(Aqs time zone pinned, so one install stops being distinguishable from another. A `compatible` identity claims a different browser, and the session is *refused* if this engine cannot back everything that identity declares, rather than started with the claim half applied.
 
 `h5i browser identity list` names the built\-ins, and `identity check` says what one covers, what it does not, and why it would be refused. Nothing here promises a session is undetectable: it promises the answers agree with each other.
 .TP
@@ -1022,7 +1022,7 @@ Recorded as an ending on the session\*(Aqs record when it passes, not as a disap
 \fB\-\-restore\fR \fI<SESSION_ID>\fR
 Seed this session\*(Aqs storage from one that has ended.
 
-A restore is a **new session with a new id**, and the inheritance is written into its record. Nothing resurrects an id: an agent holding a stale one always gets a refusal, never a different session wearing the same name. Takes an id, not a name, because a name can be reused and storage has to come from one definite session.
+A restore is a new session with a new id, and the inheritance is written into its record. Nothing resurrects an id: an agent holding a stale one always gets a refusal, never a different session wearing the same name. Takes an id, not a name, because a name can be reused and storage has to come from one definite session.
 .TP
 \fB\-\-json\fR
 Print the session record as JSON instead of a summary line
@@ -1060,7 +1060,7 @@ Read one page, or a batch of them, and leave no session behind
 \fB\-\-in\fR \fI<BOX>\fR
 Read inside this box.
 
-The box\*(Aqs profile is where a strict egress allowlist belongs, pinned in `.h5i/env.toml` and digested, and a box at the supervised tier enforces it at a network namespace boundary outside the engine \(em the one thing a session cannot have, because that tier cannot hold a resident process and a read does not need it to.
+The box\*(Aqs profile is where a strict egress allowlist belongs, pinned in `.h5i/env.toml` and digested, and a box at the supervised tier enforces it at a network namespace boundary outside the engine. The one thing a session cannot have, because that tier cannot hold a resident process and a read does not need it to.
 
 Without this, the read runs here under the same built\-in sandbox a session gets: its files and its environment, and the origin allowlist is the engine\*(Aqs alone.
 .TP
@@ -1076,7 +1076,7 @@ Read unconfined
 \fB\-\-identity\fR \fI<NAME|PATH>\fR [default: native]
 Who this read says it is: a built\-in name, or a path to a TOML file.
 
-The same identities a session takes, and refused on the same terms: see `h5i browser identity`. It belongs here as much as on a session \(em a read is a fetch, and a fetch has an agent string.
+The same identities a session takes, and refused on the same terms: see `h5i browser identity`. It belongs here as much as on a session. A read is a fetch, and a fetch has an agent string.
 .TP
 \fB\-\-json\fR
 
@@ -1202,9 +1202,9 @@ Write a PNG of the page this session is on
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
 .TP
 \fB\-\-out\fR \fI<PATH>\fR
-Where to write it, on **this** machine. Defaults to a host\-named file in the session\*(Aqs own artifacts directory.
+Where to write it, on *this* machine. Defaults to a host\-named file in the session\*(Aqs own artifacts directory.
 
-The engine paints into a directory it is allowed to write and h5i moves the file here afterwards, so this is any path you can write, not a path the confined engine can. For a session in a box that means the file is carried out of the box \(em which needs a tier whose `/tmp` this machine shares, and says so when it does not.
+The engine paints into a directory it is allowed to write and h5i moves the file here afterwards, so this is any path you can write, not a path the confined engine can. For a session in a box that means the file is carried out of the box, which needs a tier whose `/tmp` this machine shares, and says so when it does not.
 .TP
 \fB\-\-url\fR \fI<URL>\fR
 Go here first, then paint
@@ -1436,7 +1436,7 @@ The helper runs that belong to no session.
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH "H5I BROWSER STRUCTURED"
-What the page publishes **about itself**: JSON-LD, OpenGraph, `<meta>`, `<link rel>`
+What the page publishes *about itself*: JSON-LD, OpenGraph, `<meta>`, `<link rel>`
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -1457,7 +1457,7 @@ Go here first, then read. One round trip where `navigate` and then this would be
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH "H5I BROWSER TRANSCRIPT"
-What the page's media **says**: `<track>` captions, fetched and parsed
+What the page's media *says*: `<track>` captions, fetched and parsed
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -1478,18 +1478,18 @@ Prefer this language, for the words and for the outline alike.
 Prefix\-matched against `srclang`, so `en` finds `en\-GB`. Falls back to the track the page marked `default`, then to the first. Every track is listed either way.
 .TP
 \fB\-\-max\-bytes\fR \fI<BYTES>\fR
-The ceiling on caption text carried out of **one** track.
+The ceiling on caption text carried out of *one* track.
 
 Per track rather than per reply, so a media element with both words and an outline can carry up to twice this.
 .TP
 \fB\-\-via\fR \fI<HELPER>\fR
 Read it with an outside program instead of from the page\*(Aqs markup.
 
-`\-\-via yt\-dlp` reaches the transcripts that are not in the markup at all \(em YouTube\*(Aqs above all, whose captions live behind the player\*(Aqs own API. About 1,700 sites, and the same reply shape.
+`\-\-via yt\-dlp` reaches the transcripts that are not in the markup at all, YouTube\*(Aqs above all, whose captions live behind the player\*(Aqs own API. About 1,700 sites, and the same reply shape.
 
-**It is a different lane, not a better one.** yt\-dlp opens its own sockets from a process the engine never sees, so nothing it fetches is in `h5i browser requests` and nothing can be: the reply says so, and `h5i browser audit` carries the run as a host\-observed row. It runs where the session runs, inside the box for a boxed session, and it is never a fallback: an engine read that found no captions stays a read that found none. The reply says what actually saw its traffic, which for a box depends on whether that box\*(Aqs tier enforces egress at all.
+It is a different lane, not a better one. yt\-dlp opens its own sockets from a process the engine never sees, so nothing it fetches is in `h5i browser requests` and nothing can be: the reply says so, and `h5i browser audit` carries the run as a host\-observed row. It runs where the session runs, inside the box for a boxed session, and it is never a fallback: an engine read that found no captions stays a read that found none.
 
-With `\-\-via`, `\-\-url` names the media and the session does not move: there is no page here to render. With **no session open at all**, `\-\-url` is the whole of what this lane needs: the run happens on this machine, contained by nothing h5i enforces, says so in its `evidence` line, and is recorded in `h5i browser audit \-\-no\-session`. To place it behind a boundary, open a session with `\-\-in <box>` and it runs in there.
+With `\-\-via`, `\-\-url` names the media and the session does not move: there is no page here to render. With no session open at all, `\-\-url` is the whole of what this lane needs: the run happens on this machine, contained by nothing h5i enforces, says so in its `evidence` line, and is recorded in `h5i browser audit \-\-no\-session`. To place it behind a boundary, open a session with `\-\-in <box>`.
 .TP
 \fB\-\-json\fR
 
@@ -1767,14 +1767,14 @@ Local port to serve it on. 0 picks a free one and prints it
 \fB\-\-shared\-jar\fR
 Join even when the only address left is `127.0.0.1`.
 
-Each join normally gets a loopback address of its own, because a browser\*(Aqs cookie jar is scoped by host and ignores the port. On `127.0.0.1` the jar is shared with every local service you run, so the token this proxy sets is sent to any of them you visit while joined \(em and that token reaches the box. macOS configures only `127.0.0.1` on `lo0`, so this is the macOS answer unless you add an address yourself (`sudo ifconfig lo0 alias 127.0.0.2`).
+Each join normally gets a loopback address of its own, because a browser\*(Aqs cookie jar is scoped by host and ignores the port. On `127.0.0.1` the jar is shared with every local service you run, so the token this proxy sets is sent to any of them you visit while joined, and that token reaches the box. macOS configures only `127.0.0.1` on `lo0`, so this is the macOS answer unless you add an address yourself (`sudo ifconfig lo0 alias 127.0.0.2`).
 
-Your own cookies are not the other half of this: they are filtered on a shared jar whether or not you pass this, and only cookies the box set itself are ever sent back to it.
+Your own cookies are not the other half of this: they are filtered on a shared jar whether or not you pass this.
 .TP
 \fB\-\-bind\fR \fI<ADDR>\fR
 Serve on this loopback address instead of a random `127.x.y.z`.
 
-The address is bound exactly \(em no fallback \(em and only loopback (`127.0.0.0/8`) is accepted. This is the WSL answer: Windows forwards only `127.0.0.1` into the VM, so the private address a join normally picks binds fine and is then unreachable from a Windows browser. `\-\-bind 127.0.0.1` counts as shared\-jar consent by itself and carries the same cookie caveats as \-\-shared\-jar; any other loopback address keeps a cookie jar of its own.
+The address is bound exactly, no fallback, and only loopback (`127.0.0.0/8`) is accepted. This is the WSL answer: Windows forwards only `127.0.0.1` into the VM, so the private address a join normally picks binds fine and is then unreachable from a Windows browser. `\-\-bind 127.0.0.1` counts as shared\-jar consent by itself; any other loopback address keeps a cookie jar of its own.
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
@@ -1782,7 +1782,7 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 <\fITICKET\fR>
 The `h5i1_...` ticket you were sent, or `\-` to read it from stdin.
 
-`/proc/<pid>/cmdline` is world\-readable on an ordinary Linux box and this process runs for the whole session, so a ticket passed as an argument is legible to every other user on the machine for as long as you are joined \(em and a ticket is the whole authorization. `pbpaste | h5i join \-` keeps it out of the process table and out of your shell history.
+`/proc/<pid>/cmdline` is world\-readable on an ordinary Linux box and this process runs for the whole session, so a ticket passed as an argument is legible to every other user on the machine for as long as you are joined, and a ticket is the whole authorization. `pbpaste | h5i join \-` keeps it out of the process table and your shell history.
 .SH "H5I RUNNER"
 Run boxes on another Linux machine you own
 .ie \n(.g .ds Aq \(aq
@@ -1796,7 +1796,7 @@ Run boxes on another Linux machine you own
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH "H5I RUNNER PAIR"
-Pair with a Linux machine so boxes can run on it
+Pair with a Linux machine so boxes can run on it. Pairing generates a keypair used for this runner and nothing else, pins the machine's SSH host key, and installs a forced command that lets the key do exactly one thing: speak h5i's protocol on stdin and stdout. No port is opened on the runner and no daemon is left behind. The runner needs `h5i` installed and an account you can already reach over SSH. It does NOT need a container runtime: what it can do is reported by `h5i runner probe`, and a box asking for something the runner does not have is refused rather than quietly given something weaker
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS

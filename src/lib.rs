@@ -204,10 +204,11 @@ pub struct BoxArgs {
     /// Base revision, when the source is this repository. Pinned immutably.
     ///
     /// Same conflicts as the explicit `box create` form. Without them the short
-    /// form parsed `--new --from <rev>` happily and then discarded the base:
-    /// `into_command()` builds `Create` *after* clap has validated, so the
-    /// explicit form's rules never applied. A silently unpinned base is an
-    /// integrity gap in a tool whose pitch is that the base is pinned.
+    /// form parsed `--new --from <rev>` and `--pr N --from <rev>` happily and
+    /// then discarded the base: `into_command()` builds `Create` *after* clap
+    /// has validated, so the explicit form's rules never applied. A silently
+    /// unpinned base is an integrity gap in a tool whose pitch is that the base
+    /// is pinned immutably.
     #[arg(long, conflicts_with_all = ["pr", "new"])]
     from: Option<String>,
 

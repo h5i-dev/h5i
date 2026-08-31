@@ -86,7 +86,7 @@ pub enum BoxCommands {
         ///
         /// `h5i runner pair` sets one up and `h5i runner probe` says what it can
         /// do. A tier the runner does not offer is refused with the capability
-        /// named.
+        /// named, never quietly swapped for a weaker one.
         #[cfg(feature = "runner")]
         #[arg(long, value_name = "NAME")]
         runner: Option<String>,
