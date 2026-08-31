@@ -112,6 +112,18 @@ pub struct Host {
     /// The page this document was loaded from, for resolving relative fetches.
     pub base: url::Url,
 
+    /// Who this session says it is, taken from the broker when the realm is
+    /// built and never asked for again.
+    ///
+    /// From the broker, and that is the whole design rather than a detail. The
+    /// broker is the half that writes `User-Agent` and `Accept-Language`; if
+    /// this side held its own copy — a constant in `prelude.js`, say, which is
+    /// exactly where these values used to live — then the page and the wire
+    /// would be two independent answers to one question, and a server that
+    /// reads both would see two browsers. See [`crate::identity`].
+    #[cfg(feature = "identity")]
+    pub identity: std::sync::Arc<crate::identity::Identity>,
+
     /// The page's `<script type="importmap">`, if it declared one.
     ///
     /// Held here rather than on the loader because it is a property of the
@@ -266,10 +278,19 @@ impl std::ops::Deref for HostHandle {
 
 impl Host {
     pub fn new(dom: Dom, broker: std::sync::Arc<dyn Broker>, base: url::Url) -> Self {
+        // Asked before the broker is stored, and asked once. Across the process
+        // split this is a message, so a binding that asked per property read
+        // would put a round trip behind `navigator.platform` — and the client
+        // caches the answer, because an identity cannot change while a session
+        // runs. One `Arc` clone per realm, and no strings copied.
+        #[cfg(feature = "identity")]
+        let identity = broker.identity();
         Self {
             dom,
             broker,
             base,
+            #[cfg(feature = "identity")]
+            identity,
             import_map: RefCell::new(None),
             encoding: RefCell::new(encoding_rs::UTF_8),
             dirty: RefCell::new(false),

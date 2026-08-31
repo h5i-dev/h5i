@@ -1367,7 +1367,7 @@ Open a URL, making a session if there is not one already
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-secret\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-expires\-in\fR] [\fB\-\-restore\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-secret\fR] [\fB\-\-identity\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-expires\-in\fR] [\fB\-\-restore\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1410,6 +1410,13 @@ The value is resolved from the environment this command runs in and delivered to
 
 Not for `\-\-in`: a session in a box takes its credentials from that box\*(Aqs policy, in `.h5i/env.toml`.
 .TP
+\fB\-\-identity\fR \fI<NAME|PATH>\fR [default: native]
+Who this session says it is: a built\-in name, or a path to a TOML file.
+
+One identity, read by every layer that can be asked. `native` (the default) answers as h5i and answers truthfully. `privacy` is still h5i with the patch version and the host\*(Aqs time zone pinned, so one install stops being distinguishable from another. A `compatible` identity claims a different browser \(em and the session is **refused** if this engine cannot back everything that identity declares, rather than started with the claim half applied.
+
+`h5i browser identity list` names the built\-ins, and `identity check` says what one covers, what it does not, and why it would be refused. Nothing here promises a session is undetectable: it promises the answers agree with each other.
+.TP
 \fB\-\-width\fR \fI<WIDTH>\fR [default: 1280]
 Viewport width
 .TP
@@ -1434,12 +1441,27 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fIURL\fR>
 A URL, or a path to a local HTML file
+.SH "H5I BROWSER IDENTITY"
+List, show or check a browser identity
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBidentity\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIARGS\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIARGS\fR>
+`list`, `show <name>`, or `check <name>`
 .SH "H5I BROWSER READ"
 Read one page, or a batch of them, and leave no session behind
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBread\fR [\fB\-\-in\fR] [\fB\-\-text\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGETS\fR> 
+\fBread\fR [\fB\-\-in\fR] [\fB\-\-text\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-identity\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGETS\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1459,6 +1481,11 @@ Run the page\*(Aqs own JavaScript
 .TP
 \fB\-\-no\-sandbox\fR
 Read unconfined
+.TP
+\fB\-\-identity\fR \fI<NAME|PATH>\fR [default: native]
+Who this read says it is: a built\-in name, or a path to a TOML file.
+
+The same identities a session takes, and refused on the same terms: see `h5i browser identity`. It belongs here as much as on a session \(em a read is a fetch, and a fetch has an agent string.
 .TP
 \fB\-\-json\fR
 

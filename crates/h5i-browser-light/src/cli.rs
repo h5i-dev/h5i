@@ -211,10 +211,52 @@ enum Command {
         script: bool,
     },
 
+    /// List, show or check a browser identity.
+    ///
+    /// An identity is who a session says it is — on the wire and in the page,
+    /// from one source. `list` names the built-ins, `show` prints one as the
+    /// TOML you would edit, and `check` says whether this engine can stand
+    /// behind it, and what it does not cover either way.
+    #[cfg(feature = "identity")]
+    Identity {
+        #[command(subcommand)]
+        verb: IdentityVerb,
+    },
+
     /// Report the environment: fonts, proxy, and what the policy would allow.
     Doctor {
         #[command(flatten)]
         net: NetArgs,
+    },
+}
+
+#[cfg(feature = "identity")]
+#[derive(Subcommand)]
+enum IdentityVerb {
+    /// Name every identity that ships with the engine.
+    List {
+        /// Emit JSON instead of human output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print an identity as the TOML you would edit to make your own.
+    Show {
+        /// A built-in name, or a path to a TOML file.
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Say whether this engine can stand behind an identity, and what it does
+    /// not cover either way.
+    Check {
+        /// A built-in name, or a path to a TOML file.
+        name: String,
+        /// Check as a session that runs page script. Most of what an identity
+        /// declares is only readable from script, so this changes the answer.
+        #[arg(long)]
+        script: bool,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -801,6 +843,25 @@ struct NetArgs {
     #[arg(long, value_name = "URL")]
     proxy: Option<String>,
 
+    /// Who this session says it is: a built-in name, or a path to a TOML file.
+    ///
+    /// `native` (the default) answers as h5i and answers truthfully. `privacy`
+    /// is still h5i with the patch version and the host's time zone pinned, so
+    /// one install stops being distinguishable from another. A `compatible`
+    /// identity claims a different browser — and is **refused** if this engine
+    /// cannot back everything it declares, rather than applied in part.
+    ///
+    /// It belongs here, beside the cookie jar and for the same reason: this is
+    /// the one argument list both halves of a split engine parse, and an
+    /// identity read by only one of them would be a page and a wire describing
+    /// two different browsers.
+    ///
+    /// `h5i browser identity list` names the built-ins; `identity check` says
+    /// what one covers, what it does not, and why this engine would refuse it.
+    #[cfg(feature = "identity")]
+    #[arg(long, value_name = "NAME|PATH", default_value = "native")]
+    identity: String,
+
     /// Refuse a response larger than this many bytes.
     #[arg(long, default_value_t = 8 * 1024 * 1024, value_name = "BYTES")]
     max_response_bytes: u64,
@@ -1051,6 +1112,8 @@ fn dispatch(command: Command, half: &Half) -> Result<(), H5iError> {
             );
             Ok(())
         }
+        #[cfg(feature = "identity")]
+        Command::Identity { verb } => identity_verb(verb),
         Command::Doctor { net } => doctor(&net),
         Command::Session(verb) => session(verb),
         Command::Replay { script, keep_going, at } => replay(&script, keep_going, &at),
@@ -1099,6 +1162,8 @@ impl Command {
     fn net(&self) -> Option<&NetArgs> {
         match self {
             Command::Open { net, .. } | Command::Serve { net, .. } => Some(net),
+            #[cfg(feature = "identity")]
+            Command::Identity { .. } => None,
             Command::Capabilities { .. }
             | Command::Doctor { .. }
             | Command::Session(_)
@@ -1120,8 +1185,58 @@ impl Command {
 /// One function, two callers, and that is the point: the broker process builds
 /// exactly what a whole process would have built, so the two shapes cannot
 /// drift into applying different policies or different ceilings.
+/// The identity this session presents, resolved and held to its own claims.
+///
+/// Coherence is checked here and capability is not, because the two questions
+/// belong to different places. Whether an identity contradicts *itself* — a
+/// Windows agent string over a `MacIntel` platform — is a fact about the file
+/// and is wrong in front of any engine, so it is settled before a client is
+/// built from it. Whether *this* engine can back what it declares depends on
+/// `--script`, which is not in this argument list; [`factory_for`] settles that.
+/// The broker, presenting whoever this build lets a session be.
+///
+/// Two one-line bodies rather than a runtime branch, because the difference is
+/// not a runtime one: a build without the feature has no identity to pass and
+/// no `--identity` to have read.
+#[cfg(feature = "identity")]
+fn broker_for(
+    policy: Policy,
+    sink: Arc<dyn Sink>,
+    proxy: Option<&str>,
+    limits: crate::budget::Limits,
+    net: &NetArgs,
+) -> Result<Arc<crate::net::LocalBroker>, H5iError> {
+    crate::net::LocalBroker::with_identity(policy, sink, proxy, limits, Arc::new(identity_of(net)?))
+}
+
+#[cfg(not(feature = "identity"))]
+fn broker_for(
+    policy: Policy,
+    sink: Arc<dyn Sink>,
+    proxy: Option<&str>,
+    limits: crate::budget::Limits,
+    _net: &NetArgs,
+) -> Result<Arc<crate::net::LocalBroker>, H5iError> {
+    crate::net::LocalBroker::with_limits(policy, sink, proxy, limits)
+}
+
+#[cfg(feature = "identity")]
+fn identity_of(net: &NetArgs) -> Result<crate::identity::Identity, H5iError> {
+    let identity = crate::identity::Identity::resolve(&net.identity)?;
+    let found = identity.incoherences();
+    if !found.is_empty() {
+        let lines: Vec<String> = found.iter().map(|f| format!("  {f}")).collect();
+        return Err(H5iError::Metadata(format!(
+            "the browser identity `{}` contradicts itself:\n{}",
+            identity.name,
+            lines.join("\n")
+        )));
+    }
+    Ok(identity)
+}
+
 fn local_broker(net: &NetArgs) -> Result<Arc<crate::net::LocalBroker>, H5iError> {
-    let broker = crate::net::LocalBroker::with_limits(
+    let broker = broker_for(
         build_policy(net),
         receipts_sink(net)?,
         proxy_of(net).as_deref(),
@@ -1135,6 +1250,7 @@ fn local_broker(net: &NetArgs) -> Result<Arc<crate::net::LocalBroker>, H5iError>
             max_decoded_bytes: net.max_wire_bytes.saturating_mul(4),
             max_network_time: std::time::Duration::from_secs(net.max_network_seconds),
         },
+        net,
     )?;
 
     // The jar, if h5i named a file for it. Done here rather than in `serve`
@@ -1162,6 +1278,26 @@ fn local_broker(net: &NetArgs) -> Result<Arc<crate::net::LocalBroker>, H5iError>
 }
 
 fn factory_for(half: &Half, net: &NetArgs, view: &ViewArgs) -> Result<PageFactory, H5iError> {
+    // The identity's door, and it is here because here is where the two halves
+    // of the question meet: the identity comes from `net`, and whether this
+    // engine can stand behind it depends on `--script`, which comes from
+    // `view`. Refused rather than trimmed to fit — an agent string claiming
+    // Chrome in front of an engine with no client hints is more detectable than
+    // no claim at all, so a partial application would be worse than nothing.
+    #[cfg(feature = "identity")]
+    {
+        let identity = identity_of(net)?;
+        identity.admit(&crate::Capabilities::with_script(view.script))?;
+        // And the one contradiction that only exists once the identity meets
+        // the run: a window cannot be larger than the screen it says it is on.
+        if let Some(over) = identity.check_viewport(view.width, view.height) {
+            return Err(H5iError::Metadata(format!(
+                "the browser identity `{}` cannot be used at this size:\n  {over}",
+                identity.name
+            )));
+        }
+    }
+
     let broker: Arc<dyn Broker> = match half {
         Half::Whole => local_broker(net)?,
         // Nothing is built here: no policy, no sink, no jar, no secrets. This
@@ -1993,6 +2129,117 @@ fn load_fonts(view: &ViewArgs) -> fonts::FontSetup {
         view.font_dirs.clone()
     };
     fonts::load(&view.font_files, &dirs, None)
+}
+
+/// `identity list|show|check`.
+///
+/// `check` is the verb that matters, and what it prints is the design: not a
+/// score, and not a promise. It says which layers this identity reaches, which
+/// it does not, and — when the engine cannot back it — exactly which declared
+/// requirement is missing and why. A caller who wanted "am I undetectable"
+/// gets, instead, the two lists that let them answer it themselves.
+#[cfg(feature = "identity")]
+fn identity_verb(verb: IdentityVerb) -> Result<(), H5iError> {
+    use crate::identity::Identity;
+    match verb {
+        IdentityVerb::List { json } => {
+            let builtins = crate::identity::builtins();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&builtins)?);
+                return Ok(());
+            }
+            for identity in &builtins {
+                println!(
+                    "{:<20} {:<11} {}",
+                    identity.name,
+                    identity.mode.as_str(),
+                    identity.browser.user_agent
+                );
+            }
+            Ok(())
+        }
+        IdentityVerb::Show { name, json } => {
+            let identity = Identity::resolve(&name)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&identity)?);
+            } else {
+                println!(
+                    "{}",
+                    toml::to_string_pretty(&identity).map_err(|e| H5iError::Metadata(
+                        format!("could not render `{name}` as TOML: {e}")
+                    ))?
+                );
+            }
+            Ok(())
+        }
+        IdentityVerb::Check { name, script, json } => {
+            let identity = Identity::resolve(&name)?;
+            let caps = Capabilities::with_script(script);
+            let incoherences = identity.incoherences();
+            let unmet = identity.unmet(&caps);
+            let admitted = incoherences.is_empty() && unmet.is_empty();
+
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "name": identity.name,
+                        "mode": identity.mode.as_str(),
+                        "digest": identity.digest(),
+                        "admitted": admitted,
+                        "contradicts": incoherences
+                            .iter()
+                            .map(|f| serde_json::json!({ "field": f.field, "says": f.says }))
+                            .collect::<Vec<_>>(),
+                        "unmet": unmet
+                            .iter()
+                            .map(|need| serde_json::json!({
+                                "requires": need.as_str(),
+                                "why": need.why_unmet(),
+                            }))
+                            .collect::<Vec<_>>(),
+                        "covers": Identity::COVERS,
+                        "does_not_cover": Identity::DOES_NOT_COVER,
+                    }))?
+                );
+                // Refused is not an error to *ask* about, so `--json` exits 0
+                // and the caller reads `admitted`. It is an error to open a
+                // session with, which is where the refusal actually bites.
+                return Ok(());
+            }
+
+            println!("{}  ({}, {})", identity.name, identity.mode.as_str(), identity.digest());
+            println!("  agent   {}", identity.browser.user_agent);
+            println!("  accepts {}", identity.locale.accept_language());
+            println!();
+            if admitted {
+                println!("✓ this engine can present it{}", if script { "" } else { " with script off" });
+            } else {
+                println!("✗ refused");
+                for found in &incoherences {
+                    println!("    contradicts itself: {found}");
+                }
+                for need in &unmet {
+                    println!("    needs {}: {}", need.as_str(), need.why_unmet());
+                }
+                if !unmet.is_empty() {
+                    let family = identity.browser.family.as_str();
+                    println!("    Not applied in part: an agent string claiming {family} in front");
+                    println!("    of an engine missing these is louder than no claim at all.");
+                }
+            }
+            println!();
+            println!("  covers");
+            for line in Identity::COVERS {
+                println!("    {line}");
+            }
+            println!("  does not cover");
+            for line in Identity::DOES_NOT_COVER {
+                println!("    {line}");
+            }
+            Ok(())
+        }
+    }
 }
 
 fn doctor(net: &NetArgs) -> Result<(), H5iError> {

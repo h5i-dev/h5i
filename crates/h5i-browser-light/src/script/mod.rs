@@ -66,6 +66,8 @@ const TIERS: &[(&str, &str)] = &[
     ("conformance", include_str!("prelude/conformance.js")),
     ("sockets", include_str!("prelude/sockets.js")),
     ("has", include_str!("prelude/has.js")),
+    #[cfg(feature = "identity")]
+    ("screen", include_str!("prelude/screen.js")),
 ];
 
 /// Evaluate one tier into this realm, by name.
@@ -347,9 +349,40 @@ const JOB_QUEUE_BUDGET: Duration = Duration::from_secs(15);
 /// attach a handler, so reporting there would blame every page that uses
 /// `.catch`.
 #[derive(Debug)]
-struct Hooks;
+/// The realm's host hooks, carrying the one thing an identity can change about
+/// how the engine computes time.
+///
+/// `Date` is the second place a page reads the browser's locale from, after
+/// `navigator.languages`, and it is the one that leaks a *region*: a browser
+/// whose `getTimezoneOffset` says -480 is on the American west coast whatever
+/// its headers claim. Left to the host clock, every h5i session discloses the
+/// machine it runs on; that is what `privacy` exists to stop, and it can only
+/// be stopped here — patching `Date.prototype.getTimezoneOffset` from the
+/// prelude would leave `toString`, `toLocaleString` and the date parser
+/// computing from the real zone and disagreeing with it.
+///
+/// `None` is the host's own offset, which is `native`'s answer and was the only
+/// answer before this. See [`crate::identity::TimeZone`] for why a declared
+/// zone is always a fixed offset.
+struct Hooks {
+    /// `None` in every build without identities, and in every session whose
+    /// identity declares no zone — which is `native`, the default. The whole
+    /// field is absent without the feature, so the clock reaches Boa's own
+    /// default with nothing in front of it.
+    #[cfg(feature = "identity")]
+    offset_seconds: Option<i32>,
+}
 
 impl boa_engine::context::HostHooks for Hooks {
+    #[cfg(feature = "identity")]
+    fn local_timezone_offset_seconds(&self, unix_time_seconds: i64) -> i32 {
+        match self.offset_seconds {
+            Some(offset) => offset,
+            None => boa_engine::context::DefaultHooks
+                .local_timezone_offset_seconds(unix_time_seconds),
+        }
+    }
+
     fn promise_rejection_tracker(
         &self,
         promise: &boa_engine::object::JsObject<boa_engine::builtins::promise::Promise>,
@@ -621,7 +654,15 @@ impl Script {
         let mut context = Context::builder()
             .job_executor(executor)
             .module_loader(loader)
-            .host_hooks(std::rc::Rc::new(Hooks))
+            .host_hooks(std::rc::Rc::new(Hooks {
+                #[cfg(feature = "identity")]
+                offset_seconds: host
+                    .identity
+                    .locale
+                    .timezone
+                    .as_ref()
+                    .map(crate::identity::TimeZone::offset_seconds),
+            }))
             .build()
             .map_err(|e| format!("could not build the script realm: {e}"))?;
         // Boa's default recursion ceiling is low enough that a real production

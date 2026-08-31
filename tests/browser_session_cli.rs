@@ -1079,3 +1079,90 @@ fn a_secret_flag_on_a_boxed_session_is_refused_and_names_env_toml() {
     assert!(why.contains("env.toml"), "the refusal names where to put it: {why}");
     assert!(why.contains("secrets"), "{why}");
 }
+
+// ── browser identities ───────────────────────────────────────────────────────
+//
+// Gated with the feature they exercise: without it there is no `--identity` to
+// pass, and a test that asserted the flag was rejected would be pinning clap's
+// error message rather than anything this crate decides.
+
+#[cfg(feature = "identity")]
+#[test]
+fn an_identity_that_this_engine_cannot_back_refuses_the_session() {
+    let Some(fixture) = Fixture::new() else {
+        return skip("h5i is not built");
+    };
+
+    // Coherent as a description, and still refused: this engine sends no
+    // Sec-CH-UA and has no WebGL, and a Chrome agent string in front of a
+    // browser with neither is louder than an honest one. The refusal has to
+    // reach the CLI rather than being a note in the engine's log, because the
+    // session it would have started is the thing being prevented.
+    let url = fixture.site.base.clone();
+    let out = fixture.run(&[
+        "browser",
+        "open",
+        url.as_str(),
+        "--allow",
+        "127.0.0.1",
+        "--script",
+        "--identity",
+        "chrome-151-windows",
+    ]);
+    assert!(!out.status.success(), "a refused identity must not open a session");
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("ua-client-hints"), "{said}");
+    assert!(said.contains("webgl2"), "{said}");
+
+    // And nothing was left behind: the check runs before anything is spawned.
+    let list = fixture.run(&["browser", "list", "--json"]);
+    let sessions: serde_json::Value =
+        serde_json::from_slice(&list.stdout).unwrap_or(serde_json::Value::Array(vec![]));
+    assert_eq!(
+        sessions.as_array().map(Vec::len).unwrap_or(0),
+        0,
+        "a refused open left a session behind"
+    );
+}
+
+#[cfg(feature = "identity")]
+#[test]
+fn the_identity_a_session_presented_is_in_its_record() {
+    let Some(fixture) = Fixture::new() else {
+        return skip("h5i is not built");
+    };
+
+    let id = fixture.open(&["--script", "--identity", "firefox-143-linux"]);
+    let out = fixture.run(&["browser", "status", "--session", &id, "--json"]);
+    let record: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("status prints a record");
+
+    // The name is what someone typed; the digest is what was presented. A
+    // hand-written identity file can be edited after the session opened, so the
+    // digest is the half an audit can rely on.
+    assert_eq!(record["identity"], "firefox-143-linux");
+    let digest = record["identity_digest"].as_str().unwrap_or_default();
+    assert_eq!(digest.len(), 16, "a digest belongs on the record: {record}");
+
+    let _ = fixture.run(&["browser", "close", "--session", &id]);
+}
+
+#[cfg(feature = "identity")]
+#[test]
+fn identity_check_says_what_it_does_not_cover_as_plainly_as_what_it_does() {
+    let Some(fixture) = Fixture::new() else {
+        return skip("h5i is not built");
+    };
+
+    let out = fixture.run(&["browser", "identity", "check", "firefox-143-linux", "--script", "--json"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let report: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("check prints JSON");
+
+    assert_eq!(report["admitted"], true);
+    // The second list is the point. An identity that printed only what it
+    // reaches would be promising invisibility, which is not what this is.
+    let uncovered = report["does_not_cover"].to_string();
+    assert!(uncovered.contains("ClientHello"), "{uncovered}");
+    assert!(uncovered.contains("HTTP/2"), "{uncovered}");
+}

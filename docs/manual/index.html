@@ -156,6 +156,7 @@
 <a class="t3" href="#the-id-is-internal">The id is internal</a>
 <a class="t3" href="#open-navigates-a-session-that-is-already-there">open navigates a session that is already there</a>
 <a class="t3" href="#what-is-true-by-default">What is true by default</a>
+<a class="t3" href="#browser-identities">Browser identities</a>
 <a class="t3" href="#read-one-page-no-session">read: one page, no session</a>
 <a class="t3" href="#the-default-sandbox">The default sandbox</a>
 <a class="t3" href="#two-processes-the-broker-and-the-renderer">Two processes: the broker and the renderer</a>
@@ -479,6 +480,106 @@ from. Loopback is reachable by default because it is the dev server, and
 <p>The grant is the page and not "and whatever this page pulls in". An off-origin
 subresource is still refused, and still says so in the request log, which is
 the part a wider default would have given away.</p>
+<h3 id="browser-identities">Browser identities</h3>
+<p>A page can ask this engine who it is in four places: the <code>User-Agent</code> and
+<code>Accept-Language</code> it sent, the <code>navigator</code> object it exposes, the <code>screen</code>
+geometry it reports, and the offset <code>Date</code> computes local time from. Those four
+answers used to come from four different files, and nothing kept them agreeing.
+Disagreement is the only thing a fingerprinting script needs: it does not have
+to know what h5i is to notice that the browser claiming Windows on the wire
+reports <code>MacIntel</code> in script.</p>
+<p>So a session has <strong>one identity</strong>, resolved when it opens, frozen for its life,
+digested into its record, and read by every layer. Nothing randomises per page
+load, which is itself a tell — a browser whose values change between two loads
+of the same site is announcing itself, not blending in.</p>
+<pre><code>h5i browser identity list
+h5i browser identity check firefox-143-linux --script
+h5i browser open https://example.com --script --identity privacy
+</code></pre>
+<p>Three modes, because "stealth" would be one word for two strategies that pull
+in opposite directions:</p>
+<table>
+<thead>
+<tr>
+<th>mode</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>native</code></td>
+<td>Answers as h5i, truthfully. <strong>The default</strong>, and byte-for-byte what h5i sent before identities existed.</td>
+</tr>
+<tr>
+<td><code>privacy</code></td>
+<td>Still h5i, with the two values that vary between <em>installations</em> pinned: the patch version in the agent string, and the host's time zone. One install stops being distinguishable from another.</td>
+</tr>
+<tr>
+<td><code>compatible</code></td>
+<td>Claims a different browser, coherently, and only as far as this engine can actually back the claim.</td>
+</tr>
+</tbody>
+</table>
+<p><code>h5i browser identity show &lt;name&gt;</code> prints one as the TOML you would edit, and
+<code>--identity &lt;path&gt;</code> takes a file. A file that contradicts itself is refused with
+the field named — a Windows agent string over a <code>MacIntel</code> platform, a mobile
+identity with no touch points, a viewport larger than the screen it claims, a
+Firefox carrying Chrome's product token.</p>
+<h4 id="refused-never-half-applied">Refused, never half applied</h4>
+<p>An identity declares what it needs the engine to have, and one that needs
+something h5i does not have is <strong>refused</strong>:</p>
+<pre><code>$ h5i browser identity check chrome-151-windows --script
+✗ refused
+    needs ua-client-hints: this engine sends no Sec-CH-UA and exposes no navigator.userAgentData
+    needs webgl2: this engine has no WebGL
+    Not applied in part: an agent string claiming chrome in front
+    of an engine missing these is louder than no claim at all.
+</code></pre>
+<p>That refusal is the design rather than a gap in it. Chrome has sent <code>Sec-CH-UA</code>
+on every request since it shortened its agent string, and exposes
+<code>navigator.userAgentData</code> to match; a Chrome agent string in front of a browser
+with neither is <em>more</em> detectable than an honest one, because the absence is
+the signal. The identity ships anyway, and is usable unchanged the day a
+backend can answer for it.</p>
+<p><code>firefox-143-linux</code> is the compatible identity this engine can back, and the
+reason is the same fact from the other side: <strong>Firefox sends no client hints at
+all</strong>, so its identity surface is the agent string, <code>navigator</code>, <code>screen</code> and
+the locale — which is exactly what an identity covers.</p>
+<h4 id="what-it-does-not-cover">What it does not cover</h4>
+<p><code>identity check</code> prints this list as plainly as the first one, because the claim
+is coherence and not invisibility:</p>
+<ul>
+<li>the TLS ClientHello, its extension order and its GREASE</li>
+<li>the HTTP/2 SETTINGS and pseudo-header order</li>
+<li>canvas and WebGL readback, which this engine cannot produce</li>
+<li><code>AudioContext</code> fingerprints, which this engine has none of</li>
+<li>the installed font set, which is the host's</li>
+<li>pointer and keyboard event timing</li>
+</ul>
+<p>A determined check still sees this engine for what it is. What an identity buys
+is that the answers it <em>does</em> give agree with each other.</p>
+<h4 id="optional-at-both-switches">Optional, at both switches</h4>
+<p>Identities are a build feature (<code>identity</code>, on by default) as well as a flag,
+and the two promise different things.</p>
+<p><code>--identity native</code> is the default and costs nothing at run time: the wire
+values are settled once when the session is built, so a request parses the same
+<code>Accept-Language</code> it always parsed, and with <code>--script</code> off — which is also the
+default — there is no script realm to read <code>navigator</code> from at all.</p>
+<p>Without the <em>feature</em>, the code is not in the binary. There is no identity
+module, no <code>Screen</code> interface, no <code>--identity</code> to type and no <code>h5i browser
+identity</code> to run; the engine sends the one agent string it has always sent.
+That is a claim a hardened deployment can make about the file it installed
+rather than about how someone invokes it, which is the same reason <code>ytdlp</code> is a
+feature and not just a flag.</p>
+<pre><code>cargo build --release --no-default-features \
+  --features &quot;browser,ytdlp,web,share,runner&quot;
+</code></pre>
+<p>One thing is deliberately not validated: the exit address. "A Japanese address
+with a New York time zone" is a real incoherence and not one an identity can
+see, because where a request leaves from is the egress proxy's business.
+Language is not checked against time zone either — <code>navigator.languages</code> is a
+preference, not a location, and <code>en-US</code> with <code>Asia/Tokyo</code> describes every
+English speaker in Japan.</p>
 <h3 id="read-one-page-no-session"><code>read</code>: one page, no session</h3>
 <pre><code class="language-bash">h5i browser read https://example.com
 h5i browser read url1 url2 url3 --json

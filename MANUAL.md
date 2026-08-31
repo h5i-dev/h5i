@@ -246,6 +246,112 @@ The grant is the page and not "and whatever this page pulls in". An off-origin
 subresource is still refused, and still says so in the request log, which is
 the part a wider default would have given away.
 
+### Browser identities
+
+A page can ask this engine who it is in four places: the `User-Agent` and
+`Accept-Language` it sent, the `navigator` object it exposes, the `screen`
+geometry it reports, and the offset `Date` computes local time from. Those four
+answers used to come from four different files, and nothing kept them agreeing.
+Disagreement is the only thing a fingerprinting script needs: it does not have
+to know what h5i is to notice that the browser claiming Windows on the wire
+reports `MacIntel` in script.
+
+So a session has **one identity**, resolved when it opens, frozen for its life,
+digested into its record, and read by every layer. Nothing randomises per page
+load, which is itself a tell — a browser whose values change between two loads
+of the same site is announcing itself, not blending in.
+
+```
+h5i browser identity list
+h5i browser identity check firefox-143-linux --script
+h5i browser open https://example.com --script --identity privacy
+```
+
+Three modes, because "stealth" would be one word for two strategies that pull
+in opposite directions:
+
+| mode | what it does |
+|---|---|
+| `native` | Answers as h5i, truthfully. **The default**, and byte-for-byte what h5i sent before identities existed. |
+| `privacy` | Still h5i, with the two values that vary between *installations* pinned: the patch version in the agent string, and the host's time zone. One install stops being distinguishable from another. |
+| `compatible` | Claims a different browser, coherently, and only as far as this engine can actually back the claim. |
+
+`h5i browser identity show <name>` prints one as the TOML you would edit, and
+`--identity <path>` takes a file. A file that contradicts itself is refused with
+the field named — a Windows agent string over a `MacIntel` platform, a mobile
+identity with no touch points, a viewport larger than the screen it claims, a
+Firefox carrying Chrome's product token.
+
+#### Refused, never half applied
+
+An identity declares what it needs the engine to have, and one that needs
+something h5i does not have is **refused**:
+
+```
+$ h5i browser identity check chrome-151-windows --script
+✗ refused
+    needs ua-client-hints: this engine sends no Sec-CH-UA and exposes no navigator.userAgentData
+    needs webgl2: this engine has no WebGL
+    Not applied in part: an agent string claiming chrome in front
+    of an engine missing these is louder than no claim at all.
+```
+
+That refusal is the design rather than a gap in it. Chrome has sent `Sec-CH-UA`
+on every request since it shortened its agent string, and exposes
+`navigator.userAgentData` to match; a Chrome agent string in front of a browser
+with neither is *more* detectable than an honest one, because the absence is
+the signal. The identity ships anyway, and is usable unchanged the day a
+backend can answer for it.
+
+`firefox-143-linux` is the compatible identity this engine can back, and the
+reason is the same fact from the other side: **Firefox sends no client hints at
+all**, so its identity surface is the agent string, `navigator`, `screen` and
+the locale — which is exactly what an identity covers.
+
+#### What it does not cover
+
+`identity check` prints this list as plainly as the first one, because the claim
+is coherence and not invisibility:
+
+- the TLS ClientHello, its extension order and its GREASE
+- the HTTP/2 SETTINGS and pseudo-header order
+- canvas and WebGL readback, which this engine cannot produce
+- `AudioContext` fingerprints, which this engine has none of
+- the installed font set, which is the host's
+- pointer and keyboard event timing
+
+A determined check still sees this engine for what it is. What an identity buys
+is that the answers it *does* give agree with each other.
+
+#### Optional, at both switches
+
+Identities are a build feature (`identity`, on by default) as well as a flag,
+and the two promise different things.
+
+`--identity native` is the default and costs nothing at run time: the wire
+values are settled once when the session is built, so a request parses the same
+`Accept-Language` it always parsed, and with `--script` off — which is also the
+default — there is no script realm to read `navigator` from at all.
+
+Without the *feature*, the code is not in the binary. There is no identity
+module, no `Screen` interface, no `--identity` to type and no `h5i browser
+identity` to run; the engine sends the one agent string it has always sent.
+That is a claim a hardened deployment can make about the file it installed
+rather than about how someone invokes it, which is the same reason `ytdlp` is a
+feature and not just a flag.
+
+```
+cargo build --release --no-default-features \
+  --features "browser,ytdlp,web,share,runner"
+```
+
+One thing is deliberately not validated: the exit address. "A Japanese address
+with a New York time zone" is a real incoherence and not one an identity can
+see, because where a request leaves from is the egress proxy's business.
+Language is not checked against time zone either — `navigator.languages` is a
+preference, not a location, and `en-US` with `Asia/Tokyo` describes every
+English speaker in Japan.
+
 ### `read`: one page, no session
 
 ```bash

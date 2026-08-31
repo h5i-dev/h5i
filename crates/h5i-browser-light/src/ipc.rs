@@ -115,6 +115,8 @@ enum Ask {
         channel: u64,
     },
     SecretNames,
+    #[cfg(feature = "identity")]
+    Identity,
     Substitute {
         text: String,
     },
@@ -148,6 +150,8 @@ enum Said {
     Text(String),
     Flag(bool),
     Texts(Vec<String>),
+    #[cfg(feature = "identity")]
+    Identity(crate::identity::Identity),
     Resolved(Resolved),
     /// A channel id, or why there is none.
     Channel(Result<u64, String>),
@@ -229,6 +233,15 @@ pub struct BrokerClient {
     /// the same property `stream.rs` used to rely on when it read the
     /// environment once at startup so a later `setenv` could not widen it.
     has_secrets: std::sync::OnceLock<bool>,
+    /// Who this session says it is, asked once, for the same reason.
+    ///
+    /// It cannot change while the session runs: the broker takes it when it is
+    /// built and offers no operation that would replace it. Caching it here is
+    /// what keeps "one identity" true across the process split rather than
+    /// merely claimed — every realm this renderer builds answers from the one
+    /// value the broker sent, not from a constant compiled into this half.
+    #[cfg(feature = "identity")]
+    identity: std::sync::OnceLock<Arc<crate::identity::Identity>>,
 }
 
 /// End this process, from a thread that cannot assume the rest of it is well.
@@ -277,6 +290,8 @@ impl BrokerClient {
             waiting: waiting.clone(),
             gone: gone.clone(),
             has_secrets: std::sync::OnceLock::new(),
+            #[cfg(feature = "identity")]
+            identity: std::sync::OnceLock::new(),
         });
 
         let _ = std::thread::Builder::new()
@@ -589,6 +604,25 @@ impl Broker for BrokerClient {
         }
     }
 
+    /// Asked once per realm, and cached for the life of this client.
+    ///
+    /// The identity cannot change while a session runs — that is the whole
+    /// point of it — so a second ask could only ever get the same answer. The
+    /// fallback is the honest one rather than a blank: a renderer that has lost
+    /// its broker is about to stop anyway, and the alternative is a page told
+    /// it is running in a browser with no name.
+    #[cfg(feature = "identity")]
+    fn identity(&self) -> Arc<crate::identity::Identity> {
+        if let Some(known) = self.identity.get() {
+            return known.clone();
+        }
+        let answered = match self.said(Ask::Identity) {
+            Some(Said::Identity(identity)) => identity,
+            _ => crate::identity::native(),
+        };
+        self.identity.get_or_init(|| Arc::new(answered)).clone()
+    }
+
     fn substitute(&self, text: &str) -> Resolved {
         match self.said(Ask::Substitute {
             text: text.to_string(),
@@ -839,6 +873,8 @@ fn answer(
             Said::Done
         }
         Ask::SecretNames => Said::Texts(broker.secret_names()),
+        #[cfg(feature = "identity")]
+        Ask::Identity => Said::Identity((*broker.identity()).clone()),
         Ask::Substitute { text } => Said::Resolved(broker.substitute(&text)),
         Ask::Redact { text } => Said::Text(broker.redact(&text)),
         Ask::RedactAll { texts } => Said::Texts(broker.redact_all(&texts)),

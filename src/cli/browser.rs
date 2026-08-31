@@ -44,6 +44,13 @@ use h5i_core::ui::SUCCESS;
 /// says what it was waiting for and leaves the engine's own log behind.
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The identity a session presents unless one is named.
+///
+/// The honest one, and the same word the engine's own `--identity` defaults to.
+/// Two defaults that could drift would make the session record say `native`
+/// while the engine presented something else.
+pub const DEFAULT_IDENTITY: &str = "native";
+
 #[derive(Subcommand)]
 pub enum BrowserCommands {
     /// Open a URL, making a session if there is not one already.
@@ -127,6 +134,25 @@ pub enum BrowserCommands {
         #[arg(long = "secret", value_name = "NAME")]
         secrets: Vec<String>,
 
+        /// Who this session says it is: a built-in name, or a path to a TOML
+        /// file.
+        ///
+        /// One identity, read by every layer that can be asked. `native` (the
+        /// default) answers as h5i and answers truthfully. `privacy` is still
+        /// h5i with the patch version and the host's time zone pinned, so one
+        /// install stops being distinguishable from another. A `compatible`
+        /// identity claims a different browser — and the session is **refused**
+        /// if this engine cannot back everything that identity declares,
+        /// rather than started with the claim half applied.
+        ///
+        /// `h5i browser identity list` names the built-ins, and `identity
+        /// check` says what one covers, what it does not, and why it would be
+        /// refused. Nothing here promises a session is undetectable: it
+        /// promises the answers agree with each other.
+        #[cfg(feature = "identity")]
+        #[arg(long, value_name = "NAME|PATH", default_value = "native")]
+        identity: String,
+
         /// Viewport width.
         #[arg(long, default_value_t = 1280)]
         width: u32,
@@ -156,6 +182,25 @@ pub enum BrowserCommands {
         /// Print the session record as JSON instead of a summary line.
         #[arg(long)]
         json: bool,
+    },
+
+    /// List, show or check a browser identity.
+    ///
+    /// An identity is who a session says it is — on the wire and in the page,
+    /// from one source, so the two cannot disagree. `list` names the ones that
+    /// ship, `show` prints one as the TOML you would edit to make your own, and
+    /// `check` says whether this engine can stand behind it.
+    ///
+    /// `check` is the one to read before trusting an identity. It prints what
+    /// the identity reaches and, just as plainly, what it does not: the TLS
+    /// ClientHello, the HTTP/2 settings, canvas and WebGL readback, the font
+    /// set. The claim is that the answers agree with each other, never that a
+    /// session is undetectable.
+    #[cfg(feature = "identity")]
+    Identity {
+        /// `list`, `show <name>`, or `check <name>`.
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        args: Vec<String>,
     },
 
     /// Read one page, or a batch of them, and leave no session behind.
@@ -202,6 +247,15 @@ pub enum BrowserCommands {
         /// Read unconfined.
         #[arg(long)]
         no_sandbox: bool,
+
+        /// Who this read says it is: a built-in name, or a path to a TOML file.
+        ///
+        /// The same identities a session takes, and refused on the same terms:
+        /// see `h5i browser identity`. It belongs here as much as on a session
+        /// — a read is a fetch, and a fetch has an agent string.
+        #[cfg(feature = "identity")]
+        #[arg(long, value_name = "NAME|PATH", default_value = DEFAULT_IDENTITY)]
+        identity: String,
 
         #[arg(long)]
         json: bool,
@@ -768,6 +822,8 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             script,
             no_sandbox,
             secrets,
+            #[cfg(feature = "identity")]
+            identity,
             width,
             height,
             expires_in,
@@ -785,6 +841,8 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 script,
                 no_sandbox,
                 secrets,
+                #[cfg(feature = "identity")]
+                identity,
                 width,
                 height,
                 expires_in,
@@ -792,14 +850,27 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             },
             json,
         ),
+        #[cfg(feature = "identity")]
+        BrowserCommands::Identity { args } => identity(args),
         BrowserCommands::Read {
             targets,
             in_box,
             text,
             script,
             no_sandbox,
+            #[cfg(feature = "identity")]
+            identity,
             json,
-        } => read(targets, in_box, text, script, no_sandbox, json),
+        } => read(
+            targets,
+            in_box,
+            text,
+            script,
+            no_sandbox,
+            #[cfg(feature = "identity")]
+            identity,
+            json,
+        ),
         BrowserCommands::List { all, json } => list(&root, all, json),
         BrowserCommands::Status { session, json } => status(&root, session.as_deref(), json),
         BrowserCommands::Close { session, all, json } => close(&root, session.as_deref(), all, json),
@@ -1079,6 +1150,8 @@ struct StartOptions {
     script: bool,
     no_sandbox: bool,
     secrets: Vec<String>,
+    #[cfg(feature = "identity")]
+    identity: String,
     width: u32,
     height: u32,
     expires_in: Option<u64>,
@@ -1173,6 +1246,15 @@ fn creation_flags(opts: &StartOptions) -> Vec<&'static str> {
     if !opts.secrets.is_empty() {
         set.push("`--secret`");
     }
+    // Creation-only for a stronger reason than most of these. The agent string
+    // is handed to the HTTP client when the client is built, and a session that
+    // could change identity while it ran would be a browser whose user agent
+    // rotated between two requests of one page — which is louder than any value
+    // it could have rotated to.
+    #[cfg(feature = "identity")]
+    if opts.identity != DEFAULT_IDENTITY {
+        set.push("`--identity`");
+    }
     set
 }
 
@@ -1241,6 +1323,32 @@ fn start(
         Some(name) => bs::Placement::Box { name: name.clone() },
     };
 
+    // The identity, resolved and admitted before anything is spawned, for the
+    // same reason `--restore` is: a session refused after its engine started is
+    // a process to clean up and a record to explain.
+    //
+    // The engine checks it again, and that is not redundancy for its own sake.
+    // The engine is the enforcement point — it is the half that writes the
+    // headers — and this is the half that can say so in a sentence before a
+    // process exists. A `--in <box>` session's engine is behind a boundary this
+    // command cannot read an error out of at all.
+    #[cfg(feature = "identity")]
+    let identity = {
+        let identity = h5i_browser_light::identity::Identity::resolve(&opts.identity)
+            .map_err(anyhow::Error::from)?;
+        identity
+            .admit(&h5i_browser_light::Capabilities::with_script(opts.script))
+            .map_err(anyhow::Error::from)?;
+        if let Some(over) = identity.check_viewport(opts.width, opts.height) {
+            anyhow::bail!(
+                "the browser identity `{}` cannot be used at this size:\n  {over}\n\n\
+                 Open it at a size that fits, or use an identity that declares no display.",
+                identity.name
+            );
+        }
+        identity
+    };
+
     // The inheritance is resolved before anything is spawned, so a bad
     // `--restore` fails before there is a session to clean up.
     let restored_from = match &opts.restore {
@@ -1281,6 +1389,17 @@ fn start(
         }),
         storage: bs::Storage::Ephemeral,
         policy_digest: spawned.policy_digest.clone(),
+        // Empty in a build without identities, which is what those sessions
+        // are: not "presented nothing", but "not recorded" — the same thing an
+        // older record says, and what `#[serde(default)]` gives it.
+        #[cfg(feature = "identity")]
+        identity: identity.name.clone(),
+        #[cfg(not(feature = "identity"))]
+        identity: String::new(),
+        #[cfg(feature = "identity")]
+        identity_digest: identity.digest(),
+        #[cfg(not(feature = "identity"))]
+        identity_digest: String::new(),
         restored_from,
         state: bs::State::Live,
         ended_at: None,
@@ -2010,6 +2129,14 @@ fn net_args(opts: &StartOptions) -> Vec<String> {
     if opts.no_loopback {
         argv.push("--no-loopback".into());
     }
+    // Passed always rather than only when it differs from the default, because
+    // the engine's default and h5i's have to be the same word for the record to
+    // mean anything, and passing it is what makes that checkable.
+    #[cfg(feature = "identity")]
+    {
+        argv.push("--identity".into());
+        argv.push(opts.identity.clone());
+    }
     argv
 }
 
@@ -2584,6 +2711,32 @@ fn refusal(answer: &Value) -> String {
         .to_string()
 }
 
+/// `h5i browser identity ...`, answered by the engine.
+///
+/// Carried to the engine rather than answered here, and that is not indirection
+/// for its own sake: the engine is the half that presents an identity and the
+/// half that refuses one, so it is the half that should say what it can back.
+/// A second implementation in this crate would be a second opinion, and the
+/// only interesting question `check` answers — "would this be refused?" — is
+/// one only the refusing component can answer without guessing.
+///
+/// No session and no sandbox: this reads a table and prints it.
+#[cfg(feature = "identity")]
+fn identity(args: Vec<String>) -> anyhow::Result<()> {
+    let status = Command::new(engine_binary()?)
+        .arg(ENGINE_SUBCOMMAND)
+        .arg("identity")
+        .args(&args)
+        .stdin(Stdio::null())
+        .status()?;
+    if !status.success() {
+        // The engine has already said why, on its own stderr. Adding a sentence
+        // here would be this command's opinion about an answer it did not form.
+        std::process::exit(status.code().unwrap_or(1));
+    }
+    Ok(())
+}
+
 /// Carry a verb to wherever the session actually is.
 fn deliver(session: &bs::Session, dir: &Path, argv: Vec<String>) -> anyhow::Result<Value> {
     let output = match &session.placement {
@@ -2687,6 +2840,7 @@ fn read(
     text: bool,
     script: bool,
     no_sandbox: bool,
+    #[cfg(feature = "identity")] identity: String,
     json: bool,
 ) -> anyhow::Result<()> {
     let mut engine_args: Vec<String> = vec![ENGINE_SUBCOMMAND.into(), "open".into()];
@@ -2703,6 +2857,13 @@ fn read(
     }
     if json {
         engine_args.push("--json".into());
+    }
+    // Always, not only when it differs: the engine's default and h5i's have to
+    // be the same word, and passing it is what makes that checkable.
+    #[cfg(feature = "identity")]
+    {
+        engine_args.push("--identity".into());
+        engine_args.push(identity);
     }
 
     if let Some(name) = &in_box {

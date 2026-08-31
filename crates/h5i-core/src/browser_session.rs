@@ -328,6 +328,23 @@ pub struct Session {
     /// The policy this session runs under, digested. Two sessions with the same
     /// digest were allowed the same things.
     pub policy_digest: String,
+    /// Who this session presented itself as, and the digest of everything that
+    /// identity declared.
+    ///
+    /// Two fields rather than one for the reason the policy has a digest and a
+    /// name: the name is what someone typed and can be reused, the digest is
+    /// what was actually presented and cannot. A session opened with a hand
+    /// written identity file names a path that may have been edited since, so
+    /// the digest is the half an audit can rely on — two sessions with the same
+    /// one showed the same browser to the same server.
+    ///
+    /// `#[serde(default)]` on both, so a record written before identities
+    /// existed still reads. An empty digest is "not recorded", which is what
+    /// those sessions are, rather than a claim that they presented nothing.
+    #[serde(default)]
+    pub identity: String,
+    #[serde(default)]
+    pub identity_digest: String,
     /// The session whose storage seeded this one, if any. A restore is a new
     /// session with a new id and an inheritance recorded, never a resurrection.
     pub restored_from: Option<String>,
@@ -1481,6 +1498,8 @@ mod tests {
             expires_at: None,
             storage: Storage::Ephemeral,
             policy_digest: "sha256:test".into(),
+            identity: "native".into(),
+            identity_digest: "test".into(),
             restored_from: None,
             state: State::Live,
             ended_at: None,
