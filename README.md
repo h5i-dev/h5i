@@ -24,11 +24,11 @@
     </td>
     <td align="center">
       <strong>~86% less peak memory</strong><br>
-      <sub><a href="./crates/h5i-browser-light/DESIGN.md">In our benchmarks</a></sub>
+      <sub><a href="./docs/design-browser.md">In our benchmarks</a></sub>
     </td>
     <td align="center">
       <strong>~3× faster reads</strong><br>
-      <sub><a href="./crates/h5i-browser-light/DESIGN.md">In our benchmarks</a></sub>
+      <sub><a href="./docs/design-browser.md">In our benchmarks</a></sub>
     </td>
     <td align="center">
       <strong>Sandboxed & auditable</strong><br>

@@ -3559,7 +3559,7 @@ should stay written down.
 
 # The browser engine: the build log, B1 to B22
 
-Sections B1 to B22, 2026-08-09 to 2026-08-28. `design-browser-engine.md` carries
+Sections B1 to B22, 2026-08-09 to 2026-08-28. `design-browser.md` carries
 the engine's current state, the decisions that still govern it and the open
 work. This is the
 record of how it got there: the corpus runs, the WPT campaigns, the reference

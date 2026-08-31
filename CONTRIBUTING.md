@@ -200,7 +200,7 @@ Update documentation in the same change as the behavior.
 - `ROADMAP.md`: scope. What is in, what was cut, and why. Short on purpose; it
   is meant to be read in one sitting.
 - `docs/design-*.md`: the design behind each part, one file per part
-  (`design-browser-engine.md`, `design-policy.md`, `design-runner.md`,
+  (`design-browser.md`, `design-policy.md`, `design-runner.md`,
   `design-detect.md`). Live code cites their section numbers, so a section that
   moves needs its citations moved with it.
 - `docs/`: website content, guides, features and static assets.

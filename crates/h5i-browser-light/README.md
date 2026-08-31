@@ -176,7 +176,7 @@ holds, and anything a page reflects back is scrubbed on the way out.
 
 For a flow the engine cannot drive, `session login` hands the page to a human and
 refuses every read until they end it. It does not withhold frames, and
-[says so](DESIGN.md#logging-in) rather than implying otherwise.
+[says so](../../docs/design-browser.md#logging-in) rather than implying otherwise.
 
 #### Live connections
 
@@ -246,7 +246,8 @@ make it h5i's.
 
 ## More
 
-- [DESIGN.md](DESIGN.md): why the engine is shaped this way, and what each shape
+- [docs/design-browser.md](../../docs/design-browser.md): why the engine is
+  shaped this way, and what each shape
   cost: the CONNECT-gate argument, the cookie narrowings, the settle loop, the
   fence's tested property, and the measurements with their caveats.
 - [docs/roadmap-history.md](../../docs/roadmap-history.md): §12 and §B1 to §B15 are the authority on scope

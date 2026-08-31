@@ -2146,8 +2146,8 @@ a runner, which is the point.
 - `clone:` and `--new` sources. Those build their repository inside the box;
   sending one across belongs with a later milestone.
 
-The design, including what is deliberately deferred and why, is ROADMAP.md
-sections R1 to R13.
+The design, including what is deliberately deferred and why, is
+`docs/design-runner.md` sections R1 to R13.
 
 ### Unpairing
 
@@ -2686,4 +2686,6 @@ Read these to detect that you are in one; do not set them yourself.
 - `man h5i`: the terse CLI reference
 - [`skills/h5i/`](skills/h5i/): the agent-facing skill (`h5i skill show`)
 - [`ROADMAP.md`](ROADMAP.md): what is built and what is not
+- [`docs/`](docs/): the design behind each part (`design-browser.md`,
+  `design-policy.md`, `design-runner.md`, `design-detect.md`)
 - [`SECURITY.md`](SECURITY.md): reporting a vulnerability

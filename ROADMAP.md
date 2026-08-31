@@ -22,7 +22,7 @@ essential to this one.
 
 | part | status | design |
 | --- | --- | --- |
-| browser engine | shipped. WPT core tier 75.7%; a production React build is not cleared | [`docs/design-browser-engine.md`](docs/design-browser-engine.md) |
+| browser engine | shipped. WPT core tier 75.7%; a production React build is not cleared | [`docs/design-browser.md`](docs/design-browser.md) |
 | policy resolution | shipped, P1 to P4. The authority validator is opt-in | [`docs/design-policy.md`](docs/design-policy.md) |
 | remote runner | R13.1 built. R13.2 to R13.4 are not | [`docs/design-runner.md`](docs/design-runner.md) |
 | runtime detection | built 2026-08-19, off by default at three layers | [`docs/design-detect.md`](docs/design-detect.md) |
@@ -48,7 +48,7 @@ essential to this one.
    that enforce an egress allowlist on Linux, so today only `microvm` does both.
    This is what makes the central claim reachable on an ordinary Linux box.
 2. WPT core tier to 80%. The next ~5,000 subtests are measured and ranked in
-   [`docs/design-browser-engine.md`](docs/design-browser-engine.md) B1.
+   [`docs/design-browser.md`](docs/design-browser.md) B1.
 3. R13.2 to R13.4: remote create, exec and export against a paired runner.
    The design is settled; see [`docs/design-runner.md`](docs/design-runner.md).
 4. More than one session per box. Needs per-session service names and stream
@@ -62,7 +62,7 @@ than re-argued.
 - The browser will never grow tabs, extensions, Service Workers, WebRTC, iframes
   or two dozen other surfaces. The full list, and what is simplified rather than
   absent, is B4 in
-  [`docs/design-browser-engine.md`](docs/design-browser-engine.md).
+  [`docs/design-browser.md`](docs/design-browser.md).
 - No vendored engine crates, by owner decision on 2026-08-28 (B4).
 - The runtime detector never denies anything: no `bpf_send_signal`, no LSM
   programs, no daemon, no privilege escalation of its own (D12 in
@@ -78,7 +78,7 @@ of it whether you need the rest.
 
 | prefix | file | what it covers |
 | --- | --- | --- |
-| B1 to B5 | `docs/design-browser-engine.md` | the engine, the session surface, and what it is not |
+| B1 to B5 | `docs/design-browser.md` | the engine, the session surface, and what it is not |
 | P1 to P4 | `docs/design-policy.md` | resolution, the authority validator, mount realization |
 | R1 to R13 | `docs/design-runner.md` | placement, transport, the frame protocol, export |
 | D1 to D14 | `docs/design-detect.md` | the kernel-observed lane |
