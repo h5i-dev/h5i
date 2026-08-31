@@ -104,6 +104,21 @@ h5i browser open https://example.com/      --session public --new
 h5i browser snapshot --session auth
 ```
 
+Read what the page's media says:
+
+```bash
+h5i browser transcript --url https://example.com/talk --lang en                     # captions from <track>
+h5i browser transcript --via yt-dlp --url https://www.youtube.com/watch?v=VIDEO_ID  # captions from YouTube and other sites
+```
+
+Choose a coherent browser identity for stealth-mode browsing:
+
+```bash
+h5i browser open https://example.com --identity privacy                      # h5i with its exact version hidden and time zone set to UTC
+h5i browser open https://example.com --script --identity firefox-143-linux   # Firefox 143 on Linux
+h5i browser open https://example.com --script --identity ./my-identity.toml  # custom identity from TOML
+```
+
 Read the record:
 
 ```bash
