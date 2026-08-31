@@ -1,6 +1,6 @@
 //! h5i remote runner. A box on a machine that is not this one.
 //!
-//! ROADMAP R1 to R13 carry the design. Four decisions govern the code:
+//! design-runner.md R1 to R13 carry the design. Four decisions govern the code:
 //!
 //! - Placement is an axis, not a tier (R1). A runner requires Linux and this
 //!   protocol; isolation tiers, a container runtime, memory, storage,

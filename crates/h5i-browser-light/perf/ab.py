@@ -1,13 +1,13 @@
 """Time the same pages through two engine binaries, and say whether the
 difference is real.
 
-ROADMAP §B15.12b. `examples/perf.rs` measures phases inside one build; this
-measures whole page loads across two, which is the only way to check that a
-saving on paper reaches a person waiting for a page.
+roadmap-history.md §B15.12b. `examples/perf.rs` measures phases inside one
+build; this measures whole page loads across two, which is the only way to check
+that a saving on paper reaches a person waiting for a page.
 
     cargo build --release -p h5i        # the "after" binary
-    git stash && cargo build --release -p h5i && cp target/release/h5i /tmp/before
-    python3 perf/ab.py /tmp/before target/release/h5i
+    git stash && cargo build --release -p h5i && cp target/release/h5i
+    /tmp/before python3 perf/ab.py /tmp/before target/release/h5i
 
     python3 perf/ab.py A B --fast --reps 20   # the pages fast enough to resolve
     python3 perf/ab.py A B --ceiling-ms 82    # the largest effect that is possible
@@ -15,10 +15,10 @@ saving on paper reaches a person waiting for a page.
 **Read the ceiling first.** A change that hides a 67 ms compile cannot save more
 than 67 ms. If the measured median comes out well above `--ceiling-ms`, the
 instrument is wrong, not the engine, and the honest move is to find the bias
-rather than to report the number. This is not hypothetical: the first run of this
-comparison said 171 ms against a 67 ms mechanism, because `before` and `after`
-ran back to back on the same URL and the second inherited warm DNS, a resumable
-TLS session and a warm CDN. Hence `--reps` alternating the order below.
+rather than to report the number. This is not hypothetical: the first run of
+this comparison said 171 ms against a 67 ms mechanism, because `before` and
+`after` ran back to back on the same URL and the second inherited warm DNS, a
+resumable TLS session and a warm CDN. Hence `--reps` alternating the order below.
 
 **Pick pages that can show the effect.** The default eight span 0.9 to 39
 seconds and swing by hundreds of milliseconds; a 67 ms signal is not resolvable
@@ -124,8 +124,8 @@ def report(rows, urls, ceiling_ms):
     lo, hi = bootstrap_ci(paired)
 
     print(f"\n{n} paired runs")
-    print(f"  after faster in {pos}/{n}   sign test p = {binom_tail(pos, n):.2g}")
-    print(f"  median delta {med:+.0f} ms   95% bootstrap CI [{lo:+.0f}, {hi:+.0f}] ms")
+    print(f"  after faster in {pos}/{n}   sign test p = {binom_tail(pos,
+    n):.2g}") print(f"  median delta {med:+.0f} ms   95% bootstrap CI [{lo:+.0f}, {hi:+.0f}] ms")
     print(f"  ceiling (the most the change could save) {ceiling_ms:+.0f} ms")
 
     p = binom_tail(pos, n)

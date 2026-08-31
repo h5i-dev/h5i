@@ -1,8 +1,7 @@
 //! The control-plane side: opening a channel, shaking hands, asking one thing.
-//!
-//! Every method here is one channel and one RPC (ROADMAP.md R4), and each starts
-//! by proving the peer is there before it starts the longer clock for the
-//! request. That is the two-clock discipline R5 asks for, made real by
+//! Every method here is one channel and one RPC (design-runner.md R4), and each
+//! starts by proving the peer is there before it starts the longer clock for
+//! the request. That is the two-clock discipline R5 asks for, made real by
 //! [`Channel::rearm`] rather than asserted: a peer that never answers the
 //! handshake is killed in seconds, and a peer that answers and then takes a
 //! while is given the time the work needs.
@@ -43,9 +42,9 @@ pub enum ClientError {
     TimedOut { what: String },
 
     /// The worker enforced a policy that is not the one this side resolved.
-    ///
     /// Cheap to check and worth checking: it turns "the runner silently ran an
-    /// older policy" from a possibility into a detected fault (ROADMAP.md R7).
+    /// older policy" from a possibility into a detected fault (design-runner.md
+    /// R7).
     #[error(
         "the runner built the box under a different policy than the one resolved here — \
          expected {expected}, it enforced {enforced}. The box was not accepted."
@@ -139,15 +138,13 @@ impl Client {
     }
 
     /// Make a box on the runner.
-    ///
     /// `bundle` is `None` for an empty source. When it is `Some`, its bytes go
-    /// out as `DATA` frames after the request and before `DATA_DONE`, on the same
-    /// channel, so the transfer is part of this RPC rather than a second one that
-    /// could arrive without it.
-    ///
-    /// The policy digest the worker echoes is checked here, not merely logged: it
-    /// is the one thing that says the box was built under the policy this side
-    /// resolved (ROADMAP.md R7).
+    /// out as `DATA` frames after the request and before `DATA_DONE`, on the
+    /// same channel, so the transfer is part of this RPC rather than a second
+    /// one that could arrive without it.
+    /// The policy digest the worker echoes is checked here, not merely logged:
+    /// it is the one thing that says the box was built under the policy this
+    /// side resolved (design-runner.md R7).
     pub fn create(
         &self,
         request: &CreateRequest,

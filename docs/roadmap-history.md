@@ -3559,8 +3559,9 @@ should stay written down.
 
 # The browser engine: the build log, B1 to B22
 
-Sections B1 to B22, 2026-08-09 to 2026-08-28. `ROADMAP.md` carries the engine's
-current state, the decisions that still govern it and the open work. This is the
+Sections B1 to B22, 2026-08-09 to 2026-08-28. `design-browser-engine.md` carries
+the engine's current state, the decisions that still govern it and the open
+work. This is the
 record of how it got there: the corpus runs, the WPT campaigns, the reference
 engines that were read, and the reversals. Live code cites these numbers, so
 they keep their identifiers.
@@ -8932,8 +8933,8 @@ branch a single run said something that seven runs did not.**
 # Build logs: the remote runner and the detection lane
 
 R13 and D14, the step-by-step orders with their "Built" annotations.
-`ROADMAP.md` keeps the design sections (R1 to R12b, D1 to D13); this is
-the record of the work landing.
+`design-runner.md` and `design-detect.md` keep the design sections (R1 to R12b,
+D1 to D13); this is the record of the work landing.
 
 ## R13. The order
 
@@ -9253,7 +9254,7 @@ diagnosable rather than surprising:
 
 # The remote runner: the adversarial review, 2026-08-17
 
-The round-by-round record. `ROADMAP.md` R12b keeps the four rules that
+The round-by-round record. `design-runner.md` R12b keeps the four rules that
 came out of it and now govern the code.
 
 ## R12b. What an adversarial review of the built code found
@@ -9322,7 +9323,8 @@ system, and the second does not subsume the first.
 
 # Related work, read in full
 
-The surveys behind `ROADMAP.md` R2 and D3. The decisions they produced live
+The surveys behind `design-runner.md` R2 and `design-detect.md` D3. The
+decisions they produced live
 there; this is what was read.
 
 ## The remote runner: E2B and bhatti

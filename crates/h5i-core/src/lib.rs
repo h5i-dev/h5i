@@ -13,9 +13,10 @@ pub mod control;
 pub mod env;
 pub mod export;
 /// Where a box runs: the trait the lifecycle engine uses to place one on
-/// another machine, with no transport in it (ROADMAP.md R1, R7).
+/// another machine, with no transport in it (design-runner.md R1, R7).
 pub mod placement;
-/// Taking a tree from a machine we agreed might be compromised (ROADMAP.md R9).
+/// Taking a tree from a machine we agreed might be compromised
+/// (design-runner.md R9).
 pub mod quarantine;
 pub mod receipt;
 pub mod redact;
@@ -52,17 +53,17 @@ pub use h5i_sandbox::{
 // on macOS/other targets in the cross-check job.
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub use h5i_sandbox::seccomp_notify;
-/// The kernel tiers' effective-config dump (ROADMAP.md §P1). Linux only.
+/// The kernel tiers' effective-config dump (design-policy.md §P1). Linux only.
 #[cfg(target_os = "linux")]
 pub use h5i_sandbox::effective;
-/// The filesystem-authority validator (ROADMAP.md §P2).
+/// The filesystem-authority validator (design-policy.md §P2).
 pub use h5i_sandbox::fs_authority;
 /// The macOS Seatbelt backend. Compiled on every Unix target so its pure
 /// SBPL generator is testable from the Linux job.
 #[cfg(unix)]
 pub use h5i_sandbox::seatbelt;
-/// The runtime-detection lane (ROADMAP.md D1–D14). Re-exported unconditionally,
-/// every build has to be able to read a receipt written by one that had the
-/// collector, while the collector itself is behind this crate's `bpf`
-/// feature.
+/// The runtime-detection lane (design-detect.md D1–D14). Re-exported
+/// unconditionally, every build has to be able to read a receipt written by one
+/// that had the collector, while the collector itself is behind this crate's
+/// `bpf` feature.
 pub use h5i_bpf as bpf;

@@ -249,7 +249,7 @@ make it h5i's.
 - [DESIGN.md](DESIGN.md): why the engine is shaped this way, and what each shape
   cost: the CONNECT-gate argument, the cookie narrowings, the settle loop, the
   fence's tested property, and the measurements with their caveats.
-- [ROADMAP.md](../../ROADMAP.md): §12 and §B1 to §B15 are the authority on scope
+- [docs/roadmap-history.md](../../docs/roadmap-history.md): §12 and §B1 to §B15 are the authority on scope
   and order.
 - `h5i browser --help` is the authoritative flag reference; `h5i __engine --help`
   is the engine's own.

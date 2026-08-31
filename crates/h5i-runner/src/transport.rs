@@ -1,18 +1,16 @@
 //! How the frames get there.
-//!
 //! A [`Transport`] is a *factory*, not a connection: `connect()` opens one
-//! [`Channel`] and one channel carries one RPC (ROADMAP.md R4). That is the
-//! whole reason this protocol needs no request ids, no channel numbers and no
-//! multiplexer. Concurrency is several channels, and over SSH those are several
-//! sessions on one TCP connection, multiplexed by OpenSSH's ControlMaster in
-//! battle-tested C rather than by us.
-//!
+//! [`Channel`] and one channel carries one RPC (design-runner.md R4). That is
+//! the whole reason this protocol needs no request ids, no channel numbers and
+//! no multiplexer. Concurrency is several channels, and over SSH those are
+//! several sessions on one TCP connection, multiplexed by OpenSSH's
+//! ControlMaster in battle-tested C rather than by us.
 //! Both implementations are the same mechanism: spawn a child, speak frames on
 //! its stdin and stdout, read its stderr for diagnosis. [`SshTransport`] puts
 //! `ssh` in front of the worker; [`ChildProcessTransport`] runs the worker
-//! directly, which makes the whole protocol testable in CI with no sshd. Because
-//! the difference is only argv, the argv is built by pure functions a test can
-//! read without spawning anything.
+//! directly, which makes the whole protocol testable in CI with no sshd.
+//! Because the difference is only argv, the argv is built by pure functions a
+//! test can read without spawning anything.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -198,12 +196,12 @@ impl Channel {
     }
 
     /// Start a new clock for the next phase of this exchange.
-    ///
     /// This is what makes the handshake clock and the request clock genuinely
-    /// separate rather than nominally so (ROADMAP.md R5): a channel opens under a
-    /// short deadline covering connect and handshake, and the caller re-arms for
-    /// the longer request once the peer has proved it is there. A phase that has
-    /// already timed out cannot be re-armed, the child being dead.
+    /// separate rather than nominally so (design-runner.md R5): a channel opens
+    /// under a short deadline covering connect and handshake, and the caller
+    /// re-arms for the longer request once the peer has proved it is there. A
+    /// phase that has already timed out cannot be re-armed, the child being
+    /// dead.
     pub fn rearm(&mut self, after: Duration) {
         if self.timed_out.load(Ordering::SeqCst) {
             return;
@@ -288,18 +286,16 @@ impl Channel {
 }
 
 /// Kills a channel's child if the exchange outlives its deadline.
-///
 /// The clock has to live somewhere, and a pipe has no read timeout. Killing the
 /// child turns "the peer stopped talking" into an ordinary end of stream, which
 /// every reader above already handles, so the deadline needs no special case
 /// anywhere else.
-///
 /// It kills the child, not a process group. A reader unblocks when the last
 /// holder of the write end of the pipe closes it, so if the child had left a
-/// grandchild holding that end, the read would keep blocking past the kill. Both
-/// transports here are single-process by construction, so the kill is
-/// sufficient. A transport that ever spawns a shell wrapper would need the child
-/// in its own process group.
+/// grandchild holding that end, the read would keep blocking past the kill.
+/// Both transports here are single-process by construction, so the kill is
+/// sufficient. A transport that ever spawns a shell wrapper would need the
+/// child in its own process group.
 struct Watchdog {
     disarm: mpsc::Sender<()>,
 }
@@ -327,7 +323,7 @@ impl Watchdog {
 
 /// How long an exchange may take before the watchdog ends it.
 ///
-/// Three clocks, never one (ROADMAP.md R5): this is the outer one. The
+/// Three clocks, never one (design-runner.md R5): this is the outer one. The
 /// handshake clock and the idle clock live in [`crate::client`], where there is
 /// something to be idle *about*.
 #[derive(Debug, Clone, Copy)]
@@ -335,8 +331,8 @@ pub struct Deadlines {
     /// Connect plus handshake: the peer proving it is there and speaks this
     /// protocol. Short, because everything it covers is either fast or broken.
     pub handshake: Duration,
-    /// One request and its answer, once the peer has proved it is there. Re-armed
-    /// by [`Channel::rearm`] after the handshake lands.
+    /// One request and its answer, once the peer has proved it is there.
+    /// Re-armed by [`Channel::rearm`] after the handshake lands.
     pub control: Duration,
 }
 
@@ -389,21 +385,21 @@ impl SshTransport {
     /// The whole argv, as a pure function of the configuration.
     ///
     /// Every option here matters, and none of it comes from the user's
-    /// `~/.ssh/config`, because a runner's security property must not depend on a
-    /// file this code did not write.
+    /// `~/.ssh/config`, because a runner's security property must not depend on
+    /// a file this code did not write.
     ///
-    /// That last sentence used to be false, which is why it is now enforced by `-F
-    /// /dev/null` rather than asserted by a comment. Passing `-o` does not stop ssh
-    /// reading the config: it stops the config winning *for the options named*.
-    /// `GlobalKnownHostsFile` was not named, ssh consults both host-key files, and a
-    /// `~/.ssh/config` setting it alongside a `ProxyCommand` sent every RPC to
-    /// another machine with `StrictHostKeyChecking=yes` and the pinned
-    /// `UserKnownHostsFile` both still in force, while `runner list` went on showing
-    /// the honestly paired fingerprint. That breaks the attestation, not merely the
-    /// transport: `runner_id` is what a manifest and a receipt record.
+    /// That last sentence used to be false, which is why it is now enforced by
+    /// `-F /dev/null` rather than asserted by a comment. Passing `-o` does not
+    /// stop ssh reading the config: it stops the config winning *for the
+    /// options named*. `GlobalKnownHostsFile` was not named, ssh consults both
+    /// host-key files, and a `~/.ssh/config` setting it alongside a
+    /// `ProxyCommand` sent every RPC to another machine with
+    /// `StrictHostKeyChecking=yes` and the pinned `UserKnownHostsFile` both
+    /// still in force, while `runner list` went on showing the honestly paired
+    /// fingerprint. That breaks the attestation, not merely the transport: `runner_id` is what a manifest and a receipt record.
     ///
-    /// The cost is real and worth naming: a user's `ProxyJump` for this host is not
-    /// picked up either. A runner that needs one should carry it in its own record.
+    /// The cost is real and worth naming: a user's `ProxyJump` for this host is
+    /// not picked up either. A runner that needs one should carry it in its own record.
     ///
     /// - `BatchMode=yes`: never prompt. A prompt on a non-interactive channel is a
     ///   hang, and a password prompt would mean the pair key is not being used.

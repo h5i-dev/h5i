@@ -8,7 +8,7 @@
 //! before the payload is spawned, so the payload's own `execve` is the first
 //! thing it sees, and stopped when the run returns. Nothing survives it: the
 //! programs are detached when the [`aya::Ebpf`] is dropped, and there is no
-//! daemon and no pinning anywhere in this file (ROADMAP.md D12).
+//! daemon and no pinning anywhere in this file (design-detect.md D12).
 
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
@@ -84,7 +84,7 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
 
 /// Tracepoints whose *scheduler* field offsets the probe hardcodes, and what
 /// it believes they are. Checked against the kernel's own `format` file when
-/// tracefs is readable (ROADMAP.md D5).
+/// tracefs is readable (design-detect.md D5).
 type FieldLayout = (&'static str, usize, usize);
 
 const SCHED_FIELDS: &[(&str, &[FieldLayout])] = &[
@@ -307,8 +307,8 @@ fn drain(ring: &mut RingBuf<MapData>, out: &mut Collected) {
     while let Some(item) = ring.next() {
         match Event::decode(&item) {
             Ok(mut ev) => {
-                // The probe cannot report a parent (ROADMAP.md D5); the fold
-                // has been watching forks and can.
+                // The probe cannot report a parent (design-detect.md D5); the
+                // fold has been watching forks and can.
                 if ev.kind != EventKind::Fork
                     && let Some(p) = out.engine.parent_of(ev.tid)
                 {
@@ -471,14 +471,13 @@ fn attach_all(ebpf: &mut Ebpf) -> Result<(), String> {
 }
 
 /// Hold the kernel to the field offsets the probe assumes.
-///
 /// The syscall-entry layout is fixed ABI and the scheduler tracepoints publish
 /// theirs, so this is a check rather than a discovery. Best effort in one
-/// direction only: tracefs is usually root-only, and an unreadable `format` file
-/// leaves the assumption unverified and the load proceeding, but a `format` file
-/// that is readable and disagrees is a hard refusal, because silently reading
-/// the wrong four bytes of a fork event is how a scope quietly stops tracking
-/// anything.
+/// direction only: tracefs is usually root-only, and an unreadable `format`
+/// file leaves the assumption unverified and the load proceeding, but a
+/// `format` file that is readable and disagrees is a hard refusal, because
+/// silently reading the wrong four bytes of a fork event is how a scope quietly
+/// stops tracking anything.
 fn verify_tracepoint_layout() -> Result<(), String> {
     for (name, fields) in SCHED_FIELDS {
         let Some(text) = read_format("sched", name) else {

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Does the engine crash, panic, or hang on a large corpus of real pages?
 
-ROADMAP §B19.4, item 7. This is the one instrument in that section with no
-substitute here, and the reason is a matter of scale rather than of kind:
+roadmap-history.md §B19.4, item 7. This is the one instrument in that section
+with no substitute here, and the reason is a matter of scale rather than of kind:
 
   * `tests/corpus.rs` holds hand-written reductions of things the network
     corpus already found, so by construction it can only contain regressions of
@@ -137,8 +137,8 @@ def classify(done, timed_out, killed_hard):
         if REFUSAL.search(stderr):
             return "REFUSED", "the main document was denied by policy"
         note = next(
-            (l for l in stderr.strip().splitlines() if l.strip() and "ICU4X" not in l),
-            "",
+            (l for l in stderr.strip().splitlines() if l.strip() and "ICU4X" not
+            in l), "",
         )
         return "THIN", note.strip()[:200] or f"exit {done.returncode}"
 
@@ -249,8 +249,8 @@ def links_of(binary, url):
     """
     cmd = harness.instrument_argv(binary, "open", url, "--json", "--script")
     try:
-        done = subprocess.run(cmd, capture_output=True, text=True, timeout=SOFT_DEADLINE)
-        payload = json.loads(done.stdout)
+        done = subprocess.run(cmd, capture_output=True, text=True,
+        timeout=SOFT_DEADLINE) payload = json.loads(done.stdout)
     except Exception:
         return []
     out, seen = [], set()
@@ -323,8 +323,8 @@ def report(results):
         # passed the instrument grant means something is wrong with the *run*,
         # not with the engine.
         print(
-            f"\n  note: {counts['REFUSED']} main document(s) were denied by policy. "
-            f"With {harness.ENGINE_GRANT} that should be zero — check the grant "
+            f"\n  note: {counts['REFUSED']} main document(s) were denied by policy.
+            " f"With {harness.ENGINE_GRANT} that should be zero — check the grant "
             "reached the engine."
         )
     return 1 if bugs else 0
@@ -379,8 +379,8 @@ def main():
                     "engine": binary,
                     "grant": harness.ENGINE_GRANT,
                     "urls": len(results),
-                    "counts": dict(collections.Counter(r["class"] for r in results)),
-                    "results": results,
+                    "counts": dict(collections.Counter(r["class"] for r in
+                    results)), "results": results,
                 },
                 indent=2,
             )

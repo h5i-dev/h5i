@@ -3,24 +3,24 @@
 //! Pure, in the sense that matters: no I/O, no clock, no privileges, no kernel.
 //! [`Engine::observe`] is a fold over events and [`Engine::finish`] reads the
 //! accumulator out. That is not tidiness for its own sake: it is the only way
-//! this layer can be tested at all, because attaching a probe needs capabilities
-//! no CI runner grants, and a detection engine nobody can test is one nobody
-//! should believe.
+//! this layer can be tested at all, because attaching a probe needs
+//! capabilities no CI runner grants, and a detection engine nobody can test is
+//! one nobody should believe.
 //!
-//! The split is the one Tracee draws (ROADMAP.md D3): the collector below knows
-//! about syscalls and nothing about meaning; this layer knows about meaning and
-//! has never seen a ring buffer.
+//! The split is the one Tracee draws (design-detect.md D3): the collector below
+//! knows about syscalls and nothing about meaning; this layer knows about
+//! meaning and has never seen a ring buffer.
 //!
 //! ## What a rule is allowed to claim
 //!
-//! Every path in an event is a string a process passed to a syscall, captured at
-//! `sys_enter`. It is not the kernel's resolution of that string: symlinks are
-//! unfollowed, `..` is unresolved, a relative path is relative to a directory fd
-//! this probe does not know, and in principle the bytes can change between the
-//! read and the kernel's use of them. So a path-matching rule is a heuristic
-//! over caller-supplied strings and is documented as one (ROADMAP.md D13.3).
-//! That is the price of a CO-RE-free probe, and the right price for an
-//! observation-only lane.
+//! Every path in an event is a string a process passed to a syscall, captured
+//! at `sys_enter`. It is not the kernel's resolution of that string: symlinks
+//! are unfollowed, `..` is unresolved, a relative path is relative to a
+//! directory fd this probe does not know, and in principle the bytes can change
+//! between the read and the kernel's use of them. So a path-matching rule is a
+//! heuristic over caller-supplied strings and is documented as one
+//! (design-detect.md D13.3). That is the price of a CO-RE-free probe, and the
+//! right price for an observation-only lane.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -303,8 +303,8 @@ pub struct Engine {
     /// `exec.memfd`.
     memfd_pending: HashSet<u32>,
     /// Parent of each pid, learned from `Fork`. The probe cannot supply it
-    /// (ROADMAP.md D5), and lineage is what most of the interesting questions
-    /// are actually about.
+    /// (design-detect.md D5), and lineage is what most of the interesting
+    /// questions are actually about.
     parents: BTreeMap<u32, u32>,
     seen: u64,
 }

@@ -6,7 +6,7 @@
 //! declines to cooperate. This lane is neither: the kernel reports `execve`,
 //! `connect` and `openat` whether or not the box wanted them reported.
 //!
-//! ROADMAP D1 to D14 carry the design and the limits. Three belong here:
+//! design-detect.md D1 to D14 carry the design and limits. Three belong here:
 //!
 //! * It cannot deny anything. No `bpf_send_signal`, no `bpf_override_return`, no
 //!   LSM programs. Denial belongs to the mechanisms that fail closed by

@@ -28,9 +28,9 @@ sys.path.insert(0, os.path.dirname(HERE))
 import harness  # noqa: E402
 
 PAGES = [
-    ("a documentation page", "https://doc.rust-lang.org/book/ch01-00-getting-started.html"),
-    ("a reference page", "https://developer.mozilla.org/en-US/docs/Web/API/fetch"),
-    ("a wiki article", "https://en.wikipedia.org/wiki/Kelp"),
+    ("a documentation page",
+    "https://doc.rust-lang.org/book/ch01-00-getting-started.html"), ("a reference
+    page", "https://developer.mozilla.org/en-US/docs/Web/API/fetch"), ("a wiki article", "https://en.wikipedia.org/wiki/Kelp"),
     ("a news front page", "https://news.ycombinator.com/"),
     ("a single-page app", "https://todomvc.com/examples/react/dist/"),
     ("a framework docs site", "https://vuejs.org/guide/introduction.html"),
@@ -39,7 +39,7 @@ PAGES = [
 # Chromium is given no allowlist at all, so this engine must not be given a
 # narrow one: a comparison in which one side is refused half its subresources
 # is measuring the harness. `harness.ENGINE_GRANT` is the mode that makes the
-# two sides answerable to the same question (ROADMAP §B19.5).
+# two sides answerable to the same question (roadmap-history.md §B19.5).
 
 
 def tree_rss_kib(root_pid):
@@ -115,8 +115,8 @@ def main():
                     )
                 else:
                     cmd = [
-                        args.chrome, "--headless", "--disable-gpu", "--no-sandbox",
-                        f"--user-data-dir={profile}", "--dump-dom", url,
+                        args.chrome, "--headless", "--disable-gpu",
+                        "--no-sandbox", f"--user-data-dir={profile}", "--dump-dom", url,
                     ]
                 out, wall, peak = measure(cmd)
                 if out is None:
@@ -133,19 +133,19 @@ def main():
                 if best is None or peak < best[1]:
                     best = (wall, peak, got)
             if best is None:
-                print(f"{label:<26}{engine:<10}{'—':>11}{'timeout':>9}   failed")
-                rows.append({"page": label, "engine": engine, "failed": True})
+                print(f"{label:<26}{engine:<10}{'—':>11}{'timeout':>9}  
+                failed") rows.append({"page": label, "engine": engine, "failed": True})
                 continue
             wall, peak, got = best
             unit = "lines" if engine == "h5i" else "tags"
-            print(f"{label:<26}{engine:<10}{peak/1024:>8.0f} MiB{wall:>8.1f}s   {got} {unit}")
-            rows.append({"page": label, "engine": engine, "rss_mib": round(peak / 1024, 1),
+            print(f"{label:<26}{engine:<10}{peak/1024:>8.0f} MiB{wall:>8.1f}s   {got}
+            {unit}") rows.append({"page": label, "engine": engine, "rss_mib": round(peak / 1024, 1),
                          "wall_s": round(wall, 2), "read": got})
     shutil.rmtree(profile, ignore_errors=True)
 
     ours = [r for r in rows if r["engine"] == "h5i" and not r.get("failed")]
-    theirs = [r for r in rows if r["engine"] == "chromium" and not r.get("failed")]
-    if ours and theirs:
+    theirs = [r for r in rows if r["engine"] == "chromium" and not
+    r.get("failed")] if ours and theirs:
         print()
         print(f"median peak RSS   h5i {sorted(r['rss_mib'] for r in ours)[len(ours)//2]:.0f} MiB"
               f"   chromium {sorted(r['rss_mib'] for r in theirs)[len(theirs)//2]:.0f} MiB")

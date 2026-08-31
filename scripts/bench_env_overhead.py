@@ -5,7 +5,7 @@ The number this exists to produce is **fixed cost**: the part of a run that is
 paid before the workload starts and again on the next command. For the kernel
 tiers it is process setup; for `microvm` it is a guest boot, and it is the
 number that decides whether keeping one guest warm across a box's commands is
-worth building (ROADMAP M13).
+worth building (roadmap-history.md M13).
 
 Method, and why each part is here:
 
@@ -157,8 +157,8 @@ def tier_blocker(caps: dict, tier: str, image: str | None) -> str | None:
     story this script invents, so what the benchmark records as the blocker is
     the same sentence `box create` would refuse with.
     """
-    claim = next((c for c in caps.get("claims", []) if c.get("claim") == tier), None)
-    if claim is None:
+    claim = next((c for c in caps.get("claims", []) if c.get("claim") == tier),
+    None) if claim is None:
         return f"host probe reported no `{tier}` claim"
     note = claim.get("note")
 
@@ -174,8 +174,8 @@ def tier_blocker(caps: dict, tier: str, image: str | None) -> str | None:
         return None
 
     if not claim.get("runnable", False):
-        state = "satisfiable but not runnable" if claim.get("satisfiable") else "unsatisfiable"
-        return note or f"host reports `{tier}` {state}"
+        state = "satisfiable but not runnable" if claim.get("satisfiable") else
+        "unsatisfiable" return note or f"host reports `{tier}` {state}"
     return None
 
 
@@ -265,8 +265,8 @@ def main() -> int:
         description="Measure per-command overhead of each h5i isolation tier.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--bin", default="target/release/h5i", help="h5i binary to measure")
-    parser.add_argument(
+    parser.add_argument("--bin", default="target/release/h5i", help="h5i binary to
+    measure") parser.add_argument(
         "--tiers",
         default="workspace,process",
         help=f"comma-separated tiers to measure (any of: {', '.join(ALL_TIERS)})",
@@ -276,10 +276,10 @@ def main() -> int:
         default=None,
         help="pre-pulled OCI image for the image-backed tiers (container, microvm)",
     )
-    parser.add_argument("--reps", type=int, default=5, help="measured repetitions (default 5)")
-    parser.add_argument("--prefix", default="bench", help="box name prefix (default `bench`)")
-    parser.add_argument("--json", dest="json_out", default=None, help="write the artifact here")
-    parser.add_argument("--keep", action="store_true", help="leave the benchmark boxes behind")
+    parser.add_argument("--reps", type=int, default=5, help="measured repetitions (default
+    5)") parser.add_argument("--prefix", default="bench", help="box name prefix (default `bench`)")
+    parser.add_argument("--json", dest="json_out", default=None, help="write the artifact
+    here") parser.add_argument("--keep", action="store_true", help="leave the benchmark boxes behind")
     args = parser.parse_args()
 
     requested = [t.strip() for t in args.tiers.split(",") if t.strip()]
@@ -304,8 +304,8 @@ def main() -> int:
 
     boxes = {tier: f"{args.prefix}-{tier}" for tier in runnable}
     for tier, name in boxes.items():
-        remove_box(args.bin, name)  # a leftover from a failed run would be reused
-        create_box(args.bin, name, tier, args.image)
+        remove_box(args.bin, name)  # a leftover from a failed run would be
+        reused create_box(args.bin, name, tier, args.image)
 
     results: dict[str, dict[str, Series]] = {}
     try:
@@ -343,8 +343,8 @@ def main() -> int:
     for workload, series in results.items():
         bare_median = statistics.median(series["bare"].e2e)
         print(f"## {workload}  ({' '.join(WORKLOADS[workload])})")
-        print(f"{'tier':<12} {'e2e median':>12} {'vs bare':>12} {'reported':>12}")
-        print(f"{'bare':<12} {bare_median:>11.1f}ms {'baseline':>12} {'—':>12}")
+        print(f"{'tier':<12} {'e2e median':>12} {'vs bare':>12}
+        {'reported':>12}") print(f"{'bare':<12} {bare_median:>11.1f}ms {'baseline':>12} {'—':>12}")
         for tier in results[workload]:
             if tier == "bare":
                 continue
@@ -369,10 +369,10 @@ def main() -> int:
             print(f"  {tier:<12} {fixed:>8.1f}ms")
         print()
         if "short" in results:
-            print("Enforcement cost on a syscall-heavy command (short minus noop,")
-            print("over the same difference for bare) — what reuse does NOT remove:")
-            bare_delta = statistics.median(results["short"]["bare"].e2e) - bare_noop
-            for tier in results["short"]:
+            print("Enforcement cost on a syscall-heavy command (short minus
+            noop,") print("over the same difference for bare) — what reuse does NOT remove:")
+            bare_delta = statistics.median(results["short"]["bare"].e2e) -
+            bare_noop for tier in results["short"]:
                 if tier == "bare":
                     continue
                 tier_delta = (

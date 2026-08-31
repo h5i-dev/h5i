@@ -1,8 +1,8 @@
-//! End-to-end tests for the runtime-detection lane (ROADMAP.md D1–D14).
+//! End-to-end tests for the runtime-detection lane (design-detect.md D1–D14).
 //!
-//! These drive the compiled binary against real repositories, and they prove the
-//! properties that hold on every host, including the overwhelmingly common one
-//! that has no `CAP_BPF` and therefore cannot attach a probe at all:
+//! These drive the compiled binary against real repositories, and they prove
+//! the properties that hold on every host, including the overwhelmingly common
+//! one that has no `CAP_BPF` and therefore cannot attach a probe at all:
 //!
 //!   1. A profile that does not ask to be watched produces a receipt with no
 //!      runtime block. Absence means "did not ask", and nothing else.
@@ -19,9 +19,9 @@
 //!
 //! What is *not* here is the actual attach: that needs `CAP_BPF`, which no CI
 //! runner grants, and it lives in `crates/h5i-bpf/tests/live_attach.rs` behind
-//! `H5I_BPF_LIVE=1`. Splitting them this way is deliberate. Everything a host can
-//! check is checked everywhere, and the part that cannot be is isolated rather
-//! than skipped inside a suite that then reports "ok".
+//! `H5I_BPF_LIVE=1`. Splitting them this way is deliberate. Everything a host
+//! can check is checked everywhere, and the part that cannot be is isolated
+//! rather than skipped inside a suite that then reports "ok".
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

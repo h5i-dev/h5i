@@ -1,21 +1,18 @@
 //! Getting the code there, and proving it arrived intact.
-//!
-//! The unit is a *git bundle* rather than a tar (ROADMAP.md R7). A tar of a
-//! working tree is a pile of bytes whose only identity is a hash we invented; a
-//! bundle carries the commit, so the base the box was built from is a fact git
-//! itself can check.
-//!
+//! The unit is a *git bundle* rather than a tar (design-runner.md R7). A tar of
+//! a working tree is a pile of bytes whose only identity is a hash we invented;
+//! a bundle carries the commit, so the base the box was built from is a fact
+//! git itself can check.
 //! Neither side pollutes a branch namespace to do it. The client points a
 //! namespaced ref (`refs/h5i/bundle-src`) at the base commit for the length of
 //! one `git bundle create` and removes it; the worker fetches that ref out of
 //! the bundle into its own `h5i-base` branch. `git clone` cannot be used: it
-//! only sees `refs/heads/*`, so cloning would mean creating a real branch in the
-//! user's repository.
-//!
+//! only sees `refs/heads/*`, so cloning would mean creating a real branch in
+//! the user's repository.
 //! Bundles here carry full history. `git bundle create` grew rev-list arguments
 //! but not `--depth` (checked against git 2.43), so a shallow bundle is not
-//! available. For a large repository that is a real cost, and the first thing to
-//! revisit when the transfer becomes the slow part.
+//! available. For a large repository that is a real cost, and the first thing
+//! to revisit when the transfer becomes the slow part.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -231,8 +228,8 @@ pub fn materialize(bundle: &Path, work: &Path, base_commit: &str) -> Result<(), 
             "fetch",
             "--quiet",
             // Before any string this process did not choose. Without it a path
-            // beginning with `-` is read as an option, and `--upload-pack=<cmd>`
-            // is an option that runs a command.
+            // beginning with `-` is read as an option, and
+            // `--upload-pack=<cmd>` is an option that runs a command.
             "--end-of-options",
             &bundle.to_string_lossy(),
             &format!("{BUNDLE_REF}:refs/heads/{BASE_BRANCH}"),
@@ -351,8 +348,8 @@ pub fn export_bundle(work: &Path, base_commit: &str, out: &Path) -> Result<Expor
 ///   different repository, so the export's carrier commit lands in it and moves
 ///   *its* HEAD.
 ///
-/// libgit2's owner check is no help: every box on a runner runs as the same unix
-/// user. So the invariant is asserted directly.
+/// libgit2's owner check is no help: every box on a runner runs as the same
+/// unix user. So the invariant is asserted directly.
 fn open_box_repo(work: &Path) -> Result<git2::Repository, SourceError> {
     let repo = git2::Repository::open(work).map_err(SourceError::Git2)?;
     let want = work

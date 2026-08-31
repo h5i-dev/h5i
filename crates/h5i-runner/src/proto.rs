@@ -1,19 +1,15 @@
 //! What the frames mean.
-//!
 //! [`crate::wire`] moves bodies; this module says what a type code is and what
-//! its payload deserialises to. The split is deliberate: an unknown type code is
-//! a framing success and a meaning failure, and only the second one ends the
+//! its payload deserialises to. The split is deliberate: an unknown type code
+//! is a framing success and a meaning failure, and only the second one ends the
 //! session.
-//!
 //! Two rules run through everything here.
-//!
 //! `HELLO` is static, `PROBE` is dynamic, and neither does the other's job
-//! (ROADMAP.md R5). The handshake carries what cannot change while a worker
-//! binary sits on disk: the protocol version, the h5i version, the architecture.
-//! Everything that drifts between one minute and the next belongs to
-//! [`Capabilities`] and arrives only in answer to a `PROBE`. A field in the wrong
-//! one of those two goes stale in a cache and lies later.
-//!
+//! (design-runner.md R5). The handshake carries what cannot change while a
+//! worker binary sits on disk: the protocol version, the h5i version, the
+//! architecture. Everything that drifts between one minute and the next belongs
+//! to [`Capabilities`] and arrives only in answer to a `PROBE`. A field in the
+//! wrong one of those two goes stale in a cache and lies later.
 //! Identity never rides in a frame. `runner_id` is computed on the client from
 //! the host key SSH verified against the pinned `known_hosts`
 //! ([`crate::identity`]). [`HelloAck::runner_id_echo`] exists so a mismatch can
@@ -318,7 +314,7 @@ pub struct HelloAck {
     /// client needs before it can decide whether an image will run at all.
     pub arch: String,
     /// `linux`, and refused as anything else: a runner is a Linux machine
-    /// (ROADMAP.md R1).
+    /// (design-runner.md R1).
     pub os: String,
     /// The worker's opinion of its own identity, for detecting a mismatch.
     /// Never the source of `runner_id`; see the module note.
@@ -352,12 +348,12 @@ pub struct Capabilities {
     pub kvm: bool,
     /// Box state survives a disconnect and a reboot. False for a read-only OS
     /// with a tmpfs workspace, where a reboot is an early-expired lease
-    /// (ROADMAP.md R11).
+    /// (design-runner.md R11).
     pub persistent_boxes: bool,
     /// The runner reaches the internet itself, so image pulls and package
     /// installs can leave through its own allowlist proxy. False is the
     /// cable-only appliance, which needs brokered egress and is not an MVP
-    /// topology (ROADMAP.md R12).
+    /// topology (design-runner.md R12).
     pub own_egress: bool,
     /// What the worker could not determine, in its own words. Advisory text for
     /// an operator: a probe that silently reports `false` for something it
@@ -368,14 +364,13 @@ pub struct Capabilities {
 
 impl Capabilities {
     /// Make a peer-supplied report safe to store and print, or refuse it.
-    ///
-    /// R13.1's exit criterion asks for hostile capability values to be clamped or
-    /// refused and *never stored*. The distinction it draws: a number that is
-    /// merely implausible gets clamped, because a runner with a broken `/proc`
-    /// should still be usable; a value that would change a *decision*, an
-    /// isolation tier this h5i does not have a name for or an OS that is not
-    /// Linux, is refused, because storing it would mean a later create consults a
-    /// capability list that means nothing.
+    /// R13.1's exit criterion asks for hostile capability values to be clamped
+    /// or refused and *never stored*. The distinction it draws: a number that
+    /// is merely implausible gets clamped, because a runner with a broken
+    /// `/proc` should still be usable; a value that would change a *decision*,
+    /// an isolation tier this h5i does not have a name for or an OS that is not
+    /// Linux, is refused, because storing it would mean a later create consults
+    /// a capability list that means nothing.
     pub fn sanitized(mut self) -> Result<Self, ProtoError> {
         self.arch = clean_field("arch", &self.arch)?;
         self.os = clean_field("os", &self.os)?;
@@ -474,9 +469,8 @@ pub struct ResourceLimits {
 }
 
 /// How long the box lives without being touched.
-///
-/// There is no daemon on the runner to watch a clock (ROADMAP.md R11), so a
-/// lease is a fact on disk that any later invocation can evaluate. `ttl_secs`
+/// There is no daemon on the runner to watch a clock (design-runner.md R11), so
+/// a lease is a fact on disk that any later invocation can evaluate. `ttl_secs`
 /// is refreshed by any RPC that touches the box; `hard_ttl_secs` is measured
 /// from creation and is not.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -523,19 +517,19 @@ pub struct SourceSpec {
 /// Make a box.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateRequest {
-    /// The box's name on the runner. Becomes a directory, so it is path-checked.
+    /// The box's name on the runner. Becomes a directory, so it is
+    /// path-checked.
     pub box_id: String,
     /// This attempt's id. The worker builds under `creating/<operation_id>` and
     /// renames into `live/<box_id>`, so a crash leaves a directory that names
     /// the attempt rather than a half-built box wearing the real name.
     pub operation_id: String,
     /// A digest over everything in this request that decides what gets built.
-    ///
-    /// The idempotency key (ROADMAP.md R7): re-sending a create whose digest
-    /// matches an existing box returns that box, so a lost `CREATE_RESULT`
-    /// costs a retry rather than a duplicate. A *different* digest under the
-    /// same `box_id` is refused, because it asks for a different box under a
-    /// name that is taken.
+    /// The idempotency key (design-runner.md R7): re-sending a create whose
+    /// digest matches an existing box returns that box, so a lost
+    /// `CREATE_RESULT` costs a retry rather than a duplicate. A *different*
+    /// digest under the same `box_id` is refused, because it asks for a
+    /// different box under a name that is taken.
     pub request_digest: String,
     /// The tier this box wants. Refused when the runner does not advertise it
     /// (R1), never quietly downgraded.
@@ -762,8 +756,9 @@ pub struct GcRequest {
 pub struct GcResult {
     pub reaped: Vec<String>,
     /// Boxes a sweep decided to keep despite an expired lease, with the reason.
-    /// A silent skip would read as "there was nothing to do" (ROADMAP.md R11:
-    /// an un-reaped live box beats an unrecoverable dead one, but not silently).
+    /// A silent skip would read as "there was nothing to do" (design-runner.md
+    /// R11: an un-reaped live box beats an unrecoverable dead one, but not
+    /// silently).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kept: Vec<String>,
 }
@@ -903,7 +898,7 @@ pub struct ExitMsg {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_rss_kb: Option<i64>,
     /// What the runner's egress proxy saw. Observed outside the box by an h5i
-    /// we authenticated. The `runner-observed` lane (ROADMAP.md R10).
+    /// we authenticated. The `runner-observed` lane (design-runner.md R10).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress: Option<serde_json::Value>,
     /// True when output was cut at [`MAX_EXEC_OUTPUT`]. Said rather than
@@ -954,13 +949,12 @@ pub struct ExportResult {
 impl ExitMsg {
     /// The one reply that had no cleaning, and it carries the egress summary
     /// straight into a receipt.
-    ///
     /// `EgressSummary.hosts[].host` is an arbitrary string from a machine the
     /// threat model says may be compromised, and the producer-side cap on how
     /// many there are binds the honest worker and not the other kind. Nothing
-    /// renders those strings today, which is why this is consistency rather than
-    /// a hole; a receipt is a durable record, and what goes into one should be
-    /// bounded when it is written.
+    /// renders those strings today, which is why this is consistency rather
+    /// than a hole; a receipt is a durable record, and what goes into one
+    /// should be bounded when it is written.
     pub fn sanitized(mut self) -> Result<Self, ProtoError> {
         if let Some(egress) = self.egress.take() {
             let text = serde_json::to_string(&egress).unwrap_or_default();
@@ -1036,7 +1030,7 @@ impl ErrorMsg {
 /// the value actually sent is a check that passes while meaning nothing. The
 /// worker recomputes the same digest from what arrives, and only three fields
 /// of a `ResolvedPolicy` serialise, none of them a host path, so the two
-/// sides have to agree (ROADMAP.md R7).
+/// sides have to agree (design-runner.md R7).
 pub fn policy_fields(
     policy: &h5i_sandbox::sandbox_policy::ResolvedPolicy,
 ) -> Result<(serde_json::Value, String), ProtoError> {

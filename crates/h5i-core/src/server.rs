@@ -1,14 +1,11 @@
 //! The box console: `h5i ui`.
-//!
-//! One screen for what the CLI answers a box at a time: what is the fleet doing,
-//! and what has pressed on a boundary? Built over manifests, the resolved
-//! policy, the env event log and [`crate::receipt`].
-//!
+//! One screen for what the CLI answers a box at a time: what is the fleet
+//! doing, and what has pressed on a boundary? Built over manifests, the
+//! resolved policy, the env event log and [`crate::receipt`].
 //! Read-only, structurally. Every route is a `GET`, so there is no mutating
 //! handler to guard, no CSRF story, and no way to turn this into a remote
 //! control for someone's boxes. A monitoring surface that cannot act is a much
 //! smaller thing to get wrong.
-//!
 //! The old `h5i serve` bound loopback and trusted everyone who could reach it,
 //! which on a developer machine is every process and every page. This follows
 //! [`crate::view`]'s discipline: loopback only, a per-session token minted at
@@ -18,7 +15,6 @@
 //! markup-driven GET, and two loopback ports are different origins on the same
 //! site, so without it any other local port could `<img src>` this console with
 //! its cookie attached.
-//!
 //! Honesty. The dashboard this replaces had a risk classifier; nothing here
 //! invents a score to replace it. [`Signals`] is arithmetic over receipts: red
 //! means enforcement fired, amber means a run failed or the page reported
@@ -62,16 +58,16 @@ pub struct AppState {
     pub repo_path: PathBuf,
     /// This session's token. Never written to disk.
     pub token: String,
-    /// One [`crate::browser_events::BoxStream`] per box the console has looked at,
-    /// kept for the life of the process.
-    ///
+    /// One [`crate::browser_events::BoxStream`] per box the console has looked
+    /// at, kept for the life of the process.
     /// State in a server whose whole pitch is that it holds none takes a
     /// justification, and it is not caching: it is what makes the event ids
     /// stable. Rebuilding the stream per request renumbers from 1 over whatever
     /// the sources currently hold, and a run clears the box's `/tmp`, so a
     /// viewer's cursor would silently swallow the next session. Bounded twice
-    /// over, one entry per box *viewed* and each capped at [`STREAM_CAP`] events,
-    /// and derived from files on disk, so losing it costs nothing but a re-read.
+    /// over, one entry per box *viewed* and each capped at [`STREAM_CAP`]
+    /// events, and derived from files on disk, so losing it costs nothing but a
+    /// re-read.
     browser: Arc<std::sync::Mutex<std::collections::HashMap<String, crate::browser_events::BoxStream>>>,
     /// One live-view reader per box currently being watched. Separate from
     /// `browser` because their lifetimes differ: the event stream is cheap and
@@ -122,20 +118,18 @@ impl Refusal {
 
 /// The whole authorization decision, as a pure function of the four things it
 /// depends on, so it can be tested without a socket.
-///
-/// `Origin` is checked first: a request from another origin is refused even when
-/// it somehow carries the right token, because at that point the token is the
-/// thing that has leaked and honouring it would be the bug.
-///
+/// `Origin` is checked first: a request from another origin is refused even
+/// when it somehow carries the right token, because at that point the token is
+/// the thing that has leaked and honouring it would be the bug.
 /// `sec_fetch_site` is every value of that header, because a second copy is a
 /// disagreement about where a request came from. It closes the gap `Origin`
 /// alone cannot: `Origin` is not sent on a subresource GET at all, and the
-/// cookie is `SameSite=Strict`, which constrains cross-*site* requests only. Two
-/// loopback ports are different origins and the *same site*, so a page served by
-/// any other local service, and `h5i join` puts somebody else's agent-written
-/// app on exactly such a port, could `<img
-/// src="http://127.0.0.1:<console>/api/…">` with this console's cookie attached.
-///
+/// cookie is `SameSite=Strict`, which constrains cross-*site* requests only.
+/// Two loopback ports are different origins and the *same site*, so a page
+/// served by any other local service, and `h5i join` puts somebody else's
+/// agent-written app on exactly such a port, could `<img
+/// src="http://127.0.0.1:<console>/api/…">` with this console's cookie
+/// attached.
 /// A `cross-site` request that carries the token in the query is the printed
 /// invite link being followed, and is allowed for the same reason `h5i-share`'s
 /// gate allows it: the capability arrived with the request rather than out of
@@ -340,15 +334,14 @@ pub struct Signals {
     /// Runs recorded by the in-box tee shim. The box's own account.
     pub box_claimed: usize,
     /// Runs observed from outside the box, on a machine we do not own: a runner
-    /// (ROADMAP.md R10).
-    ///
+    /// (design-runner.md R10).
     /// Its own count rather than folded into either neighbour, because it is
     /// genuinely neither. The box could not forge these, the worker having seen
-    /// them from outside it over a channel authenticated with a pinned host key.
-    /// But this machine did not watch them either, so a compromised runner could.
-    /// The honest reading is that they collapse to box-claimed exactly when the
-    /// runner host is compromised, and the runner host is the machine chosen to
-    /// be losable.
+    /// them from outside it over a channel authenticated with a pinned host
+    /// key. But this machine did not watch them either, so a compromised runner
+    /// could. The honest reading is that they collapse to box-claimed exactly
+    /// when the runner host is compromised, and the runner host is the machine
+    /// chosen to be losable.
     #[serde(default)]
     pub runner_observed: usize,
     /// Timestamp of the newest receipt.
@@ -375,9 +368,10 @@ pub struct Signals {
     /// grading an intent rather than reporting a boundary trip. It is counted
     /// so the pane can *say* it happened, which is a different job.
     pub shares: usize,
-    /// Of those, the ones whose traffic a third party could read. Anything
-    /// but `p2p`, decided by [`crate::receipt::ShareEvidence::third_party_can_read`] rather
-    /// than re-derived here, so one rule answers this question everywhere.
+    /// Of those, the ones whose traffic a third party could read. Anything but
+    /// `p2p`, decided by
+    /// [`crate::receipt::ShareEvidence::third_party_can_read`] rather than
+    /// re-derived here, so one rule answers this question everywhere.
     pub shares_third_party_readable: usize,
     /// Distinct peers admitted across every recorded share, including any past
     /// an individual receipt's record cap.
@@ -392,10 +386,9 @@ pub struct Signals {
     /// the check; the pane only speaks when there is something recorded.
     pub fs_overlap: Vec<String>,
     /// Receipts whose kernel-observed lane actually watched the run
-    /// (ROADMAP.md D10).
-    ///
-    /// Its own count, beside `host_observed` rather than inside it, for the same
-    /// reason `runner_observed` is its own: they are different claims. A
+    /// (design-detect.md D10).
+    /// Its own count, beside `host_observed` rather than inside it, for the
+    /// same reason `runner_observed` is its own: they are different claims. A
     /// host-observed run is one h5i was the parent of; a kernel-watched run is
     /// one an eBPF collector saw from underneath. The second is strictly harder
     /// for a box to defeat and strictly narrower in what it covers.
@@ -853,9 +846,8 @@ pub struct BrowserStream {
     pub live_view: bool,
     /// Sequence number of the newest frame the console holds, or `None` when it
     /// holds none.
-    ///
-    /// The page re-fetches the frame only when this changes, which is what keeps
-    /// a still page at zero requests instead of on a timer. The same
+    /// The page re-fetches the frame only when this changes, which is what
+    /// keeps a still page at zero requests instead of on a timer. The same
     /// change-driven rule the engine itself follows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frame_seq: Option<u64>,
@@ -1456,13 +1448,12 @@ mod tests {
     }
 
     /// The gap `Origin` alone cannot close.
-    ///
-    /// A markup-driven GET (`<img>`, `<script src>`, `<link>`) sends no `Origin`
-    /// at all, and the console's cookie is `SameSite=Strict`, which constrains
-    /// cross-*site* requests only. Two loopback ports are different origins and
-    /// the same site, so a page served by any other local service, and `h5i
-    /// join` puts somebody else's agent-written app on exactly such a port,
-    /// reached this console with its cookie attached.
+    /// A markup-driven GET (`<img>`, `<script src>`, `<link>`) sends no
+    /// `Origin` at all, and the console's cookie is `SameSite=Strict`, which
+    /// constrains cross-*site* requests only. Two loopback ports are different
+    /// origins and the same site, so a page served by any other local service,
+    /// and `h5i join` puts somebody else's agent-written app on exactly such a
+    /// port, reached this console with its cookie attached.
     #[test]
     fn a_page_on_another_loopback_port_cannot_ride_the_console_cookie() {
         let tok = "0123456789abcdef";

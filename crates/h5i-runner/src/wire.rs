@@ -8,21 +8,21 @@
 //! ```
 //!
 //! A frame is never shorter than one body byte, the declared length is checked
-//! before any body byte is read, and a reader that has consumed the length knows
-//! exactly how much more to expect. JSON rides in the payload for control
+//! before any body byte is read, and a reader that has consumed the length
+//! knows exactly how much more to expect. JSON rides in the payload for control
 //! messages and raw bytes for stdio; this module knows about neither and does
-//! not know what any type code means. That is [`crate::proto`]'s business, which
-//! is why an unknown type code is not an error here: framing stays correct even
-//! when meaning does not.
+//! not know what any type code means. That is [`crate::proto`]'s business,
+//! which is why an unknown type code is not an error here: framing stays
+//! correct even when meaning does not.
 //!
 //! It carries no transport, like `h5i-share`'s `wire` and for the same reason:
 //! the format is testable over an in-memory pipe, with no SSH and no child
 //! process anywhere near the build.
 //!
-//! Limits are per RPC, not just per frame (ROADMAP.md R5). A 1 MiB frame cap
-//! bounds one message and nothing else, since a peer can send frames forever.
-//! [`FrameReader`] carries running totals and fails the RPC the moment either is
-//! exceeded.
+//! Limits are per RPC, not just per frame (design-runner.md R5). A 1 MiB frame
+//! cap bounds one message and nothing else, since a peer can send frames
+//! forever. [`FrameReader`] carries running totals and fails the RPC the moment
+//! either is exceeded.
 
 use std::io::{Read, Write};
 
@@ -44,10 +44,10 @@ pub enum WireError {
     #[error("runner transport I/O: {0}")]
     Io(#[from] std::io::Error),
 
-    /// The peer declared a body larger than the cap. Nothing was read for
-    /// it: the declared length is refused on sight, so a peer cannot make us
-    /// allocate or block on bytes it never intends to send. The session is over.
-    /// We are no longer synchronised with the stream and must not guess.
+    /// The peer declared a body larger than the cap. Nothing was read for it:
+    /// the declared length is refused on sight, so a peer cannot make us
+    /// allocate or block on bytes it never intends to send. The session is
+    /// over. We are no longer synchronised with the stream and must not guess.
     #[error("frame declares {declared} bytes, over the {max} byte cap — refusing to read it")]
     Oversized { declared: u64, max: usize },
 
@@ -81,8 +81,8 @@ pub enum WireError {
 /// One frame, after framing and before meaning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
-    /// The type code, uninterpreted. [`crate::proto::FrameKind`] gives it a name,
-    /// or declines to, which is how an unknown frame type is handled.
+    /// The type code, uninterpreted. [`crate::proto::FrameKind`] gives it a
+    /// name, or declines to, which is how an unknown frame type is handled.
     pub kind: u8,
     pub payload: Vec<u8>,
 }
@@ -98,7 +98,7 @@ impl Frame {
 /// Every field is a *receiver* bound. A sender's declared size is a claim, and
 /// a claim is not a budget: the receiver clamps to its own numbers and aborts
 /// the moment a claim is exceeded, which is the same discipline the exec
-/// timeout follows (ROADMAP.md R5).
+/// timeout follows (design-runner.md R5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     /// Cap on a single frame body. Never above [`MAX_FRAME`]; a caller may
@@ -128,13 +128,12 @@ impl Limits {
 
     /// A small exchange: a handshake, a probe, a refusal. Sized so that a peer
     /// which decides to talk forever is cut off long before it costs anything.
-    ///
     /// Note what is *not* narrowed here: the frame cap. One frame is already
     /// bounded by the format at [`MAX_FRAME`], and that bound is what stops a
     /// hostile length from costing anything. Narrowing it per exchange as well
-    /// looked like defence in depth and was a bug: it made the *session's* first
-    /// budget silently govern every later RPC on the same channel, so a command
-    /// with a real amount of output was refused by its own client.
+    /// looked like defence in depth and was a bug: it made the *session's*
+    /// first budget silently govern every later RPC on the same channel, so a
+    /// command with a real amount of output was refused by its own client.
     pub const fn control() -> Self {
         Self {
             max_frame: MAX_FRAME,
@@ -291,15 +290,14 @@ impl<R: Read> FrameReader<R> {
     }
 
     /// Start a new RPC on this stream, under its own budget.
-    ///
     /// Budgets are *per RPC*, not per connection: a handshake and a source
     /// transfer have nothing in common except the socket they share, and one
     /// budget covering both would have to be as loose as the looser of the two.
     /// So the counters reset with the limits, and a create that moves a hundred
     /// megabytes does not leave a session too spent to answer a `PROBE`.
-    ///
-    /// Deliberately explicit rather than implicit per frame kind: a reader whose
-    /// bound silently changes with the traffic is a reader with no bound at all.
+    /// Deliberately explicit rather than implicit per frame kind: a reader
+    /// whose bound silently changes with the traffic is a reader with no bound
+    /// at all.
     pub fn begin_rpc(&mut self, limits: Limits) {
         self.limits = limits;
         self.bytes = 0;

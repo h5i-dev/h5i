@@ -155,13 +155,14 @@ The non-goals, which matter just as much:
   keeps streaming, because the person typing has to see the page, and the
   viewer socket is inside the box. So this is the same structural limit as the
   bullet above: an agent that attaches to the viewer socket watches the same
-  pixels. ROADMAP §5.10 specifies withholding both; only the read half exists.
+  pixels. docs/roadmap-history.md §5.10 specifies withholding both; only the
+  read half exists.
 - Chrome inside a box runs with its own sandbox off, because the seccomp
   deny-list blocks the namespace syscalls it needs. The box is the boundary;
   Chrome's own is one layer you do not have.
 - Runtime detection observes; it never denies. The eBPF collector
-  (`[profile.X.detect]`, ROADMAP.md D1–D14) reports what a box's processes did.
-  It contains nothing, and it is built so that it cannot: no
+  (`[profile.X.detect]`, docs/design-detect.md D1–D14) reports what a box's
+  processes did. It contains nothing, and it is built so that it cannot: no
   `bpf_send_signal`, no `bpf_override_return`, no LSM program anywhere in it.
   Confinement stays with Landlock, seccomp, the network namespace and the
   egress proxy. A `runtime` block in a receipt is never evidence that something
@@ -185,7 +186,7 @@ The non-goals, which matter just as much:
   `sudo`, and prints the command rather than running it, so the decision stays
   yours. A privilege-separated collector, a small setcap'd helper that owns the
   probe and streams events over a socket, is the right long-term shape and is
-  not built (ROADMAP.md D13.1).
+  not built (docs/design-detect.md D13.1).
 - h5i does not guarantee that all secrets are detected, nor complete redaction
   of prompts, transcripts, or command output.
 - h5i does not guarantee a malicious repository cannot exploit your editor,

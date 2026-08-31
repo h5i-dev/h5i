@@ -1,28 +1,28 @@
 //! The effective configuration: what the kernel tiers actually apply
-//! (ROADMAP.md §P1).
+//! (design-policy.md §P1).
 //!
 //! `policy.resolved.toml` is the digested *intent*. `ResolvedPolicy` also
-//! carries runtime-only, never-serialized fields that are enforced all the same,
-//! so a model reading only the toml verifies less than what a box gets. This
-//! module serializes the enforced state, and
+//! carries runtime-only, never-serialized fields that are enforced all the
+//! same, so a model reading only the toml verifies less than what a box gets.
+//! This module serializes the enforced state, and
 //! [`crate::sandbox::build_confined_command`] consumes the *same*
 //! [`compute_effective`] result to build its Landlock path sets and bind lists.
 //! One computation, two readers, so the dump is never a parallel pretty-printer.
 //!
 //! Paths serialize as lossy UTF-8. Grants and bind sources come from TOML and
 //! h5i-created directories, so a non-UTF-8 host path would mangle here and the
-//! enforcement reading these strings would then miss the grant or fail the bind,
-//! both the fail-closed direction.
+//! enforcement reading these strings would then miss the grant or fail the
+//! bind, both the fail-closed direction.
 //!
 //! Linux kernel tiers only, per §P1's v1 scope. Seatbelt, container and microvm
 //! enforce through mechanisms this schema does not describe.
 //!
 //! Every `serde(skip)` field of [`ResolvedPolicy`] is either in the dump or
 //! excluded here by name: the bind lists, readonly mode and egress extras are
-//! *in* it; `box_git` is container mounts whose kernel-tier paths already appear
-//! under `landlock`; `env_capture_spool` and `env_inbox` are container plumbing;
-//! `hosts_services` is a microvm idle-stop hint; `egress_proxy_port` is container
-//! proxy wiring; and `effective_out` is where this dump is written.
+//! *in* it; `box_git` is container mounts whose kernel-tier paths already
+//! appear under `landlock`; `env_capture_spool` and `env_inbox` are container
+//! plumbing; `hosts_services` is a microvm idle-stop hint; `egress_proxy_port`
+//! is container proxy wiring; and `effective_out` is where this dump is written.
 
 use std::path::Path;
 
@@ -358,7 +358,7 @@ pub fn compute_effective(
 /// [`compute_effective`] does, minus the exists-filter (which only removes).
 /// The validator checks the effective grants are a subset of these, so a
 /// legitimate box always passes, and only a divergence between the resolver's
-/// output and the declared intent (a bug) is caught. ROADMAP §P2.
+/// output and the declared intent (a bug) is caught. design-policy.md §P2.
 pub fn declared_grants(policy: &ResolvedPolicy, work: &Path) -> (Vec<String>, Vec<String>) {
     let p = &policy.profile;
     let ro_work = policy.work_readonly;
@@ -387,9 +387,9 @@ pub fn validate_effective(
     cfg: &EffectiveConfig,
 ) -> crate::fs_authority::AuthorityVerdict {
     let (declared_ro, declared_rw) = declared_grants(policy, work);
-    // Only the read-only *overlays* must stay read-only: the config-lock pin and
-    // the warm cache. Private and home-state binds and the one cache-rw refresh
-    // bind are writable by design (`compute_effective` sets them so).
+    // Only the read-only *overlays* must stay read-only: the config-lock pin
+    // and the warm cache. Private and home-state binds and the one cache-rw
+    // refresh bind are writable by design (`compute_effective` sets them so).
     let overlays_ro = cfg.binds.iter().all(|b| match b.kind {
         BindKind::ConfigLock | BindKind::CacheRo => !b.writable,
         BindKind::Private | BindKind::HomeState | BindKind::CacheRw => true,
@@ -403,11 +403,11 @@ pub fn validate_effective(
     );
     #[cfg(unix)]
     {
-        // Check the landlock grants AND every bind's source and target. A grant is
-        // the user's own declaration, but a bind whose mountpoint or source lies
-        // beneath the worktree and resolves out through a planted symlink is the
-        // runc-class escape (§P3). The config-lock and private binds sit under
-        // $WORK, exactly where a previous run's agent could redirect.
+        // Check the landlock grants AND every bind's source and target. A grant
+        // is the user's own declaration, but a bind whose mountpoint or source
+        // lies beneath the worktree and resolves out through a planted symlink
+        // is the runc-class escape (§P3). The config-lock and private binds sit
+        // under $WORK, exactly where a previous run's agent could redirect.
         // `symlink_escapes` ignores paths outside the worktree.
         let mut paths: Vec<String> =
             cfg.landlock.ro.iter().chain(cfg.landlock.rw.iter()).cloned().collect();
@@ -444,7 +444,7 @@ fn scopes_overlap(a: &str, b: &str) -> bool {
 /// clean check in BOTH directions means neither box can write a path the
 /// other reads through their Landlock-granted filesystems. The claim's scope
 /// is exactly the grant lists: binds, the network, and anything outside the
-/// dumps are not covered (ROADMAP.md §P2).
+/// dumps are not covered (design-policy.md §P2).
 pub fn interferes(
     writer: &EffectiveConfig,
     reader: &EffectiveConfig,
@@ -559,7 +559,8 @@ mod tests {
         let work = tmp.path().join("work");
         std::fs::create_dir_all(&work).unwrap();
         let work = work.canonicalize().unwrap();
-        // A declared read grant that exists (so it is not exists-filtered away).
+        // A declared read grant that exists (so it is not exists-filtered
+        // away).
         let shared = tmp.path().join("shared");
         std::fs::create_dir_all(&shared).unwrap();
 

@@ -1,8 +1,8 @@
 //! The event the kernel hands up, and the decoding of it.
 //!
-//! Mirrors `bpf/h5i_event.h` field for field. The two are held together by three
-//! things, in increasing order of how much they would embarrass us if they were
-//! the only one:
+//! Mirrors `bpf/h5i_event.h` field for field. The two are held together by
+//! three things, in increasing order of how much they would embarrass us if
+//! they were the only one:
 //!
 //! 1. A compile-time assertion on [`RawEvent`]'s size and alignment here.
 //! 2. A magic word and a version in every record, checked on decode, so a probe
@@ -207,7 +207,7 @@ impl Family {
 ///
 /// Strings are lossy-decoded and truncated at the first NUL. They are the
 /// bytes a *process* passed to a syscall, not anything the kernel resolved, so
-/// every consumer treats them as a hint (ROADMAP.md D13.3), and they can
+/// every consumer treats them as a hint (design-detect.md D13.3), and they can
 /// contain anything, including terminal control sequences, which is why the
 /// rendering path runs them through `h5i_error::redact`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,7 +217,7 @@ pub struct Event {
     pub tgid: u32,
     pub tid: u32,
     /// Filled in by the session from the Fork events it has already seen; the
-    /// probe never reports it (ROADMAP.md D5).
+    /// probe never reports it (design-detect.md D5).
     pub ppid: u32,
     pub uid: u32,
     pub a0: i64,

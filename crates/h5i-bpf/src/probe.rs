@@ -1,24 +1,24 @@
 //! What this host can actually do, asked rather than assumed.
 //!
 //! Every field here is measured: the kernel version off `osrelease`, the
-//! capabilities off this process's own `CapEff` mask, the object off whether the
-//! build script produced one. Nothing is inferred from "it is Linux, so
+//! capabilities off this process's own `CapEff` mask, the object off whether
+//! the build script produced one. Nothing is inferred from "it is Linux, so
 //! presumably".
 //!
 //! The [`BpfCaps::fix`] field is the part that earns its keep. A detector that
 //! reports "unavailable" and stops is a detector people disable; one that says
 //! *which* capability is missing and prints the command that grants it is one
 //! they turn on. h5i does not run that command and does not escalate its own
-//! privileges (ROADMAP.md D12), it just stops making the user work out what the
-//! refusal meant.
+//! privileges (design-detect.md D12), it just stops making the user work out
+//! what the refusal meant.
 //!
 //! Most of this module describes a Linux facility, so on every other target the
 //! helpers below are reached by nothing and read as dead code. Allowed
 //! module-wide rather than cfg-gated one function at a time, the shape
 //! `h5i-sandbox`'s `cgroup.rs` already settled on for the same reason: the
-//! alternative is a cfg attribute on each helper *and* on each of its tests, and
-//! it breaks on the cross-check job rather than here, where nobody can compile a
-//! Darwin target to find out.
+//! alternative is a cfg attribute on each helper *and* on each of its tests,
+//! and it breaks on the cross-check job rather than here, where nobody can
+//! compile a Darwin target to find out.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use serde::{Deserialize, Serialize};
@@ -52,8 +52,8 @@ pub struct BpfCaps {
     /// `CAP_PERFMON` (or `CAP_SYS_ADMIN`) is in this process's effective set.
     pub cap_perfmon: bool,
     /// `/sys/kernel/btf/vmlinux` exists. *Not* required, this probe is
-    /// CO-RE-free (ROADMAP.md D5), and reported because its absence is the
-    /// first thing anyone familiar with other eBPF tools will ask about.
+    /// CO-RE-free (design-detect.md D5), and reported because its absence is
+    /// the first thing anyone familiar with other eBPF tools will ask about.
     pub kernel_btf: bool,
     /// `/sys/kernel/tracing/events` is readable, so tracepoint `format` files
     /// can be parsed and the probe's assumed field offsets verified rather

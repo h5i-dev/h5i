@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Run the tests against WPT's own server instead of ours.
 
-ROADMAP §B19.3, item 10. `serve.py` is a static server, and §B12.1 chose that
-deliberately: it needs no checkout modification, so the WPT tree stays a
-pristine `git status` and can be shared with any other runner. That reasoning
-still holds and this does not replace it.
+roadmap-history.md §B19.3, item 10. `serve.py` is a static server, and §B12.1
+chose that deliberately: it needs no checkout modification, so the WPT tree
+stays a pristine `git status` and can be shared with any other runner. That
+reasoning still holds and this does not replace it.
 
 What it cannot reach is now the problem. Three subsystems this engine grew
 *after* §B12 are only testable on the real server, and all three are the
@@ -145,8 +145,8 @@ def start(root: Path, ready_timeout=90):
     while time.time() < deadline:
         if process.poll() is not None:
             sys.exit(
-                f"wptserve exited immediately ({process.returncode}). See {log}.\n"
-                "The usual cause is a leftover server holding the ports: "
+                f"wptserve exited immediately ({process.returncode}). See
+                {log}.\n" "The usual cause is a leftover server holding the ports: "
                 "`pkill -f 'wpt serve'`."
             )
         try:

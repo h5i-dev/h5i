@@ -197,7 +197,12 @@ Update documentation in the same change as the behavior.
 - `MANUAL.md`: the complete command, policy, receipt and limits reference. Its
   Limits section is a security document in prose. If your change moves a
   boundary, it changes there too.
-- `ROADMAP.md`: scope. What is in, what was cut, and why.
+- `ROADMAP.md`: scope. What is in, what was cut, and why. Short on purpose; it
+  is meant to be read in one sitting.
+- `docs/design-*.md`: the design behind each part, one file per part
+  (`design-browser-engine.md`, `design-policy.md`, `design-runner.md`,
+  `design-detect.md`). Live code cites their section numbers, so a section that
+  moves needs its citations moved with it.
 - `docs/`: website content, guides, features and static assets.
   `docs/content-style-guide.md` governs voice and structure there.
 - `SECURITY.md`: security model, reporting, and sensitive areas.

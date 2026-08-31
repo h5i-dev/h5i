@@ -1,10 +1,11 @@
-//! The mount-realization audit (ROADMAP.md §P3). `validate_effective` checks the
-//! *plan*; this checks what the kernel actually realized. After setup, the
+//! The mount-realization audit (design-policy.md §P3). `validate_effective`
+//! checks the *plan*; this checks what the kernel actually realized. After
+//! setup, the
 //! supervisor reads the child's `/proc/<pid>/mountinfo` and diffs the realized
-//! mounts against the plan (the `EffectiveConfig` binds): a bind that did not land
-//! where planned, or a read-only overlay realized read-write, is the shape of the
-//! runc 2025 mount-swap / masked-path CVEs. Detected here and failed closed,
-//! rather than trusted.
+//! mounts against the plan (the `EffectiveConfig` binds): a bind that did not
+//! land where planned, or a read-only overlay realized read-write, is the shape
+//! of the runc 2025 mount-swap / masked-path CVEs. Detected here and failed
+//! closed, rather than trusted.
 //!
 //! Honest bounds (§P3): `mountinfo` exposes mount topology and flags, not the
 //! installed Landlock ruleset or seccomp filter, and a symlink race that leaves
@@ -183,8 +184,8 @@ mod tests {
 
     #[test]
     fn rw_plan_ignores_realized_ro() {
-        // A writable plan is not violated by a stricter realized ro (narrower is
-        // the fail-closed direction; only widening is a fault).
+        // A writable plan is not violated by a stricter realized ro (narrower
+        // is the fail-closed direction; only widening is a fault).
         let plan = vec![exp("/root/.npm", false)];
         assert!(audit_mounts(&plan, SAMPLE).is_empty());
     }

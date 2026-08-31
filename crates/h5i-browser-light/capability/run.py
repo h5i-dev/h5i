@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Does the modern web work here, and how fast? Offline, deterministic.
 
-ROADMAP §B19.4, item 12. The gap this fills is structural rather than a matter
-of coverage:
+roadmap-history.md §B19.4, item 12. The gap this fills is structural rather than
+a matter of coverage:
 
   `tests/corpus.rs` holds hand-written reductions of things the *network*
   corpus found. By construction it can only contain regressions of bugs we have
@@ -109,8 +109,8 @@ def run_stage(binary, base, stage, runs, warmup):
         if done.returncode != 0:
             note = (done.stderr or "").strip().splitlines()
             return {"name": stage["name"], "ok": False,
-                    "detail": (note[-1] if note else f"exit {done.returncode}")[:200],
-                    "ms": None}
+                    "detail": (note[-1] if note else f"exit
+                    {done.returncode}")[:200], "ms": None}
         try:
             payload = json.loads(done.stdout)
         except json.JSONDecodeError as exc:
@@ -153,8 +153,8 @@ def check(payload, stage):
     if text is None:
         return False, "the engine returned no page text to check"
     pattern = re.compile(stage["match"])
-    matched = [line.strip() for line in text.splitlines() if pattern.search(line)]
-    if len(matched) != stage["count"]:
+    matched = [line.strip() for line in text.splitlines() if
+    pattern.search(line)] if len(matched) != stage["count"]:
         return False, (
             f"expected {stage['count']} line(s) matching {stage['match']!r}, "
             f"got {len(matched)}"
@@ -202,8 +202,8 @@ def main():
         print("-" * 42)
         for row in results:
             ms = f"{row['ms']:.0f} ms" if row["ms"] is not None else "—"
-            print(f"{row['name']:<20}{'ok' if row['ok'] else 'FAIL':<10}{ms:>9}")
-            if not row["ok"]:
+            print(f"{row['name']:<20}{'ok' if row['ok'] else
+            'FAIL':<10}{ms:>9}") if not row["ok"]:
                 print(f"    {row['detail']}")
                 for line in row.get("console", []):
                     print(f"    engine said: {line[:160]}")

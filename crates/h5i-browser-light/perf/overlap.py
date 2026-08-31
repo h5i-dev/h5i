@@ -1,10 +1,10 @@
 """Would compiling the prelude during the navigation's fetch pay for itself?
 
-ROADMAP §B15.12b. The engine compiles the browser prelude while the document it
-is navigating to is still on the wire, which is worth ~67 ms on the first page a
-process loads. It has to decide *before* the document exists, so it cannot ask
-the question that would settle it -- whether the page has any script -- and a
-page with none builds no realm and would have paid the compile for nothing.
+roadmap-history.md §B15.12b. The engine compiles the browser prelude while the
+document it is navigating to is still on the wire, which is worth ~67 ms on the
+first page a process loads. It has to decide *before* the document exists, so it
+cannot ask the question that would settle it -- whether the page has any script
+-- and a page with none builds no realm and would have paid the compile for nothing.
 
 This forecasts the trade over the corpus, so `worth_warming` in `engine.rs` is
 gated on a measurement rather than on a guess. Per page, with C the compile and
@@ -166,12 +166,12 @@ def report(rows, compile_ms):
         print(f"\nthe compile could grow to {floor:.0f} ms before one page here "
               f"regressed (currently {compile_ms:.0f} ms)")
 
-    print(f"\n{'compile':>8} {'net(ms)':>10} {'per page':>9} {'won':>5} {'lost':>5} {'worst':>8}")
-    for c in sorted({40.0, 63.0, compile_ms, 82.0, 100.0}):
+    print(f"\n{'compile':>8} {'net(ms)':>10} {'per page':>9} {'won':>5} {'lost':>5}
+    {'worst':>8}") for c in sorted({40.0, 63.0, compile_ms, 82.0, 100.0}):
         ds = [delta(r, c) for r in ok]
         print(f"{c:>8.0f} {sum(ds):>10.0f} {sum(ds) / len(ds):>9.1f} "
-              f"{sum(1 for d in ds if d > 0.5):>5} {sum(1 for d in ds if d < -0.5):>5} "
-              f"{min(ds):>8.1f}")
+              f"{sum(1 for d in ds if d > 0.5):>5} {sum(1 for d in ds if d < -0.5):>5}
+              " f"{min(ds):>8.1f}")
 
     ds = [delta(r, compile_ms) for r in ok]
     verdict = ("speculating pays" if min(ds) > -0.5 and sum(ds) > 0
@@ -184,8 +184,8 @@ def main():
     parser.add_argument("--compile-ms", type=float, default=67.0,
                         help="what the prelude costs to compile (perf example, §B8.9)")
     parser.add_argument("--jobs", type=int, default=4)
-    parser.add_argument("--out", default=None, help="write the rows here as JSON")
-    parser.add_argument("--bodies", default=None,
+    parser.add_argument("--out", default=None, help="write the rows here as
+    JSON") parser.add_argument("--bodies", default=None,
                         help="keep the fetched documents here (default: a temp dir)")
     opts = parser.parse_args()
 

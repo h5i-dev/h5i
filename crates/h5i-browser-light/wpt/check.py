@@ -2,9 +2,9 @@
 """Compare a WPT run against the committed baseline and fail on a regression.
 
 Why a gate at all: a coverage number with nothing defending it decays. Every
-number in ROADMAP.md §B12 was paid for by a specific change, and any of them
-can be given back silently by an unrelated one — the settle-loop rewrite in this
-branch cost 3,142 subtests in `html` before anyone looked.
+number in roadmap-history.md §B12 was paid for by a specific change, and any of
+them can be given back silently by an unrelated one — the settle-loop rewrite in
+this branch cost 3,142 subtests in `html` before anyone looked.
 
 Why it gates on *passing* and not on a percentage: the denominator moves when
 tests are added upstream or when the harness learns to reach more of them, and a
@@ -64,8 +64,8 @@ def main():
     for name, floor in sorted(expected.items()):
         got = results.get(name)
         if got is None:
-            failures.append(f"  {name}: not in this run at all (baseline {floor})")
-            continue
+            failures.append(f"  {name}: not in this run at all (baseline
+            {floor})") continue
         allowed = floor - max(1, int(floor * TOLERANCE))
         if got < allowed:
             failures.append(f"  {name}: {got} passing, baseline {floor} (floor {allowed})")
@@ -75,8 +75,8 @@ def main():
     total = sum(results.values())
     print(f"WPT gate: {total} subtests passing, baseline {baseline['total']}")
     if gains:
-        print("\nabove baseline — re-baseline with `wpt/check.py --write` to keep the gate tight:")
-        print("\n".join(gains))
+        print("\nabove baseline — re-baseline with `wpt/check.py --write` to keep the gate
+        tight:") print("\n".join(gains))
     if failures:
         print("\nREGRESSION:")
         print("\n".join(failures))

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """How every harness in this crate reaches the engine, in one place.
 
-ROADMAP §B19.5. Three scripts used to each hold their own answer to "where is
-the engine and how is it invoked", and when the engine stopped being its own
-binary — it became a library behind `h5i __engine` — `wpt/run.py` was updated
-and `corpus/run.py` and `corpus/compare.py` were not. Both had been pointed at
-`target/{debug,release}/h5i-browser-light` ever since, a path that does not
-exist, so neither had run. The instrument this repository credits with finding
-most of the engine's real work had been dead for weeks and nothing said so.
+roadmap-history.md §B19.5. Three scripts used to each hold their own answer to
+"where is the engine and how is it invoked", and when the engine stopped being
+its own binary — it became a library behind `h5i __engine` — `wpt/run.py` was
+updated and `corpus/run.py` and `corpus/compare.py` were not. Both had been
+pointed at `target/{debug,release}/h5i-browser-light` ever since, a path that
+does not exist, so neither had run. The instrument this repository credits with
+finding most of the engine's real work had been dead for weeks and nothing said so.
 
 A shared module rather than three fixed copies, because the failure was not
 that the paths were wrong. It was that there were three of them.
@@ -77,8 +77,8 @@ def engine_binary(explicit=None):
     debug = REPO / "target" / "debug" / "h5i"
     if debug.exists():
         print(
-            "warning: using the debug build; latency and memory numbers from it "
-            "mean nothing. Build with `cargo build --release -p h5i`.",
+            "warning: using the debug build; latency and memory numbers from it
+            " "mean nothing. Build with `cargo build --release -p h5i`.",
             file=sys.stderr,
         )
         return str(debug)

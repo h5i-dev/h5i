@@ -104,7 +104,7 @@ jobs:
           H5I_SKIP_WEB_BUILD: "1"
         run: cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
 
-  # The runtime-detection lane (ROADMAP.md D1–D14). Its own job because it needs
+  # The runtime-detection lane (docs/design-detect.md D1–D14). Its own job because it needs
   # a toolchain the other jobs do not — a clang that can target BPF — and
   # because `bpf` is off by default, so nothing above would notice it rotting.
   #
