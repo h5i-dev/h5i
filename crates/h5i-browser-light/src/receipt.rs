@@ -1,15 +1,14 @@
 //! The request log, and the reason it is not merely a log.
 //!
-//! A record is written *before* the wire and again after it. The first write
-//! is what makes the fail-closed claim true rather than aspirational: if the
-//! sink refuses the decision record, [`crate::net::LocalBroker`] refuses the fetch,
-//! so there is no path from "the engine made a request" to "nobody recorded
-//! it". The second write carries the outcome (status, bytes, duration), which
-//! is the part a human actually reads.
+//! A record is written *before* the wire and again after it. The first write is
+//! what makes the fail-closed claim true rather than aspirational: if the sink
+//! refuses the decision record, [`crate::net::LocalBroker`] refuses the fetch, so
+//! there is no path from "the engine made a request" to "nobody recorded it".
+//! The second write carries the outcome, which is the part a human reads.
 //!
 //! Two phases rather than one record written at the end, because a single
-//! trailing record cannot describe a request that hung, crashed the process,
-//! or was still in flight when the page was screenshotted. The pair can.
+//! trailing record cannot describe a request that hung, crashed the process, or
+//! was still in flight when the page was screenshotted.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -90,13 +89,11 @@ pub struct RequestRecord {
     pub bytes: Option<u64>,
     /// What actually crossed the wire, when that is a different number.
     ///
-    /// Recorded separately rather than replacing `bytes`, because the two
-    /// answer different questions and a log that reported one under the other's
-    /// name would be wrong for whichever reader wanted the other. "How much did
-    /// this cost the network" and "how much did the page get" diverge by a
-    /// factor of three to five once compression is negotiated, and an export
-    /// that conflated them would make a compressed fetch look like a smaller
-    /// page rather than a cheaper one.
+    /// Recorded separately rather than replacing `bytes`, because the two answer
+    /// different questions and a log that reported one under the other's name
+    /// would be wrong for whichever reader wanted the other. "How much did this
+    /// cost the network" and "how much did the page get" diverge by a factor of
+    /// three to five once compression is negotiated.
     ///
     /// `None` when the response was not encoded, so an uncompressed request
     /// records one number and not the same number twice.
@@ -217,14 +214,13 @@ impl JsonlSink {
 
 /// Open a session artifact for appending, readable only by its owner.
 ///
-/// The request log names every URL this session fetched and the action log
-/// names every verb the agent ran, which together are a complete account of
-/// what the agent was doing. h5i writes them into the session directory, and a
-/// boxed session's directory is under a `/tmp` the `agent` profile shares with
-/// the host, so the umask's 0644 published the account to anything on the
-/// machine. The mode is set at creation, so there is no window in which the
-/// file exists and is readable; an existing file is narrowed too, because a log
-/// that was created wide does not become safe by being appended to.
+/// The request log names every URL this session fetched and the action log names
+/// every verb the agent ran, which together are a complete account of what the
+/// agent was doing. h5i writes them into the session directory, and a boxed
+/// session's directory is under a `/tmp` the `agent` profile shares with the
+/// host, so the umask's 0644 published the account to anything on the machine.
+/// The mode is set at creation, so there is no window in which the file exists
+/// and is readable; an existing file is narrowed too.
 fn open_owner_only(path: &Path) -> Result<File, H5iError> {
     let mut options = OpenOptions::new();
     options.create(true).append(true);
@@ -423,17 +419,15 @@ mod tests {
 
 /// One verb an agent asked the resident session for.
 ///
-/// A *separate* record from [`RequestRecord`], and a separate lane, because
-/// they answer different questions with different evidence. A request row is
-/// what crossed the wire; this is what the agent asked for. Correlating the two,
-/// which click caused which fetch, is not attempted here: the link has to be
-/// stamped by whoever knows it, and inferring it from adjacency in a file would
-/// be inventing evidence.
+/// A *separate* record from [`RequestRecord`], and a separate lane, because they
+/// answer different questions with different evidence. A request row is what
+/// crossed the wire; this is what the agent asked for. Correlating the two is
+/// not attempted here: the link has to be stamped by whoever knows it, and
+/// inferring it from adjacency in a file would be inventing evidence.
 ///
 /// Written by the engine, inside the box, so this lane is *box-claimed*. h5i
 /// sits on no socket between an agent and this engine, because there is none:
-/// the engine *is* the browser. Anything reading these rows should weigh them
-/// as the box's own account.
+/// the engine *is* the browser.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionRecord {
     pub seq: u64,
@@ -460,18 +454,15 @@ pub struct ActionRecord {
     /// out".
     ///
     /// Deliberately a *window*, and named as one. The engine could only claim
-    /// strict causation for the one path that dispatches a script event and
-    /// gets a list back; every other verb that moves the page (`navigate`, a
-    /// click that follows an href, `submit`, a `wait_for` that lets a pending
-    /// load finish) produces fetches it never enumerates. A window covers all
-    /// of them, and its one weakness is stated rather than hidden: the page
-    /// thread owns the session, but a viewer's own traffic can land inside the
+    /// strict causation for the one path that dispatches a script event and gets
+    /// a list back; every other verb that moves the page produces fetches it
+    /// never enumerates. A window covers all of them, and its one weakness is
+    /// stated rather than hidden: a viewer's own traffic can land inside the
     /// window and be attributed to a verb that did not ask for it.
     ///
-    /// The earlier version of this field read the reply's `requests` key, which
-    /// the `requests` verb uses for the rows it *returns*. The one verb that
-    /// causes nothing was therefore recorded as having caused everything it
-    /// read, and the verbs that actually fetch recorded nothing at all.
+    /// The earlier version read the reply's `requests` key, which the `requests`
+    /// verb uses for the rows it *returns*, so the one verb that causes nothing
+    /// was recorded as having caused everything it read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requests: Vec<u64>,
 }
@@ -511,15 +502,13 @@ impl ActionLog {
 
     /// Record that a verb is about to run, and return its sequence number.
     ///
-    /// Before, not after, and the failure is propagated: no record, no
-    /// action, the same rule the request log enforces for fetches. Recording
-    /// afterwards would make a full disk into an agent that acts invisibly,
-    /// which is precisely the silent under-reporting this log exists to end.
+    /// Before, not after, and the failure is propagated: no record, no action,
+    /// the same rule the request log enforces for fetches. Recording afterwards
+    /// would make a full disk into an agent that acts invisibly.
     ///
-    /// Worth being exact about what that buys, since the lane is box-claimed:
-    /// it is a guarantee against *accident*. A bad path, a full disk, a
-    /// permission the box does not have. It is not a guarantee against a box
-    /// that has decided to lie, and nothing written inside the box could be.
+    /// Worth being exact about what that buys, since the lane is box-claimed: it
+    /// is a guarantee against *accident*, a bad path or a full disk. It is not a
+    /// guarantee against a box that has decided to lie.
     pub fn begin(&self, verb: &str, target: Option<&str>) -> Result<u64, H5iError> {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
         self.write(&ActionRecord {

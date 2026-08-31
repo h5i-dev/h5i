@@ -3,16 +3,15 @@
 //! `corpus/run.py` points this engine at real sites and is the instrument that
 //! finds new work, but it needs the network, the sites change under it, and a
 //! run takes minutes. What it finds, once fixed, belongs here: the same
-//! *patterns* against local fixtures, so a regression is caught by `cargo test`
-//! rather than by a manual run somebody remembers to do.
+//! *patterns* against local fixtures, so a regression is caught by `cargo test`.
 //!
 //! Every fixture below is here because the network corpus found it, and the
 //! comment on each says which finding it stands for. The two assertions that
 //! matter are the ones the corpus itself reports on:
 //!
 //!   1. the page asks for *nothing* this engine lacks, and
-//!   2. no console error is *anonymous*: every one names either a request
-//!      that was refused or the script that threw.
+//!   2. no console error is *anonymous*: every one names either a request that
+//!      was refused or the script that threw.
 //!
 //! An empty ask list beside an unattributable error is the failure mode this
 //! whole apparatus exists to prevent (roadmap-history.md §B8.3).
@@ -704,13 +703,12 @@ fn the_platform_error_type_can_be_constructed() {
 
 /// A panic in the layout engine must not end the process.
 ///
-/// Blitz panics on the GNU bash manual, one megabyte of single-page HTML,
-/// with `attempt to subtract with overflow` deep in layout construction. A
-/// panic is the one outcome an agent cannot act on: not a thin page, not an
-/// error it can read, but a dead process and no answer. This pins the *shape*
-/// of the guard with a page that lays out normally; the real page is in the
-/// structures corpus, where it now returns 500 lines and a note saying the
-/// layout stage failed.
+/// Blitz panics on the GNU bash manual, one megabyte of single-page HTML, with
+/// `attempt to subtract with overflow` deep in layout construction. A panic is
+/// the one outcome an agent cannot act on: not a thin page, not an error it can
+/// read, but a dead process and no answer. This pins the *shape* of the guard
+/// with a page that lays out normally; the real page is in the structures
+/// corpus.
 #[test]
 fn layout_runs_behind_a_guard_that_reports_rather_than_aborts() {
     // Deeply nested and wide, which is the shape that provokes layout edge

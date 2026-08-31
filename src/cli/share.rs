@@ -348,24 +348,20 @@ fn box_dir(h5i_root: &std::path::Path, name: &str) -> anyhow::Result<std::path::
 }
 
 /// The box must have a network namespace of its own, and a live process to
-/// borrow it from. Without one, "the box's port 3000" and "this machine's
-/// port 3000" are the same port, and a share would publish whatever happened
-/// to be listening on the host, which is the one outcome nobody would
-/// forgive. So this refuses rather than guessing.
+/// borrow it from. Without one, "the box's port 3000" and "this machine's port
+/// 3000" are the same port, and a share would publish whatever happened to be
+/// listening on the host.
 ///
-/// The condition is deliberately "does this box have a netns of its own",
-/// not a list of tiers. A `process`-tier box gets one when its profile
-/// denies egress and shares the host's when it does not, so naming tiers
-/// here would be advice that is wrong half the time.
+/// The condition is deliberately "does this box have a netns of its own", not a
+/// list of tiers. A `process`-tier box gets one when its profile denies egress
+/// and shares the host's when it does not, so naming tiers here would be advice
+/// that is wrong half the time.
 ///
 /// One function per platform rather than one function with three `cfg` blocks
-/// inside it. The unsupported branch used to be written as
-/// `let box_pid: u32 = anyhow::bail!(…)`, and `bail!` expands to a `return`:
-/// on any other target that binding diverged, which made every binding above
-/// it unused and every statement below it unreachable. With `-D warnings` in
-/// the cross-check that is four hard errors, and it has been red since the
-/// platform work landed. A function that returns the pid has nothing for
-/// either lint to catch.
+/// inside it. The unsupported branch used to be written as `let box_pid: u32 =
+/// anyhow::bail!(…)`, and `bail!` expands to a `return`: on any other target
+/// that binding diverged, which made every binding above it unused and every
+/// statement below it unreachable, four hard errors under `-D warnings`.
 #[cfg(target_os = "linux")]
 fn box_process(
     dir: &std::path::Path,
@@ -385,15 +381,13 @@ fn box_process(
         );
     }
     let Some(pid) = h5i_core::view::box_pid(dir) else {
-        // A *writer*, which is the same filter `box_pid` applies. Asking
-        // whether the registry is non-empty counts `box shell --readonly`
-        // observers too, so with only an observer alive, and in the state a
-        // writer exiting while an observer stays leaves behind, this branch
-        // told the operator their box shares the host's network and that they
-        // needed a different tier or profile. Neither was true: `box_pid`
-        // rejected it because there is no writer session, not because the
-        // isolation is weak, and a process- or supervised-tier observer can
-        // have a namespace of its own. The remedy it needed was the other one.
+        // A *writer*, which is the same filter `box_pid` applies. Asking whether
+        // the registry is non-empty counts `box shell --readonly` observers too, so
+        // with only an observer alive this branch told the operator their box
+        // shares the host's network and that they needed a different tier or
+        // profile. Neither was true: `box_pid` rejected it because there is no
+        // writer session, and a process- or supervised-tier observer can have a
+        // namespace of its own.
         let running = h5i_core::env::live_sessions(dir)
             .iter()
             .any(|s| h5i_core::env::live_is_writer(&s.kind));
@@ -431,14 +425,12 @@ fn box_process(
     // dialer does that on every connection, so what this function needs is only
     // the root of the tree. The session process itself.
     let pid = {
-        // A box inside a VM has no host process holding its port, so
-        // attribution would find nothing and report "nothing is listening",
-        // which is both untrue and unactionable. Said plainly instead.
+        // A box inside a VM has no host process holding its port, so attribution
+        // would find nothing and report "nothing is listening", which is both
+        // untrue and unactionable.
         //
-        // Keyed on the resolved claim rather than on probing for a VM: these
-        // are exactly the tiers whose boxes do not run as host processes, and a
-        // box that asked for one and did not get it has a different claim
-        // recorded here.
+        // Keyed on the resolved claim rather than on probing for a VM: these are
+        // exactly the tiers whose boxes do not run as host processes.
         if matches!(
             m.isolation_claim.as_str(),
             "container" | "hardened-container" | "microvm"
@@ -591,15 +583,15 @@ fn announce(name: &str, args: &ShareArgs, s: &h5i_share::run::Started) {
 
 // ─── the other machine ──────────────────────────────────────────────────────
 
-/// `h5i join <ticket>`.
-/// One JSON shape for every command that hands back a share record.
+/// `h5i join <ticket>`, and one JSON shape for every command that hands back a
+/// share record.
 ///
 /// `live` is "a process holds this record" and `admitting` is "somebody could
-/// still get in", which are different questions with different answers: a
-/// share winding up, or one whose grants are all revoked or expired, is live
-/// and admits nobody. Everything below `h5i-share` already distinguishes them,
-/// `box rm` and `box apply` ask the second, and a consumer of this JSON
-/// could only ask the first.
+/// still get in", which are different questions with different answers: a share
+/// winding up, or one whose grants are all revoked or expired, is live and
+/// admits nobody. Everything below `h5i-share` already distinguishes them, `box
+/// rm` and `box apply` ask the second, and a consumer of this JSON could only
+/// ask the first.
 fn envelope(name: &str, s: &h5i_share::session::ShareSession) -> serde_json::Value {
     let now = chrono::Utc::now().timestamp();
     let live = h5i_share::session::is_live(s);
@@ -615,12 +607,11 @@ fn envelope(name: &str, s: &h5i_share::session::ShareSession) -> serde_json::Val
 
 /// The ticket, from the argument or from stdin.
 ///
-/// `-` is not a convenience. A ticket is the entire authorization, this
-/// process runs for the length of the session, and `/proc/<pid>/cmdline` is
+/// `-` is not a convenience. A ticket is the entire authorization, this process
+/// runs for the length of the session, and `/proc/<pid>/cmdline` is
 /// world-readable on an ordinary Linux box, so `h5i join h5i1_…` hands every
 /// other user on the machine a working invite for as long as you are joined.
-/// Reading it from a pipe is the way out, and it keeps the ticket out of shell
-/// history at the same time.
+/// Reading it from a pipe keeps it out of shell history too.
 #[cfg(feature = "share")]
 fn ticket_text(arg: &str) -> anyhow::Result<String> {
     if arg != "-" {
@@ -738,15 +729,13 @@ pub fn join(
                  open in it.",
                 WARN
             );
-            // The half that *is* handled, and the half that is not. Saying only
-            // the first read as "your local credentials are safe", which is a
-            // claim about the proxy being made about the situation: this front
-            // forwards only what the box set, and the page it serves is on
-            // `127.0.0.1` where cookies ignore the port, so script on it can
-            // read any non-HttpOnly cookie in that jar and send it to the box
-            // itself. The filter stops the proxy handing them over; nothing
-            // stops the page. The person reading this is the one who did not
-            // choose the risk, so they get both halves.
+            // The half that *is* handled, and the half that is not. Saying only the
+            // first read as "your local credentials are safe", which is a claim about
+            // the proxy being made about the situation: this front forwards only what
+            // the box set, and the page it serves is on `127.0.0.1` where cookies
+            // ignore the port, so script on it can read any non-HttpOnly cookie in that
+            // jar and send it to the box itself. The filter stops the proxy handing them
+            // over; nothing stops the page.
             println!(
                 "             This proxy forwards only cookies the box itself set, so nothing \
                  of yours travels there automatically — but the page runs on 127.0.0.1 and \

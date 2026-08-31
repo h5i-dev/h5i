@@ -3,9 +3,9 @@
 //! Everything here is deliberately free of GC-managed values. Boa's host data
 //! must be `Trace`, and the only way to hold a `JsObject` correctly is to trace
 //! it; rather than do that for event handlers, timer callbacks and promise
-//! resolvers, those all live on the JavaScript side (see `prelude.js`) and
-//! this holds only plain Rust state. That is why every field below can be
-//! `unsafe_ignore_trace` honestly: none of them can reach the heap Boa collects.
+//! resolvers, those all live on the JavaScript side and this holds only plain
+//! Rust state. That is why every field below can be `unsafe_ignore_trace`
+//! honestly.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -116,11 +116,10 @@ pub struct Host {
     /// built and never asked for again.
     ///
     /// From the broker, and that is the whole design rather than a detail. The
-    /// broker is the half that writes `User-Agent` and `Accept-Language`; if
-    /// this side held its own copy (a constant in `prelude.js`, say, which is
-    /// exactly where these values used to live) then the page and the wire
-    /// would be two independent answers to one question, and a server that
-    /// reads both would see two browsers. See [`crate::identity`].
+    /// broker is the half that writes `User-Agent` and `Accept-Language`; if this
+    /// side held its own copy, which is exactly where these values used to live,
+    /// then the page and the wire would be two independent answers to one
+    /// question. See [`crate::identity`].
     #[cfg(feature = "identity")]
     pub identity: std::sync::Arc<crate::identity::Identity>,
 
@@ -131,29 +130,24 @@ pub struct Host {
     /// runs, which is when the specification says it is locked in. A map that
     /// arrived after the first import would change what earlier imports meant.
     ///
-    /// `None` is "the page declared no map", which is the case the bare
-    /// specifier refusal was written for and still describes exactly. See
-    /// [`crate::script::import_map`].
+    /// `None` is "the page declared no map".
     pub import_map: RefCell<Option<crate::script::import_map::ImportMap>>,
 
     /// Set whenever script changed the tree, so the engine knows to re-resolve
     /// style and layout once rather than after every mutation.
-    /// What the document is written in.
     ///
-    /// Here as well as on the `Page` because the URL query encoder needs it and
-    /// lives on this side. Set once, when the realm is built for a page that
-    /// knows its own encoding; UTF-8 until then, which is what a string handed
-    /// straight to the parser already is.
+    /// What the document is written in. Here as well as on the `Page` because
+    /// the URL query encoder needs it and lives on this side. Set once, when the
+    /// realm is built for a page that knows its own encoding; UTF-8 until then.
     pub encoding: RefCell<&'static encoding_rs::Encoding>,
     pub dirty: RefCell<bool>,
     /// Whether the cascade has been recomputed since the tree last changed.
     ///
-    /// Separate from `dirty`, which the settle loop consumes to decide whether
-    /// to lay out. `getComputedStyle` needs a *style* recalc rather than a
-    /// layout, and it needs one on demand: a page that builds its DOM in script
-    /// and asks for a computed value gets nothing otherwise, because Stylo has
-    /// not seen the new nodes. Two flags because one consumer clearing the
-    /// other's would skip a pass someone was relying on.
+    /// Separate from `dirty`, which the settle loop consumes to decide whether to
+    /// lay out. `getComputedStyle` needs a *style* recalc rather than a layout,
+    /// and on demand: a page that builds its DOM in script and asks for a
+    /// computed value gets nothing otherwise. Two flags because one consumer
+    /// clearing the other's would skip a pass someone was relying on.
     pub styles_stale: RefCell<bool>,
 
     pub console: RefCell<Vec<ConsoleLine>>,
@@ -163,11 +157,10 @@ pub struct Host {
     /// Every `<canvas>` this document has drawn on.
     ///
     /// Kept here rather than on the element because a canvas surface is *not*
-    /// part of the DOM: it survives reflow, it is not serialised by
-    /// `outerHTML`, and it is exactly the kind of thing a second tree would let
-    /// drift from the first. Keyed by node id, so a canvas removed from the
-    /// document keeps its pixels for as long as script holds a reference to it,
-    /// which is what a page doing off-screen composition depends on.
+    /// part of the DOM: it survives reflow, it is not serialised by `outerHTML`,
+    /// and it is exactly the kind of thing a second tree would let drift from the
+    /// first. Keyed by node id, so a canvas removed from the document keeps its
+    /// pixels for as long as script holds a reference to it.
     pub canvases: RefCell<crate::canvas::Canvases>,
 
     /// URLs script asked for, in order, so a caller can say which action caused
@@ -232,21 +225,19 @@ pub struct RequestLink {
 /// How many long-lived connections one page may hold at once.
 ///
 /// Sockets and event streams together, because each is a thread and the thread
-/// is the resource: the browser session's own sandbox profile caps the process
-/// at 64, and that ceiling is shared with the viewer loop, the control loop,
-/// the HTTP client's runtime and the fetch workers. Nothing bounded these, so a
-/// page could open until thread creation failed and take the engine's own
-/// workers down with it.
+/// is the resource: the session's own sandbox profile caps the process at 64,
+/// shared with the viewer loop, the control loop, the HTTP client's runtime and
+/// the fetch workers. Nothing bounded these, so a page could open until thread
+/// creation failed and take the engine's own workers down with it.
 ///
 /// The per-navigation request budget bounds how many a page may *open* over the
 /// life of a page; this bounds how many it may hold at one moment. Sixteen is
-/// far past what a real page does (a dev server's hot-reload socket, a
-/// notification stream, a live feed) and far short of the ceiling.
+/// far past what a real page does and far short of the ceiling.
 ///
 /// Counted over the maps rather than over live peers: this engine cannot ask a
-/// channel whether the far end has gone without a method on the trait that
-/// crosses the process split, and a page that opens sixteen and closes none is
-/// holding sixteen whatever the peers think.
+/// channel whether the far end has gone without a method that crosses the
+/// process split, and a page that opens sixteen and closes none is holding
+/// sixteen whatever the peers think.
 pub const MAX_OPEN_CHANNELS: usize = 16;
 
 /// How many requests a page may have *waiting to be started*.
@@ -255,14 +246,11 @@ pub const MAX_OPEN_CHANNELS: usize = 16;
 /// [`crate::budget::Limits::max_requests`] bounds what a page may send, and
 /// neither bounded the queue in between. `fetch()` returns before anything is
 /// decided about it, so a loop calling it builds one `FetchSlot` per call,
-/// holding a URL, a method, a body and headers, and the drain only runs once
-/// per settle round. Five million iterations is what the loop limit permits;
-/// even a small body each is gigabytes before the request budget has refused a
-/// single one.
+/// holding a URL, a method, a body and headers, and the drain only runs once per
+/// settle round. Five million iterations is what the loop limit permits.
 ///
 /// Twice the default request allowance, so the *budget* is what an ordinary
-/// runaway page hits and this only catches the shape the budget cannot see: a
-/// page queueing faster than the engine can refuse.
+/// runaway page hits and this only catches the shape the budget cannot see.
 pub const MAX_QUEUED_FETCHES: usize = 1_000;
 
 /// How many request links one realm remembers.

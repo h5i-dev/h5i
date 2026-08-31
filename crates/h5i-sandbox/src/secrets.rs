@@ -1,24 +1,22 @@
 //! In-process secret scanner.
 //!
-//! High-precision regex pack (no runtime dependency on the gitleaks binary)
-//! covering the credential formats that produce the fewest false positives
-//! in real-world repos: AWS keys, GitHub PATs, Slack tokens, Stripe keys,
-//! Google / Anthropic / OpenAI API keys, JWTs, generic private-key PEM
-//! blocks, and a Shannon-entropy fallback for opaque high-entropy
-//! assignments next to a credential-like keyword.
+//! A high-precision regex pack, with no runtime dependency on the gitleaks
+//! binary, covering the credential formats that produce the fewest false
+//! positives in real repos: AWS keys, GitHub PATs, Slack tokens, Stripe keys,
+//! Google / Anthropic / OpenAI API keys, JWTs, private-key PEM blocks, and a
+//! Shannon-entropy fallback for opaque high-entropy assignments next to a
+//! credential-like keyword.
 //!
-//! The design notes that drove the rule choices:
+//! What drove the rule choices:
 //!
-//! - Each rule is anchored on a known prefix or structure. Prefix-anchored
-//!   rules (`AKIA…`, `ghp_…`, `sk-ant-…`) have effectively zero false
-//!   positives because the prefix only appears in real credentials.
-//! - A path allowlist prunes lockfiles, vendor trees, fonts, binaries, and
-//!   well-known test-fixture directories before regex matching. These are
-//!   the biggest sources of FPs in any secret scanner.
-//! - A per-line stoplist suppresses obvious placeholders (`your-key-here`,
-//!   `<INSERT_KEY>`, `EXAMPLE`, `xxxx…`, `${VAR}`).
-//! - An entropy floor on the generic rule catches the long tail of
-//!   opaque credentials without firing on every `key = "config"` line.
+//! - Each rule is anchored on a known prefix or structure. Prefix-anchored rules
+//!   (`AKIA…`, `ghp_…`, `sk-ant-…`) have effectively zero false positives.
+//! - A path allowlist prunes lockfiles, vendor trees, fonts, binaries and
+//!   well-known test-fixture directories before regex matching, those being the
+//!   biggest sources of false positives in any secret scanner.
+//! - A per-line stoplist suppresses obvious placeholders.
+//! - An entropy floor on the generic rule catches the long tail without firing
+//!   on every `key = "config"` line.
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -40,15 +38,14 @@ struct SecretRule {
     /// Minimum Shannon entropy (bits/char) on the captured group. Only
     /// consulted when `entropy_group` is `Some`.
     min_entropy: f32,
-    /// Lower-cased substrings that must appear somewhere in the line before
-    /// we bother running the regex. Empty slice = "no pre-filter, always
-    /// try" (used by catch-all rules like `GENERIC_HIGH_ENTROPY`).
+    /// Lower-cased substrings that must appear somewhere in the line before we
+    /// bother running the regex. An empty slice means "no pre-filter, always
+    /// try", used by catch-all rules like `GENERIC_HIGH_ENTROPY`.
     ///
-    /// All entries MUST be lowercase: the scanner lowercases the line once
-    /// and compares against these as-is. Keeping the pre-filter strictly
-    /// looser than the regex is required for correctness. False positives
-    /// here just trigger a wasted regex run; false negatives would hide a
-    /// real finding.
+    /// All entries MUST be lowercase: the scanner lowercases the line once and
+    /// compares against these as-is. Keeping the pre-filter strictly looser than
+    /// the regex is required for correctness, since a false positive here costs
+    /// a wasted regex run and a false negative hides a real finding.
     keywords: &'static [&'static str],
 }
 
@@ -218,14 +215,12 @@ const RULES: &[SecretRule] = &[
 
     // ── Generic high-entropy assignment (entropy-gated, catches the tail) ─
     //
-    // Matches `<credential-keyword> [=:] "<value>"` where `<value>` has
-    // enough characters and entropy to plausibly be a real secret. The
-    // entropy gate keeps this from firing on `password = "config"`.
+    // Matches `<credential-keyword> [=:] "<value>"` where `<value>` has enough
+    // characters and entropy to plausibly be a real secret. The entropy gate
+    // keeps this from firing on `password = "config"`.
     //
-    // `keywords` intentionally empty: this rule IS the keyword pre-filter
-    // (the regex's own credential-keyword alternation does the same job),
-    // and there's no single substring we could anchor on without falsely
-    // suppressing real matches.
+    // `keywords` intentionally empty: this rule IS the keyword pre-filter, the
+    // regex's own credential-keyword alternation doing the same job.
     SecretRule {
         id: "GENERIC_HIGH_ENTROPY",
         description: "high-entropy credential-like assignment",
@@ -507,24 +502,23 @@ const REDACTION_MARKER: &str = "‹redacted›";
 
 /// Replace every secret-like span in `text` with [`REDACTION_MARKER`], reusing
 /// the same rule pack as [`scan_lines`]. Returns a scrubbed copy safe to embed
-/// in published output (e.g. a PR comment or a pulled message body).
+/// in published output.
 ///
 /// Differences from [`scan_lines`], which exists to *report* findings:
+///
 /// - There is no path argument and no path allowlist. The caller is redacting
-///   arbitrary untrusted text (a message body), not a file, so "skip lockfiles"
-///   does not apply.
+///   arbitrary untrusted text, not a file.
 /// - It redacts *every* matching rule on a line, not just the first, because a
-///   single untrusted line may carry more than one credential. Defense in depth.
+///   single untrusted line may carry more than one credential.
 ///
-/// The guillemet marker is intentionally free of Markdown/HTML metacharacters so
-/// it survives a later escaping pass unchanged.
-/// Redact every line, preserving the payload's exact framing.
+/// The guillemet marker is free of Markdown and HTML metacharacters so it
+/// survives a later escaping pass unchanged.
 ///
-/// Line endings and a trailing newline are kept byte-for-byte. `lines()` would
-/// fold `\r\n` into `\n` and drop a trailing newline, which mattered little
-/// while redaction was conditional but rewrites every receipt now that it is
-/// unconditional, and `raw_oid`/`raw_size` are supposed to describe the bytes
-/// the run actually produced.
+/// Redact every line, preserving the payload's exact framing. Line endings and
+/// a trailing newline are kept byte-for-byte: `lines()` would fold `\r\n` into
+/// `\n` and drop a trailing newline, which mattered little while redaction was
+/// conditional but rewrites every receipt now that it is unconditional, and
+/// `raw_oid`/`raw_size` are supposed to describe the bytes the run produced.
 pub fn redact_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -552,12 +546,10 @@ pub fn redact_text(text: &str) -> String {
 /// detection in two fail-closed ways:
 ///
 /// - No [`STOPLIST`] early-return. In detection the stoplist suppresses
-///   placeholder false positives (`your-key-here`, `EXAMPLE`). Applied to
-///   redaction it would be *fail-open*: a line like `example token ghp_<real>`
-///   contains `example`, so the whole line, real credential included, would be
-///   emitted verbatim. We accept the occasional redacted placeholder instead.
-/// - Every match of every rule is scrubbed, not just the first per rule, so
-///   two distinct credentials of the same type on one line are both removed.
+///   placeholder false positives; applied to redaction it would be *fail-open*,
+///   since a line like `example token ghp_<real>` contains `example` and would
+///   be emitted verbatim, real credential included.
+/// - Every match of every rule is scrubbed, not just the first per rule.
 ///
 /// Matches are collected as byte spans, merged, and the line rebuilt. Overlaps
 /// across rules collapse to a single marker.
