@@ -2,8 +2,8 @@
 //!
 //! Token economics. An agent wanting five titles off a listing page should not
 //! read three hundred lines of outline to find them, and a model asked to
-//! transcribe them out of prose will occasionally invent one. The schema shape
-//! is Lightpanda's, the better of the two designs read for this: keys are output
+//! transcribe them out of prose will occasionally invent one. The schema shape is
+//! Lightpanda's, the better of the two designs read for this: keys are output
 //! field names, values are selector specs.
 //!
 //! ```text
@@ -14,17 +14,16 @@
 //!   "fields": { ... }}]                  scoped to it
 //! ```
 //!
-//! One rule is worth copying exactly, and it is about failure. An empty array
-//! is a valid result; a schema where every top-level key came back null is a
-//! mistake the caller should hear about. The first says there were no rows,
-//! the second says your selectors do not match this page, and answering the
-//! second with a tidy object full of nulls is a wrong answer that looks right.
-//! It comes back as an error naming the two verbs that would show the model what
-//! the page actually contains.
+//! One rule is worth copying exactly, and it is about failure. An empty array is
+//! a valid result; a schema where every top-level key came back null is a mistake
+//! the caller should hear about. The first says there were no rows, the second
+//! says your selectors do not match this page, and answering the second with a
+//! tidy object full of nulls is a wrong answer that looks right. It comes back as
+//! an error naming the two verbs that would show the model what the page actually
+//! contains.
 //!
-//! Values are page-derived, so they go through
-//! [`crate::snapshot::collapse`]: none spans a line, none carries a forged fence
-//! marker.
+//! Values are page-derived, so they go through [`crate::snapshot::collapse`]:
+//! none spans a line, none carries a forged fence marker.
 
 use std::collections::BTreeMap;
 

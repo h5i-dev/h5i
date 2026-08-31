@@ -1,11 +1,11 @@
 //! `h5i-core`'s placement trait, implemented over the runner protocol.
 //!
-//! This is the only place the two halves meet. `h5i-core` owns the box
-//! lifecycle and knows nothing about SSH or frames; `h5i-runner` owns the
-//! protocol and knows nothing about manifests. The binary is above both, which
-//! is where a dependency between them would otherwise have to go, and where
-//! it would eventually become a cycle, since a later milestone will want the
-//! worker reaching for receipts and export.
+//! This is the only place the two halves meet. `h5i-core` owns the box lifecycle
+//! and knows nothing about SSH or frames; `h5i-runner` owns the protocol and
+//! knows nothing about manifests. The binary is above both, which is where a
+//! dependency between them would otherwise have to go, and where it would
+//! eventually become a cycle, since a later milestone will want the worker
+//! reaching for receipts and export.
 
 use h5i_core::error::H5iError;
 use h5i_core::placement::{

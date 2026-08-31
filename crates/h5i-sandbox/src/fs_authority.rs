@@ -1,10 +1,10 @@
-//! The filesystem-authority validator (ROADMAP.md §P2). Given the shipped
-//! plan's grant lists and the measured world, it re-derives the authority the
-//! plan installs and checks it is a subset of what the declared policy
-//! authorized. Translation validation on the resolver's output, catching a
-//! `compute_effective` bug the way translation validation catches a compiler
-//! bug. A worktree path that resolves out through a planted symlink is
-//! reported as a boundary signal beside the verdict.
+//! The filesystem-authority validator (ROADMAP.md §P2). Given the shipped plan's
+//! grant lists and the measured world, it re-derives the authority the plan
+//! installs and checks it is a subset of what the declared policy authorized.
+//! Translation validation on the resolver's output, catching a `compute_effective`
+//! bug the way translation validation catches a compiler bug. A worktree path that
+//! resolves out through a planted symlink is reported as a boundary signal beside
+//! the verdict.
 //!
 //! Pure and cross-platform apart from [`symlink_escapes`], which measures the
 //! host. Fully opt-in: see [`enforce_enabled`].
@@ -53,9 +53,9 @@ fn subset(sub: &[String], sup: &[String]) -> bool {
     sub.iter().all(|s| sup.contains(s))
 }
 
-/// The per-run translation validator (ROADMAP.md §P2): re-check the
-/// shipped effective grants against the declared policy, independently of the
-/// resolver that produced them.
+/// The per-run translation validator (ROADMAP.md §P2): re-check the shipped
+/// effective grants against the declared policy, independently of the resolver
+/// that produced them.
 ///
 /// - `declared_ro` / `declared_rw`: the source policy's read / read-write grant
 ///   paths, expanded exactly as `compute_effective` expands them ($WORK and
@@ -84,16 +84,16 @@ pub fn validate_grants(
     }
 }
 
-/// Which of `paths`, resolved on the host, escape the managed worktree through
-/// a symlink? A path at or above `work` is the user's declared choice and is
-/// not second-guessed; a path *beneath* `work` whose canonical form leaves
-/// `work` is the planted-symlink escape (§P3). The previous run's agent
-/// redirected a worktree path out. Callers pass the landlock grants and the
-/// bind sources/mountpoints; paths outside the worktree (h5i's managed cache
-/// and home-state dirs) are ignored by construction. Returns the offenders.
+/// Which of `paths`, resolved on the host, escape the managed worktree through a
+/// symlink? A path at or above `work` is the user's declared choice and is not
+/// second-guessed; a path *beneath* `work` whose canonical form leaves `work` is
+/// the planted-symlink escape (§P3), the previous run's agent redirecting a
+/// worktree path out. Callers pass the landlock grants and the bind
+/// sources/mountpoints; paths outside the worktree (h5i's managed cache and
+/// home-state dirs) are ignored by construction. Returns the offenders.
 ///
-/// Linux/Unix only (it canonicalizes on the host); the caller records `Some`
-/// only where it ran.
+/// Linux/Unix only (it canonicalizes on the host); the caller records `Some` only
+/// where it ran.
 #[cfg(unix)]
 pub fn symlink_escapes(work: &std::path::Path, paths: &[String]) -> Vec<String> {
     let work_canon = std::fs::canonicalize(work).unwrap_or_else(|_| work.to_path_buf());

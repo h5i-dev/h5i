@@ -15,13 +15,13 @@ pub mod browser;
 // The helper lane behind `h5i browser transcript --via yt-dlp`: an outside
 // program, run deliberately, recorded as one.
 //
-// Its own feature *and* its own flag, and both are deliberate. The feature
-// means a build can be made that has no path to exec anything at all. The
-// stronger promise, and the one a hardened deployment wants to be able to make
-// about a binary rather than about how it is invoked. The flag means the lane
-// never fires by default and never fires as a fallback from the engine's own
-// read, because a fetch that left the engine's request log without anyone
-// asking is exactly the silence this product is arranged against.
+// Its own feature *and* its own flag, both deliberate. The feature means a
+// build can be made that has no path to exec anything at all: the stronger
+// promise, and the one a hardened deployment wants to be able to make about a
+// binary rather than about how it is invoked. The flag means the lane never
+// fires by default and never fires as a fallback from the engine's own read,
+// because a fetch that left the engine's request log without anyone asking is
+// exactly the silence this product is arranged against.
 //
 // It implies `browser`: the two lanes answer with one shape and share one
 // WebVTT parser, which is what stops them disagreeing about a timestamp.

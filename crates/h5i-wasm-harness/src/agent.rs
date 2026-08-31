@@ -1,16 +1,16 @@
-//! The sans-io agent loop: a state machine that never performs I/O.
-//! Every effect (model call, tool run) is returned to the host as data;
-//! the host performs it and feeds the result back via `handle`.
+//! The sans-io agent loop: a state machine that never performs I/O. Every effect
+//! (model call, tool run) is returned to the host as data; the host performs it
+//! and feeds the result back via `handle`.
 //!
-//! Loop shape follows mini-swe-agent's DefaultAgent (query -> execute actions
+//! Loop shape follows mini-swe-agent's DefaultAgent (query, then execute actions
 //! until an exit condition, ref: src/minisweagent/agents/default.py) with the
 //! Model and Environment implementations moved across the wasm boundary, and
-//! hax's structural termination rule: the run ends when the model stops
-//! calling tools (ref: hax src/agent_loop.h).
+//! hax's structural termination rule: the run ends when the model stops calling
+//! tools (ref: hax src/agent_loop.h).
 //!
 //! Wire-level model interface: OpenAI chat-completions with native tool_calls.
-//! The guest builds the full request body; the host does POST(bytes)->bytes
-//! and reports only the HTTP status alongside the raw body.
+//! The guest builds the full request body; the host does POST(bytes)->bytes and
+//! reports only the HTTP status alongside the raw body.
 
 use alloc::format;
 use alloc::string::{String, ToString};
