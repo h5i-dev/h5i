@@ -4,62 +4,48 @@ Status: in progress, 2026-08-27. This document is the scope authority. It
 supersedes the "contained agentic development environment" positioning, which
 itself superseded "auditable workspaces / provenance". Both are kept in
 [`docs/roadmap-history.md`](docs/roadmap-history.md), because both describe real
-machinery that is still shipped and tested. What changed is which part is the
-product.
-
-The one-liner:
+machinery that is still shipped and tested.
 
 > Give an AI agent a browser it can drive and you can audit. Every request is
 > policy-checked and written down before the bytes move, and the fetch is
 > refused when the record cannot be written.
 
-Nothing was thrown away to get here. The engine (`crates/h5i-browser-light`),
-the fail-closed request broker, the egress proxy, the receipt lanes, the control
-lock and the box tiers were all built for the environment story and all are
-essential to this one. The pivot puts the piece with no equivalent elsewhere at
-the front: Playwright and Puppeteer drive a browser, and neither can tell you
-what it reached, because neither *is* the HTTP client.
+Nothing was thrown away: the engine, the broker, the egress proxy, the receipt
+lanes, the control lock and the box tiers were all built for the environment
+story and all are essential to this one. Playwright and Puppeteer drive a
+browser and cannot tell you what it reached, because neither *is* the HTTP
+client.
 
 ## The three decisions this pivot rests on
 
 1. The sandbox is opt-in. `h5i browser open` runs on the host like any other
-   headless browser, and h5i says so on the placement line rather than letting
-   the word "browser" imply a boundary. Requiring a box up front would make
-   hello-world fail on CI, under AppArmor, on macOS and inside a container,
-   which is fatal for adoption and buys nothing the record does not already
-   give. Containment is `--in <box>`.
-2. The box stays a separate, orthogonal surface. It is not the browser's
-   implementation detail, so it stays agent-facing. `h5i box run -- h5i browser
-   open` is ordinary composition, and `--in` is sugar over the same placement.
-3. The lane is earned, not assumed. A boxed session is `host-observed` only when
-   something outside the engine decides what may leave. A box that lets the
-   browser reach the whole network corroborates nothing and keeps the
-   `engine-claimed` label. See `browser_session::Session::lane_for`.
+   headless browser and says so on the placement line. Requiring a box up front
+   would fail hello-world on CI, under AppArmor, on macOS and in a container,
+   for nothing the record does not already give. Containment is `--in <box>`.
+2. The box stays a separate, orthogonal, agent-facing surface, not the browser's
+   implementation detail. `h5i box run -- h5i browser open` is ordinary
+   composition and `--in` is sugar over the same placement.
+3. The lane is earned. A boxed session is `host-observed` only when something
+   outside the engine decides what may leave; a box that lets the browser reach
+   the whole network keeps `engine-claimed`. See
+   `browser_session::Session::lane_for`.
 
 ## The id is not the interface
 
 `h5i browser open` makes a session and points the *default* at it; every verb
 that follows lands there. The opaque id (`br_7k2xqa`) is in the record, in
 `--json` and in the receipts, because a durable reference has to survive a
-rename. It is not what anyone types.
-
-Demanding one on every verb is the shape of a remote-browser HTTP API
-(Browserbase returns an `id` and a `connectUrl` for exactly this reason), where
-the id exists because the client and the browser share nothing else. Playwright
-never shows one because the caller holds the object, and a local CLI is nearer
-to Playwright: it shares a filesystem with the browser, so the id can stay where
-it belongs. Names are for running several at once (`--session auth`), and a name
-is comfortable precisely because it is *not* an identity, so it can be reused
-once the session it named has ended.
+rename. It is not what anyone types. Names are for running several at once
+(`--session auth`), and a name is comfortable precisely because it is *not* an
+identity, so it can be reused once its session has ended.
 
 Two rules fell out of building it, both about not moving under an agent:
 
 - No "if only one is live, use it". It reads as helpful and silently redirects
   the next verb the moment a second session exists.
-- The default outlives the session it names. Following a pointer to a closed
-  session is what lets the next bare verb say *"the session you were on was
-  closed"* rather than *"no session is open"*. Only a pointer to a record that
-  is gone is dropped.
+- The default outlives the session it names, so the next bare verb can say *"the
+  session you were on was closed"* rather than *"no session is open"*. Only a
+  pointer to a record that is gone is dropped.
 
 ## What is agent-facing, and what is not
 
@@ -77,29 +63,27 @@ not get a name in the CLI, and a thing that stands beside a session does.
 
 ## Built, 2026-08-27
 
-- `browser_session`: the host-owned registry. Ids that are never reused, five
-  states, endings written down, `EXIT_SESSION_GONE`, host-named artifacts, and
-  the scrubber every relayed answer goes through.
+- `browser_session`: the host-owned registry. Ids never reused, five states,
+  endings written down, `EXIT_SESSION_GONE`, host-named artifacts, and the
+  scrubber every relayed answer goes through.
 - `h5i browser` as the front door: `start`, `list`, `status`, `close`, the
   fourteen session verbs, and the control lock moved onto the session.
 - `--in <box>`: the engine runs as a *service*, since the writer lock would
-  otherwise shut every later verb out of its own box, and verbs are carried in
-  over a Unix socket, since every `box run` gets a fresh netns and a port cannot
-  be reached from the next run. Preflighted, so a box that cannot hold a session
+  otherwise shut every later verb out of its own box, and verbs arrive over a
+  Unix socket, since every `box run` gets a fresh netns and a port cannot be
+  reached from the next run. Preflighted, so a box that cannot hold a session
   says why before anything starts.
-- `env::service_start_with_def` and the engine's `--control-socket`, both added
-  for the above.
+- `env::service_start_with_def` and the engine's `--control-socket`.
 
 ## Open, and honest about it
 
 - Supervised and container cannot hold a resident process (h5i-sandbox's
-  `spawn_background`, "Idea 3.5"). Those are also the two tiers that enforce an
-  egress allowlist on Linux, so today the only tier that both holds a session
-  and earns `host-observed` is `microvm`. Closing this is the highest-value
-  piece of remaining work: it is what makes the product's central claim
-  reachable on an ordinary Linux box.
-- One session per box. One resident engine, one service name. Enough for now; a
-  second would need per-session service names and stream files.
+  `spawn_background`, "Idea 3.5"), and they are also the two tiers that enforce
+  an egress allowlist on Linux, so the only tier that both holds a session and
+  earns `host-observed` is `microvm`. Closing this is the highest-value
+  remaining work: it makes the central claim reachable on an ordinary Linux box.
+- One session per box. A second would need per-session service names and stream
+  files.
 
 ## How this document is laid out
 
@@ -108,7 +92,6 @@ remote runner (R) and runtime detection (D). Each prefix is its own numbering,
 so nothing collides with the history document, which holds the superseded
 environment positioning (sections 1 to 12) and the engine's build log (B1 to
 B22). Live code cites section numbers in both files.
-
 ---
 
 # The browser engine
@@ -120,9 +103,9 @@ build a local engine that runs script; these sections are where it got to.
 > A pure-Rust browser that lives inside the agent's own sandbox, renders on
 > demand, and can prove what it did.
 
-Only the third claim is unique. Pure Rust is a real property, no C toolchain and
-a smaller memory-bug surface, but it is a means, and rendering on demand is what
-separates this from Lightpanda.
+Only the third claim is unique. Pure Rust is a means (no C toolchain, a smaller
+memory-bug surface), and rendering on demand is what separates this from
+Lightpanda.
 
 ## B1. Where it stands, 2026-08-28
 
@@ -159,34 +142,30 @@ fetch/api JS surface (~400 reachable without wptserve).
 ## B2. Architecture, and the constraints that chose it
 
 Four decisions the compiler or the dependency graph made rather than preference.
-Each will look arbitrary later.
 
-One thread owns the page. `Page` is not `Send`: Blitz's `BaseDocument` holds an
-`Arc<dyn HtmlParserProvider>` and a `Box<dyn FontMetricsProvider>`, neither
+*One thread owns the page.* `Page` is not `Send`: Blitz's `BaseDocument` holds
+an `Arc<dyn HtmlParserProvider>` and a `Box<dyn FontMetricsProvider>`, neither
 thread-safe, so there is no `Arc<Mutex<Session>>` to be had. The page has a
-single owning loop and everything else reaches it by channel, which is the right
-shape for a multi-driver session anyway.
+single owning loop and everything else reaches it by channel.
 
-The Rust DOM is the single source of truth. Every JS object naming a node is a
-wrapper over a `NodeId`. A second tree inside the engine would let the snapshot,
-the paint, the events and the script state drift apart, with nothing downstream
-able to say which was right.
+*The Rust DOM is the single source of truth.* Every JS object naming a node is a
+wrapper over a `NodeId`. A second tree would let the snapshot, the paint, the
+events and the script state drift apart.
 
-The object model lives in a JavaScript prelude. Listeners, timer callbacks and
+*The object model lives in a JavaScript prelude.* Listeners, timer callbacks and
 promise resolvers are GC-managed, and holding them Rust-side means tracing them
 through Boa's collector. Putting them where Boa already owns their lifetime
-leaves a Rust surface of about twenty primitives taking ids and strings, and
-turns event propagation into ordinary code rather than a lifetime problem. The
-prelude is compiled once per thread rather than per realm.
+leaves a Rust surface of about twenty primitives taking ids and strings.
+Compiled once per thread rather than per realm.
 
-Boa is a fork, pinned by revision. `boa_engine` and `boa_gc` come from
+*Boa is a fork, pinned by revision.* `boa_engine` and `boa_gc` come from
 `h5i-dev/boa` at 0.22.0 (`Cargo.toml`), carrying one commit that adds
 `bind_to_realm` so a compiled prelude can be reused across realms. The older
-0.19 pin, and the ICU version clash with parley that forced it, are gone;
-`scripts/check_boa_release.sh` still asks crates.io on every CI run whether a
-published boa would do, and fails the build the day one would. Patch both
-`boa_engine` and `boa_gc` together, and note that a `Gc` in a `thread_local`
-must be `ManuallyDrop` or the thread aborts at exit.
+0.19 pin, and the ICU clash with parley that forced it, are gone;
+`scripts/check_boa_release.sh` asks crates.io on every CI run whether a
+published boa would do, and fails the build the day one would. Patch both crates
+together, and note that a `Gc` in a `thread_local` must be `ManuallyDrop` or the
+thread aborts at exit.
 
 ---
 
@@ -196,16 +175,15 @@ Loopback is reachable from a loopback document. `Policy::check` took only a URL,
 and loopback is allowed unconditionally because the box's dev server is the
 point. Before script an untrusted page could *cause* a loopback request but not
 read the response; with `--script` it could `fetch` the dev server, read the
-body, and POST it anywhere in `net.egress`, which is a read primitive against
-the code the agent is working on, past a proxy that never sees loopback.
-`Policy::check_from(url, document)` closed it: a page served by the dev server
-may talk to it, a page from the open web may not. This was a *logic* bug, and
-Rust prevents none of them. "Fewer memory bugs" is honest; "safer browser" is
-earned by the origin model, not the language.
+body, and POST it anywhere in `net.egress`: a read primitive against the code
+the agent is working on, past a proxy that never sees loopback.
+`Policy::check_from(url, document)` closed it. This was a *logic* bug, and Rust
+prevents none of them. "Fewer memory bugs" is honest; "safer browser" is earned
+by the origin model, not the language.
 
 Site isolation is the one thing the box does not replace. Chromium's process
 model contains a compromised renderer against filesystem, network privilege,
-crashes and cross-origin theft. The box covers the first three at a stronger
+crashes and cross-origin theft; the box covers the first three at a stronger
 boundary and says nothing about two origins sharing one address space. The
 answer is `Jar::retain_origin`: the jar is cleared on cross-origin navigation,
 so one session holds one origin's cookies and a page is never in the same
@@ -213,9 +191,8 @@ address space as another origin's session. Leaving an origin drops its login,
 and the snapshot says so rather than letting the agent discover it by being
 logged out. `document.cookie` additionally withholds `HttpOnly`.
 
-The gate is still honoured. `capabilities.javascript` reports the running
+The gate is still honoured: `capabilities.javascript` reports the running
 configuration, script is opt-in, and with it off `<script>` elements are inert.
-
 The same-origin policy proper lives in `cors.rs`, added once the `Domain`
 attribute turned an unauthenticated cross-origin read into an authenticated one.
 
@@ -250,15 +227,14 @@ click/input/change/submit/focus/keyboard, promises and microtasks and timers,
 navigation, the rendered result, and console plus exception capture.
 
 No iframes. Not "same-origin only": none. Each iframe is a second document, a
-second script realm and a navigation boundary. It is not a feature, it is a
-second browser.
+second script realm and a navigation boundary. It is a second browser.
 
 No vendored engine crates. A 5.6MB in-tree copy of stylo bought `:has()` in
 stylesheets and was reversed by owner decision on 2026-08-28: no WPT arithmetic
-pays for a fork this project carries across every stylo bump. The query half of
-`:has()` is evaluated in the prelude instead (`withHasMarkers`), so
-`querySelector`, `querySelectorAll`, `matches` and `closest` keep it. Stylesheet
-rules using `:has()` stay lost until Blitz depends on stylo >= 0.20.
+pays for a fork carried across every stylo bump. The query half of `:has()` is
+evaluated in the prelude instead (`withHasMarkers`), so `querySelector`,
+`querySelectorAll`, `matches` and `closest` keep it. Stylesheet rules using
+`:has()` stay lost until Blitz depends on stylo >= 0.20.
 
 ---
 
@@ -267,25 +243,24 @@ rules using `:has()` stay lost until Blitz depends on stylo >= 0.20.
 Nothing is built until a page asks for it, and an instrument that cannot name
 what is missing is fixed before anything it failed to name.
 
-The claim is deliberately not speed. This class of engine is slower than
-Chromium in wall time, and a benchmark table is something anyone can beat by
-shipping less browser. What no one else can copy back is proving what the engine
-did, because that depends on the engine *being* the HTTP client rather than
-being watched by one.
+The claim is deliberately not speed: this class of engine is slower than
+Chromium in wall time, and anyone can beat a benchmark table by shipping less
+browser. What no one else can copy back is proving what the engine did, because
+that depends on the engine *being* the HTTP client rather than being watched by
+one.
 
 Sections B1 to B22 of [`docs/roadmap-history.md`](docs/roadmap-history.md) carry
-the build log: the corpus runs, the WPT campaigns, the reference engines that
-were read, and the reversals.
-
+the build log: the corpus runs, the WPT campaigns, the reference engines read,
+and the reversals.
 ---
 
 # Policy resolution and the authority validator
 
 Status: shipped, P1 to P4. This was once the tail of a formal verification
 effort whose Lean 4 model was removed on 2026-08-28: it cost more to keep in
-step with the Rust than it caught, and nothing on a runtime path depended on it.
-What follows outlived it, all Rust and all exercised by the normal test suite,
-so the claims below are what the code checks rather than what a prover proved.
+step with the Rust than it caught. What outlived it is all Rust and all
+exercised by the normal test suite, so the claims below are what the code checks
+rather than what a prover proved.
 
 ## P1. The effective configuration, dumped at the apply seam
 
@@ -297,11 +272,11 @@ loopback ports, `box_git`). So a reader of the toml alone sees less than a box
 gets, and `policy.effective.json` is written at box creation to close that.
 
 The dump serializes the exact values handed to the mechanism appliers in
-`build_confined_command`, never a parallel pretty-printer. Re-derived by
-separate code it would be a brochure, and every check over it would be checking
-the brochure. It takes the same structs at the seam where Landlock rules, mount
-calls and the seccomp filter are constructed, after `$WORK` expansion and after
-`prepare_private_paths` and `prepare_home_state` have run.
+`build_confined_command`, never a parallel pretty-printer that would be a
+brochure every check then checked. It takes the same structs at the seam where
+Landlock rules, mount calls and the seccomp filter are constructed, after
+`$WORK` expansion and after `prepare_private_paths` and `prepare_home_state`
+have run.
 
 Version 1 of a versioned schema, canonically ordered so the digest is stable:
 the tier selected and the claim it resolved from; Landlock grants as absolute
@@ -313,8 +288,7 @@ allowlist.
 
 `fs_deny` appears under resolution metadata rather than enforcement, because
 Landlock is allowlist-only and `fs_deny` is a preflight refusal on the *policy*.
-What can be said is "resolution refuses", never "the kernel denies", and putting
-that in the schema keeps the artifact honest by construction.
+What can be said is "resolution refuses", never "the kernel denies".
 
 The dump's digest goes in the capture manifest beside the policy digest, so it
 is tamper-evident for the cost of one hash. Linux kernel tiers only, matching
@@ -324,8 +298,8 @@ the mechanisms it describes (`crates/h5i-sandbox/src/effective.rs`).
 
 The dump feeds a check on the resolver itself: re-derive the subset claims from
 the *shipped* effective config and the declared policy, independently of the
-`compute_effective` code that produced them. Translation validation, the same
-shape as checking a compiler's output for one program rather than proving the
+`compute_effective` code that produced them. Translation validation, the shape
+of checking a compiler's output for one program rather than proving the
 compiler, and it catches resolution silently widening a grant.
 
 `fs_authority::validate_grants` records one boolean per claim in the box
@@ -344,9 +318,8 @@ where a false is a real bug and safe to fail a launch on.
 
 Fully opt-in. With `H5I_FS_AUTHORITY_ENFORCE` unset nothing executes: no
 computation, no host measurement, no manifest field, no gate. Setting it to `1`
-computes the verdict at create and run and fails closed. Earning trust before
-gating by default is the discipline, so flipping the default is a decision with
-a receipt trail rather than a drift.
+computes the verdict at create and run and fails closed. Flipping the default
+should be a decision with a receipt trail rather than a drift.
 
 Two bounds. `no_shared_writable`, whether a box shares a writable path with
 another live box, is not a single-run property: deciding it needs a lock or an
@@ -360,15 +333,14 @@ unenforced, never rendered as enforced and never silently downgraded.
 
 ## P3. Mount realization audit: plan-check plus a read-back
 
-A check on the plan says the plan is safe, not that the kernel realized it. For
-mechanisms whose output is a syscall stream there is no argv to re-parse, so the
-plan-level check leaves the serializer-bug class one layer down.
-`mount_audit.rs` narrows it: after setup and before `exec` the supervisor reads
-back the child's realized state and diffs it against the plan, aborting the
-launch and landing in the receipt on a mismatch. It reads mount ID and parent,
-major/minor, mount root, ro/rw and nosuid/nodev/noexec, propagation flags,
-per-target object identity via `statx`/`fdinfo`, the inherited-fd inventory,
-`NoNewPrivs` and the seccomp mode.
+A check on the plan says the plan is safe, not that the kernel realized it, and
+for mechanisms whose output is a syscall stream there is no argv to re-parse.
+`mount_audit.rs` narrows the gap: after setup and before `exec` the supervisor
+reads back the child's realized state and diffs it against the plan, aborting
+the launch and landing in the receipt on a mismatch. It reads mount ID and
+parent, major/minor, mount root, ro/rw and nosuid/nodev/noexec, propagation
+flags, per-target object identity via `statx`/`fdinfo`, the inherited-fd
+inventory, `NoNewPrivs` and the seccomp mode.
 
 Two bounds, because "complete mediation" would overstate it. It is a
 mount-topology and identity audit: `/proc/<pid>/mountinfo` does not expose the
@@ -381,8 +353,7 @@ symlink race leaving topology unchanged is prevented by P4 instead.
 The audit needs an explicit exec barrier. `Command::pre_exec` runs setup and
 execs in the same breath, with no point for a second party to look. So the child
 completes setup and *stops*, on a `SIGSTOP` or a blocking wait on a pipe, the
-supervisor audits, and only on success sends *go*. Without that barrier "audit
-before exec" has nowhere to stand.
+supervisor audits, and only on success sends *go*.
 
 ## P4. Race-free mount construction
 
@@ -400,16 +371,15 @@ setup code:
 
 An attacker acting *between* two steps is the case these exist for, and P3's
 read-back catches the residue.
-
 ---
 
 # The remote runner
 
 Status: R13.1 built, 2026-08-16. R13.2 to R13.4 are not built. These sections
 are the authority on design; the order and what landed against it are in
-[`docs/roadmap-history.md`](docs/roadmap-history.md). The design was drawn
-against two codebases read in full: the E2B spec repo and bhatti, a Go
-single-node microVM sandbox service.
+[`docs/roadmap-history.md`](docs/roadmap-history.md), along with the full
+reading of the two codebases the design was drawn against: the E2B spec repo and
+bhatti, a Go single-node microVM sandbox service.
 
 > The box's boundary becomes a machine you own and can afford to lose. The
 > product does not move: the repo, the policy, the credentials, and the patch
@@ -428,36 +398,26 @@ A runner requires Linux and the h5i protocol, nothing else. Everything past that
 (isolation tiers, container runtime, KVM, memory, storage, persistence, its own
 internet route) is an advertised capability, and a capability the runner lacks
 is a refusal, never a silent weakening. There is no fallback ladder across
-machines.
-
-The MVP builds one cell, `runner × container`. The kernel tiers are coherent
-there and deferred for real work rather than principle: they assume the worktree
-backend even locally, so they wait on a copy-in workspace path that does not
-exist anywhere yet. `runner × microvm` waits until the container cell has earned
-it. When they land, note that on a sacrificial runner the tier protects the
-runner's *other* boxes and its own state machinery; the machine boundary is what
-protects you, so a weak tier on a strong boundary is a legitimate configuration
-for weak hardware.
-
-No device class is named anywhere on purpose: the capability report, not the
+machines. No device class is named anywhere: the capability report, not the
 hardware, is the vocabulary.
 
-The security claim is that the agent's execution moves to hardware whose
-compromise you have priced in, while the working tree, the credentials, the
-receipts store and the apply step stay on the machine that never runs agent
-code. The converse is that this does not make the box harder to escape; it
-changes what an escape reaches.
+The MVP builds one cell, `runner × container`. The kernel tiers are deferred for
+real work rather than principle: they assume the worktree backend even locally,
+so they wait on a copy-in workspace path that does not exist anywhere yet.
+`runner × microvm` waits until the container cell has earned it. On a
+sacrificial runner the tier protects the runner's *other* boxes and its own
+state machinery; the machine boundary is what protects you, so a weak tier on a
+strong boundary is legitimate for weak hardware.
 
-Not a hosted sandbox service, a scheduler or a fleet: one developer, machines
-they own. Against Coder or a self-hosted E2B the differentiator was never the
-remoting, it is that the far end returns a reviewable patch and evidence rather
-than a live filesystem you trust by default.
+The security claim: the agent's execution moves to hardware whose compromise you
+have priced in, while the working tree, the credentials, the receipts store and
+the apply step stay on the machine that never runs agent code. This does not
+make the box harder to escape, it changes what an escape reaches. Against Coder
+or a self-hosted E2B the differentiator was never the remoting, it is that the
+far end returns a reviewable patch and evidence rather than a live filesystem
+you trust by default.
 
 ## R2. Related work: take the wire shapes, refuse the planes
-
-Two codebases were read in full, and what each contributed is in
-[`docs/roadmap-history.md`](docs/roadmap-history.md). The decisions they
-produced are R4's and R5's; one finding matters enough to sit here.
 
 bhatti moved its internal API off loopback TCP onto a unix socket after a
 sandbox reached the daemon's loopback listener. The forced command over SSH
@@ -476,12 +436,11 @@ three times over. Argv is path-laden: `container::build_run_argv` is pure but
 full of local paths, so built here it reasons about another machine's filesystem
 and built there it needs the policy-to-argv logic, which *is* `h5i-sandbox`. The
 egress proxy must run where podman runs, since the container tier wires
-`HTTPS_PROXY` to the slirp4netns address meaning "the machine podman runs on";
-running the existing `container::run` path unchanged means the MVP needs zero
-egress redesign. The binary is already the distribution, since boxes exec
-`/usr/local/bin/h5i` today. That last is an MVP decision rather than a permanent
-constraint: a slim worker build is a cargo feature set away, and the protocol
-never learns the difference.
+`HTTPS_PROXY` to the slirp4netns address meaning "the machine podman runs on".
+And the binary is already the distribution, since boxes exec
+`/usr/local/bin/h5i` today; that last is an MVP decision, not a permanent
+constraint, since a slim worker build is a cargo feature set away and the
+protocol never learns the difference.
 
 ```
 this machine (control plane)          runner (worker)
@@ -550,7 +509,7 @@ for control types, raw bytes for stdio. The codec is transport-free, like
   `HELLO` exchanges what never changes within an install; there is no
   negotiation, the lower protocol version governs, and both sides gate features
   by named constants so a worker too old fails at probe time rather than
-  mid-create. Everything that drifts belongs to `CAPABILITIES` and nowhere else.
+  mid-create. Everything that drifts belongs to `CAPABILITIES`.
 - Identity never rides in a frame. `runner_id` is computed on this side from the
   host key SSH verified against pinned known_hosts. The worker may echo it as a
   sanity check, and the echo is never identity-bearing: a value the peer asserts
@@ -559,7 +518,7 @@ for control types, raw bytes for stdio. The codec is transport-free, like
   `DATA_DONE` carrying the SHA-256 the receiver verifies before acting.
 - Limits are per RPC, not just per frame. The frame cap bounds one message and
   nothing stops a peer streaming forever, so every RPC class carries a
-  receiver-enforced total. The sender's declared size is a claim, and the
+  receiver-enforced total; the sender's declared size is a claim, and the
   receiver aborts the moment it is exceeded.
 - Commands are argv arrays end to end. A shell is asked for by name, never
   implied by the protocol.
@@ -575,9 +534,8 @@ h5i runner list | gc <name> | unpair <name>
 `pair` generates the dedicated Ed25519 keypair at mode 0600, installs the
 forced-command line (over existing SSH access, or by printing the line to
 paste), records the host key into the per-runner known_hosts (trust on first use
-at pair, strict forever after), and runs `HELLO` plus a first `PROBE`. It
-succeeds against any Linux machine that speaks the protocol: the only hard
-failure is no `h5i` on the far side. Everything else lands in the report:
+at pair, strict forever after), and runs `HELLO` plus a first `PROBE`. The only
+hard failure is no `h5i` on the far side; everything else lands in the report:
 
 ```json
 {
@@ -603,9 +561,8 @@ The account is part of the boundary. `restrict` binds *our key*, not the
 machine; every other key, account and sshd setting is whatever the admin left.
 So the docs specify a dedicated OS user and `pair` offers to create it: no
 password login, no sudo, no supplementary groups, a clean environment, the
-forced command by absolute path. `probe` warns on what it can see. None of this
-is enforcement h5i can promise, and the docs must not conflate "the pair key is
-constrained" with "the account is".
+forced command by absolute path. `probe` warns on what it can see. The docs must
+not conflate "the pair key is constrained" with "the account is".
 
 Runner config is host-scoped, never in the repo: which machines *this* developer
 can reach is a fact about this machine, like the user egress allowlist. A
@@ -613,9 +570,9 @@ profile may later carry a human-facing label, which resolves to `runner_id`
 before the manifest is authored; only `runner_id` is digested.
 
 `probe` is `box probe` one machine over, and for every tier the runner
-advertises it must end by running `verify_exec` functionally. A runner whose
-advertisement its own kernel cannot back gets it corrected, loudly. Present bits
-are not a working confined exec, and the probe is where that lesson stays paid.
+advertises it must end by running `verify_exec` functionally. Present bits are
+not a working confined exec, and a runner whose advertisement its own kernel
+cannot back gets it corrected, loudly.
 
 ## R7. Create: copy in, one machine over
 
@@ -642,10 +599,10 @@ repo's worktree inodes, and a remote box shares nothing.
    mount of anything on the runner. A remote create makes the box (source,
    policy, lease); the container is made when there is something to run in it
    (R13.3), since the container tier is `podman run --rm` per command and has no
-   warm form. That also suits the hardware this aims at, a warm container idling
-   on a small runner costing memory for nothing. When it lands, copy
-   `microvm::guest_name`'s rule: the container's name is a digest of its own
-   create argv, so a config change forces a fresh one by construction.
+   warm form, and a warm container idling on a small runner costs memory for
+   nothing. When it lands, copy `microvm::guest_name`'s rule: the container's
+   name is a digest of its own create argv, so a config change forces a fresh
+   one by construction.
 4. `CREATE_RESULT` echoes the digest of the policy the worker actually enforced,
    and this side refuses to mark the box live unless it matches. Cheap, and it
    converts "the worker silently ran an older policy" from a possibility into a
@@ -719,9 +676,9 @@ and the channel is mutually authenticated with pinned keys.
 
 So it is a third thing with an honest name, *`runner-observed`*: observed from
 outside the box, by an h5i we authenticated, on hardware we do not control. The
-entire security claim of this part is one sentence: *runner-observed collapses
-to box-claimed exactly when the runner host is compromised, and the runner host
-is the machine you chose to be able to lose.* The `Grade` axis is unchanged.
+security claim of this part is one sentence: *runner-observed collapses to
+box-claimed exactly when the runner host is compromised, and the runner host is
+the machine you chose to be able to lose.* The `Grade` axis is unchanged.
 
 Receipts are written on this side from the `EXIT` and `EXPORT_RESULT` payloads.
 No signing is added, because none exists locally either and a signature from a
@@ -737,8 +694,8 @@ its own work, the same sweep-on-entry pattern
 `sweep_invalid_worktree_registrations` uses, plus an explicit `h5i runner gc`.
 Reaping stops the container, snapshots a partial export bundle and the receipt
 spool, and deletes after a grace window; when the snapshot fails it keeps the
-box and says so. There is no heartbeat protocol, because there is no daemon to
-keep alive.
+box and says so. There is no heartbeat, because there is no daemon to keep
+alive.
 
 Persistence is a capability, not a requirement. A `persistent_boxes: false`
 runner (read-only OS, tmpfs workspace, one microSD) loses every box at reboot,
@@ -753,12 +710,11 @@ machine; a pairing-time warning, not something h5i can enforce.
 Refused, fail-closed, with the reason in the error:
 
 - Profiles that need the secrets broker or the auth proxy. Both exist to keep
-  secret values on this machine, and shipping them to the runner to keep the
-  feature working would invert the point. The later design is a credential
-  channel: a dedicated long-lived session carrying muxed connections from the
-  runner-side proxy back to the auth proxy here. That channel is the one place a
-  mux enters the protocol, which is why it is not in the MVP. Until it exists,
-  no agent that needs model credentials runs on a runner.
+  secret values on this machine. The later design is a credential channel: a
+  dedicated long-lived session carrying muxed connections from the runner-side
+  proxy back to the auth proxy here. That channel is the one place a mux enters
+  the protocol, which is why it is not in the MVP. Until it exists, no agent
+  that needs model credentials runs on a runner.
 - Any request past the runner's advertised capabilities, per R1.
 
 Assumed, and stated so it is priced: the MVP runner has its own outbound
@@ -769,7 +725,7 @@ supported MVP topology; it becomes one when brokered egress lands.
 Deferred, with their shape already known. Brokered no-network egress: the
 container gets no network at all and its only egress is a proxy whose upstream
 is the credential channel, so raw sockets fail closed instead of bypassing the
-CONNECT proxy. When it lands it lands for local boxes too. WAN transport over
+CONNECT proxy; when it lands it lands for local boxes too. WAN transport over
 iroh: a runner ALPN beside the share ALPN, with the pair keys authenticating
 above it, reusing the existing QUIC stack without touching the ticket model, and
 the runner dials out so no router configuration. The kernel tiers on a runner,
@@ -807,17 +763,14 @@ R12's refusal of credential-bearing profiles was also written down and never
 implemented: values never crossed, but the runner resolves grant descriptors
 against its own environment, so a box could be handed the runner's credential.
 
-Two process lessons worth keeping. Several fixes were themselves wrong, three of
-them surviving until a round was spent reviewing the *fixes* rather than the
-code, so reviewing a patch is not the same activity as reviewing a system. And
-one fix's commit message described work its diff never did, which is worse than
-the bug: the message is what the next reader trusts.
+One process lesson. Several fixes were themselves wrong, three of them surviving
+until a round was spent reviewing the *fixes* rather than the code, so reviewing
+a patch is not the same activity as reviewing a system.
 
 ## R13. The order
 
 The step-by-step order, and what landed against each step, is in
 [`docs/roadmap-history.md`](docs/roadmap-history.md).
-
 ---
 
 # Runtime detection: a kernel-observed lane
@@ -859,13 +812,11 @@ h5i sorts its evidence into lanes because they are not equally trustworthy:
 | `browser` | the browser in the box | console, page errors, failed requests | closing the browser |
 | `runner-observed` | the paired worker | the same as the above, one machine over | the same as the above |
 
-Every one of them either sits at the boundary of the box or lives inside it. The
-boundary lanes see the first process and the traffic that chose to go through
-h5i; the in-box lane sees what the box chose to report. Between them sits what
-an agent's build actually does: the four hundred processes `npm ci` forks, the
-`postinstall` that reads `~/.aws/credentials` because the profile granted the
-directory, the test that dials a hardcoded IP because the proxy only ever sees
-names.
+Every one either sits at the boundary of the box or lives inside it, so between
+them sits what an agent's build actually does: the four hundred processes `npm
+ci` forks, the `postinstall` that reads `~/.aws/credentials` because the profile
+granted the directory, the test that dials a hardcoded IP because the proxy only
+ever sees names.
 
 The kernel sees every `execve` whether or not a shim wrapped it, every `connect`
 whether or not it spoke HTTP, and every `openat` whether or not the opener
@@ -884,14 +835,13 @@ that is not.
 
 Both solve this at a scale h5i does not have; the full reading is in
 [`docs/roadmap-history.md`](docs/roadmap-history.md). Three decisions came out
-of it.
-
-The collector/signature split is Tracee's: rules never touch a ring buffer and
-the collector never learns what a credential file is (D7, D9). Lineage lives in
-the kernel, not reconstructed by racing `/proc`, which is Tetragon's idea and
-D6's scope mechanism, because by the time userspace reads `/proc/<pid>` a
-short-lived `postinstall` is gone. And a dropped event is reported rather than
-smoothed over, which is why `events_lost` sits beside `events_seen`.
+of it. The collector/signature split is Tracee's: rules never touch a ring
+buffer and the collector never learns what a credential file is (D7, D9).
+Lineage lives in the kernel rather than being reconstructed by racing `/proc`,
+which is Tetragon's idea and D6's scope mechanism, because by the time userspace
+reads `/proc/<pid>` a short-lived `postinstall` is gone. And a dropped event is
+reported rather than smoothed over, which is why `events_lost` sits beside
+`events_seen`.
 
 Refused: Tracee's event catalogue, since hundreds of instrumented events need
 CO-RE plus a full BTF toolchain and a detector that costs a second toolchain is
@@ -908,14 +858,12 @@ the release matrix already builds. `libbpf-rs` would drag in libbpf, libelf and
 zlib as native link-time dependencies; hand-rolling `bpf(2)` is two thousand
 lines of ELF parsing aya has already had reviewed.
 
-The probe is C, compiled by `clang -target bpf` in the build script, which is
-the decision most likely to be questioned since aya has a Rust eBPF frontend.
-Three reasons: `aya-ebpf` requires a *nightly* toolchain and the `bpf-linker`
-binary, and adding both to the build of an optional feature is a poor trade; the
-probe is ~350 lines of straight-line code with no allocation, generics or error
-handling, where C's disadvantages are smallest; and every reference
-implementation writes its probes in C, so the code is reviewable against them
-line for line.
+The probe is C, compiled by `clang -target bpf` in the build script, though aya
+has a Rust eBPF frontend. Three reasons: `aya-ebpf` requires a *nightly*
+toolchain and the `bpf-linker` binary; the probe is ~350 lines of straight-line
+code with no allocation, generics or error handling, where C's disadvantages are
+smallest; and every reference implementation writes its probes in C, so the code
+is reviewable against them line for line.
 
 The build script is honest about the toolchain rather than demanding it. No
 BPF-capable `clang` means the object is not built, the crate still compiles, and
@@ -952,9 +900,8 @@ accessors), all stable since 5.8, which is the floor the loader checks for.
 The cut costs real things: no `task_struct` walking, so no parent `comm` without
 keeping it ourselves, no cgroup *path*, no mount-namespace inode, no file inode
 on `openat`. It buys a probe that loads on any kernel from 5.8 onward with no
-build-time headers and no runtime BTF, which is the difference between a feature
-that works on a user's WSL2 kernel and one that works on the maintainer's
-laptop.
+build-time headers and no runtime BTF, the difference between a feature that
+works on a user's WSL2 kernel and one that works on the maintainer's laptop.
 
 ## D6. Scope: which events belong to which box
 
@@ -967,10 +914,10 @@ restrictive misses the interesting child. One constraint decides it:
 > which is the most valuable single event of the run.
 
 That rules out cgroup id, exact and cheap but created *inside* the spawn path
-and on most hosts not available at all without a systemd user manager that
-grants delegation; and pid namespace, whose inode comes from `/proc/<pid>` of a
-process not yet forked. The process tree is the one thing knowable in advance,
-because h5i is already running.
+and on most hosts unavailable without a systemd user manager that grants
+delegation; and pid namespace, whose inode comes from `/proc/<pid>` of a process
+not yet forked. The process tree is the one thing knowable in advance, because
+h5i is already running.
 
 So the scope is `pidtree`, seeded with every task of the h5i process, not just
 the main thread: `Command::spawn` can be called from any thread, and a tree
@@ -1002,9 +949,9 @@ nothing in v1 ships it.
 | anything else | `none` | an unknown tier is uncovered, never assumed covered |
 
 `partial` and `none` go into the receipt as facts with their reasons attached,
-which is the difference between "we looked and found nothing" and "we could not
-look". One consequence of seeding from h5i's tree: any process h5i spawns during
-the run window is in scope. On the kernel tiers that is the payload and nothing
+the difference between "we looked and found nothing" and "we could not look".
+One consequence of seeding from h5i's tree: any process h5i spawns during the
+run window is in scope. On the kernel tiers that is the payload and nothing
 else; on the container tier it is also the runtime, which is why that tier is
 `partial` rather than wrong.
 
@@ -1142,10 +1089,9 @@ All optional, all appended last on `Profile` so no existing canonical
 serialization or pinned digest moves. `enabled` defaults to false: turning on a
 kernel facility that needs privileges most users have not granted would produce
 a fleet of `unavailable` blocks and teach everyone to ignore them. `require =
-true` is the fail-closed switch and means what it says, which is the setting for
-"I am running somebody else's dependency tree" and off by default because the
-failure mode of a mandatory detector on a laptop kernel is a tool that does not
-start.
+true` is the fail-closed switch, the setting for "I am running somebody else's
+dependency tree", off by default because the failure mode of a mandatory
+detector on a laptop kernel is a tool that does not start.
 
 ### D11.1. Opt-in at three layers, and the one that is easy to get wrong
 
