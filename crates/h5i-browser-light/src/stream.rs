@@ -735,8 +735,18 @@ fn bind_control_socket(path: &Path) -> Result<UnixListener, H5iError> {
 #[cfg(unix)]
 fn restrict_to_owner(path: &Path) -> Result<(), H5iError> {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|e| H5iError::with_path(e, path))
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|e| {
+        // Fatal rather than best-effort, and the message has to say why or it
+        // reads as an unrelated permissions problem. A control socket this
+        // process cannot narrow is one anything on the machine may connect to,
+        // and connecting to it is authority over the session.
+        H5iError::Metadata(format!(
+            "could not restrict `{}` to this user ({e}). It is the session's control \
+             channel — whoever can open it can drive the browser and use its credentials — \
+             so the session will not start rather than serve on one anyone can reach.",
+            path.display()
+        ))
+    })
 }
 
 /// Windows has no mode bits to set, and inventing an ACL check here would be a

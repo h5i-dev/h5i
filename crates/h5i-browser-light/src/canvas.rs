@@ -946,8 +946,8 @@ mod tests {
         // A second one takes the pair past it and is refused, by name.
         let refused = canvases
             .get_or_create(2, MAX_SIDE, MAX_SIDE)
-            .err()
-            .expect("a second full-size canvas is over the ceiling");
+            .map(|_| ())
+            .expect_err("a second full-size canvas is over the ceiling");
         assert!(refused.contains("ceiling"), "{refused}");
         assert!(
             canvases.get(2).is_none(),
@@ -979,8 +979,7 @@ mod tests {
         canvases.get_or_create(2, 64, 64).expect("fits");
         let refused = canvases
             .resize(2, MAX_SIDE, MAX_SIDE)
-            .err()
-            .expect("growing the second one is over the ceiling");
+            .expect_err("growing the second one is over the ceiling");
         assert!(refused.contains("ceiling"), "{refused}");
         assert_eq!(canvases.get(2).expect("still there").width(), 64);
         // And a resize that fits still happens, or the ceiling would be a

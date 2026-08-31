@@ -658,16 +658,23 @@ fn is_secure(url: &Url) -> bool {
 /// malformed cookie made *every* later request's header unparseable and the
 /// page lost the cookies that were fine along with the one that was not.
 fn is_wire_safe(name: &str, value: &str) -> bool {
-    let bad = |c: char| {
-        c.is_control() || c.is_whitespace() || matches!(c, '"' | ',' | ';' | '\\' | '=')
-    };
+    // **Narrower than the grammar, deliberately.** RFC 6265's cookie-octet also
+    // excludes space, comma, quote and backslash, and refusing those would
+    // refuse cookies the web actually sets — every browser accepts them,
+    // because a `Cookie:` header is one header split on `;` and none of them
+    // change where the split falls. What this rejects is what makes the header
+    // *unparseable* or reframes it: a control character, and the two delimiters
+    // the header itself is built from.
+    let unparseable = |c: char| c.is_control();
     // `=` separates the pair, so it may not appear in a name; a value may hold
-    // one, which is what a base64 padding character is.
+    // one, which is what a base64 padding character is. Whitespace in a name is
+    // not a name — the header would carry two tokens where a server expects
+    // one — while whitespace in a value is ordinary.
     !name.is_empty()
-        && !name.chars().any(bad)
-        && !value
+        && !name
             .chars()
-            .any(|c| c.is_control() || c.is_whitespace() || matches!(c, '"' | ',' | ';' | '\\'))
+            .any(|c| unparseable(c) || c.is_whitespace() || matches!(c, '=' | ';'))
+        && !value.chars().any(|c| unparseable(c) || c == ';')
 }
 
 /// RFC 6265 §5.1.4 default-path: the request path with its last segment
@@ -1287,11 +1294,9 @@ mod tests {
             "bad\rname=v",
             "bad\nname=v",
             "bad name=v",
-            "quo\"ted=v",
-            "com,ma=v",
+            "bad\tname=v",
             "ok=va\rlue",
-            "ok=va lue",
-            "ok=va,lue",
+            "ok=va\u{0}lue",
         ] {
             assert_eq!(
                 jar.store(&site, [header]),
@@ -1302,11 +1307,22 @@ mod tests {
         }
         assert_eq!(jar.len(), 1, "and the one good cookie is still there");
 
-        // A base64 value keeps its padding: `=` is legal in a value and only
-        // separates the pair once.
-        assert_eq!(jar.store(&site, ["token=YWJjZA=="]), 1);
-        let (header, _) = jar.header_for(&site).expect("sent");
-        assert!(header.contains("token=YWJjZA=="), "{header}");
+        // And the rule stays narrower than the grammar, because the web is:
+        // a space, a comma and a quote in a *value* are all things real sites
+        // set and every browser accepts, and none of them move the `;` the
+        // header is split on. A base64 value keeps its padding too — `=` is
+        // legal in a value and only separates the pair once.
+        for header in [
+            "token=YWJjZA==",
+            "pref=a, b",
+            "greeting=hello world",
+            "quoted=\"a b\"",
+        ] {
+            assert_eq!(jar.store(&site, [header]), 1, "`{header}` is ordinary");
+        }
+        let (sent, _) = jar.header_for(&site).expect("sent");
+        assert!(sent.contains("token=YWJjZA=="), "{sent}");
+        assert!(sent.contains("greeting=hello world"), "{sent}");
     }
 
     /// Loopback is a first-party channel by one rule, not two: the allowlist's

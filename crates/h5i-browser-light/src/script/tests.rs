@@ -1350,7 +1350,7 @@ fn a_cross_origin_event_stream_is_refused_when_the_server_does_not_allow_it() {
             "globalThis.es = new EventSource('http://127.0.0.1:{port}/events');"
         ))
         .expect_err("a stream the server did not allow must not open");
-    let error = format!("{error}");
+    let error = error.to_string();
     assert!(
         error.contains("same-origin policy") && error.contains("Access-Control-Allow-Origin"),
         "{error}"
@@ -1402,7 +1402,7 @@ fn an_answer_that_is_not_an_event_stream_is_not_read_as_one() {
             "globalThis.es = new EventSource('http://127.0.0.1:{port}/events');"
         ))
         .expect_err("a body that is not an event stream must not be read as one");
-    let error = format!("{error}");
+    let error = error.to_string();
     assert!(error.contains("not `text/event-stream`"), "{error}");
 
     let _ = server.join();

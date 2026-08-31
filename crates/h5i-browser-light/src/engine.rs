@@ -3474,6 +3474,51 @@ mod frame_tests {
             .expect("the engine survives reading back a tree its own script built");
     }
 
+    /// What the bound costs a page that is nowhere near it. Printed rather
+    /// than asserted: a threshold here would fail on a loaded machine and say
+    /// nothing about the engine.
+    #[test]
+    #[ignore = "a measurement, not an assertion"]
+    fn the_depth_walk_costs_little_against_a_layout() {
+        let path = std::env::var("H5I_PERF_PAGE").expect("set H5I_PERF_PAGE");
+        let html = std::fs::read_to_string(path).expect("read");
+        let broker =
+            crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+                .expect("broker");
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let factory =
+            PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+        let page = factory.from_html(&html, &Url::parse("https://host.example/").unwrap());
+
+        let mut nodes = 0usize;
+        {
+            let doc = page.doc.borrow();
+            let mut stack = vec![doc.root_node().id];
+            while let Some(id) = stack.pop() {
+                let Some(node) = doc.get_node(id) else { continue };
+                nodes += 1;
+                stack.extend(node.children.iter().copied());
+            }
+        }
+
+        let walk = {
+            let started = std::time::Instant::now();
+            for _ in 0..100 {
+                let mut doc = page.doc.borrow_mut();
+                prune_deep_nesting(&mut doc);
+            }
+            started.elapsed() / 100
+        };
+        let layout = {
+            let started = std::time::Instant::now();
+            for _ in 0..10 {
+                let _ = guard_layout(|| page.doc.borrow_mut().resolve(0.0));
+            }
+            started.elapsed() / 10
+        };
+        eprintln!("nodes={nodes} prune={walk:?} layout={layout:?}");
+    }
+
     /// An ordinary page is nowhere near the bound, so it is untouched and says
     /// nothing about depth. The deepest page in this project's corpus is under
     /// 40 levels.
