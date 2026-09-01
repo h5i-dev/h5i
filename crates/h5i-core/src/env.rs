@@ -884,6 +884,14 @@ pub fn materialize_from_ref(repo: &Repository, h5i_root: &Path) -> Result<usize,
             // later as a confusing "tampered policy" failure. Verify first,
             // with the SAME check load_policy runs, and skip (don't write a
             // broken env).
+            //
+            // What this is NOT is a trust anchor. Whoever wrote this ref chose
+            // both halves — the manifest's `policy_digest` and the
+            // `policy.resolved.toml` it is compared against — so the check
+            // detects drift and corruption and nothing else. `load_policy`
+            // later calls the same equality "tamper-evident", which it is
+            // against a local edit made after this point and is not against the
+            // peer this ref came from.
             let consistent = ResolvedPolicy::from_toml(toml)
                 .and_then(|p| p.digest())
                 .map(|d| d == m.policy_digest)
@@ -1352,7 +1360,13 @@ pub fn find(h5i_root: &Path, name: &str) -> Result<EnvManifest, H5iError> {
 }
 
 /// Load the stored resolved policy for `m`, verifying it against the digest
-/// pinned in the manifest (tamper-evident).
+/// pinned in the manifest.
+///
+/// Tamper-evident against an edit of one of the two files, which is the case
+/// this exists for. It is not evidence of provenance: anything that wrote both
+/// halves — a `refs/h5i/env` import, or a same-uid process reaching
+/// `.git/.h5i/` — chose the digest as well as the policy. See
+/// [`materialize_from_ref`].
 pub fn load_policy(h5i_root: &Path, m: &EnvManifest) -> Result<ResolvedPolicy, H5iError> {
     let path = m.dir(h5i_root).join(POLICY_RESOLVED_FILE);
     let text = std::fs::read_to_string(&path).map_err(|e| H5iError::with_path(e, &path))?;

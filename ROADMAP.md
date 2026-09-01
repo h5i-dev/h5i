@@ -24,7 +24,7 @@ essential to this one.
 | --- | --- | --- |
 | browser engine | shipped. WPT core tier 75.7%; a production React build is not cleared | [`docs/design-browser.md`](docs/design-browser.md) |
 | in-terminal viewer | shipped, V1 to V8. Keyboard-driven, in the terminal or a browser | [`docs/design-interminal-browser.md`](docs/design-interminal-browser.md) |
-| policy resolution | shipped, P1 to P4. The authority validator is opt-in | [`docs/design-policy.md`](docs/design-policy.md) |
+| policy resolution | P1 shipped; P2 shipped, opt-in; P3 and P4 designed, not built | [`docs/design-policy.md`](docs/design-policy.md) |
 | remote runner | R13.1 built. R13.2 to R13.4 are not | [`docs/design-runner.md`](docs/design-runner.md) |
 | runtime detection | built 2026-08-19, off by default at three layers | [`docs/design-detect.md`](docs/design-detect.md) |
 

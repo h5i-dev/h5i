@@ -1,7 +1,10 @@
 # Design: policy resolution and the authority validator
 
 How a declared policy becomes an enforced one, and what re-checks that the
-translation was faithful. Sections P1 to P4, all shipped.
+translation was faithful. P1 is shipped and unconditional. P2 is shipped and
+opt-in. P3 and P4 are **designed and not built**, and the sections below say so
+where they describe them: a control a reader takes for enforced is worse than
+one they know is missing.
 
 ## In one screen
 
@@ -9,10 +12,12 @@ translation was faithful. Sections P1 to P4, all shipped.
   digested intent in `policy.resolved.toml`.
 - A per-run translation validator re-derives the subset claims independently of
   the resolver that produced them. Opt-in behind `H5I_FS_AUTHORITY_ENFORCE`.
-- The supervisor reads back the child's realized mounts before `exec` and fails
-  closed on a mismatch.
-- Mount construction is race-free by `openat2` and mount-by-handle; the
-  read-back is the net under that.
+- P3: the supervisor would read back the child's realized mounts before `exec`
+  and fail closed on a mismatch. **Not built.** `mount_audit.rs` parses mount
+  point and per-mount `ro` and has no callers; there is no exec barrier.
+- P4: mount construction would be race-free by `openat2` and mount-by-handle.
+  **Not built.** Neither call appears in the crate. The filesystem boundary
+  today is the Landlock ruleset, and nothing re-checks how it was constructed.
 
 Part of the h5i design set. The roadmap, and what is next, is
 [`ROADMAP.md`](../ROADMAP.md). Superseded positioning and the build logs are in
@@ -96,6 +101,11 @@ unenforced, never rendered as enforced and never silently downgraded.
 
 ## P3. Mount realization audit: plan-check plus a read-back
 
+**Status: designed, not built.** `mount_audit.rs` holds a partial reader (mount
+point and `ro`, not the identity and flag set described here) and nothing calls
+it. Read this section as the specification it is; the rest of it is in the
+present tense because that is how it was written, not because it runs.
+
 A check on the plan says the plan is safe, not that the kernel realized it, and
 for mechanisms whose output is a syscall stream there is no argv to re-parse.
 `mount_audit.rs` narrows the gap: after setup and before `exec` the supervisor
@@ -120,8 +130,13 @@ supervisor audits, and only on success sends *go*.
 
 ## P4. Race-free mount construction
 
-The audit is a net; prevention is the floor under it. Two disciplines in the
-setup code:
+**Status: designed, not built.** There is no `openat2`, `open_tree`,
+`mount_setattr` or `move_mount` anywhere in the workspace. Setup resolves paths
+by string, which is the residual `env::staged_path_violation` names in its own
+comment on the same class of race.
+
+The audit is a net; prevention is the floor under it. Two disciplines the setup
+code would carry:
 
 - Resolution. Every path the privileged setup opens on the adversarial worktree
   goes through `openat2` with `RESOLVE_NO_SYMLINKS` and `RESOLVE_BENEATH`, then
