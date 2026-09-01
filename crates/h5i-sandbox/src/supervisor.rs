@@ -351,6 +351,19 @@ pub struct ResolvedEgress {
     pub unenforceable: Vec<(String, String)>,
 }
 
+/// The list this tier actually enforces.
+///
+/// The profile's own `net.egress` plus the host-side `h5i box allow` extras,
+/// merged by the one rule that never widens a deny-all profile. Reading the
+/// profile list directly is what made `h5i box allow` apply at container and
+/// microvm and do nothing here, while `h5i box run` printed the extra on the
+/// egress line as though it were in force. Fail-closed, so not an escape, but
+/// the announced scope was not the enforced one, which is the one thing that
+/// line exists to get right.
+pub fn enforced_egress(policy: &crate::sandbox::ResolvedPolicy) -> Vec<String> {
+    crate::container::effective_egress(&policy.profile.net_egress, &policy.user_egress_allow)
+}
+
 /// May a `net.egress` entry pin to this address?
 fn is_pinnable(ip: &IpAddr) -> bool {
     // A v4 address written as `::ffff:a.b.c.d` is the same address. Unwrap it
@@ -769,7 +782,7 @@ fn setup_egress(
         // needed (the base URL is the gateway IP), so no host pins.
         Some(port) => (vec![EgressDest { ip: SLIRP_GATEWAY, port }], Vec::new()),
         None => {
-            let resolved = resolve_egress(&policy.profile.net_egress);
+            let resolved = resolve_egress(&enforced_egress(policy));
             // Loud, not silent. The entry read like an ordinary host and
             // answered with an address this tier will not dial, and the two
             // facts only make sense together. Dropping it quietly would leave
@@ -1181,13 +1194,8 @@ fn run_supervised(
     // narrows the nftables ruleset to the auth proxy alone in that case).
     let mut env = effective_env;
     let (_egress_proxy, egress_port) = if has_egress && auth_port.is_none() {
-        // Through `effective_egress`, like every other tier: parsing the profile
-        // list directly meant `h5i box allow` extras applied on container and
-        // microvm but silently did nothing here.
-        let mut allow = crate::container::AllowList::parse(&crate::container::effective_egress(
-            &policy.profile.net_egress,
-            &policy.user_egress_allow,
-        ))?;
+        // Through [`enforced_egress`], like every other tier.
+        let mut allow = crate::container::AllowList::parse(&enforced_egress(policy))?;
         // Pin now, so a later DNS answer cannot move the allowlist under us.
         allow.pin_dns();
         // On the pinned port when the box has one: a `browser` box's Chrome
@@ -1486,6 +1494,25 @@ mod tests {
         let r = resolve_egress(&["localhost".into(), "localhost:8080".into()]);
         assert!(r.unenforceable.is_empty(), "{:?}", r.unenforceable);
         assert!(r.dests.iter().any(|d| d.port == 8080));
+    }
+
+    #[test]
+    fn a_box_allow_extra_reaches_the_nftables_ruleset() {
+        // The macOS half of this tier went through `effective_egress`; the
+        // Linux half read the profile list, so the extra was printed on the
+        // egress line and never pinned.
+        let mut p = crate::sandbox::Profile::builtin("p", crate::sandbox::IsolationClaim::Supervised);
+        p.net_egress = vec!["api.example.com".into()];
+        let mut pol = crate::sandbox::ResolvedPolicy::new(p.isolation, p);
+        pol.user_egress_allow = vec!["pypi.org".into()];
+        assert_eq!(enforced_egress(&pol), vec!["api.example.com", "pypi.org"]);
+
+        // And the widening rule still holds: a deny-all profile stays one.
+        let mut deny = crate::sandbox::Profile::builtin("p", crate::sandbox::IsolationClaim::Supervised);
+        deny.net_egress = Vec::new();
+        let mut pol = crate::sandbox::ResolvedPolicy::new(deny.isolation, deny);
+        pol.user_egress_allow = vec!["pypi.org".into()];
+        assert!(enforced_egress(&pol).is_empty());
     }
 
     #[test]
