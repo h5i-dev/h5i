@@ -4,7 +4,8 @@
 > agent reads, so the cost of a step tracks what the step changed rather than
 > how big the page is.
 
-Status: draft 0.1. Target: `crates/h5i-browser-light`. Primary surfaces:
+Status: draft 0.2. Phases 0 and 1 are built and measured; see
+[Measured](#measured). Target: `crates/h5i-browser-light`. Primary surfaces:
 `snapshot`, `snapshot --delta`, `markdown`, and the ref resolution every action
 verb performs. Paths below are relative to `crates/h5i-browser-light/src/`
 unless said otherwise. Cited symbols are the authority; line numbers drift.
@@ -27,6 +28,10 @@ is *read*, not what it loads or renders.
   never allowed to be stale and silent about it.
 - Prior art is Chromium's accessibility abstraction as distilled by AccessKit.
   We take the design, not the dependency.
+- Built and measured, phases 0 and 1: an agent's `snapshot --delta` step on a
+  loaded page went from 1.43 ms and 11,844 allocations to 0.12 ms and 2,028,
+  while a cold `open` moved by about 1%. Which half came from where, and what
+  is still on the table, is under [Measured](#measured).
 
 ## Contents
 
@@ -38,7 +43,8 @@ is *read*, not what it loads or renders.
 [rendering](#snapshot-rendering), [delta](#delta), [markdown](#markdown-and-extract),
 [budgets](#budgets-and-dos-resistance), [modules](#module-layout),
 [testing](#testing), [acceptance](#acceptance-criteria),
-[rollout](#rollout), [expected gains](#expected-gains-and-the-adoption-decision).
+[measured](#measured), [rollout](#rollout),
+[expected gains](#expected-gains-and-the-adoption-decision).
 
 ---
 
@@ -288,6 +294,30 @@ Requirements:
 - Optional data lives in the sparse attribute table, not in the node.
 - The fingerprint is a fast-skip hint for delta only. Correctness always
   comes from exact comparison, never from a hash.
+
+What phase 1 actually built is a subset of the above, and the differences are
+deliberate rather than partial work:
+
+- `local_revision` and `subtree_fingerprint` are absent. Nothing reads them
+  until phase 3's incremental invalidation, and a field nothing reads is a
+  field nothing tests. They are what the remaining budget is being held for:
+  the shipped node is 28 bytes.
+- The child links are absent too. The builder emits in preorder and stores a
+  `depth`, which determines the same tree an indented outline does, and phase 1
+  renders and diffs by walking that sequence flat. Child links buy O(1)
+  navigation, which is a phase 3 need.
+- `href` sits in the node rather than in the attribute table. It is printed on
+  the same line as the name, every link has one, and a side allocation for the
+  commonest actionable element on the web costs more than the four bytes it
+  saves.
+- `ReadId` carries no generation. Generations catch a reference into a freed
+  slot, and while every tree is built and dropped whole there is no freed slot
+  to catch. They arrive with the retained arena.
+- One flag was added that the sketch did not have: `VERBATIM`, marking the
+  lines of a code block, whose leading indentation the arena stores as-is
+  while every other string arrives collapsed. Without it the renderer cannot
+  tell which strings still need normalising, and the outline silently indents
+  code the walker did not.
 
 ### Roles
 
@@ -631,19 +661,24 @@ in `hidden_from_assistive_tech`.
 
 ```
 src/read_ir/
-  mod.rs
-  model.rs            ids, nodes, roles, flags, size assertions
-  text_arena.rs       chunked immutable text storage
-  build.rs            DOM + style -> ReadTree
-  names.rs            accessible name + dependency index
-  refs.rs             stable @ref lifecycle, tombstones
-  invalidate.rs       mutation classification
-  commit.rs           safe-point update, atomic commit
-  delta.rs            revision log, delta materialization
-  render_snapshot.rs
+  mod.rs              *  the Snapshot compatibility seam
+  model.rs            *  ids, nodes, roles, flags, size assertions
+  text_arena.rs       *  immutable text storage
+  build.rs            *  DOM + style -> ReadTree
+  render_snapshot.rs  *  ReadTree -> the text an agent reads
+  delta.rs            *  unchanged fast path; defers the rest to the walker
+  equivalence.rs      *  the phase 1 acceptance gate (tests)
+  names.rs               accessible name + dependency index
+  refs.rs                stable @ref lifecycle, tombstones
+  invalidate.rs          mutation classification
+  commit.rs              safe-point update, atomic commit
   render_markdown.rs
   invariants.rs
 ```
+
+`*` is what phase 1 built. `text_arena.rs` is one buffer and a span table
+rather than the design's chunk list: chunking exists to free and compact
+incrementally, which a tree that is dropped whole never does.
 
 `snapshot.rs` keeps the fence constants, `collapse`, `one_line`,
 `defang_fence` and the role tables through the transition; the IR build calls
@@ -687,37 +722,162 @@ into CI only after Phase 0 baselines exist.
 
 ## Acceptance criteria
 
-Functional:
+Functional. The first is met and gated by `read_ir/equivalence.rs`, which reads
+a corpus of the shapes the walk treats specially both ways and compares the
+rendered outline, the ref list and the materialised snapshot; the rest belong to
+the phases that introduce what they describe.
 
-- Existing snapshot tests pass byte-identically, approved diffs aside.
-- A stale ref never dispatches to a different node.
-- Incremental and full rebuild agree on the final tree.
-- Uncertainty always resolves to a full rebuild or an explicit error.
+- *Met.* Existing snapshot tests pass byte-identically, approved diffs aside.
+  The whole crate suite (817 tests) is green with the IR in the `--text` path.
+- A stale ref never dispatches to a different node. (Phase 2.)
+- Incremental and full rebuild agree on the final tree. (Phase 3.)
+- Uncertainty always resolves to a full rebuild or an explicit error. (Phase 3.)
 
 Structural:
 
-- No per-node heap allocation for roles or tags.
-- No intermediate `Vec<Line>` in full snapshot rendering.
-- No quadratic table in delta.
-- An unchanged delta performs no DOM walk.
-- `ReadNode` is 48 bytes or the overrun is documented with a benchmark.
-- Transient-mode arenas are fully freed after output.
+- *Met.* No per-node heap allocation for roles or tags: the role is an enum and
+  the tag is a borrowed `&str`.
+- *Met.* No intermediate `Vec<Line>` in full snapshot rendering. Rendering a
+  26 KB outline makes three allocations.
+- *Met, for the case that pays.* No quadratic table in an unchanged delta,
+  which now allocates once. A changed page still runs the walker's subsequence;
+  phase 3 replaces it.
+- An unchanged delta performs no DOM walk. (Phase 2: it needs a retained tree.
+  Phase 1 still captures, then compares in O(lines) with no allocation.)
+- *Met.* `ReadNode` is 48 bytes or the overrun is documented. It is 28, asserted
+  at compile time.
+- *Met.* Transient arenas are freed after output; nothing is retained.
+
+One criterion the design did not think to write down, and should have, because
+it is the one the gate actually caught: **the structured reading and the
+rendered outline are two different outputs and both have to match.** The IR
+first shipped an arena that trimmed on the way in, which was invisible in the
+outline, because rendering collapses every line anyway, and wrong in the
+`Line.text` a delta serialises, where a code block's indentation lives. Testing
+only the rendered bytes would have passed it.
+
+## Measured
+
+Phases 0 and 1 have landed. `crates/h5i-browser-light/benches/read.rs` is the
+instrument: median of 9 runs after a warm-up, allocations counted by a global
+allocator armed around one call. Same box as the engine's other numbers
+(aarch64, WSL2), release profile. The bench asserts the two readings are
+byte-identical before it times them, so every row compares two ways of
+producing the same bytes.
+
+Absolute times move with what else the box is doing, by up to 40% between
+runs. Ratios and allocation counts do not, and allocation counts are exact, so
+those are what the claims below rest on.
+
+Fixture `large-static`: 500 lines (at the budget), 72 refs, 26.6 KB of outline,
+19.1 ms to load.
+
+| operation | walker | Read IR | ratio |
+|---|---|---|---|
+| capture | 0.154 ms | 0.093 ms | 1.7x |
+| render | 0.118 ms | 0.023 ms | 5.1x |
+| capture + render | 0.275 ms | 0.115 ms | **2.4x** |
+| capture, then materialise a `Snapshot` | 0.154 ms | 0.142 ms | 1.1x |
+| capture, then the refs alone | 0.156 ms | 0.104 ms | 1.5x |
+| delta, unchanged | 0.003 ms | 0.004 ms | 1.0x |
+| delta, one line inserted | 0.661 ms | 0.757 ms | 0.9x |
+
+Allocations for the same fixture, which is where the time went:
+
+| operation | walker | Read IR |
+|---|---|---|
+| capture | 4,376 / 141 KiB | 2,024 / 114 KiB |
+| render | 4,014 / 115 KiB | **3** / 34 KiB |
+| capture + render | 8,390 / 256 KiB | 2,027 / 148 KiB |
+| materialise a `Snapshot` | 4,376 / 141 KiB | 3,586 / **196 KiB** |
+| delta, unchanged | 1 / 0 KiB | 1 / 0 KiB |
+
+The delta row needs the phase 0 column to mean anything. Before any of this,
+the same unchanged delta cost **0.999 ms, 3,454 allocations and 1,108 KiB**,
+four times the cost of capturing the page it was reporting no change to.
+
+Four results worth stating plainly, including the two that are not wins:
+
+**The most expensive thing in a read was the unchanged delta, and it was not
+the IR that fixed it.** Answering "nothing moved" built two identity vectors
+and a 1.1 MB quadratic table. The fix is nine lines in `Snapshot::delta`: when
+every line's identity matches, a longest common subsequence of a sequence with
+itself is the whole sequence, so the answer is assembled directly. One
+allocation, no table. That is a provable equivalence rather than a heuristic,
+it is pinned by a differential test against the algorithm it replaced, and it
+needed nothing from this design. Reported separately because folding it into
+the IR's numbers would be false.
+
+**Rendering is where the IR itself wins, and it wins by not allocating.** Three
+allocations to render a 26 KB outline, against 4,014. The arena and the
+`&'static str` roles mean the outline is one buffer and some slices; `format!`
+per field and a fresh indent string per line were most of the old cost. On the
+form-heavy fixture the same change is 10.5x.
+
+**Materialising a `Snapshot` from the IR is not worth doing, and the number
+says so.** 1.1x on time, and it allocates *more bytes than the walker* (196 KiB
+against 141), because the page is then held in two shapes at once. This is the
+trap the design warned about under "Expected gains", now with a measurement
+attached: the IR pays only when the old shape goes away. So `Page::snapshot`
+deliberately still uses the walker, and the one caller switched over is
+`Page::text`, which wanted the words alone and was building a whole `Snapshot`
+to discard most of it.
+
+**Sizing the arena from the line budget made small pages worse, and the bench
+caught it.** Reserving 500 lines for a 40-line page had the IR using 26.8 KiB
+where the walker used 10.9. Reserving a floor of 64 and letting it grow costs a
+few doublings on a large page, which the allocation count does not notice, and
+the same fixture now reads at 5.5 KiB, half the walker's.
+
+### Against the predictions
+
+The cold-read prediction was 0 to 15%, and the honest answer is at the bottom
+of that range. Loading `large-static` costs 19.1 ms and the read is 0.28 ms of
+it, so a 2.4x faster read moves an `open` by about 1.2%. Parse, style and
+script dominate a first read, exactly as Amdahl said.
+
+The agent-loop prediction is the one that mattered, and it held. A
+`snapshot --delta` step on an already-loaded page cost 0.43 ms of capture and
+render plus 1.00 ms of delta at the phase 0 baseline; it now costs 0.115 ms
+plus 0.004 ms. Allocations for that step, which are exact rather than
+load-dependent, went from **11,844 to 2,028**. That is the design's actual
+claim, each step costing what the step changed rather than what the page
+weighs, and it is now true for the unchanged case and half true for the rest.
+
+### What is still on the table
+
+IR capture still makes about 2,000 allocations for 500 lines, four per line,
+and nearly all of them are in the accessible-name computation: it returns an
+owned `String` per named node, and `label_for` and `labelled_by` still scan the
+whole document per control. The form-heavy fixture shows the cost, at 0.45 µs
+per line against 0.19 µs for prose. The design's `names.rs`, an id index and a
+`label[for]` reverse index built once per capture, is the next measured lever.
+
+The changed-page delta is 0.9x, slightly worse, because the IR path
+materialises both readings and hands the question to the walker's subsequence.
+That is the honest shape of a transient tree, and it is what phase 3's change
+log exists to fix.
 
 ## Rollout
 
-**Phase 0, instrumentation.** Split-timing and allocation counters for the
-current parse / script / resolve / walk / render / delta pipeline, plus RSS.
-No behaviour change. Everything after this phase is judged against these
-numbers.
+**Phase 0, instrumentation. Landed.** Split-timing and allocation counters for
+the current capture / render / delta pipeline, in
+`crates/h5i-browser-light/benches/read.rs`. No behaviour change. Everything
+after this phase is judged against these numbers, which are in
+[Measured](#measured).
 
-**Phase 1, transient IR.** `ReadRole`, the compact node, direct rendering
-from the IR, byte-compatible output. No retained cache, no mutation hooks.
-This isolates the build cost and the allocation win.
+**Phase 1, transient IR. Landed.** `ReadRole`, the compact node, the text
+arena, direct rendering from the IR, byte-compatible output. No retained cache,
+no mutation hooks. The role table now returns the enum, so the walker and the
+IR share one role vocabulary rather than two that could drift.
 
-**Phase 2, stable refs and the retained cache.** Document epoch on `Page`,
-monotonic `RefId` with tombstones, the cache held across verbs in a live
-session, and the fast path for unchanged snapshot/delta. Action verbs stop
-taking a full capture per action.
+**Phase 2, stable refs and the retained cache. Next, and now justified by a
+measurement.** Document epoch on `Page`, monotonic `RefId` with tombstones, the
+cache held across verbs in a live session, and the fast path for unchanged
+snapshot/delta. Action verbs stop taking a full capture per action. This is the
+phase that lets `Session` retain a `ReadTree` instead of a `Snapshot`, which is
+the precondition for the IR paying on the snapshot verb at all: while both
+shapes are held, converting between them costs more than it saves.
 
 **Phase 3, incremental invalidation.** Mutation classification at
 `guard_mutation` and the native mutators, the name relation index, dirty
