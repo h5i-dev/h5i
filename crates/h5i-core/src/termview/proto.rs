@@ -279,6 +279,11 @@ pub enum ServerMessage {
     },
     /// What came of an `act`, an `insert` or a `history` step.
     Acted {
+        /// Which request this answers, when the engine said. Carried because a
+        /// viewer that coalesces one kind of request has to know which one just
+        /// completed, and "the last thing I sent" is a guess that a refusal
+        /// arriving out of order would get wrong.
+        action: Option<String>,
         ok: bool,
         /// Why not, when it did not work. Page-derived, so the caller
         /// sanitizes before drawing it.
@@ -411,6 +416,11 @@ pub fn parse(text: &str) -> Option<ServerMessage> {
         "act" => {
             let reply = v.get("reply").unwrap_or(&Value::Null);
             ServerMessage::Acted {
+                action: v
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
                 ok: reply.get("ok").and_then(Value::as_bool).unwrap_or(false),
                 error: reply
                     .get("error")
@@ -632,12 +642,32 @@ mod tests {
         assert_eq!(
             m,
             ServerMessage::Acted {
+                action: None,
                 ok: false,
                 error: Some("nope".into())
             }
         );
         let ok = parse(r#"{"type":"act","reply":{"ok":true,"ref":"e1"}}"#).unwrap();
-        assert_eq!(ok, ServerMessage::Acted { ok: true, error: None });
+        assert_eq!(
+            ok,
+            ServerMessage::Acted {
+                action: None,
+                ok: true,
+                error: None
+            }
+        );
+
+        // And the action comes back when the engine named it, which is what
+        // lets a viewer tell a completed `insert` from a completed `press`.
+        let named = parse(r#"{"type":"act","action":"insert","reply":{"ok":true}}"#).unwrap();
+        assert_eq!(
+            named,
+            ServerMessage::Acted {
+                action: Some("insert".into()),
+                ok: true,
+                error: None
+            }
+        );
     }
 
     #[test]

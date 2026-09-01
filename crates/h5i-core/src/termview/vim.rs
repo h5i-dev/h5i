@@ -314,6 +314,62 @@ pub fn narrow(labels: &[String], typed: &str) -> Match {
     }
 }
 
+/// Coalescing a stream of whole-value updates, as a state machine.
+///
+/// Pulled out of the viewer so the ordering can be tested without a socket, a
+/// terminal or an engine. What it protects is not obvious from the call sites:
+/// the invariant is that the *last* thing the human typed always reaches the
+/// wire, however many keystrokes landed while an earlier one was in flight, and
+/// nothing in between has to.
+///
+/// That second half is only sound because the payload is a whole value rather
+/// than a delta. Coalescing deltas loses characters. Coalescing snapshots loses
+/// nothing, because the last one already contains every earlier one.
+#[derive(Debug, Default)]
+pub struct Coalesce {
+    in_flight: bool,
+    dirty: bool,
+}
+
+impl Coalesce {
+    /// The human typed. Returns whether to send now.
+    pub fn typed(&mut self) -> bool {
+        if self.in_flight {
+            self.dirty = true;
+            return false;
+        }
+        self.in_flight = true;
+        self.dirty = false;
+        true
+    }
+
+    /// The engine answered. Returns whether something is owed.
+    pub fn landed(&mut self) -> bool {
+        self.in_flight = false;
+        if self.dirty {
+            self.dirty = false;
+            self.in_flight = true;
+            return true;
+        }
+        false
+    }
+
+    /// Nothing is coming. Returns whether to send again.
+    pub fn timed_out(&mut self) -> bool {
+        if !self.in_flight {
+            return false;
+        }
+        self.in_flight = false;
+        self.dirty = false;
+        self.in_flight = true;
+        true
+    }
+
+    pub fn waiting(&self) -> bool {
+        self.in_flight
+    }
+}
+
 /// One row of the key list.
 pub struct Binding {
     pub keys: &'static str,
@@ -496,6 +552,62 @@ mod tests {
     fn an_empty_overlay_offers_nothing_to_hit() {
         assert_eq!(narrow(&[], ""), Match::Several(Vec::new()));
         assert_eq!(narrow(&[], "s"), Match::None);
+    }
+
+    // ─── coalescing ─────────────────────────────────────────────────────────
+
+    /// A burst of typing becomes one message in flight and one more owed, not a
+    /// queue of them. This is the whole fix for a 40ms round trip: without it,
+    /// nineteen characters is nineteen serialized relayouts.
+    #[test]
+    fn a_burst_of_typing_puts_one_message_on_the_wire_and_owes_one_more() {
+        let mut c = Coalesce::default();
+        assert!(c.typed(), "the first keystroke goes straight out");
+        for _ in 0..18 {
+            assert!(!c.typed(), "a keystroke went out while one was in flight");
+        }
+        assert!(c.landed(), "the buffer moved, so one more is owed");
+        assert!(!c.landed(), "nothing was owed after that one");
+    }
+
+    /// A single keystroke with nothing behind it must not send twice.
+    #[test]
+    fn one_keystroke_is_one_message() {
+        let mut c = Coalesce::default();
+        assert!(c.typed());
+        assert!(!c.landed());
+        assert!(!c.waiting());
+    }
+
+    /// Typing again after the wire is clear starts a new one rather than
+    /// waiting for a reply that already came.
+    #[test]
+    fn typing_after_a_reply_sends_immediately() {
+        let mut c = Coalesce::default();
+        c.typed();
+        c.landed();
+        assert!(c.typed(), "a keystroke after the reply was held back");
+    }
+
+    /// The wedge this exists to prevent: a reply that never comes. The web
+    /// viewer's forward drops input outright when the control lock is not the
+    /// human's, and a dropped `insert` is answered by nothing.
+    #[test]
+    fn a_reply_that_never_arrives_does_not_wedge_typing_forever() {
+        let mut c = Coalesce::default();
+        c.typed();
+        c.typed();
+        assert!(c.waiting());
+        assert!(c.timed_out(), "the timeout did not resend");
+        assert!(c.waiting(), "the resend is itself in flight");
+        assert!(!c.landed());
+    }
+
+    /// And a timeout with nothing outstanding sends nothing.
+    #[test]
+    fn a_timeout_with_an_empty_wire_sends_nothing() {
+        let mut c = Coalesce::default();
+        assert!(!c.timed_out());
     }
 
     // ─── the web viewer's copy ──────────────────────────────────────────────

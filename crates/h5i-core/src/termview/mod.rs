@@ -466,6 +466,25 @@ fn unsupported() -> H5iError {
     )
 }
 
+/// How long to wait for an `insert` before assuming it is not coming.
+///
+/// Not a guess about engine speed. It guards against a reply that will never
+/// arrive: an engine that does not know the message answers with nothing, and
+/// the web viewer's forward drops input outright when the control lock is not
+/// the human's. Without it, one lost reply wedges typing for the session.
+#[cfg(unix)]
+const INSERT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Whether a redraw puts the image somewhere new.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Moved {
+    /// Same placement, different content. No clear.
+    Nothing,
+    /// The page is about to occupy a different box, so the old one has to go.
+    Layout,
+}
+
 /// The roles `gi` will accept as "a field to type into".
 ///
 /// The roles [`crate::browser`]'s outline mints for text-bearing controls. A
@@ -500,6 +519,14 @@ struct App<'a> {
     /// The last frame, kept so a resize can redraw without waiting for the box
     /// to send another. A static page sends nothing at all.
     last_frame: Option<Vec<u8>>,
+    /// The same frame, already decoded.
+    ///
+    /// Most redraws are not caused by new pixels: narrowing a hint label,
+    /// opening the key list, a mode change. Those used to re-decode the JPEG
+    /// every time, which is about 1.7ms of a keystroke's budget spent
+    /// reproducing a buffer that has not changed. Dropped whenever a new frame
+    /// arrives, so it can never be stale by construction.
+    decoded: Option<image::Rgb>,
     /// Developer layout: page plus what the page said.
     developer: bool,
     /// Console errors and page exceptions, bounded.
@@ -567,13 +594,38 @@ impl Hinting {
 }
 
 /// The field INSERT is typing into.
+///
+/// Typing is the one thing here that cannot be answered locally: the viewer
+/// draws pixels the engine rendered, so a character is not on screen until the
+/// engine has put it in the DOM, laid the page out again and encoded a frame.
+/// Measured on this machine that round trip is about 40ms, and 80ms at the tail.
+///
+/// Sent one keystroke at a time it is worse than it sounds, because the requests
+/// *serialize*: nineteen characters typed at a normal pace is nineteen full
+/// relayouts queued end to end, and the text crawls in behind the fingers long
+/// after they have stopped. So at most one is ever on the wire, and whatever was
+/// typed while it was in flight goes out as a single message when it lands.
+///
+/// This is safe only because `insert` carries the whole value and the engine's
+/// primitive is select-all-then-replace. Coalescing a stream of *deltas* would
+/// lose characters; coalescing a stream of snapshots loses nothing, because the
+/// last one is the answer. That idempotence was worth having on its own and it
+/// is what pays for this.
 #[cfg(unix)]
 struct Inserting {
     reference: String,
-    /// The whole value, resent on every keystroke. The engine's primitive is
-    /// select-all-then-insert, so sending the buffer is idempotent and a
-    /// dropped message cannot leave the field holding a scramble.
+    /// The whole value, as the human has typed it so far.
     text: String,
+    /// What is on the wire and what is owed. See [`vim::Coalesce`], which is
+    /// where the ordering lives and where it is tested.
+    wire: vim::Coalesce,
+    /// When the in-flight one went out.
+    ///
+    /// A guard against a reply that never arrives rather than a guess about how
+    /// slow an engine can be: an engine that does not know `insert` answers with
+    /// nothing at all, and without this the first keystroke would wedge typing
+    /// for the life of the session.
+    sent_at: Instant,
 }
 
 #[cfg(unix)]
@@ -586,6 +638,7 @@ impl<'a> App<'a> {
             placer: kitty::Placer::new(encoding),
             mode: Mode::View,
             last_frame: None,
+            decoded: None,
             developer: false,
             // Enough to see a failure loop's shape without holding a page's
             // whole console in a viewer.
@@ -643,7 +696,7 @@ impl<'a> App<'a> {
                 if self.on_input(quiet, writer) {
                     return None;
                 }
-                self.on_tick();
+                self.on_tick(writer);
             }
         }
     }
@@ -685,7 +738,13 @@ impl<'a> App<'a> {
                     }) => {
                         self.on_hints(items, (viewport_width, viewport_height), writer);
                     }
-                    Some(proto::ServerMessage::Acted { ok, error }) => {
+                    Some(proto::ServerMessage::Acted { action, ok, error }) => {
+                        // The reply is what releases the next insert. Done
+                        // before the refusal is shown, so a rejected keystroke
+                        // does not also wedge the ones after it.
+                        if action.as_deref() == Some("insert") {
+                            self.insert_landed(writer);
+                        }
                         // Only the refusals are shown. A click that worked
                         // announces itself by the page changing, and a viewer
                         // that said so as well would be narrating.
@@ -744,6 +803,8 @@ impl<'a> App<'a> {
         let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(base64_jpeg) else {
             return;
         };
+        // New pixels, so whatever is cached describes the frame before this one.
+        self.decoded = None;
         self.render(&bytes);
         self.last_frame = Some(bytes);
     }
@@ -755,7 +816,17 @@ impl<'a> App<'a> {
         // A frame that will not decode is dropped, never fatal: the box can
         // produce one by crashing at the wrong moment, and a viewer that exits
         // on it is a viewer any flaky page can close.
-        let Ok(frame) = image::decode(jpeg) else {
+        //
+        // Decoded once per frame rather than once per redraw. `on_frame` clears
+        // the cache before calling here, so a hit means these are the same
+        // pixels and a miss means they are not; nothing else has to be checked.
+        if self.decoded.is_none() {
+            let Ok(frame) = image::decode(jpeg) else {
+                return;
+            };
+            self.decoded = Some(frame);
+        }
+        let Some(frame) = self.decoded.take() else {
             return;
         };
         let regions = panes::layout(self.size.cols.max(1), self.size.rows, self.developer);
@@ -812,6 +883,7 @@ impl<'a> App<'a> {
         let mut out = std::io::stdout();
         let _ = out.write_all(&bytes);
         let _ = out.flush();
+        self.decoded = Some(frame);
     }
 
     /// Where each still-matching label goes in the frame just decoded.
@@ -886,7 +958,8 @@ impl<'a> App<'a> {
         let _ = stdout.flush();
     }
 
-    fn on_tick(&mut self) {
+    fn on_tick(&mut self, writer: &mut impl Write) {
+        self.unwedge_insert(writer);
         let size = self.guard.size().or_fallback();
         if size != self.size {
             self.size = size;
@@ -1061,7 +1134,9 @@ impl<'a> App<'a> {
             Action::Developer => self.toggle_developer(),
             Action::Help => {
                 self.help = !self.help;
-                self.repaint();
+                // Layout, so the cells the list was written into are cleared
+                // rather than left showing through when it is dismissed.
+                self.repaint_with(Moved::Layout);
             }
             Action::Scroll(scroll) => self.scroll(scroll, writer),
             Action::Reload => self.send(writer, &proto::reload()),
@@ -1167,10 +1242,16 @@ impl<'a> App<'a> {
         }
         match key.code {
             KeyCode::Backspace => {
-                if let Some(hinting) = self.hinting.as_mut() {
-                    hinting.typed.pop();
+                let changed = match self.hinting.as_mut() {
+                    Some(hinting) => hinting.typed.pop().is_some(),
+                    None => false,
+                };
+                // Backspace at an empty prefix changes nothing on screen, and
+                // redrawing for it would send the whole frame again to show the
+                // same picture.
+                if changed {
+                    self.repaint();
                 }
-                self.repaint();
             }
             KeyCode::Char(ch) if !ctrl => {
                 let Some(hinting) = self.hinting.as_mut() else {
@@ -1246,6 +1327,13 @@ impl<'a> App<'a> {
         self.inserting = Some(Inserting {
             reference: reference.clone(),
             text: String::new(),
+            // The empty value below is already on the wire.
+            wire: {
+                let mut wire = vim::Coalesce::default();
+                wire.typed();
+                wire
+            },
+            sent_at: Instant::now(),
         });
         self.mode = Mode::Insert;
         self.say(Some("typing — Enter to submit, Esc to stop".into()));
@@ -1307,7 +1395,6 @@ impl<'a> App<'a> {
         if let Some(text) = text {
             inserting.text.push_str(&text);
         }
-        let (reference, value) = (inserting.reference.clone(), inserting.text.clone());
 
         // Re-read rather than assumed, the same rule INTERACT follows: another
         // process can take the lock while a human is typing, and the keystrokes
@@ -1316,6 +1403,68 @@ impl<'a> App<'a> {
             self.leave_insert();
             return;
         }
+        self.flush_insert(writer);
+    }
+
+    /// Put the buffer on the wire, if the last one has landed.
+    ///
+    /// The whole of the coalescing. Nothing is dropped: `dirty` remembers that
+    /// the buffer moved, and [`App::insert_landed`] sends whatever it says when
+    /// the reply arrives.
+    fn flush_insert(&mut self, writer: &mut impl Write) {
+        let Some(inserting) = self.inserting.as_mut() else {
+            return;
+        };
+        if !inserting.wire.typed() {
+            return;
+        }
+        inserting.sent_at = Instant::now();
+        let (reference, value) = (inserting.reference.clone(), inserting.text.clone());
+        self.send(writer, &proto::insert(&reference, &value));
+    }
+
+    /// Release an insert that is never going to be answered.
+    ///
+    /// Resending is correct rather than merely safe: `insert` carries the whole
+    /// value, so a late arrival and a resend cannot disagree about what the
+    /// field should hold.
+    fn unwedge_insert(&mut self, writer: &mut impl Write) {
+        let stuck = self
+            .inserting
+            .as_ref()
+            .is_some_and(|i| i.wire.waiting() && i.sent_at.elapsed() > INSERT_TIMEOUT);
+        if !stuck {
+            return;
+        }
+        let Some(inserting) = self.inserting.as_mut() else {
+            return;
+        };
+        if !inserting.wire.timed_out() {
+            return;
+        }
+        // Sent from here rather than left for the next keystroke: someone who
+        // typed a word and stopped would otherwise be looking at a field that
+        // never caught up, with nothing to press to fix it. Resending is correct
+        // rather than merely safe, because `insert` carries the whole value: a
+        // late arrival and a resend cannot disagree about what the field holds.
+        inserting.sent_at = Instant::now();
+        let (reference, value) = (inserting.reference.clone(), inserting.text.clone());
+        self.send(writer, &proto::insert(&reference, &value));
+    }
+
+    /// An insert came back. Send what was typed while it was away.
+    fn insert_landed(&mut self, writer: &mut impl Write) {
+        let Some(inserting) = self.inserting.as_mut() else {
+            return;
+        };
+        if !inserting.wire.landed() {
+            return;
+        }
+        // Something was typed while that one was away. `landed` has already
+        // marked the replacement as in flight, so this writes it rather than
+        // going back through `flush_insert` and being held.
+        inserting.sent_at = Instant::now();
+        let (reference, value) = (inserting.reference.clone(), inserting.text.clone());
         self.send(writer, &proto::insert(&reference, &value));
     }
 
@@ -1417,7 +1566,9 @@ impl<'a> App<'a> {
 
     fn toggle_developer(&mut self) {
         self.developer = !self.developer;
-        self.repaint();
+        // The split moves the page, so the old placement has to go before the
+        // new one is drawn or the two overlap.
+        self.repaint_with(Moved::Layout);
     }
 
     /// Redraw everything from the frame already in hand.
@@ -1426,9 +1577,21 @@ impl<'a> App<'a> {
     /// a split, an overlay, a mode change, has to repaint from what is already
     /// here or the viewport stays as it was until the page happens to change.
     fn repaint(&mut self) {
-        // The split and the overlay both move the image, so the old placement
-        // has to go before the new one is drawn or the two overlap.
-        let _ = std::io::stdout().write_all(b"\x1b[2J");
+        self.repaint_with(Moved::Nothing);
+    }
+
+    /// Repaint, saying whether the image is about to land somewhere else.
+    ///
+    /// The distinction is worth a parameter because the screen clear is not
+    /// free and is not invisible. Toggling the console pane or the key list
+    /// resizes the page and the old placement has to go, or the two overlap.
+    /// Narrowing a hint label does not move anything, and clearing the screen
+    /// for it makes every keystroke flash — which reads as the viewer
+    /// struggling to keep up, on the one path where it is doing no work at all.
+    fn repaint_with(&mut self, moved: Moved) {
+        if moved == Moved::Layout {
+            let _ = std::io::stdout().write_all(b"\x1b[2J");
+        }
         self.draw_status();
         if let Some(frame) = self.last_frame.take() {
             self.render(&frame);
