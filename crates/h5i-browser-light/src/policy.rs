@@ -376,9 +376,15 @@ fn normalize_origin(input: &str) -> Option<String> {
         return None;
     }
 
-    let parsed = Url::parse(trimmed)
-        .or_else(|_| Url::parse(&format!("https://{trimmed}")))
-        .ok()?;
+    // `example.com:8080` *parses*, as a URL whose scheme is `example.com` and
+    // whose path is `8080`: a scheme may contain dots. Trusting that first
+    // parse dropped every `host:port` grant on the floor, silently, which is
+    // the one outcome `allow`'s contract rules out. So a parse that did not
+    // land on a web scheme is re-read as a bare authority.
+    let parsed = match Url::parse(trimmed) {
+        Ok(url) if matches!(url.scheme(), "http" | "https" | "ws" | "wss") => url,
+        _ => Url::parse(&format!("https://{trimmed}")).ok()?,
+    };
 
     // A socket address is judged as its HTTP twin, which is what `check`'s
     // documentation already promised: "same host, same allowlist, same loopback
@@ -411,6 +417,22 @@ mod tests {
 
     fn url(s: &str) -> Url {
         Url::parse(s).expect("test url parses")
+    }
+
+    #[test]
+    fn a_host_and_port_grant_is_a_grant() {
+        // It parses as scheme `example.com`, path `8080`, so reading the first
+        // parse threw the whole entry away and the run reached nothing, with
+        // no line saying why.
+        let policy = Policy::new().allow("dev.example.com:8080");
+        assert!(policy.check(&url("https://dev.example.com:8080/x")).is_allowed());
+        assert!(!policy.check(&url("https://dev.example.com/x")).is_allowed());
+        // Same for the wildcard spelling, which normalises through here too.
+        let wild = Policy::new().allow("*.example.com:8080");
+        assert!(wild.check(&url("https://a.example.com:8080/")).is_allowed());
+        assert!(!wild.check(&url("https://a.example.com/")).is_allowed());
+        // And a scheme this engine cannot fetch is still not a grant.
+        assert!(!Policy::new().allow("file://etc").check(&url("https://etc/")).is_allowed());
     }
 
     #[test]
