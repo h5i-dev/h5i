@@ -467,6 +467,20 @@ impl Jar {
                 }
             }
 
+            // A weaker channel may not stand on a `Secure` cookie (RFC
+            // 6265bis §5.6). `same_cookie` compares name, host and path and
+            // not `secure`, so a single plaintext response, or a
+            // `document.cookie` on an http page, replaced the session cookie
+            // https had set: the cookie-forcing half of a session fixation.
+            // The `__Secure-` prefix already carried this rule; a plain `sid`
+            // had nothing.
+            if !cookie.secure
+                && !is_secure(url)
+                && jar.iter().any(|c| c.secure && same_cookie(c, &cookie))
+            {
+                continue;
+            }
+
             // Replacing by identity is what makes deletion work: a server
             // clears a cookie by re-sending it with an expiry in the past, so
             // the removal has to happen through the same door as the write.
@@ -857,6 +871,23 @@ mod tests {
 
     fn url(s: &str) -> Url {
         Url::parse(s).expect("test url")
+    }
+
+    #[test]
+    fn an_insecure_channel_cannot_stand_on_a_secure_cookie() {
+        // `same_cookie` does not compare `secure`, so the replacement that
+        // makes deletion work also let one http response overwrite the session
+        // cookie https set. Cookie forcing, from any allowlisted origin that
+        // will answer over plaintext.
+        let jar = Jar::new();
+        assert_eq!(jar.store(&url("https://app.example/"), ["sid=real; Secure"]), 1);
+        assert_eq!(jar.store(&url("http://app.example/"), ["sid=forced"]), 0);
+        let (header, _) = jar.header_for(&url("https://app.example/x")).expect("sent");
+        assert_eq!(header, "sid=real");
+        // The rightful owner can still replace and clear its own cookie.
+        assert_eq!(jar.store(&url("https://app.example/"), ["sid=rotated; Secure"]), 1);
+        let (header, _) = jar.header_for(&url("https://app.example/x")).expect("sent");
+        assert_eq!(header, "sid=rotated");
     }
 
     #[test]
