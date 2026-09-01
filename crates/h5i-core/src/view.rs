@@ -1985,18 +1985,6 @@ mod tests {
         );
     }
 
-    /// The stale-pid case, made deterministic: hand the connect the namespace
-    /// this process is already in, which is what a reissued pid looks like from
-    /// here. The answer has to be a refusal, because what follows otherwise is
-    /// `TcpStream::connect(("127.0.0.1", port))` in *this* namespace, with the
-    /// port read out of `<env>/tmp`, one of the two paths the box can write.
-    ///
-    /// Unprivileged, the kernel refuses the `setns` that would get there anyway;
-    /// run as root it does not, and either way this says no before the fork.
-    #[cfg(all(
-        target_os = "linux",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    ))]
     /// A host session advertises one port in one file.
     #[test]
     fn a_host_sessions_stream_port_is_read_from_the_file_the_engine_wrote() {
@@ -2034,6 +2022,18 @@ mod tests {
         );
     }
 
+    /// The stale-pid case, made deterministic: hand the connect the namespace
+    /// this process is already in, which is what a reissued pid looks like from
+    /// here. The answer has to be a refusal, because what follows otherwise is
+    /// `TcpStream::connect(("127.0.0.1", port))` in *this* namespace, with the
+    /// port read out of `<env>/tmp`, one of the two paths the box can write.
+    ///
+    /// Unprivileged, the kernel refuses the `setns` that would get there anyway;
+    /// run as root it does not, and either way this says no before the fork.
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     #[test]
     fn the_viewer_refuses_to_connect_in_its_own_network_namespace() {
         let own = std::fs::read_link("/proc/self/ns/net").expect("a netns link");
