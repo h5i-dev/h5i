@@ -54,6 +54,15 @@ const MAX_UNKNOWN_VERBS: usize = 64;
 /// reported in full, so a truncated list is visibly truncated.
 const MAX_FIND_MATCHES: usize = 20;
 
+/// What the viewer lane offers, advertised in every `status`.
+///
+/// The names are the message types a viewer may send, so this list and
+/// [`handle`]'s match arms are the same set said twice. They are checked
+/// against each other by a test rather than by a type, because the wire is the
+/// contract here and a type would only prove the two halves of *this* process
+/// agree.
+const VIEWER_FEATURES: &[&str] = &["hints", "act", "insert", "history", "reload"];
+
 const PAGE_SCROLL: f64 = 0.9;
 const LINE_SCROLL: f64 = 64.0;
 
@@ -341,6 +350,16 @@ impl Session {
             // this string should find out here rather than from a missing
             // feature later.
             "engine": "h5i-browser-light",
+            // What this engine's *viewer* lane offers, so a viewer can decide
+            // what to bind rather than deciding it from the name above.
+            //
+            // A name match would work today and would be wrong in the way that
+            // matters: the terminal viewer watches boxes running a second
+            // engine too, and "which engine is this" is not the question it
+            // needs answered. "Can I ask for a hint overlay" is. Anything that
+            // sends no list gets no keys bound, which is the right default for
+            // an engine that has not said.
+            "features": VIEWER_FEATURES,
         })
     }
 
@@ -2804,6 +2823,30 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
         "insert" => return viewer_insert(session, message),
 
         "history" => return viewer_history(session, message),
+
+        // Fetching the current URL again. On the viewer lane because a human
+        // watching a page that failed to load has no other way to ask, and the
+        // agent's `reload` verb is on a socket they are not holding.
+        "reload" => {
+            let here = session.page.url().clone();
+            match session.factory.open(&here) {
+                Ok(page) => {
+                    session.page = page;
+                    // Not a `visit`: a reload is not a place. Both handle sets
+                    // go, because both described a document that has been
+                    // replaced even though the URL has not moved.
+                    session.hint_refs = None;
+                    session.served_refs = None;
+                    return Ok(vec![session.url_message(), session.frame_message()?]);
+                }
+                Err(error) => {
+                    return Ok(vec![json!({
+                        "type": "page_error",
+                        "text": format!("reloading {here} failed: {error}"),
+                    })]);
+                }
+            }
+        }
 
         // keyUp never scrolls: acting on both halves would double every press.
         "input_keyboard"

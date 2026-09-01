@@ -184,6 +184,66 @@ pub fn ack(seq: u64) -> Value {
     json!({"type": "ack", "seq": seq})
 }
 
+/// Ask for the hint overlay.
+pub fn hints() -> Value {
+    json!({"type": "hints"})
+}
+
+/// Act on a hinted ref, by the name of the thing to do.
+pub fn act(reference: &str, action: &str) -> Value {
+    json!({"type": "act", "ref": reference, "action": action})
+}
+
+/// Send a key to a hinted ref: `Enter` to submit, `Escape` to dismiss.
+pub fn act_press(reference: &str, key: &str) -> Value {
+    json!({"type": "act", "ref": reference, "action": "press", "key": key})
+}
+
+/// Replace a field's contents with what has been typed so far.
+///
+/// The whole buffer each time rather than a keystroke at a time, because the
+/// engine's primitive underneath is select-all-then-insert: sending the buffer
+/// is idempotent, so a dropped or reordered message cannot leave the field
+/// holding a scramble of what was meant.
+pub fn insert(reference: &str, text: &str) -> Value {
+    json!({"type": "insert", "ref": reference, "text": text})
+}
+
+/// Step through the pages this session visited. -1 back, 1 forward.
+pub fn history(go: i8) -> Value {
+    json!({"type": "history", "go": go})
+}
+
+/// Fetch the current URL again.
+pub fn reload() -> Value {
+    json!({"type": "reload"})
+}
+
+/// Scroll, expressed as a wheel event.
+///
+/// Deliberately not a message of our own. A wheel event is something every
+/// engine on the other end of this socket already handles, so the keys a reader
+/// uses most work on a box running an engine that has never heard of hints. The
+/// pixel amount is computed by the caller from the viewport, which is the one
+/// piece the keymap cannot know.
+pub fn wheel(delta_y: f64) -> Value {
+    json!({"type": "input_mouse", "eventType": "mouseWheel", "deltaY": delta_y})
+}
+
+/// One thing the overlay named, with where it is in viewport pixels.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Hint {
+    pub label: String,
+    pub reference: String,
+    pub role: String,
+    pub name: String,
+    pub href: Option<String>,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 // ─── box → client ───────────────────────────────────────────────────────────
 
 /// What the box said, as far as the viewer cares.
@@ -203,6 +263,26 @@ pub enum ServerMessage {
         viewport_width: u32,
         viewport_height: u32,
         engine: Option<String>,
+        /// What the engine says its viewer lane offers.
+        ///
+        /// Read rather than inferred from `engine`. The viewer watches boxes
+        /// running an engine that is not ours, and "which engine is this" is
+        /// not the question it needs answered; "may I ask for an overlay" is.
+        /// An engine that says nothing gets nothing bound.
+        features: Vec<String>,
+    },
+    /// The overlay, in reply to [`hints`].
+    Hints {
+        viewport_width: u32,
+        viewport_height: u32,
+        items: Vec<Hint>,
+    },
+    /// What came of an `act`, an `insert` or a `history` step.
+    Acted {
+        ok: bool,
+        /// Why not, when it did not work. Page-derived, so the caller
+        /// sanitizes before drawing it.
+        error: Option<String>,
     },
     /// The active tab navigated.
     Url(String),
@@ -214,6 +294,54 @@ pub enum ServerMessage {
     PageError(String),
     /// Anything else on the stream.
     Other,
+}
+
+/// How many hints one overlay may carry.
+///
+/// The labels come from the engine and the rects come from the page, so this is
+/// a bound on something a document decides. Far past a usable overlay: past a
+/// few hundred targets the labels are three characters and nobody is reading
+/// them anyway.
+const MAX_HINTS: usize = 1024;
+
+/// How many feature names a status message may carry.
+const MAX_FEATURES: usize = 32;
+
+/// How long a page-derived string on the overlay may be.
+///
+/// The name is drawn in the status line while a label is being typed, and the
+/// status line has a width. Truncated here rather than at the drawing site so
+/// nothing downstream holds an unbounded string a page chose.
+const MAX_HINT_TEXT: usize = 200;
+
+fn clip(text: &str) -> String {
+    text.chars().take(MAX_HINT_TEXT).collect()
+}
+
+fn hint(v: &Value) -> Option<Hint> {
+    // A hint with no label cannot be typed and a hint with no ref cannot be
+    // acted on. Either way there is nothing to draw, so it is dropped rather
+    // than carried as an empty row.
+    let label = v.get("label").and_then(Value::as_str).filter(|s| !s.is_empty())?;
+    let reference = v.get("ref").and_then(Value::as_str).filter(|s| !s.is_empty())?;
+    let number = |key: &str| v.get(key).and_then(Value::as_f64).filter(|n| n.is_finite());
+    Some(Hint {
+        label: clip(label),
+        reference: clip(reference),
+        role: clip(v.get("role").and_then(Value::as_str).unwrap_or_default()),
+        name: clip(v.get("name").and_then(Value::as_str).unwrap_or_default()),
+        href: v
+            .get("href")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(clip),
+        // Non-finite coordinates would turn into a nonsense chip position and,
+        // through the scale, into a nonsense pixel index. Refused here.
+        x: number("x")?,
+        y: number("y")?,
+        width: number("w")?,
+        height: number("h")?,
+    })
 }
 
 /// Parse one server text frame.
@@ -249,7 +377,48 @@ pub fn parse(text: &str) -> Option<ServerMessage> {
                 .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string),
+            features: v
+                .get("features")
+                .and_then(Value::as_array)
+                .map(|names| {
+                    names
+                        .iter()
+                        .filter_map(Value::as_str)
+                        // Bounded: the list comes off the socket, and a viewer
+                        // holding an unbounded set of strings a box chose is a
+                        // viewer a box can grow.
+                        .take(MAX_FEATURES)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
         },
+        "hints" => ServerMessage::Hints {
+            viewport_width: v
+                .get("viewportWidth")
+                .and_then(Value::as_u64)
+                .unwrap_or(1280) as u32,
+            viewport_height: v
+                .get("viewportHeight")
+                .and_then(Value::as_u64)
+                .unwrap_or(720) as u32,
+            items: v
+                .get("items")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().take(MAX_HINTS).filter_map(hint).collect())
+                .unwrap_or_default(),
+        },
+        "act" => {
+            let reply = v.get("reply").unwrap_or(&Value::Null);
+            ServerMessage::Acted {
+                ok: reply.get("ok").and_then(Value::as_bool).unwrap_or(false),
+                error: reply
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
+            }
+        }
         "url" => ServerMessage::Url(
             v.get("url")
                 .and_then(Value::as_str)
@@ -399,6 +568,9 @@ mod tests {
                 viewport_width: 1024,
                 viewport_height: 768,
                 engine: Some("chromium".into()),
+                // An engine that lists nothing gets nothing bound, which is the
+                // right default for one that has not said.
+                features: Vec::new(),
             }
         );
 
@@ -412,8 +584,60 @@ mod tests {
                 viewport_width: 1280,
                 viewport_height: 720,
                 engine: None,
+                features: Vec::new(),
             }
         );
+    }
+
+    /// The overlay arrives as data, and everything in it came from a page. A
+    /// row that cannot be drawn or cannot be acted on is dropped rather than
+    /// carried, and a coordinate that is not a number never reaches the
+    /// arithmetic that turns it into a pixel index.
+    #[test]
+    fn a_hint_row_missing_what_it_needs_is_dropped_rather_than_carried() {
+        let m = parse(
+            r#"{"type":"hints","viewportWidth":800,"viewportHeight":600,"items":[
+                 {"label":"s","ref":"e1","role":"link","name":"One","href":"/one",
+                  "x":1,"y":2,"w":3,"h":4},
+                 {"label":"","ref":"e2","x":1,"y":2,"w":3,"h":4},
+                 {"label":"d","x":1,"y":2,"w":3,"h":4},
+                 {"label":"f","ref":"e3","x":null,"y":2,"w":3,"h":4}]}"#,
+        )
+        .unwrap();
+        let ServerMessage::Hints { items, viewport_width, .. } = m else {
+            panic!("not a hints message");
+        };
+        assert_eq!(viewport_width, 800);
+        assert_eq!(items.len(), 1, "{items:?}");
+        assert_eq!(items[0].reference, "e1");
+        assert_eq!(items[0].href.as_deref(), Some("/one"));
+    }
+
+    #[test]
+    fn what_the_engine_advertises_is_read_rather_than_inferred_from_its_name() {
+        let m = parse(
+            r#"{"type":"status","connected":true,"screencasting":true,
+                "engine":"h5i-browser-light","features":["hints","history"]}"#,
+        )
+        .unwrap();
+        let ServerMessage::Status { features, .. } = m else {
+            panic!("not a status message");
+        };
+        assert_eq!(features, vec!["hints".to_string(), "history".to_string()]);
+    }
+
+    #[test]
+    fn a_refusal_from_the_act_lane_carries_its_reason() {
+        let m = parse(r#"{"type":"act","reply":{"ok":false,"error":"nope"}}"#).unwrap();
+        assert_eq!(
+            m,
+            ServerMessage::Acted {
+                ok: false,
+                error: Some("nope".into())
+            }
+        );
+        let ok = parse(r#"{"type":"act","reply":{"ok":true,"ref":"e1"}}"#).unwrap();
+        assert_eq!(ok, ServerMessage::Acted { ok: true, error: None });
     }
 
     #[test]

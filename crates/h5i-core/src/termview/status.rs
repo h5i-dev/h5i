@@ -29,9 +29,16 @@ pub enum Mode {
     /// Watching. Keystrokes and clicks are the viewer's, not the page's, and
     /// the terminal keeps its own mouse (selection, scrollback).
     View,
-    /// Driving. Input goes to the page, and only the control-lock holder's
-    /// input is sent at all.
+    /// Driving with the pointer. Input goes to the page, and only the
+    /// control-lock holder's input is sent at all.
     Interact,
+    /// The hint overlay is up. Keys narrow the labels; nothing reaches the
+    /// page until one is chosen.
+    Hint,
+    /// Typing into a field a hint named. Keys become that field's text, and
+    /// nothing else, which is the difference between this and INTERACT: there
+    /// is one destination and the viewer knows what it is.
+    Insert,
 }
 
 impl Mode {
@@ -39,7 +46,19 @@ impl Mode {
         match self {
             Mode::View => "VIEW",
             Mode::Interact => "INTERACT",
+            Mode::Hint => "HINT",
+            Mode::Insert => "INSERT",
         }
+    }
+
+    /// Whether keystrokes in this mode are the page's rather than the viewer's.
+    ///
+    /// The one question the control lock cares about, asked of the mode rather
+    /// than matched at each call site: HINT looks like driving and is not, and
+    /// a viewer that took the lock to put an overlay up would pause the agent
+    /// every time somebody glanced at the page.
+    pub fn drives_the_page(self) -> bool {
+        matches!(self, Mode::Interact | Mode::Insert)
     }
 }
 
@@ -60,6 +79,13 @@ pub struct Status {
     pub errors: u32,
     /// Whether the box's browser is still streaming.
     pub streaming: bool,
+    /// One line of the viewer talking to the human: what a hint is for, what a
+    /// refusal said, why a key did nothing.
+    ///
+    /// Never dropped when the row is short, because a message that appears only
+    /// on wide terminals is a message that cannot be relied on to explain a
+    /// refusal. It gives way only to the mode and the lock.
+    pub notice: Option<String>,
 }
 
 /// SGR: reverse video, so the row reads as chrome rather than as page content.
@@ -121,6 +147,11 @@ fn compose(s: &Status, width: usize) -> String {
         0,
         format!("{} control:{}", s.mode.as_str(), s.holder.as_str()),
     ));
+    // Priority 1, beside the error count: worth more than the URL, because it
+    // is the viewer answering something the human just did.
+    if let Some(notice) = &s.notice {
+        segs.push(seg(1, sanitize_display(notice)));
+    }
     if let Some(url) = &s.url {
         let clean = sanitize_display(url);
         segs.push(Seg {
@@ -248,6 +279,7 @@ mod tests {
             egress: "localhost".into(),
             errors: 0,
             streaming: true,
+            notice: None,
         }
     }
 
@@ -383,5 +415,37 @@ mod tests {
         let out = body(&render(&s, 120));
         assert!(out.contains("not streaming"), "{out:?}");
         assert!(out.contains("err:3"), "{out:?}");
+    }
+
+    /// The viewer's own answer to what the human just did. It gives way only to
+    /// the mode and the lock, because a refusal that appears on wide terminals
+    /// and not on narrow ones is a refusal nobody can rely on reading.
+    #[test]
+    fn what_the_viewer_says_survives_a_narrow_row() {
+        let mut s = status();
+        s.notice = Some("no label starts with `z`".into());
+        let row = render(&s, 60);
+        assert!(row.contains("no label starts with"), "{row}");
+        assert!(row.contains("VIEW"), "{row}");
+    }
+
+    /// And it is page-influenced text on its way to a PTY, so it goes through
+    /// the same sanitizer everything else on this row does.
+    #[test]
+    fn a_notice_carrying_an_escape_sequence_cannot_repaint_the_row() {
+        let mut s = status();
+        s.notice = Some("link \u{1b}[2Jgone".into());
+        let row = render(&s, 120);
+        assert!(!row.contains("\u{1b}[2J"), "{row:?}");
+    }
+
+    #[test]
+    fn only_the_modes_that_drive_the_page_hold_the_lock() {
+        assert!(Mode::Interact.drives_the_page());
+        assert!(Mode::Insert.drives_the_page());
+        // Putting an overlay up is looking, not driving. A viewer that took the
+        // lock to look would pause the agent every time somebody glanced.
+        assert!(!Mode::Hint.drives_the_page());
+        assert!(!Mode::View.drives_the_page());
     }
 }

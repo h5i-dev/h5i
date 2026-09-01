@@ -19,6 +19,13 @@
 //! viewers numbering the same page independently is two answers to a question
 //! with one right answer, and the first time they disagreed it would be a human
 //! pressing `sd` and activating something they were not looking at.
+//!
+//! *Matching* is the other half, and it lives with whoever is drawing: see
+//! `h5i_core::termview::vim::narrow` for the terminal viewer's, and the same
+//! rule in JavaScript in the web viewer. Split that way because narrowing is
+//! per-viewer state, what this human has typed so far, while the labels are a
+//! property of the page. What both halves rest on is [`labels`]'s
+//! prefix-freeness, which is why that is the property carrying the test.
 
 /// The alphabet labels are drawn from, most-reachable first.
 ///
@@ -102,44 +109,6 @@ fn spell(mut value: usize, width: usize) -> String {
     chars.into_iter().collect()
 }
 
-/// What typing `typed` has done to a set of labels.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Match {
-    /// Exactly one label is `typed`. Act on it.
-    One(usize),
-    /// Several labels still start with `typed`. Keep the overlay up, showing
-    /// only these.
-    Several(Vec<usize>),
-    /// Nothing starts with `typed`. The human mistyped, and the honest answer
-    /// is to say so rather than to act on the nearest thing.
-    None,
-}
-
-/// Narrow `labels` by what has been typed so far.
-///
-/// Case-insensitive on the way in, because the labels are lower case and a
-/// human with caps lock on has made a typing mistake rather than a different
-/// request.
-pub fn narrow(labels: &[String], typed: &str) -> Match {
-    let typed = typed.to_ascii_lowercase();
-    if typed.is_empty() {
-        return Match::Several((0..labels.len()).collect());
-    }
-    let hits: Vec<usize> = labels
-        .iter()
-        .enumerate()
-        .filter(|(_, label)| label.starts_with(&typed))
-        .map(|(i, _)| i)
-        .collect();
-    match hits.len() {
-        0 => Match::None,
-        // An exact match is only decidable because the labels are prefix-free:
-        // one hit that equals what was typed cannot be the start of another.
-        1 if labels[hits[0]] == typed => Match::One(hits[0]),
-        _ => Match::Several(hits),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,34 +161,5 @@ mod tests {
         for pair in out.windows(2) {
             assert!(pair[0].len() <= pair[1].len(), "{out:?}");
         }
-    }
-
-    #[test]
-    fn typing_a_whole_label_picks_exactly_one_target() {
-        let out = labels(200);
-        assert_eq!(narrow(&out, &out[7]), Match::One(7));
-    }
-
-    #[test]
-    fn a_partial_label_keeps_the_overlay_up() {
-        let out = labels(200);
-        let prefix = &out[out.len() - 1][..1];
-        match narrow(&out, prefix) {
-            Match::Several(hits) => assert!(hits.len() > 1),
-            other => panic!("expected several, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_key_no_label_starts_with_matches_nothing() {
-        let out = labels(3);
-        assert_eq!(narrow(&out, "z"), Match::None);
-    }
-
-    #[test]
-    fn capitals_are_a_typing_mistake_rather_than_a_different_request() {
-        let out = labels(200);
-        let upper = out[7].to_ascii_uppercase();
-        assert_eq!(narrow(&out, &upper), Match::One(7));
     }
 }
