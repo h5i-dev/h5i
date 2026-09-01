@@ -24,16 +24,57 @@ struct EgressTally {
     /// `(host, port) -> (allowed, denied)`. `BTreeMap` keeps the snapshot
     /// deterministic (sorted) for stable manifests and tests.
     hosts: BTreeMap<(String, u16), (u64, u64)>,
+    /// Distinct keys refused because the map was full. Kept so the summary can
+    /// still say the list is partial.
+    keys_dropped: u64,
+}
+
+/// Distinct `host:port` keys the tally will hold.
+///
+/// The key is chosen by the box, one per connection, and `record` runs *before*
+/// the allow check, so a `CONNECT <random>:443` loop inside the box grew a map
+/// in the host h5i process without limit. The snapshot's own clamp came too
+/// late: it runs once, after the container exits. Well above
+/// [`MAX_EGRESS_HOSTS`], so no real run notices.
+const MAX_TALLY_KEYS: usize = 4 * MAX_EGRESS_HOSTS;
+
+/// Longest host key kept. A DNS name is at most 253 bytes; the head reader
+/// allows sixteen kilobytes of them, and each would otherwise be copied into
+/// the map and on into the capture manifest.
+const MAX_TALLY_HOST: usize = 253;
+
+/// `s` cut to at most `max` bytes, on a character boundary. `host` came out of
+/// `from_utf8_lossy`, so it is valid UTF-8 but not necessarily ASCII, and a
+/// byte slice through the middle of a character panics.
+fn clip(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let end = s
+        .char_indices()
+        .map(|(i, _)| i)
+        .take_while(|i| *i <= max)
+        .last()
+        .unwrap_or(0);
+    &s[..end]
 }
 
 impl EgressTally {
     fn record(&mut self, host: &str, port: u16, permitted: bool) {
-        let slot = self.hosts.entry((host.to_string(), port)).or_insert((0, 0));
         if permitted {
             self.allowed += 1;
-            slot.0 += 1;
         } else {
             self.denied += 1;
+        }
+        let key = (clip(host, MAX_TALLY_HOST).to_string(), port);
+        if !self.hosts.contains_key(&key) && self.hosts.len() >= MAX_TALLY_KEYS {
+            self.keys_dropped += 1;
+            return;
+        }
+        let slot = self.hosts.entry(key).or_insert((0, 0));
+        if permitted {
+            slot.0 += 1;
+        } else {
             slot.1 += 1;
         }
     }
@@ -59,7 +100,7 @@ impl EgressTally {
                 .then((b.allowed + b.denied).cmp(&(a.allowed + a.denied)))
                 .then(a.host.cmp(&b.host))
         });
-        let hosts_truncated = hosts.len() > MAX_EGRESS_HOSTS;
+        let hosts_truncated = hosts.len() > MAX_EGRESS_HOSTS || self.keys_dropped > 0;
         hosts.truncate(MAX_EGRESS_HOSTS);
         EgressSummary {
             allowed: self.allowed,
@@ -2173,6 +2214,27 @@ mod tests {
         // A bare IPv6-ish string must not be mis-split on its colons.
         let a = AllowList::parse(&["example.org".into()]).unwrap();
         assert!(a.allows("example.org", 443));
+    }
+
+    /// `record` runs before the allow check and the key is whatever the box
+    /// put on the request line, so a `CONNECT <random>:443` loop grew a map in
+    /// the *host* process. The counts stay exact; only the per-host list is
+    /// bounded, and it says so.
+    #[test]
+    fn a_probing_loop_cannot_grow_the_tally_without_limit() {
+        let mut t = EgressTally::default();
+        for i in 0..(MAX_TALLY_KEYS * 4) {
+            t.record(&format!("h{i}.example.com"), 443, false);
+        }
+        assert_eq!(t.hosts.len(), MAX_TALLY_KEYS);
+        assert_eq!(t.denied, (MAX_TALLY_KEYS * 4) as u64);
+        assert!(t.snapshot().hosts_truncated);
+
+        // And one enormous host name is not carried into the manifest whole.
+        let mut t = EgressTally::default();
+        t.record(&"\u{e9}".repeat(9000), 443, false);
+        let (host, _) = t.hosts.keys().next().unwrap();
+        assert!(host.len() <= MAX_TALLY_HOST, "{}", host.len());
     }
 
     #[test]
