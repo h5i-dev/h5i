@@ -307,6 +307,26 @@ pub struct HelloAck {
     pub runner_id_echo: Option<String>,
 }
 
+impl HelloAck {
+    /// Make the peer's greeting safe to store and print, or refuse it.
+    ///
+    /// Every other peer-authored message on this wire has one of these. This
+    /// one did not, and it is the *first* thing a runner says: `h5i runner
+    /// pair` prints `h5i {version} on {os} {arch}` straight to stdout, one line
+    /// below the host-key fingerprint the operator is being asked to trust. A
+    /// megabyte of ANSI in `h5i_version` repaints that line.
+    pub fn sanitized(mut self) -> Result<Self, ProtoError> {
+        self.h5i_version = clean_field("h5i_version", &self.h5i_version)?;
+        self.arch = clean_field("arch", &self.arch)?;
+        self.os = clean_field("os", &self.os)?;
+        self.runner_id_echo = match self.runner_id_echo {
+            Some(id) => Some(clean_field("runner_id_echo", &id)?),
+            None => None,
+        };
+        Ok(self)
+    }
+}
+
 /// Everything that can change between one probe and the next.
 ///
 /// This is the vocabulary R1's rule is written in: a runner requires Linux and
@@ -1212,6 +1232,34 @@ pub fn decode<T: for<'de> Deserialize<'de>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The greeting is the first thing a runner says and the first thing
+    /// `h5i runner pair` prints, one line under the host-key fingerprint the
+    /// operator is being asked to trust. It was the one peer-authored message
+    /// with no `sanitized()`.
+    #[test]
+    fn a_greeting_cannot_repaint_the_line_above_it() {
+        let hostile = HelloAck {
+            protocol: PROTOCOL_VERSION,
+            h5i_version: "\u{1b}[1A\u{1b}[2KHost key SHA256:trust-me".into(),
+            arch: "aarch64".into(),
+            os: "linux".into(),
+            runner_id_echo: Some("a\u{1b}[31mb".into()),
+        };
+        let clean = hostile.sanitized().expect("a printable greeting survives");
+        assert!(!clean.h5i_version.contains('\u{1b}'), "{:?}", clean.h5i_version);
+        assert!(!clean.runner_id_echo.unwrap().contains('\u{1b}'));
+
+        // Nothing but control characters is not a version.
+        let empty = HelloAck {
+            protocol: PROTOCOL_VERSION,
+            h5i_version: "\u{1b}\u{7}\u{1b}".into(),
+            arch: "aarch64".into(),
+            os: "linux".into(),
+            runner_id_echo: None,
+        };
+        assert!(empty.sanitized().is_err());
+    }
 
     fn caps() -> Capabilities {
         Capabilities {

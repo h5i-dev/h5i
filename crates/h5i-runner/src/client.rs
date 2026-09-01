@@ -55,8 +55,17 @@ pub enum ClientError {
     Source(#[from] crate::source::SourceError),
 }
 
+/// The peer's stderr, made safe to print.
+///
+/// The forced command on the other end is whatever binary sits at
+/// `worker_path` on a machine we do not trust, and it can write anything it
+/// likes to fd 2. This string is interpolated into an error the CLI prints, so
+/// the in-band `ERROR` message being sanitized and this one not was the same
+/// escape sequence arriving by the door nobody was watching. `sanitize_block`
+/// rather than `sanitize_display`: a stderr tail is meant to have lines.
 fn stderr_tail(stderr: &str) -> String {
-    let t = stderr.trim();
+    let t = h5i_error::redact::sanitize_block(stderr);
+    let t = t.trim();
     if t.is_empty() {
         String::new()
     } else {
@@ -320,14 +329,22 @@ impl Session {
             return Err(ClientError::Closed { what, stderr });
         }
 
-        let ack: HelloAck = match read_message(
+        let ack = match read_message::<HelloAck, _>(
             &mut reader,
             FrameKind::HelloAck,
             "HELLO_ACK",
             &what,
             &channel,
         ) {
-            Ok(ack) => ack,
+            // Sanitized on receipt, like every other peer-authored message:
+            // this one is printed to a terminal before anything else is.
+            Ok(ack) => match ack.sanitized() {
+                Ok(ack) => ack,
+                Err(e) => {
+                    channel.abandon();
+                    return Err(e.into());
+                }
+            },
             Err(e) => {
                 channel.abandon();
                 return Err(e);
