@@ -141,8 +141,17 @@ main() {
         exit 1
       fi
 
+      # Both fields. `sha256sum` writes "<hash>  <name>", and reading only the
+      # hash meant the file the hash was *for* went unchecked: a release that
+      # shipped the wrong `.sha256` beside an archive would verify against
+      # another asset's digest and pass.
       expected="$(cut -d' ' -f1 < "${TMP}/${ARCHIVE}.sha256")"
+      named="$(awk '{print $NF}' < "${TMP}/${ARCHIVE}.sha256")"
       actual="$(sha256_of "${TMP}/${ARCHIVE}")"
+      if [ "${named#\*}" != "$ARCHIVE" ]; then
+        echo "Checksum file names ${named:-<empty>}, not ${ARCHIVE} — refusing." >&2
+        exit 1
+      fi
       if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
         echo "Checksum mismatch for ${ARCHIVE}" >&2
         echo "  expected: ${expected:-<empty>}" >&2
@@ -151,7 +160,11 @@ main() {
       fi
     fi
 
-    tar -xzf "${TMP}/${ARCHIVE}" -C "$TMP"
+    # `--no-same-owner`: extraction is into `$TMP` and only `$TMP/h5i` is
+    # installed, with an explicit mode, so this changes nothing today. It is
+    # here so a future archive with more than one member cannot carry
+    # ownership in from a tarball the operator did not build.
+    tar -xzf "${TMP}/${ARCHIVE}" -C "$TMP" --no-same-owner
 
     # ── install ────────────────────────────────────────────────────────────────
     # `install` rather than `mv`: `mv` preserves the *invoking user's* ownership,
