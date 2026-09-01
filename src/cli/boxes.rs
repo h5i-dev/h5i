@@ -1552,9 +1552,11 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                             .and_then(|p| p.profile.engine)
                             .map(|e| e.as_str().to_string());
                         h5i_core::termview::run(h5i_core::termview::Options {
-                            env_dir: dir,
-                            env_id: m.id.clone(),
+                            state_dir: dir,
+                            subject: m.id.clone(),
                             policy_digest: m.policy_digest.clone(),
+                            attach: h5i_core::termview::Attach::Boxed,
+                            command: "h5i box view --term".into(),
                             egress,
                             engine,
                             max_fps: fps,

@@ -114,6 +114,81 @@ pub fn stream_port(env_dir: &Path) -> Option<u16> {
     ports.into_iter().next()
 }
 
+/// The port a host session's engine is listening on, from the file it wrote.
+///
+/// The counterpart of [`stream_port`], and separate from it because the two
+/// answer the same question about two different arrangements. A box advertises
+/// inside its own `/tmp`, where several sessions can be found by scanning; a
+/// host session writes one file at a path h5i chose, so there is nothing to
+/// scan and nothing to disambiguate.
+pub fn session_stream_port(stream_file: &Path) -> Option<u16> {
+    let port = std::fs::read_to_string(stream_file)
+        .ok()?
+        .trim()
+        .parse::<u16>()
+        .ok()?;
+    // Port 0 is not an address. A stream file holding one means the engine
+    // wrote it before it had bound, and saying so here is better than a
+    // connection refused much further along.
+    (port != 0).then_some(port)
+}
+
+/// Where a browser's frame stream is, and how to reach it.
+///
+/// Both viewers resolve one of these before they do anything else. Two arms,
+/// because they are two different security stories rather than two transports:
+///
+/// * [`Route::Boxed`] reaches a stream advertised inside a box's own `/tmp`,
+///   through a fork that enters the box's namespaces. Nothing is bound on the
+///   host, and what the page may reach is enforced outside the engine.
+/// * [`Route::Host`] reaches an engine on this machine's loopback, because
+///   there is no namespace between the two. There is no boundary either: the
+///   engine's own confinement is what holds it, and any claim about egress
+///   there rests on the engine's word.
+///
+/// Keeping this a type rather than a pair of code paths is what stops the
+/// second arm from being bolted on twice, once per viewer, with two different
+/// ideas of what "not streaming" should say.
+#[derive(Debug, Clone)]
+pub enum Route {
+    Boxed {
+        pid: u32,
+        pid_ns: std::ffi::OsString,
+        port: u16,
+    },
+    Host {
+        port: u16,
+    },
+}
+
+impl Route {
+    pub fn port(&self) -> u16 {
+        match self {
+            Route::Boxed { port, .. } | Route::Host { port } => *port,
+        }
+    }
+
+    /// Whether what is on the other end is held by something outside the engine.
+    ///
+    /// Read by the status line, which must not present a host session's chrome
+    /// as though a box were enforcing it.
+    pub fn is_boxed(&self) -> bool {
+        matches!(self, Route::Boxed { .. })
+    }
+
+    pub fn connect(&self) -> Result<TcpStream, H5iError> {
+        match self {
+            Route::Boxed { pid, pid_ns, port } => connect_in_netns(*pid, *port, pid_ns),
+            Route::Host { port } => TcpStream::connect(("127.0.0.1", *port)).map_err(|e| {
+                H5iError::Metadata(format!(
+                    "the session's browser is not answering on 127.0.0.1:{port}: {e}. \
+                     It may have exited since it wrote its stream port."
+                ))
+            }),
+        }
+    }
+}
+
 /// A pid living *inside* the box's namespaces.
 ///
 /// The live registry is the starting point, not the answer: it records the
@@ -886,12 +961,10 @@ pub struct Forward {
     env_id: String,
     policy_digest: String,
     token: String,
-    pid: u32,
-    /// The namespace `pid` was identified by, carried so the connect can check
-    /// it arrived there. A pid on its own is not an identity. See
-    /// [`connect_in_netns`].
-    pid_ns: std::ffi::OsString,
-    stream_port: u16,
+    /// Where the frames come from, resolved once at bind time so a connection
+    /// arriving later does not re-ask a question that could by then answer
+    /// differently.
+    route: Route,
 }
 
 impl Forward {
@@ -906,13 +979,6 @@ impl Forward {
         policy_digest: &str,
         port: u16,
     ) -> Result<Forward, H5iError> {
-        let token = read_token(env_dir).ok_or_else(|| {
-            H5iError::Metadata(
-                "this box has no viewer token — it was created before the viewer existed. \
-                 Create a new box to get one."
-                    .into(),
-            )
-        })?;
         let (pid, pid_ns) = box_pid_ns(env_dir).ok_or_else(|| {
             H5iError::Metadata(
                 "this box is not running, so there is no browser to watch. Start a session \
@@ -927,17 +993,42 @@ impl Forward {
                     .into(),
             )
         })?;
+        Forward::on(
+            env_dir,
+            env_id,
+            policy_digest,
+            port,
+            Route::Boxed {
+                pid,
+                pid_ns,
+                port: stream_port,
+            },
+        )
+    }
+
+    /// Bind a forward onto an already-resolved route.
+    ///
+    /// The half of `bind` that does not care whether there is a box. A host
+    /// session reaches this directly: it has a stream port and a directory to
+    /// keep its token in, which is all a forward needs, and the box-shaped
+    /// questions above have no answer there rather than a different one.
+    pub fn on(
+        state_dir: &Path,
+        subject: &str,
+        policy_digest: &str,
+        port: u16,
+        route: Route,
+    ) -> Result<Forward, H5iError> {
+        let token = ensure_token(state_dir)?;
         // Loopback only. Never an external address, on any code path.
         let listener = TcpListener::bind(("127.0.0.1", port))?;
         Ok(Forward {
             listener,
-            env_dir: env_dir.to_path_buf(),
-            env_id: env_id.to_string(),
+            env_dir: state_dir.to_path_buf(),
+            env_id: subject.to_string(),
             policy_digest: policy_digest.to_string(),
             token,
-            pid,
-            pid_ns,
-            stream_port,
+            route,
         })
     }
 
@@ -993,7 +1084,7 @@ impl Forward {
         // Enter the box, connect, and relay the handshake verbatim so
         // agent-browser negotiates with the client directly (we never have to
         // know its subprotocol or its Sec-WebSocket-Accept).
-        let mut upstream = connect_in_netns(self.pid, self.stream_port, &self.pid_ns)?;
+        let mut upstream = self.route.connect()?;
         upstream.write_all(rewrite_head_for_upstream(&head).as_bytes())?;
         upstream.flush()?;
 
@@ -1030,6 +1121,7 @@ impl Forward {
                 env_id: self.env_id.clone(),
                 policy_digest: self.policy_digest.clone(),
                 transport: Transport::Web,
+                command: "h5i box view".into(),
             },
             opened,
             holder_at_open,
@@ -1063,12 +1155,23 @@ impl Transport {
     }
 }
 
-/// Which box a viewer session belongs to.
+/// What a viewer session was watching, and how it was started.
 pub struct Session {
+    /// Where the receipt is filed and where `control.json` lives. A box's env
+    /// directory, or a browser session's own directory.
     pub env_dir: PathBuf,
+    /// What was being watched: a box id, or a browser session id.
     pub env_id: String,
     pub policy_digest: String,
     pub transport: Transport,
+    /// The command that started this viewer, as it was actually invoked.
+    ///
+    /// Carried rather than reconstructed from `transport`, because there is now
+    /// more than one command that opens a terminal viewer and a receipt naming
+    /// a flag the reader did not type is a receipt nobody can retrace. It was
+    /// reconstructed here once, and the day a second entry point appeared every
+    /// receipt it wrote said `h5i box view --term`.
+    pub command: String,
 }
 
 /// Record a viewer session in the box's receipt log, so it reaches the export
@@ -1138,13 +1241,8 @@ pub fn record_session(
             // claimed, but something h5i itself did on the human's behalf.
             source: "viewer".into(),
             cmd: Some(format!(
-                // The command as it was actually invoked. A receipt naming a
-                // flag that does not exist is a receipt nobody can retrace.
-                "h5i box view{} ({}, {seconds}s)",
-                match session.transport {
-                    Transport::Web => "",
-                    Transport::Terminal => " --term",
-                },
+                "{} ({}, {seconds}s)",
+                session.command,
                 if took_control {
                     "human took control"
                 } else {
@@ -1813,6 +1911,47 @@ mod tests {
         target_os = "linux",
         any(target_arch = "x86_64", target_arch = "aarch64")
     ))]
+    /// A host session advertises one port in one file. Nothing to scan, and no
+    /// second session to be confused with.
+    #[test]
+    fn a_host_sessions_stream_port_is_read_from_the_file_the_engine_wrote() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("stream");
+        std::fs::write(&path, "45123\n").expect("write");
+        assert_eq!(session_stream_port(&path), Some(45123));
+    }
+
+    /// Port 0 is not an address. A stream file holding one means the engine
+    /// wrote it before it had bound, and the viewer says so rather than dialling
+    /// it and reporting a connection refused from somewhere less informative.
+    #[test]
+    fn a_stream_file_written_before_the_engine_bound_is_not_an_address() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("stream");
+        std::fs::write(&path, "0").expect("write");
+        assert_eq!(session_stream_port(&path), None);
+
+        std::fs::write(&path, "not a port").expect("write");
+        assert_eq!(session_stream_port(&path), None);
+        assert_eq!(session_stream_port(&dir.path().join("absent")), None);
+    }
+
+    /// The one thing the status line reads off a route, and the reason the two
+    /// arms are a type rather than an `Option<pid>`: a host session must not be
+    /// presented with a boxed session's chrome.
+    #[test]
+    fn only_a_boxed_route_claims_a_boundary_outside_the_engine() {
+        assert!(!Route::Host { port: 1 }.is_boxed());
+        assert!(
+            Route::Boxed {
+                pid: 1,
+                pid_ns: std::ffi::OsString::from("net:[4026531840]"),
+                port: 1,
+            }
+            .is_boxed()
+        );
+    }
+
     #[test]
     fn the_viewer_refuses_to_connect_in_its_own_network_namespace() {
         let own = std::fs::read_link("/proc/self/ns/net").expect("a netns link");

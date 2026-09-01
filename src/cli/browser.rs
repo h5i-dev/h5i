@@ -819,6 +819,45 @@ pub enum BrowserCommands {
         session: Option<String>,
     },
 
+    /// Watch this session's page, and take the controls.
+    ///
+    /// The live view a session already serves, reachable without a box. The
+    /// terminal viewer draws the page in this terminal and drives it by keyboard
+    /// (`?` lists the keys); `--web` binds a loopback port instead and prints a
+    /// URL for the human's own browser.
+    ///
+    /// What the status line will say about this session is *not* what it says
+    /// about a boxed one, and the difference is real: a host session's engine is
+    /// on this machine's loopback with no boundary outside it, so what the page
+    /// may reach rests on the engine's word. `--in` is what makes that claim
+    /// checkable from outside; watching does not change it either way.
+    View {
+        /// Which session, when more than one is open. A name from `--session`
+        /// at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION,
+        /// then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        /// Serve the page to a browser over loopback instead of drawing it here.
+        ///
+        /// The escape hatch for a terminal that cannot draw images, and the way
+        /// to use a mouse on a page the keyboard cannot reach.
+        #[arg(long)]
+        web: bool,
+        /// Port for `--web`. 0 picks a free one.
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Frame-rate ceiling asked of the session.
+        #[arg(long, default_value_t = 10, value_name = "N")]
+        fps: u32,
+        /// Skip the graphics probe and render anyway.
+        ///
+        /// An escape hatch, not a feature: detection is a heuristic about
+        /// someone else's terminal, and being wrong about it must not be the end
+        /// of the road for a user who knows better.
+        #[arg(long)]
+        assume_graphics: bool,
+    },
+
     /// Print the loopback viewer URL for a box, token included. `h5i box view`
     /// is what actually serves it; this is for pasting into a browser when a
     /// forward is already running.
@@ -1163,6 +1202,13 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
 
         BrowserCommands::Take { session } => take(&root, session.as_deref()),
         BrowserCommands::Release { session } => release(&root, session.as_deref()),
+        BrowserCommands::View {
+            session,
+            web,
+            port,
+            fps,
+            assume_graphics,
+        } => view(&root, session.as_deref(), web, port, fps, assume_graphics),
         BrowserCommands::Url { name, port } => viewer_url(&name, port),
     }
 }
@@ -3564,6 +3610,77 @@ fn release(root: &Path, selector: Option<&str>) -> anyhow::Result<()> {
         SUCCESS,
         control.holder.as_str()
     );
+    Ok(())
+}
+
+/// Watch a session, in this terminal or in a browser.
+///
+/// Both viewers are opened from here, because the parts that must agree between
+/// them are decided here: which session, what the status line calls it, and what
+/// this machine can honestly say about what holds it. Two entry points deciding
+/// those separately is how a viewer ends up describing containment a session
+/// does not have.
+fn view(
+    root: &Path,
+    selector: Option<&str>,
+    web: bool,
+    port: u16,
+    fps: u32,
+    assume_graphics: bool,
+) -> anyhow::Result<()> {
+    // `open_live` rather than `resolve`: a viewer attached to a session that has
+    // already ended would sit on a dead socket reporting nothing, and the
+    // session record can say so now.
+    let session = bs::open_live(root, &bs::resolve(root, selector).map_err(|e| anyhow::anyhow!("{e}"))?.id)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let dir = bs::dir(root, &session.id);
+    let stream_file = dir.join(bs::STREAM_FILE);
+
+    // What this machine can say about what the page may reach, in the words the
+    // session record already uses. A host session is engine-claimed however
+    // carefully its engine is confined, and the status line says the word rather
+    // than leaving a blank that reads as "nothing to declare".
+    let egress = match &session.placement {
+        bs::Placement::Box { name } => format!("box:{name}"),
+        bs::Placement::Host => session.lane.as_str().to_string(),
+    };
+
+    if !web {
+        return h5i_core::termview::run(h5i_core::termview::Options {
+            state_dir: dir,
+            subject: session.name.clone().unwrap_or_else(|| session.id.clone()),
+            policy_digest: session.policy_digest.clone(),
+            attach: h5i_core::termview::Attach::Host { stream_file },
+            command: "h5i browser view".into(),
+            egress,
+            // The engine is named for the hint text a failure prints, and this
+            // session's is recorded rather than guessed.
+            engine: Some(session.engine.as_str().to_string()),
+            max_fps: fps,
+            assume_graphics,
+        })
+        .map_err(Into::into);
+    }
+
+    let stream_port = h5i_core::view::session_stream_port(&stream_file).ok_or_else(|| {
+        anyhow::anyhow!(
+            "this session is not serving a live view, so there is nothing to watch. \
+             Only a resident session does: open one with `h5i browser open <url>` and try again."
+        )
+    })?;
+    let forward = h5i_core::view::Forward::on(
+        &dir,
+        &session.id,
+        &session.policy_digest,
+        port,
+        h5i_core::view::Route::Host { port: stream_port },
+    )?;
+    let holder = h5i_core::control::read(&dir).holder;
+    println!("{} viewer for {}", SUCCESS, session.id);
+    println!("   open     {}", forward.url()?);
+    println!("   control  {holder:?} — `h5i browser take` to drive");
+    println!("   stop     Ctrl-C");
+    forward.serve()?;
     Ok(())
 }
 

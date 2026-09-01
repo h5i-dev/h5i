@@ -77,12 +77,44 @@ const TICK: Duration = Duration::from_millis(250);
 // chrome takes" is a screen that overlaps by one row the first time either
 // changes.
 
-/// What a viewer needs to know to attach to one box.
+/// Where the browser being watched is, and how this process reaches its frames.
+///
+/// The two arms are not two transports for one thing. They are two different
+/// security stories, and the viewer has to be able to say which one it is in
+/// rather than presenting them identically:
+///
+/// * A boxed session's stream port is advertised inside the box's own `/tmp`
+///   and reached through a fork that enters the box's namespaces, so nothing is
+///   bound on the host and no token is minted. What the page may reach is
+///   enforced outside the engine, and the status line can say so.
+/// * A host session's engine is on this machine's loopback, because there is no
+///   namespace between the two. There is also no boundary: the engine's own
+///   confinement is what is holding it, and an egress claim here rests on the
+///   engine's word. The status line says that too. The alternative, showing the
+///   same chrome for both, would be the viewer implying containment that is not
+///   there.
+#[derive(Debug, Clone)]
+pub enum Attach {
+    /// A browser inside an h5i box.
+    Boxed,
+    /// A browser session on this machine, whose engine wrote its stream port
+    /// into this file.
+    Host { stream_file: PathBuf },
+}
+
+/// What a viewer needs to know to attach to one browser.
 pub struct Options {
-    pub env_dir: PathBuf,
-    pub env_id: String,
+    /// Where `control.json` lives and where the viewer receipt is filed: a
+    /// box's env directory, or a browser session's own directory.
+    pub state_dir: PathBuf,
+    /// What is being watched, for the status line and the receipt.
+    pub subject: String,
     pub policy_digest: String,
-    /// A short account of what the box may reach, for the status line.
+    /// How to reach the frames.
+    pub attach: Attach,
+    /// The command the human actually typed, for the receipt.
+    pub command: String,
+    /// A short account of what the page may reach, for the status line.
     pub egress: String,
     /// Frame-rate ceiling asked of the box.
     pub max_fps: u32,
@@ -96,6 +128,43 @@ pub struct Options {
     /// someone how to start a stream. The viewer itself is engine-agnostic,
     /// and adding this must not become the start of engine-specific rendering.
     pub engine: Option<String>,
+}
+
+/// Find this browser's stream, with a sentence a human can act on if it is not
+/// there.
+///
+/// The resolution itself lives in [`crate::view::Route`], shared with the web
+/// forward. What is here is the *refusals*, which differ between the two ways
+/// of attaching in a way the shared type should not have to know about: a box
+/// that is not running is a different problem, with a different fix, from a
+/// session that never became resident.
+#[cfg(unix)]
+fn resolve_route(opts: &Options) -> Result<crate::view::Route, H5iError> {
+    match &opts.attach {
+        Attach::Boxed => {
+            let (pid, pid_ns) = crate::view::box_pid_ns(&opts.state_dir).ok_or_else(|| {
+                H5iError::Metadata(
+                    "this box is not running, so there is no browser to watch. \
+                     Start a session (`h5i box shell <name>`) and try again."
+                        .into(),
+                )
+            })?;
+            let port = crate::view::stream_port(&opts.state_dir)
+                .ok_or_else(|| H5iError::Metadata(not_streaming_hint(opts.engine.as_deref())))?;
+            Ok(crate::view::Route::Boxed { pid, pid_ns, port })
+        }
+        Attach::Host { stream_file } => {
+            let port = crate::view::session_stream_port(stream_file).ok_or_else(|| {
+                H5iError::Metadata(
+                    "this session is not serving a live view, so there is nothing to watch. \
+                     Only a resident session does: open one with `h5i browser open <url>` \
+                     and try again."
+                        .into(),
+                )
+            })?;
+            Ok(crate::view::Route::Host { port })
+        }
+    }
 }
 
 /// What to tell someone whose box has no `.stream` file yet.
@@ -199,16 +268,10 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
 
     // Everything that can fail with an explanation is resolved before the
     // terminal is touched, so a failure prints a sentence on a normal screen
-    // rather than on an alternate one that is about to be torn down.
-    let (pid, pid_ns) = crate::view::box_pid_ns(&opts.env_dir).ok_or_else(|| {
-        H5iError::Metadata(
-            "this box is not running, so there is no browser to watch. \
-             Start a session (`h5i box shell <name>`) and try again."
-                .into(),
-        )
-    })?;
-    let port = crate::view::stream_port(&opts.env_dir)
-        .ok_or_else(|| H5iError::Metadata(not_streaming_hint(opts.engine.as_deref())))?;
+    // rather than on an alternate one that is about to be torn down. That
+    // includes finding the stream, which is the step that fails most often and
+    // whose message differs the most between the two ways of attaching.
+    let route = resolve_route(&opts)?;
 
     let mut guard = term::Guard::enter(stdin).map_err(H5iError::Io)?;
     // Skipping the probe means skipping the answer about compression too. Raw
@@ -221,9 +284,8 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
         probe_graphics(stdin)?
     };
 
-    // The socket is a descriptor this process owns, handed back from a fork
-    // that entered the box's namespaces. Nothing is listening anywhere.
-    let mut socket = crate::view::connect_in_netns(pid, port, &pid_ns)?;
+    let mut socket = route.connect()?;
+    let port = route.port();
     let key = ws::new_key();
     socket
         .write_all(ws::request(&format!("127.0.0.1:{port}"), "/", &key).as_bytes())
@@ -291,7 +353,7 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
     drop(tx);
 
     let opened = chrono::Utc::now();
-    let holder_at_open = control::read(&opts.env_dir).holder;
+    let holder_at_open = control::read(&opts.state_dir).holder;
     // Scoped so the app releases its borrow of the terminal guard before the
     // guard itself is dropped and the terminal is restored.
     let (outcome, bytes_in, input_sent) = {
@@ -302,7 +364,7 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
         // lock leaves the agent refusing to act, with nothing on screen to
         // explain why.
         if app.mode == Mode::Interact {
-            let _ = control::release(&opts.env_dir);
+            let _ = control::release(&opts.state_dir);
         }
         let _ = writer.write_all(&app.placer.clear());
         (outcome, app.bytes_in, app.input_sent)
@@ -315,10 +377,11 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
 
     crate::view::record_session(
         &crate::view::Session {
-            env_dir: opts.env_dir.clone(),
-            env_id: opts.env_id.clone(),
+            env_dir: opts.state_dir.clone(),
+            env_id: opts.subject.clone(),
             policy_digest: opts.policy_digest.clone(),
             transport: crate::view::Transport::Terminal,
+            command: opts.command.clone(),
         },
         opened,
         holder_at_open,
@@ -415,7 +478,7 @@ struct App<'a> {
     viewport: (u32, u32),
     url: Option<String>,
     egress: String,
-    box_id: String,
+    subject: String,
     errors: u32,
     streaming: bool,
     size: term::Size,
@@ -433,7 +496,7 @@ impl<'a> App<'a> {
     fn new(opts: &Options, guard: &'a mut term::Guard, encoding: kitty::Encoding) -> App<'a> {
         let size = guard.size().or_fallback();
         App {
-            env_dir: opts.env_dir.clone(),
+            env_dir: opts.state_dir.clone(),
             guard,
             placer: kitty::Placer::new(encoding),
             mode: Mode::View,
@@ -446,7 +509,7 @@ impl<'a> App<'a> {
             viewport: (1280, 720),
             url: None,
             egress: opts.egress.clone(),
-            box_id: opts.env_id.clone(),
+            subject: opts.subject.clone(),
             errors: 0,
             streaming: true,
             size,
@@ -670,7 +733,7 @@ impl<'a> App<'a> {
 
     fn draw_status(&mut self) {
         let s = Status {
-            box_id: self.box_id.clone(),
+            subject: self.subject.clone(),
             mode: self.mode,
             holder: control::read(&self.env_dir).holder,
             url: self.url.clone(),

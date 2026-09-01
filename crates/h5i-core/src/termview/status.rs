@@ -48,7 +48,8 @@ impl Mode {
 /// is sanitized on the way in.
 #[derive(Debug, Clone)]
 pub struct Status {
-    pub box_id: String,
+    /// What is being watched: a box id, or a browser session id.
+    pub subject: String,
     pub mode: Mode,
     pub holder: Holder,
     /// The page's current URL, as the box last reported it.
@@ -102,10 +103,10 @@ const URL_PRIO: u8 = 2;
 /// Lay the fields out, giving up the least useful ones first.
 ///
 /// The order things are surrendered in is a judgement about what this row is
-/// *for*. Which box, and where the page is, are useful. Which mode the viewer
-/// is in and who holds the control lock are the reason a human looks up here at
-/// all, someone about to type a password needs to know whether their keys are
-/// going to the page, so those never give way, whatever else has to.
+/// *for*. Which session, and where the page is, are useful. Which mode the
+/// viewer is in and who holds the control lock are the reason a human looks up
+/// here at all, someone about to type a password needs to know whether their
+/// keys are going to the page, so those never give way, whatever else has to.
 fn compose(s: &Status, width: usize) -> String {
     let mut segs: Vec<Seg> = Vec::new();
     let seg = |prio, text: String| Seg {
@@ -114,7 +115,7 @@ fn compose(s: &Status, width: usize) -> String {
         raw: None,
     };
 
-    segs.push(seg(3, format!("h5i:{}", sanitize_display(&s.box_id))));
+    segs.push(seg(3, format!("h5i:{}", sanitize_display(&s.subject))));
     // Never dropped.
     segs.push(seg(
         0,
@@ -240,7 +241,7 @@ mod tests {
 
     fn status() -> Status {
         Status {
-            box_id: "env/claude/fix-auth".into(),
+            subject: "env/claude/fix-auth".into(),
             mode: Mode::View,
             holder: Holder::Agent,
             url: Some("http://localhost:3000/login".into()),
@@ -281,7 +282,7 @@ mod tests {
         // row is allowed to drop, however narrow the pane, and a long box id
         // must not be able to push it off the end.
         let mut s = status();
-        s.box_id = "env/claude/a-very-long-branch-name-for-this-box".into();
+        s.subject = "env/claude/a-very-long-branch-name-for-this-box".into();
         for width in [18u16, 24, 34, 60, 100] {
             let out = body(&render(&s, width));
             assert!(out.contains("VIEW"), "width {width}: {out:?}");
