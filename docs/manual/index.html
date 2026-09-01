@@ -1558,16 +1558,16 @@ letters safe to bind. <code>?</code> lists them in the viewer itself.</p>
 <td>Reload</td>
 </tr>
 <tr>
-<td><code>i</code></td>
-<td>Hand the keyboard to the page. <code>Esc</code> (or <code>Ctrl-]</code>) takes it back</td>
-</tr>
-<tr>
 <td><code>D</code></td>
 <td>The console pane: what the page logged and what it threw</td>
 </tr>
 <tr>
 <td><code>q</code></td>
 <td>Leave</td>
+</tr>
+<tr>
+<td><code>i</code></td>
+<td>Hand the keyboard to the page, where an engine can use it (below)</td>
 </tr>
 </tbody>
 </table>
@@ -1595,19 +1595,34 @@ overlay up: the labels describe the page as it is now, and an agent navigating
 underneath them would leave every one of them stale. Leaving without acting
 hands it straight back. All of it is recorded in the receipt, under the same
 lane the browser viewer uses.</p>
-<p>The pointer is still there under <code>i</code>, for canvases, maps and drags. It has the
-same two limits it always had: a terminal reports presses and not releases, so
-h5i sends a press and a release together and a held key is not expressible, and
-clicks land at the resolution of a cell.</p>
+<p><code>i</code> hands the keyboard and the pointer to the page, and it is offered only where
+that means something. On h5i's own engine it does not: the viewer lane drops a
+pointer press and a pointer move, and the one gesture it acts on is a release
+over a link. Click a button, nothing happens. Click a field and type, nothing
+happens. So there the key says so and points at <code>f</code>, which reaches every
+actionable element rather than only the links, does it without aiming, and
+leaves a receipt naming what was activated instead of a coordinate.</p>
+<p>It stays bound on a box running an engine that <em>can</em> be driven that way, which
+is where the canvas, the map and the drag live. The rule is asymmetric on
+purpose: every other gated key is new, so an engine that has not mentioned it
+does not have it, while handing over the keyboard is what this viewer did before
+any of this existed. An engine that describes its lane and leaves the pointer out
+has said no; one that describes nothing has said nothing, and keeps what worked.</p>
+<p>Where it is bound it has the same two limits it always had: a terminal reports
+presses and not releases, so h5i sends a press and a release together and a held
+key is not expressible, and clicks land at the resolution of a cell. Which is
+most of the reason the keyboard path exists.</p>
 <h4 id="the-same-keys-in-the-browser-viewer">The same keys in the browser viewer</h4>
 <p>The loopback viewer binds the same keys to the same things, down to the hint
 overlay, so there is one thing to learn whichever you open. A test parses the
 key table out of the viewer page and compares it against the terminal viewer's,
 because two keymaps maintained by hand drift and the drift is silent.</p>
 <p>Two differences, both honest. The browser has a real pointer with pixel
-coordinates and a visible cursor, so the mouse stays live there without a mode.
-And it takes the control lock for you when you reach for the controls, which
-until now meant leaving the page to run <code>h5i browser take</code> and reloading.</p>
+coordinates and a visible cursor, so the mouse stays live there without a mode —
+though what it can <em>reach</em> is still whatever the engine implements, which on
+h5i's own engine is links and the scroll wheel. And it takes the control lock for
+you when you reach for the controls, which until now meant leaving the page to
+run <code>h5i browser take</code> and reloading.</p>
 <h3 id="the-engine-underneath">The engine, underneath</h3>
 <p>The engine is part of the <code>h5i</code> binary. <code>h5i browser</code> runs it as a separate
 process and speaks a protocol to it, the way it always has; what changed is that

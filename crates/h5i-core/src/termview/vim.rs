@@ -18,8 +18,9 @@
 //! Three rules hold this together:
 //!
 //! * **The page never sees these keys.** Everything here is decided in VIEW,
-//!   where the keyboard is the viewer's. INTERACT is untouched and is still how
-//!   a canvas, a map or a drag gets driven.
+//!   where the keyboard is the viewer's. INTERACT still exists, for the canvas,
+//!   the map and the drag that no keyboard can express — but only on an engine
+//!   that can actually be driven that way, which h5i's own is not.
 //! * **A binding that cannot work is not bound.** The terminal viewer watches
 //!   boxes running an engine that is not ours, so which keys mean anything is a
 //!   property of the session, read from what the engine advertises rather than
@@ -111,8 +112,15 @@ impl HintThen {
 pub enum Action {
     /// Leave the viewer.
     Quit,
-    /// Hand the keyboard and the pointer to the page. The old behaviour, kept:
-    /// a canvas, a map and a drag are still things only a pointer can do.
+    /// Hand the keyboard and the pointer to the page.
+    ///
+    /// Kept for the engine that can use it. On one that cannot, offering it is
+    /// worse than not having it: h5i's own engine answers a press and a move
+    /// with nothing at all, and the only pointer gesture it acts on is a release
+    /// over a link — which `f` does better, without aiming, and with a receipt
+    /// that names what was activated instead of where. A mode that silently does
+    /// one twentieth of what it looks like it does is a trap, so it is offered
+    /// only where it is real. See [`resolve`].
     Interact,
     /// Toggle the console pane.
     Developer,
@@ -153,6 +161,27 @@ pub fn resolve(key: char, pending: &str, features: &Features) -> Action {
     // human's next move would be to press it harder.
     let needs = |feature: &str, action: Action, why: &'static str| {
         if features.has(feature) {
+            action
+        } else {
+            Action::Unsupported(why)
+        }
+    };
+
+    // The one binding that fails *open*, and the asymmetry is the point rather
+    // than an oversight.
+    //
+    // Every other gated key is a capability introduced alongside this keymap, so
+    // an engine that has not said it offers one does not offer it. Handing the
+    // page the keyboard is not new: it is what this viewer did before any of
+    // this existed, and it is the only way to drive a canvas, a map or a drag on
+    // a box running an engine that will never send a feature list at all.
+    //
+    // So the question for `i` is not "did you say yes" but "did you say no". An
+    // engine that described its lane and left `pointer` out has said no, and is
+    // taken at its word; an engine that described nothing has said nothing, and
+    // keeps what already worked.
+    let pointer_or_nothing_said = |action: Action, why: &'static str| {
+        if features.is_empty() || features.has("pointer") {
             action
         } else {
             Action::Unsupported(why)
@@ -224,7 +253,11 @@ pub fn resolve(key: char, pending: &str, features: &Features) -> Action {
 
         // ─── the viewer itself ──────────────────────────────────────────────
         ("", 'q') => Action::Quit,
-        ("", 'i') => Action::Interact,
+        ("", 'i') => pointer_or_nothing_said(
+            Action::Interact,
+            "this session's engine is driven from the keyboard: `f` reaches anything \
+             a click could, and `F` types into it",
+        ),
         // Moved off `d`, which is half-page-down everywhere a reader has used
         // this idiom. Shifted rather than relocated to a prefix because it is a
         // panel toggle and belongs next to the other one-key viewer state.
@@ -307,7 +340,7 @@ pub const BINDINGS: &[Binding] = &[
     Binding { keys: "yy", what: "copy this page's URL", needs: None },
     Binding { keys: "H L", what: "back, forward", needs: Some("history") },
     Binding { keys: "r", what: "reload", needs: Some("reload") },
-    Binding { keys: "i", what: "take the pointer (INTERACT)", needs: None },
+    Binding { keys: "i", what: "take the pointer (INTERACT)", needs: Some("pointer") },
     Binding { keys: "D", what: "console pane", needs: None },
     Binding { keys: "?", what: "this list", needs: None },
     Binding { keys: "q", what: "leave", needs: None },
@@ -346,8 +379,8 @@ mod tests {
     /// engine: a key that cannot work says why rather than doing nothing.
     #[test]
     fn a_binding_the_engine_cannot_serve_explains_itself() {
-        let none = Features::default();
-        for key in ['f', 'F', 'H', 'L', 'r'] {
+        let none = Features::from_iter(["something-else-entirely"]);
+        for key in ['f', 'F', 'H', 'L', 'r', 'i'] {
             match resolve(key, "", &none) {
                 Action::Unsupported(why) => assert!(!why.is_empty(), "key `{key}`"),
                 other => panic!("key `{key}` resolved to {other:?} with no engine support"),
@@ -390,10 +423,37 @@ mod tests {
 
     /// The one key that was already bound and must keep meaning what it meant.
     #[test]
-    fn taking_the_pointer_is_still_i_and_leaving_is_still_q() {
-        let all = all();
-        assert_eq!(resolve('i', "", &all), Action::Interact);
-        assert_eq!(resolve('q', "", &all), Action::Quit);
+    fn leaving_is_still_q() {
+        assert_eq!(resolve('q', "", &all()), Action::Quit);
+        assert_eq!(resolve('q', "", &Features::default()), Action::Quit);
+    }
+
+    /// `i` is the one key that fails open, and this pins both directions of it.
+    ///
+    /// An engine that has said nothing keeps the behaviour this viewer shipped
+    /// with, because that is where the pointer is the only way to drive a canvas
+    /// or a drag. An engine that described its lane and did not claim `pointer`
+    /// has said no, and is taken at its word rather than being allowed to offer
+    /// a mode that does nothing: h5i's own engine answers a press and a move
+    /// with nothing, and a release only over a link.
+    #[test]
+    fn the_pointer_is_offered_only_where_it_is_real() {
+        // Said nothing: keep what worked.
+        assert_eq!(resolve('i', "", &Features::default()), Action::Interact);
+
+        // Said so: bind it.
+        let pointing = Features::from_iter(["hints", "pointer"]);
+        assert_eq!(resolve('i', "", &pointing), Action::Interact);
+
+        // Described a lane without it: refuse, and point at the better path
+        // rather than leaving the key to do a twentieth of what it looks like.
+        match resolve('i', "", &all()) {
+            Action::Unsupported(why) => {
+                assert!(why.contains("keyboard"), "{why}");
+                assert!(why.contains('f'), "{why}");
+            }
+            other => panic!("a keyboard-only engine offered the pointer: {other:?}"),
+        }
     }
 
     // ─── narrowing ──────────────────────────────────────────────────────────
@@ -533,9 +593,13 @@ mod tests {
 
     /// And the other direction: a binding that needs a feature must say so in
     /// the list, or the list will offer a key that answers with a refusal.
+    /// Checked against an engine that *described* its lane and offered none of
+    /// these, rather than against one that said nothing. The empty list is not
+    /// the gating case: it is the "we have not been told" case, which `i` treats
+    /// differently on purpose.
     #[test]
     fn the_key_list_declares_the_same_requirements_the_resolver_enforces() {
-        let none = Features::default();
+        let none = Features::from_iter(["something-else-entirely"]);
         for binding in BINDINGS {
             let token = binding.keys.split(' ').next().expect("a key");
             let (pending, key) = match token {

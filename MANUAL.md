@@ -1398,9 +1398,9 @@ letters safe to bind. `?` lists them in the viewer itself.
 | `yy` | Copy this page's URL |
 | `H` `L` | Back, forward |
 | `r` | Reload |
-| `i` | Hand the keyboard to the page. `Esc` (or `Ctrl-]`) takes it back |
 | `D` | The console pane: what the page logged and what it threw |
 | `q` | Leave |
+| `i` | Hand the keyboard to the page, where an engine can use it (below) |
 
 The reason it works this way is worth stating, because "add a mouse" sounds
 easier. A terminal reports cells rather than pixels, so a click lands at the
@@ -1430,10 +1430,25 @@ underneath them would leave every one of them stale. Leaving without acting
 hands it straight back. All of it is recorded in the receipt, under the same
 lane the browser viewer uses.
 
-The pointer is still there under `i`, for canvases, maps and drags. It has the
-same two limits it always had: a terminal reports presses and not releases, so
-h5i sends a press and a release together and a held key is not expressible, and
-clicks land at the resolution of a cell.
+`i` hands the keyboard and the pointer to the page, and it is offered only where
+that means something. On h5i's own engine it does not: the viewer lane drops a
+pointer press and a pointer move, and the one gesture it acts on is a release
+over a link. Click a button, nothing happens. Click a field and type, nothing
+happens. So there the key says so and points at `f`, which reaches every
+actionable element rather than only the links, does it without aiming, and
+leaves a receipt naming what was activated instead of a coordinate.
+
+It stays bound on a box running an engine that *can* be driven that way, which
+is where the canvas, the map and the drag live. The rule is asymmetric on
+purpose: every other gated key is new, so an engine that has not mentioned it
+does not have it, while handing over the keyboard is what this viewer did before
+any of this existed. An engine that describes its lane and leaves the pointer out
+has said no; one that describes nothing has said nothing, and keeps what worked.
+
+Where it is bound it has the same two limits it always had: a terminal reports
+presses and not releases, so h5i sends a press and a release together and a held
+key is not expressible, and clicks land at the resolution of a cell. Which is
+most of the reason the keyboard path exists.
 
 #### The same keys in the browser viewer
 
@@ -1443,9 +1458,11 @@ key table out of the viewer page and compares it against the terminal viewer's,
 because two keymaps maintained by hand drift and the drift is silent.
 
 Two differences, both honest. The browser has a real pointer with pixel
-coordinates and a visible cursor, so the mouse stays live there without a mode.
-And it takes the control lock for you when you reach for the controls, which
-until now meant leaving the page to run `h5i browser take` and reloading.
+coordinates and a visible cursor, so the mouse stays live there without a mode —
+though what it can *reach* is still whatever the engine implements, which on
+h5i's own engine is links and the scroll wheel. And it takes the control lock for
+you when you reach for the controls, which until now meant leaving the page to
+run `h5i browser take` and reloading.
 
 ### The engine, underneath
 

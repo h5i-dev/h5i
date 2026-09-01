@@ -375,7 +375,7 @@ const BINDINGS = [
   ["yy", "copy this page's URL", null],
   ["H L", "back, forward", "history"],
   ["r", "reload", "reload"],
-  ["i", "take the pointer (INTERACT)", null],
+  ["i", "take the pointer (INTERACT)", "pointer"],
   ["D", "console pane", null],
   ["?", "this list", null],
   ["q", "leave", null],
@@ -402,11 +402,25 @@ function setMode(next) {
 }
 function say(text) { sayEl.textContent = text || ""; }
 
+// Features an engine that said *nothing* is assumed to have.
+//
+// The asymmetry `vim.rs` documents at length, in one line: every other gated key
+// is a capability introduced with this keymap, so silence means no. Handing the
+// page the keyboard is not new — it is what this viewer did before any of this
+// existed, and on a box running an engine that will never send a feature list it
+// is the only way to drive a canvas or a drag. So for `pointer` the question is
+// "did you say no", not "did you say yes".
+const FAIL_OPEN = new Set(["pointer"]);
+
+function offers(feature) {
+  if (features.has(feature)) return true;
+  return FAIL_OPEN.has(feature) && features.size === 0;
+}
+
 // Same rule as the resolver in `vim.rs`: a key that cannot work says why rather
 // than doing nothing, because a key that does nothing gets pressed harder.
 function needs(feature, why) {
-  if (features.has(feature)) return null;
-  return why;
+  return offers(feature) ? null : why;
 }
 
 function resolve(key, pending) {
@@ -436,7 +450,7 @@ function resolve(key, pending) {
     case "r": return { reload: true, need: "reload" };
     case "f": return { hints: "click", need: "hints" };
     case "F": return { hints: "insert", need: "hints" };
-    case "i": return { interact: true };
+    case "i": return { interact: true, need: "pointer" };
     case "D": return { developer: true };
     case "?": return { help: true };
     default: return {};
@@ -448,6 +462,7 @@ const WHY = {
   history: "this session's engine does not keep history for the viewer",
   insert: "this session's engine does not offer typing from the viewer",
   reload: "this session's engine does not offer reload from the viewer",
+  pointer: "this session's engine is driven from the keyboard: f reaches anything a click could, and F types into it",
 };
 
 function onViewKey(e) {
@@ -716,7 +731,7 @@ function renderKeys() {
     // An unavailable key is shown and marked rather than hidden: hiding it
     // leaves someone who has used this on another session wondering where the
     // key went.
-    const off = need !== null && !features.has(need);
+    const off = need !== null && !offers(need);
     dd.textContent = what + (off ? " (not on this engine)" : "");
     if (off) { dt.className = "off"; dd.className = "off"; }
     keysEl.append(dt, dd);

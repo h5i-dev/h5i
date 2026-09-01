@@ -61,6 +61,16 @@ const MAX_FIND_MATCHES: usize = 20;
 /// against each other by a test rather than by a type, because the wire is the
 /// contract here and a type would only prove the two halves of *this* process
 /// agree.
+/// Note what is *not* here: `pointer`.
+///
+/// This engine's viewer lane answers a pointer press and a pointer move with
+/// nothing at all, and the only gesture it acts on is a release over a link. A
+/// viewer told it could hand the page the pointer would offer a mode that does
+/// one twentieth of what it looks like it does — click a button, nothing; click
+/// a field and type, nothing — which is worse than not offering it. The list
+/// above is what this lane can do, and it is keyboard-complete: `hints` reaches
+/// every actionable element the snapshot knows about, which is strictly more
+/// than a click here can.
 const VIEWER_FEATURES: &[&str] = &["hints", "act", "insert", "history", "reload"];
 
 const PAGE_SCROLL: f64 = 0.9;
@@ -5903,6 +5913,70 @@ mod tests {
             assert_eq!(out[0]["type"], "act", "{:?}", out[0]);
             assert_eq!(out[0]["reply"]["ok"], false, "{:?}", out[0]);
         }
+    }
+
+    /// The claim a viewer builds its keymap from, pinned in both directions.
+    ///
+    /// Every name advertised is a message [`handle`] answers, and `pointer` is
+    /// deliberately absent: this engine drops a pointer press and a pointer
+    /// move, so a viewer that offered to hand the page the pointer would be
+    /// offering a mode that does almost nothing.
+    #[test]
+    fn the_engine_advertises_the_lane_it_actually_has() {
+        let mut session = session_with("<body><a href='/one'>One</a></body>");
+        let status = session.status_message();
+        let advertised: Vec<&str> = status["features"]
+            .as_array()
+            .expect("a feature list")
+            .iter()
+            .map(|v| v.as_str().expect("a name"))
+            .collect();
+
+        assert!(
+            !advertised.contains(&"pointer"),
+            "this engine claimed a pointer lane it does not implement: {advertised:?}"
+        );
+
+        // And everything it does claim is answered rather than ignored. A name
+        // here that `handle` does not know is a key bound in a viewer to
+        // nothing at all.
+        for name in advertised {
+            if name == "act" {
+                // Answered, but only with a ref to act on; covered by its own
+                // tests rather than by a bare probe.
+                continue;
+            }
+            let out = handle(&mut session, &json!({"type": name})).expect("a reply");
+            assert!(
+                !out.is_empty(),
+                "`{name}` is advertised and answered with nothing"
+            );
+        }
+    }
+
+    /// The other half of the same fact, from the pointer's side: this is the
+    /// whole of what a click can reach here.
+    #[test]
+    fn a_pointer_press_does_nothing_and_a_release_only_follows_a_link() {
+        let mut session = session_with(
+            "<body><button>Press</button><input type='text'></body>",
+        );
+        for event in ["mousePressed", "mouseMoved"] {
+            let out = handle(
+                &mut session,
+                &json!({"type": "input_mouse", "eventType": event, "x": 20.0, "y": 20.0}),
+            )
+            .expect("a reply");
+            assert!(out.is_empty(), "`{event}` did something: {out:?}");
+        }
+        // And a key that is not a scroll key is dropped, so "type into the page"
+        // is not something this lane offers either.
+        let out = handle(
+            &mut session,
+            &json!({"type": "input_keyboard", "eventType": "keyDown", "key": "a"}),
+        )
+        .expect("a reply");
+        assert!(out.is_empty(), "a printable key reached the page: {out:?}");
     }
 
     // ─── history ────────────────────────────────────────────────────────────
