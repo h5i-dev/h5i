@@ -867,10 +867,24 @@ The viewer combines the rendered page with action, network, console, and policy
 events. Each row keeps its observation source and evidence grade separate; h5i
 does not infer causal links that are absent from the event stream.
 
-The terminal viewer uses the Kitty graphics protocol when available and falls
-back to text-oriented panes otherwise. Press `i` to take control, `Esc` to
-return it, and `q` to quit. The page cannot write the viewer's status row or
-inject terminal markup through displayed page text.
+| Key | Does |
+| --- | --- |
+| `j` `k` | Scroll a line |
+| `d` `u` | Scroll half a page |
+| `space` `b` | Scroll a page |
+| `gg` `G` | Top, bottom |
+| `f` | Label everything on screen, then follow the one you type |
+| `F` | Label the fields, then type into the one you choose |
+| `yf` | Label everything, then copy that link |
+| `gi` | Type into the first field on the page |
+| `yy` | Copy this page's URL |
+| `H` `L` | Back, forward |
+| `r` | Reload |
+| `i` | Hand the keyboard to the page, where an engine can use it |
+| `Esc` | Return it |
+| `D` | The console pane: what the page logged and what it threw |
+| `?` | The key list |
+| `q` | Leave |
 
 A viewer attaches read-only. It does not weaken the box policy, publish the
 browser port, or become part of the agent's session.
