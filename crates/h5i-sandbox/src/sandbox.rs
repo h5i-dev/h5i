@@ -610,6 +610,26 @@ fn unresolvable_tilde_entries(p: &Profile, home_set: bool) -> Vec<&String> {
         .collect()
 }
 
+/// A policy path as the kernel will see it.
+///
+/// Resolved, not merely expanded: Landlock grants follow symlinks, so a grant
+/// of `~/work-tools` on a host where that is a link to `$HOME` really grants
+/// the whole home directory, and a textual prefix check never saw `~/.ssh`
+/// underneath. Best-effort: a path that does not exist yet falls back to the
+/// expanded text, and a non-existent grant is skipped by the Landlock builder
+/// anyway.
+fn resolved_policy_path(s: &str) -> String {
+    let expanded = expand_tilde(s);
+    std::fs::canonicalize(&expanded)
+        .map(|p| p.display().to_string())
+        .unwrap_or(expanded)
+}
+
+/// Is `child` `parent`, or inside it?
+fn path_is_under(child: &str, parent: &str) -> bool {
+    child == parent || child.starts_with(&format!("{}/", parent.trim_end_matches('/')))
+}
+
 pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     if let Some(image) = &p.image {
         validate_image(image)?;
@@ -751,6 +771,25 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
                 )));
             }
         }
+        // A `file:` source is a host-side read, performed by the unconfined h5i
+        // process and handed to the box. The deny list is what the profile says
+        // is out of the box's reach, so a source pointing inside one is the
+        // same contradiction the fs lint refuses one level up: the policy says
+        // `~/.ssh` is not reachable and then reads `~/.ssh/id_ed25519` for it.
+        if let Some(path) = src.strip_prefix("file:") {
+            let target = resolved_policy_path(path);
+            for deny in &p.fs_deny {
+                let d = resolved_policy_path(deny);
+                if path_is_under(&target, &d) {
+                    return Err(H5iError::Metadata(format!(
+                        "secret grant '{}' reads '{path}', which is inside the denied path \
+                         '{deny}'. A source is a host-side read handed to the box, so it \
+                         cannot reach where the box may not (fail-closed).",
+                        g.name
+                    )));
+                }
+            }
+        }
         match g.inject_or_default() {
             "file" | "env" => {}
             other => {
@@ -817,20 +856,11 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     // check never saw `~/.ssh` underneath. Canonicalization is best-effort: a
     // path that does not exist yet falls back to the expanded text, and a
     // non-existent grant is skipped by the Landlock builder anyway.
-    let resolve = |s: &str| -> String {
-        let expanded = expand_tilde(s);
-        std::fs::canonicalize(&expanded)
-            .map(|p| p.display().to_string())
-            .unwrap_or(expanded)
-    };
-    let under = |child: &str, parent: &str| -> bool {
-        child == parent || child.starts_with(&format!("{}/", parent.trim_end_matches('/')))
-    };
     for grant in p.fs_read.iter().chain(p.fs_write.iter()) {
-        let g = resolve(grant);
+        let g = resolved_policy_path(grant);
         for deny in &p.fs_deny {
-            let d = resolve(deny);
-            if under(&d, &g) {
+            let d = resolved_policy_path(deny);
+            if path_is_under(&d, &g) {
                 return Err(H5iError::Metadata(format!(
                     "policy refused: granted path '{grant}' contains denied child '{deny}' \
                      (Landlock is allowlist-only and cannot subtract a child from a granted \
@@ -843,7 +873,7 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
             // Landlock ruleset doing another — and the ruleset is what runs.
             // The same shape reaches `~/.config/h5i/egress-allow`, which is the
             // file `h5i box allow` refuses to let a box edit.
-            if under(&g, &d) {
+            if path_is_under(&g, &d) {
                 return Err(H5iError::Metadata(format!(
                     "policy refused: granted path '{grant}' is inside denied path '{deny}' \
                      — the deny list would say it is out of reach and Landlock would grant \
@@ -4419,6 +4449,36 @@ fs.deny = ["~/.ssh"]
     /// is the same contradiction seen from the other end, and the ruleset is
     /// what runs: `fs.read = ["~/.ssh/id_ed25519"]` under the default deny of
     /// `~/.ssh` read as narrowed and was a grant of the key.
+    /// A `file:` source is a host-side read performed by the unconfined h5i
+    /// process and handed to the box. The deny list says what is out of the
+    /// box's reach, and reading it *for* the box is the same contradiction the
+    /// fs lint refuses one level up.
+    #[test]
+    fn a_secret_source_cannot_read_what_the_deny_list_names() {
+        let with = |source: &str| {
+            let mut p = Profile::builtin("p", IsolationClaim::Process);
+            p.secret_grants = vec![crate::sandbox_policy::SecretGrant {
+                name: "KEY".into(),
+                source: Some(source.to_string()),
+                inject: None,
+                ttl: None,
+            }];
+            p
+        };
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/x".into());
+        for bad in [
+            format!("file:{home}/.ssh/id_ed25519"),
+            format!("file:{home}/.aws/credentials"),
+            format!("file:{home}/.config/h5i/egress-allow"),
+        ] {
+            let err = validate_profile(&with(&bad)).unwrap_err();
+            assert!(format!("{err}").contains("denied path"), "{bad}: {err}");
+        }
+        // An ordinary source is untouched.
+        assert!(validate_profile(&with("file:/etc/h5i-token")).is_ok());
+        assert!(validate_profile(&with("env:MY_TOKEN")).is_ok());
+    }
+
     /// The one place h5i attaches a credential the operator holds to a request
     /// it originates. The destination is interpolated into `https://{host}` and
     /// forced as the outgoing `Host`, so anything but a bare name makes the
