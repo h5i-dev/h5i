@@ -4706,6 +4706,17 @@ pub fn validate_egress_rule(raw: &str) -> Result<String, H5iError> {
     {
         return bad("malformed host");
     }
+    // The enforcing parser has the last word, because this function's contract
+    // is "exactly what the proxy's `AllowList` understands" and it was looser
+    // in several places. `*.com` is the plain one: a single-label suffix rule,
+    // which `parse_egress_rule` refuses. A line this check accepted and the
+    // proxy refused was not skipped with a warning — `AllowList::parse` runs
+    // with a `?` on the run path, so one such line in a hand-edited
+    // `~/.config/h5i/egress-allow` aborted every container, microvm and
+    // macOS-supervised box in the repository.
+    if let Err(e) = crate::container::parse_egress_rule(&rule) {
+        return bad(&format!("the egress rule parser refuses it — {e}"));
+    }
     Ok(rule)
 }
 
@@ -10646,8 +10657,19 @@ mod tests {
             "a..b",
             "trailing.example.",
             "::1",
+            // Intake and enforcement are one grammar. A single-label suffix
+            // rule is refused by the proxy's parser, so accepting it here made
+            // a hand-edited allowlist line abort every run instead of being
+            // skipped with a warning.
+            "*.com",
+            "a.-b.example.com",
         ] {
             assert!(validate_egress_rule(bad).is_err(), "accepted {bad:?}");
+        }
+        // ...and every accepted rule is one the enforcing parser takes.
+        for good in ["api.example.com", ".example.com", "*.example.com", "github.com:443"] {
+            let rule = validate_egress_rule(good).expect(good);
+            crate::container::parse_egress_rule(&rule).unwrap_or_else(|e| panic!("{good}: {e}"));
         }
     }
 
