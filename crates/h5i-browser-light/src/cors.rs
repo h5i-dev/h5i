@@ -172,6 +172,15 @@ const SAFELISTED_RESPONSE_HEADERS: &[&str] = &[
     "pragma",
 ];
 
+/// Response headers no caller ever sees, however the exposure was decided.
+///
+/// The Fetch spec's forbidden response-header names. `Set-Cookie` is the reason
+/// the list exists: `document.cookie` withholds `HttpOnly` cookies, and a
+/// response header handed to script gives back exactly what that withholding
+/// took away. Same-origin is not an exemption — a script on the page is who the
+/// flag is being kept from.
+const FORBIDDEN_RESPONSE_HEADERS: &[&str] = &["set-cookie", "set-cookie2"];
+
 /// Whether a header may be set cross-origin without a preflight.
 fn header_is_safelisted(name: &str, value: &str) -> bool {
     let lower = name.trim().to_ascii_lowercase();
@@ -455,11 +464,16 @@ pub fn exposure_from(raw: Option<&str>, credentialed: bool) -> Exposure {
 
 /// Drop the response headers this caller may not see.
 pub fn filter_headers(headers: &[(String, String)], exposure: &Exposure) -> Vec<(String, String)> {
+    // Applied before the exposure decision, not inside one arm of it: `Full`
+    // returned every header verbatim, and a server naming `set-cookie` in
+    // `Access-Control-Expose-Headers` got past the cross-origin arm too.
+    let visible = headers.iter().filter(|(name, _)| {
+        !FORBIDDEN_RESPONSE_HEADERS.contains(&name.to_ascii_lowercase().as_str())
+    });
     match exposure {
-        Exposure::Full => headers.to_vec(),
+        Exposure::Full => visible.cloned().collect(),
         Exposure::Opaque => Vec::new(),
-        Exposure::Filtered { expose, all } => headers
-            .iter()
+        Exposure::Filtered { expose, all } => visible
             .filter(|(name, _)| {
                 let lower = name.to_ascii_lowercase();
                 SAFELISTED_RESPONSE_HEADERS.contains(&lower.as_str())
@@ -807,9 +821,20 @@ mod tests {
             "a credential must never be exposed by name: {seen:?}"
         );
 
-        // Same-origin sees everything, opaque sees nothing.
-        assert_eq!(filter_headers(&headers, &Exposure::Full).len(), 3);
+        // Same-origin sees everything but the credential, opaque sees nothing.
+        // `Set-Cookie` is forbidden to script whatever the exposure: the whole
+        // point of `HttpOnly` is that the page cannot read it, and handing it
+        // back through `response.headers` returns what was withheld.
+        let full = filter_headers(&headers, &Exposure::Full);
+        assert_eq!(full.len(), 2, "{full:?}");
+        assert!(!full.iter().any(|(name, _)| name == "set-cookie"), "{full:?}");
         assert!(filter_headers(&headers, &Exposure::Opaque).is_empty());
+
+        // Nor may a server expose it by name, or sweep it up with `*`.
+        for exposure in [exposure_from(Some("Set-Cookie"), false), exposure_from(Some("*"), false)] {
+            let seen = filter_headers(&headers, &exposure);
+            assert!(!seen.iter().any(|(name, _)| name == "set-cookie"), "{seen:?}");
+        }
     }
 
     #[test]
