@@ -110,12 +110,15 @@ pub fn authorize(
     }) {
         return Err(Refusal::ForeignOrigin);
     }
-    let presented =
-        from_query.or_else(|| cookie_header.and_then(|c| cookie(c, COOKIE)));
-    match presented {
-        Some(t) if token_matches(expected, &t) => Ok(()),
-        _ => Err(Refusal::Unauthorized),
+    // A token in the query answers for itself, right or wrong: it is what the
+    // operator just pasted, and falling back to the cookie behind a wrong one
+    // would make a bad link look like a good one.
+    if let Some(t) = from_query {
+        return if token_matches(expected, &t) { Ok(()) } else { Err(Refusal::Unauthorized) };
     }
+    let matched = cookie_header
+        .is_some_and(|c| cookies(c, COOKIE).any(|value| token_matches(expected, value)));
+    if matched { Ok(()) } else { Err(Refusal::Unauthorized) }
 }
 
 /// Compare in constant time w.r.t. content. The lengths are public (both are
@@ -139,11 +142,19 @@ fn param(query: &str, key: &str) -> Option<String> {
     })
 }
 
-/// Value of `name` in a `Cookie:` header.
-fn cookie(header: &str, name: &str) -> Option<String> {
-    header.split(';').find_map(|kv| {
+/// Every value of `name` in a `Cookie:` header.
+///
+/// Every, not the first. Cookies are not scoped by port, so a page served from
+/// any other loopback port — a box's dev server, which is the case `h5i join`
+/// exists for — can set a second `h5i_console` on a longer path. RFC 6265 §5.4
+/// orders longer paths first, so reading one value let that page lock the
+/// operator out of their own console until they cleared a cookie they have no
+/// way to see. Reopening the printed URL did not repair it: that sets the
+/// `Path=/` cookie, which is the one being shadowed.
+fn cookies<'a>(header: &'a str, name: &'a str) -> impl Iterator<Item = &'a str> {
+    header.split(';').filter_map(move |kv| {
         let (k, v) = kv.trim().split_once('=')?;
-        (k == name).then(|| v.to_string())
+        (k == name).then_some(v)
     })
 }
 
@@ -1386,6 +1397,25 @@ mod tests {
         assert!(
             authorize(None, Some("h5i_console=0123456789abcdef"), Some(me), &["same-origin"], tok, me)
                 .is_ok()
+        );
+    }
+
+    /// The other half of the same fact: cookies have no port. A page on any
+    /// other loopback port cannot *ride* the console cookie (above) but could
+    /// set one, and reading only the first value let it lock the operator out.
+    #[test]
+    fn a_shadowing_cookie_from_another_loopback_port_does_not_lock_the_console() {
+        let tok = "0123456789abcdef";
+        let me = "http://127.0.0.1:8765";
+        // RFC 6265 §5.4 puts the longer path first, so this is the order the
+        // browser actually sends after `document.cookie = "h5i_console=junk;
+        // path=/api"` on another port.
+        let shadowed = Some("h5i_console=junk; h5i_console=0123456789abcdef");
+        assert!(authorize(None, shadowed, None, &["same-origin"], tok, me).is_ok());
+        // And a head carrying only wrong values is still refused.
+        assert_eq!(
+            authorize(None, Some("h5i_console=junk; h5i_console=nope"), None, &[], tok, me),
+            Err(Refusal::Unauthorized)
         );
     }
 
