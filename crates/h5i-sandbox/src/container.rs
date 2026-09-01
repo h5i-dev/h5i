@@ -419,7 +419,7 @@ impl AllowEntry {
 /// loopback, a private range or the cloud metadata address turns the egress
 /// boundary into an SSRF gadget. `IpAddr::is_global` is still unstable, so the
 /// ranges are spelled out.
-fn is_internal(ip: &IpAddr) -> bool {
+pub(crate) fn is_internal(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(a) => {
             let [o0, o1, ..] = a.octets();

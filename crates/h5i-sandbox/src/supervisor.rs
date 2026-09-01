@@ -434,10 +434,21 @@ pub fn resolve_egress(egress: &[String]) -> ResolvedEgress {
         }
         let host = host.as_str();
         let port = port.unwrap_or(443);
+        // Did the entry itself say "inside"? An address written out is the
+        // operator's decision, and `localhost` means loopback by definition.
+        // Anything else is a name, and what a name answers is chosen by
+        // whoever answers it.
+        let names_local = host.parse::<IpAddr>().is_ok()
+            || host == "localhost"
+            || host.ends_with(".localhost");
         let Ok(addrs) = (host, port).to_socket_addrs() else { continue };
         let mut first_ip: Option<IpAddr> = None;
         for a in addrs {
-            if !is_pinnable(&a.ip()) {
+            // slirp NATs the box's packets through the host's routing table,
+            // so a name answering `192.168.1.1` is a rule that reaches the
+            // operator's LAN with nothing in the policy text saying so. Same
+            // shape the container proxy refuses, same reasoning.
+            if !is_pinnable(&a.ip()) || (!names_local && crate::container::is_internal(&a.ip())) {
                 if is_sinkhole(&a.ip()) {
                     r.sinkholed.push((raw.to_string(), a.ip()));
                 } else {
@@ -798,10 +809,11 @@ fn setup_egress(
             if let Some((entry, ip)) = resolved.refused.first() {
                 return Err(H5iError::Metadata(format!(
                     "net.egress entry {entry:?} resolves to {ip}, which this tier refuses to \
-                     pin: it is a link-local, multicast or broadcast address, not a host on \
-                     the network. 169.254.169.254 is the cloud instance metadata service; a \
-                     name answering there would hand the box the instance's credentials, and \
-                     nothing in the policy text would show it (fail-closed)."
+                     pin: it is not a host on the open network. 169.254.169.254 is the cloud \
+                     instance metadata service, and a private address is the operator's own \
+                     LAN, reached through slirp's NAT; a name answering at either would hand \
+                     the box something no line of the policy names. Write the address out if \
+                     that is what you meant (fail-closed)."
                 )));
             }
             // Reported, not fatal. A sinkholed answer is the operator's resolver
@@ -1513,6 +1525,24 @@ mod tests {
         let mut pol = crate::sandbox::ResolvedPolicy::new(deny.isolation, deny);
         pol.user_egress_allow = vec!["pypi.org".into()];
         assert!(enforced_egress(&pol).is_empty());
+    }
+
+    /// slirp NATs the box's packets through the host's routing table, so a
+    /// pinned private address is a rule that reaches the operator's LAN.
+    /// `is_pinnable` refused link-local and multicast and let RFC 1918
+    /// through, so a name under someone else's DNS could open one.
+    #[test]
+    fn a_name_answering_in_private_space_is_not_pinned() {
+        // Resolved through the loopback name, which every host answers the
+        // same way, and asserted on the *policy*: `localhost` says local, so
+        // it pins; an ordinary name answering there would not.
+        let r = resolve_egress(&["localhost".into()]);
+        assert!(!r.dests.is_empty(), "a name that means loopback still pins");
+        assert!(r.refused.is_empty(), "{:?}", r.refused);
+
+        // And the address the operator wrote out is still their decision.
+        let r = resolve_egress(&["10.1.2.3:8443".into()]);
+        assert_eq!(r.dests, vec![EgressDest { ip: "10.1.2.3".parse().unwrap(), port: 8443 }]);
     }
 
     #[test]
