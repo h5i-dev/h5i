@@ -610,6 +610,26 @@ fn unresolvable_tilde_entries(p: &Profile, home_set: bool) -> Vec<&String> {
         .collect()
 }
 
+/// A policy path as the kernel will see it.
+///
+/// Resolved, not merely expanded: Landlock grants follow symlinks, so a grant
+/// of `~/work-tools` on a host where that is a link to `$HOME` really grants
+/// the whole home directory, and a textual prefix check never saw `~/.ssh`
+/// underneath. Best-effort: a path that does not exist yet falls back to the
+/// expanded text, and a non-existent grant is skipped by the Landlock builder
+/// anyway.
+fn resolved_policy_path(s: &str) -> String {
+    let expanded = expand_tilde(s);
+    std::fs::canonicalize(&expanded)
+        .map(|p| p.display().to_string())
+        .unwrap_or(expanded)
+}
+
+/// Is `child` `parent`, or inside it?
+fn path_is_under(child: &str, parent: &str) -> bool {
+    child == parent || child.starts_with(&format!("{}/", parent.trim_end_matches('/')))
+}
+
 pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     if let Some(image) = &p.image {
         validate_image(image)?;
@@ -679,6 +699,20 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     // proxy refuses every request with 403 and the agent sees a broken client
     // with no explanation. Refuse at load instead.
     for g in &p.auth {
+        // The credential the operator holds is sent to this host, over a
+        // connection h5i originates, with the real token attached. The string
+        // is interpolated into `https://{host}` and forced as the outgoing
+        // `Host`, so anything that is not a bare hostname makes the origin the
+        // proxy pins and the origin a reader sees two different things.
+        if !crate::container::is_egress_host(&g.host) {
+            return Err(H5iError::Metadata(format!(
+                "profile '{}': auth grant host '{}' is not a bare hostname. This is the one \
+                 place h5i attaches your real credential to a request it originates, so the \
+                 destination has to be a name and nothing else — no scheme, path, port, \
+                 userinfo or wildcard (fail-closed).",
+                p.name, g.host
+            )));
+        }
         if g.token_var.trim().is_empty() {
             return Err(H5iError::Metadata(format!(
                 "profile '{}': auth grant for '{}' has no `token_var`. The proxy gates each \
@@ -709,17 +743,52 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
                 g.name
             )));
         }
-        // A command: source executes host-side code outside the sandbox. Refuse
-        // it at policy-load unless the profile explicitly opts in, so the gate
-        // is pinned in the (tamper-evident) digest, not just enforced at run
-        // time.
-        if src.starts_with("command:") && !p.allow_command_extractors {
-            return Err(H5iError::Metadata(format!(
-                "secret grant '{}' uses a command: extractor (host-side code outside the \
-                 sandbox) but the profile does not set `allow_command_extractors = true` \
-                 (fail-closed)",
-                g.name
-            )));
+        // A command: source executes host-side code outside the sandbox. It
+        // needs *both* halves of the opt-in. The profile flag is what pins the
+        // decision in the (tamper-evident) digest, so a receipt can say what
+        // this box was allowed to do; it cannot also be the authority, because
+        // `.h5i/env.toml` is part of the repository. A branch adding seven
+        // lines of TOML would otherwise run `sh -c` on a reviewer's machine,
+        // unconfined, on their first `h5i box run`.
+        if src.starts_with("command:") {
+            if !p.allow_command_extractors {
+                return Err(H5iError::Metadata(format!(
+                    "secret grant '{}' uses a command: extractor (host-side code outside the \
+                     sandbox) but the profile does not set `allow_command_extractors = true` \
+                     (fail-closed)",
+                    g.name
+                )));
+            }
+            if !host_permits_command_extractors() {
+                return Err(H5iError::Metadata(format!(
+                    "secret grant '{}' uses a command: extractor, which runs host-side code \
+                     outside the sandbox as you. The profile opts in, but the profile is in \
+                     the repository, so that opt-in was written by whoever wrote the \
+                     repository and cannot also be the authority for it. Read the extractor, \
+                     then set {HOST_COMMAND_EXTRACTOR_VAR}=1 on the host if you mean it \
+                     (fail-closed).",
+                    g.name
+                )));
+            }
+        }
+        // A `file:` source is a host-side read, performed by the unconfined h5i
+        // process and handed to the box. The deny list is what the profile says
+        // is out of the box's reach, so a source pointing inside one is the
+        // same contradiction the fs lint refuses one level up: the policy says
+        // `~/.ssh` is not reachable and then reads `~/.ssh/id_ed25519` for it.
+        if let Some(path) = src.strip_prefix("file:") {
+            let target = resolved_policy_path(path);
+            for deny in &p.fs_deny {
+                let d = resolved_policy_path(deny);
+                if path_is_under(&target, &d) {
+                    return Err(H5iError::Metadata(format!(
+                        "secret grant '{}' reads '{path}', which is inside the denied path \
+                         '{deny}'. A source is a host-side read handed to the box, so it \
+                         cannot reach where the box may not (fail-closed).",
+                        g.name
+                    )));
+                }
+            }
         }
         match g.inject_or_default() {
             "file" | "env" => {}
@@ -787,21 +856,28 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     // check never saw `~/.ssh` underneath. Canonicalization is best-effort: a
     // path that does not exist yet falls back to the expanded text, and a
     // non-existent grant is skipped by the Landlock builder anyway.
-    let resolve = |s: &str| -> String {
-        let expanded = expand_tilde(s);
-        std::fs::canonicalize(&expanded)
-            .map(|p| p.display().to_string())
-            .unwrap_or(expanded)
-    };
     for grant in p.fs_read.iter().chain(p.fs_write.iter()) {
-        let g = resolve(grant);
+        let g = resolved_policy_path(grant);
         for deny in &p.fs_deny {
-            let d = resolve(deny);
-            if d == g || d.starts_with(&format!("{}/", g.trim_end_matches('/'))) {
+            let d = resolved_policy_path(deny);
+            if path_is_under(&d, &g) {
                 return Err(H5iError::Metadata(format!(
                     "policy refused: granted path '{grant}' contains denied child '{deny}' \
                      (Landlock is allowlist-only and cannot subtract a child from a granted \
                      parent — narrow the grant)"
+                )));
+            }
+            // And the other way round, which the lint did not ask. `fs.read =
+            // ["~/.ssh/id_ed25519"]` under the default deny of `~/.ssh` is not
+            // a narrower grant, it is the deny list saying one thing and the
+            // Landlock ruleset doing another — and the ruleset is what runs.
+            // The same shape reaches `~/.config/h5i/egress-allow`, which is the
+            // file `h5i box allow` refuses to let a box edit.
+            if path_is_under(&g, &d) {
+                return Err(H5iError::Metadata(format!(
+                    "policy refused: granted path '{grant}' is inside denied path '{deny}' \
+                     — the deny list would say it is out of reach and Landlock would grant \
+                     it anyway. Remove one of the two (fail-closed)."
                 )));
             }
         }
@@ -1017,6 +1093,22 @@ pub(crate) fn expand_tilde(path: &str) -> String {
     path.to_string()
 }
 
+/// The host-side half of the `command:` extractor opt-in.
+///
+/// The profile flag stays: it is what puts the decision in the policy digest,
+/// which is how a receipt says what this box was allowed to do. What it cannot
+/// be is the *authority*, because the file it lives in is checked into the
+/// repository. A branch that adds seven lines of TOML would otherwise run
+/// `sh -c` on the reviewer's machine, unconfined, on their first
+/// `h5i box run`. Both halves, or no extractor.
+pub const HOST_COMMAND_EXTRACTOR_VAR: &str = "H5I_ALLOW_COMMAND_EXTRACTORS";
+
+/// Whether the host has said yes, separately from the repository.
+pub fn host_permits_command_extractors() -> bool {
+    std::env::var(HOST_COMMAND_EXTRACTOR_VAR)
+        .is_ok_and(|v| matches!(v.trim(), "1" | "true" | "yes"))
+}
+
 /// Parse a memory size like "4G", "512M", "1024K", or plain bytes.
 pub fn parse_mem(s: &str) -> Result<u64, H5iError> {
     let t = s.trim();
@@ -1026,10 +1118,19 @@ pub fn parse_mem(s: &str) -> Result<u64, H5iError> {
         Some('K') | Some('k') => (&t[..t.len() - 1], 1024),
         _ => (t, 1),
     };
+    // `checked_mul`, because `n * mult` wraps in a release build and a cap that
+    // wrapped to `0` is not a small cap: `--memory 0` is how Podman spells *no
+    // limit*, while `policy.resolved.toml` and its digest record `mem_bytes = 0`
+    // as though one were in force.
     num.trim()
         .parse::<u64>()
-        .map(|n| n * mult)
-        .map_err(|_| H5iError::Metadata(format!("invalid resources.mem '{s}' (expected e.g. \"4G\", \"512M\")")))
+        .ok()
+        .and_then(|n| n.checked_mul(mult))
+        .ok_or_else(|| {
+            H5iError::Metadata(format!(
+                "invalid resources.mem '{s}' (expected e.g. \"4G\", \"512M\")"
+            ))
+        })
 }
 
 /// Parse a wall-clock duration like "30m", "90s", "2h".
@@ -1041,10 +1142,17 @@ pub fn parse_wall(s: &str) -> Result<Duration, H5iError> {
         Some('s') => (&t[..t.len() - 1], 1),
         _ => (t, 1),
     };
+    // As in [`parse_mem`]: an overflowing multiply is a refusal, never a wrap.
     num.trim()
         .parse::<u64>()
-        .map(|n| Duration::from_secs(n * mult))
-        .map_err(|_| H5iError::Metadata(format!("invalid resources.wall '{s}' (expected e.g. \"30m\", \"90s\")")))
+        .ok()
+        .and_then(|n| n.checked_mul(mult))
+        .map(Duration::from_secs)
+        .ok_or_else(|| {
+            H5iError::Metadata(format!(
+                "invalid resources.wall '{s}' (expected e.g. \"30m\", \"90s\")"
+            ))
+        })
 }
 
 // ─── capability probing (§5, mandatory) ─────────────────────────────────────
@@ -4337,6 +4445,88 @@ fs.deny = ["~/.ssh"]
         assert!(err.to_string().contains("granted path"), "{err}");
     }
 
+    /// The lint asked one of the two questions. A grant *inside* a denied path
+    /// is the same contradiction seen from the other end, and the ruleset is
+    /// what runs: `fs.read = ["~/.ssh/id_ed25519"]` under the default deny of
+    /// `~/.ssh` read as narrowed and was a grant of the key.
+    /// A `file:` source is a host-side read performed by the unconfined h5i
+    /// process and handed to the box. The deny list says what is out of the
+    /// box's reach, and reading it *for* the box is the same contradiction the
+    /// fs lint refuses one level up.
+    #[test]
+    fn a_secret_source_cannot_read_what_the_deny_list_names() {
+        let with = |source: &str| {
+            let mut p = Profile::builtin("p", IsolationClaim::Process);
+            p.secret_grants = vec![crate::sandbox_policy::SecretGrant {
+                name: "KEY".into(),
+                source: Some(source.to_string()),
+                inject: None,
+                ttl: None,
+            }];
+            p
+        };
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/x".into());
+        for bad in [
+            format!("file:{home}/.ssh/id_ed25519"),
+            format!("file:{home}/.aws/credentials"),
+            format!("file:{home}/.config/h5i/egress-allow"),
+        ] {
+            let err = validate_profile(&with(&bad)).unwrap_err();
+            assert!(format!("{err}").contains("denied path"), "{bad}: {err}");
+        }
+        // An ordinary source is untouched.
+        assert!(validate_profile(&with("file:/etc/h5i-token")).is_ok());
+        assert!(validate_profile(&with("env:MY_TOKEN")).is_ok());
+    }
+
+    /// The one place h5i attaches a credential the operator holds to a request
+    /// it originates. The destination is interpolated into `https://{host}` and
+    /// forced as the outgoing `Host`, so anything but a bare name makes the
+    /// pinned origin and the readable one two different things.
+    #[test]
+    fn an_auth_grant_host_must_be_a_bare_name() {
+        let grant = |host: &str| crate::sandbox_policy::AuthGrant {
+            host: host.to_string(),
+            credential_env: "GITHUB_TOKEN".into(),
+            base_url_var: "GH_HOST".into(),
+            token_var: "GH_TOKEN".into(),
+        };
+        let with = |host: &str| {
+            let mut p = Profile::builtin("p", IsolationClaim::Container);
+            p.auth = vec![grant(host)];
+            p
+        };
+        for bad in [
+            "https://api.github.com",
+            "api.github.com/v3",
+            "user:pass@api.github.com",
+            "api.github.com:443",
+            "*.github.com",
+            "api github.com",
+            "",
+        ] {
+            assert!(validate_profile(&with(bad)).is_err(), "accepted {bad:?}");
+        }
+        assert!(validate_profile(&with("api.github.com")).is_ok());
+    }
+
+    #[test]
+    fn fs_deny_lint_rejects_a_grant_inside_a_denied_path() {
+        for grant in ["~/.ssh/id_ed25519", "~/.config/h5i/egress-allow"] {
+            let toml_text = format!(
+                r#"
+[profile.default]
+isolation = "process"
+fs.read = ["{grant}"]
+"#
+            );
+            let err = load_from_str(&toml_text, "default", None)
+                .map(|_| ())
+                .unwrap_err();
+            assert!(err.to_string().contains("inside denied path"), "{grant}: {err}");
+        }
+    }
+
     /// The lint is the only thing standing between a grant and a denied child
     /// inside it: Landlock has no deny rules, so `fs.deny` is a preflight
     /// refusal and nothing else. With `$HOME` unset it compared the literal
@@ -4421,6 +4611,11 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         assert_eq!(parse_mem("64k").unwrap(), 64 * 1024);
         assert_eq!(parse_mem("12345").unwrap(), 12345);
         assert!(parse_mem("lots").is_err());
+        // A cap that wraps to zero is not a small cap: `--memory 0` is how
+        // Podman spells *no limit*, and the policy digest records the zero as
+        // though a cap were in force.
+        assert!(parse_mem("17179869184G").is_err());
+        assert!(parse_wall("18446744073709551615h").is_err());
     }
 
     #[test]

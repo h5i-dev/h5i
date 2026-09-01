@@ -241,7 +241,12 @@ adversarial tests, not functional ones.
 
 The secrets broker resolves a profile's declared grants from host-side sources
 at run time, never at policy load, and injects them capability-scoped and
-audited. It records only the grant id, source, injection method, TTL and a
+audited. A profile is part of the repository, so two of its sources need
+something the repository cannot write: a `command:` extractor needs
+`H5I_ALLOW_COMMAND_EXTRACTORS=1` on the host as well as the profile flag, and a
+`file:` source may not point inside the profile's own `fs.deny` list. An
+`[[auth]]` grant's destination must be a bare hostname and is announced on every
+run, naming the variable and the host. It records only the grant id, source, injection method, TTL and a
 value fingerprint. It never writes a value into the policy, the manifest, or a
 git ref. File-injected secrets are written `0600` outside `$WORK` and unlinked
 when the run ends. A declared grant that cannot be resolved aborts the run
@@ -286,7 +291,9 @@ the security design, not incidental:
 - Every route is a GET. Lifecycle verbs (`shell`, `run`, `export`, `apply`)
   stay in the CLI, so the console can watch boxes but never drive them.
 - Access needs a per-session token, held in memory and never written to disk.
-  The page drops it from the address bar as soon as the cookie is set.
+  The page drops it from the address bar as soon as the cookie is set. `--open`
+  hands the browser a *separate*, single-use token, because a URL on another
+  process's command line is readable by every other uid on the machine.
 - Its badges are arithmetic over receipts. Nothing on the screen is a score.
 
 Security-sensitive console changes include binding to a non-loopback interface,

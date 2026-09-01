@@ -1424,6 +1424,24 @@ secrets <name>` dry-runs the resolution and reports a fingerprint, never a
 value. A grant that cannot be resolved fails the run closed rather than starting
 a box that will fail confusingly later.
 
+Two limits on what a source may be, because a profile lives in the repository:
+
+- `source = "command:…"` runs host-side code outside the sandbox, as you. It
+  needs the profile's `allow_command_extractors = true` *and*
+  `H5I_ALLOW_COMMAND_EXTRACTORS=1` in your own environment. The profile flag is
+  what pins the decision in the policy digest; it cannot also be the authority
+  for it, because whoever wrote the repository wrote it.
+- `source = "file:…"` is a host-side read handed to the box, so it may not point
+  inside the profile's `fs.deny` list. A policy that says `~/.ssh` is out of the
+  box's reach cannot read `~/.ssh/id_ed25519` on its behalf.
+
+An `[[auth]]` grant is the one place h5i attaches a credential you hold to a
+request it originates. The destination must be a bare hostname, and every run
+prints which variable is being attached and where it goes.
+
+`ttl` is advisory and is shown as `ttl=<value>(advisory)`: h5i resolves a grant
+once and never expires it.
+
 ---
 
 ## Receipts

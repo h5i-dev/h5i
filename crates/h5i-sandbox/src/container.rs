@@ -358,6 +358,15 @@ pub fn parse_egress_rule(raw: &str) -> Result<Option<(String, bool, Option<u16>)
     Ok(Some((host, wildcard, port)))
 }
 
+/// Is `host` a plain destination name, with no rule syntax on it?
+///
+/// [`is_rule_host`] under its other name, for callers that have a host and not
+/// a rule: an `[[auth]]` grant's upstream, which is interpolated into a URL and
+/// forced as an outgoing `Host` header.
+pub fn is_egress_host(host: &str) -> bool {
+    !host.is_empty() && !host.contains('/') && is_rule_host(host)
+}
+
 /// Is `host` something a rule may name: a DNS name, an IPv4 address, or an IPv4
 /// CIDR? See [`parse_egress_rule`] for why this is checked at all.
 fn is_rule_host(host: &str) -> bool {

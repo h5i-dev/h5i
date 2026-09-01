@@ -539,6 +539,46 @@ fn is_pem_armour(line: &str, marker: &str) -> bool {
     t.starts_with(marker) && t.ends_with("PRIVATE KEY-----")
 }
 
+/// Replace every byte-exact occurrence of a known secret.
+///
+/// The guaranteed half of the defence, beside [`redact_text`]'s best-effort
+/// half: the pattern rules describe what a credential *looks like*, and this
+/// one is told what the values are. Byte-oriented, so it reaches a value split
+/// across what a line-oriented scan would call two lines, and a value in a
+/// binary payload.
+pub fn scrub_exact(raw: &[u8], secrets: &[String]) -> Vec<u8> {
+    const MARKER: &[u8] = b"[redacted secret]";
+    let mut out = raw.to_vec();
+    for secret in secrets {
+        let needle = secret.as_bytes();
+        if needle.is_empty() {
+            continue;
+        }
+        let mut next = Vec::with_capacity(out.len());
+        let mut i = 0;
+        while i < out.len() {
+            if out[i..].starts_with(needle) {
+                next.extend_from_slice(MARKER);
+                i += needle.len();
+            } else {
+                next.push(out[i]);
+                i += 1;
+            }
+        }
+        out = next;
+    }
+    out
+}
+
+/// [`scrub_exact`] for a string. Lossless: the values are UTF-8 and so is the
+/// marker, so nothing here can split a character.
+pub fn scrub_exact_str(text: &str, secrets: &[String]) -> String {
+    if secrets.is_empty() {
+        return text.to_string();
+    }
+    String::from_utf8_lossy(&scrub_exact(text.as_bytes(), secrets)).into_owned()
+}
+
 /// Redact one line.
 fn redact_line(line: &str) -> String {
     let lowered = line.to_ascii_lowercase();

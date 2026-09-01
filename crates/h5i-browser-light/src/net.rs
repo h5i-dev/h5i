@@ -157,6 +157,43 @@ impl reqwest::dns::Resolve for Pinned {
     }
 }
 
+/// Is this a header the engine owns rather than the page?
+///
+/// Two groups. The Fetch spec's forbidden request-header names, which a page
+/// may not set because they describe the connection rather than the request
+/// (`Host`, `Connection`, `Content-Length`) or because they are what the
+/// boundary is decided on (`Cookie`, `Origin`, `Referer`, the
+/// `Access-Control-Request-*` pair a preflight is made of). And
+/// `Accept-Encoding`, which this engine sets because it is the one that has to
+/// decode the answer.
+fn header_is_the_engines(name: &str) -> bool {
+    let n = name.trim().to_ascii_lowercase();
+    matches!(
+        n.as_str(),
+        "accept-charset"
+            | "accept-encoding"
+            | "access-control-request-headers"
+            | "access-control-request-method"
+            | "connection"
+            | "content-length"
+            | "cookie"
+            | "cookie2"
+            | "date"
+            | "dnt"
+            | "expect"
+            | "host"
+            | "keep-alive"
+            | "origin"
+            | "referer"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
+            | "via"
+    ) || n.starts_with("proxy-")
+        || n.starts_with("sec-")
+}
+
 /// What a script request needs the broker to know about its origin.
 ///
 /// Only script requests carry one. A navigation has no document behind it, and
@@ -856,17 +893,47 @@ impl LocalBroker {
             let started = Instant::now();
             let verb = reqwest::Method::from_bytes(method.as_bytes())
                 .unwrap_or(reqwest::Method::GET);
+            // The page's own headers, on the request `cors::plan` approved.
+            //
+            // They were used to decide whether a preflight was needed and what
+            // it asked permission for, and then never sent: the server answered
+            // a question about a request that did not happen, and
+            // `fetch(u, {headers: {Authorization: …}})` lost the header without
+            // saying so. Forbidden names are dropped (see
+            // [`header_is_the_engines`]), because a page choosing `Host`,
+            // `Cookie` or `Origin` would be choosing what the CORS decision was
+            // made about.
+            let page_headers: Vec<(&str, &str)> = cors
+                .map(|c| c.headers.as_slice())
+                .unwrap_or(&[])
+                .iter()
+                .filter(|(name, _)| !header_is_the_engines(name))
+                .map(|(name, value)| (name.as_str(), value.as_str()))
+                .collect();
+            let page_sets = |n: &str| page_headers.iter().any(|(k, _)| k.eq_ignore_ascii_case(n));
+
             let mut request = self
                 .client
                 .request(verb, current.clone())
-                .header(reqwest::header::ACCEPT, accept_for(asked_as))
-                .header(
+                .header(reqwest::header::ACCEPT_ENCODING, ACCEPT_ENCODING);
+            // Ours only where the page did not say: `reqwest::header` appends
+            // rather than replaces, so setting both would send both.
+            if !page_sets("accept") {
+                request = request.header(reqwest::header::ACCEPT, accept_for(asked_as));
+            }
+            if !page_sets("accept-language") {
+                request = request.header(
                     reqwest::header::ACCEPT_LANGUAGE,
                     self.presented.accept_language.as_str(),
-                )
-                .header(reqwest::header::ACCEPT_ENCODING, ACCEPT_ENCODING);
+                );
+            }
+            for (name, value) in &page_headers {
+                request = request.header(*name, *value);
+            }
             if !body.is_empty() {
-                if let Some(kind) = content_type {
+                if let Some(kind) = content_type
+                    && !page_sets("content-type")
+                {
                     request = request.header(reqwest::header::CONTENT_TYPE, kind);
                 }
                 request = request.body(body.clone());
@@ -1160,9 +1227,24 @@ impl LocalBroker {
         use std::io::Read;
         let cap = self.policy.max_response_bytes();
 
-        // Only the last encoding is handled, which is all any server sends.
-        // A stacked `gzip, br` is refused by name rather than half-decoded.
-        let name = encoding.rsplit(',').next().unwrap_or(encoding).trim();
+        // One encoding, or a refusal. This makes a single pass, and a stacked
+        // `gzip, br` needs two of them in order; taking the *last* name and
+        // decoding with it is not half the answer, it is the wrong one under a
+        // message that sends the reader somewhere else ("the br response could
+        // not be decoded", over gzip bytes). `identity` is a no-op in the list
+        // and does not count as a layer.
+        let mut layers = encoding
+            .split(',')
+            .map(str::trim)
+            .filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case("identity"));
+        let name = layers.next().unwrap_or("");
+        if layers.next().is_some() {
+            return Err(H5iError::Metadata(format!(
+                "the response stacks encodings (`{}`), which this engine decodes one layer at \
+                 a time. It asked for {ACCEPT_ENCODING}.",
+                encoding.trim()
+            )));
+        }
         let mut out = Vec::new();
         let read = match name {
             "gzip" | "x-gzip" => flate2::read::GzDecoder::new(raw)
@@ -2277,6 +2359,22 @@ mod cookie_wire_tests {
             writer.write_all(&body).unwrap();
         }
         assert_eq!(broker.decode_capped(&br, "br").unwrap(), body);
+
+        // A stacked encoding is refused by name. Reading the last one made the
+        // engine brotli-decode gzip output and blame brotli for it.
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut gz, &body).unwrap();
+        let err = broker
+            .decode_capped(&gz.finish().unwrap(), "gzip, br")
+            .expect_err("stacked encodings are refused");
+        assert!(format!("{err}").contains("stacks encodings"), "{err}");
+        // `identity` in the list is a no-op, not a second layer.
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut gz, &body).unwrap();
+        assert_eq!(
+            broker.decode_capped(&gz.finish().unwrap(), "identity, gzip").unwrap(),
+            body
+        );
     }
 
     /// Serves a page that says who asked and echoes the cookie it saw, with
@@ -2299,6 +2397,7 @@ mod cookie_wire_tests {
                 let method = line.split_whitespace().next().unwrap_or("").to_string();
                 let mut origin = String::new();
                 let mut cookie = String::new();
+                let mut rest_headers: Vec<String> = Vec::new();
                 loop {
                     let mut header = String::new();
                     if reader.read_line(&mut header).unwrap_or(0) == 0
@@ -2313,11 +2412,17 @@ mod cookie_wire_tests {
                     if let Some(rest) = lower.strip_prefix("cookie:") {
                         cookie = rest.trim().to_string();
                     }
+                    // Everything else, so a test can ask what actually
+                    // travelled rather than only what the two named fields did.
+                    rest_headers.push(lower.trim().to_string());
                 }
                 record
                     .lock()
                     .unwrap()
-                    .push(format!("{method} origin={origin} cookie={cookie}"));
+                    .push(format!(
+                        "{method} origin={origin} cookie={cookie} {}",
+                        rest_headers.join(" ")
+                    ));
 
                 let body = "SECRET-BODY";
                 let mut head = format!(
@@ -2457,6 +2562,38 @@ mod cookie_wire_tests {
             !seen[0].contains("s3cr3t"),
             "a cross-origin fetch must not carry the session by default: {seen:?}"
         );
+    }
+
+    /// The headers a page sets decided whether a preflight was needed and what
+    /// it asked permission for, and were then not sent: the server answered a
+    /// question about a request that never happened.
+    #[test]
+    fn a_page_set_header_reaches_the_request_it_was_preflighted_for() {
+        let (port, seen) = cors_server(Some("*"), false, 1);
+        let (broker, _sink) = cors_broker();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/x")).unwrap();
+        let document = target.join("/page").unwrap();
+        let outcome = broker.send_script(
+            &target,
+            "GET",
+            &[],
+            None,
+            &document,
+            &[
+                ("X-Token".to_string(), "carried".to_string()),
+                // Forbidden: a page choosing `Host` is a page choosing what
+                // the boundary was decided about.
+                ("Host".to_string(), "evil.test".to_string()),
+                ("Cookie".to_string(), "sid=forged".to_string()),
+            ],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::default(),
+        );
+        assert!(outcome.error.is_none(), "{outcome:?}");
+        let seen = seen.lock().unwrap();
+        assert!(seen[0].contains("x-token: carried"), "{seen:?}");
+        assert!(!seen[0].contains("evil.test"), "a page may not choose the Host: {seen:?}");
+        assert!(!seen[0].contains("sid=forged"), "nor forge a Cookie: {seen:?}");
     }
 
     /// The other direction of the same flag. A response nobody was allowed to

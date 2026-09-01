@@ -884,6 +884,14 @@ pub fn materialize_from_ref(repo: &Repository, h5i_root: &Path) -> Result<usize,
             // later as a confusing "tampered policy" failure. Verify first,
             // with the SAME check load_policy runs, and skip (don't write a
             // broken env).
+            //
+            // What this is NOT is a trust anchor. Whoever wrote this ref chose
+            // both halves — the manifest's `policy_digest` and the
+            // `policy.resolved.toml` it is compared against — so the check
+            // detects drift and corruption and nothing else. `load_policy`
+            // later calls the same equality "tamper-evident", which it is
+            // against a local edit made after this point and is not against the
+            // peer this ref came from.
             let consistent = ResolvedPolicy::from_toml(toml)
                 .and_then(|p| p.digest())
                 .map(|d| d == m.policy_digest)
@@ -1352,7 +1360,13 @@ pub fn find(h5i_root: &Path, name: &str) -> Result<EnvManifest, H5iError> {
 }
 
 /// Load the stored resolved policy for `m`, verifying it against the digest
-/// pinned in the manifest (tamper-evident).
+/// pinned in the manifest.
+///
+/// Tamper-evident against an edit of one of the two files, which is the case
+/// this exists for. It is not evidence of provenance: anything that wrote both
+/// halves — a `refs/h5i/env` import, or a same-uid process reaching
+/// `.git/.h5i/` — chose the digest as well as the policy. See
+/// [`materialize_from_ref`].
 pub fn load_policy(h5i_root: &Path, m: &EnvManifest) -> Result<ResolvedPolicy, H5iError> {
     let path = m.dir(h5i_root).join(POLICY_RESOLVED_FILE);
     let text = std::fs::read_to_string(&path).map_err(|e| H5iError::with_path(e, &path))?;
@@ -4939,6 +4953,22 @@ fn engage_grants_for(
     if policy.profile.auth.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
+    // Said out loud, every run, like the egress line above it. This is the one
+    // place h5i takes a credential the operator holds and attaches it to a
+    // request going somewhere the *profile* named — and the profile is
+    // `.h5i/env.toml`, which is part of the repository. Silence here meant a
+    // branch could add four lines of TOML and have `$GITHUB_TOKEN` sent to a
+    // host of its choosing with nothing on screen. The value never appears;
+    // the variable's name and the destination do, which is what makes the
+    // grant reviewable.
+    for g in &policy.profile.auth {
+        eprintln!(
+            "⦿ auth grant: ${} is attached host-side to requests this box makes to {} \
+             (the token itself stays outside the box)",
+            crate::redact::sanitize_display(&g.credential_env),
+            crate::redact::sanitize_display(&g.host),
+        );
+    }
     match crate::container::grant_host_addr(policy.claim) {
         Some(addr) => crate::container::engage_auth_grants(&policy.profile, true, addr),
         None => Err(H5iError::Metadata(format!(
@@ -5197,7 +5227,10 @@ fn run_inner(
         &policy.profile.secret_grants,
         &secret_dir,
         is_workspace,
-        policy.profile.allow_command_extractors,
+        // Both halves: the profile's opt-in is in the digest, and the host's
+        // is the one the repository cannot write. See
+        // `sandbox::HOST_COMMAND_EXTRACTOR_VAR`.
+        policy.profile.allow_command_extractors && sandbox::host_permits_command_extractors(),
         &crate::secrets_broker::fingerprint_key(h5i_root)?,
     )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
@@ -5311,7 +5344,7 @@ fn run_inner(
     // the pattern-based redaction the capture already applies. A token echoed
     // to stdout must never reach refs/h5i/objects even if it matches no
     // pattern.
-    raw = scrub_exact(&raw, &brokered.redactions);
+    raw = crate::secrets::scrub_exact(&raw, &brokered.redactions);
 
     // Browser evidence: when this run drove the browser, ask the page what happened before
     // recording the run.
@@ -5385,7 +5418,15 @@ fn run_inner(
         // same.
         runtime: runtime_evidence,
     };
-    let captured = crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, &raw)?;
+    // The brokered values reach every field the pattern scan reaches, not just
+    // the payload the caller scrubbed above: `cmd` is the argv the host shell
+    // expanded, and the kernel-observed exemplars are box-chosen command lines.
+    let captured = crate::receipt::append_with_secrets(
+        &env_dir(h5i_root, &m.agent, &m.slug),
+        input,
+        &raw,
+        &brokered.redactions,
+    )?;
     let capture_id = captured.id.clone();
 
     m.captures.push(capture_id.clone());
@@ -5624,7 +5665,10 @@ pub fn shell(
         &policy.profile.secret_grants,
         &secret_dir,
         is_workspace,
-        policy.profile.allow_command_extractors,
+        // Both halves: the profile's opt-in is in the digest, and the host's
+        // is the one the repository cannot write. See
+        // `sandbox::HOST_COMMAND_EXTRACTOR_VAR`.
+        policy.profile.allow_command_extractors && sandbox::host_permits_command_extractors(),
         &crate::secrets_broker::fingerprint_key(h5i_root)?,
     )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
@@ -5843,7 +5887,7 @@ pub fn shell(
     let runtime_note = match runtime_evidence {
         Some(ev) => {
             let note = format!(" runtime={}", ev.summary());
-            match capture_shell_runtime(h5i_root, m, &work, ev, exit_code) {
+            match capture_shell_runtime(h5i_root, m, &work, ev, exit_code, &brokered.redactions) {
                 Ok(id) => m.captures.push(id),
                 Err(e) => eprintln!("warning: shell runtime capture failed: {e}"),
             }
@@ -6017,6 +6061,7 @@ fn capture_shell_runtime(
     work: &Path,
     runtime: h5i_bpf::RuntimeEvidence,
     exit_code: i32,
+    secrets: &[String],
 ) -> Result<String, H5iError> {
     let mut raw = format!("runtime detection ({}): {}\n", runtime.lane, runtime.summary());
     raw.push_str(&format!(
@@ -6058,7 +6103,13 @@ fn capture_shell_runtime(
         runtime: Some(runtime),
         ..Default::default()
     };
-    Ok(crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, raw.as_bytes())?.id)
+    Ok(crate::receipt::append_with_secrets(
+        &env_dir(h5i_root, &m.agent, &m.slug),
+        input,
+        raw.as_bytes(),
+        secrets,
+    )?
+    .id)
 }
 
 /// Persist an interactive session's egress tally as an env-tagged capture. The
@@ -6376,30 +6427,6 @@ fn write_plain_zshrc(
     })
 }
 
-/// Replace every occurrence of each `secrets` value in `raw`, on the *bytes*.
-fn scrub_exact(raw: &[u8], secrets: &[String]) -> Vec<u8> {
-    const MARKER: &[u8] = b"[redacted secret]";
-    let mut out = raw.to_vec();
-    for secret in secrets {
-        let needle = secret.as_bytes();
-        if needle.is_empty() {
-            continue;
-        }
-        let mut next = Vec::with_capacity(out.len());
-        let mut i = 0;
-        while i < out.len() {
-            if out[i..].starts_with(needle) {
-                next.extend_from_slice(MARKER);
-                i += needle.len();
-            } else {
-                next.push(out[i]);
-                i += 1;
-            }
-        }
-        out = next;
-    }
-    out
-}
 
 // ─── shell-spool ingest (in-box observation evidence) ────────────────────────
 
@@ -6501,13 +6528,13 @@ fn ingest_shell_spool(
             raw.extend_from_slice(&stderr);
         }
 
-        let raw = scrub_exact(&raw, secrets);
+        let raw = crate::secrets::scrub_exact(&raw, secrets);
 
         // The command string is box-controlled: redact secrets, flatten to one
         // line, and cap it before it lands in a manifest or event detail. The
         // brokered values go too. A credential passed on a command line is at
         // least as likely as one echoed to stdout.
-        let cmd_text = String::from_utf8_lossy(&scrub_exact(cmd_text.as_bytes(), secrets))
+        let cmd_text = String::from_utf8_lossy(&crate::secrets::scrub_exact(cmd_text.as_bytes(), secrets))
             .into_owned();
         let safe_cmd: String = crate::secrets::redact_text(&cmd_text)
             .replace(['\n', '\r'], " ")
@@ -6525,7 +6552,12 @@ fn ingest_shell_spool(
             git_tree: head_tree.clone(),
             ..Default::default()
         };
-        let captured = crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, &raw)?;
+        let captured = crate::receipt::append_with_secrets(
+            &env_dir(h5i_root, &m.agent, &m.slug),
+            input,
+            &raw,
+            secrets,
+        )?;
         m.captures.push(captured.id.clone());
         append_event(
             repo,
@@ -6584,12 +6616,12 @@ fn ingest_shell_spool(
         // The same exact-value scrub the tee-shim branch above gets. These are
         // two branches of one function reading one spool, and a credential does
         // not care which of them recorded it.
-        let raw = scrub_exact(
+        let raw = crate::secrets::scrub_exact(
             &read_spool_capped(&path_of("raw"), SPOOL_MAX_OUTPUT_BYTES).unwrap_or_default(),
             secrets,
         );
         let meta_cmd =
-            String::from_utf8_lossy(&scrub_exact(meta.cmd.as_bytes(), secrets)).into_owned();
+            String::from_utf8_lossy(&crate::secrets::scrub_exact(meta.cmd.as_bytes(), secrets)).into_owned();
         let safe_cmd: String = crate::secrets::redact_text(&meta_cmd)
             .replace(['\n', '\r'], " ")
             .chars()
@@ -6607,7 +6639,12 @@ fn ingest_shell_spool(
             files,
             ..Default::default()
         };
-        let captured = crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, &raw)?;
+        let captured = crate::receipt::append_with_secrets(
+            &env_dir(h5i_root, &m.agent, &m.slug),
+            input,
+            &raw,
+            secrets,
+        )?;
         m.captures.push(captured.id.clone());
         append_event(
             repo,
@@ -7540,10 +7577,13 @@ pub fn render_secrets(env_id: &str, rows: &[SecretStatus]) -> String {
         return out;
     }
     for s in rows {
+        // Marked advisory here for the reason `GrantRecord::detail` marks it:
+        // h5i resolves a grant once and never expires it, so the number is
+        // what the source was asked for, not a bound h5i holds.
         let ttl = s
             .ttl
             .as_deref()
-            .map(|t| format!(" ttl={t}"))
+            .map(|t| format!(" ttl={t}(advisory)"))
             .unwrap_or_default();
         let fp = s
             .fingerprint
@@ -11537,14 +11577,14 @@ mod tests {
 
         // Binary in, byte-identical out.
         let binary: Vec<u8> = vec![0x00, 0xff, 0xfe, 0x80, b'o', b'k', 0xc3];
-        assert_eq!(scrub_exact(&binary, &secrets), binary);
+        assert_eq!(crate::secrets::scrub_exact(&binary, &secrets), binary);
 
         // ...and the secret goes even when it sits next to bytes that are not
         // UTF-8 at all, which is where the lossy round trip did its damage.
         let mut payload = vec![0xffu8, 0xfe];
         payload.extend_from_slice(b"token=sk-live-abcdef\n");
         payload.push(0x80);
-        let out = scrub_exact(&payload, &secrets);
+        let out = crate::secrets::scrub_exact(&payload, &secrets);
         assert!(!out.windows(14).any(|w| w == b"sk-live-abcdef"), "{out:?}");
         assert_eq!(&out[..2], &[0xff, 0xfe], "the surrounding bytes are untouched");
         assert_eq!(out.last(), Some(&0x80));
@@ -11552,10 +11592,10 @@ mod tests {
 
         // Every occurrence, and an empty entry is a no-op rather than an
         // infinite marker.
-        let out = scrub_exact(b"a sk-live-abcdef b sk-live-abcdef", &secrets);
+        let out = crate::secrets::scrub_exact(b"a sk-live-abcdef b sk-live-abcdef", &secrets);
         assert_eq!(out, b"a [redacted secret] b [redacted secret]");
-        assert_eq!(scrub_exact(b"abc", &["".to_string()]), b"abc");
-        assert_eq!(scrub_exact(b"abc", &[]), b"abc");
+        assert_eq!(crate::secrets::scrub_exact(b"abc", &["".to_string()]), b"abc");
+        assert_eq!(crate::secrets::scrub_exact(b"abc", &[]), b"abc");
     }
 
     /// `validate_profile` pins a persona source inside `$WORK` (relative, no

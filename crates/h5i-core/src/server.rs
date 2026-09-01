@@ -1019,14 +1019,22 @@ async fn api_browser_frame(
 /// `GET /api/probe`: what this host can actually enforce. The same report
 /// `h5i box capabilities --json` prints, so the console's top strip and the
 /// CLI can never disagree.
-async fn api_probe() -> Json<crate::sandbox::CapabilitiesReport> {
+async fn api_probe() -> Response {
     // A capability report is a diagnostic, so it is probed fresh rather than
     // served from the per-boot podman cache. Exactly as `box probe` does. The
     // freshness is a property of the call, not of the process environment: this
     // is a long-lived multithreaded server, and a `set_var` here would race
     // every other thread's `getenv` and outlive the request that wanted it.
-    let report = tokio::task::spawn_blocking(crate::sandbox::capabilities_report_fresh).await;
-    Json(report.unwrap_or_else(|_| crate::sandbox::capabilities_report_fresh()))
+    //
+    // The only way the join fails is a panic inside the probe, so calling it
+    // again inline was calling the thing that just panicked, on a runtime
+    // worker, where the unwind leaves the connection dropped with no response
+    // at all. Every other handler folds that case into a status through
+    // [`blocking`]; this one now does too.
+    match blocking(|| Some(crate::sandbox::capabilities_report_fresh())).await {
+        Some(report) => Json(report).into_response(),
+        None => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 /// Every route, wired to `state`. Extracted so tests can drive the surface

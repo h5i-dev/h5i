@@ -4699,19 +4699,37 @@ fn env_secrets_reports_status_without_values() {
 }
 
 #[test]
-fn command_extractor_gated_by_pinned_policy_flag() {
+fn command_extractor_needs_both_the_repos_opt_in_and_the_hosts() {
     let r = Repo::new();
     write_secret_profile(&r);
-    // No opt-in → the command: extractor is refused at create (the gate is
-    // pinned in the policy digest, not just enforced at run time).
-    let bad = r.h5i(&["env", "create", "ebad", "--profile", "cmdbad"]);
-    assert!(
-        !bad.status.success(),
-        "command extractor must fail closed at create"
-    );
+    let create = |name: &str, profile: &str, host_ok: bool| {
+        let mut c = Command::new(H5I);
+        c.args(["env", "create", name, "--profile", profile])
+            .env("H5I_AGENT", "tester")
+            .env("H5I_DEFAULT_ISOLATION", "workspace")
+            .current_dir(&r.dir);
+        if host_ok {
+            c.env("H5I_ALLOW_COMMAND_EXTRACTORS", "1");
+        }
+        c.output().expect("run h5i")
+    };
+
+    // No profile opt-in → refused at create, whatever the host says. The gate
+    // is pinned in the policy digest, not just enforced at run time.
+    let bad = create("ebad", "cmdbad", true);
+    assert!(!bad.status.success(), "must fail closed at create");
     assert!(out_str(&bad).contains("allow_command_extractors"));
-    // Opted in → create succeeds.
-    r.h5i_ok(&["env", "create", "ecmd", "--profile", "cmd"]);
+
+    // Profile opt-in but no host opt-in → still refused. `.h5i/env.toml` is in
+    // the repository, so a branch that added it would otherwise run `sh -c` on
+    // a reviewer's machine, unconfined, on their first command.
+    let repo_only = create("erepo", "cmd", false);
+    assert!(!repo_only.status.success(), "the repo cannot open its own gate");
+    assert!(out_str(&repo_only).contains("H5I_ALLOW_COMMAND_EXTRACTORS"));
+
+    // Both halves → create succeeds.
+    let both = create("ecmd", "cmd", true);
+    assert!(both.status.success(), "{}", out_str(&both));
 }
 
 // ─── Idea 3.5 + 2: services (daemon-free) + dynamic ports ────────────────────

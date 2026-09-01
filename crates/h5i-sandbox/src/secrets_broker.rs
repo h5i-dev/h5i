@@ -49,7 +49,16 @@ pub struct GrantRecord {
 impl GrantRecord {
     /// The `secret` event detail line (secret-free).
     pub fn detail(&self) -> String {
-        let ttl = self.ttl.as_deref().map(|t| format!(" ttl={t}")).unwrap_or_default();
+        // `ttl(advisory)`, spelled out. Nothing in h5i expires a grant: the
+        // value is resolved once and lives for the run. A reviewer reading
+        // `ttl=10m` in a durable audit record would reasonably conclude the
+        // credential was scoped to ten minutes, and a record that reads as a
+        // bound where there is none is worse than no field at all.
+        let ttl = self
+            .ttl
+            .as_deref()
+            .map(|t| format!(" ttl={t}(advisory)"))
+            .unwrap_or_default();
         format!(
             "grant={} source={} inject={}{} fp={}",
             self.name, self.source, self.inject, ttl, self.fingerprint
@@ -751,6 +760,20 @@ mod tests {
             .expect_err("must refuse");
         assert!(format!("{err}").contains("fail-closed"), "{err}");
         assert!(!dir.path().join("escaped").exists());
+    }
+
+    #[test]
+    fn a_ttl_is_recorded_as_the_advice_it_is() {
+        let rec = GrantRecord {
+            name: "TOK".into(),
+            source: "env:MY_TOKEN".into(),
+            inject: "env".into(),
+            ttl: Some("10m".into()),
+            fingerprint: "fp:abc".into(),
+        };
+        // Nothing expires a grant, so `ttl=10m` alone in a durable record
+        // reads as a bound that is not there.
+        assert!(rec.detail().contains("ttl=10m(advisory)"), "{}", rec.detail());
     }
 
     #[test]
