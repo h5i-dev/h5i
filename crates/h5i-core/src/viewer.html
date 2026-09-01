@@ -20,8 +20,38 @@
   #holder.human { color: #78d18c; }
   #url { color: #9aa3ad; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   main { flex: 1; display: grid; place-items: center; overflow: hidden; background: #0e1013; }
+  #stage { position: relative; line-height: 0; }
   canvas { max-width: 100%; max-height: 100%; cursor: crosshair; }
   #hint { padding: .4rem .75rem; color: #9aa3ad; background: #1c1f24; border-top: 1px solid #2a2e35; }
+  #mode { font-weight: 600; letter-spacing: .04em; }
+  #mode.view { color: #9aa3ad; }
+  #mode.hint, #mode.insert, #mode.interact { color: #f2c14e; }
+  #say { color: #f2c14e; }
+  /* Over the canvas, in its displayed pixels. `pointer-events: none` so a chip
+     never eats a click meant for the page. */
+  #hints { position: absolute; inset: 0; pointer-events: none; }
+  .chip {
+    position: absolute; font: 600 11px/1 ui-monospace, SFMono-Regular, monospace;
+    background: #ffc828; color: #141414; border: 1px solid #3c2d00;
+    padding: 2px 3px; border-radius: 2px; white-space: nowrap;
+  /* The typed prefix is dimmed, not removed, so the label does not shift. */
+  }
+  .chip .spent { color: #96781e; }
+  #keys {
+    position: absolute; top: .5rem; right: .5rem; margin: 0;
+    background: #1c1f24ee; border: 1px solid #2a2e35; border-radius: 4px;
+    padding: .5rem .75rem; color: #e6e8eb; font-size: 12px;
+    display: grid; grid-template-columns: auto 1fr; gap: .15rem .75rem;
+  }
+  #keys kbd { font: 600 12px/1.5 ui-monospace, monospace; color: #f2c14e; }
+  #keys .off { color: #6b727b; }
+  #log {
+    max-height: 30vh; overflow-y: auto; padding: .4rem .75rem;
+    background: #101216; border-top: 1px solid #2a2e35;
+    font: 11px/1.6 ui-monospace, SFMono-Regular, monospace;
+    color: #e08b8b; white-space: pre-wrap; word-break: break-word;
+  }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
@@ -30,13 +60,23 @@
   <!-- Substituted by the forward when it serves this page. The value is one of
        two fixed strings from h5i's own enum, never anything the box supplies. -->
   <span>control at page load: <span id="holder" class="__H5I_HOLDER__">__H5I_HOLDER__</span></span>
+  <span id="mode" class="view">VIEW</span>
   <span id="status">connecting…</span>
+  <span id="say"></span>
   <span id="url"></span>
 </header>
-<main><canvas id="screen" width="1280" height="800" tabindex="0"></canvas></main>
+<main>
+  <div id="stage">
+    <canvas id="screen" width="1280" height="800" tabindex="0"></canvas>
+    <div id="hints"></div>
+    <dl id="keys" hidden></dl>
+  </div>
+</main>
+<div id="log" hidden></div>
 <div id="hint">
-  Input reaches the page only while you hold the control lock. Take it with
-  <code>h5i browser take &lt;box&gt;</code>, then reload to see the state above update.
+  Keys are the viewer's until you press <kbd>i</kbd>. <kbd>?</kbd> lists them.
+  Reaching for the controls takes the control lock for you, and the agent's
+  automation pauses until you are done with it.
 </div>
 <script>
 // The viewer is served by the forward, so same-origin is the only origin that
@@ -92,7 +132,25 @@ function connect() {
       else if (msg.type === "status") {
         if (msg.viewportWidth) viewport = { w: msg.viewportWidth, h: msg.viewportHeight };
         statusEl.textContent = msg.screencasting ? "connected" : "not streaming";
+        // What the keymap may bind, from the engine's own account. One that
+        // lists nothing gets nothing bound.
+        features = new Set(Array.isArray(msg.features) ? msg.features : []);
+        renderKeys();
       }
+      else if (msg.type === "hints") onHints(msg);
+      else if (msg.type === "act") {
+        // Released before the refusal is shown, so a rejected keystroke does not
+        // wedge the ones after it.
+        // `focus` releases the first batch; `input_keys` releases each one after.
+        if (msg.action === "input_keys" || msg.action === "focus") insertLanded();
+        // Only refusals are shown. A click that worked announces itself by the
+        // page changing, and a viewer that said so as well would be narrating.
+        const reply = msg.reply || {};
+        if (reply.ok === false) say(reply.error || "refused");
+      }
+      // Only errors, the same rule the terminal viewer's pane follows.
+      else if (msg.type === "console" && msg.level === "error") logLine("console", msg.text);
+      else if (msg.type === "page_error") logLine("page", msg.text);
       else if (msg.type === "url") setUrl(msg.url);
       else if (msg.type === "tabs") {
         const active = (msg.tabs || []).find((t) => t.active);
@@ -292,8 +350,460 @@ function key(e, eventType) {
   if (text !== undefined) msg.text = text;
   send(msg);
 }
-window.addEventListener("keydown", (e) => key(e, "keyDown"), true);
-window.addEventListener("keyup", (e) => key(e, "keyUp"), true);
+// ─── the keymap ─────────────────────────────────────────────────────────────
+//
+// The same keys as the terminal viewer, so there is one thing to learn. The
+// table below is the same knowledge as `termview::vim::BINDINGS`, and a test
+// parses it out of this file and compares the two — two hand-maintained keymaps
+// drift silently.
+//
+// What differs is what honestly differs: this viewer has a real pointer, so the
+// mouse stays live in VIEW. INTERACT is for pages that want the *keyboard*.
+const BINDINGS = [
+  ["j k", "scroll a line", null],
+  ["d u", "scroll half a page", null],
+  ["space b", "scroll a page", null],
+  ["gg G", "top, bottom", null],
+  ["f", "hint, then follow", "hints"],
+  ["F", "hint, then type into", "hints"],
+  ["yf", "hint, then copy its link", "hints"],
+  ["gi", "type into the first field", "insert"],
+  ["yy", "copy this page's URL", null],
+  ["H L", "back, forward", "history"],
+  ["r", "reload", "reload"],
+  ["i", "take the pointer (INTERACT)", "pointer"],
+  ["D", "console pane", null],
+  ["?", "this list", null],
+  ["q", "leave", null],
+];
+
+let features = new Set();
+let mode = "view";
+let prefix = "";
+// The overlay, from the moment it is asked for to the moment a label is chosen
+// or the human gives up.
+let hinting = null;
+
+const modeEl = document.getElementById("mode");
+const sayEl = document.getElementById("say");
+const hintsEl = document.getElementById("hints");
+const keysEl = document.getElementById("keys");
+const logEl = document.getElementById("log");
+const holderEl = document.getElementById("holder");
+
+function setMode(next) {
+  mode = next;
+  modeEl.textContent = next.toUpperCase();
+  modeEl.className = next;
+}
+function say(text) { sayEl.textContent = text || ""; }
+
+// Features an engine that said *nothing* is assumed to have. Every other gated
+// key is new, so silence means no; handing over the keyboard predates all this,
+// so for `pointer` the question is "did you say no", not "did you say yes".
+// See `vim.rs`.
+const FAIL_OPEN = new Set(["pointer"]);
+
+function offers(feature) {
+  if (features.has(feature)) return true;
+  return FAIL_OPEN.has(feature) && features.size === 0;
+}
+
+// Same rule as the resolver in `vim.rs`: a key that cannot work says why rather
+// than doing nothing, because a key that does nothing gets pressed harder.
+function needs(feature, why) {
+  return offers(feature) ? null : why;
+}
+
+function resolve(key, pending) {
+  if (pending === "") {
+    if (key === "g" || key === "y") return { pending: true };
+  }
+  if (pending === "g") {
+    if (key === "g") return { scroll: "top" };
+    if (key === "i") return { hints: "insert", autoFirst: true, need: "insert" };
+    return {};
+  }
+  if (pending === "y") {
+    if (key === "y") return { yankUrl: true };
+    if (key === "f") return { hints: "yank", need: "hints" };
+    return {};
+  }
+  switch (key) {
+    case "j": return { scroll: "lineDown" };
+    case "k": return { scroll: "lineUp" };
+    case "d": return { scroll: "halfDown" };
+    case "u": return { scroll: "halfUp" };
+    case " ": return { scroll: "pageDown" };
+    case "b": return { scroll: "pageUp" };
+    case "G": return { scroll: "bottom" };
+    case "H": return { history: -1, need: "history" };
+    case "L": return { history: 1, need: "history" };
+    case "r": return { reload: true, need: "reload" };
+    case "f": return { hints: "click", need: "hints" };
+    case "F": return { hints: "insert", need: "hints" };
+    case "i": return { interact: true, need: "pointer" };
+    case "D": return { developer: true };
+    case "?": return { help: true };
+    default: return {};
+  }
+}
+
+const WHY = {
+  hints: "this session's engine does not offer a hint overlay",
+  history: "this session's engine does not keep history for the viewer",
+  insert: "this session's engine does not offer typing from the viewer",
+  reload: "this session's engine does not offer reload from the viewer",
+  pointer: "this session's engine is driven from the keyboard: f reaches anything a click could, and F types into it",
+};
+
+function onViewKey(e) {
+  if (e.key === "Escape") { prefix = ""; say(""); return; }
+  if (e.key.length !== 1 && !ARROWS[e.key]) return;
+
+  const scroll = ARROWS[e.key];
+  if (scroll) { doScroll(scroll); return; }
+
+  const pending = prefix;
+  prefix = "";
+  const action = resolve(e.key, pending);
+
+  if (action.pending) { prefix = e.key; say(e.key + "…"); return; }
+  if (action.need) {
+    const why = needs(action.need, WHY[action.need]);
+    if (why) { say(why); return; }
+  }
+  say("");
+
+  if (action.scroll) doScroll(action.scroll);
+  else if (action.reload) send({ type: "reload" });
+  else if (action.history) send({ type: "history", go: action.history });
+  else if (action.hints) askForHints(action.hints, !!action.autoFirst);
+  else if (action.yankUrl) yank(urlEl.textContent, "this page's URL");
+  else if (action.interact) {
+    hold(true);
+    setMode("interact");
+    say("keys go to the page — Esc to stop");
+  }
+  else if (action.developer) { logEl.hidden = !logEl.hidden; }
+  else if (action.help) { keysEl.hidden = !keysEl.hidden; renderKeys(); }
+}
+
+const ARROWS = {
+  ArrowDown: "lineDown", ArrowUp: "lineUp",
+  PageDown: "pageDown", PageUp: "pageUp",
+  Home: "top", End: "bottom",
+};
+
+// Wheel deltas and Home/End, never a message of ours, so the keys a reader uses
+// most work on any engine. The same choice `termview`'s `scroll` makes.
+const LINE = 64;
+function doScroll(which) {
+  const page = viewport.h || 1;
+  const delta = {
+    lineDown: LINE, lineUp: -LINE,
+    halfDown: page / 2, halfUp: -page / 2,
+    pageDown: page * 0.9, pageUp: -page * 0.9,
+  }[which];
+  if (delta !== undefined) {
+    send({ type: "input_mouse", eventType: "mouseWheel", x: 0, y: 0,
+           button: "none", clickCount: 0, deltaX: 0, deltaY: delta, modifiers: 0 });
+    return;
+  }
+  const key = which === "top" ? "Home" : "End";
+  const code = which === "top" ? 36 : 35;
+  for (const eventType of ["keyDown", "keyUp"]) {
+    send({ type: "input_keyboard", eventType, key, code: key,
+           windowsVirtualKeyCode: code, modifiers: 0 });
+  }
+}
+
+// Reaching for the controls *is* taking them. Taken before the request goes
+// out: the labels describe the page now, and an agent navigating in between
+// would make them all stale.
+function hold(on) {
+  send({ type: "control", hold: on });
+  holderEl.textContent = on ? "human" : "agent";
+  holderEl.className = on ? "human" : "agent";
+}
+
+function askForHints(then, autoFirst) {
+  hold(true);
+  hinting = { then, autoFirst, items: [], typed: "", viewport: { ...viewport } };
+  // Narrowed when the human is about to type: labelling a link under `F` or
+  // `gi` offers a choice that can only be refused.
+  send(then === "insert" ? { type: "hints", for: "text" } : { type: "hints" });
+}
+
+function onHints(msg) {
+  // An overlay nobody asked for, or one that arrived after the human gave up.
+  if (!hinting) return;
+  hinting.items = Array.isArray(msg.items) ? msg.items : [];
+  if (msg.viewportWidth) hinting.viewport = { w: msg.viewportWidth, h: msg.viewportHeight };
+
+  if (!hinting.items.length) {
+    hinting = null;
+    hold(false);
+    say("nothing on screen to act on");
+    return;
+  }
+
+  // `gi` wanted a field, not a choice. The overlay was only ever the thing that
+  // knows where the fields are.
+  if (hinting.autoFirst) {
+    const field = hinting.items.find((item) => FIELD_ROLES.has(item.role));
+    hinting = null;
+    if (!field) { hold(false); say("no field on screen to type into"); return; }
+    enterInsert(field.ref);
+    return;
+  }
+  setMode("hint");
+  say(PROMPT[hinting.then] + ": type a label, Esc to stop");
+  drawHints();
+}
+
+const FIELD_ROLES = new Set(["textbox", "searchbox", "combobox"]);
+const PROMPT = { click: "follow", insert: "type into", yank: "copy link from" };
+
+// The viewer's half of the hint scheme: the engine mints the labels, each
+// viewer tracks its own typing. Acting on a single hit immediately is sound only
+// because the labels are prefix-free.
+function narrow(items, typed) {
+  const want = typed.toLowerCase();
+  if (!want) return items.map((_, i) => i);
+  return items
+    .map((item, i) => [item, i])
+    .filter(([item]) => item.label.toLowerCase().startsWith(want))
+    .map(([, i]) => i);
+}
+
+function drawHints() {
+  hintsEl.replaceChildren();
+  if (!hinting) return;
+  const r = canvas.getBoundingClientRect();
+  const stage = document.getElementById("stage").getBoundingClientRect();
+  const sx = r.width / (hinting.viewport.w || 1);
+  const sy = r.height / (hinting.viewport.h || 1);
+  const typed = hinting.typed.length;
+
+  for (const index of narrow(hinting.items, hinting.typed)) {
+    const item = hinting.items[index];
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    chip.style.left = ((r.left - stage.left) + item.x * sx) + "px";
+    chip.style.top = ((r.top - stage.top) + item.y * sy) + "px";
+    // Text nodes, never markup: this came off a page.
+    const spent = document.createElement("span");
+    spent.className = "spent";
+    spent.textContent = item.label.slice(0, typed);
+    chip.append(spent, document.createTextNode(item.label.slice(typed)));
+    chip.title = (item.role || "") + " " + (item.name || "");
+    hintsEl.append(chip);
+  }
+}
+
+function onHintKey(e) {
+  if (e.key === "Escape") { leaveHint(); return; }
+  if (e.key === "Backspace") {
+    if (hinting) hinting.typed = hinting.typed.slice(0, -1);
+    drawHints();
+    return;
+  }
+  if (e.key.length !== 1) return;
+  if (!hinting) { leaveHint(); return; }
+
+  // Tried before it is kept, or the overlay sticks behind a dead prefix.
+  const attempt = hinting.typed + e.key;
+  const hits = narrow(hinting.items, attempt);
+  if (!hits.length) { say("no label starts with `" + attempt + "`"); return; }
+  if (hits.length === 1 && hinting.items[hits[0]].label.toLowerCase() === attempt.toLowerCase()) {
+    const item = hinting.items[hits[0]];
+    const then = hinting.then;
+    leaveHint();
+    actOn(then, item);
+    return;
+  }
+  hinting.typed = attempt;
+  say("");
+  drawHints();
+}
+
+function actOn(then, item) {
+  if (then === "click") {
+    // Through the verb layer, so the receipt names a role and an accessible name
+    // rather than a coordinate.
+    send({ type: "act", ref: item.ref, action: "click" });
+    hold(false);
+    say((item.role || "") + " " + (item.name || ""));
+  } else if (then === "insert") {
+    // Keeps the lock this overlay took and hands it on.
+    enterInsert(item.ref);
+  } else if (then === "yank") {
+    hold(false);
+    if (item.href) yank(item.href, "link");
+    else say("a " + (item.role || "control") + " has no link to copy");
+  }
+}
+
+// The field INSERT is typing into.
+//
+// A keystroke cannot be answered locally: nothing appears until the engine has
+// laid the page out again and encoded a frame, around 40ms. Sent one at a time
+// those serialize, so at most one message is on the wire and every key struck
+// while it is away goes out together.
+//
+// Batched, not coalesced: a keystroke is a delta, so dropping the ones in
+// between would lose characters. The relayout is still paid once per message.
+let inserting = null;
+
+function enterInsert(ref) {
+  // The `focus` below is already on the wire, and is acknowledged on the same
+  // lane, so it is what releases the first batch.
+  inserting = { ref, pending: [], inFlight: true, dirty: false, timer: 0 };
+  setMode("insert");
+  say("typing — Enter to submit, Esc to stop");
+  // The caret goes to the end and what is there stays: emptying it would assume
+  // anyone focusing a field meant to replace it.
+  send({ type: "act", ref, action: "focus" });
+}
+
+// How long to wait before assuming a reply is not coming. This viewer's
+// messages pass through a forward that drops input when the control lock is not
+// ours, so losing it mid-word would otherwise wedge typing until a reload.
+const INSERT_TIMEOUT_MS = 2000;
+
+/// Put the pending keys on the wire, if the last batch has landed.
+function flushInsert() {
+  if (!inserting || !inserting.pending.length) return;
+  if (inserting.inFlight) { inserting.dirty = true; return; }
+  inserting.inFlight = true;
+  inserting.dirty = false;
+  clearTimeout(inserting.timer);
+  inserting.timer = setTimeout(() => {
+    // Given up on, not retried: the lost batch may have arrived, and repeating
+    // it would type the word twice. Only the keys behind it go out.
+    if (inserting && inserting.inFlight) { inserting.inFlight = false; flushInsert(); }
+  }, INSERT_TIMEOUT_MS);
+  const batch = inserting.pending;
+  inserting.pending = [];
+  send({ type: "input_keys", keys: batch });
+}
+
+/// An insert came back. Send what was typed while it was away.
+function insertLanded() {
+  if (!inserting) return;
+  clearTimeout(inserting.timer);
+  inserting.inFlight = false;
+  if (inserting.dirty) flushInsert();
+}
+
+function onInsertKey(e) {
+  if (e.key === "Escape") { leaveInsert(); return; }
+  if (!inserting) { leaveInsert(); return; }
+  if (e.key === "Enter") {
+    send({ type: "act", ref: inserting.ref, action: "press", key: "Enter" });
+    leaveInsert();
+    return;
+  }
+  // The keystroke itself, not the value it would produce: that is what moves the
+  // caret and lets a page listening for typing hear it.
+  const key = { key: e.key, modifiers: mods(e) };
+  // A chord types nothing: `Ctrl-S` must not put an `s` in the field being
+  // saved. Shift is not a chord.
+  if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) key.text = e.key;
+  else if (e.key.length === 1 && (e.ctrlKey || e.metaKey || e.altKey)) { /* command */ }
+  else if (!EDITING_KEYS.has(e.key)) return;
+  inserting.pending.push(key);
+  flushInsert();
+}
+
+// Keys with no text that still mean something in a field. Anything else with a
+// multi-character name is left to the page.
+const EDITING_KEYS = new Set([
+  "Backspace", "Delete", "Tab",
+  "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
+  "Home", "End", "PageUp", "PageDown",
+]);
+
+// Also called on the way to acting, so the lock is released by whichever action
+// is finished with it rather than here.
+function leaveHint() { hinting = null; hintsEl.replaceChildren(); setMode("view"); say(""); }
+function leaveInsert() {
+  if (inserting) clearTimeout(inserting.timer);
+  inserting = null;
+  hold(false);
+  setMode("view");
+  say("");
+}
+
+// Said honestly: the clipboard API can be refused, so the notice reports what
+// was tried.
+function yank(text, what) {
+  if (!text) { say("no " + what + " to copy"); return; }
+  if (!navigator.clipboard) { say("this browser will not let the page copy"); return; }
+  navigator.clipboard.writeText(text)
+    .then(() => say("copied " + what))
+    .catch(() => say("the browser refused the clipboard"));
+}
+
+// Bounded: the page decides how much it writes.
+const LOG_CAP = 200;
+let errors = 0;
+
+function logLine(kind, text) {
+  errors++;
+  statusEl.textContent = "connected · " + errors + " error" + (errors === 1 ? "" : "s");
+  const row = document.createElement("div");
+  // Text nodes only. This came from the page.
+  row.textContent = kind + "  " + (text || "");
+  logEl.append(row);
+  while (logEl.childElementCount > LOG_CAP) logEl.firstElementChild.remove();
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function renderKeys() {
+  if (keysEl.hidden) return;
+  keysEl.replaceChildren();
+  for (const [keys, what, need] of BINDINGS) {
+    const dt = document.createElement("dt");
+    const kbd = document.createElement("kbd");
+    kbd.textContent = keys;
+    dt.append(kbd);
+    const dd = document.createElement("dd");
+    dd.style.margin = "0";
+    // Shown and marked rather than hidden, so it is clear where the key went.
+    const off = need !== null && !offers(need);
+    dd.textContent = what + (off ? " (not on this engine)" : "");
+    if (off) { dt.className = "off"; dd.className = "off"; }
+    keysEl.append(dt, dd);
+  }
+}
+
+// One entry point, so a key means one thing at a time.
+window.addEventListener("keydown", (e) => {
+  // Only while the canvas has focus, or the browser's own shortcuts stop
+  // working anywhere on the page. The same rule the raw forwarder followed.
+  if (document.activeElement !== canvas) return;
+  if (mode === "interact") {
+    // The one key the viewer keeps, so a page cannot trap the keyboard.
+    if (e.key === "Escape") { e.preventDefault(); hold(false); setMode("view"); say(""); return; }
+    key(e, "keyDown");
+    return;
+  }
+  e.preventDefault();
+  if (mode === "hint") onHintKey(e);
+  else if (mode === "insert") onInsertKey(e);
+  else onViewKey(e);
+}, true);
+
+window.addEventListener("keyup", (e) => {
+  if (document.activeElement !== canvas) return;
+  // Only INTERACT sends raw keys, so only it has a key-up to pair.
+  if (mode === "interact") key(e, "keyUp");
+}, true);
+
+// The overlay is in the canvas's displayed pixels, so a resize moves every chip.
+window.addEventListener("resize", () => { if (mode === "hint") drawHints(); });
 
 connect();
 </script>

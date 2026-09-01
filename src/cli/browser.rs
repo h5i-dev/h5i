@@ -819,6 +819,39 @@ pub enum BrowserCommands {
         session: Option<String>,
     },
 
+    /// Watch this session's page, and take the controls.
+    ///
+    /// Draws the page in this terminal and drives it by keyboard; `?` lists the
+    /// keys. `--web` serves it to your own browser instead.
+    ///
+    /// The status line says less about a host session than a boxed one, and
+    /// honestly so: its engine is on loopback with no boundary outside it, so
+    /// what the page may reach rests on the engine's word. `--in` is what makes
+    /// that checkable.
+    View {
+        /// Which session, when more than one is open. A name from `--session`
+        /// at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION,
+        /// then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        /// Serve the page to a browser over loopback instead of drawing it here.
+        ///
+        /// For a terminal that cannot draw images, and for a page the keyboard
+        /// cannot reach.
+        #[arg(long)]
+        web: bool,
+        /// Port for `--web`. 0 picks a free one.
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Frame-rate ceiling asked of the session.
+        #[arg(long, default_value_t = 10, value_name = "N")]
+        fps: u32,
+        /// Skip the graphics probe and render anyway, for a terminal the probe
+        /// gets wrong.
+        #[arg(long)]
+        assume_graphics: bool,
+    },
+
     /// Print the loopback viewer URL for a box, token included. `h5i box view`
     /// is what actually serves it; this is for pasting into a browser when a
     /// forward is already running.
@@ -1163,6 +1196,13 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
 
         BrowserCommands::Take { session } => take(&root, session.as_deref()),
         BrowserCommands::Release { session } => release(&root, session.as_deref()),
+        BrowserCommands::View {
+            session,
+            web,
+            port,
+            fps,
+            assume_graphics,
+        } => view(&root, session.as_deref(), web, port, fps, assume_graphics),
         BrowserCommands::Url { name, port } => viewer_url(&name, port),
     }
 }
@@ -3564,6 +3604,71 @@ fn release(root: &Path, selector: Option<&str>) -> anyhow::Result<()> {
         SUCCESS,
         control.holder.as_str()
     );
+    Ok(())
+}
+
+/// Watch a session, in this terminal or in a browser.
+///
+/// Both viewers open from here, so which session, what it is called, and what
+/// this machine can honestly say about what holds it are decided once.
+fn view(
+    root: &Path,
+    selector: Option<&str>,
+    web: bool,
+    port: u16,
+    fps: u32,
+    assume_graphics: bool,
+) -> anyhow::Result<()> {
+    // `open_live` rather than `resolve`: a viewer on an ended session would sit
+    // on a dead socket reporting nothing.
+    let session = bs::open_live(root, &bs::resolve(root, selector).map_err(|e| anyhow::anyhow!("{e}"))?.id)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let dir = bs::dir(root, &session.id);
+    let stream_file = dir.join(bs::STREAM_FILE);
+
+    // What this machine can say about what the page may reach, in the session
+    // record's own words. A host session is engine-claimed however carefully its
+    // engine is confined, and saying so beats a blank.
+    let egress = match &session.placement {
+        bs::Placement::Box { name } => format!("box:{name}"),
+        bs::Placement::Host => session.lane.as_str().to_string(),
+    };
+
+    if !web {
+        return h5i_core::termview::run(h5i_core::termview::Options {
+            state_dir: dir,
+            subject: session.name.clone().unwrap_or_else(|| session.id.clone()),
+            policy_digest: session.policy_digest.clone(),
+            attach: h5i_core::termview::Attach::Host { stream_file },
+            command: "h5i browser view".into(),
+            egress,
+            // Named for the hint text a failure prints.
+            engine: Some(session.engine.as_str().to_string()),
+            max_fps: fps,
+            assume_graphics,
+        })
+        .map_err(Into::into);
+    }
+
+    let stream_port = h5i_core::view::session_stream_port(&stream_file).ok_or_else(|| {
+        anyhow::anyhow!(
+            "this session is not serving a live view, so there is nothing to watch. \
+             Only a resident session does: open one with `h5i browser open <url>` and try again."
+        )
+    })?;
+    let forward = h5i_core::view::Forward::on(
+        &dir,
+        &session.id,
+        &session.policy_digest,
+        port,
+        h5i_core::view::Route::Host { port: stream_port },
+    )?;
+    let holder = h5i_core::control::read(&dir).holder;
+    println!("{} viewer for {}", SUCCESS, session.id);
+    println!("   open     {}", forward.url()?);
+    println!("   control  {holder:?} — `h5i browser take` to drive");
+    println!("   stop     Ctrl-C");
+    forward.serve()?;
     Ok(())
 }
 

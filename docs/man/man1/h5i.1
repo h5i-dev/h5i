@@ -1733,6 +1733,35 @@ Which session, when more than one is open
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.SH "H5I BROWSER VIEW"
+Watch this session's page, and take the controls
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBview\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-web\fR] [\fB\-\-port\fR] [\fB\-\-fps\fR] [\fB\-\-assume\-graphics\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-web\fR
+Serve the page to a browser over loopback instead of drawing it here.
+
+For a terminal that cannot draw images, and for a page the keyboard cannot reach.
+.TP
+\fB\-\-port\fR \fI<PORT>\fR [default: 0]
+Port for `\-\-web`. 0 picks a free one
+.TP
+\fB\-\-fps\fR \fI<N>\fR [default: 10]
+Frame\-rate ceiling asked of the session
+.TP
+\fB\-\-assume\-graphics\fR
+Skip the graphics probe and render anyway, for a terminal the probe gets wrong
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH "H5I BROWSER URL"
 Print the loopback viewer URL for a box, token included. `h5i box view` is what actually serves it; this is for pasting into a browser when a forward is already running
 .ie \n(.g .ds Aq \(aq

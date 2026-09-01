@@ -114,6 +114,67 @@ pub fn stream_port(env_dir: &Path) -> Option<u16> {
     ports.into_iter().next()
 }
 
+/// The port a host session's engine is listening on, from the file it wrote.
+///
+/// The counterpart of [`stream_port`]: a box advertises inside its own `/tmp`
+/// and is found by scanning, while a host session writes one known file.
+pub fn session_stream_port(stream_file: &Path) -> Option<u16> {
+    let port = std::fs::read_to_string(stream_file)
+        .ok()?
+        .trim()
+        .parse::<u16>()
+        .ok()?;
+    // Port 0 means the engine wrote the file before it had bound.
+    (port != 0).then_some(port)
+}
+
+/// Where a browser's frame stream is, and how to reach it.
+///
+/// Two arms, because they are two security stories rather than two transports:
+/// [`Route::Boxed`] enters a box's namespaces and nothing is bound on the host,
+/// with egress enforced outside the engine; [`Route::Host`] is plain loopback,
+/// where the engine's own confinement is all there is.
+///
+/// A type rather than a pair of code paths, so the second arm is not bolted on
+/// once per viewer with two ideas of what "not streaming" should say.
+#[derive(Debug, Clone)]
+pub enum Route {
+    Boxed {
+        pid: u32,
+        pid_ns: std::ffi::OsString,
+        port: u16,
+    },
+    Host {
+        port: u16,
+    },
+}
+
+impl Route {
+    pub fn port(&self) -> u16 {
+        match self {
+            Route::Boxed { port, .. } | Route::Host { port } => *port,
+        }
+    }
+
+    /// Whether something outside the engine is holding it. Read by the status
+    /// line, which must not imply containment a host session does not have.
+    pub fn is_boxed(&self) -> bool {
+        matches!(self, Route::Boxed { .. })
+    }
+
+    pub fn connect(&self) -> Result<TcpStream, H5iError> {
+        match self {
+            Route::Boxed { pid, pid_ns, port } => connect_in_netns(*pid, *port, pid_ns),
+            Route::Host { port } => TcpStream::connect(("127.0.0.1", *port)).map_err(|e| {
+                H5iError::Metadata(format!(
+                    "the session's browser is not answering on 127.0.0.1:{port}: {e}. \
+                     It may have exited since it wrote its stream port."
+                ))
+            }),
+        }
+    }
+}
+
 /// A pid living *inside* the box's namespaces.
 ///
 /// The live registry is the starting point, not the answer: it records the
@@ -643,6 +704,8 @@ pub fn gate(req: &Request, expected_token: &str, self_origin: &str) -> Result<()
 /// What to do with one client→box frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameVerdict {
+    /// The forward answers this itself. Never written upstream.
+    Forward,
     /// Connection management: forwarded regardless of who holds the lock, or
     /// the socket would stall and time out while a human watches.
     Control,
@@ -661,6 +724,14 @@ pub enum FrameVerdict {
 /// harmless" is how gates get bypassed; the answer to a message that genuinely
 /// must pass is not to guess more loosely but to *name* it.
 const PACING_MESSAGES: [&str; 2] = ["config", "ack"];
+
+/// Messages the forward acts on itself and never passes upstream.
+///
+/// Exactly one: the control lock. It is a *host* fact kept in a file beside the
+/// box, and the thing on the other end of this socket is inside the box — the
+/// forward is the only party that can write it. Without this the web viewer's
+/// only way to take the controls was to leave the page and reload.
+const FORWARD_MESSAGES: [&str; 1] = ["control"];
 
 /// Largest text frame worth parsing to see whether it is a pacing message.
 /// `{"type":"config","maxFps":30,"pacing":"ack"}` is 44 bytes; anything in this
@@ -701,19 +772,56 @@ pub fn classify(opcode: u8, fin: bool, payload: &[u8]) -> FrameVerdict {
     }
     // Text only, and only a whole message. A fragment cannot be judged from the
     // fragment in hand, so it is input.
-    if opcode == 0x1 && fin && payload.len() <= MAX_PACING_FRAME && is_pacing(payload) {
-        return FrameVerdict::Pacing;
+    if opcode == 0x1 && fin && payload.len() <= MAX_PACING_FRAME {
+        match message_type(payload) {
+            Some(name) if PACING_MESSAGES.contains(&name.as_str()) => {
+                return FrameVerdict::Pacing;
+            }
+            Some(name) if FORWARD_MESSAGES.contains(&name.as_str()) => {
+                return FrameVerdict::Forward;
+            }
+            _ => {}
+        }
     }
     FrameVerdict::Input
 }
 
-fn is_pacing(payload: &[u8]) -> bool {
-    let Ok(v) = serde_json::from_slice::<serde_json::Value>(payload) else {
-        return false;
-    };
+/// The `type` of a JSON message, if it is one.
+fn message_type(payload: &[u8]) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(payload).ok()?;
     v.get("type")
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|t| PACING_MESSAGES.contains(&t))
+        .map(str::to_string)
+}
+
+/// Take or hand back the control lock, on a viewer's say-so.
+///
+/// Whoever is on this socket reached a loopback port with the box's viewer
+/// token — the same standing `h5i browser take` has — so this grants nothing
+/// new. A take always succeeds: the agent is a program that can wait.
+fn apply_control(payload: &[u8], env_dir: &Path) {
+    let Some(v) = serde_json::from_slice::<serde_json::Value>(payload).ok() else {
+        return;
+    };
+    match v.get("hold").and_then(serde_json::Value::as_bool) {
+        Some(true) => {
+            let _ = crate::control::take(env_dir);
+            crate::browser_session::journal_control(
+                env_dir,
+                crate::control::Holder::Human.as_str(),
+                Some("taken at the live view"),
+            );
+        }
+        Some(false) => {
+            let _ = crate::control::release(env_dir);
+            crate::browser_session::journal_control(
+                env_dir,
+                crate::control::Holder::Agent.as_str(),
+                Some("handed back at the live view"),
+            );
+        }
+        None => {}
+    }
 }
 
 /// One frame from the client, as read.
@@ -828,8 +936,13 @@ pub fn pump_input(mut from_client: impl Read, mut to_box: impl Write, env_dir: &
                 return pump;
             }
             Ok(Some(frame)) => {
-                let is_input =
-                    classify(frame.opcode, frame.fin, &frame.payload) == FrameVerdict::Input;
+                let verdict = classify(frame.opcode, frame.fin, &frame.payload);
+                // Never written upstream: the lock is not the box's to write.
+                if verdict == FrameVerdict::Forward {
+                    apply_control(&frame.payload, env_dir);
+                    continue;
+                }
+                let is_input = verdict == FrameVerdict::Input;
                 // A continuation (opcode 0) inherits the decision made for the
                 // message's first frame; anything else decides afresh. Control
                 // frames may be interleaved mid-message and carry their own
@@ -886,12 +999,8 @@ pub struct Forward {
     env_id: String,
     policy_digest: String,
     token: String,
-    pid: u32,
-    /// The namespace `pid` was identified by, carried so the connect can check
-    /// it arrived there. A pid on its own is not an identity. See
-    /// [`connect_in_netns`].
-    pid_ns: std::ffi::OsString,
-    stream_port: u16,
+    /// Where the frames come from, resolved once at bind time.
+    route: Route,
 }
 
 impl Forward {
@@ -906,13 +1015,6 @@ impl Forward {
         policy_digest: &str,
         port: u16,
     ) -> Result<Forward, H5iError> {
-        let token = read_token(env_dir).ok_or_else(|| {
-            H5iError::Metadata(
-                "this box has no viewer token — it was created before the viewer existed. \
-                 Create a new box to get one."
-                    .into(),
-            )
-        })?;
         let (pid, pid_ns) = box_pid_ns(env_dir).ok_or_else(|| {
             H5iError::Metadata(
                 "this box is not running, so there is no browser to watch. Start a session \
@@ -927,17 +1029,38 @@ impl Forward {
                     .into(),
             )
         })?;
+        Forward::on(
+            env_dir,
+            env_id,
+            policy_digest,
+            port,
+            Route::Boxed {
+                pid,
+                pid_ns,
+                port: stream_port,
+            },
+        )
+    }
+
+    /// Bind a forward onto an already-resolved route: the half of `bind` that
+    /// does not care whether there is a box.
+    pub fn on(
+        state_dir: &Path,
+        subject: &str,
+        policy_digest: &str,
+        port: u16,
+        route: Route,
+    ) -> Result<Forward, H5iError> {
+        let token = ensure_token(state_dir)?;
         // Loopback only. Never an external address, on any code path.
         let listener = TcpListener::bind(("127.0.0.1", port))?;
         Ok(Forward {
             listener,
-            env_dir: env_dir.to_path_buf(),
-            env_id: env_id.to_string(),
+            env_dir: state_dir.to_path_buf(),
+            env_id: subject.to_string(),
             policy_digest: policy_digest.to_string(),
             token,
-            pid,
-            pid_ns,
-            stream_port,
+            route,
         })
     }
 
@@ -993,7 +1116,7 @@ impl Forward {
         // Enter the box, connect, and relay the handshake verbatim so
         // agent-browser negotiates with the client directly (we never have to
         // know its subprotocol or its Sec-WebSocket-Accept).
-        let mut upstream = connect_in_netns(self.pid, self.stream_port, &self.pid_ns)?;
+        let mut upstream = self.route.connect()?;
         upstream.write_all(rewrite_head_for_upstream(&head).as_bytes())?;
         upstream.flush()?;
 
@@ -1030,6 +1153,7 @@ impl Forward {
                 env_id: self.env_id.clone(),
                 policy_digest: self.policy_digest.clone(),
                 transport: Transport::Web,
+                command: "h5i box view".into(),
             },
             opened,
             holder_at_open,
@@ -1063,12 +1187,19 @@ impl Transport {
     }
 }
 
-/// Which box a viewer session belongs to.
+/// What a viewer session was watching, and how it was started.
 pub struct Session {
+    /// Where the receipt is filed and where `control.json` lives. A box's env
+    /// directory, or a browser session's own directory.
     pub env_dir: PathBuf,
+    /// What was being watched: a box id, or a browser session id.
     pub env_id: String,
     pub policy_digest: String,
     pub transport: Transport,
+    /// The command that started this viewer, as invoked. Carried rather than
+    /// reconstructed: more than one command opens a viewer now, and a receipt
+    /// naming a flag the reader did not type cannot be retraced.
+    pub command: String,
 }
 
 /// Record a viewer session in the box's receipt log, so it reaches the export
@@ -1138,13 +1269,8 @@ pub fn record_session(
             // claimed, but something h5i itself did on the human's behalf.
             source: "viewer".into(),
             cmd: Some(format!(
-                // The command as it was actually invoked. A receipt naming a
-                // flag that does not exist is a receipt nobody can retrace.
-                "h5i box view{} ({}, {seconds}s)",
-                match session.transport {
-                    Transport::Web => "",
-                    Transport::Terminal => " --term",
-                },
+                "{} ({}, {seconds}s)",
+                session.command,
                 if took_control {
                     "human took control"
                 } else {
@@ -1435,6 +1561,64 @@ mod tests {
         let rewritten = rewrite_head_for_upstream(&with_body);
         assert!(!rewritten.contains("trailing-garbage"), "{rewritten:?}");
         assert!(rewritten.ends_with("\r\n\r\n"), "{rewritten:?}");
+    }
+
+    /// The web viewer's way of reaching for the controls, handled by the forward
+    /// and never written upstream.
+    #[test]
+    fn a_viewer_can_take_the_lock_without_leaving_the_page() {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(crate::control::read(dir.path()).holder, crate::control::Holder::Agent);
+
+        let take = client_frame(0x1, br#"{"type":"control","hold":true}"#);
+        let mut upstream = Vec::new();
+        let pumped = pump_input(&take[..], &mut upstream, dir.path());
+
+        assert_eq!(crate::control::read(dir.path()).holder, crate::control::Holder::Human);
+        assert!(
+            upstream.is_empty(),
+            "a control message reached the box: {upstream:?}"
+        );
+        // Not counted as input either: nothing was forwarded to the page.
+        assert_eq!(pumped.input_frames, 0);
+
+        let release = client_frame(0x1, br#"{"type":"control","hold":false}"#);
+        let mut upstream = Vec::new();
+        pump_input(&release[..], &mut upstream, dir.path());
+        assert_eq!(crate::control::read(dir.path()).holder, crate::control::Holder::Agent);
+        assert!(upstream.is_empty());
+    }
+
+    /// Three verdicts, and the third must not widen the second: anything that is
+    /// neither pacing nor the forward's own message is input.
+    #[test]
+    fn only_the_named_messages_escape_the_lock() {
+        let text = |body: &[u8]| classify(0x1, true, body);
+        assert_eq!(text(br#"{"type":"config"}"#), FrameVerdict::Pacing);
+        assert_eq!(text(br#"{"type":"ack"}"#), FrameVerdict::Pacing);
+        assert_eq!(text(br#"{"type":"control","hold":true}"#), FrameVerdict::Forward);
+        for body in [
+            &br#"{"type":"hints"}"#[..],
+            &br#"{"type":"act","ref":"e1"}"#[..],
+            &br#"{"type":"insert","ref":"e1","text":"x"}"#[..],
+            &br#"{"type":"history","go":-1}"#[..],
+            &br#"{"type":"reload"}"#[..],
+            &br#"{"type":"input_mouse"}"#[..],
+            &br#"{"type":"controlled"}"#[..],
+            &br#"not json"#[..],
+        ] {
+            assert_eq!(
+                text(body),
+                FrameVerdict::Input,
+                "{}",
+                String::from_utf8_lossy(body)
+            );
+        }
+        // And a fragment is never judged from the fragment in hand.
+        assert_eq!(
+            classify(0x1, false, br#"{"type":"control","hold":true}"#),
+            FrameVerdict::Input
+        );
     }
 
     #[test]
@@ -1798,6 +1982,43 @@ mod tests {
         assert!(
             human.contains("control at page load"),
             "and it says what it knows"
+        );
+    }
+
+    /// A host session advertises one port in one file.
+    #[test]
+    fn a_host_sessions_stream_port_is_read_from_the_file_the_engine_wrote() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("stream");
+        std::fs::write(&path, "45123\n").expect("write");
+        assert_eq!(session_stream_port(&path), Some(45123));
+    }
+
+    /// Port 0 means the file was written before the engine bound.
+    #[test]
+    fn a_stream_file_written_before_the_engine_bound_is_not_an_address() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("stream");
+        std::fs::write(&path, "0").expect("write");
+        assert_eq!(session_stream_port(&path), None);
+
+        std::fs::write(&path, "not a port").expect("write");
+        assert_eq!(session_stream_port(&path), None);
+        assert_eq!(session_stream_port(&dir.path().join("absent")), None);
+    }
+
+    /// Why the two arms are a type: a host session must not be shown a boxed
+    /// session's chrome.
+    #[test]
+    fn only_a_boxed_route_claims_a_boundary_outside_the_engine() {
+        assert!(!Route::Host { port: 1 }.is_boxed());
+        assert!(
+            Route::Boxed {
+                pid: 1,
+                pid_ns: std::ffi::OsString::from("net:[4026531840]"),
+                port: 1,
+            }
+            .is_boxed()
         );
     }
 

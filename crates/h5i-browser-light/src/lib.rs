@@ -40,6 +40,8 @@ pub mod engine;
 pub mod extract;
 #[cfg(feature = "identity")]
 pub mod identity;
+pub mod hints;
+pub mod keys;
 pub mod fonts;
 pub mod markdown;
 pub mod ipc;

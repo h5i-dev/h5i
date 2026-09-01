@@ -951,13 +951,32 @@ it just did, repainting a prompt. Nothing a browser has to say needs `ESC`.
 Files a session produces are named by the host, never by the session, and land
 under the session's own `artifacts/` directory.
 
+### h5i browser view
+
+Watch the page and take the controls, without a box.
+
+```bash
+h5i browser view                      # draw it in this terminal
+h5i browser view --web                # serve it to your browser instead
+h5i browser view --session auth       # when more than one is open
+```
+
+`h5i box view` reaches the same viewer for a session in a box. The difference
+that shows on screen is what the status line can claim: a boxed session's egress
+is enforced outside the engine, while a host session's rests on the engine's own
+word, so it reads `engine-claimed` rather than naming a box. Watching changes
+neither; `--in` is what makes the claim checkable.
+
+The keys are the ones under [h5i box view](#h5i-box-view).
+
 ### The control lock
 
 Two clients can drive one page: the agent, and a human at the live view.
 
 - The agent holds control by default. A session exists to let an agent work; it
   should not have to ask.
-- A human takes control, never asks for it. `h5i browser take <session>`. The
+- A human takes control, never asks for it: `h5i browser take <session>`, or by
+  reaching for the controls at either live view, which takes it for you. The
   agent's mutating verbs are refused with a typed message rather than fighting
   for the pointer; read-only verbs keep working, because watching never
   collides.
@@ -1351,23 +1370,53 @@ gets shortened at the expense of the truth: a long URL loses its path, and a
 host too long for the row is cut from the left, because shortening
 `bank.example.evil.test` from the right is the trick itself.
 
-Two modes:
+#### Driving it
+
+The keyboard is the viewer's until you hand it over, which is what makes single
+letters safe to bind. `?` lists them in the viewer itself.
 
 | Key | Does |
 | --- | --- |
-| `i` | Take the control lock and start driving the page |
-| `Ctrl-]` | Hand control back and return to watching |
+| `j` `k` | Scroll a line |
+| `d` `u` | Scroll half a page |
+| `space` `b` | Scroll a page |
+| `gg` `G` | Top, bottom |
+| `f` | Label everything on screen, then follow the one you type |
+| `F` | Label the fields, then type into the one you choose |
+| `yf` | Label everything, then copy that link |
+| `gi` | Type into the first field on the page |
+| `yy` | Copy this page's URL |
+| `H` `L` | Back, forward |
+| `r` | Reload |
+| `i` | Hand the keyboard to the page, where an engine can use it |
+| `D` | The console pane: what the page logged and what it threw |
+| `?` | The key list |
 | `q` | Leave |
 
-Watching is read-only and leaves the mouse to your terminal, so selection and
-scrollback still work. Driving takes the lock, because in a terminal viewer
-there is no second window to run `h5i browser take` in. Leaving hands it back.
-Both are recorded in the receipt, under the same lane the browser viewer uses.
+Once a hint puts the caret in a field, the keyboard is that field's and it
+behaves like a keyboard: the arrows and `Home` and `End` move the caret,
+`Backspace` and `Delete` cut where the caret is rather than off the end, `Ctrl`
+or `Alt` with a motion works by word, `Tab` moves to the next field, `Ctrl-A`
+selects all. `Enter` submits and hands the keyboard back, `Esc` hands it back
+without submitting.
 
-Two limits. A terminal reports key presses and not releases, so h5i sends a
-press and a release together: typing works exactly, and holding a key down does
-not. Clicks are placed at the resolution of a terminal cell, which is fine for a
-form and coarse for a dense canvas.
+Which keys do anything depends on the session. The viewer reads what the engine
+says it offers, so scrolling always works while `f`, `F`, `gi`, `H`, `L` and `r`
+say so plainly when the engine on the other end does not offer them. `i` is
+refused on h5i's own engine, which cannot be driven by pointer; it stays bound on
+a box running one that can.
+
+Reaching for the controls takes the control lock, and putting the hint overlay up
+counts. Leaving without acting hands it straight back. All of it reaches the
+receipt, under the same lane the browser viewer uses.
+
+The loopback viewer binds the same keys to the same things, hint overlay
+included, so there is one thing to learn whichever you open. It keeps its mouse
+live, since a browser has a real pointer.
+
+Why the keyboard rather than the pointer, what the hint labels actually are, and
+how the latency is kept down are in
+[`docs/design-interminal-browser.md`](docs/design-interminal-browser.md).
 
 ### The engine, underneath
 

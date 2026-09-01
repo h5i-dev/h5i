@@ -31,6 +31,23 @@ const CHUNK: usize = 4096;
 /// its replacement exists, which is visible as a flicker on every frame.
 const IDS: [u32; 2] = [7311, 7312];
 
+/// Ids for the patches placed over a frame. A pool, because several are on
+/// screen at once; far from [`IDS`] so a patch cannot be taken for the frame.
+const PATCH_IDS: [u32; 32] = {
+    let mut ids = [0u32; 32];
+    let mut i = 0;
+    while i < 32 {
+        ids[i] = 7400 + i as u32;
+        i += 1;
+    }
+    ids
+};
+
+/// How many patches to place before a whole frame again. Patches are never
+/// deleted individually — what is under one is the older picture it corrects —
+/// so a whole frame is what releases them. A memory bound, not a visual one.
+const MAX_PATCHES: usize = 24;
+
 /// zlib level for frame payloads.
 ///
 /// Level 1, and the gap is not close. Measured through this path on a real
@@ -83,6 +100,10 @@ impl Encoding {
 /// Builds the escape sequences for successive frames.
 #[derive(Debug, Default)]
 pub struct Placer {
+    /// Index into [`PATCH_IDS`] for the next patch.
+    patch: usize,
+    /// Patches placed since the last whole frame.
+    patches: usize,
     /// Index into [`IDS`] for the *next* frame.
     next: usize,
     /// The id currently on screen, if any.
@@ -136,7 +157,43 @@ impl Placer {
         if let Some(old) = self.live.replace(id) {
             out.extend_from_slice(delete(old).as_bytes());
         }
+        // And every patch, made redundant by this frame.
+        for patch in PATCH_IDS.iter().take(self.patches.min(PATCH_IDS.len())) {
+            out.extend_from_slice(delete(*patch).as_bytes());
+        }
+        self.patches = 0;
+        self.patch = 0;
         out
+    }
+
+    /// Draw a *patch*: the part of a frame that changed, over the one beneath it.
+    ///
+    /// A keystroke changes a few hundred pixels of a frame with nine hundred
+    /// thousand, and sending the whole frame for it cost about 40KB per key.
+    ///
+    /// A patch does not replace what is under it, so they accumulate and the
+    /// caller must return to a whole frame — see [`Placer::should_refresh`].
+    pub fn draw_patch(&mut self, rgb: &[u8], width: u32, height: u32, at: Placement) -> Vec<u8> {
+        let id = PATCH_IDS[self.patch % PATCH_IDS.len()];
+        self.patch += 1;
+        self.patches += 1;
+
+        let mut out = Vec::with_capacity(rgb.len() * 4 / 3 + 512);
+        out.extend_from_slice(cursor_to(at.row, at.col).as_bytes());
+        // Freed before reuse: this id may still be on screen from an earlier
+        // lap of the pool, and transmitting over a live one leaks its pixels.
+        out.extend_from_slice(delete(id).as_bytes());
+        let payload = base64_of(&self.encoding.apply(rgb));
+        for chunk in transmit_chunks(id, width, height, at.cols, at.rows, &payload, self.encoding) {
+            out.extend_from_slice(chunk.as_bytes());
+        }
+        out
+    }
+
+    /// Whether enough patches have accumulated to be worth a whole frame again,
+    /// which is what releases them ([`Placer::draw`]).
+    pub fn should_refresh(&self) -> bool {
+        self.patches >= MAX_PATCHES
     }
 
     /// Remove whatever is on screen. Used on the way out, so a viewer that

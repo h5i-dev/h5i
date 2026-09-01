@@ -23,6 +23,7 @@ essential to this one.
 | part | status | design |
 | --- | --- | --- |
 | browser engine | shipped. WPT core tier 75.7%; a production React build is not cleared | [`docs/design-browser.md`](docs/design-browser.md) |
+| in-terminal viewer | shipped, V1 to V8. Keyboard-driven, in the terminal or a browser | [`docs/design-interminal-browser.md`](docs/design-interminal-browser.md) |
 | policy resolution | shipped, P1 to P4. The authority validator is opt-in | [`docs/design-policy.md`](docs/design-policy.md) |
 | remote runner | R13.1 built. R13.2 to R13.4 are not | [`docs/design-runner.md`](docs/design-runner.md) |
 | runtime detection | built 2026-08-19, off by default at three layers | [`docs/design-detect.md`](docs/design-detect.md) |
@@ -79,6 +80,7 @@ of it whether you need the rest.
 | prefix | file | what it covers |
 | --- | --- | --- |
 | B1 to B5 | `docs/design-browser.md` | the engine, the session surface, and what it is not |
+| V1 to V8 | `docs/design-interminal-browser.md` | the viewers: the keymap, hints, latency, the lock |
 | P1 to P4 | `docs/design-policy.md` | resolution, the authority validator, mount realization |
 | R1 to R13 | `docs/design-runner.md` | placement, transport, the frame protocol, export |
 | D1 to D14 | `docs/design-detect.md` | the kernel-observed lane |

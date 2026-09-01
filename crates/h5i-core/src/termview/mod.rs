@@ -29,8 +29,10 @@ pub mod image;
 pub mod input;
 pub mod kitty;
 pub mod proto;
+pub mod overlay;
 pub mod panes;
 pub mod status;
+pub mod vim;
 pub mod ws;
 
 // Raw mode, `termios` and `TIOCGWINSZ` have no Windows equivalent worth
@@ -77,12 +79,33 @@ const TICK: Duration = Duration::from_millis(250);
 // chrome takes" is a screen that overlaps by one row the first time either
 // changes.
 
-/// What a viewer needs to know to attach to one box.
+/// Where the browser being watched is, and how this process reaches its frames.
+///
+/// Two different security stories rather than two transports, and the status
+/// line has to be able to tell them apart: a boxed session is enforced outside
+/// the engine, a host session is not.
+#[derive(Debug, Clone)]
+pub enum Attach {
+    /// A browser inside an h5i box.
+    Boxed,
+    /// A browser session on this machine, whose engine wrote its stream port
+    /// into this file.
+    Host { stream_file: PathBuf },
+}
+
+/// What a viewer needs to know to attach to one browser.
 pub struct Options {
-    pub env_dir: PathBuf,
-    pub env_id: String,
+    /// Where `control.json` lives and where the viewer receipt is filed: a
+    /// box's env directory, or a browser session's own directory.
+    pub state_dir: PathBuf,
+    /// What is being watched, for the status line and the receipt.
+    pub subject: String,
     pub policy_digest: String,
-    /// A short account of what the box may reach, for the status line.
+    /// How to reach the frames.
+    pub attach: Attach,
+    /// The command the human actually typed, for the receipt.
+    pub command: String,
+    /// A short account of what the page may reach, for the status line.
     pub egress: String,
     /// Frame-rate ceiling asked of the box.
     pub max_fps: u32,
@@ -96,6 +119,38 @@ pub struct Options {
     /// someone how to start a stream. The viewer itself is engine-agnostic,
     /// and adding this must not become the start of engine-specific rendering.
     pub engine: Option<String>,
+}
+
+/// Find this browser's stream, with a sentence a human can act on if it is not
+/// there. The resolution lives in [`crate::view::Route`]; what is here is the
+/// refusals, which differ between the two ways of attaching.
+#[cfg(unix)]
+fn resolve_route(opts: &Options) -> Result<crate::view::Route, H5iError> {
+    match &opts.attach {
+        Attach::Boxed => {
+            let (pid, pid_ns) = crate::view::box_pid_ns(&opts.state_dir).ok_or_else(|| {
+                H5iError::Metadata(
+                    "this box is not running, so there is no browser to watch. \
+                     Start a session (`h5i box shell <name>`) and try again."
+                        .into(),
+                )
+            })?;
+            let port = crate::view::stream_port(&opts.state_dir)
+                .ok_or_else(|| H5iError::Metadata(not_streaming_hint(opts.engine.as_deref())))?;
+            Ok(crate::view::Route::Boxed { pid, pid_ns, port })
+        }
+        Attach::Host { stream_file } => {
+            let port = crate::view::session_stream_port(stream_file).ok_or_else(|| {
+                H5iError::Metadata(
+                    "this session is not serving a live view, so there is nothing to watch. \
+                     Only a resident session does: open one with `h5i browser open <url>` \
+                     and try again."
+                        .into(),
+                )
+            })?;
+            Ok(crate::view::Route::Host { port })
+        }
+    }
 }
 
 /// What to tell someone whose box has no `.stream` file yet.
@@ -199,16 +254,10 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
 
     // Everything that can fail with an explanation is resolved before the
     // terminal is touched, so a failure prints a sentence on a normal screen
-    // rather than on an alternate one that is about to be torn down.
-    let (pid, pid_ns) = crate::view::box_pid_ns(&opts.env_dir).ok_or_else(|| {
-        H5iError::Metadata(
-            "this box is not running, so there is no browser to watch. \
-             Start a session (`h5i box shell <name>`) and try again."
-                .into(),
-        )
-    })?;
-    let port = crate::view::stream_port(&opts.env_dir)
-        .ok_or_else(|| H5iError::Metadata(not_streaming_hint(opts.engine.as_deref())))?;
+    // rather than on an alternate one that is about to be torn down. That
+    // includes finding the stream, which is the step that fails most often and
+    // whose message differs the most between the two ways of attaching.
+    let route = resolve_route(&opts)?;
 
     let mut guard = term::Guard::enter(stdin).map_err(H5iError::Io)?;
     // Skipping the probe means skipping the answer about compression too. Raw
@@ -221,9 +270,8 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
         probe_graphics(stdin)?
     };
 
-    // The socket is a descriptor this process owns, handed back from a fork
-    // that entered the box's namespaces. Nothing is listening anywhere.
-    let mut socket = crate::view::connect_in_netns(pid, port, &pid_ns)?;
+    let mut socket = route.connect()?;
+    let port = route.port();
     let key = ws::new_key();
     socket
         .write_all(ws::request(&format!("127.0.0.1:{port}"), "/", &key).as_bytes())
@@ -291,7 +339,7 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
     drop(tx);
 
     let opened = chrono::Utc::now();
-    let holder_at_open = control::read(&opts.env_dir).holder;
+    let holder_at_open = control::read(&opts.state_dir).holder;
     // Scoped so the app releases its borrow of the terminal guard before the
     // guard itself is dropped and the terminal is restored.
     let (outcome, bytes_in, input_sent) = {
@@ -301,8 +349,10 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
         // Leave the page as we found it. A viewer that exits still holding the
         // lock leaves the agent refusing to act, with nothing on screen to
         // explain why.
-        if app.mode == Mode::Interact {
-            let _ = control::release(&opts.env_dir);
+        // Asked of the mode, so a mode added later cannot leave the lock held by
+        // forgetting to be listed.
+        if app.mode.holds_control() {
+            let _ = control::release(&opts.state_dir);
         }
         let _ = writer.write_all(&app.placer.clear());
         (outcome, app.bytes_in, app.input_sent)
@@ -315,10 +365,11 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
 
     crate::view::record_session(
         &crate::view::Session {
-            env_dir: opts.env_dir.clone(),
-            env_id: opts.env_id.clone(),
+            env_dir: opts.state_dir.clone(),
+            env_id: opts.subject.clone(),
             policy_digest: opts.policy_digest.clone(),
             transport: crate::view::Transport::Terminal,
+            command: opts.command.clone(),
         },
         opened,
         holder_at_open,
@@ -396,6 +447,79 @@ fn unsupported() -> H5iError {
     )
 }
 
+/// How long to wait for a reply before assuming it is not coming. An engine that
+/// does not know the message answers nothing, and the web viewer's forward drops
+/// input when the control lock is not the human's — without this, one lost reply
+/// wedges typing for the session.
+#[cfg(unix)]
+const INSERT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Whether a redraw puts the image somewhere new.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Moved {
+    /// Same placement, different content. No clear.
+    Nothing,
+    /// The page is about to occupy a different box, so the old one has to go.
+    Layout,
+}
+
+/// The roles `gi` accepts as "a field to type into". A list rather than "the
+/// first hint", because the first actionable thing on a page is rarely a field.
+#[cfg(unix)]
+const FIELD_ROLES: &[&str] = &["textbox", "searchbox", "combobox"];
+
+/// One terminal keystroke, in the vocabulary a browser uses.
+///
+/// `text` is what gets inserted, reported rather than re-derived: the terminal
+/// already read the byte. `None` for keys the viewer keeps for itself.
+#[cfg(unix)]
+fn dom_key(key: &input::Key) -> Option<proto::Typed> {
+    use input::KeyCode;
+    let ctrl = key.modifiers & proto::modifiers::CTRL != 0;
+    let (name, text) = match key.code {
+        KeyCode::Backspace => ("Backspace", None),
+        KeyCode::Delete => ("Delete", None),
+        KeyCode::Tab => ("Tab", None),
+        KeyCode::Up => ("ArrowUp", None),
+        KeyCode::Down => ("ArrowDown", None),
+        KeyCode::Left => ("ArrowLeft", None),
+        KeyCode::Right => ("ArrowRight", None),
+        KeyCode::Home => ("Home", None),
+        KeyCode::End => ("End", None),
+        KeyCode::PageUp => ("PageUp", None),
+        KeyCode::PageDown => ("PageDown", None),
+        KeyCode::Insert | KeyCode::Function(_) | KeyCode::Escape | KeyCode::Enter => return None,
+        KeyCode::Char(ch) => {
+            // A chord types nothing. Enforced in the engine's table too; said
+            // here so a viewer cannot send `Ctrl-S` as an `s`.
+            let text = (!ctrl).then(|| ch.to_string());
+            return Some(proto::Typed {
+                key: ch.to_string(),
+                text,
+                modifiers: key.modifiers,
+            });
+        }
+    };
+    Some(proto::Typed {
+        key: name.to_string(),
+        text,
+        modifiers: key.modifiers,
+    })
+}
+
+/// Collapse a page-derived string to one line for the status row. [`status`]
+/// strips escape sequences; this stops a newline pushing the row off its line.
+#[cfg(unix)]
+fn one_line(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// The render loop's state.
 #[cfg(unix)]
 struct App<'a> {
@@ -406,6 +530,15 @@ struct App<'a> {
     /// The last frame, kept so a resize can redraw without waiting for the box
     /// to send another. A static page sends nothing at all.
     last_frame: Option<Vec<u8>>,
+    /// The scaled image the terminal is showing, so only the part that moved has
+    /// to be sent. A resize changes its shape, which `damage` reports as "all of
+    /// it".
+    shown: Option<image::Rgb>,
+    /// The same frame, already decoded. Most redraws are not caused by new
+    /// pixels — a hint keystroke, a mode change — and re-decoding for those
+    /// costs about 1.7ms to reproduce an identical buffer. Dropped whenever a
+    /// new frame arrives, so it cannot go stale.
+    decoded: Option<image::Rgb>,
     /// Developer layout: page plus what the page said.
     developer: bool,
     /// Console errors and page exceptions, bounded.
@@ -415,7 +548,7 @@ struct App<'a> {
     viewport: (u32, u32),
     url: Option<String>,
     egress: String,
-    box_id: String,
+    subject: String,
     errors: u32,
     streaming: bool,
     size: term::Size,
@@ -426,6 +559,76 @@ struct App<'a> {
     input_sent: u64,
     /// Terminal bytes not yet parsed into a complete event.
     pending: Vec<u8>,
+    /// What the engine says its viewer lane offers, read off `status`.
+    features: vim::Features,
+    /// The key prefix already typed in VIEW (`g`, `y`), if any.
+    prefix: String,
+    /// The overlay, while it is up.
+    hinting: Option<Hinting>,
+    /// The field being typed into, while INSERT is on.
+    inserting: Option<Inserting>,
+    /// Whether the key list is showing.
+    help: bool,
+    /// One line of the viewer talking to the human, cleared on the next key.
+    notice: Option<String>,
+}
+
+/// The overlay, from the moment it is asked for to the moment a label is
+/// chosen or the human gives up.
+#[cfg(unix)]
+struct Hinting {
+    /// What a chosen label is for. Decided before the overlay went up, which is
+    /// what lets one set of labels serve `f`, `F` and `yf`.
+    then: vim::HintThen,
+    /// Set by `gi`, which wants a field rather than a choice: the overlay is
+    /// asked for only because it is the thing that knows where the fields are,
+    /// and the first one is taken without ever being drawn.
+    auto_first: bool,
+    items: Vec<proto::Hint>,
+    typed: String,
+    /// The viewport the rects were measured in. Kept with them, because a
+    /// resize between the request and the draw would otherwise scale a chip by
+    /// a viewport the rects never belonged to.
+    viewport: (u32, u32),
+}
+
+#[cfg(unix)]
+impl Hinting {
+    /// Which items still match what has been typed.
+    fn matching(&self) -> Vec<usize> {
+        let labels: Vec<String> = self.items.iter().map(|h| h.label.clone()).collect();
+        match vim::narrow(&labels, &self.typed) {
+            vim::Match::One(i) => vec![i],
+            vim::Match::Several(hits) => hits,
+            vim::Match::None => Vec::new(),
+        }
+    }
+}
+
+/// The field INSERT is typing into.
+///
+/// A keystroke cannot be answered locally: nothing appears until the page is
+/// laid out again and a frame encoded, around 40ms. Sent one at a time those
+/// serialize, so at most one message is on the wire and every key struck while
+/// it is away goes out together.
+///
+/// Batched, not coalesced: a keystroke is a delta, so dropping the ones in
+/// between would lose characters.
+#[cfg(unix)]
+struct Inserting {
+    reference: String,
+    /// Keys struck since the last batch went out, in order.
+    pending: Vec<proto::Typed>,
+    /// What is on the wire and what is owed. See [`vim::Coalesce`], which is
+    /// where the ordering lives and where it is tested.
+    wire: vim::Coalesce,
+    /// When the in-flight batch went out.
+    ///
+    /// A guard against a reply that never arrives rather than a guess about how
+    /// slow an engine can be: an engine that does not know the message answers
+    /// with nothing at all, and without this the first keystroke would wedge
+    /// typing for the life of the session.
+    sent_at: Instant,
 }
 
 #[cfg(unix)]
@@ -433,11 +636,13 @@ impl<'a> App<'a> {
     fn new(opts: &Options, guard: &'a mut term::Guard, encoding: kitty::Encoding) -> App<'a> {
         let size = guard.size().or_fallback();
         App {
-            env_dir: opts.env_dir.clone(),
+            env_dir: opts.state_dir.clone(),
             guard,
             placer: kitty::Placer::new(encoding),
             mode: Mode::View,
             last_frame: None,
+            shown: None,
+            decoded: None,
             developer: false,
             // Enough to see a failure loop's shape without holding a page's
             // whole console in a viewer.
@@ -446,13 +651,19 @@ impl<'a> App<'a> {
             viewport: (1280, 720),
             url: None,
             egress: opts.egress.clone(),
-            box_id: opts.env_id.clone(),
+            subject: opts.subject.clone(),
             errors: 0,
             streaming: true,
             size,
             bytes_in: 0,
             input_sent: 0,
             pending: Vec::new(),
+            features: vim::Features::default(),
+            prefix: String::new(),
+            hinting: None,
+            inserting: None,
+            help: false,
+            notice: None,
         }
     }
 
@@ -489,7 +700,7 @@ impl<'a> App<'a> {
                 if self.on_input(quiet, writer) {
                     return None;
                 }
-                self.on_tick();
+                self.on_tick(writer);
             }
         }
     }
@@ -512,11 +723,35 @@ impl<'a> App<'a> {
                         screencasting,
                         viewport_width,
                         viewport_height,
+                        features,
                         ..
                     }) => {
                         self.streaming = screencasting;
                         self.viewport = (viewport_width, viewport_height);
+                        // What the keymap may bind, from the engine's own
+                        // account. Re-read on every status.
+                        self.features = vim::Features::from_iter(features);
                         self.draw_status();
+                    }
+                    Some(proto::ServerMessage::Hints {
+                        viewport_width,
+                        viewport_height,
+                        items,
+                    }) => {
+                        self.on_hints(items, (viewport_width, viewport_height), writer);
+                    }
+                    Some(proto::ServerMessage::Acted { action, ok, error }) => {
+                        // Released before the refusal is shown, so a rejected
+                        // keystroke does not wedge the ones after it.
+                        // `focus` releases the first batch, `input_keys` the rest.
+                        if matches!(action.as_deref(), Some("input_keys" | "focus")) {
+                            self.insert_landed(writer);
+                        }
+                        // Only refusals: a click that worked shows on the page.
+                        if !ok {
+                            let why = error.unwrap_or_else(|| "refused".into());
+                            self.say(Some(one_line(&why)));
+                        }
                     }
                     Some(proto::ServerMessage::Url(url)) => {
                         self.url = Some(url);
@@ -568,6 +803,8 @@ impl<'a> App<'a> {
         let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(base64_jpeg) else {
             return;
         };
+        // New pixels, so whatever is cached describes the frame before this one.
+        self.decoded = None;
         self.render(&bytes);
         self.last_frame = Some(bytes);
     }
@@ -579,7 +816,16 @@ impl<'a> App<'a> {
         // A frame that will not decode is dropped, never fatal: the box can
         // produce one by crashing at the wrong moment, and a viewer that exits
         // on it is a viewer any flaky page can close.
-        let Ok(frame) = image::decode(jpeg) else {
+        //
+        // Decoded once per frame, not once per redraw: `on_frame` clears the
+        // cache, so a hit means the same pixels.
+        if self.decoded.is_none() {
+            let Ok(frame) = image::decode(jpeg) else {
+                return;
+            };
+            self.decoded = Some(frame);
+        }
+        let Some(frame) = self.decoded.take() else {
             return;
         };
         let regions = panes::layout(self.size.cols.max(1), self.size.rows, self.developer);
@@ -591,7 +837,25 @@ impl<'a> App<'a> {
             self.size.cell_w,
             self.size.cell_h,
         );
-        let scaled = image::downscale(&frame, fit.pixel_width, fit.pixel_height);
+        let mut scaled = image::downscale(&frame, fit.pixel_width, fit.pixel_height);
+
+        // Composited into the frame rather than written as terminal text over
+        // it. See `overlay` for why: an image's relationship to cell
+        // backgrounds is the one part of the graphics protocol terminals
+        // genuinely disagree about, and a label that is sometimes invisible is
+        // worse than none.
+        if let Some(hinting) = self.hinting.as_ref()
+            && self.mode == Mode::Hint
+        {
+            let chips = self.chips(hinting, scaled.width, scaled.height);
+            if !chips.is_empty() {
+                // `downscale` hands back a borrow when the frame is already the
+                // right size, so drawing into it is the one path that has to
+                // own its pixels. Paid only when there is an overlay to draw.
+                let owned = scaled.to_mut();
+                overlay::draw(&mut owned.data, owned.width, owned.height, &chips);
+            }
+        }
 
         let at = kitty::Placement {
             row: regions.page.row,
@@ -612,15 +876,121 @@ impl<'a> App<'a> {
             viewport_height: self.viewport.1,
         });
 
-        let bytes = self
-            .placer
-            .draw(&scaled.data, scaled.width, scaled.height, at);
-        let mut out = std::io::stdout();
-        let _ = out.write_all(&bytes);
-        let _ = out.flush();
+        // Only what changed, when only a little did. Sending the whole frame for
+        // a keystroke cost about 40KB of deflated JPEG each time, a megabyte to
+        // type one word, nearly all of it already on screen.
+        let patch = self.shown.as_ref().and_then(|shown| {
+            if self.placer.should_refresh() {
+                // Patches have piled up; a whole frame releases them.
+                return None;
+            }
+            let hurt = image::damage(shown, &scaled)?;
+            // Cell-aligned, grown outwards so no changed pixel is left showing
+            // the older frame.
+            let cell_w = scaled.width / u32::from(fit.cols.max(1));
+            let cell_h = scaled.height / u32::from(fit.rows.max(1));
+            let hurt = hurt.to_cells(cell_w, cell_h, scaled.width, scaled.height);
+            hurt.worth_patching(scaled.width, scaled.height)
+                .then_some((hurt, cell_w, cell_h))
+        });
+
+        let bytes = match patch {
+            // Identical to what is on screen: the cheapest frame is unsent.
+            None if self.shown.as_ref().is_some_and(|shown| *shown == *scaled) => Vec::new(),
+            None => self
+                .placer
+                .draw(&scaled.data, scaled.width, scaled.height, at),
+            Some((hurt, cell_w, cell_h)) => {
+                let piece = hurt.crop(&scaled);
+                let where_ = kitty::Placement {
+                    row: at.row + (hurt.y / cell_h.max(1)) as u16,
+                    col: at.col + (hurt.x / cell_w.max(1)) as u16,
+                    cols: (hurt.width / cell_w.max(1)).max(1) as u16,
+                    rows: (hurt.height / cell_h.max(1)).max(1) as u16,
+                };
+                self.placer
+                    .draw_patch(&piece.data, piece.width, piece.height, where_)
+            }
+        };
+
+        if !bytes.is_empty() {
+            let mut out = std::io::stdout();
+            let _ = out.write_all(&bytes);
+            let _ = out.flush();
+        }
+        // What the next frame is compared against. Kept whatever was sent: after
+        // a patch the screen holds the new frame just as after a whole one.
+        self.shown = Some(scaled.into_owned());
+        self.decoded = Some(frame);
     }
 
-    fn on_tick(&mut self) {
+    /// Where each still-matching label goes in the frame just decoded.
+    fn chips(&self, hinting: &Hinting, width: u32, height: u32) -> Vec<overlay::Chip> {
+        hinting
+            .matching()
+            .into_iter()
+            .filter_map(|index| hinting.items.get(index))
+            .map(|item| {
+                overlay::place(
+                    &item.label,
+                    hinting.typed.chars().count(),
+                    (item.x, item.y, item.width, item.height),
+                    // The viewport the rects were measured in, not whatever the
+                    // viewport is now: a resize between the request and the draw
+                    // would otherwise scale a chip by a page it never described.
+                    hinting.viewport,
+                    (width, height),
+                )
+            })
+            .collect()
+    }
+
+    /// The key list, drawn over the page as terminal text — unlike a hint chip
+    /// it does not have to line up with anything, so it may sit where it fits.
+    fn draw_help(&mut self) {
+        if !self.help {
+            return;
+        }
+        let rows: Vec<String> = vim::BINDINGS
+            .iter()
+            .map(|binding| {
+                let available = binding.needs.is_none_or(|need| self.features.has(need));
+                format!(
+                    " {:<7} {}{} ",
+                    binding.keys,
+                    binding.what,
+                    // An unavailable key is shown and marked rather than hidden.
+                    // Hiding it leaves someone who has used this on another
+                    // session wondering where the key went.
+                    if available { "" } else { " (not on this engine)" },
+                )
+            })
+            .collect();
+        let width = rows.iter().map(|r| r.chars().count()).max().unwrap_or(0) as u16;
+        let col = self.size.cols.saturating_sub(width + 1).max(1);
+
+        let mut out = String::from("\x1b[s");
+        for (index, row) in rows.iter().enumerate() {
+            let row_at = panes::CHROME_ROWS + 1 + index as u16;
+            if row_at > self.size.rows {
+                break;
+            }
+            out.push_str(&kitty::cursor_to(row_at, col));
+            // Reverse video, like the status line: it has to read as the
+            // viewer's chrome rather than as something the page drew.
+            out.push_str("\x1b[7m");
+            out.push_str(&format!("{row:<width$}", width = width as usize));
+            out.push_str("\x1b[0m");
+        }
+        out.push_str("\x1b[u");
+
+        let mut stdout = std::io::stdout();
+        let _ = stdout.write_all(out.as_bytes());
+        let _ = stdout.flush();
+    }
+
+    fn on_tick(&mut self, writer: &mut impl Write) {
+        self.unwedge_insert(writer);
         let size = self.guard.size().or_fallback();
         if size != self.size {
             self.size = size;
@@ -670,13 +1040,14 @@ impl<'a> App<'a> {
 
     fn draw_status(&mut self) {
         let s = Status {
-            box_id: self.box_id.clone(),
+            subject: self.subject.clone(),
             mode: self.mode,
             holder: control::read(&self.env_dir).holder,
             url: self.url.clone(),
             egress: self.egress.clone(),
             errors: self.errors,
             streaming: self.streaming,
+            notice: self.notice.clone(),
         };
         let mut out = std::io::stdout();
         // Saved and restored around the write so the image's placement cursor
@@ -703,7 +1074,15 @@ impl<'a> App<'a> {
 
     fn on_event(&mut self, ev: input::Event, writer: &mut impl Write) -> bool {
         match self.mode {
-            Mode::View => self.on_view_key(ev),
+            Mode::View => self.on_view_key(ev, writer),
+            Mode::Hint => {
+                self.on_hint_key(ev, writer);
+                false
+            }
+            Mode::Insert => {
+                self.on_insert_key(ev, writer);
+                false
+            }
             Mode::Interact => {
                 self.on_interact(ev, writer);
                 false
@@ -712,38 +1091,501 @@ impl<'a> App<'a> {
     }
 
     /// In VIEW the keyboard is the viewer's. Nothing reaches the page, which is
-    /// what makes it safe to bind single letters.
-    fn on_view_key(&mut self, ev: input::Event) -> bool {
+    /// what makes it safe to bind single letters, and what the whole keymap
+    /// rests on.
+    ///
+    /// Returns true when the human is leaving.
+    fn on_view_key(&mut self, ev: input::Event, writer: &mut impl Write) -> bool {
         use input::{Event, KeyCode};
         let Event::Key(key) = ev else {
             return false;
         };
         let ctrl = key.modifiers & proto::modifiers::CTRL != 0;
-        match key.code {
-            KeyCode::Char('q') if !ctrl => true,
-            // Ctrl-C is a keystroke here, not a signal, raw mode saw to that,
-            // so leaving on it has to be arranged rather than assumed.
-            KeyCode::Char('c') if ctrl => true,
-            KeyCode::Char('i') if !ctrl => {
-                self.enter_interact();
-                false
-            }
-            // Developer mode. Safe as a bare letter here: nothing typed in
-            // VIEW reaches the page.
-            KeyCode::Char('d') if !ctrl => {
-                self.developer = !self.developer;
-                // The split moves the page, so the old placement has to go
-                // before the new one is drawn or the two overlap.
-                let _ = std::io::stdout().write_all(b"\x1b[2J");
-                self.draw_status();
-                if let Some(frame) = self.last_frame.clone() {
-                    self.render(&frame);
-                }
-                self.redraw_log();
-                false
-            }
-            _ => false,
+
+        // Ctrl-C is a keystroke here, not a signal — raw mode saw to that — so
+        // leaving on it is arranged, before the keymap, so no prefix eats it.
+        if ctrl && key.code == KeyCode::Char('c') {
+            return true;
         }
+        // Escape abandons a half-typed prefix and clears the notice. Nothing
+        // else, so it is safe to press when unsure.
+        if key.code == KeyCode::Escape {
+            self.prefix.clear();
+            self.say(None);
+            return false;
+        }
+
+        // The arrows and page keys work whatever the keymap says, so someone who
+        // has not read the key list can still move around.
+        let arrow = match key.code {
+            KeyCode::Down => Some(vim::Scroll::LineDown),
+            KeyCode::Up => Some(vim::Scroll::LineUp),
+            KeyCode::PageDown => Some(vim::Scroll::PageDown),
+            KeyCode::PageUp => Some(vim::Scroll::PageUp),
+            KeyCode::Home => Some(vim::Scroll::Top),
+            KeyCode::End => Some(vim::Scroll::Bottom),
+            _ => None,
+        };
+        if let Some(scroll) = arrow {
+            self.scroll(scroll, writer);
+            return false;
+        }
+
+        let KeyCode::Char(ch) = key.code else {
+            return false;
+        };
+        // A control chord is not a keymap letter: `Ctrl-D` must not scroll.
+        if ctrl {
+            return false;
+        }
+
+        let prefix = std::mem::take(&mut self.prefix);
+        let action = vim::resolve(ch, &prefix, &self.features);
+        self.dispatch(action, ch, writer)
+    }
+
+    /// Carry out what the keymap decided. Returns true when the human is
+    /// leaving.
+    fn dispatch(&mut self, action: vim::Action, key: char, writer: &mut impl Write) -> bool {
+        use vim::Action;
+        match action {
+            Action::Quit => return true,
+            Action::Pending => {
+                self.prefix.push(key);
+                // Shown: a waiting prefix looks like a viewer that has stopped.
+                self.say(Some(format!("{key}…")));
+                return false;
+            }
+            Action::Interact => self.enter_interact(),
+            Action::Developer => self.toggle_developer(),
+            Action::Help => {
+                self.help = !self.help;
+                // Layout, so the cells the list was written into are cleared
+                // rather than left showing through when it is dismissed.
+                self.repaint_with(Moved::Layout);
+            }
+            Action::Scroll(scroll) => self.scroll(scroll, writer),
+            Action::Reload => self.send(writer, &proto::reload()),
+            Action::History(go) => self.send(writer, &proto::history(go)),
+            Action::Hints(then) => self.ask_for_hints(then, false, writer),
+            Action::InsertFirstField => {
+                self.ask_for_hints(vim::HintThen::Insert, true, writer)
+            }
+            Action::YankUrl => {
+                let url = self.url.clone().unwrap_or_default();
+                self.yank(&url, "this page's URL");
+            }
+            // Said rather than swallowed: a silent key gets pressed harder.
+            Action::Unsupported(why) => self.say(Some(why.to_string())),
+            Action::Unbound => self.say(None),
+        }
+        false
+    }
+
+    /// Ask the engine for the overlay. The *reply* is what enters HINT, so an
+    /// engine that ignores the message leaves the viewer where it was.
+    fn ask_for_hints(&mut self, then: vim::HintThen, auto_first: bool, writer: &mut impl Write) {
+        // Taken before the request goes out: the labels describe the page as it
+        // is now, and an agent navigating in between would make them all stale.
+        let _ = control::take(&self.env_dir);
+        self.hinting = Some(Hinting {
+            then,
+            auto_first,
+            items: Vec::new(),
+            typed: String::new(),
+            viewport: self.viewport,
+        });
+        // Narrowed when the human is about to type.
+        self.send(writer, &proto::hints(then == vim::HintThen::Insert));
+    }
+
+    /// The overlay arrived. Draw it, or use it and put it away.
+    fn on_hints(&mut self, items: Vec<proto::Hint>, viewport: (u32, u32), writer: &mut impl Write) {
+        let Some(hinting) = self.hinting.as_mut() else {
+            // An overlay nobody asked for, or one that arrived after the human
+            // gave up.
+            return;
+        };
+        hinting.items = items;
+        hinting.viewport = viewport;
+
+        if hinting.items.is_empty() {
+            self.hinting = None;
+            let _ = control::release(&self.env_dir);
+            self.say(Some("nothing on screen to act on".into()));
+            return;
+        }
+
+        // `gi` wanted a field, not a choice.
+        if hinting.auto_first {
+            let first = hinting
+                .items
+                .iter()
+                .position(|item| FIELD_ROLES.contains(&item.role.as_str()));
+            match first {
+                Some(index) => {
+                    let reference = hinting.items[index].reference.clone();
+                    self.hinting = None;
+                    self.enter_insert(reference, writer);
+                }
+                None => {
+                    self.hinting = None;
+                    let _ = control::release(&self.env_dir);
+                    self.say(Some("no field on screen to type into".into()));
+                }
+            }
+            return;
+        }
+
+        let prompt = hinting.then.prompt();
+        self.mode = Mode::Hint;
+        self.say(Some(format!("{prompt}: type a label, Esc to stop")));
+        self.repaint();
+    }
+
+    /// In HINT the keys narrow the labels and nothing reaches the page. The lock
+    /// is held anyway: see [`Mode::holds_control`].
+    fn on_hint_key(&mut self, ev: input::Event, writer: &mut impl Write) {
+        use input::{Event, KeyCode};
+        let Event::Key(key) = ev else {
+            return;
+        };
+        let ctrl = key.modifiers & proto::modifiers::CTRL != 0;
+        // Both ways out, before the label matcher: `c` is in the hint alphabet,
+        // so the modifier separates "get me out" from "narrow to c".
+        if key.code == KeyCode::Escape || (ctrl && key.code == KeyCode::Char('c')) {
+            self.leave_hint();
+            return;
+        }
+        match key.code {
+            KeyCode::Backspace => {
+                let changed = match self.hinting.as_mut() {
+                    Some(hinting) => hinting.typed.pop().is_some(),
+                    None => false,
+                };
+                // Backspace at an empty prefix changes nothing on screen.
+                if changed {
+                    self.repaint();
+                }
+            }
+            KeyCode::Char(ch) if !ctrl => {
+                let Some(hinting) = self.hinting.as_mut() else {
+                    self.leave_hint();
+                    return;
+                };
+                // Tried before it is kept, or the overlay sticks behind a prefix
+                // no label starts with.
+                let mut attempt = hinting.typed.clone();
+                attempt.push(ch);
+                let labels: Vec<String> =
+                    hinting.items.iter().map(|item| item.label.clone()).collect();
+                match vim::narrow(&labels, &attempt) {
+                    vim::Match::None => {
+                        self.say(Some(format!("no label starts with `{attempt}`")));
+                    }
+                    vim::Match::Several(_) => {
+                        hinting.typed = attempt;
+                        self.repaint();
+                    }
+                    vim::Match::One(index) => {
+                        let then = hinting.then;
+                        let item = hinting.items[index].clone();
+                        self.hinting = None;
+                        self.act_on(then, item, writer);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Do what the overlay was put up for.
+    fn act_on(&mut self, then: vim::HintThen, item: proto::Hint, writer: &mut impl Write) {
+        match then {
+            vim::HintThen::Click => {
+                // The lock this overlay took is given back after the click.
+                self.mode = Mode::View;
+                // Through the verb layer, so the receipt names a role and an
+                // accessible name rather than a coordinate.
+                self.send(writer, &proto::act(&item.reference, "click"));
+                let _ = control::release(&self.env_dir);
+                self.say(Some(format!("{} {}", item.role, one_line(&item.name))));
+                self.repaint();
+            }
+            vim::HintThen::Insert => self.enter_insert(item.reference.clone(), writer),
+            vim::HintThen::Yank => {
+                self.mode = Mode::View;
+                let _ = control::release(&self.env_dir);
+                match &item.href {
+                    Some(href) => self.yank(href, "link"),
+                    None => self.say(Some(format!(
+                        "a {} has no link to copy",
+                        one_line(&item.role)
+                    ))),
+                }
+                self.repaint();
+            }
+        }
+    }
+
+    /// Put the caret in a field and start typing into it.
+    fn enter_insert(&mut self, reference: String, writer: &mut impl Write) {
+        let _ = control::take(&self.env_dir);
+        self.inserting = Some(Inserting {
+            reference: reference.clone(),
+            pending: Vec::new(),
+            // The focus below is already on the wire and releases the first batch.
+            wire: {
+                let mut wire = vim::Coalesce::default();
+                wire.typed();
+                wire
+            },
+            sent_at: Instant::now(),
+        });
+        self.mode = Mode::Insert;
+        self.say(Some("typing — Enter to submit, Esc to stop".into()));
+        // The caret goes to the end and what is there stays: emptying it would
+        // assume anyone focusing a field meant to replace it.
+        self.send(writer, &proto::focus(&reference));
+        self.repaint();
+    }
+
+    /// In INSERT every key goes to the field, as a real key.
+    ///
+    /// The keystroke itself rather than the value it would produce, so the caret
+    /// moves, `Backspace` deletes where it is, and a page listening for typing
+    /// hears it. None of that is expressible by sending a whole value.
+    fn on_insert_key(&mut self, ev: input::Event, writer: &mut impl Write) {
+        use input::{Event, KeyCode};
+        let typed = match ev {
+            // A paste is text, whole, control bytes included. It rides as one
+            // key carrying all of it, inserted at the caret in one edit.
+            Event::Paste(pasted) => proto::Typed {
+                key: "Paste".into(),
+                text: Some(pasted),
+                modifiers: 0,
+            },
+            // The terminal keeps the mouse in INSERT: a click is its own
+            // selection, not the page's.
+            Event::Mouse(_) => return,
+            Event::Key(key) => {
+                let ctrl = key.modifiers & proto::modifiers::CTRL != 0;
+                match key.code {
+                    KeyCode::Escape => {
+                        self.leave_insert();
+                        return;
+                    }
+                    KeyCode::Char('c') if ctrl => {
+                        self.leave_insert();
+                        return;
+                    }
+                    // Submitting is the viewer's decision: a human who pressed
+                    // `Enter` is done with the field.
+                    KeyCode::Enter => {
+                        if let Some(inserting) = self.inserting.as_ref() {
+                            let reference = inserting.reference.clone();
+                            self.send(writer, &proto::act_press(&reference, "Enter"));
+                        }
+                        self.leave_insert();
+                        return;
+                    }
+                    _ => match dom_key(&key) {
+                        Some(typed) => typed,
+                        None => return,
+                    },
+                }
+            }
+        };
+
+        // Re-read, not assumed: another process can take the lock mid-word, and
+        // the keystrokes must stop the moment it does.
+        if control::read(&self.env_dir).holder != Holder::Human {
+            self.leave_insert();
+            return;
+        }
+        let Some(inserting) = self.inserting.as_mut() else {
+            self.leave_insert();
+            return;
+        };
+        inserting.pending.push(typed);
+        self.flush_insert(writer);
+    }
+
+    /// Put the pending keys on the wire, if the last batch has landed.
+    fn flush_insert(&mut self, writer: &mut impl Write) {
+        let Some(inserting) = self.inserting.as_mut() else {
+            return;
+        };
+        if inserting.pending.is_empty() || !inserting.wire.typed() {
+            return;
+        }
+        inserting.sent_at = Instant::now();
+        // Taken, not copied: a batch that left a copy would type twice.
+        let batch = std::mem::take(&mut inserting.pending);
+        self.send(writer, &proto::keys(&batch));
+    }
+
+    /// Release a batch that is never going to be answered.
+    fn unwedge_insert(&mut self, writer: &mut impl Write) {
+        let stuck = self
+            .inserting
+            .as_ref()
+            .is_some_and(|i| i.wire.waiting() && i.sent_at.elapsed() > INSERT_TIMEOUT);
+        if !stuck {
+            return;
+        }
+        let Some(inserting) = self.inserting.as_mut() else {
+            return;
+        };
+        // `timed_out` first, unconditionally: skipping it on an empty queue
+        // leaves the wire marked busy for a batch that is never coming.
+        let released = inserting.wire.timed_out();
+        if !released || inserting.pending.is_empty() {
+            return;
+        }
+        // Sent from here, not left for the next keystroke: someone who typed a
+        // word and stopped would be looking at a field that never caught up.
+        // Only what has *not* been sent goes out — repeating a batch that may
+        // already have arrived would type the word twice.
+        inserting.sent_at = Instant::now();
+        let batch = std::mem::take(&mut inserting.pending);
+        self.send(writer, &proto::keys(&batch));
+    }
+
+    /// A batch came back. Send what was typed while it was away.
+    fn insert_landed(&mut self, writer: &mut impl Write) {
+        let Some(inserting) = self.inserting.as_mut() else {
+            return;
+        };
+        if !inserting.wire.landed() {
+            return;
+        }
+        // `landed` already marked the replacement in flight, so this writes it
+        // rather than going back through `flush_insert`, which would hold it.
+        inserting.sent_at = Instant::now();
+        let batch = std::mem::take(&mut inserting.pending);
+        self.send(writer, &proto::keys(&batch));
+    }
+
+    fn leave_hint(&mut self) {
+        self.hinting = None;
+        let _ = control::release(&self.env_dir);
+        self.mode = Mode::View;
+        self.say(None);
+        self.repaint();
+    }
+
+    fn leave_insert(&mut self) {
+        self.inserting = None;
+        let _ = control::release(&self.env_dir);
+        self.mode = Mode::View;
+        self.say(None);
+        self.repaint();
+    }
+
+    /// Turn a scroll intent into events any engine understands: wheel deltas and
+    /// the Home/End keys, never a message of ours.
+    fn scroll(&mut self, scroll: vim::Scroll, writer: &mut impl Write) {
+        use vim::Scroll;
+        // The engine's own line step. Named here rather than guessed, so a
+        // `j` moves the page by what the engine calls a line.
+        const LINE: f64 = 64.0;
+        let page = self.viewport.1.max(1) as f64;
+        let delta = match scroll {
+            Scroll::LineDown => Some(LINE),
+            Scroll::LineUp => Some(-LINE),
+            Scroll::HalfDown => Some(page / 2.0),
+            Scroll::HalfUp => Some(-page / 2.0),
+            Scroll::PageDown => Some(page * 0.9),
+            Scroll::PageUp => Some(-page * 0.9),
+            // Home and End rather than an enormous wheel delta. An engine
+            // clamps a scroll to the document, so a huge delta would work, but
+            // "go to the top" is a thing the keyboard can say exactly and
+            // saying it approximately is how a page with lazy loading ends up
+            // somewhere near the top.
+            Scroll::Top | Scroll::Bottom => None,
+        };
+        match delta {
+            Some(delta) => self.send(writer, &proto::wheel(delta)),
+            None => {
+                let code = if scroll == Scroll::Top {
+                    input::KeyCode::Home
+                } else {
+                    input::KeyCode::End
+                };
+                // Through the same encoder INTERACT uses, so an arrow sent from
+                // the keymap and one typed by hand are the same event.
+                let key = input::Key { code, modifiers: 0 };
+                for event in input::key_events(&key) {
+                    self.send(writer, &event.to_json());
+                }
+            }
+        }
+        self.say(None);
+    }
+
+    /// Put text on the clipboard with OSC 52. It cannot be confirmed — the write
+    /// has no reply and many terminals disable it — so the notice says what was
+    /// tried rather than claiming success.
+    fn yank(&mut self, text: &str, what: &str) {
+        if text.is_empty() {
+            self.say(Some(format!("no {what} to copy")));
+            return;
+        }
+        use base64::Engine as _;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+        let mut out = std::io::stdout();
+        // The payload is base64, so nothing page-derived reaches the terminal
+        // as an escape sequence: this is the one place a URL is written to the
+        // PTY unsanitized, and base64 is what makes it safe rather than a check.
+        let _ = write!(out, "\x1b]52;c;{encoded}\x07");
+        let _ = out.flush();
+        self.say(Some(format!("sent {what} to the clipboard (OSC 52)")));
+    }
+
+    /// Say one line to the human, on the row the page can never reach. Draws as
+    /// well as stores, so a refusal appears now rather than on the next tick.
+    fn say(&mut self, notice: Option<String>) {
+        if self.notice == notice {
+            return;
+        }
+        self.notice = notice;
+        self.draw_status();
+    }
+
+    fn toggle_developer(&mut self) {
+        self.developer = !self.developer;
+        // The split moves the page, so the old placement has to go before the
+        // new one is drawn or the two overlap.
+        self.repaint_with(Moved::Layout);
+    }
+
+    /// Redraw everything from the frame already in hand. A static page sends
+    /// nothing, so a mode or layout change has to repaint from what is here.
+    fn repaint(&mut self) {
+        self.repaint_with(Moved::Nothing);
+    }
+
+    /// Repaint, saying whether the image is about to land somewhere else.
+    ///
+    /// A pane toggle resizes the page and the old placement has to go. Narrowing
+    /// a hint label moves nothing, and clearing the screen for it makes every
+    /// keystroke flash.
+    fn repaint_with(&mut self, moved: Moved) {
+        if moved == Moved::Layout {
+            let _ = std::io::stdout().write_all(b"\x1b[2J");
+            // The screen is blank now, so nothing on it can be patched against.
+            // Without this the next frame would send only its difference from a
+            // picture that has been wiped.
+            self.shown = None;
+        }
+        self.draw_status();
+        if let Some(frame) = self.last_frame.take() {
+            self.render(&frame);
+            self.last_frame = Some(frame);
+        }
+        self.redraw_log();
+        self.draw_help();
     }
 
     /// Reaching for the controls *is* taking them.

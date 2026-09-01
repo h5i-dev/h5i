@@ -94,6 +94,10 @@ impl Default for PageOptions {
     }
 }
 
+/// How many nodes an inline union walks before giving up. Far above any real
+/// anchor's subtree, far below anything that would make an overlay feel slow.
+const MAX_INLINE_NODES: usize = 4096;
+
 /// What [`Page::select_option`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectOutcome {
@@ -105,6 +109,121 @@ pub enum SelectOutcome {
     NoSuchOption,
     /// It was never a `<select>`.
     NotASelect,
+}
+
+/// Where an element is on screen, in viewport pixels.
+///
+/// Two sources, because a document has two layout systems. Blocks and
+/// inline-blocks get a taffy box; a *non-replaced inline* element has zero taffy
+/// size, its text laid out by parley into the containing block. That is the
+/// ordinary shape of a link, so the fallback unions its inline runs, as
+/// `getClientRects` does. `None` when there is nothing to point at.
+fn hint_rect(doc: &BaseDocument, node_id: usize) -> Option<(f64, f64, f64, f64)> {
+    if let Some(rect) = doc.get_client_bounding_rect(node_id)
+        && rect.width > 0.0
+        && rect.height > 0.0
+    {
+        return Some((rect.x, rect.y, rect.width, rect.height));
+    }
+    inline_rect(doc, node_id)
+}
+
+/// The union of an inline element's line boxes, in viewport pixels.
+fn inline_rect(doc: &BaseDocument, node_id: usize) -> Option<(f64, f64, f64, f64)> {
+    let node = doc.get_node(node_id)?;
+    let root = node.inline_root_ancestor()?;
+    let layout = &root.element_data()?.inline_layout_data.as_ref()?.layout;
+
+    // Which nodes count as "this element's text". Parley labels a glyph run with
+    // the node whose style it took, which for `<a><b>bold</b></a>` is the `<b>`,
+    // so matching the anchor alone would find nothing.
+    let mut owned = std::collections::HashSet::new();
+    let mut stack = vec![node_id];
+    // Bounded: this runs on a keystroke over a tree the page controls.
+    let mut budget = MAX_INLINE_NODES;
+    while let Some(id) = stack.pop() {
+        if budget == 0 {
+            break;
+        }
+        budget -= 1;
+        if !owned.insert(id) {
+            continue;
+        }
+        if let Some(child) = doc.get_node(id) {
+            stack.extend(child.children.iter().copied());
+        }
+    }
+
+    let (mut x0, mut y0) = (f64::MAX, f64::MAX);
+    let (mut x1, mut y1) = (f64::MIN, f64::MIN);
+    let mut found = false;
+    for line in layout.lines() {
+        for item in line.items() {
+            let (a, b, c, d) = match item {
+                parley::layout::PositionedLayoutItem::GlyphRun(run) => {
+                    if !owned.contains(&run.style().brush.id) {
+                        continue;
+                    }
+                    let metrics = run.run().metrics();
+                    let baseline = run.baseline() as f64;
+                    (
+                        run.offset() as f64,
+                        baseline - metrics.ascent as f64,
+                        run.advance() as f64,
+                        (metrics.ascent + metrics.descent) as f64,
+                    )
+                }
+                parley::layout::PositionedLayoutItem::InlineBox(ibox) => {
+                    if !owned.contains(&(ibox.id as usize)) {
+                        continue;
+                    }
+                    (
+                        ibox.x as f64,
+                        ibox.y as f64,
+                        ibox.width as f64,
+                        ibox.height as f64,
+                    )
+                }
+            };
+            found = true;
+            x0 = x0.min(a);
+            y0 = y0.min(b);
+            x1 = x1.max(a + c);
+            y1 = y1.max(b + d);
+        }
+    }
+    if !found || x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+
+    // Inline coordinates are relative to the inline root's content box, so its
+    // padding and border are added back — the correction `hit_inner` makes on
+    // the way in, applied on the way out.
+    let origin = root.absolute_position(0.0, 0.0);
+    let inset_x = (root.final_layout.padding.left + root.final_layout.border.left) as f64;
+    let inset_y = (root.final_layout.padding.top + root.final_layout.border.top) as f64;
+    let scroll = doc.viewport_scroll();
+
+    Some((
+        origin.x as f64 + inset_x + x0 - scroll.x,
+        origin.y as f64 + inset_y + y0 - scroll.y,
+        x1 - x0,
+        y1 - y0,
+    ))
+}
+
+/// One actionable element, with the geometry an overlay needs to label it.
+///
+/// The ref is carried whole, not reduced to its id: a viewer has to show what
+/// the target is as well as address it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HintTarget {
+    pub entry: crate::snapshot::RefEntry,
+    /// Viewport pixels: the left edge, past the scroll offset.
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 /// A request a form asked for, caught on its way to the network.
@@ -2038,6 +2157,143 @@ impl Page {
         true
     }
 
+    /// Put the caret in a field without disturbing what it holds.
+    ///
+    /// The counterpart of [`Page::type_into`], which sets a value — right for an
+    /// agent that knows what the field should say. This is right for a person who
+    /// came to append to it or correct a character.
+    ///
+    /// Returns whether there is a field here, so aiming at a button gets an
+    /// answer rather than a caret nowhere.
+    pub fn focus(&mut self, node_id: usize) -> bool {
+        let mut doc = self.doc.borrow_mut();
+        let takes_text = doc
+            .get_node(node_id)
+            .and_then(|node| node.element_data())
+            .and_then(|el| el.text_input_data())
+            .is_some();
+        if !takes_text {
+            return false;
+        }
+        doc.set_focus_to(node_id);
+        // At the end: a caret at zero puts everything typed before what is there.
+        doc.with_text_input(node_id, |mut driver| driver.move_to_text_end());
+        true
+    }
+
+    /// Whether anything on the page has keyboard focus, so a key a focused field
+    /// declined is not then handed to the scroller.
+    pub fn has_focus(&self) -> bool {
+        self.doc.borrow().get_focussed_node_id().is_some()
+    }
+
+    /// What a key does to the focused element.
+    ///
+    /// The key-to-edit mapping is a pure decision and lives in [`crate::keys`];
+    /// this is the half that needs a document.
+    ///
+    /// Returns whether anything changed, so a key that does nothing costs no
+    /// frame. The events are dispatched *around* the edit — `keydown` before,
+    /// `input` after — which is the order an autocomplete or a controlled input
+    /// is written against, and the reason this exists beside `type_into`.
+    pub fn key_to_focused(&mut self, key: &crate::keys::Key) -> bool {
+        use crate::keys::Edit;
+
+        let focused = self.doc.borrow().get_focussed_node_id();
+        let Some(node_id) = focused else {
+            return false;
+        };
+        let edit = crate::keys::edit_for(key);
+
+        // Tab moves between controls rather than into one, so it is answered
+        // before the field is consulted at all.
+        if edit == Edit::FocusNext || edit == Edit::FocusPrevious {
+            self.dispatch_key(node_id, "keydown", &key.name);
+            let moved = {
+                let mut doc = self.doc.borrow_mut();
+                // Blitz offers forward only. Backwards is left unhandled rather
+                // than faked by cycling round the whole form.
+                match edit {
+                    Edit::FocusNext => doc.focus_next_node().is_some(),
+                    _ => false,
+                }
+            };
+            self.dispatch_key(node_id, "keyup", &key.name);
+            return moved;
+        }
+
+        let takes_text = {
+            let doc = self.doc.borrow();
+            doc.get_node(node_id)
+                .and_then(|node| node.element_data())
+                .and_then(|el| el.text_input_data())
+                .is_some()
+        };
+        if !takes_text {
+            // Not a field, but the key is still delivered: a page may be
+            // listening for it on a button or on the document.
+            for kind in ["keydown", "keypress", "keyup"] {
+                self.dispatch_key(node_id, kind, &key.name);
+            }
+            return false;
+        }
+
+        let before = self.field_value(node_id);
+        self.dispatch_key(node_id, "keydown", &key.name);
+        if edit != Edit::Ignore {
+            let mut doc = self.doc.borrow_mut();
+            doc.with_text_input(node_id, |mut driver| match edit {
+                Edit::Insert(text) => driver.insert_or_replace_selection(text),
+                Edit::Backspace => driver.backdelete(),
+                Edit::DeleteForward => driver.delete(),
+                Edit::BackspaceWord => driver.backdelete_word(),
+                Edit::DeleteWord => driver.delete_word(),
+                Edit::Left => driver.move_left(),
+                Edit::Right => driver.move_right(),
+                Edit::WordLeft => driver.move_word_left(),
+                Edit::WordRight => driver.move_word_right(),
+                Edit::LineStart => driver.move_to_line_start(),
+                Edit::LineEnd => driver.move_to_line_end(),
+                Edit::TextStart => driver.move_to_text_start(),
+                Edit::TextEnd => driver.move_to_text_end(),
+                Edit::Up => driver.move_up(),
+                Edit::Down => driver.move_down(),
+                Edit::SelectLeft => driver.select_left(),
+                Edit::SelectRight => driver.select_right(),
+                Edit::SelectAll => driver.select_all(),
+                Edit::SelectToLineStart => driver.select_to_line_start(),
+                Edit::SelectToLineEnd => driver.select_to_line_end(),
+                Edit::FocusNext | Edit::FocusPrevious | Edit::Ignore => {}
+            });
+            // Typing reflows a form.
+            let _ = lay_out_doc(&mut doc);
+        }
+
+        let after = self.field_value(node_id);
+        let changed = before != after;
+        if edit.types() {
+            self.dispatch_key(node_id, "keypress", &key.name);
+        }
+        self.dispatch_key(node_id, "keyup", &key.name);
+
+        // A user edit fires `input`; script setting `.value` must not, or a
+        // framework that re-renders on its own write would loop.
+        if changed
+            && let Some(script) = self.script.as_mut()
+        {
+            let _ = script.dispatch(node_id, "input");
+            let settled = script.settle();
+            let dirty = script.take_dirty();
+            self.settled = Some(settled);
+            if dirty {
+                self.note_layout_failure(lay_out(&self.doc));
+            }
+        }
+
+        // The caret is drawn, so a motion is still a new picture.
+        changed || edit.moves_the_caret()
+    }
+
     /// What a text field currently holds.
     ///
     /// Read from the editor rather than the `value` attribute, because typing
@@ -2186,6 +2442,43 @@ impl Page {
             node_id = node.parent?;
         }
         None
+    }
+
+
+    /// Everything on screen a human could act on, and where it is.
+    ///
+    /// The snapshot's own refs rather than a second opinion about what is
+    /// clickable, so the overlay cannot offer a target the verb layer refuses.
+    /// What this adds is the geometry the outline leaves out.
+    ///
+    /// Viewport coordinates, past the scroll offset. Offscreen elements are
+    /// dropped rather than clamped, so a label never points at something
+    /// invisible.
+    pub fn hint_targets(&self) -> Vec<HintTarget> {
+        let snapshot = self.snapshot();
+        let doc = self.doc.borrow();
+        let (width, height) = (self.options.width as f64, self.options.height as f64);
+
+        snapshot
+            .refs
+            .iter()
+            .filter_map(|entry| {
+                let (x, y, w, h) = hint_rect(&doc, entry.node_id)?;
+                // Intersection, not containment: a link half off the right edge
+                // is still one a human can see and click.
+                let visible = x < width && y < height && x + w > 0.0 && y + h > 0.0;
+                if !visible {
+                    return None;
+                }
+                Some(HintTarget {
+                    entry: entry.clone(),
+                    x,
+                    y,
+                    width: w,
+                    height: h,
+                })
+            })
+            .collect()
     }
 
     /// The document's visible text, for the case where the caller wants prose

@@ -54,6 +54,28 @@ const MAX_UNKNOWN_VERBS: usize = 64;
 /// reported in full, so a truncated list is visibly truncated.
 const MAX_FIND_MATCHES: usize = 20;
 
+/// What the viewer lane offers, advertised in every `status`. The names are the
+/// message types a viewer may send, so this and [`handle`]'s arms are one set
+/// said twice, checked by a test.
+///
+/// Note what is *not* here: `pointer`. This lane drops a pointer press and move,
+/// so offering one would be offering a mode that barely works.
+const VIEWER_FEATURES: &[&str] = &[
+    "hints", "act", "insert", "history", "reload", "input_keys",
+];
+
+/// How many keys one batch may carry: far above any human burst, far below
+/// anything that would stall the page thread.
+/// The roles a caret can go in. The same question
+/// [`crate::engine::Page::focus`] answers from the document; kept in step by
+/// `only_the_roles_that_take_a_caret_are_offered`.
+const TEXT_ROLES: &[&str] = &["textbox", "searchbox", "combobox"];
+
+const MAX_KEY_BATCH: usize = 256;
+
+/// How much text one keystroke may insert. A character, or an IME commit.
+const MAX_KEY_TEXT: usize = 64;
+
 const PAGE_SCROLL: f64 = 0.9;
 const LINE_SCROLL: f64 = 64.0;
 
@@ -181,6 +203,18 @@ struct Session {
     /// against; this is the evidence that an agent's `@e5` still means what the
     /// agent read. See [`resolve_ref`].
     served_refs: Option<Vec<crate::snapshot::RefEntry>>,
+    /// The refs this session last handed to a *viewer*, as a hint overlay.
+    ///
+    /// Separate from `served_refs` so that minting one does not expire the other:
+    /// a human pressing `f` is not asking the agent to re-snapshot. `resolve_ref`
+    /// honours either, under the same `same_target` rule.
+    hint_refs: Option<Vec<crate::snapshot::RefEntry>>,
+    /// Where this session has been, so a viewer can go back.
+    ///
+    /// Held here rather than in the page because a page is replaced on every
+    /// navigation and history is the one thing that has to outlive that. See
+    /// [`History`] for what is and is not a history entry.
+    history: History,
     /// Verb names callers asked for that this session does not have, counted.
     ///
     /// Free telemetry on the gap between what this engine offers and what the
@@ -201,6 +235,14 @@ struct Session {
     /// the caller decides whether to keep it.
     recording: crate::replay::Recording,
 
+    /// The page moved and no viewer has been shown it.
+    ///
+    /// Rendering costs about 13ms against under 1ms to apply a keystroke, and the
+    /// page runs on one thread — so a frame rendered for a viewer that cannot
+    /// take it is 13ms the next keystroke waits for. Deferred until somebody can,
+    /// which also makes what they get more current.
+    frame_owed: bool,
+
     /// Whether a human is typing a credential right now.
     ///
     /// While this is set every control verb that reads the page is refused (see
@@ -211,6 +253,61 @@ struct Session {
     /// frames. roadmap-history.md §5.10 specified withholding frames *and*
     /// snapshots; only the snapshot half is built, and the refusal text says so.
     login: bool,
+}
+
+/// Where this session has been, and where forward is.
+///
+/// Kept by the engine because `navigate` to the previous URL is a *new* visit,
+/// so a viewer holding its own list could not implement back. Only navigations
+/// that actually landed are entries: a failed one changed no page, and a reload
+/// is not a place.
+#[derive(Debug, Clone, Default)]
+struct History {
+    entries: Vec<Url>,
+    /// Index of the current page in `entries`. Meaningless when `entries` is
+    /// empty, which is the state before the first navigation lands.
+    index: usize,
+}
+
+impl History {
+    /// A history that starts on the page a session opened on. Without the seed
+    /// the first `back` refuses, so the fixtures use it too.
+    fn seeded(url: Url) -> History {
+        History {
+            entries: vec![url],
+            index: 0,
+        }
+    }
+
+    /// Record a navigation the session actually performed. Going somewhere new
+    /// after stepping back discards the forward entries, as any browser does.
+    fn visit(&mut self, url: Url) {
+        if self.entries.get(self.index) == Some(&url) {
+            return;
+        }
+        if !self.entries.is_empty() {
+            self.entries.truncate(self.index + 1);
+            self.index += 1;
+        }
+        self.entries.push(url);
+        self.index = self.entries.len() - 1;
+    }
+
+    /// Where stepping `delta` would land, without moving. `None` at either end
+    /// rather than clamping, so a viewer can say there is nothing back there.
+    fn peek(&self, delta: isize) -> Option<Url> {
+        let target = self.index.checked_add_signed(delta)?;
+        self.entries.get(target).cloned()
+    }
+
+    /// Commit a step that [`History::peek`] approved.
+    fn step(&mut self, delta: isize) {
+        if let Some(target) = self.index.checked_add_signed(delta)
+            && target < self.entries.len()
+        {
+            self.index = target;
+        }
+    }
 }
 
 impl Session {
@@ -260,6 +357,11 @@ impl Session {
             // this string should find out here rather than from a missing
             // feature later.
             "engine": "h5i-browser-light",
+            // What this lane offers, so a viewer binds keys from the list
+            // rather than from the engine name above. It watches boxes running
+            // other engines too, and "can I ask for an overlay" is the question
+            // it needs answered.
+            "features": VIEWER_FEATURES,
         })
     }
 
@@ -277,13 +379,65 @@ impl Session {
         }))
     }
 
+    /// Land on a new page, and record everything that follows.
+    ///
+    /// Every place that replaces `self.page` goes through here — a viewer
+    /// following a link, `navigate`, a form submission, and a `click` on an href
+    /// — because the bookkeeping is identical: history gains an entry and every
+    /// ref anyone holds describes a document that is gone. Two of the four used
+    /// to do neither, which showed up as `H` doing nothing after a link.
+    ///
+    /// Not used by `reload` or a history step: neither is a new place.
+    fn land(&mut self, page: crate::engine::Page) {
+        let url = page.url().clone();
+        self.page = page;
+        self.history.visit(url);
+        // Both handle sets described the document being left. `same_target`
+        // would usually catch a stale ref, but only if the new document does not
+        // happen to put the same role at the same node id.
+        self.hint_refs = None;
+        self.served_refs = None;
+    }
+
+    /// One key, to whatever has focus, or to the page if nothing does.
+    ///
+    /// With a field focused the key edits it. With nothing focused the scrolling
+    /// keys keep their old meaning. The field is asked first, or a page that
+    /// focuses a search box on load would scroll on every space.
+    fn type_key(&mut self, key: &crate::keys::Key) -> bool {
+        if self.page.key_to_focused(key) {
+            return true;
+        }
+        // Only now is it a scroll: a space in a field is a space.
+        let focused = self.page.has_focus();
+        if focused {
+            return false;
+        }
+        let (_, viewport_height) = self.viewport();
+        match scroll_for_key(&key.name, viewport_height as f64) {
+            Some(delta) => self.page.scroll_by(0.0, delta),
+            None => false,
+        }
+    }
+
+    /// Add a frame to `out`, or remember that one is owed. The single place the
+    /// deferral decision is made. See [`Session::frame_owed`].
+    fn show(&mut self, may_render: bool, out: &mut Vec<Value>) -> Result<(), H5iError> {
+        if may_render {
+            out.push(self.frame_message()?);
+        } else {
+            self.frame_owed = true;
+        }
+        Ok(())
+    }
+
     /// Follow a link, replacing the page. A failed navigation leaves the
     /// current page in place and reports itself, because a viewer that goes
     /// blank on a denied link is indistinguishable from one that crashed.
     fn navigate(&mut self, url: &Url) -> Result<Vec<Value>, H5iError> {
         match self.factory.open(url) {
             Ok(page) => {
-                self.page = page;
+                self.land(page);
                 Ok(vec![self.url_message()])
             }
             Err(error) => Ok(vec![json!({
@@ -402,6 +556,8 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         None => None,
     };
 
+    // Captured before `page` is moved into the session.
+    let page_url = page.url().clone();
     let session = Session {
         factory,
         page,
@@ -410,6 +566,9 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         actions,
         last_snapshot: None,
         served_refs: None,
+        hint_refs: None,
+        frame_owed: false,
+        history: History::seeded(page_url),
         unknown_verbs: std::collections::BTreeMap::new(),
         recording: crate::replay::Recording::default(),
         login: false,
@@ -486,6 +645,11 @@ fn run_session(mut session: Session, rx: Receiver<Command>, once: bool) {
                             send_frame(viewer, frame);
                         }
                     }
+                    // The ack may have freed the only viewer there was, and the
+                    // page may have moved while it was busy. This is where that
+                    // frame is finally rendered — of the page as it is now,
+                    // rather than as it was when the change happened.
+                    serve_owed(&mut session, &mut viewers);
                     continue;
                 }
                 if message.get("type").and_then(Value::as_str) == Some("config")
@@ -495,12 +659,16 @@ fn run_session(mut session: Session, rx: Receiver<Command>, once: bool) {
                         message.get("pacing").and_then(Value::as_str) == Some("ack");
                 }
 
-                match handle(&mut session, &message) {
+                // Asked before the message is handled, because the answer is
+                // what decides whether a frame is rendered at all.
+                let may_render = anyone_ready(&viewers);
+                match handle_with(&mut session, &message, may_render) {
                     Ok(out) => dispatch(&mut viewers, id, out),
                     Err(error) => {
                         eprintln!("h5i-browser-light: {error}");
                     }
                 }
+                serve_owed(&mut session, &mut viewers);
             }
 
             Command::Control { request, reply } => {
@@ -531,6 +699,38 @@ fn dispatch(viewers: &mut HashMap<u64, Viewer>, actor: u64, out: Vec<Value>) {
             }
         } else if let Some(viewer) = viewers.get(&actor) {
             viewer.send(&message);
+        }
+    }
+}
+
+/// Whether a frame rendered now could reach anybody.
+///
+/// A viewer under ack pacing that still owes one cannot take another, so the
+/// frame would be held and then dropped when the next replaced it.
+fn anyone_ready(viewers: &HashMap<u64, Viewer>) -> bool {
+    viewers
+        .values()
+        .any(|viewer| !(viewer.ack_pacing && viewer.awaiting_ack))
+}
+
+/// Render and deliver the frame the page owes, if anyone can take it now.
+///
+/// The deferred half of [`Session::show`], called after every viewer message and
+/// every ack — the two ways the answer can change.
+fn serve_owed(session: &mut Session, viewers: &mut HashMap<u64, Viewer>) {
+    if !session.frame_owed || !anyone_ready(viewers) {
+        return;
+    }
+    match session.frame_message() {
+        Ok(frame) => {
+            session.frame_owed = false;
+            for viewer in viewers.values_mut() {
+                send_frame(viewer, frame.clone());
+            }
+        }
+        Err(error) => {
+            // Left owed: the next ack is another chance to show it.
+            eprintln!("h5i-browser-light: could not render a frame: {error}");
         }
     }
 }
@@ -1220,14 +1420,13 @@ fn navigate_to(session: &mut Session, target: &str) -> Result<(), Value> {
     };
     match session.factory.open(&resolved) {
         Ok(page) => {
-            session.page = page;
-            // The refs the caller last read describe a page this session is no
-            // longer on. Dropping them here is what makes a fused navigation
-            // safe: without it a `@ref` from before would be checked against a
-            // reading of a different document, and `same_target` could match by
-            // coincidence (same ordinal, same role, same href) on a page the
-            // agent has never seen.
-            session.served_refs = None;
+            // Which drops the refs the caller last read, because they describe a
+            // page this session is no longer on. That is what makes a fused
+            // navigation safe: without it a `@ref` from before would be checked
+            // against a reading of a different document, and `same_target` could
+            // match by coincidence — same ordinal, same role, same href — on a
+            // page the agent has never seen.
+            session.land(page);
             Ok(())
         }
         // A refusal is an answer, not a crash: the allowlist saying no is the
@@ -1742,7 +1941,7 @@ fn control_verb_inner(
             };
             match session.factory.open_submission(&submission) {
                 Ok(page) => {
-                    session.page = page;
+                    session.land(page);
                     (
                         json!({
                             "ok": true,
@@ -1820,7 +2019,7 @@ fn control_verb_inner(
             };
             match session.factory.open(&resolved) {
                 Ok(page) => {
-                    session.page = page;
+                    session.land(page);
                     (json!({"ok": true, "url": session.page.url().to_string()}), true)
                 }
                 Err(error) => (VerbError::refused(format!("{error}")).reply(), false),
@@ -2535,17 +2734,30 @@ fn resolve_ref(
     // No snapshot has been served, so the caller cannot have read this ref
     // anywhere. Distinguished from a stale one because the fix differs: this is
     // "take a snapshot", that is "take another".
-    let Some(served) = session.served_refs.as_ref() else {
+    // Either reading counts: the agent's snapshot, or the overlay a human is
+    // looking at. Kept apart so "no reading at all" stays distinguishable from
+    // "a reading that no longer matches".
+    let readings = [
+        session.served_refs.as_ref(),
+        session.hint_refs.as_ref(),
+    ];
+    if readings.iter().all(Option::is_none) {
         return Err(VerbError::no_snapshot(reference));
-    };
+    }
     let wanted = reference.trim_start_matches('@');
-    match served.iter().find(|e| e.id == wanted) {
-        Some(before) if same_target(before, entry) => Ok(entry.clone()),
-        // Either it named something else in the served reading, or it was not
-        // in it at all. Both mean the same thing to the caller and get the same
-        // answer, which names what the ref points at *now*. The one piece of
-        // evidence the session has and the agent does not.
-        Some(_) | None => Err(VerbError::stale_ref(reference, &describe(entry))),
+    let minted = readings
+        .into_iter()
+        .flatten()
+        .flat_map(|refs| refs.iter())
+        .find(|e| e.id == wanted && same_target(e, entry))
+        .cloned();
+    match minted {
+        Some(_) => Ok(entry.clone()),
+        // Either it named something else in every reading served, or it was not
+        // in any of them. Both mean the same thing to the caller and get the
+        // same answer, which names what the ref points at *now*. The one piece
+        // of evidence the session has and the agent does not.
+        None => Err(VerbError::stale_ref(reference, &describe(entry))),
     }
 }
 
@@ -2601,6 +2813,28 @@ fn login_safe_url(url: &Url) -> String {
     }
 }
 
+/// Read one key off the wire, in the shape `input_keyboard` already uses.
+fn key_of(value: &Value) -> crate::keys::Key {
+    crate::keys::Key {
+        // Collapsed, because it is page-bound text off a socket and it reaches
+        // a DOM event name.
+        name: crate::snapshot::one_line(
+            value.get("key").and_then(Value::as_str).unwrap_or_default(),
+        ),
+        text: value
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            // Bounded: `text` is what gets inserted, and a viewer sending a
+            // megabyte in one keystroke should not be able to.
+            .map(|s| s.chars().take(MAX_KEY_TEXT).collect()),
+        modifiers: value
+            .get("modifiers")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+    }
+}
+
 /// A ref entry as one line of prose, safe to put in an error message.
 ///
 /// The name is page-derived, and an error message is read *outside* the
@@ -2632,10 +2866,26 @@ fn write_port_file(path: &Path, port: u16) -> Result<(), H5iError> {
 
 /// Handle one client message, returning what to send back.
 ///
-/// Split out from the socket so the protocol can be tested without one.
+/// Split out from the socket so the protocol can be tested without one, which is
+/// why this shape is kept: a test says what it sent and reads what came back,
+/// with rendering always allowed.
+#[cfg(test)]
 fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError> {
+    handle_with(session, message, true)
+}
+
+/// The same, told whether a frame it produced could actually be delivered.
+///
+/// `may_render` is not an optimisation hint that can be ignored: a `false` here
+/// means every viewer still owes an ack, so a frame rendered now would be held
+/// and then thrown away when the next one replaced it. The page moves either
+/// way; what defers is the picture of it. See [`Session::frame_owed`].
+fn handle_with(
+    session: &mut Session,
+    message: &Value,
+    may_render: bool,
+) -> Result<Vec<Value>, H5iError> {
     let kind = message.get("type").and_then(Value::as_str).unwrap_or("");
-    let (_, viewport_height) = session.viewport();
 
     let changed = match kind {
         // The viewer announces its pacing; answering with the current frame
@@ -2660,7 +2910,7 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
                 let y = message.get("y").and_then(Value::as_f64).unwrap_or(0.0) as f32;
                 if let Some(url) = session.page.link_at(x, y) {
                     let mut out = session.navigate(&url)?;
-                    out.push(session.frame_message()?);
+                    session.show(may_render, &mut out)?;
                     return Ok(out);
                 }
                 false
@@ -2668,25 +2918,345 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
             _ => false,
         },
 
-        // keyUp never scrolls: acting on both halves would double every press.
+        // ─── the hint lane ──────────────────────────────────────────────
+        //
+        // What a viewer asks for instead of aiming a pointer. Three messages,
+        // and the split between them is a security boundary rather than a
+        // tidiness one: `hints` and `act` go through the verb layer, which is
+        // where refusals, staleness and the action log already live, while
+        // `insert` deliberately does *not*, because the verb layer's `type`
+        // resolves `$H5I_SECRET_…` against the broker and a viewer socket must
+        // never be a way to ask for a credential. See `viewer_insert`.
+        "hints" => return Ok(vec![viewer_hints(session, message)]),
+
+        "act" => return viewer_act(session, message, may_render),
+
+        "insert" => return viewer_insert(session, message, may_render),
+
+        "history" => return viewer_history(session, message, may_render),
+
+        // Fetching the current URL again. On the viewer lane because a human
+        // watching a page that failed to load has no other way to ask, and the
+        // agent's `reload` verb is on a socket they are not holding.
+        "reload" => {
+            let here = session.page.url().clone();
+            match session.factory.open(&here) {
+                Ok(page) => {
+                    session.page = page;
+                    // Not a `visit`: a reload is not a place. Both handle sets
+                    // go, because the document was replaced.
+                    session.hint_refs = None;
+                    session.served_refs = None;
+                    let mut out = vec![session.url_message()];
+                    session.show(may_render, &mut out)?;
+                    return Ok(out);
+                }
+                // Answered on the lane the request came in on. A `page_error`
+                // would land in the console pane, count against the page's own
+                // errors, and never reach the status line where the person who
+                // pressed the key is looking: the page did not fail, the thing
+                // they just asked for did.
+                Err(error) => {
+                    return Ok(vec![viewer_refusal(&format!(
+                        "reloading failed: {error}"
+                    ))]);
+                }
+            }
+        }
+
+        // keyUp never acts: doing both halves would type every character twice.
         "input_keyboard"
             if message.get("eventType").and_then(Value::as_str) == Some("keyDown") =>
         {
-            let key = message.get("key").and_then(Value::as_str).unwrap_or("");
-            match scroll_for_key(key, viewport_height as f64) {
-                Some(delta) => session.page.scroll_by(0.0, delta),
-                None => false,
+            session.type_key(&key_of(message))
+        }
+
+        // A burst of typing, applied in order and rendered once.
+        //
+        // The message a viewer sends when the human is typing faster than the
+        // round trip. Batching is what makes real key events affordable: a
+        // keystroke is a *delta*, so unlike `insert` it cannot be coalesced by
+        // dropping the ones in between — but the expensive half is the relayout
+        // and the render, and those are per batch rather than per key.
+        "input_keys" => {
+            let keys = message.get("keys").and_then(Value::as_array);
+            let mut changed = false;
+            let mut applied = 0usize;
+            for value in keys.into_iter().flatten().take(MAX_KEY_BATCH) {
+                changed |= session.type_key(&key_of(value));
+                applied += 1;
             }
+            // Acknowledged whether or not the page moved: if the release signal
+            // were the frame, a batch that changed nothing would never release
+            // and typing would stop.
+            let mut out = vec![json!({
+                "type": "act",
+                "action": "input_keys",
+                "reply": {"ok": true, "applied": applied},
+            })];
+            if changed {
+                session.show(may_render, &mut out)?;
+            }
+            return Ok(out);
         }
 
         _ => false,
     };
 
+    let mut out = Vec::new();
     if changed {
-        Ok(vec![session.frame_message()?])
-    } else {
-        Ok(Vec::new())
+        session.show(may_render, &mut out)?;
     }
+    Ok(out)
+}
+
+/// The overlay: every actionable element on screen, labelled.
+///
+/// Labels are minted here so two viewers cannot disagree about what `sd` means,
+/// and remembered as `hint_refs` so the `act` that follows is checked against
+/// the reading the human was looking at. The viewport rides along because the
+/// viewer has to scale these coordinates into whatever it draws on.
+fn viewer_hints(session: &mut Session, message: &Value) -> Value {
+    let mut targets = session.page.hint_targets();
+
+    // Narrowed by what the human is about to do. `F` and `gi` mean "type into
+    // something", and offering a link there is offering a refusal. A narrowing
+    // of the same list, never a second opinion about what is actionable.
+    if message.get("for").and_then(Value::as_str) == Some("text") {
+        targets.retain(|target| TEXT_ROLES.contains(&target.entry.role.as_str()));
+    }
+
+    let labels = crate::hints::labels(targets.len());
+    let (viewport_width, viewport_height) = session.viewport();
+    let page_url = session.page.url().clone();
+
+    let items: Vec<Value> = targets
+        .iter()
+        .zip(labels.iter())
+        .map(|(target, label)| {
+            json!({
+                "label": label,
+                "ref": target.entry.id,
+                "role": target.entry.role,
+                // Collapsed, like every other page-derived string that leaves
+                // this engine. The viewers sanitize on arrival as well: this is
+                // the engine keeping its own output on one line, not the
+                // boundary check.
+                "name": crate::snapshot::one_line(&target.entry.name),
+                // Resolved against the page: a viewer copying a link wants one
+                // it can paste, and only the engine knows the base.
+                "href": target
+                    .entry
+                    .href
+                    .as_deref()
+                    .and_then(|href| page_url.join(href).ok())
+                    .map(|url| crate::snapshot::one_line(url.as_str())),
+                "x": target.x,
+                "y": target.y,
+                "w": target.width,
+                "h": target.height,
+            })
+        })
+        .collect();
+
+    session.hint_refs = Some(targets.into_iter().map(|t| t.entry).collect());
+    json!({
+        "type": "hints",
+        "viewportWidth": viewport_width,
+        "viewportHeight": viewport_height,
+        "items": items,
+    })
+}
+
+/// Act on a hint, through the same verb an agent would have sent.
+///
+/// This dispatches `click @e7`, so the receipt names a role and an accessible
+/// name. A pixel click records a coordinate, which tells a reviewer nothing.
+fn viewer_act(
+    session: &mut Session,
+    message: &Value,
+    may_render: bool,
+) -> Result<Vec<Value>, H5iError> {
+    let Some(reference) = message.get("ref").and_then(Value::as_str) else {
+        return Ok(vec![viewer_refusal("`act` needs `ref`.")]);
+    };
+    let action = message
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("click");
+
+    // An allowlist, not a pass-through of whatever `verb` the viewer names.
+    // The viewer socket is not the control socket and must not become a second
+    // way to reach every verb: `script`, `env` and `requests` are not things a
+    // hint overlay has any business asking for.
+    let request = match action {
+        "click" => json!({"verb": "click", "ref": reference}),
+        // Not a verb: an agent that wants text in a field says `type`. This is
+        // the human's half — put the caret here, change nothing.
+        "focus" => {
+            let snapshot = session.page.snapshot();
+            let entry = match resolve_ref(session, &snapshot, reference) {
+                Ok(entry) => entry,
+                Err(e) => {
+                    return Ok(vec![json!({
+                        "type": "act",
+                        "action": "focus",
+                        "reply": viewer_wording(e.reply()),
+                    })]);
+                }
+            };
+            let role = entry.role.clone();
+            let reply = if session.page.focus(entry.node_id) {
+                json!({"ok": true, "ref": reference})
+            } else {
+                viewer_wording(
+                    VerbError::wrong_role(reference, &role, "a field to type into").reply(),
+                )
+            };
+            let mut out = vec![json!({"type": "act", "action": "focus", "reply": reply})];
+            // The caret is drawn, so focusing is something to look at.
+            session.show(may_render, &mut out)?;
+            return Ok(out);
+        }
+        "press" => {
+            let Some(key) = message.get("key").and_then(Value::as_str) else {
+                return Ok(vec![viewer_refusal("`act press` needs `key`.")]);
+            };
+            json!({"verb": "press", "ref": reference, "key": key})
+        }
+        "check" | "uncheck" => json!({
+            "verb": "set_checked",
+            "ref": reference,
+            "checked": action == "check",
+        }),
+        other => {
+            return Ok(vec![viewer_refusal(&format!(
+                "a viewer may act with `click`, `focus`, `press`, `check` or `uncheck`, \
+                 not `{}`.",
+                crate::snapshot::one_line(other)
+            ))]);
+        }
+    };
+
+    let (reply, moved) = control_verb(session, &request);
+    let mut out = vec![json!({
+        "type": "act",
+        "action": action,
+        "reply": viewer_wording(reply),
+    })];
+    if moved {
+        // The overlay described the page before the click, so it is dropped.
+        session.hint_refs = None;
+        out.push(session.url_message());
+        session.show(may_render, &mut out)?;
+    }
+    Ok(out)
+}
+
+/// Put text into a field a hint named.
+///
+/// Deliberately not `Verb::Type`, which substitutes `$H5I_SECRET_…` from the
+/// broker. The viewer socket carries no grant, so a path from it to the broker
+/// would let anything reaching the stream port resolve a secret into a DOM it is
+/// already watching. `type_into` is the primitive underneath, with no broker.
+fn viewer_insert(
+    session: &mut Session,
+    message: &Value,
+    may_render: bool,
+) -> Result<Vec<Value>, H5iError> {
+    let Some(reference) = message.get("ref").and_then(Value::as_str) else {
+        return Ok(vec![viewer_refusal("`insert` needs `ref`.")]);
+    };
+    let text = message.get("text").and_then(Value::as_str).unwrap_or("");
+
+    let snapshot = session.page.snapshot();
+    let entry = match resolve_ref(session, &snapshot, reference) {
+        Ok(entry) => entry,
+        Err(e) => {
+            return Ok(vec![json!({
+                "type": "act",
+                "action": "insert",
+                "reply": viewer_wording(e.reply()),
+            })]);
+        }
+    };
+    let node_id = entry.node_id;
+    let role = entry.role.clone();
+    if !session.page.type_into(node_id, text) {
+        let refusal = VerbError::wrong_role(reference, &role, "a field to type into").reply();
+        return Ok(vec![json!({"type": "act", "action": "insert", "reply": refusal})]);
+    }
+    let mut out = vec![
+        json!({"type": "act", "action": "insert", "reply": {"ok": true, "ref": reference}}),
+    ];
+    session.show(may_render, &mut out)?;
+    Ok(out)
+}
+
+/// Step back or forward through the pages this session actually visited.
+fn viewer_history(
+    session: &mut Session,
+    message: &Value,
+    may_render: bool,
+) -> Result<Vec<Value>, H5iError> {
+    let delta = message.get("go").and_then(Value::as_i64).unwrap_or(0) as isize;
+    if delta == 0 {
+        return Ok(vec![viewer_refusal("`history` needs `go` to be -1 or 1.")]);
+    }
+    let Some(target) = session.history.peek(delta) else {
+        let edge = if delta < 0 { "back" } else { "forward" };
+        return Ok(vec![viewer_refusal(&format!(
+            "there is nothing {edge} from here in this session's history."
+        ))]);
+    };
+    match session.factory.open(&target) {
+        Ok(page) => {
+            session.page = page;
+            // Stepping, not visiting: a back that pushed an entry would make
+            // forward unreachable.
+            session.history.step(delta);
+            session.hint_refs = None;
+            session.served_refs = None;
+            let mut out = vec![session.url_message()];
+            session.show(may_render, &mut out)?;
+            Ok(out)
+        }
+        Err(error) => Ok(vec![viewer_refusal(&format!("going back failed: {error}"))]),
+    }
+}
+
+/// A refusal shaped like every other viewer reply, so a viewer has one thing to
+/// read rather than a reply on success and a silence on failure.
+/// A ref refusal, in words that fit whoever is being refused.
+///
+/// The verb layer names `snapshot`, a verb a person at a viewer does not have.
+/// The *code* is left alone; only the sentence changes.
+fn viewer_wording(mut reply: Value) -> Value {
+    let code = reply
+        .get("code")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let replacement = match code.as_str() {
+        "no-snapshot" | "no-such-ref" => {
+            "that label is not on this page any more. Ask for the overlay again."
+        }
+        "stale-ref" => {
+            "the page moved since those labels were drawn. Ask for the overlay again."
+        }
+        _ => return reply,
+    };
+    if let Some(object) = reply.as_object_mut() {
+        object.insert("error".into(), json!(replacement));
+    }
+    reply
+}
+
+fn viewer_refusal(reason: &str) -> Value {
+    json!({
+        "type": "act",
+        "reply": {"ok": false, "error": reason},
+    })
 }
 
 /// How far a key should scroll, or `None` if it is not a scrolling key.
@@ -2798,6 +3368,7 @@ mod tests {
         };
         let factory = PageFactory::new(broker.clone(), sources, options);
         let page = factory.from_html(html, &Url::parse("https://example.com/").unwrap());
+        let page_url = page.url().clone();
         let session = Session {
             factory,
             page,
@@ -2806,6 +3377,9 @@ mod tests {
             actions: None,
             last_snapshot: None,
             served_refs: None,
+            hint_refs: None,
+            frame_owed: false,
+            history: History::seeded(page_url),
             unknown_verbs: std::collections::BTreeMap::new(),
             recording: crate::replay::Recording::default(),
             login: false,
@@ -3883,6 +4457,7 @@ mod tests {
         };
         let factory = PageFactory::new(broker, fonts.sources.clone(), options);
         let page = factory.from_html(html, &Url::parse("https://app.example/").unwrap());
+        let page_url = page.url().clone();
         Session {
             factory,
             page,
@@ -3891,6 +4466,9 @@ mod tests {
             actions: None,
             last_snapshot: None,
             served_refs: None,
+            hint_refs: None,
+            frame_owed: false,
+            history: History::seeded(page_url),
             unknown_verbs: std::collections::BTreeMap::new(),
             recording: crate::replay::Recording::default(),
             login: false,
@@ -5238,6 +5816,727 @@ mod tests {
         broadcast_change(&mut session, &mut nobody);
         assert_eq!(session.seq, before, "no viewers, no frame");
     }
+
+    // ─── the hint lane ──────────────────────────────────────────────────────
+
+    /// The claim the whole design rests on: a label taken off the overlay can be
+    /// acted on with no other reading first, because the overlay is made of the
+    /// same refs the verb layer resolves.
+    ///
+    /// `check` rather than `click`, so the assertion is about the ref and the
+    /// action rather than about where a link goes: following one asks the
+    /// allowlist a question this test is not about.
+    #[test]
+    fn every_hint_names_a_ref_the_verb_layer_will_honour() {
+        let mut session = session_with(
+            "<body><a href='/one'>One</a><input type='checkbox'><p>just words</p></body>",
+        );
+        let out = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let items = out[0]["items"].as_array().expect("items").clone();
+        assert!(items.len() >= 2, "{items:?}");
+
+        let box_item = items
+            .iter()
+            .find(|item| item["role"] == "checkbox")
+            .expect("the checkbox is on the overlay");
+        let reference = box_item["ref"].as_str().expect("a ref").to_string();
+        let out = handle(
+            &mut session,
+            &json!({"type": "act", "ref": reference, "action": "check"}),
+        )
+        .expect("act");
+        assert_eq!(out[0]["reply"]["ok"], true, "{:?}", out[0]);
+    }
+
+    /// And a link on the overlay reaches the verb layer too, which is visible
+    /// from the refusal it comes back with: the allowlist's, about where the
+    /// link goes, not the ref machinery's about a handle it does not recognise.
+    #[test]
+    fn a_link_on_the_overlay_is_refused_by_policy_rather_than_by_the_ref_check() {
+        let mut session = session_with("<body><a href='/one'>One</a></body>");
+        let out = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let reference = out[0]["items"][0]["ref"]
+            .as_str()
+            .expect("a ref")
+            .to_string();
+        let out = handle(
+            &mut session,
+            &json!({"type": "act", "ref": reference, "action": "click"}),
+        )
+        .expect("act");
+        let code = out[0]["reply"]["code"].as_str().unwrap_or_default();
+        assert!(
+            !matches!(code, "no-snapshot" | "stale-ref" | "no-such-ref"),
+            "the overlay's own label was not honoured as a ref: {:?}",
+            out[0]
+        );
+    }
+
+    /// The other half of the same claim, from the failure direction: a label the
+    /// overlay never minted is refused rather than acted on.
+    #[test]
+    fn a_ref_no_overlay_ever_served_is_refused() {
+        let mut session = session_with("<body><button>Press</button></body>");
+        let out = handle(
+            &mut session,
+            &json!({"type": "act", "ref": "@e99", "action": "click"}),
+        )
+        .expect("act");
+        assert_eq!(out[0]["reply"]["ok"], false, "{:?}", out[0]);
+    }
+
+    /// Prose is not a target. A page whose every paragraph got a label would be
+    /// a page with no usable labels.
+    #[test]
+    fn only_actionable_elements_get_a_label() {
+        let mut session = session_with("<body><p>one</p><p>two</p><p>three</p></body>");
+        let out = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        assert_eq!(out[0]["items"].as_array().expect("items").len(), 0);
+    }
+
+    /// The labels are the engine's, so two viewers watching one page cannot
+    /// disagree about what a keystroke means.
+    #[test]
+    fn labels_are_minted_by_the_engine_and_are_prefix_free() {
+        let mut links = String::from("<body>");
+        for i in 0..40 {
+            links.push_str(&format!("<a href='/{i}'>link {i}</a>"));
+        }
+        links.push_str("</body>");
+        let mut session = session_with(&links);
+        let out = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let labels: Vec<String> = out[0]["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|item| item["label"].as_str().expect("a label").to_string())
+            .collect();
+        assert_eq!(labels.len(), 40);
+        for a in &labels {
+            for b in &labels {
+                if a != b {
+                    assert!(!b.starts_with(a.as_str()), "`{a}` is a prefix of `{b}`");
+                }
+            }
+        }
+    }
+
+    /// A link on the overlay carries somewhere a viewer can paste, not the raw
+    /// attribute. The engine is the only party that knows the base to resolve
+    /// against.
+    #[test]
+    fn a_hinted_links_href_is_resolved_against_the_page() {
+        let mut session = session_with("<body><a href='/docs/here'>Docs</a></body>");
+        let out = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        assert_eq!(
+            out[0]["items"][0]["href"],
+            "https://example.com/docs/here",
+            "{:?}",
+            out[0]["items"][0]
+        );
+    }
+
+    /// Offscreen elements are dropped rather than clamped: a label pointing at
+    /// something the human cannot see is worse than no label.
+    #[test]
+    fn a_target_below_the_fold_gets_no_label_until_it_is_scrolled_to() {
+        let mut session = session_with(
+            "<body><div style='height:4000px'>top</div><a href='/deep'>Deep</a></body>",
+        );
+        let before = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        assert_eq!(before[0]["items"].as_array().expect("items").len(), 0);
+
+        session.page.scroll_by(0.0, 4000.0);
+        let after = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        assert_eq!(after[0]["items"].as_array().expect("items").len(), 1);
+    }
+
+    /// The security rule the `insert` lane exists to keep. `Verb::Type` resolves
+    /// `$H5I_SECRET_…` against the broker; a viewer socket carries no grant, so
+    /// the same string typed there has to stay literal.
+    #[test]
+    fn a_viewer_cannot_resolve_a_secret_by_typing_its_placeholder() {
+        let (mut session, broker) = session_and_broker(
+            "<body><input id='f' type='text'></body>",
+            crate::secrets::Secrets::from_pairs(&[("TOKEN", "hunter2")]),
+        );
+        let _ = &broker;
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let reference = session.hint_refs.as_ref().expect("refs")[0].id.clone();
+
+        handle(
+            &mut session,
+            &json!({"type": "insert", "ref": reference, "text": "$H5I_SECRET_TOKEN"}),
+        )
+        .expect("insert");
+
+        let node_id = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        let value = session.page.field_value(node_id).expect("a field value");
+        assert_eq!(
+            value, "$H5I_SECRET_TOKEN",
+            "the viewer lane resolved a credential; it must stay literal"
+        );
+        assert!(!value.contains("hunter2"), "the secret reached the DOM");
+    }
+
+    /// The viewer socket is not a second control socket. It may click and type;
+    /// it may not ask for the request log or run script.
+    #[test]
+    fn a_viewer_may_not_reach_a_verb_the_hint_lane_does_not_offer() {
+        let mut session = session_with("<body><a href='/one'>One</a></body>");
+        let out = handle(
+            &mut session,
+            &json!({"type": "act", "ref": "@e1", "action": "script"}),
+        )
+        .expect("act");
+        assert_eq!(out[0]["reply"]["ok"], false, "{:?}", out[0]);
+        let error = out[0]["reply"]["error"].as_str().unwrap_or_default();
+        assert!(error.contains("`click`"), "{error}");
+    }
+
+    /// Looking at a page must not expire the agent's handles.
+    #[test]
+    fn minting_an_overlay_leaves_the_agents_own_refs_alone() {
+        let mut session = session_with("<body><input type='checkbox'></body>");
+        control_verb(&mut session, &json!({"verb": "snapshot"}));
+        let agents = session.served_refs.clone().expect("the agent read the page");
+
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        assert_eq!(
+            session.served_refs.as_ref(),
+            Some(&agents),
+            "a human looking at the page expired the agent's refs"
+        );
+
+        // And the agent's ref still resolves afterwards.
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({
+                "verb": "set_checked",
+                "ref": format!("@{}", agents[0].id),
+                "checked": true,
+            }),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+    }
+
+    /// A refusal a human can act on. The verb layer's own wording names
+    /// `snapshot`, which is a verb an agent has and a person at a viewer does
+    /// not, so following it would send them looking for a key that is not there.
+    #[test]
+    fn a_ref_refusal_on_the_viewer_lane_is_worded_for_the_person_reading_it() {
+        let mut session = session_with("<body><button>Press</button></body>");
+        let out = handle(
+            &mut session,
+            &json!({"type": "act", "ref": "@e99", "action": "click"}),
+        )
+        .expect("act");
+        let reply = &out[0]["reply"];
+        let error = reply["error"].as_str().unwrap_or_default();
+        assert!(!error.contains("snapshot"), "{error}");
+        assert!(error.contains("overlay"), "{error}");
+        // The code is untouched, so anything reading the reply as data still
+        // sees the same fact.
+        assert_eq!(reply["code"], "no-such-ref");
+    }
+
+    /// A viewer action that fails is the viewer's problem, not the page's. Sent
+    /// as a `page_error` it would count against the page's own errors and land
+    /// in a pane the human does not have open, instead of on the status line
+    /// where they are looking.
+    #[test]
+    fn a_failed_viewer_action_answers_on_the_lane_it_arrived_on() {
+        let mut session = session_with("<body><p>only page</p></body>");
+        for message in [
+            json!({"type": "history", "go": -1}),
+            json!({"type": "history", "go": 0}),
+        ] {
+            let out = handle(&mut session, &message).expect("history");
+            assert_eq!(out[0]["type"], "act", "{:?}", out[0]);
+            assert_eq!(out[0]["reply"]["ok"], false, "{:?}", out[0]);
+        }
+    }
+
+    /// The claim a viewer builds its keymap from, pinned in both directions.
+    ///
+    /// Every name advertised is a message [`handle`] answers, and `pointer` is
+    /// deliberately absent: this engine drops a pointer press and a pointer
+    /// move, so a viewer that offered to hand the page the pointer would be
+    /// offering a mode that does almost nothing.
+    #[test]
+    fn the_engine_advertises_the_lane_it_actually_has() {
+        // A page every probe below can actually do something to, and a focused
+        // field, because a key with nothing focused is correctly a no-op and
+        // that is not what this test is asking about.
+        let mut session = session_with(
+            "<body><a href='/one'>One</a><input type='text'></body>",
+        );
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let field = session
+            .hint_refs
+            .as_ref()
+            .expect("refs")
+            .iter()
+            .find(|e| e.role == "textbox")
+            .expect("a field")
+            .node_id;
+        session.page.type_into(field, "");
+        let status = session.status_message();
+        let advertised: Vec<&str> = status["features"]
+            .as_array()
+            .expect("a feature list")
+            .iter()
+            .map(|v| v.as_str().expect("a name"))
+            .collect();
+
+        assert!(
+            !advertised.contains(&"pointer"),
+            "this engine claimed a pointer lane it does not implement: {advertised:?}"
+        );
+
+        // And everything it claims is answered: a name `handle` does not know
+        // is a key bound to nothing. Probed with a real payload, since some of
+        // these correctly do nothing when given nothing.
+        let probe = |name: &str| -> Value {
+            match name {
+                "act" => json!({"type": "act", "ref": "@e1", "action": "click"}),
+                "insert" => json!({"type": "insert", "ref": "@e1", "text": "x"}),
+                "history" => json!({"type": "history", "go": -1}),
+                "input_keys" => json!({
+                    "type": "input_keys",
+                    "keys": [{"key": "a", "text": "a"}],
+                }),
+                other => json!({"type": other}),
+            }
+        };
+        for name in advertised {
+            let out = handle(&mut session, &probe(name)).expect("a reply");
+            assert!(
+                !out.is_empty(),
+                "`{name}` is advertised and answered with nothing"
+            );
+        }
+    }
+
+    /// The other half of the same fact, from the pointer's side: this is the
+    /// whole of what a click can reach here.
+    #[test]
+    fn a_pointer_press_does_nothing_and_a_release_only_follows_a_link() {
+        let mut session = session_with(
+            "<body><button>Press</button><input type='text'></body>",
+        );
+        for event in ["mousePressed", "mouseMoved"] {
+            let out = handle(
+                &mut session,
+                &json!({"type": "input_mouse", "eventType": event, "x": 20.0, "y": 20.0}),
+            )
+            .expect("a reply");
+            assert!(out.is_empty(), "`{event}` did something: {out:?}");
+        }
+        // And a key that is not a scroll key is dropped, so "type into the page"
+        // is not something this lane offers either.
+        let out = handle(
+            &mut session,
+            &json!({"type": "input_keyboard", "eventType": "keyDown", "key": "a"}),
+        )
+        .expect("a reply");
+        assert!(out.is_empty(), "a printable key reached the page: {out:?}");
+    }
+
+    // ─── real keys ──────────────────────────────────────────────────────────
+
+    /// The gap this closes: a keystroke used to reach the page only as one of
+    /// six scrolling keys, so there was no way to type into a focused field at
+    /// all, and no caret to move if there had been.
+    #[test]
+    fn a_key_types_into_the_focused_field() {
+        let mut session = session_with("<body><input type='text' id='f'></body>");
+        // Focus it the way a viewer would, by acting on the hint.
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let node = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        session.page.type_into(node, "");
+
+        for ch in ["h", "i"] {
+            handle(
+                &mut session,
+                &json!({"type": "input_keyboard", "eventType": "keyDown", "key": ch, "text": ch}),
+            )
+            .expect("a key");
+        }
+        assert_eq!(session.page.field_value(node).as_deref(), Some("hi"));
+    }
+
+    /// And the caret is real, which is the half `type` could never offer: it
+    /// sets a whole value and leaves the caret at the end.
+    #[test]
+    fn the_caret_moves_and_backspace_deletes_where_it_is() {
+        let mut session = session_with("<body><input type='text'></body>");
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let node = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        session.page.type_into(node, "abcd");
+
+        let key = |name: &str, text: Option<&str>| {
+            let mut m = json!({"type": "input_keyboard", "eventType": "keyDown", "key": name});
+            if let Some(text) = text {
+                m["text"] = json!(text);
+            }
+            m
+        };
+        // Left twice, then backspace: deletes the `b`, not the `d`.
+        for _ in 0..2 {
+            handle(&mut session, &key("ArrowLeft", None)).expect("left");
+        }
+        handle(&mut session, &key("Backspace", None)).expect("backspace");
+        assert_eq!(session.page.field_value(node).as_deref(), Some("acd"));
+
+        // And typing lands at the caret rather than at the end.
+        handle(&mut session, &key("X", Some("X"))).expect("x");
+        assert_eq!(session.page.field_value(node).as_deref(), Some("aXcd"));
+    }
+
+    /// A burst is one relayout and one frame rather than one of each per key.
+    /// Batching is what makes real key events affordable, and unlike `insert` a
+    /// keystroke is a delta, so nothing in a batch may be dropped.
+    #[test]
+    fn a_batch_applies_every_key_in_order() {
+        let mut session = session_with("<body><input type='text'></body>");
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let node = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        session.page.type_into(node, "");
+
+        let keys: Vec<Value> = "hello"
+            .chars()
+            .map(|c| json!({"key": c.to_string(), "text": c.to_string()}))
+            .collect();
+        let out = handle(&mut session, &json!({"type": "input_keys", "keys": keys}))
+            .expect("a batch");
+        assert_eq!(session.page.field_value(node).as_deref(), Some("hello"));
+
+        // One relayout and one frame for the whole burst, which is what makes
+        // real key events affordable: the expensive half is per batch, not per
+        // key. Counted as frames rather than messages, because the batch is also
+        // acknowledged and that acknowledgement is what releases the next one.
+        let frames = out.iter().filter(|m| m["type"] == "frame").count();
+        assert_eq!(frames, 1, "a batch encoded {frames} frames: {out:?}");
+        assert_eq!(out[0]["action"], "input_keys");
+        assert_eq!(out[0]["reply"]["applied"], 5);
+    }
+
+    /// With a field focused, space is a space. With nothing focused it is a page
+    /// down, which is what it has always been here and what a reader wants.
+    #[test]
+    fn a_space_is_text_in_a_field_and_a_scroll_outside_one() {
+        let mut session = session_with(&format!(
+            "<body><input type='text'><div style='height:4000px'>{}</div></body>",
+            "x ".repeat(50)
+        ));
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let node = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        session.page.type_into(node, "a");
+
+        let space = json!({"type": "input_keyboard", "eventType": "keyDown", "key": " ", "text": " "});
+        handle(&mut session, &space).expect("space");
+        assert_eq!(session.page.field_value(node).as_deref(), Some("a "));
+        assert_eq!(session.page.scroll_offset().1, 0.0, "a focused field let the page scroll");
+    }
+
+    /// A chord is a command. Typing an `s` into the field somebody was saving is
+    /// the failure this guards, and it is guarded on the wire as well as in the
+    /// table.
+    #[test]
+    fn a_modified_key_does_not_type_into_the_field() {
+        let mut session = session_with("<body><input type='text'></body>");
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let node = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        session.page.type_into(node, "");
+
+        handle(
+            &mut session,
+            &json!({"type": "input_keyboard", "eventType": "keyDown",
+                    "key": "s", "text": "s", "modifiers": 2}),
+        )
+        .expect("ctrl-s");
+        assert_eq!(session.page.field_value(node).as_deref(), Some(""));
+    }
+
+    /// keyUp is not a second keystroke.
+    #[test]
+    fn the_release_half_of_a_press_types_nothing() {
+        let mut session = session_with("<body><input type='text'></body>");
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let node = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        session.page.type_into(node, "");
+        for kind in ["keyDown", "keyUp"] {
+            handle(
+                &mut session,
+                &json!({"type": "input_keyboard", "eventType": kind, "key": "z", "text": "z"}),
+            )
+            .expect("a key");
+        }
+        assert_eq!(session.page.field_value(node).as_deref(), Some("z"));
+    }
+
+    /// `F` and `gi` mean "type into something". Offering a link there is
+    /// offering a label whose only possible answer is a refusal.
+    #[test]
+    fn asking_for_somewhere_to_type_labels_only_the_fields() {
+        let mut session = session_with(
+            "<body><a href='/a'>Link</a><input type='text'><button>Press</button>\
+             <textarea></textarea></body>",
+        );
+        let all = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        assert_eq!(all[0]["items"].as_array().expect("items").len(), 4);
+
+        let fields = handle(&mut session, &json!({"type": "hints", "for": "text"}))
+            .expect("hints");
+        let items = fields[0]["items"].as_array().expect("items");
+        assert_eq!(items.len(), 2, "{items:?}");
+        assert!(items.iter().all(|i| i["role"] == "textbox"), "{items:?}");
+
+        // And the labels are re-minted for the shorter list, so the first field
+        // is one keystroke rather than whichever letter it happened to get in
+        // the full overlay.
+        assert_eq!(items[0]["label"], "s");
+    }
+
+    /// The list of roles and the document's own answer must agree. A role
+    /// offered here that `focus` then refuses is a label that wastes a keystroke.
+    #[test]
+    fn only_the_roles_that_take_a_caret_are_offered() {
+        let mut session = session_with(
+            "<body><input type='text'><input type='search'><input type='password'>\
+             <input type='email'><textarea></textarea></body>",
+        );
+        let out = handle(&mut session, &json!({"type": "hints", "for": "text"}))
+            .expect("hints");
+        let items = out[0]["items"].as_array().expect("items").clone();
+        assert_eq!(items.len(), 5, "{items:?}");
+
+        for item in items {
+            let reference = item["ref"].as_str().expect("a ref");
+            let reply = handle(
+                &mut session,
+                &json!({"type": "act", "ref": reference, "action": "focus"}),
+            )
+            .expect("focus");
+            assert_eq!(
+                reply[0]["reply"]["ok"], true,
+                "offered `{}` as somewhere to type, then refused it: {:?}",
+                item["role"], reply[0]
+            );
+        }
+    }
+
+    /// Focusing is not typing. A human sent to a field they came to *append* to
+    /// would otherwise have to retype what was already there.
+    #[test]
+    fn focusing_a_field_leaves_what_is_in_it_and_puts_the_caret_at_the_end() {
+        let mut session = session_with("<body><input type='text' value='already'></body>");
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let entry = session.hint_refs.as_ref().expect("refs")[0].clone();
+
+        let out = handle(
+            &mut session,
+            &json!({"type": "act", "ref": entry.id, "action": "focus"}),
+        )
+        .expect("focus");
+        assert_eq!(out[0]["reply"]["ok"], true, "{:?}", out[0]);
+        assert_eq!(session.page.field_value(entry.node_id).as_deref(), Some("already"));
+
+        // And the caret is at the end, so what is typed lands after it.
+        handle(
+            &mut session,
+            &json!({"type": "input_keys", "keys": [{"key": "!", "text": "!"}]}),
+        )
+        .expect("a key");
+        assert_eq!(
+            session.page.field_value(entry.node_id).as_deref(),
+            Some("already!")
+        );
+    }
+
+    /// Aiming `focus` at something with no caret is answered rather than
+    /// silently leaving the keyboard pointing nowhere.
+    #[test]
+    fn focusing_something_that_is_not_a_field_says_so() {
+        let mut session = session_with("<body><button>Press</button></body>");
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let reference = session.hint_refs.as_ref().expect("refs")[0].id.clone();
+        let out = handle(
+            &mut session,
+            &json!({"type": "act", "ref": reference, "action": "focus"}),
+        )
+        .expect("focus");
+        assert_eq!(out[0]["reply"]["ok"], false, "{:?}", out[0]);
+    }
+
+    /// The release signal a batching viewer needs. If it were the frame, a batch
+    /// that changed nothing would never release and typing would stop dead.
+    #[test]
+    fn a_batch_is_acknowledged_even_when_it_changed_nothing() {
+        let mut session = session_with("<body><p>no field here</p></body>");
+        let out = handle(
+            &mut session,
+            &json!({"type": "input_keys", "keys": [{"key": "a", "text": "a"}]}),
+        )
+        .expect("a batch");
+        assert_eq!(out[0]["type"], "act");
+        assert_eq!(out[0]["action"], "input_keys");
+        assert_eq!(out[0]["reply"]["ok"], true);
+        assert!(
+            out.iter().all(|m| m["type"] != "frame"),
+            "a frame was encoded for a page that did not move: {out:?}"
+        );
+    }
+
+    /// Rendering is the expensive half of everything this session does, and it
+    /// used to be paid whether or not the frame could go anywhere. On a
+    /// single-threaded page that is not merely waste: it is time the next
+    /// keystroke spends waiting.
+    #[test]
+    fn a_frame_nobody_can_take_is_not_rendered_until_somebody_can() {
+        let mut session = session_with("<body><input type='text'></body>");
+        handle(&mut session, &json!({"type": "hints", "for": "text"})).expect("hints");
+        let node = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        session.page.focus(node);
+        // What an empty field holds before anything is typed is the editor's
+        // business, so the assertions below are about the change rather than the
+        // absolute value.
+        let before = session.page.field_value(node).unwrap_or_default();
+
+        // Nobody ready: the key lands, no frame is produced, and the session
+        // remembers that one is owed.
+        let out = handle_with(
+            &mut session,
+            &json!({"type": "input_keys", "keys": [{"key": "a", "text": "a"}]}),
+            false,
+        )
+        .expect("a key");
+        assert!(
+            out.iter().all(|m| m["type"] != "frame"),
+            "a frame was rendered for nobody: {out:?}"
+        );
+        assert!(session.frame_owed, "the page moved and nothing recorded it");
+        // The page still moved. Deferring the picture is not deferring the edit.
+        assert_eq!(
+            session.page.field_value(node).as_deref(),
+            Some(format!("{before}a").as_str())
+        );
+
+        // And when somebody can take one, it is rendered then.
+        let out = handle_with(
+            &mut session,
+            &json!({"type": "input_keys", "keys": [{"key": "b", "text": "b"}]}),
+            true,
+        )
+        .expect("a key");
+        assert!(out.iter().any(|m| m["type"] == "frame"), "{out:?}");
+        assert_eq!(
+            session.page.field_value(node).as_deref(),
+            Some(format!("{before}ab").as_str())
+        );
+    }
+
+    /// A viewer under ack pacing that owes one cannot take another; anyone else
+    /// can. The question `serve_owed` asks before paying for a render.
+    #[test]
+    fn readiness_is_asked_of_every_viewer_not_just_the_one_that_spoke() {
+        let (busy, _b) = channel();
+        let (free, _f) = channel();
+        let mut viewers = HashMap::new();
+        viewers.insert(1u64, Viewer { tx: busy, ack_pacing: true, awaiting_ack: true, pending: None });
+        assert!(!anyone_ready(&viewers), "an ack-paced viewer mid-frame is not ready");
+
+        // A second viewer that is not waiting makes the render worth paying for.
+        viewers.insert(2u64, Viewer { tx: free, ack_pacing: true, awaiting_ack: false, pending: None });
+        assert!(anyone_ready(&viewers));
+
+        // And a viewer that never asked for ack pacing is always ready.
+        let mut push = HashMap::new();
+        let (tx, _p) = channel();
+        push.insert(1u64, Viewer { tx, ack_pacing: false, awaiting_ack: true, pending: None });
+        assert!(anyone_ready(&push));
+
+        assert!(!anyone_ready(&HashMap::new()), "nobody watching is nobody ready");
+    }
+
+    // ─── history ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn back_returns_to_the_page_the_link_was_followed_from() {
+        let mut history = History::default();
+        let first = Url::parse("https://example.com/one").unwrap();
+        let second = Url::parse("https://example.com/two").unwrap();
+        history.visit(first.clone());
+        history.visit(second.clone());
+
+        assert_eq!(history.peek(-1), Some(first.clone()));
+        history.step(-1);
+        assert_eq!(history.peek(1), Some(second));
+        assert_eq!(history.peek(-1), None, "there is nothing before the first page");
+    }
+
+    /// A reload is not a place, so it does not earn a history entry.
+    #[test]
+    fn revisiting_the_page_already_on_top_is_not_a_new_entry() {
+        let mut history = History::default();
+        let url = Url::parse("https://example.com/one").unwrap();
+        history.visit(url.clone());
+        history.visit(url.clone());
+        assert_eq!(history.entries.len(), 1);
+        assert_eq!(history.peek(-1), None);
+    }
+
+    /// Going somewhere new after stepping back discards forward, which is what
+    /// stops forward from jumping to a page unrelated to the one being read.
+    #[test]
+    fn a_new_navigation_after_going_back_drops_the_forward_entries() {
+        let mut history = History::default();
+        for path in ["one", "two", "three"] {
+            history.visit(Url::parse(&format!("https://example.com/{path}")).unwrap());
+        }
+        history.step(-1);
+        history.step(-1);
+        assert_eq!(history.index, 0);
+
+        let fresh = Url::parse("https://example.com/elsewhere").unwrap();
+        history.visit(fresh.clone());
+        assert_eq!(history.peek(1), None, "forward still pointed at a discarded page");
+        assert_eq!(history.entries.last(), Some(&fresh));
+    }
+
+    /// The bug that made `H` do nothing after following a link: `click` replaced
+    /// the page without going through the one place that records having landed.
+    /// Driven through the viewer lane, because that is where it showed up.
+    #[test]
+    fn following_a_link_is_a_place_the_viewer_can_come_back_from() {
+        let mut session = session_with("<body><a href='/next'>Next</a></body>");
+        assert_eq!(session.history.entries.len(), 1, "the opening page is seeded");
+
+        // The allowlist refuses the hop in a test, so the navigation is driven
+        // through the funnel every caller shares rather than over the wire.
+        let page = session
+            .factory
+            .from_html("<body><p>next</p></body>", &Url::parse("https://example.com/next").unwrap());
+        session.land(page);
+
+        assert_eq!(session.history.entries.len(), 2);
+        assert_eq!(
+            session.history.peek(-1),
+            Some(Url::parse("https://example.com/").unwrap())
+        );
+        // And landing expires both handle sets, because both described the page
+        // that has been left.
+        assert!(session.hint_refs.is_none());
+        assert!(session.served_refs.is_none());
+    }
+
+    #[test]
+    fn a_viewer_at_the_first_page_is_told_there_is_nothing_back_there() {
+        let mut session = session_with("<body><p>only page</p></body>");
+        let out = handle(&mut session, &json!({"type": "history", "go": -1})).expect("history");
+        assert_eq!(out[0]["reply"]["ok"], false, "{:?}", out[0]);
+    }
 }
 
 #[cfg(test)]
@@ -5259,6 +6558,7 @@ mod delta_and_login_tests {
         );
         let base = url::Url::parse("https://app.example/").unwrap();
         let page = factory.from_html(html, &base);
+        let page_url = page.url().clone();
         Session {
             factory,
             page,
@@ -5267,6 +6567,9 @@ mod delta_and_login_tests {
             actions: None,
             last_snapshot: None,
             served_refs: None,
+            hint_refs: None,
+            frame_owed: false,
+            history: History::seeded(page_url),
             unknown_verbs: std::collections::BTreeMap::new(),
             recording: crate::replay::Recording::default(),
             login: false,

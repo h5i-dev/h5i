@@ -29,9 +29,14 @@ pub enum Mode {
     /// Watching. Keystrokes and clicks are the viewer's, not the page's, and
     /// the terminal keeps its own mouse (selection, scrollback).
     View,
-    /// Driving. Input goes to the page, and only the control-lock holder's
-    /// input is sent at all.
+    /// Driving with the pointer. Input goes to the page, and only the
+    /// control-lock holder's input is sent at all.
     Interact,
+    /// The hint overlay is up. Keys narrow the labels.
+    Hint,
+    /// Typing into a field a hint named. Unlike INTERACT there is one
+    /// destination and the viewer knows what it is.
+    Insert,
 }
 
 impl Mode {
@@ -39,7 +44,24 @@ impl Mode {
         match self {
             Mode::View => "VIEW",
             Mode::Interact => "INTERACT",
+            Mode::Hint => "HINT",
+            Mode::Insert => "INSERT",
         }
+    }
+
+    /// Whether this mode holds the control lock. Asked of the mode, so a new one
+    /// cannot leave it held by forgetting to be listed.
+    ///
+    /// HINT is included even though an overlay is a read: asking for one is an
+    /// intent to act, and the labels describe the page *as it is now*.
+    pub fn holds_control(self) -> bool {
+        matches!(self, Mode::Interact | Mode::Insert | Mode::Hint)
+    }
+
+    /// Whether keystrokes in this mode reach the page. HINT is where this parts
+    /// from [`Mode::holds_control`]: it holds the lock and sends nothing.
+    pub fn types_into_the_page(self) -> bool {
+        matches!(self, Mode::Interact | Mode::Insert)
     }
 }
 
@@ -48,7 +70,8 @@ impl Mode {
 /// is sanitized on the way in.
 #[derive(Debug, Clone)]
 pub struct Status {
-    pub box_id: String,
+    /// What is being watched: a box id, or a browser session id.
+    pub subject: String,
     pub mode: Mode,
     pub holder: Holder,
     /// The page's current URL, as the box last reported it.
@@ -59,6 +82,10 @@ pub struct Status {
     pub errors: u32,
     /// Whether the box's browser is still streaming.
     pub streaming: bool,
+    /// One line of the viewer talking to the human. It gives way only to the
+    /// mode and the lock: a refusal that shows on wide terminals only is one
+    /// nobody can rely on.
+    pub notice: Option<String>,
 }
 
 /// SGR: reverse video, so the row reads as chrome rather than as page content.
@@ -102,10 +129,10 @@ const URL_PRIO: u8 = 2;
 /// Lay the fields out, giving up the least useful ones first.
 ///
 /// The order things are surrendered in is a judgement about what this row is
-/// *for*. Which box, and where the page is, are useful. Which mode the viewer
-/// is in and who holds the control lock are the reason a human looks up here at
-/// all, someone about to type a password needs to know whether their keys are
-/// going to the page, so those never give way, whatever else has to.
+/// *for*. Which session, and where the page is, are useful. Which mode the
+/// viewer is in and who holds the control lock are the reason a human looks up
+/// here at all, someone about to type a password needs to know whether their
+/// keys are going to the page, so those never give way, whatever else has to.
 fn compose(s: &Status, width: usize) -> String {
     let mut segs: Vec<Seg> = Vec::new();
     let seg = |prio, text: String| Seg {
@@ -114,12 +141,16 @@ fn compose(s: &Status, width: usize) -> String {
         raw: None,
     };
 
-    segs.push(seg(3, format!("h5i:{}", sanitize_display(&s.box_id))));
+    segs.push(seg(3, format!("h5i:{}", sanitize_display(&s.subject))));
     // Never dropped.
     segs.push(seg(
         0,
         format!("{} control:{}", s.mode.as_str(), s.holder.as_str()),
     ));
+    // Worth more than the URL: it answers something the human just did.
+    if let Some(notice) = &s.notice {
+        segs.push(seg(1, sanitize_display(notice)));
+    }
     if let Some(url) = &s.url {
         let clean = sanitize_display(url);
         segs.push(Seg {
@@ -240,13 +271,14 @@ mod tests {
 
     fn status() -> Status {
         Status {
-            box_id: "env/claude/fix-auth".into(),
+            subject: "env/claude/fix-auth".into(),
             mode: Mode::View,
             holder: Holder::Agent,
             url: Some("http://localhost:3000/login".into()),
             egress: "localhost".into(),
             errors: 0,
             streaming: true,
+            notice: None,
         }
     }
 
@@ -281,7 +313,7 @@ mod tests {
         // row is allowed to drop, however narrow the pane, and a long box id
         // must not be able to push it off the end.
         let mut s = status();
-        s.box_id = "env/claude/a-very-long-branch-name-for-this-box".into();
+        s.subject = "env/claude/a-very-long-branch-name-for-this-box".into();
         for width in [18u16, 24, 34, 60, 100] {
             let out = body(&render(&s, width));
             assert!(out.contains("VIEW"), "width {width}: {out:?}");
@@ -382,5 +414,37 @@ mod tests {
         let out = body(&render(&s, 120));
         assert!(out.contains("not streaming"), "{out:?}");
         assert!(out.contains("err:3"), "{out:?}");
+    }
+
+    /// A refusal must survive a narrow row, or nobody can rely on reading it.
+    #[test]
+    fn what_the_viewer_says_survives_a_narrow_row() {
+        let mut s = status();
+        s.notice = Some("no label starts with `z`".into());
+        let row = render(&s, 60);
+        assert!(row.contains("no label starts with"), "{row}");
+        assert!(row.contains("VIEW"), "{row}");
+    }
+
+    /// And it is page-influenced text on its way to a PTY.
+    #[test]
+    fn a_notice_carrying_an_escape_sequence_cannot_repaint_the_row() {
+        let mut s = status();
+        s.notice = Some("link \u{1b}[2Jgone".into());
+        let row = render(&s, 120);
+        assert!(!row.contains("\u{1b}[2J"), "{row:?}");
+    }
+
+    /// Two questions, not one. HINT holds the lock and sends nothing.
+    #[test]
+    fn holding_the_lock_and_typing_into_the_page_are_different_questions() {
+        for mode in [Mode::Interact, Mode::Insert] {
+            assert!(mode.holds_control(), "{mode:?}");
+            assert!(mode.types_into_the_page(), "{mode:?}");
+        }
+        assert!(Mode::Hint.holds_control());
+        assert!(!Mode::Hint.types_into_the_page());
+        assert!(!Mode::View.holds_control());
+        assert!(!Mode::View.types_into_the_page());
     }
 }
