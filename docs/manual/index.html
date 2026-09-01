@@ -1059,10 +1059,80 @@ h5i box view mybox --web
 <p>The viewer combines the rendered page with action, network, console, and policy
 events. Each row keeps its observation source and evidence grade separate; h5i
 does not infer causal links that are absent from the event stream.</p>
-<p>The terminal viewer uses the Kitty graphics protocol when available and falls
-back to text-oriented panes otherwise. Press <code>i</code> to take control, <code>Esc</code> to
-return it, and <code>q</code> to quit. The page cannot write the viewer's status row or
-inject terminal markup through displayed page text.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>j</code> <code>k</code></td>
+<td>Scroll a line</td>
+</tr>
+<tr>
+<td><code>d</code> <code>u</code></td>
+<td>Scroll half a page</td>
+</tr>
+<tr>
+<td><code>space</code> <code>b</code></td>
+<td>Scroll a page</td>
+</tr>
+<tr>
+<td><code>gg</code> <code>G</code></td>
+<td>Top, bottom</td>
+</tr>
+<tr>
+<td><code>f</code></td>
+<td>Label everything on screen, then follow the one you type</td>
+</tr>
+<tr>
+<td><code>F</code></td>
+<td>Label the fields, then type into the one you choose</td>
+</tr>
+<tr>
+<td><code>yf</code></td>
+<td>Label everything, then copy that link</td>
+</tr>
+<tr>
+<td><code>gi</code></td>
+<td>Type into the first field on the page</td>
+</tr>
+<tr>
+<td><code>yy</code></td>
+<td>Copy this page's URL</td>
+</tr>
+<tr>
+<td><code>H</code> <code>L</code></td>
+<td>Back, forward</td>
+</tr>
+<tr>
+<td><code>r</code></td>
+<td>Reload</td>
+</tr>
+<tr>
+<td><code>i</code></td>
+<td>Hand the keyboard to the page, where an engine can use it</td>
+</tr>
+<tr>
+<td><code>Esc</code></td>
+<td>Return it</td>
+</tr>
+<tr>
+<td><code>D</code></td>
+<td>The console pane: what the page logged and what it threw</td>
+</tr>
+<tr>
+<td><code>?</code></td>
+<td>The key list</td>
+</tr>
+<tr>
+<td><code>q</code></td>
+<td>Leave</td>
+</tr>
+</tbody>
+</table>
 <p>A viewer attaches read-only. It does not weaken the box policy, publish the
 browser port, or become part of the agent's session.</p>
 <h3 id="the-engine-underneath">The engine, underneath</h3>
