@@ -510,6 +510,10 @@ pub struct Request {
     pub path: String,
     pub token: Option<String>,
     pub origin: Option<String>,
+    /// The `Host` the client asked for. The page builds its WebSocket URL from
+    /// `location.host`, so the origin to compare against is the one the human
+    /// actually typed, not the one this process would have printed.
+    pub host: Option<String>,
     pub upgrade: bool,
 }
 
@@ -568,6 +572,7 @@ pub fn parse_request(head: &str) -> Option<Request> {
     });
 
     let mut origin = None;
+    let mut host = None;
     let mut upgrade = false;
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
@@ -576,6 +581,7 @@ pub fn parse_request(head: &str) -> Option<Request> {
         let value = value.trim();
         match name.trim().to_ascii_lowercase().as_str() {
             "origin" => origin = Some(value.to_string()),
+            "host" => host = Some(value.to_string()),
             "upgrade" => upgrade = value.eq_ignore_ascii_case("websocket"),
             _ => {}
         }
@@ -584,8 +590,27 @@ pub fn parse_request(head: &str) -> Option<Request> {
         path,
         token,
         origin,
+        host,
         upgrade,
     })
+}
+
+/// Does this `Host` name loopback on `port`?
+///
+/// The port matters here in a way it does not for the console: this value
+/// becomes the origin the page's own `Origin` is compared against, so a `Host`
+/// naming a different port would let a page on that port answer for itself.
+fn is_loopback_authority(host: &str, port: u16) -> bool {
+    let (name, given) = match host.rsplit_once(':') {
+        // Only a trailing all-digit port; `[::1]` has colons of its own.
+        Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => (h, p.parse().ok()),
+        _ => (host, None),
+    };
+    if given != Some(port) {
+        return false;
+    }
+    let name = name.trim_matches(|c| c == '[' || c == ']');
+    name.eq_ignore_ascii_case("localhost") || name == "127.0.0.1" || name == "::1"
 }
 
 /// The gate: may this connection through?
@@ -968,33 +993,49 @@ impl Forward {
         ))
     }
 
-    fn self_origin(&self) -> String {
-        format!(
-            "http://127.0.0.1:{}",
-            self.listener.local_addr().map(|a| a.port()).unwrap_or(0)
-        )
+    /// The origin this forward's own page has, as the browser sees it.
+    ///
+    /// From the request's `Host`, not from the listener's address. The page
+    /// builds its WebSocket URL from `location.host`, so a human who opened
+    /// `http://localhost:<port>` sent `Origin: http://localhost:<port>`, which
+    /// a pinned `127.0.0.1` never matched: the page was served (a top-level GET
+    /// carries no `Origin`) and every socket upgrade was refused, with the page
+    /// retrying forever and nothing on screen saying why.
+    ///
+    /// The `Host` has to name loopback and this listener's port, or a
+    /// DNS-rebinding page satisfies the origin check against itself. Anything
+    /// else falls back to the pinned address, which then matches no `Origin`
+    /// at all — fail-closed, exactly as before.
+    fn self_origin_for(&self, host: Option<&str>) -> String {
+        let port = self.listener.local_addr().map(|a| a.port()).unwrap_or(0);
+        let pinned = format!("http://127.0.0.1:{port}");
+        match host {
+            Some(h) if is_loopback_authority(h, port) => format!("http://{h}"),
+            _ => pinned,
+        }
     }
 
     /// Serve until interrupted. One connection at a time is the right shape:
     /// exactly one human is at the viewport, and a second concurrent viewer of
     /// the same box is a control-lock question we have deliberately not opened.
     pub fn serve(&self) -> Result<(), H5iError> {
-        let origin = self.self_origin();
         for conn in self.listener.incoming() {
             let Ok(conn) = conn else { continue };
-            if let Err(e) = self.handle(conn, &origin) {
+            if let Err(e) = self.handle(conn) {
                 eprintln!("viewer: {e}");
             }
         }
         Ok(())
     }
 
-    fn handle(&self, mut client: TcpStream, origin: &str) -> Result<(), H5iError> {
+    fn handle(&self, mut client: TcpStream) -> Result<(), H5iError> {
         let head = read_head(&mut client)?;
         let Some(req) = parse_request(&head) else {
             let _ = respond(&mut client, 400, "Bad Request", "not an HTTP request");
             return Ok(());
         };
+        let origin = self.self_origin_for(req.host.as_deref());
+        let origin = origin.as_str();
         if let Err(refusal) = gate(&req, &self.token, origin) {
             let (code, reason) = refusal.status();
             let _ = respond(&mut client, code, reason, refusal.explain());
@@ -1375,6 +1416,24 @@ mod tests {
             gate(&req("?token=goo"), "good", origin),
             Err(Refusal::BadToken)
         );
+    }
+
+    /// The page builds its socket URL from `location.host`, so the origin to
+    /// compare against is the one the human typed. Pinning `127.0.0.1` meant
+    /// opening the forward as `localhost` served the page (a top-level GET
+    /// sends no `Origin`) and then refused every upgrade, forever, silently.
+    #[test]
+    fn the_origin_compared_against_is_the_one_the_human_opened() {
+        assert!(is_loopback_authority("localhost:9000", 9000));
+        assert!(is_loopback_authority("127.0.0.1:9000", 9000));
+        assert!(is_loopback_authority("[::1]:9000", 9000));
+        // A rebinding page arrives as `Host: evil.test:<port>` /
+        // `Origin: http://evil.test:<port>`, which match each other. The Host
+        // has to name loopback or the check answers itself.
+        assert!(!is_loopback_authority("evil.test:9000", 9000));
+        // ...and a different port is a different origin, whatever it is called.
+        assert!(!is_loopback_authority("localhost:9001", 9000));
+        assert!(!is_loopback_authority("localhost", 9000));
     }
 
     #[test]
