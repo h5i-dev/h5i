@@ -185,8 +185,16 @@ pub fn ack(seq: u64) -> Value {
 }
 
 /// Ask for the hint overlay.
-pub fn hints() -> Value {
-    json!({"type": "hints"})
+///
+/// `fields_only` when the human is about to type: `F` and `gi` mean "type into
+/// something", and labelling a link there offers a choice whose only possible
+/// answer is a refusal.
+pub fn hints(fields_only: bool) -> Value {
+    if fields_only {
+        json!({"type": "hints", "for": "text"})
+    } else {
+        json!({"type": "hints"})
+    }
 }
 
 /// Act on a hinted ref, by the name of the thing to do.
@@ -199,14 +207,57 @@ pub fn act_press(reference: &str, key: &str) -> Value {
     json!({"type": "act", "ref": reference, "action": "press", "key": key})
 }
 
-/// Replace a field's contents with what has been typed so far.
+/// Replace a field's contents outright.
 ///
-/// The whole buffer each time rather than a keystroke at a time, because the
-/// engine's primitive underneath is select-all-then-insert: sending the buffer
-/// is idempotent, so a dropped or reordered message cannot leave the field
-/// holding a scramble of what was meant.
+/// Kept for the case where a viewer knows what a field should say. The viewers
+/// here do not use it to type: see [`keys`], which delivers real key events so
+/// the caret moves and the page hears the typing.
 pub fn insert(reference: &str, text: &str) -> Value {
     json!({"type": "insert", "ref": reference, "text": text})
+}
+
+/// Put the caret in a field, changing nothing in it.
+pub fn focus(reference: &str) -> Value {
+    json!({"type": "act", "ref": reference, "action": "focus"})
+}
+
+/// A burst of keys, in the order they were typed.
+///
+/// Batched rather than sent one at a time, and *not* coalesced. A keystroke is a
+/// delta, so unlike a whole-value `insert` nothing here may be dropped: what
+/// makes a burst affordable is that the expensive half — the relayout and the
+/// render — happens once for the batch instead of once per key.
+pub fn keys(batch: &[Typed]) -> Value {
+    json!({
+        "type": "input_keys",
+        "keys": batch.iter().map(Typed::to_json).collect::<Vec<_>>(),
+    })
+}
+
+/// One key on its way to the page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Typed {
+    /// DOM `key`: `"a"`, `"Enter"`, `"ArrowLeft"`.
+    pub key: String,
+    /// What this keystroke inserts, when it inserts anything.
+    ///
+    /// Sent rather than left for the engine to derive, because deriving it means
+    /// re-deciding what a shifted key produces on a keyboard layout the engine
+    /// cannot see. The terminal read the byte; it already knows.
+    pub text: Option<String>,
+    pub modifiers: u32,
+}
+
+impl Typed {
+    fn to_json(&self) -> Value {
+        let mut m = serde_json::Map::new();
+        m.insert("key".into(), json!(self.key));
+        if let Some(text) = &self.text {
+            m.insert("text".into(), json!(text));
+        }
+        m.insert("modifiers".into(), json!(self.modifiers));
+        Value::Object(m)
+    }
 }
 
 /// Step through the pages this session visited. -1 back, 1 forward.

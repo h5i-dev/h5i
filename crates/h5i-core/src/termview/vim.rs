@@ -314,17 +314,22 @@ pub fn narrow(labels: &[String], typed: &str) -> Match {
     }
 }
 
-/// Coalescing a stream of whole-value updates, as a state machine.
+/// One message on the wire at a time, and one owed behind it.
 ///
 /// Pulled out of the viewer so the ordering can be tested without a socket, a
-/// terminal or an engine. What it protects is not obvious from the call sites:
-/// the invariant is that the *last* thing the human typed always reaches the
-/// wire, however many keystrokes landed while an earlier one was in flight, and
-/// nothing in between has to.
+/// terminal or an engine. The invariant is that everything the human typed
+/// reaches the page, in order, while never more than one message is outstanding.
 ///
-/// That second half is only sound because the payload is a whole value rather
-/// than a delta. Coalescing deltas loses characters. Coalescing snapshots loses
-/// nothing, because the last one already contains every earlier one.
+/// The caller decides what "owed" carries. For typing it is the keys struck
+/// since the last batch went out, and they are *batched*, not merged: a
+/// keystroke is a delta, so dropping the ones in between would lose characters.
+/// What batching buys is that the expensive half — the engine's relayout and
+/// render — is paid once for the batch however many keys it holds, which is the
+/// same win merging would have given without the loss.
+///
+/// Hence [`Coalesce::timed_out`] releases the wire without asking for a repeat:
+/// a batch that may already have been applied must not be sent twice, so what
+/// goes out afterwards is only what has not been sent yet.
 #[derive(Debug, Default)]
 pub struct Coalesce {
     in_flight: bool,
@@ -354,7 +359,12 @@ impl Coalesce {
         false
     }
 
-    /// Nothing is coming. Returns whether to send again.
+    /// Nothing is coming. Returns whether the wire is now free to send on.
+    ///
+    /// Deliberately not "resend that": the lost message may have arrived and
+    /// been applied, and repeating a batch of keystrokes would type the word
+    /// twice. It gives the wire back, and the caller sends whatever has piled
+    /// up behind it.
     pub fn timed_out(&mut self) -> bool {
         if !self.in_flight {
             return false;
@@ -556,7 +566,7 @@ mod tests {
 
     // ─── coalescing ─────────────────────────────────────────────────────────
 
-    /// A burst of typing becomes one message in flight and one more owed, not a
+    /// A burst of typing becomes one message in flight and one batch owed, not a
     /// queue of them. This is the whole fix for a 40ms round trip: without it,
     /// nineteen characters is nineteen serialized relayouts.
     #[test]
@@ -591,7 +601,7 @@ mod tests {
 
     /// The wedge this exists to prevent: a reply that never comes. The web
     /// viewer's forward drops input outright when the control lock is not the
-    /// human's, and a dropped `insert` is answered by nothing.
+    /// human's, and a dropped message is answered by nothing.
     #[test]
     fn a_reply_that_never_arrives_does_not_wedge_typing_forever() {
         let mut c = Coalesce::default();

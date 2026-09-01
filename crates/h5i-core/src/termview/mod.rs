@@ -494,6 +494,52 @@ enum Moved {
 #[cfg(unix)]
 const FIELD_ROLES: &[&str] = &["textbox", "searchbox", "combobox"];
 
+/// One terminal keystroke, in the vocabulary a browser uses.
+///
+/// The terminal reports what was pressed and, for a printable key, what it
+/// produced; both are needed and they are not the same question. `text` is what
+/// gets inserted and is reported rather than re-derived, because deriving it
+/// means re-deciding what a shifted key produces on a keyboard layout nothing
+/// here can see — the terminal already read the byte.
+///
+/// `None` for the keys the viewer keeps for itself, which the caller has already
+/// handled, and for anything with no DOM spelling worth inventing.
+#[cfg(unix)]
+fn dom_key(key: &input::Key) -> Option<proto::Typed> {
+    use input::KeyCode;
+    let ctrl = key.modifiers & proto::modifiers::CTRL != 0;
+    let (name, text) = match key.code {
+        KeyCode::Backspace => ("Backspace", None),
+        KeyCode::Delete => ("Delete", None),
+        KeyCode::Tab => ("Tab", None),
+        KeyCode::Up => ("ArrowUp", None),
+        KeyCode::Down => ("ArrowDown", None),
+        KeyCode::Left => ("ArrowLeft", None),
+        KeyCode::Right => ("ArrowRight", None),
+        KeyCode::Home => ("Home", None),
+        KeyCode::End => ("End", None),
+        KeyCode::PageUp => ("PageUp", None),
+        KeyCode::PageDown => ("PageDown", None),
+        KeyCode::Insert | KeyCode::Function(_) | KeyCode::Escape | KeyCode::Enter => return None,
+        KeyCode::Char(ch) => {
+            // A chord is a command and types nothing, which the engine's own
+            // table enforces as well. Said here too, so a viewer cannot be the
+            // thing that sends `Ctrl-S` as an `s`.
+            let text = (!ctrl).then(|| ch.to_string());
+            return Some(proto::Typed {
+                key: ch.to_string(),
+                text,
+                modifiers: key.modifiers,
+            });
+        }
+    };
+    Some(proto::Typed {
+        key: name.to_string(),
+        text,
+        modifiers: key.modifiers,
+    })
+}
+
 /// Collapse a page-derived string to one line for the status row.
 ///
 /// The row's whole claim is that nothing from the page can put a pixel in it,
@@ -603,28 +649,29 @@ impl Hinting {
 /// Sent one keystroke at a time it is worse than it sounds, because the requests
 /// *serialize*: nineteen characters typed at a normal pace is nineteen full
 /// relayouts queued end to end, and the text crawls in behind the fingers long
-/// after they have stopped. So at most one is ever on the wire, and whatever was
-/// typed while it was in flight goes out as a single message when it lands.
+/// after they have stopped. So at most one message is ever on the wire, and
+/// every key struck while it was away goes out together when it lands.
 ///
-/// This is safe only because `insert` carries the whole value and the engine's
-/// primitive is select-all-then-replace. Coalescing a stream of *deltas* would
-/// lose characters; coalescing a stream of snapshots loses nothing, because the
-/// last one is the answer. That idempotence was worth having on its own and it
-/// is what pays for this.
+/// Batched rather than coalesced, and the difference matters. A keystroke is a
+/// *delta*: dropping the ones in between would lose characters, which is exactly
+/// what coalescing does and why the earlier whole-value `insert` could get away
+/// with it. What is actually expensive is the relayout and the render, and those
+/// are paid once per batch however many keys it carries — so nothing is lost and
+/// the win is the same.
 #[cfg(unix)]
 struct Inserting {
     reference: String,
-    /// The whole value, as the human has typed it so far.
-    text: String,
+    /// Keys struck since the last batch went out, in order.
+    pending: Vec<proto::Typed>,
     /// What is on the wire and what is owed. See [`vim::Coalesce`], which is
     /// where the ordering lives and where it is tested.
     wire: vim::Coalesce,
-    /// When the in-flight one went out.
+    /// When the in-flight batch went out.
     ///
     /// A guard against a reply that never arrives rather than a guess about how
-    /// slow an engine can be: an engine that does not know `insert` answers with
-    /// nothing at all, and without this the first keystroke would wedge typing
-    /// for the life of the session.
+    /// slow an engine can be: an engine that does not know the message answers
+    /// with nothing at all, and without this the first keystroke would wedge
+    /// typing for the life of the session.
     sent_at: Instant,
 }
 
@@ -742,7 +789,9 @@ impl<'a> App<'a> {
                         // The reply is what releases the next insert. Done
                         // before the refusal is shown, so a rejected keystroke
                         // does not also wedge the ones after it.
-                        if action.as_deref() == Some("insert") {
+                        // `focus` releases the first batch; `input_keys`
+                        // releases each one after it.
+                        if matches!(action.as_deref(), Some("input_keys" | "focus")) {
                             self.insert_landed(writer);
                         }
                         // Only the refusals are shown. A click that worked
@@ -1175,7 +1224,9 @@ impl<'a> App<'a> {
             typed: String::new(),
             viewport: self.viewport,
         });
-        self.send(writer, &proto::hints());
+        // Narrowed when the human is about to type, so every label they can
+        // reach is one they can actually use.
+        self.send(writer, &proto::hints(then == vim::HintThen::Insert));
     }
 
     /// The overlay arrived. Draw it, or use it and put it away.
@@ -1326,8 +1377,9 @@ impl<'a> App<'a> {
         let _ = control::take(&self.env_dir);
         self.inserting = Some(Inserting {
             reference: reference.clone(),
-            text: String::new(),
-            // The empty value below is already on the wire.
+            pending: Vec::new(),
+            // The focus below is already on the wire, and is acknowledged on the
+            // same lane, so it is what releases the first batch.
             wire: {
                 let mut wire = vim::Coalesce::default();
                 wire.typed();
@@ -1337,22 +1389,34 @@ impl<'a> App<'a> {
         });
         self.mode = Mode::Insert;
         self.say(Some("typing — Enter to submit, Esc to stop".into()));
-        // Emptied on the way in, so what is typed replaces the field rather than
-        // appending to whatever was there. The alternative is a viewer whose
-        // first keystroke lands at an unknown offset in an unknown value.
-        self.send(writer, &proto::insert(&reference, ""));
+        // The caret goes to the end of what is there, and what is there stays.
+        // Emptying it would be a viewer deciding that anyone who focuses a field
+        // meant to replace it, which is wrong for every field somebody came to
+        // correct a character in or append to.
+        self.send(writer, &proto::focus(&reference));
         self.repaint();
     }
 
-    /// In INSERT every key is the field's text. One destination, known to the
-    /// viewer, which is what makes this different from INTERACT.
+    /// In INSERT every key goes to the field, as a real key.
+    ///
+    /// One destination, known to the viewer, which is what makes this different
+    /// from INTERACT. What it sends is the keystroke itself rather than the
+    /// value it would produce: the caret moves, `Backspace` deletes where the
+    /// caret is rather than off the end, `Delete` and the arrows and `Home` mean
+    /// what they mean everywhere else, and a page listening for typing hears it.
+    /// None of that is expressible by sending a field's whole value.
     fn on_insert_key(&mut self, ev: input::Event, writer: &mut impl Write) {
         use input::{Event, KeyCode};
-        let text = match ev {
+        let typed = match ev {
             // A paste is text, whole, and its control bytes are text too. Same
             // rule the viewer already follows in INTERACT and for the same
-            // reason bracketed paste is enabled at all.
-            Event::Paste(pasted) => Some(pasted),
+            // reason bracketed paste is enabled at all. It rides as one key
+            // carrying all of it, which inserts it at the caret in one edit.
+            Event::Paste(pasted) => proto::Typed {
+                key: "Paste".into(),
+                text: Some(pasted),
+                modifiers: 0,
+            },
             // The terminal still has the mouse in INSERT: nothing here took it,
             // because there is one destination and it is already known. A click
             // is the terminal's own selection, not the page's.
@@ -1368,6 +1432,9 @@ impl<'a> App<'a> {
                         self.leave_insert();
                         return;
                     }
+                    // Submitting is the viewer's decision rather than the
+                    // field's: `Enter` in a single-line input submits a form,
+                    // and a human who pressed it is done with the field.
                     KeyCode::Enter => {
                         if let Some(inserting) = self.inserting.as_ref() {
                             let reference = inserting.reference.clone();
@@ -1376,25 +1443,13 @@ impl<'a> App<'a> {
                         self.leave_insert();
                         return;
                     }
-                    KeyCode::Backspace => {
-                        if let Some(inserting) = self.inserting.as_mut() {
-                            inserting.text.pop();
-                        }
-                        None
-                    }
-                    KeyCode::Char(ch) if !ctrl => Some(ch.to_string()),
-                    _ => return,
+                    _ => match dom_key(&key) {
+                        Some(typed) => typed,
+                        None => return,
+                    },
                 }
             }
         };
-
-        let Some(inserting) = self.inserting.as_mut() else {
-            self.leave_insert();
-            return;
-        };
-        if let Some(text) = text {
-            inserting.text.push_str(&text);
-        }
 
         // Re-read rather than assumed, the same rule INTERACT follows: another
         // process can take the lock while a human is typing, and the keystrokes
@@ -1403,6 +1458,11 @@ impl<'a> App<'a> {
             self.leave_insert();
             return;
         }
+        let Some(inserting) = self.inserting.as_mut() else {
+            self.leave_insert();
+            return;
+        };
+        inserting.pending.push(typed);
         self.flush_insert(writer);
     }
 
@@ -1415,12 +1475,14 @@ impl<'a> App<'a> {
         let Some(inserting) = self.inserting.as_mut() else {
             return;
         };
-        if !inserting.wire.typed() {
+        if inserting.pending.is_empty() || !inserting.wire.typed() {
             return;
         }
         inserting.sent_at = Instant::now();
-        let (reference, value) = (inserting.reference.clone(), inserting.text.clone());
-        self.send(writer, &proto::insert(&reference, &value));
+        // Taken rather than copied: these keys are on the wire now, and a batch
+        // that left a copy behind would type everything twice.
+        let batch = std::mem::take(&mut inserting.pending);
+        self.send(writer, &proto::keys(&batch));
     }
 
     /// Release an insert that is never going to be answered.
@@ -1439,17 +1501,26 @@ impl<'a> App<'a> {
         let Some(inserting) = self.inserting.as_mut() else {
             return;
         };
-        if !inserting.wire.timed_out() {
+        // `timed_out` first, unconditionally: short-circuiting past it on an
+        // empty queue would leave the wire marked busy for a batch that is never
+        // coming, and the next keystroke would then wait for a tick instead of
+        // going straight out.
+        let released = inserting.wire.timed_out();
+        if !released || inserting.pending.is_empty() {
             return;
         }
         // Sent from here rather than left for the next keystroke: someone who
         // typed a word and stopped would otherwise be looking at a field that
-        // never caught up, with nothing to press to fix it. Resending is correct
-        // rather than merely safe, because `insert` carries the whole value: a
-        // late arrival and a resend cannot disagree about what the field holds.
+        // never caught up, with nothing to press to fix it.
+        //
+        // What is sent is only what has *not* been sent. Unlike a whole-value
+        // insert, a batch cannot be safely repeated: the earlier one may have
+        // arrived and been applied, and sending it again would type the word
+        // twice. So a batch already on the wire is given up on rather than
+        // retried, and only the keys behind it go out.
         inserting.sent_at = Instant::now();
-        let (reference, value) = (inserting.reference.clone(), inserting.text.clone());
-        self.send(writer, &proto::insert(&reference, &value));
+        let batch = std::mem::take(&mut inserting.pending);
+        self.send(writer, &proto::keys(&batch));
     }
 
     /// An insert came back. Send what was typed while it was away.
@@ -1460,12 +1531,12 @@ impl<'a> App<'a> {
         if !inserting.wire.landed() {
             return;
         }
-        // Something was typed while that one was away. `landed` has already
+        // Keys were struck while that batch was away. `landed` has already
         // marked the replacement as in flight, so this writes it rather than
-        // going back through `flush_insert` and being held.
+        // going back through `flush_insert`, which would hold it.
         inserting.sent_at = Instant::now();
-        let (reference, value) = (inserting.reference.clone(), inserting.text.clone());
-        self.send(writer, &proto::insert(&reference, &value));
+        let batch = std::mem::take(&mut inserting.pending);
+        self.send(writer, &proto::keys(&batch));
     }
 
     fn leave_hint(&mut self) {

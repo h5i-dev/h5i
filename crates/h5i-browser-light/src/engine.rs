@@ -2180,6 +2180,162 @@ impl Page {
         true
     }
 
+    /// Put the caret in a field without disturbing what it holds.
+    ///
+    /// The counterpart of [`Page::type_into`], and the difference is the whole
+    /// reason both exist. `type_into` sets a value: right for an agent, which
+    /// knows what the field should say. This puts a human at the end of whatever
+    /// is already there, which is what focusing a field means to a person who
+    /// may have come to append to it, correct a character, or select a word.
+    ///
+    /// Returns whether there is a field here at all, so a viewer that aimed at a
+    /// button gets an answer rather than a caret nowhere.
+    pub fn focus(&mut self, node_id: usize) -> bool {
+        let mut doc = self.doc.borrow_mut();
+        let takes_text = doc
+            .get_node(node_id)
+            .and_then(|node| node.element_data())
+            .and_then(|el| el.text_input_data())
+            .is_some();
+        if !takes_text {
+            return false;
+        }
+        doc.set_focus_to(node_id);
+        // At the end, not at the start: a caret dropped at position zero puts
+        // every character the human types before what is already in the field.
+        doc.with_text_input(node_id, |mut driver| driver.move_to_text_end());
+        true
+    }
+
+    /// Whether anything on the page has keyboard focus.
+    ///
+    /// Asked so a key that a focused field declined is not then handed to the
+    /// scroller. Space in a search box is a space; space with nothing focused is
+    /// a page down; and the difference is which of those the human meant.
+    pub fn has_focus(&self) -> bool {
+        self.doc.borrow().get_focussed_node_id().is_some()
+    }
+
+    /// What a key does to the focused element.
+    ///
+    /// The mapping from a DOM key name to an edit is a pure decision and lives in
+    /// [`crate::keys`], so it can be argued about and tested without a document.
+    /// This is the half that needs one.
+    ///
+    /// Returns whether anything changed, which is what keeps the live view at
+    /// zero frames per second when a key does nothing: an arrow at the end of a
+    /// field moves no caret and is not a reason to encode a frame.
+    ///
+    /// The event dispatch is deliberately *around* the edit rather than instead
+    /// of it. A page listening for `keydown` sees the key before the field
+    /// changes and can still `preventDefault` in the ordinary sense of reading
+    /// it; a page listening for `input` sees the change after. That ordering is
+    /// what an autocomplete and a controlled input are written against, and it
+    /// is the whole reason this exists beside `type_into`, which sets a value and
+    /// fires nothing a keystroke would.
+    pub fn key_to_focused(&mut self, key: &crate::keys::Key) -> bool {
+        use crate::keys::Edit;
+
+        let focused = self.doc.borrow().get_focussed_node_id();
+        let Some(node_id) = focused else {
+            return false;
+        };
+        let edit = crate::keys::edit_for(key);
+
+        // Tab moves between controls rather than into one, so it is answered
+        // before the field is consulted at all.
+        if edit == Edit::FocusNext || edit == Edit::FocusPrevious {
+            self.dispatch_key(node_id, "keydown", &key.name);
+            let moved = {
+                let mut doc = self.doc.borrow_mut();
+                // Blitz offers forward only. Backwards is left unhandled rather
+                // than faked by cycling all the way round, which on a long form
+                // is a caret that appears to jump somewhere arbitrary.
+                match edit {
+                    Edit::FocusNext => doc.focus_next_node().is_some(),
+                    _ => false,
+                }
+            };
+            self.dispatch_key(node_id, "keyup", &key.name);
+            return moved;
+        }
+
+        let takes_text = {
+            let doc = self.doc.borrow();
+            doc.get_node(node_id)
+                .and_then(|node| node.element_data())
+                .and_then(|el| el.text_input_data())
+                .is_some()
+        };
+        if !takes_text {
+            // Not a field. The key is still delivered, because a page may be
+            // listening for it on a button or on the document, and that is a
+            // real thing keyboards do.
+            for kind in ["keydown", "keypress", "keyup"] {
+                self.dispatch_key(node_id, kind, &key.name);
+            }
+            return false;
+        }
+
+        let before = self.field_value(node_id);
+        self.dispatch_key(node_id, "keydown", &key.name);
+        if edit != Edit::Ignore {
+            let mut doc = self.doc.borrow_mut();
+            doc.with_text_input(node_id, |mut driver| match edit {
+                Edit::Insert(text) => driver.insert_or_replace_selection(text),
+                Edit::Backspace => driver.backdelete(),
+                Edit::DeleteForward => driver.delete(),
+                Edit::BackspaceWord => driver.backdelete_word(),
+                Edit::DeleteWord => driver.delete_word(),
+                Edit::Left => driver.move_left(),
+                Edit::Right => driver.move_right(),
+                Edit::WordLeft => driver.move_word_left(),
+                Edit::WordRight => driver.move_word_right(),
+                Edit::LineStart => driver.move_to_line_start(),
+                Edit::LineEnd => driver.move_to_line_end(),
+                Edit::TextStart => driver.move_to_text_start(),
+                Edit::TextEnd => driver.move_to_text_end(),
+                Edit::Up => driver.move_up(),
+                Edit::Down => driver.move_down(),
+                Edit::SelectLeft => driver.select_left(),
+                Edit::SelectRight => driver.select_right(),
+                Edit::SelectAll => driver.select_all(),
+                Edit::SelectToLineStart => driver.select_to_line_start(),
+                Edit::SelectToLineEnd => driver.select_to_line_end(),
+                Edit::FocusNext | Edit::FocusPrevious | Edit::Ignore => {}
+            });
+            // Typing reflows a form, and nothing else here re-resolves on the
+            // caller's behalf.
+            let _ = lay_out_doc(&mut doc);
+        }
+
+        let after = self.field_value(node_id);
+        let changed = before != after;
+        if edit.types() {
+            self.dispatch_key(node_id, "keypress", &key.name);
+        }
+        self.dispatch_key(node_id, "keyup", &key.name);
+
+        // A *user* edit fires `input`, and `change` only when the value moved.
+        // Script setting `.value` does neither, and must not, or a framework
+        // that re-renders on its own write would loop.
+        if changed
+            && let Some(script) = self.script.as_mut()
+        {
+            let _ = script.dispatch(node_id, "input");
+            let settled = script.settle();
+            let dirty = script.take_dirty();
+            self.settled = Some(settled);
+            if dirty {
+                self.note_layout_failure(lay_out(&self.doc));
+            }
+        }
+
+        // The caret moved even when the text did not, and the caret is drawn, so
+        // a viewer still has a new picture to be shown.
+        changed || edit.moves_the_caret()
+    }
+
     /// What a text field currently holds.
     ///
     /// Read from the editor rather than the `value` attribute, because typing

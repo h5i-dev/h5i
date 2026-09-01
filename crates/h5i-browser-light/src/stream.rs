@@ -71,7 +71,31 @@ const MAX_FIND_MATCHES: usize = 20;
 /// above is what this lane can do, and it is keyboard-complete: `hints` reaches
 /// every actionable element the snapshot knows about, which is strictly more
 /// than a click here can.
-const VIEWER_FEATURES: &[&str] = &["hints", "act", "insert", "history", "reload"];
+const VIEWER_FEATURES: &[&str] = &[
+    "hints", "act", "insert", "history", "reload", "input_keys",
+];
+
+/// How many keys one batch may carry.
+///
+/// A bound on work a client can ask for in one message. Far above any burst a
+/// human produces between two frames, and far below anything that would make the
+/// page thread stop answering.
+/// The roles a caret can go in.
+///
+/// The same question [`crate::engine::Page::focus`] answers by asking the
+/// document, written here as the roles the outline mints for text-bearing
+/// controls. Kept in step by `only_the_roles_that_take_a_caret_are_offered`,
+/// which checks the two against each other on a real page rather than trusting
+/// the list.
+const TEXT_ROLES: &[&str] = &["textbox", "searchbox", "combobox"];
+
+const MAX_KEY_BATCH: usize = 256;
+
+/// How much text one keystroke may insert.
+///
+/// A keystroke inserts a character; an IME commit inserts a few. This is not a
+/// paste, which arrives as its own message.
+const MAX_KEY_TEXT: usize = 64;
 
 const PAGE_SCROLL: f64 = 0.9;
 const LINE_SCROLL: f64 = 64.0;
@@ -427,6 +451,37 @@ impl Session {
         // and "usually catches it" is not the standard this file is held to.
         self.hint_refs = None;
         self.served_refs = None;
+    }
+
+    /// One key, to whatever has focus, or to the page if nothing does.
+    ///
+    /// Two behaviours under one message, and which one applies is a property of
+    /// the document rather than of the key. With a field focused the key edits
+    /// it: a caret moves, `Backspace` deletes at the caret, and the page hears
+    /// `keydown`, `keypress` and `input` in the order a script expects. With
+    /// nothing focused there is no field to edit and the scrolling keys keep the
+    /// meaning they have always had here, which is what a reader pressing
+    /// `PageDown` on an article is asking for.
+    ///
+    /// The order matters: the field is asked first. A page that focuses a search
+    /// box on load would otherwise have every space bar press scroll the article
+    /// instead of typing a space.
+    fn type_key(&mut self, key: &crate::keys::Key) -> bool {
+        if self.page.key_to_focused(key) {
+            return true;
+        }
+        // Nothing focused took it. Only then is it a scroll, and only for a key
+        // that carries no text: a space typed into a field is a space, and it is
+        // a page-down only when there is no field.
+        let focused = self.page.has_focus();
+        if focused {
+            return false;
+        }
+        let (_, viewport_height) = self.viewport();
+        match scroll_for_key(&key.name, viewport_height as f64) {
+            Some(delta) => self.page.scroll_by(0.0, delta),
+            None => false,
+        }
     }
 
     /// Follow a link, replacing the page. A failed navigation leaves the
@@ -2771,6 +2826,31 @@ fn login_safe_url(url: &Url) -> String {
     }
 }
 
+/// Read one key off the wire.
+///
+/// The same three fields both viewers already send with `input_keyboard`, so a
+/// batch and a single key are the same shape and nothing new had to be invented.
+fn key_of(value: &Value) -> crate::keys::Key {
+    crate::keys::Key {
+        // Collapsed, because it is page-bound text off a socket and it reaches
+        // a DOM event name.
+        name: crate::snapshot::one_line(
+            value.get("key").and_then(Value::as_str).unwrap_or_default(),
+        ),
+        text: value
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            // Bounded: `text` is what gets inserted, and a viewer sending a
+            // megabyte in one keystroke should not be able to.
+            .map(|s| s.chars().take(MAX_KEY_TEXT).collect()),
+        modifiers: value
+            .get("modifiers")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+    }
+}
+
 /// A ref entry as one line of prose, safe to put in an error message.
 ///
 /// The name is page-derived, and an error message is read *outside* the
@@ -2805,7 +2885,6 @@ fn write_port_file(path: &Path, port: u16) -> Result<(), H5iError> {
 /// Split out from the socket so the protocol can be tested without one.
 fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError> {
     let kind = message.get("type").and_then(Value::as_str).unwrap_or("");
-    let (_, viewport_height) = session.viewport();
 
     let changed = match kind {
         // The viewer announces its pacing; answering with the current frame
@@ -2847,7 +2926,7 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
         // `insert` deliberately does *not*, because the verb layer's `type`
         // resolves `$H5I_SECRET_…` against the broker and a viewer socket must
         // never be a way to ask for a credential. See `viewer_insert`.
-        "hints" => return Ok(vec![viewer_hints(session)]),
+        "hints" => return Ok(vec![viewer_hints(session, message)]),
 
         "act" => return viewer_act(session, message),
 
@@ -2883,15 +2962,42 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
             }
         }
 
-        // keyUp never scrolls: acting on both halves would double every press.
+        // keyUp never acts: doing both halves would type every character twice.
         "input_keyboard"
             if message.get("eventType").and_then(Value::as_str) == Some("keyDown") =>
         {
-            let key = message.get("key").and_then(Value::as_str).unwrap_or("");
-            match scroll_for_key(key, viewport_height as f64) {
-                Some(delta) => session.page.scroll_by(0.0, delta),
-                None => false,
+            session.type_key(&key_of(message))
+        }
+
+        // A burst of typing, applied in order and rendered once.
+        //
+        // The message a viewer sends when the human is typing faster than the
+        // round trip. Batching is what makes real key events affordable: a
+        // keystroke is a *delta*, so unlike `insert` it cannot be coalesced by
+        // dropping the ones in between — but the expensive half is the relayout
+        // and the render, and those are per batch rather than per key.
+        "input_keys" => {
+            let keys = message.get("keys").and_then(Value::as_array);
+            let mut changed = false;
+            let mut applied = 0usize;
+            for value in keys.into_iter().flatten().take(MAX_KEY_BATCH) {
+                changed |= session.type_key(&key_of(value));
+                applied += 1;
             }
+            // Acknowledged whether or not the page moved, and that is the point.
+            // A viewer holds one batch on the wire and gathers what is typed
+            // behind it; if the release signal were the frame, a batch that
+            // changed nothing — an arrow at the end of a field — would never
+            // release, and typing would stop.
+            let mut out = vec![json!({
+                "type": "act",
+                "action": "input_keys",
+                "reply": {"ok": true, "applied": applied},
+            })];
+            if changed {
+                out.push(session.frame_message()?);
+            }
+            return Ok(out);
         }
 
         _ => false,
@@ -2914,8 +3020,21 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
 /// The viewport is reported alongside, because a viewer has to scale these
 /// coordinates into whatever it is drawing on and deriving the scale from the
 /// last frame's dimensions would be deriving it from a different message.
-fn viewer_hints(session: &mut Session) -> Value {
-    let targets = session.page.hint_targets();
+fn viewer_hints(session: &mut Session, message: &Value) -> Value {
+    let mut targets = session.page.hint_targets();
+
+    // Narrowed by what the human is about to do, when they said. `F` and `gi`
+    // are "type into something", and offering them a link is offering a label
+    // that can only answer with a refusal — which costs a keystroke and reads as
+    // the overlay being wrong rather than the choice being.
+    //
+    // Only ever a *narrowing* of the same list, never a second opinion about
+    // what is actionable: the roles below are the ones the engine itself will
+    // accept a caret in.
+    if message.get("for").and_then(Value::as_str) == Some("text") {
+        targets.retain(|target| TEXT_ROLES.contains(&target.entry.role.as_str()));
+    }
+
     let labels = crate::hints::labels(targets.len());
     let (viewport_width, viewport_height) = session.viewport();
     let page_url = session.page.url().clone();
@@ -2981,6 +3100,35 @@ fn viewer_act(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iE
     // hint overlay has any business asking for.
     let request = match action {
         "click" => json!({"verb": "click", "ref": reference}),
+        // Not a verb: there is no agent-facing `focus`, because an agent that
+        // wants to put text in a field says so with `type`. This is the human's
+        // half — put the caret here, change nothing — and it is answered
+        // directly rather than through the verb table it is not in.
+        "focus" => {
+            let snapshot = session.page.snapshot();
+            let entry = match resolve_ref(session, &snapshot, reference) {
+                Ok(entry) => entry,
+                Err(e) => {
+                    return Ok(vec![json!({
+                        "type": "act",
+                        "action": "focus",
+                        "reply": viewer_wording(e.reply()),
+                    })]);
+                }
+            };
+            let role = entry.role.clone();
+            let reply = if session.page.focus(entry.node_id) {
+                json!({"ok": true, "ref": reference})
+            } else {
+                viewer_wording(
+                    VerbError::wrong_role(reference, &role, "a field to type into").reply(),
+                )
+            };
+            let mut out = vec![json!({"type": "act", "action": "focus", "reply": reply})];
+            // The caret is drawn, so focusing is something to look at.
+            out.push(session.frame_message()?);
+            return Ok(out);
+        }
         "press" => {
             let Some(key) = message.get("key").and_then(Value::as_str) else {
                 return Ok(vec![viewer_refusal("`act press` needs `key`.")]);
@@ -2994,7 +3142,8 @@ fn viewer_act(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iE
         }),
         other => {
             return Ok(vec![viewer_refusal(&format!(
-                "a viewer may act with `click`, `press`, `check` or `uncheck`, not `{}`.",
+                "a viewer may act with `click`, `focus`, `press`, `check` or `uncheck`, \
+                 not `{}`.",
                 crate::snapshot::one_line(other)
             ))]);
         }
@@ -5923,7 +6072,22 @@ mod tests {
     /// offering a mode that does almost nothing.
     #[test]
     fn the_engine_advertises_the_lane_it_actually_has() {
-        let mut session = session_with("<body><a href='/one'>One</a></body>");
+        // A page every probe below can actually do something to, and a focused
+        // field, because a key with nothing focused is correctly a no-op and
+        // that is not what this test is asking about.
+        let mut session = session_with(
+            "<body><a href='/one'>One</a><input type='text'></body>",
+        );
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let field = session
+            .hint_refs
+            .as_ref()
+            .expect("refs")
+            .iter()
+            .find(|e| e.role == "textbox")
+            .expect("a field")
+            .node_id;
+        session.page.type_into(field, "");
         let status = session.status_message();
         let advertised: Vec<&str> = status["features"]
             .as_array()
@@ -5940,13 +6104,26 @@ mod tests {
         // And everything it does claim is answered rather than ignored. A name
         // here that `handle` does not know is a key bound in a viewer to
         // nothing at all.
-        for name in advertised {
-            if name == "act" {
-                // Answered, but only with a ref to act on; covered by its own
-                // tests rather than by a bare probe.
-                continue;
+        //
+        // Probed with a payload that means something, not a bare `{"type": …}`.
+        // Some of these legitimately do nothing when given nothing — an empty
+        // key batch changes no text and is not a reason to encode a frame — and
+        // a test that could not tell that apart from an unhandled message would
+        // be checking the wrong thing.
+        let probe = |name: &str| -> Value {
+            match name {
+                "act" => json!({"type": "act", "ref": "@e1", "action": "click"}),
+                "insert" => json!({"type": "insert", "ref": "@e1", "text": "x"}),
+                "history" => json!({"type": "history", "go": -1}),
+                "input_keys" => json!({
+                    "type": "input_keys",
+                    "keys": [{"key": "a", "text": "a"}],
+                }),
+                other => json!({"type": other}),
             }
-            let out = handle(&mut session, &json!({"type": name})).expect("a reply");
+        };
+        for name in advertised {
+            let out = handle(&mut session, &probe(name)).expect("a reply");
             assert!(
                 !out.is_empty(),
                 "`{name}` is advertised and answered with nothing"
@@ -5977,6 +6154,252 @@ mod tests {
         )
         .expect("a reply");
         assert!(out.is_empty(), "a printable key reached the page: {out:?}");
+    }
+
+    // ─── real keys ──────────────────────────────────────────────────────────
+
+    /// The gap this closes: a keystroke used to reach the page only as one of
+    /// six scrolling keys, so there was no way to type into a focused field at
+    /// all, and no caret to move if there had been.
+    #[test]
+    fn a_key_types_into_the_focused_field() {
+        let mut session = session_with("<body><input type='text' id='f'></body>");
+        // Focus it the way a viewer would, by acting on the hint.
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let node = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        session.page.type_into(node, "");
+
+        for ch in ["h", "i"] {
+            handle(
+                &mut session,
+                &json!({"type": "input_keyboard", "eventType": "keyDown", "key": ch, "text": ch}),
+            )
+            .expect("a key");
+        }
+        assert_eq!(session.page.field_value(node).as_deref(), Some("hi"));
+    }
+
+    /// And the caret is real, which is the half `type` could never offer: it
+    /// sets a whole value and leaves the caret at the end.
+    #[test]
+    fn the_caret_moves_and_backspace_deletes_where_it_is() {
+        let mut session = session_with("<body><input type='text'></body>");
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let node = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        session.page.type_into(node, "abcd");
+
+        let key = |name: &str, text: Option<&str>| {
+            let mut m = json!({"type": "input_keyboard", "eventType": "keyDown", "key": name});
+            if let Some(text) = text {
+                m["text"] = json!(text);
+            }
+            m
+        };
+        // Left twice, then backspace: deletes the `b`, not the `d`.
+        for _ in 0..2 {
+            handle(&mut session, &key("ArrowLeft", None)).expect("left");
+        }
+        handle(&mut session, &key("Backspace", None)).expect("backspace");
+        assert_eq!(session.page.field_value(node).as_deref(), Some("acd"));
+
+        // And typing lands at the caret rather than at the end.
+        handle(&mut session, &key("X", Some("X"))).expect("x");
+        assert_eq!(session.page.field_value(node).as_deref(), Some("aXcd"));
+    }
+
+    /// A burst is one relayout and one frame rather than one of each per key.
+    /// Batching is what makes real key events affordable, and unlike `insert` a
+    /// keystroke is a delta, so nothing in a batch may be dropped.
+    #[test]
+    fn a_batch_applies_every_key_in_order() {
+        let mut session = session_with("<body><input type='text'></body>");
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let node = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        session.page.type_into(node, "");
+
+        let keys: Vec<Value> = "hello"
+            .chars()
+            .map(|c| json!({"key": c.to_string(), "text": c.to_string()}))
+            .collect();
+        let out = handle(&mut session, &json!({"type": "input_keys", "keys": keys}))
+            .expect("a batch");
+        assert_eq!(session.page.field_value(node).as_deref(), Some("hello"));
+
+        // One relayout and one frame for the whole burst, which is what makes
+        // real key events affordable: the expensive half is per batch, not per
+        // key. Counted as frames rather than messages, because the batch is also
+        // acknowledged and that acknowledgement is what releases the next one.
+        let frames = out.iter().filter(|m| m["type"] == "frame").count();
+        assert_eq!(frames, 1, "a batch encoded {frames} frames: {out:?}");
+        assert_eq!(out[0]["action"], "input_keys");
+        assert_eq!(out[0]["reply"]["applied"], 5);
+    }
+
+    /// With a field focused, space is a space. With nothing focused it is a page
+    /// down, which is what it has always been here and what a reader wants.
+    #[test]
+    fn a_space_is_text_in_a_field_and_a_scroll_outside_one() {
+        let mut session = session_with(&format!(
+            "<body><input type='text'><div style='height:4000px'>{}</div></body>",
+            "x ".repeat(50)
+        ));
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let node = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        session.page.type_into(node, "a");
+
+        let space = json!({"type": "input_keyboard", "eventType": "keyDown", "key": " ", "text": " "});
+        handle(&mut session, &space).expect("space");
+        assert_eq!(session.page.field_value(node).as_deref(), Some("a "));
+        assert_eq!(session.page.scroll_offset().1, 0.0, "a focused field let the page scroll");
+    }
+
+    /// A chord is a command. Typing an `s` into the field somebody was saving is
+    /// the failure this guards, and it is guarded on the wire as well as in the
+    /// table.
+    #[test]
+    fn a_modified_key_does_not_type_into_the_field() {
+        let mut session = session_with("<body><input type='text'></body>");
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let node = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        session.page.type_into(node, "");
+
+        handle(
+            &mut session,
+            &json!({"type": "input_keyboard", "eventType": "keyDown",
+                    "key": "s", "text": "s", "modifiers": 2}),
+        )
+        .expect("ctrl-s");
+        assert_eq!(session.page.field_value(node).as_deref(), Some(""));
+    }
+
+    /// keyUp is not a second keystroke.
+    #[test]
+    fn the_release_half_of_a_press_types_nothing() {
+        let mut session = session_with("<body><input type='text'></body>");
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let node = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        session.page.type_into(node, "");
+        for kind in ["keyDown", "keyUp"] {
+            handle(
+                &mut session,
+                &json!({"type": "input_keyboard", "eventType": kind, "key": "z", "text": "z"}),
+            )
+            .expect("a key");
+        }
+        assert_eq!(session.page.field_value(node).as_deref(), Some("z"));
+    }
+
+    /// `F` and `gi` mean "type into something". Offering a link there is
+    /// offering a label whose only possible answer is a refusal.
+    #[test]
+    fn asking_for_somewhere_to_type_labels_only_the_fields() {
+        let mut session = session_with(
+            "<body><a href='/a'>Link</a><input type='text'><button>Press</button>\
+             <textarea></textarea></body>",
+        );
+        let all = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        assert_eq!(all[0]["items"].as_array().expect("items").len(), 4);
+
+        let fields = handle(&mut session, &json!({"type": "hints", "for": "text"}))
+            .expect("hints");
+        let items = fields[0]["items"].as_array().expect("items");
+        assert_eq!(items.len(), 2, "{items:?}");
+        assert!(items.iter().all(|i| i["role"] == "textbox"), "{items:?}");
+
+        // And the labels are re-minted for the shorter list, so the first field
+        // is one keystroke rather than whichever letter it happened to get in
+        // the full overlay.
+        assert_eq!(items[0]["label"], "s");
+    }
+
+    /// The list of roles and the document's own answer must agree. A role
+    /// offered here that `focus` then refuses is a label that wastes a keystroke.
+    #[test]
+    fn only_the_roles_that_take_a_caret_are_offered() {
+        let mut session = session_with(
+            "<body><input type='text'><input type='search'><input type='password'>\
+             <input type='email'><textarea></textarea></body>",
+        );
+        let out = handle(&mut session, &json!({"type": "hints", "for": "text"}))
+            .expect("hints");
+        let items = out[0]["items"].as_array().expect("items").clone();
+        assert_eq!(items.len(), 5, "{items:?}");
+
+        for item in items {
+            let reference = item["ref"].as_str().expect("a ref");
+            let reply = handle(
+                &mut session,
+                &json!({"type": "act", "ref": reference, "action": "focus"}),
+            )
+            .expect("focus");
+            assert_eq!(
+                reply[0]["reply"]["ok"], true,
+                "offered `{}` as somewhere to type, then refused it: {:?}",
+                item["role"], reply[0]
+            );
+        }
+    }
+
+    /// Focusing is not typing. A human sent to a field they came to *append* to
+    /// would otherwise have to retype what was already there.
+    #[test]
+    fn focusing_a_field_leaves_what_is_in_it_and_puts_the_caret_at_the_end() {
+        let mut session = session_with("<body><input type='text' value='already'></body>");
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let entry = session.hint_refs.as_ref().expect("refs")[0].clone();
+
+        let out = handle(
+            &mut session,
+            &json!({"type": "act", "ref": entry.id, "action": "focus"}),
+        )
+        .expect("focus");
+        assert_eq!(out[0]["reply"]["ok"], true, "{:?}", out[0]);
+        assert_eq!(session.page.field_value(entry.node_id).as_deref(), Some("already"));
+
+        // And the caret is at the end, so what is typed lands after it.
+        handle(
+            &mut session,
+            &json!({"type": "input_keys", "keys": [{"key": "!", "text": "!"}]}),
+        )
+        .expect("a key");
+        assert_eq!(
+            session.page.field_value(entry.node_id).as_deref(),
+            Some("already!")
+        );
+    }
+
+    /// Aiming `focus` at something with no caret is answered rather than
+    /// silently leaving the keyboard pointing nowhere.
+    #[test]
+    fn focusing_something_that_is_not_a_field_says_so() {
+        let mut session = session_with("<body><button>Press</button></body>");
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let reference = session.hint_refs.as_ref().expect("refs")[0].id.clone();
+        let out = handle(
+            &mut session,
+            &json!({"type": "act", "ref": reference, "action": "focus"}),
+        )
+        .expect("focus");
+        assert_eq!(out[0]["reply"]["ok"], false, "{:?}", out[0]);
+    }
+
+    /// The release signal a batching viewer needs. If it were the frame, a batch
+    /// that changed nothing would never release and typing would stop dead.
+    #[test]
+    fn a_batch_is_acknowledged_even_when_it_changed_nothing() {
+        let mut session = session_with("<body><p>no field here</p></body>");
+        let out = handle(
+            &mut session,
+            &json!({"type": "input_keys", "keys": [{"key": "a", "text": "a"}]}),
+        )
+        .expect("a batch");
+        assert_eq!(out[0]["type"], "act");
+        assert_eq!(out[0]["action"], "input_keys");
+        assert_eq!(out[0]["reply"]["ok"], true);
+        assert!(
+            out.iter().all(|m| m["type"] != "frame"),
+            "a frame was encoded for a page that did not move: {out:?}"
+        );
     }
 
     // ─── history ────────────────────────────────────────────────────────────

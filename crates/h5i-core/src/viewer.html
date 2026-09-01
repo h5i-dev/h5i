@@ -144,7 +144,8 @@ function connect() {
       else if (msg.type === "act") {
         // The reply is what releases the next insert. Done before the refusal is
         // shown, so a rejected keystroke does not wedge the ones after it.
-        if (msg.action === "insert") insertLanded();
+        // `focus` releases the first batch; `input_keys` releases each one after.
+        if (msg.action === "input_keys" || msg.action === "focus") insertLanded();
         // Only refusals are shown. A click that worked announces itself by the
         // page changing, and a viewer that said so as well would be narrating.
         const reply = msg.reply || {};
@@ -544,7 +545,10 @@ function hold(on) {
 function askForHints(then, autoFirst) {
   hold(true);
   hinting = { then, autoFirst, items: [], typed: "", viewport: { ...viewport } };
-  send({ type: "hints" });
+  // Narrowed when the human is about to type, so every label they can reach is
+  // one they can actually use: `F` and `gi` mean "type into something", and
+  // labelling a link there offers a choice that can only be refused.
+  send(then === "insert" ? { type: "hints", for: "text" } : { type: "hints" });
 }
 
 function onHints(msg) {
@@ -671,21 +675,25 @@ function actOn(then, item) {
 // Sent one keystroke at a time it is worse than it sounds, because the requests
 // serialize: nineteen characters typed at a normal pace is nineteen full
 // relayouts queued end to end, and the text crawls in long after the fingers
-// have stopped. So at most one is on the wire, and whatever was typed while it
-// was in flight goes out as a single message when it lands.
+// have stopped. So at most one message is on the wire, and every key struck
+// while it was away goes out together when it lands.
 //
-// Safe only because `insert` carries the whole value and the engine's primitive
-// is select-all-then-replace. Coalescing deltas would lose characters;
-// coalescing snapshots loses nothing, because the last one is the answer.
+// Batched rather than coalesced. A keystroke is a delta, so dropping the ones in
+// between would lose characters; what is actually expensive is the relayout and
+// the render, and those are paid once per batch however many keys it carries.
 let inserting = null;
 
 function enterInsert(ref) {
-  inserting = { ref, text: "", inFlight: true, dirty: false };
+  // The `focus` below is already on the wire, and is acknowledged on the same
+  // lane, so it is what releases the first batch.
+  inserting = { ref, pending: [], inFlight: true, dirty: false, timer: 0 };
   setMode("insert");
   say("typing — Enter to submit, Esc to stop");
-  // Emptied on the way in, so what is typed replaces the field rather than
-  // landing at an unknown offset in an unknown value.
-  send({ type: "insert", ref, text: "" });
+  // The caret goes to the end of what is there, and what is there stays.
+  // Emptying it would be a viewer deciding that anyone who focuses a field meant
+  // to replace it, which is wrong for every field somebody came to correct a
+  // character in or append to.
+  send({ type: "act", ref, action: "focus" });
 }
 
 // How long to wait for an insert before assuming it is not coming.
@@ -697,20 +705,23 @@ function enterInsert(ref) {
 // typing for the life of the page, with no way back but a reload.
 const INSERT_TIMEOUT_MS = 2000;
 
-/// Put the buffer on the wire, if the last one has landed.
+/// Put the pending keys on the wire, if the last batch has landed.
 function flushInsert() {
-  if (!inserting) return;
+  if (!inserting || !inserting.pending.length) return;
   if (inserting.inFlight) { inserting.dirty = true; return; }
   inserting.inFlight = true;
   inserting.dirty = false;
   clearTimeout(inserting.timer);
   inserting.timer = setTimeout(() => {
-    // Whatever happened to it, the buffer is still what the human typed, so
-    // resending is correct rather than merely safe: `insert` carries the whole
-    // value, so a late arrival and a resend cannot disagree.
+    // Given up on rather than retried. Unlike a whole-value insert, a batch
+    // cannot be safely repeated: the earlier one may have arrived and been
+    // applied, and sending it again would type the word twice. Only the keys
+    // struck behind it go out.
     if (inserting && inserting.inFlight) { inserting.inFlight = false; flushInsert(); }
   }, INSERT_TIMEOUT_MS);
-  send({ type: "insert", ref: inserting.ref, text: inserting.text });
+  const batch = inserting.pending;
+  inserting.pending = [];
+  send({ type: "input_keys", keys: batch });
 }
 
 /// An insert came back. Send what was typed while it was away.
@@ -729,11 +740,27 @@ function onInsertKey(e) {
     leaveInsert();
     return;
   }
-  if (e.key === "Backspace") inserting.text = inserting.text.slice(0, -1);
-  else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) inserting.text += e.key;
-  else return;
+  // The keystroke itself, not the value it would produce. That is what makes the
+  // caret move, `Backspace` delete where the caret is rather than off the end,
+  // and a page listening for typing actually hear it.
+  const key = { key: e.key, modifiers: mods(e) };
+  // A chord is a command and types nothing: `Ctrl-S` must not put an `s` in the
+  // field somebody was saving. Shift is not a chord — it is how capitals are
+  // typed, and they arrive already shifted.
+  if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) key.text = e.key;
+  else if (e.key.length === 1 && (e.ctrlKey || e.metaKey || e.altKey)) { /* command */ }
+  else if (!EDITING_KEYS.has(e.key)) return;
+  inserting.pending.push(key);
   flushInsert();
 }
+
+// Keys with no text that still mean something inside a field. Anything else with
+// a multi-character name is left to the page, which may have its own use for it.
+const EDITING_KEYS = new Set([
+  "Backspace", "Delete", "Tab",
+  "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
+  "Home", "End", "PageUp", "PageDown",
+]);
 
 // `leaveHint` is called on the way to acting as well as on the way out, so the
 // lock is given back by the actions that are finished with it rather than here.

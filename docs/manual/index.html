@@ -1571,6 +1571,31 @@ letters safe to bind. <code>?</code> lists them in the viewer itself.</p>
 </tr>
 </tbody>
 </table>
+<h4 id="typing">Typing</h4>
+<p><code>F</code> labels the fields — only the fields, since a link is not somewhere to type —
+and puts the caret in the one you pick, at the end of whatever is already in it.
+<code>gi</code> skips the labels and goes to the first field on the page. From there the
+keyboard is that field's, and it is a real keyboard: the arrows and <code>Home</code> and
+<code>End</code> move the caret, <code>Backspace</code> and <code>Delete</code> cut where the caret is rather than
+off the end, <code>Ctrl</code> or <code>Alt</code> with a motion works by word, <code>Tab</code> moves to the next
+field, and <code>Ctrl-A</code> selects all. <code>Enter</code> submits and hands the keyboard back;
+<code>Esc</code> hands it back without submitting.</p>
+<p>What reaches the page is the keystroke, not the value it would have produced.
+That matters beyond the caret: a page listening for typing — an autocomplete, a
+search-as-you-type box, an input a framework is controlling — hears <code>keydown</code>,
+<code>keypress</code> and <code>input</code> in the order it was written against. Setting a field's
+whole value fires none of those, which is right for an agent and wrong for a
+person.</p>
+<p>Keys are sent in batches rather than one at a time, and that is a latency
+decision rather than a tidiness one. A keystroke cannot be answered locally: the
+viewer draws pixels the engine rendered, so a character is not on screen until
+the page has been laid out again and a frame encoded, which is around 40ms.
+Sending each key on its own makes those queue end to end, and the text crawls in
+behind the fingers. At most one message is in flight, every key struck while it
+is away rides out together when it lands, and the relayout is paid once per batch
+however many keys it carries. Nothing is dropped: a keystroke is a difference,
+not a snapshot, so they are gathered rather than replaced.</p>
+<h4 id="why-keys-and-not-a-pointer">Why keys and not a pointer</h4>
 <p>The reason it works this way is worth stating, because "add a mouse" sounds
 easier. A terminal reports cells rather than pixels, so a click lands at the
 corner of the cell it was in; the viewer hides the cursor, so there is nothing
@@ -1598,10 +1623,10 @@ lane the browser viewer uses.</p>
 <p><code>i</code> hands the keyboard and the pointer to the page, and it is offered only where
 that means something. On h5i's own engine it does not: the viewer lane drops a
 pointer press and a pointer move, and the one gesture it acts on is a release
-over a link. Click a button, nothing happens. Click a field and type, nothing
-happens. So there the key says so and points at <code>f</code>, which reaches every
-actionable element rather than only the links, does it without aiming, and
-leaves a receipt naming what was activated instead of a coordinate.</p>
+over a link. Click a button, nothing happens. So there the key says so and points
+at <code>f</code>, which reaches every actionable element rather than only the links, does
+it without aiming, and leaves a receipt naming what was activated instead of a
+coordinate.</p>
 <p>It stays bound on a box running an engine that <em>can</em> be driven that way, which
 is where the canvas, the map and the drag live. The rule is asymmetric on
 purpose: every other gated key is new, so an engine that has not mentioned it
