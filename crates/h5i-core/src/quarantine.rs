@@ -235,7 +235,15 @@ fn inspect(
         let path = format!("{dir}{name}");
 
         if path.len() > MAX_PATH_LEN {
-            violations.push(format!("a path longer than {MAX_PATH_LEN} bytes: {}", &path[..64.min(path.len())]));
+            // Counted in characters, not bytes. `name` is a tree entry the peer
+            // authored: a byte slice landing inside a multi-byte character
+            // panicked, git2 resumed the unwind out of the walk, and the
+            // violation this line was about to record was lost with it — a
+            // refusal that leaves no mark is one a peer can probe behind.
+            violations.push(format!(
+                "a path longer than {MAX_PATH_LEN} bytes: {}",
+                crate::env::short(&path, 64)
+            ));
             return git2::TreeWalkResult::Abort;
         }
 
@@ -404,6 +412,24 @@ fn git(dir: &PathBuf, args: &[&str]) -> Result<String, H5iError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The over-long-path refusal is one of the three that abort the walk, and
+    /// the message it records is the only durable mark a probing peer leaves.
+    /// Slicing the peer's own path by *byte* offset panicked inside the git2
+    /// callback, the unwind resumed out of `inspect`, and the violation went
+    /// with it.
+    #[test]
+    fn an_over_long_path_is_reported_rather_than_sliced_through_a_character() {
+        // 63 ASCII bytes, then a character straddling byte 64.
+        let path = format!("{}\u{20ac}{}", "a".repeat(63), "b".repeat(MAX_PATH_LEN));
+        assert!(path.len() > MAX_PATH_LEN);
+        assert!(!path.is_char_boundary(64), "the crafted shape must straddle");
+        let message = format!(
+            "a path longer than {MAX_PATH_LEN} bytes: {}",
+            crate::env::short(&path, 64)
+        );
+        assert!(message.contains("aaa"));
+    }
 
     #[test]
     fn a_private_path_is_matched_by_component_not_by_prefix() {
