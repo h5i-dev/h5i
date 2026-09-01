@@ -2265,6 +2265,59 @@ fn response_headers_reach_the_page() {
     let _ = server.join();
 }
 
+/// A `no-cors` read is opaque: no body, no headers, no status. `response.url`
+/// gave the same answer back in one field, because it reported where the
+/// redirect chain *ended* — the login-state oracle, and whatever a victim
+/// server puts in a `Location`.
+#[test]
+fn an_opaque_response_does_not_say_where_it_ended_up() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let Ok((stream, _)) = listener.accept() else { return };
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut line = String::new();
+        let _ = reader.read_line(&mut line);
+        loop {
+            let mut h = String::new();
+            if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() { break; }
+        }
+        let mut stream = stream;
+        let _ = write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\n\
+             Connection: close\r\n\r\nSECRET"
+        );
+        let _ = stream.flush();
+    });
+
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    // A *different* loopback origin, so the fetch is genuinely cross-origin.
+    let base = url::Url::parse("http://127.0.0.1:1/page").unwrap();
+    let page = factory.from_html("<html><body></body></html>", &base);
+    let mut script = Script::new(page.dom(), broker, &base).expect("realm");
+
+    script
+        .eval(&format!(
+            "globalThis.seen = null; globalThis.op = null; \
+             fetch('http://127.0.0.1:{port}/x', {{ mode: 'no-cors' }})\
+               .then(r => {{ seen = r.url; op = r.type }})\
+               .catch(e => {{ op = 'err:' + e }});"
+        ))
+        .expect("runs");
+    script.settle();
+
+    assert_eq!(script.eval_value("op").unwrap(), "opaque", "the read must be opaque");
+    assert_eq!(script.eval_value("seen").unwrap(), "", "{:?}", script.eval_value("seen"));
+    let _ = server.join();
+}
+
 #[test]
 fn an_already_aborted_signal_refuses_the_fetch() {
     let (_page, mut script) = page_and_script("<html><body></body></html>");

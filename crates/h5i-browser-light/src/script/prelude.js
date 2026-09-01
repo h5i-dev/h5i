@@ -9890,7 +9890,10 @@
       // empty body with status 0, which reads as a network error.
       type: res.opaque ? "opaque" : "basic",
       url: res.url,
-      redirected: res.url !== request.url,
+      // An opaque response reports no URL, so it cannot report a redirect
+      // either: comparing an empty string to the request's URL said every
+      // opaque read had been redirected.
+      redirected: res.opaque ? false : res.url !== request.url,
     });
   }
 
