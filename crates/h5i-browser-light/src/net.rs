@@ -1160,9 +1160,24 @@ impl LocalBroker {
         use std::io::Read;
         let cap = self.policy.max_response_bytes();
 
-        // Only the last encoding is handled, which is all any server sends.
-        // A stacked `gzip, br` is refused by name rather than half-decoded.
-        let name = encoding.rsplit(',').next().unwrap_or(encoding).trim();
+        // One encoding, or a refusal. This makes a single pass, and a stacked
+        // `gzip, br` needs two of them in order; taking the *last* name and
+        // decoding with it is not half the answer, it is the wrong one under a
+        // message that sends the reader somewhere else ("the br response could
+        // not be decoded", over gzip bytes). `identity` is a no-op in the list
+        // and does not count as a layer.
+        let mut layers = encoding
+            .split(',')
+            .map(str::trim)
+            .filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case("identity"));
+        let name = layers.next().unwrap_or("");
+        if layers.next().is_some() {
+            return Err(H5iError::Metadata(format!(
+                "the response stacks encodings (`{}`), which this engine decodes one layer at \
+                 a time. It asked for {ACCEPT_ENCODING}.",
+                encoding.trim()
+            )));
+        }
         let mut out = Vec::new();
         let read = match name {
             "gzip" | "x-gzip" => flate2::read::GzDecoder::new(raw)
@@ -2277,6 +2292,22 @@ mod cookie_wire_tests {
             writer.write_all(&body).unwrap();
         }
         assert_eq!(broker.decode_capped(&br, "br").unwrap(), body);
+
+        // A stacked encoding is refused by name. Reading the last one made the
+        // engine brotli-decode gzip output and blame brotli for it.
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut gz, &body).unwrap();
+        let err = broker
+            .decode_capped(&gz.finish().unwrap(), "gzip, br")
+            .expect_err("stacked encodings are refused");
+        assert!(format!("{err}").contains("stacks encodings"), "{err}");
+        // `identity` in the list is a no-op, not a second layer.
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut gz, &body).unwrap();
+        assert_eq!(
+            broker.decode_capped(&gz.finish().unwrap(), "identity, gzip").unwrap(),
+            body
+        );
     }
 
     /// Serves a page that says who asked and echoes the cookie it saw, with
