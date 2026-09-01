@@ -492,8 +492,17 @@ impl AllowList {
                 continue; // can't enumerate a wildcard's IPs
             }
             let port = e.port.unwrap_or(443);
+            // A name whose answer points inside is not pinned. The proxy dials
+            // from the *host's* network namespace, so pinning what DNS said
+            // would let a name in the allowlist stand for host loopback, the
+            // operator's LAN, or the cloud metadata address. An address the
+            // operator wrote out literally is what they asked for and stays.
+            let literal = e.host.parse::<IpAddr>().is_ok();
             if let Ok(addrs) = (e.host.as_str(), port).to_socket_addrs() {
-                e.pinned = addrs.map(|a| a.ip()).collect();
+                e.pinned = addrs
+                    .map(|a| a.ip())
+                    .filter(|ip| literal || !is_internal(ip))
+                    .collect();
                 distinct.extend(e.pinned.iter().copied());
             }
         }
@@ -510,11 +519,25 @@ impl AllowList {
     pub fn dial_addrs(&self, host: &str, port: u16) -> Vec<std::net::SocketAddr> {
         let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
         if let Ok(ip) = h.parse::<IpAddr>() {
+            // Same rule as the pinned answers above: an internal address is
+            // reachable only when the allowlist names that address itself.
+            if is_internal(&ip) && !self.names_address(&ip) {
+                return Vec::new();
+            }
             return vec![std::net::SocketAddr::new(ip, port)];
         }
         let mut out: Vec<std::net::SocketAddr> = Vec::new();
         for e in self.entries.iter().filter(|e| e.matches(&h, port)) {
-            out.extend(e.pinned.iter().map(|ip| std::net::SocketAddr::new(*ip, port)));
+            // Filtered here as well as at pin time: this is the dial site, and
+            // it is the one place that has to hold whatever put an address on
+            // the entry.
+            let literal = e.host.parse::<IpAddr>().is_ok();
+            out.extend(
+                e.pinned
+                    .iter()
+                    .filter(|ip| literal || !is_internal(ip))
+                    .map(|ip| std::net::SocketAddr::new(*ip, port)),
+            );
         }
         if !out.is_empty() {
             out.sort();
@@ -525,6 +548,16 @@ impl AllowList {
             .to_socket_addrs()
             .map(|it| it.filter(|a| !is_internal(&a.ip())).collect())
             .unwrap_or_default()
+    }
+
+    /// Did the operator write this exact address into the allowlist?
+    ///
+    /// The one thing that makes an internal destination reachable: a rule that
+    /// names the address is a decision, a name that happens to resolve to one
+    /// is a DNS answer someone else chose.
+    fn names_address(&self, ip: &IpAddr) -> bool {
+        let text = ip.to_string();
+        self.entries.iter().any(|e| !e.wildcard && e.host == text)
     }
 
     /// Decide whether a CONNECT/request to `host:port` is allowed (fail-closed:
@@ -1939,10 +1972,12 @@ mod tests {
     /// the address the allowlist pinned.
     #[test]
     fn dial_uses_the_pinned_address_not_a_fresh_lookup() {
-        let a = pinned("api.example.com", &["203.0.113.10", "203.0.113.11"]);
+        // Routable addresses, not `203.0.113.x`: `is_internal` counts the
+        // documentation ranges, and a pin now goes through it too.
+        let a = pinned("api.example.com", &["93.184.216.34", "93.184.216.35"]);
         let addrs = a.dial_addrs("api.example.com", 443);
         assert_eq!(addrs.len(), 2);
-        assert!(addrs.iter().all(|x| x.ip().to_string().starts_with("203.0.113.")));
+        assert!(addrs.iter().all(|x| x.ip().to_string().starts_with("93.184.216.")));
         assert!(addrs.iter().all(|x| x.port() == 443));
     }
 
@@ -1985,10 +2020,32 @@ mod tests {
     /// it against the pins, so there is nothing left to resolve.
     #[test]
     fn a_literal_ip_target_is_dialled_as_given() {
-        let a = pinned("api.example.com", &["203.0.113.10"]);
-        let addrs = a.dial_addrs("203.0.113.10", 443);
+        let a = pinned("api.example.com", &["93.184.216.34"]);
+        let addrs = a.dial_addrs("93.184.216.34", 443);
         assert_eq!(addrs.len(), 1);
-        assert_eq!(addrs[0].to_string(), "203.0.113.10:443");
+        assert_eq!(addrs[0].to_string(), "93.184.216.34:443");
+    }
+
+    /// The proxy dials from the host's namespace, so an allowlisted *name*
+    /// whose DNS answer points inside would make the egress boundary an SSRF
+    /// gadget: `CONNECT 169.254.169.254:80` on an allowlist of `api.example.com`
+    /// that resolves there. The supervised tier already refuses this shape.
+    #[test]
+    fn a_name_that_resolves_inside_is_not_a_route_to_the_host() {
+        for inside in ["127.0.0.1", "169.254.169.254", "10.0.0.5", "192.168.1.50"] {
+            let a = pinned("api.example.com", &[inside]);
+            assert!(
+                a.dial_addrs(inside, 443).is_empty(),
+                "{inside} was dialled as a literal target"
+            );
+            assert!(
+                a.dial_addrs("api.example.com", 443).is_empty(),
+                "{inside} was dialled through the name that resolved to it"
+            );
+        }
+        // ...and the operator's own literal entry is still their decision.
+        let listed = AllowList::parse(&["10.0.0.5:8080".into()]).unwrap();
+        assert_eq!(listed.dial_addrs("10.0.0.5", 8080)[0].to_string(), "10.0.0.5:8080");
     }
 
     /// Podman applies `--env` in order and the proxy wiring is pushed first, so
