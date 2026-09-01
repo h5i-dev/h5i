@@ -154,15 +154,6 @@ fn resolve_route(opts: &Options) -> Result<crate::view::Route, H5iError> {
 }
 
 /// What to tell someone whose box has no `.stream` file yet.
-///
-/// The advice is engine-specific because the command is: an `h5i-light` box has
-/// no agent-browser daemon to enable streaming on, and telling its owner to run
-/// `agent-browser stream enable` sends them to a CLI that will fail on a missing
-/// socket directory before it reaches the question they asked.
-///
-/// Unix-gated with the `run` that calls it, following this file's rule: the
-/// non-unix `run` is a stub that refuses before it could need advice about
-/// streaming.
 #[cfg(unix)]
 fn not_streaming_hint(engine: Option<&str>) -> String {
     match engine {

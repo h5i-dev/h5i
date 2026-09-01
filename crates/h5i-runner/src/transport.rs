@@ -1,16 +1,4 @@
 //! How the frames get there.
-//! A [`Transport`] is a *factory*, not a connection: `connect()` opens one
-//! [`Channel`] and one channel carries one RPC (design-runner.md R4). That is
-//! the whole reason this protocol needs no request ids, no channel numbers and
-//! no multiplexer. Concurrency is several channels, and over SSH those are
-//! several sessions on one TCP connection, multiplexed by OpenSSH's
-//! ControlMaster in battle-tested C rather than by us.
-//! Both implementations are the same mechanism: spawn a child, speak frames on
-//! its stdin and stdout, read its stderr for diagnosis. [`SshTransport`] puts
-//! `ssh` in front of the worker; [`ChildProcessTransport`] runs the worker
-//! directly, which makes the whole protocol testable in CI with no sshd.
-//! Because the difference is only argv, the argv is built by pure functions a
-//! test can read without spawning anything.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -286,16 +274,6 @@ impl Channel {
 }
 
 /// Kills a channel's child if the exchange outlives its deadline.
-/// The clock has to live somewhere, and a pipe has no read timeout. Killing the
-/// child turns "the peer stopped talking" into an ordinary end of stream, which
-/// every reader above already handles, so the deadline needs no special case
-/// anywhere else.
-/// It kills the child, not a process group. A reader unblocks when the last
-/// holder of the write end of the pipe closes it, so if the child had left a
-/// grandchild holding that end, the read would keep blocking past the kill.
-/// Both transports here are single-process by construction, so the kill is
-/// sufficient. A transport that ever spawns a shell wrapper would need the
-/// child in its own process group.
 struct Watchdog {
     disarm: mpsc::Sender<()>,
 }

@@ -1,22 +1,5 @@
 #!/usr/bin/env bash
-#
 # End-to-end checks for `h5i box share`, against a real box.
-#
-# These are the things that kept breaking and that the unit tests cannot see,
-# because they live in the seams between the CLI, `run.rs`, the signal
-# handlers and a real network: a first Ctrl-C during the teardown, a joiner
-# nobody has visited yet, a client that half-closes, `stop` racing `grant`.
-# Every one of them was found by a reviewer and then verified by hand with a
-# stopwatch, five rounds running. This is that by-hand check, written down.
-#
-# Not a `cargo test`: it needs a real box, a real network namespace, and
-# (for the tunnel half) `cloudflared` and the internet. Run it deliberately.
-#
-#   scripts/share_e2e.sh           # everything that works offline
-#   scripts/share_e2e.sh --tunnel  # and the Cloudflare path as well
-#   scripts/share_e2e.sh --leak    # and five hundred requests, watching fds
-#
-# Exits non-zero on the first failure and leaves the box behind for inspection.
 
 set -uo pipefail
 

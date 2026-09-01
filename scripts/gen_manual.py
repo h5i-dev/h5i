@@ -30,18 +30,8 @@ md = markdown.Markdown(extensions=["fenced_code","tables","toc","sane_lists","at
                        extension_configs={"toc":{"permalink":False,"slugify":gh_slug,"separator":"-"}})
 body = md.convert(src)
 
-# Guard against the two ways this renderer silently produces wrong HTML from
-# markdown that looks fine in an editor and on GitHub. Both bit the Limits and
-# Credentials sections and shipped unnoticed, because a mangled list is still
-# valid HTML: nothing downstream had any reason to complain.
-#
-#   1. A `- ` line directly after a multi-line paragraph is read as another line
-#      of that paragraph, not as a list item, so the bullet and everything after
-#      it collapse into prose. Fix: a blank line before the item.
-#   2. python-markdown's fenced_code is a preprocessor and never sees a fence
-#      indented inside a list item, so the fence renders as literal text and the
-#      language word leaks into the page. Fix: an indented code block instead,
-#      8 spaces at the top level of a list and 12 inside a nested item.
+# Guard against the two ways this renderer silently produces wrong HTML from markdown that looks
+# fine in an editor and on GitHub.
 def _check(body):
     problems = []
     for m in re.finditer(r'<p>(?:(?!</p>).)*?\n\s*[-*+] ', body, re.S):
@@ -288,4 +278,3 @@ print("h2 sections:", body.count("<h2"), "| h3:", body.count("<h3"), "| code blo
 # tree CI rejects, having run exactly the command the docs told them to.
 _stamp = Path(__file__).resolve().parent / "stamp_assets.py"
 subprocess.run([sys.executable, str(_stamp)], check=True, stdout=subprocess.DEVNULL)
-

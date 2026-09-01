@@ -1,24 +1,4 @@
 //! Terminal input, turned into events a browser understands.
-//!
-//! A terminal and a browser disagree about input in three ways, and each is a
-//! decision this module has to make rather than a translation it can perform:
-//!
-//! * A terminal reports presses, not releases. There is no key-up in the legacy
-//!   encoding, so the viewer synthesizes the pair, emitting `keyDown` followed
-//!   immediately by `keyUp`. The consequence is honest and worth knowing: a page
-//!   cannot observe a *held* key, so press-and-hold interactions do not work.
-//!   Typing, which is what a form needs, works exactly.
-//! * A terminal reports cells, not pixels. A click has to be mapped through the
-//!   image's placement back into viewport coordinates. This is the one piece of
-//!   arithmetic in the viewer that can be *plausibly wrong*, so it is derived
-//!   from the placement rather than assumed, and tested at the edges.
-//!   Pixel-resolution mouse reporting (`?1016`) would be better, but a terminal
-//!   that does not support it silently keeps reporting cells with no way to tell
-//!   the difference.
-//! * A terminal has no spare keys. Raw mode hands us `Ctrl-C` and every other
-//!   combination, which is required since a page under test may bind them, and
-//!   means the viewer must reserve exactly one key to escape with. That key is
-//!   `Ctrl-]`, the telnet convention, and it is never forwarded.
 
 use super::proto::{self, Button, KeyEvent, KeyKind, MouseEvent, MouseKind};
 
@@ -531,15 +511,6 @@ pub struct Mapping {
 
 impl Mapping {
     /// Map a terminal cell to a viewport pixel.
-    ///
-    /// `None` for a cell outside the image, which is not an error: the status
-    /// line is up there, and a click on it is a click on the viewer, not on the
-    /// page.
-    ///
-    /// The cell's *centre* is used rather than its corner. A cell is eight pixels
-    /// wide; its top-left corner systematically biases every click up and to the
-    /// left, which on a dense form is the difference between the field and the
-    /// label above it.
     pub fn to_viewport(&self, col: u16, row: u16) -> Option<(i32, i32)> {
         if col < self.col || row < self.row {
             return None;

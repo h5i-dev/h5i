@@ -1,18 +1,4 @@
-// Cargo build script. Keeps the box console's React bundle (`web/dist/`)
-// present and fresh before `rust-embed` reads it.
-//
-// It does nothing at all unless the `web` feature is on: a
-// `--no-default-features` build has no `server` module, no embedder, and so no
-// reason to require Node. When `web` is on, the bundle is rebuilt only when:
-//   - web/dist is missing, or
-//   - anything under web/src (or index.html / package.json / vite.config.ts /
-//     tsconfig.json) is newer than web/dist/index.html
-//
-// Set `H5I_SKIP_WEB_BUILD=1` to opt out with the feature still on (a developer
-// machine running `npm run dev`, or a CI job that builds the frontend itself).
-//
-// `cargo:rerun-if-changed` lines tell cargo to re-run *this script*. They do
-// not by themselves run npm. The freshness check in `main` decides that.
+// Cargo build script.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

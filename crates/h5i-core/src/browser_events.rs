@@ -1,25 +1,4 @@
 //! The browser terminal's event stream (roadmap-history.md M11a).
-//!
-//! One stream, three consumers: the console's browser terminal, the terminal
-//! viewer, and the exported receipt. Two viewers collecting their own data are
-//! two viewers that disagree, and that disagreement is unfalsifiable for whoever
-//! is watching.
-//!
-//! Every event carries two things that are not the same question. [`Lane`] is
-//! who observed it, host-observed or box-claimed. [`Grade`] is how complete the
-//! observation is, fail-closed or best-effort. The interesting case proves they
-//! are orthogonal: `h5i-browser-light` writes its request log inside the box, so
-//! box-claimed, and that log is fail-closed by construction because the engine
-//! refuses the fetch when the record cannot be written. Chromium's Fetch lane is
-//! box-claimed *and* best-effort, since attach races and buffer limits leave
-//! gaps.
-//!
-//! Correlation is carried, never guessed. [`ViewerEvent::caused_by`] is set only
-//! where the source carries the link; nothing infers causation from timestamps.
-//!
-//! Time is when h5i read the record, not when the box produced it: the request
-//! log carries a sequence number and no clock, so an event time would be
-//! fabricated. Ordering comes from [`EventLog`]'s monotonic `id`.
 
 use serde::{Deserialize, Serialize};
 
@@ -169,17 +148,6 @@ pub enum EventKind {
         note: Option<String>,
     },
     /// An outside program h5i ran on this session's behalf, and what came of it.
-    ///
-    /// Host-observed, and the row that keeps the request log honest. A helper
-    /// makes its own network connections, from a process the engine never sees,
-    /// so its fetches are not in `h5i browser requests`, and the invariant that
-    /// log carries ("a request that is not here did not happen") would quietly
-    /// become false if a helper's traffic went unrecorded anywhere. It does not,
-    /// because this row says a second program ran, names it, and names what it
-    /// was told to do.
-    ///
-    /// `argv` is what was actually executed, credentials excluded. H5i builds it,
-    /// so this is a fact rather than the helper's account of itself.
     Helper {
         name: String,
         argv: Vec<String>,
@@ -456,18 +424,8 @@ fn clean(s: &str) -> String {
     out
 }
 
-/// Parse `h5i-browser-light`'s request log (`H5I_BROWSER_RECEIPTS`, one JSON
-/// object per line) into request and response events.
-///
-/// Box-claimed and fail-closed. The file is written inside the box, so a box
-/// that wanted to lie could; and the engine will not fetch what it cannot
-/// record, so within that trust boundary there is no request missing from it.
-/// Both facts travel with every row.
-///
-/// Defensive throughout, because this is untrusted input from a box that may be
-/// mid-write: a line that is not JSON, an object missing its sequence number, or
-/// a phase this build does not know is skipped rather than failing the read. A
-/// half-written trailing line is the ordinary case, not an error.
+/// Parse `h5i-browser-light`'s request log (`H5I_BROWSER_RECEIPTS`, one JSON object per line)
+/// into request and response events.
 pub fn ingest_request_log(text: &str) -> Vec<Draft> {
     ingest_request_log_with(text, &std::collections::BTreeMap::new())
 }
@@ -669,18 +627,8 @@ pub fn ingest_evidence(evidence: &crate::receipt::BrowserEvidence) -> Vec<Draft>
     drafts
 }
 
-/// Parse the light engine's own action log: what the box says it was asked to
-/// do, as opposed to what h5i watched cross a socket.
-///
-/// Box-claimed, always. The engine writes this from inside the box, and no
-/// arrangement of files could make that host-observed: h5i sits on no socket
-/// between an agent and this engine, because the engine *is* the browser. The
-/// rows are still worth showing, since an empty pane for a session an agent is
-/// driving is a worse lie than a row that says who is claiming it.
-///
-/// Only `result` lines become rows. The `request` line that precedes each one
-/// exists to make "no record, no action" true inside the engine; rendering both
-/// would double every verb in the pane.
+/// Parse the light engine's own action log: what the box says it was asked to do, as opposed to
+/// what h5i watched cross a socket.
 pub fn ingest_light_actions(text: &str) -> Vec<Draft> {
     ingest_light_actions_with(text, &mut std::collections::BTreeMap::new())
 }
@@ -769,22 +717,7 @@ pub fn ingest_actions_log(text: &str) -> Vec<Draft> {
     ingest_actions(&records)
 }
 
-/// What one box's sources have already given up, so the next read can ask only
-/// for what is new.
-///
-/// Held by the console across polls rather than rebuilt per request, and the
-/// reason is a defect the first version of this reader shipped with. It
-/// re-parsed every source on every poll and numbered events from 1 each time,
-/// which is stable only while the files grow by appending, and they do not.
-/// Every run clears the box's private `/tmp`, so a second browser run starts the
-/// request log over at zero bytes, the numbering restarts with it, and a console
-/// tab holding a cursor from the first run silently drops the head of the
-/// second.
-///
-/// Holding the position turns that into its opposite: ids never restart, a
-/// shortened file is *detected*, and the restart is emitted as
-/// [`EventKind::SessionReset`], a row a human can see. It also stops the console
-/// re-reading and re-parsing whole files once a second.
+/// What one box's sources have already given up, so the next read can ask only for what is new.
 #[derive(Debug)]
 pub struct BoxStream {
     log: EventLog,
@@ -818,17 +751,6 @@ impl BoxStream {
     }
 
     /// Fold in whatever the sources have produced since the last call.
-    ///
-    /// Four sources, read in a fixed order: mediated actions, the light engine's
-    /// own actions, its request log, then the page evidence carried on receipts.
-    /// The first two never both exist, since a box runs one engine.
-    ///
-    /// That order is the read order, not a timeline: the sources share no clock,
-    /// so interleaving them by time would mean inventing one. Within a source the
-    /// order is the source's own.
-    ///
-    /// Best effort by design: a box that has never opened a browser has none of
-    /// these files, and that is an empty stream rather than an error.
     pub fn poll(&mut self, h5i_root: &std::path::Path, m: &crate::env::EnvManifest) {
         let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
         let env_dir = m.dir(h5i_root);

@@ -1,27 +1,5 @@
 #!/usr/bin/env bash
-#
 # Does a macOS share reach the *box*, and refuse everything else?
-#
-# On Linux this question does not arise: the box's port is in a network
-# namespace, the dialer is the only way in, and "the box's port 3000" is a
-# different object from this machine's. macOS has no such boundary — a Seatbelt
-# box binds the host's loopback — so h5i asks Darwin which process holds the
-# listening socket and refuses unless it is one of the box's
-# (`crates/h5i-share/src/owner.rs`).
-#
-# That rule is unit-tested against a table of listeners. What it cannot test is
-# the thing this script does: a real box, a real dev server, a real stranger on
-# the same port number, and a real visitor checking *which one* answered. The
-# hazard is not hypothetical — it was found on the machine the feature was
-# written on, where port 3000 was held by the box's server on `::` and by an
-# unrelated `serve.py` on `127.0.0.1`, and a plain loopback connect reached the
-# stranger.
-#
-#   scripts/share_macos.sh
-#
-# Exits non-zero on the first failure and leaves the boxes behind to inspect.
-# macOS only; on Linux the guarantee is structural and this script has nothing
-# to say.
 
 set -uo pipefail
 
@@ -58,16 +36,6 @@ free_port() {
 }
 
 # End the box's current session and wait for it to let go.
-#
-# A box holds one session at a time — a second `box run` is refused with
-# "environment is busy" — so each stage below has to hand the box over rather
-# than stack another server onto it. That refusal is also silent unless
-# somebody is reading the server's own output, which is how this script spent
-# three runs believing a bind had failed.
-# Free the shared port of every stand-in this script has put on it, and wait
-# for the kernel to agree it is free. Killing is asynchronous; a stage that
-# starts its own listener a millisecond later gets `EADDRINUSE` and looks like
-# a product failure.
 kill_port_holders() {
   pkill -f "serve4.py" 2>/dev/null
   pkill -f "serve6.py" 2>/dev/null
@@ -87,18 +55,6 @@ stop_session() {
 }
 
 # Wait for a listener to actually exist, rather than sleeping and hoping.
-#
-# Not a nicety. Two of the checks below expect a **refusal**, and a refusal is
-# exactly what h5i also produces when the box's server never started — so a
-# fixed sleep that is a second too short turns this script into one that passes
-# without testing anything. Starting a box server takes a few seconds (Seatbelt
-# setup, then Python), and it varies with load.
-#
-#   wait_listen <port> <lsof pattern> <what it is> [server log]
-#
-# The log is not optional in spirit. A server that dies on startup is the most
-# likely reason this ever fires, and its own last line says why in one sentence
-# — so it is printed rather than left in a file nobody knows to open.
 wait_listen() {
   for _ in $(seq 1 40); do
     if lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | grep -q "$2"; then return 0; fi

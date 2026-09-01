@@ -1,16 +1,4 @@
 //! What the page is allowed to reach.
-//!
-//! The policy is an origin allowlist that is fail-closed by default: an empty
-//! allowlist permits nothing, matching `AllowList` on the sandbox side rather
-//! than inventing a second, friendlier default. Two rules are worth stating
-//! because they are where "allowlist" usually leaks:
-//!
-//! - Every redirect hop is checked, not just the first. An allowed origin that
-//!   302s to a denied one is a denial, and the hop is recorded. A proxy watching
-//!   CONNECT lines cannot see that decision.
-//! - The navigation target is not implicitly trusted for subresources. Asking to
-//!   open a page grants that page's origin and nothing else, so a docs page
-//!   cannot quietly pull a tracker from a third party.
 
 use std::collections::BTreeSet;
 
@@ -56,24 +44,7 @@ pub struct Policy {
     /// grant refused it.
     wildcards: BTreeSet<String>,
     allow_loopback: bool,
-    /// Every remote origin is granted. For instruments, not for agents.
-    ///
-    /// The corpus (§B8) and the reliability sweep (§B19.4) point this engine at
-    /// the open web and measure what a page *asks for*. An allowlist built one
-    /// URL at a time cannot serve them: the third-party subresources are most of
-    /// what there is to see, so such a run measures its own allowlist rather than
-    /// the page.
-    ///
-    /// Three properties keep this from being a hole:
-    ///
-    /// * It widens the name check only. [`Self::check_address`] is untouched, so
-    ///   a public name that resolves into private space is still refused.
-    /// * Loopback still follows the document rule in [`Self::check_from`]: a page
-    ///   from the web may not reach the dev server.
-    /// * It is visible. [`Self::allows_any_remote`] is what the doctor line and
-    ///   the placement line read.
-    ///
-    /// The sandbox underneath is unaffected either way.
+    /// Every remote origin is granted.
     any_remote: bool,
     max_redirects: usize,
     max_response_bytes: u64,
@@ -194,22 +165,7 @@ impl Policy {
         self.origins.iter().map(String::as_str)
     }
 
-    /// The one decision point: every request and every redirect hop comes through
-    /// here.
-    ///
-    /// Check a request made *by a document*. The document's origin is the argument
-    /// [`Self::check`] lacks, and it exists for one reason: loopback. Loopback is
-    /// reachable by default because the box's dev server is the whole point of a
-    /// browser box, and it bypasses the egress proxy for the same reason. Once
-    /// script runs, that combination is a read primitive: a page from the open web
-    /// could `fetch` the dev server, read the source the agent is working on, and
-    /// post it to any allowed host, with the box's outer enforcement never seeing
-    /// it.
-    ///
-    /// So loopback is reachable *from a loopback document*. A page the dev server
-    /// served may talk to the dev server; a page from the web may not. `None` is a
-    /// document with no origin of its own, a local file or the engine acting on the
-    /// agent's explicit instruction, and is trusted.
+    /// The one decision point: every request and every redirect hop comes through here.
     pub fn check_from(&self, url: &Url, document: Option<&Url>) -> Verdict {
         if self.allow_loopback && url.host_str().is_some_and(is_loopback) {
             let document_is_local = match document {
@@ -231,16 +187,6 @@ impl Policy {
     }
 
     /// Check the *address* a host actually resolved to.
-    ///
-    /// [`Self::check`] decides about a name. This decides about where that name
-    /// went, and the two are not the same question: DNS answers can change between
-    /// the check and the connection, and an allowed name that resolves into loopback
-    /// or private space is the classic rebinding move.
-    ///
-    /// The rule is narrow on purpose. Reaching an internal address is fine when the
-    /// *name* said so: `localhost` is the dev server and is allowed by design. It is
-    /// not fine when a public name arrives there, because then the receipt says
-    /// `docs.example.com` and the bytes went to `10.0.0.1`.
     pub fn check_address(&self, url: &Url, addr: std::net::IpAddr) -> Verdict {
         if !is_internal_address(addr) {
             return Verdict::Allow;

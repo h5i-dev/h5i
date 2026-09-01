@@ -23,15 +23,6 @@ use h5i_runner::{Client, Worker};
 #[derive(Subcommand)]
 pub enum RunnerCommands {
     /// Pair with a Linux machine so boxes can run on it.
-    /// Pairing generates a keypair used for this runner and nothing else, pins
-    /// the machine's SSH host key, and installs a forced command that lets the
-    /// key do exactly one thing: speak h5i's protocol on stdin and stdout. No
-    /// port is opened on the runner and no daemon is left behind.
-    /// The runner needs `h5i` installed and an account you can already reach
-    /// over SSH. It does NOT need a container runtime: what it can do is
-    /// reported by `h5i runner probe`, and a box asking for something the
-    /// runner does not have is refused rather than quietly given something
-    /// weaker.
     Pair {
         /// A short name for this machine, used in commands and output. It is a
         /// label: the runner's identity is its host key, so renaming or

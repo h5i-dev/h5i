@@ -1,23 +1,4 @@
 //! Warm dependency caches.
-//!
-//! A cold box installs its dependencies from scratch, which is the difference
-//! between a twenty second box and a four minute one. That gap is what makes
-//! people give up and mount their host directory, so caching is a boundary
-//! feature, not a convenience.
-//!
-//! The shape keeps the boundary intact:
-//!
-//! * One cache per project *and ecosystem*, keyed by a digest of that
-//!   ecosystem's lockfiles. A different lockfile is a different cache, so a box
-//!   never sees packages resolved for someone else's dependency set.
-//! * Caches are mounted *read only* into a box. Every package manager falls back
-//!   to fetching what it cannot find, so a read-only cache is a speed feature
-//!   with no correctness cost.
-//! * Writing to a cache happens only in [`refresh`], which runs the ecosystem's
-//!   fetch step alone, in a throwaway box with no agent in it.
-//!
-//! The result is that no mutable surface is ever shared between an agent box and
-//! anything else.
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -215,16 +196,8 @@ pub fn prepare(h5i_root: &Path, eco: &Ecosystem, key: &str) -> Result<PathBuf, H
     Ok(dir)
 }
 
-/// Populate `eco`'s cache by running its fetch step in a box with no agent in
-/// it, with that one cache writable and nothing else changed.
-///
-/// This is the only writer. An agent session never gets a cache read-write, so a
-/// cache can never become a channel between boxes. The box is removed whether
-/// the fetch worked or not.
-///
-/// Returns the cache directory and the fetch's exit code. A non-zero exit is
-/// reported rather than swallowed, because a half-populated cache that claims
-/// success is worse than a cold one.
+/// Populate `eco`'s cache by running its fetch step in a box with no agent in it, with that one
+/// cache writable and nothing else changed.
 pub fn refresh(
     repo: &git2::Repository,
     h5i_root: &Path,
@@ -322,16 +295,6 @@ fn dir_bytes(path: &Path) -> u64 {
 }
 
 /// Total bytes under `path`, without following symlinks.
-///
-/// `DirEntry::metadata` follows them, and this walks a directory a package
-/// manager populated: `npm` plants symlinks in `node_modules` as a matter of
-/// course, and a package tarball may carry any link it likes. So a link pointing
-/// anywhere else had `h5i box cache list` walking, and reporting the size of, a
-/// tree outside the cache entirely; a link pointing at an ancestor had it
-/// walking the same subtree until the accumulating path tripped `ENAMETOOLONG`.
-///
-/// `symlink_metadata` answers about the link rather than its target, which is
-/// both the terminating choice and the accurate one.
 fn dir_bytes_within(path: &Path, depth: usize) -> u64 {
     if depth >= MAX_CACHE_DEPTH {
         return 0;

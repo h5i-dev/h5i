@@ -3821,22 +3821,6 @@ fn the_prelude_is_compiled_once_for_a_thread_and_run_for_every_realm() {
 }
 
 /// A thread that warmed before it had a realm must be able to end.
-///
-/// A regression test for a crash, not for a wrong answer, and it has an unusual
-/// shape because of it: everything the thread does succeeds, and the process
-/// then aborts as the thread exits, with `tcache_thread_shutdown(): unaligned
-/// tcache chunk detected`. So the failure is the test binary dying rather than
-/// an assertion, and the thread has to be spawned and joined for the teardown
-/// to happen at all.
-///
-/// The order is the entire content of the test. Building a realm first touches
-/// Boa's garbage-collected heap before it touches [`PRELUDE_TEMPLATE`], and the
-/// thread-local destructors then run in an order that happens to be safe.
-/// Warming first inverts it, and the template drops `Gc` handles into a heap
-/// that has already been torn down. Warming before a realm exists is precisely
-/// what the overlap does.
-///
-/// See [`PreludeTemplate`] for why the fix is that the template is never dropped.
 #[test]
 fn the_compile_survives_a_thread_that_warmed_before_it_had_a_realm() {
     std::thread::spawn(|| {
@@ -4458,18 +4442,8 @@ fn an_api_this_engine_lacks_names_itself_instead_of_throwing_anonymously() {
 
 #[test]
 fn a_constructed_text_node_is_a_text_node_and_not_the_document() {
-    // `new Text("x")` is a page building a node, DOM §4.10 says it may, and
-    // this file's classes take a *node id* as their first argument. Without a
-    // way to tell those apart the page got a wrapper whose id was the string
-    // "x", which the primitives converted to 0, which is the document. So
-    // `new Text("x").nodeType` was *9*, and appending it anywhere put the
-    // document inside one of its own descendants.
-    //
-    // What that cost: `dom/events/Event-dispatch-click.html` does exactly this
-    // and the engine walked the resulting cycle for ever, at 100% of a core,
-    // past every deadline it has, since those guard the script realm and no
-    // script is running while layout walks. Six were found spinning on one
-    // machine, the oldest for seven hours. The file now reports in 0.18 s.
+    // `new Text("x")` is a page building a node, DOM §4.10 says it may, and this file's classes
+    // take a *node id* as their first argument.
     let (_page, mut script) = page_and_script("<html><body><div id='d'></div></body></html>");
     assert_eq!(
         script
@@ -6120,15 +6094,6 @@ fn the_wire_agent_and_the_scripted_one_are_the_same_string() {
 // ── the session's identity, as the page reads it ─────────────────────────────
 
 /// Off means *absent*, not merely unused.
-///
-/// The claim the `identity` feature makes is about the binary, not about how
-/// someone invokes it: without the feature there is no identity module, no
-/// `Screen` interface, and no crossing into Rust to build one. A page can check
-/// that for itself, which is what this does: `api.identity` is the only door,
-/// and in a bare build there is no door.
-///
-/// Written as one test with two arms rather than two tests, so the pair reads as
-/// a single fact about the switch.
 #[test]
 fn the_identity_binding_exists_only_in_a_build_that_has_identities() {
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
@@ -6149,15 +6114,6 @@ fn the_identity_binding_exists_only_in_a_build_that_has_identities() {
 }
 
 /// The prelude's fallback literal, held to the identity it stands in for.
-///
-/// A build without the `identity` feature has no `api.identity()` to call, so
-/// the prelude falls back to a literal, and a literal is exactly the second
-/// source of truth this module was written to remove. It cannot drift, because
-/// this test reads the same properties out of a realm and compares them to
-/// `identity::native()`, which the wire is built from.
-///
-/// It runs in the *feature-on* build and still proves the feature-off one,
-/// because what it pins is that the two agree.
 #[test]
 fn the_bare_build_answers_what_native_declares() {
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
@@ -7266,4 +7222,3 @@ fn assigning_the_width_clears_the_surface() {
         "and what is left must be an empty surface:\n{rendered}"
     );
 }
-

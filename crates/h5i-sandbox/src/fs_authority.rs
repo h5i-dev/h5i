@@ -52,17 +52,8 @@ fn subset(sub: &[String], sup: &[String]) -> bool {
     sub.iter().all(|s| sup.contains(s))
 }
 
-/// The per-run translation validator (design-policy.md §P2): re-check the
-/// shipped effective grants against the declared policy, independently of the
-/// resolver that produced them.
-///
-/// - `declared_ro` / `declared_rw`: the source policy's read / read-write grant
-///   paths, expanded exactly as `compute_effective` expands them ($WORK and
-///   tilde), so a like-for-like subset check is meaningful.
-/// - `eff_ro` / `eff_rw`: the effective config's `landlock.ro` / `landlock.rw`.
-/// - `overlays_read_only`: the read-only overlay binds (config-lock, cache-ro)
-///   are all non-writable (the caller computes this from the bind manifest;
-///   private/home-state/cache-rw binds are writable by design).
+/// The per-run translation validator (design-policy.md §P2): re-check the shipped effective
+/// grants against the declared policy, independently of the resolver that produced them.
 pub fn validate_grants(
     declared_ro: &[String],
     declared_rw: &[String],

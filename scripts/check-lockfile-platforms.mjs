@@ -1,17 +1,5 @@
-// Fail early, and with an actionable message, when web/package-lock.json was
-// written by an npm that recorded only its own machine's optional binaries.
-//
-// Rollup (via Vite) ships its native code as per-platform optional packages.
-// npm 9 writes a lockfile containing only the ones matching the machine that
-// generated it; npm 10 records every variant. So a lockfile regenerated from
-// scratch on, say, an arm64 laptop installs cleanly there and then dies on an
-// x64 CI runner with `Cannot find module @rollup/rollup-linux-x64-gnu` and a
-// stack trace into node_modules — a message that says nothing about the actual
-// cause, which is three commits away in a file nobody was looking at.
-//
-// This turns that into one line naming the fix. Run from `web/`:
-//
-//     node ../scripts/check-lockfile-platforms.mjs
+// Fail early, and with an actionable message, when web/package-lock.json was written by an npm
+// that recorded only its own machine's optional binaries.
 
 import { readFileSync } from "node:fs";
 

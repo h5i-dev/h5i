@@ -1,28 +1,6 @@
-//! The `isolation=microvm` backend: an environment's command inside a
-//! *hardware-isolated microVM* via [microsandbox](https://microsandbox.dev)
-//! (`msb`), with `net.egress` enforced in the VM's own network stack.
-//!
-//! `container.rs` enforces egress at *L7*, which blocks only the tooling that
-//! honours `HTTP(S)_PROXY`. Two things change here: the boundary is a virtual
-//! machine with its own kernel, so a kernel exploit is contained by the
-//! hypervisor rather than by the kernel it just subverted; and egress is
-//! filtered by address (`--net-default-egress deny` plus one `--net-rule` per
-//! destination), so a raw socket to an unlisted IP is dropped.
-//!
-//! Costs, stated rather than hidden. The host must support virtualization
-//! (`/dev/kvm`, or Apple Silicon), and without it [`resolve`] refuses rather
-//! than downgrading. There is no per-request egress tally, because a VM
-//! netstack drops packets without saying which, so [`ExecOutcome::egress`] is
-//! `None` and we report the tier's rules at session start: stronger
-//! enforcement, weaker evidence. And there is no in-box tee shim, since a VM
-//! has no image to self-mount, though the read-only managed-settings mount
-//! carrying the `wrap-bash` hook works as it does under `container`.
-//!
-//! Secrets never enter the host argv. `msb --env` takes `KEY=VALUE`, and a
-//! credential in `msb run`'s argv is published to every local user through
-//! `/proc/<pid>/cmdline`, so no environment goes on the command line at all:
-//! [`preload_script`] writes a `0600` script host-side and registers it with
-//! `--script-path`, whose contents travel over a config fd.
+//! The `isolation=microvm` backend: an environment's command inside a *hardware-isolated
+//! microVM* via [microsandbox](https://microsandbox.dev) (`msb`), with `net.egress` enforced in
+//! the VM's own network stack.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -242,28 +220,6 @@ pub enum NetPlan {
 }
 
 /// Translate h5i's `net.egress` entries into microsandbox `--net-rule` tokens.
-///
-/// h5i spells an entry `host`, `host:port`, `.suffix` or `*.suffix`;
-/// microsandbox spells a rule
-/// `<action>[:<direction>]@<target>[:<proto>[:<ports>]]`. The mapping is
-/// deliberately conservative: an entry we cannot translate *exactly* is an
-/// error, never a rule that quietly allows more or less than the policy says.
-///
-/// - `example.com`      → `allow@example.com`  (any proto, any port)
-/// - `example.com:443`  → `allow@example.com:tcp:443`
-/// - `.example.com`     → `allow@domain=example.com` *and*
-///   `allow@suffix=example.com`: h5i's wildcard matches the apex as well as
-///   subdomains, and microsandbox's `suffix=` covers only the subdomain half.
-/// - a bare IP or CIDR passes through as its own target.
-///
-/// No DNS rule is emitted. microsandbox resolves names at the gateway and keeps
-/// that path reachable under `--net-default-egress deny`, so a domain rule is
-/// enough on its own. An explicit `allow@dns` was emitted here until it turned
-/// out `msb` 0.6.8 rejects the token outright, which failed *every* microvm run
-/// carrying an allowlist, the default agent profiles included.
-///
-/// Fail-closed rejections: an entry carrying `,` or `@`, which would split or
-/// re-target the token, and a single-label wildcard such as `.com`.
 pub fn egress_rule_tokens(egress: &[String]) -> Result<Vec<String>, H5iError> {
     let mut tokens: Vec<String> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -375,16 +331,6 @@ fn run_stage_dir(work: &Path) -> Result<PathBuf, H5iError> {
 }
 
 /// Remove credential scripts a previous run left in the staging directory.
-///
-/// [`PreloadScript`]'s `Drop` is the normal cleanup and cannot cover SIGKILL, a
-/// `panic = "abort"` build, or an OOM. That was harmless while the directory
-/// was never mounted. The warm path mounts it into a guest that outlives the
-/// run, so a crashed `box run` would leave its brokered credentials readable by
-/// that box's long-lived services indefinitely, including after the credential
-/// was rotated host-side.
-///
-/// Safe to do unconditionally: every entry point that stages a script holds the
-/// box's run lock.
 fn sweep_stale_env_scripts(stage: &Path) {
     let Ok(rd) = std::fs::read_dir(stage) else {
         return;
@@ -900,19 +846,6 @@ pub fn sanitize_label(raw: &str) -> String {
 }
 
 /// The name of the warm guest for this box under this configuration.
-///
-/// `h5i-<label>-<12 hex>`, where the hex is a SHA-256 over the create argv
-/// itself. That choice is the whole reuse-safety argument: the guest's mounts,
-/// image, memory and egress rules are fixed when it is created, and the create
-/// argv is exactly the list of those things. Hashing it means a box whose
-/// profile, allowlist, image or mount set has changed resolves to a *different
-/// name*, so it gets a new guest and can never be served a stale one still
-/// enforcing the old policy. Structural rather than a comparison somebody has
-/// to remember to write.
-///
-/// Deliberately not the pinned policy digest: that excludes the runtime-only
-/// mounts (`box_git`, `private_binds`, the spool, the inbox) by design, and
-/// those *do* change what a guest can reach.
 pub fn guest_name(work: &Path, create_argv: &[String]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -1144,23 +1077,8 @@ fn remove_named(bin: &str, name: &str) {
         .status();
 }
 
-/// The directory holding one marker per live named sandbox, or `None` when this
-/// process has no directory it can trust to hold them.
-///
-/// A function of its own rather than `marker_path("").parent()`, which is what
-/// this was: joining an empty component yields a trailing separator, and
-/// `parent()` then walks up *past* the marker directory to the temp directory.
-/// The sweep consequently scanned `/tmp` for names that only exist one level
-/// down, so it reaped nothing, silently, since every step is best-effort.
-///
-/// Per user, not per host. These markers decide which VMs get destroyed, so a
-/// directory shared between logins is the wrong place for them. On a shared
-/// Linux box the old `/tmp/h5i-msb-live` belonged to whoever ran the tier
-/// first: everyone else's marker writes then failed silently, and worse, their
-/// sweeps *read the first user's markers* and saw `exists() == false` for a
-/// workspace under a home directory they cannot traverse, concluding a live box
-/// was gone and removing its VM. `$XDG_RUNTIME_DIR` is per-user and `0700` by
-/// definition; without one, the uid keeps the fallback distinct.
+/// The directory holding one marker per live named sandbox, or `None` when this process has no
+/// directory it can trust to hold them.
 fn marker_dir() -> Option<PathBuf> {
     let base = match std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
         Some(rt) => PathBuf::from(rt).join("h5i"),
@@ -1259,19 +1177,6 @@ fn is_h5i_sandbox_name(name: &str) -> bool {
 }
 
 /// Reap named sandboxes an earlier h5i left behind.
-///
-/// Two kinds of marker, because there are two kinds of guest:
-///
-/// - *One-shot* (`h5i-<pid>-<seq>`, empty marker), keyed on the pid in the
-///   name: a marker whose process is gone can only be a leftover, because a
-///   live run holds its own marker until Drop removes it.
-/// - *Warm* (`h5i-<label>-<digest>`, marker holds the workspace path). These
-///   outlive their process deliberately, so a pid says nothing. The box's
-///   existence is the signal: once its workspace is gone, so is any reason to
-///   keep a VM configured for it.
-///
-/// Best-effort throughout: a failed sweep must never turn a good run into an
-/// error.
 pub fn reap_orphaned_sandboxes(bin: &str) {
     for (name, owner) in live_markers() {
         let reap = match &owner {
@@ -1555,17 +1460,6 @@ pub fn run(
 }
 
 /// May this run reuse a warm guest?
-///
-/// Reuse is the default (roadmap-history.md 9., "a box is the trust domain, not
-/// a command"), with two exclusions:
-///
-/// - [`NO_REUSE_ENV`], the operator's escape hatch for a pristine guest per
-///   command.
-/// - A run carrying `cache_write`. It is the one run whose mount set differs
-///   from the box's, `h5i box cache refresh` and nothing else, and letting it
-///   define the box's guest would either give every later command a writable
-///   cache mount it should not have, or make the two configurations evict each
-///   other's guest on every alternation.
 fn reuse_available(policy: &ResolvedPolicy) -> bool {
     if std::env::var_os(NO_REUSE_ENV).is_some_and(|v| v != "0") {
         return false;
@@ -1664,18 +1558,7 @@ fn ensure_warm_guest(policy: &ResolvedPolicy, work: &Path) -> Result<WarmGuest, 
     std::fs::create_dir_all(&logs).map_err(|e| H5iError::with_path(e, &logs))?;
     check_spec_path(&logs, "service log")?;
 
-    // Built twice: once with a placeholder to hash, once with the name that
-    // hash produced. Only the `--name` value differs, so the digest still
-    // describes this guest's configuration exactly.
-    //
-    // `managed_settings` is `None` here and not a parameter: it is a
-    // create-time mount, so letting it vary per session would give one box two
-    // guests that reap each other. Re-enabling it needs a design for warm
-    // guests, not an argument here.
-    //
-    // A box that runs services must not have its guest stopped for idleness:
-    // `msb` measures idleness in commands, not in the traffic a dev server is
-    // serving. Such a guest is reclaimed by `box rm` and by the sweep instead.
+    // Built twice: once with a placeholder to hash, once with the name that hash produced.
     let idle = (!policy.hosts_services).then_some(GUEST_IDLE_TIMEOUT);
     let placeholder = warm_create_plan(&image, GUEST_NAME_PLACEHOLDER, &net, &stage, &logs, idle);
     let hashed = build_create_argv(&rt, policy, work, &placeholder);
@@ -1744,19 +1627,8 @@ fn run_warm(
 
 // ─── background services ────────────────────────────────────────────────────
 
-/// Start `argv` as a detached service inside the box's warm guest, returning
-/// the *guest* pid of its session leader and the guest it runs in.
-///
-/// The returned pid is meaningless on this host: it names a process in the
-/// guest's pid namespace, where a number equal to some host pid is a
-/// coincidence. Callers must record which world it belongs to and never hand it
-/// to `kill(2)`; [`service_alive`] and [`service_signal`] are the only things
-/// that may interpret it.
-///
-/// The launcher shell sources this run's env script and deletes it before
-/// detaching, so the credentials exist on disk for the length of one exec
-/// rather than for the life of the service. `setsid` makes the service a
-/// session leader, so signalling `-pid` later reaps its whole descendant tree.
+/// Start `argv` as a detached service inside the box's warm guest, returning the *guest* pid of
+/// its session leader and the guest it runs in.
 pub fn spawn_background(
     policy: &ResolvedPolicy,
     work: &Path,
@@ -1790,19 +1662,6 @@ pub fn spawn_background(
     // tiers embed it. Nothing from the guest reaches this string.
     let command = shell_join(argv);
     // No pidfile, and no fd gymnastics: `$!` is the service.
-    //
-    // `setsid` only forks when it is already a process-group leader, and a
-    // background job in a non-interactive shell is not one, so it `setsid()`s
-    // in place and `$!` names the session leader itself. Verified on this
-    // runtime rather than assumed, because an earlier reading was wrong: a
-    // broken liveness check (exec'ing `kill`, which is a builtin) made a good
-    // pid look dead and sent this down a detour through a pidfile, which had
-    // to live in a mounted directory, where any process in the box could win a
-    // race and choose the pid the host records.
-    //
-    // The session id is reported alongside and checked, so a shell that *does*
-    // fork fails loudly instead of recording a pid whose process group is
-    // somebody else's.
     let launcher = format!(
         // Sourcing failing is fatal rather than skipped: a service that started
         // *without* its brokered credentials would look healthy and behave
@@ -1965,17 +1824,6 @@ fn stop_group(rt: &Runtime, sandbox: &str, pid: u32) {
 }
 
 /// The last few lines of a service's log, for an error message.
-///
-/// Every byte here was written *inside the box*, and this string goes straight
-/// to the operator's terminal through `Error: …`. So it is sanitised on the way
-/// out and bounded on the way in:
-///
-/// * A control sequence in a log line repaints the terminal it is printed on.
-///   Five lines is enough for `ESC[2J ESC[1;1H` and a forged h5i banner
-///   underneath it, and a service that fails to start on purpose is how a box
-///   gets that printed on demand.
-/// * The read is capped because nothing bounds the file. Reading a log the box
-///   grew to fill the disk is a host-side OOM triggered from inside a box.
 fn tail_service_log(work: &Path, service: &str) -> String {
     let Ok(path) = service_log_path(work, service) else {
         return String::new();
@@ -2021,29 +1869,8 @@ fn read_tail(path: &Path, cap: u64) -> String {
     }
 }
 
-/// The pid a launcher recorded into the service log, for cleaning up after a
-/// start that failed *after* the service had already detached.
-///
-/// Without this, a host-side failure past the point of no return leaves the
-/// service running in a guest that outlives the command, invisible to `service
-/// status` and unreachable by `service stop`.
-///
-/// This marker is *guest-writable*, which is the whole reason for the checks on
-/// it. The log is a mounted file the service itself writes to; a service that
-/// prints its own `#h5i-pid` line wins, because the last one is the one read.
-/// So the number is a hint from inside the box, used to send a signal to a
-/// process *group*: the same hazard that kept the pid out of a pidfile,
-/// arriving through the log instead.
-///
-/// `-1` as a process group means "every process the caller can signal", so an
-/// unchecked marker of `1` turns a failed `service start` into `kill -KILL -1`
-/// as root inside the guest. Anything below 2 is refused here, and
-/// `reap_detached` confirms the pid is a session leader before signalling.
-///
-/// What is left is that a box can *hide* the real pid by appending a marker of
-/// its own, losing the orphan this function reaps. That is a service leaking
-/// into a guest the operator can still see and stop, not a signal aimed by the
-/// box, and it cannot be closed from the host.
+/// The pid a launcher recorded into the service log, for cleaning up after a start that failed
+/// *after* the service had already detached.
 fn logged_service_pid(work: &Path, service: &str) -> Option<u32> {
     let path = service_log_path(work, service).ok()?;
     // Bounded for the same reason the tail is: the box chooses this file's
@@ -2137,16 +1964,8 @@ pub fn service_pid_running(rt: &Runtime, sandbox: &str, pid: u32) -> bool {
 /// which makes `service_stop` skip its signal and delete the record anyway,
 /// leaving a live dev server in the guest that nothing on the host can reach.
 pub fn service_pid_state(rt: &Runtime, sandbox: &str, pid: u32) -> Option<bool> {
-    // `kill -0` alone is not liveness: it succeeds on a *zombie*, and a service
-    // that exits inside a guest stays one until something reaps it. Guest init
-    // reparents it to pid 1 and may never do so, so a finished dev server would
-    // read as running forever: `service status` reporting a corpse as healthy,
-    // `service start` refusing because of it, and `service stop` waiting out
-    // its whole grace period before a pointless KILL.
-    //
-    // `/proc/<pid>/status` is read rather than `stat` because the `comm` field
-    // in `stat` may contain spaces and parentheses, which makes positional
-    // parsing wrong for a process that chose the wrong name.
+    // `kill -0` alone is not liveness: it succeeds on a *zombie*, and a service that exits
+    // inside a guest stays one until something reaps it.
     let mut cmd = std::process::Command::new(&rt.bin);
     cmd.args([
         "exec",

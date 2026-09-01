@@ -1,28 +1,4 @@
-//! The effective configuration: what the kernel tiers actually apply
-//! (design-policy.md §P1).
-//!
-//! `policy.resolved.toml` is the digested *intent*. `ResolvedPolicy` also
-//! carries runtime-only, never-serialized fields that are enforced all the
-//! same, so a model reading only the toml verifies less than what a box gets.
-//! This module serializes the enforced state, and
-//! [`crate::sandbox::build_confined_command`] consumes the *same*
-//! [`compute_effective`] result to build its Landlock path sets and bind lists.
-//! One computation, two readers, so the dump is never a parallel pretty-printer.
-//!
-//! Paths serialize as lossy UTF-8. Grants and bind sources come from TOML and
-//! h5i-created directories, so a non-UTF-8 host path would mangle here and the
-//! enforcement reading these strings would then miss the grant or fail the
-//! bind, both the fail-closed direction.
-//!
-//! Linux kernel tiers only, per §P1's v1 scope. Seatbelt, container and microvm
-//! enforce through mechanisms this schema does not describe.
-//!
-//! Every `serde(skip)` field of [`ResolvedPolicy`] is either in the dump or
-//! excluded here by name: the bind lists, readonly mode and egress extras are
-//! *in* it; `box_git` is container mounts whose kernel-tier paths already
-//! appear under `landlock`; `env_capture_spool` and `env_inbox` are container
-//! plumbing; `hosts_services` is a microvm idle-stop hint; `egress_proxy_port`
-//! is container proxy wiring; and `effective_out` is where this dump is written.
+//! The effective configuration: what the kernel tiers actually apply (design-policy.md §P1).
 
 use std::path::Path;
 

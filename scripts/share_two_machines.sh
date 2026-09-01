@@ -1,32 +1,5 @@
 #!/usr/bin/env bash
-#
 # Two machines, one share — the half of this feature a single host cannot test.
-#
-# Everything in scripts/share_e2e.sh runs both ends on one machine over
-# loopback, which exercises the protocol and proves nothing about the transport:
-# no NAT is traversed, no hole is punched, no relay is ever selected, and the
-# addressing inside a ticket is used from the network that minted it. This
-# script is the same feature with a real network in the middle.
-#
-#   on the sharing machine:   scripts/share_two_machines.sh share
-#   on the other machine:     scripts/share_two_machines.sh join       # ticket on stdin
-#                             scripts/share_two_machines.sh join --url <invite>   # --tunnel shares
-#
-# The two sides print blocks meant to be read side by side: the joiner says what
-# it fetched and how it travelled, the sharer's receipt says what it served and
-# how it travelled. A receipt that disagrees with the person it describes is the
-# thing this is looking for.
-#
-# Nothing here needs the two machines to talk to each other except by you
-# pasting one ticket.
-#
-# One thing to look at first, because a loopback smoke run of this script found
-# it twice: the two sides can disagree about the transport. The joiner printed
-# `path direct` while the sharer's receipt recorded `via relayed`, for the same
-# session, with the connection and byte counts agreeing exactly on both sides.
-# Each end reports its own observation and the joiner takes only one reading, at
-# join time. Over a real network that disagreement matters more than it does on
-# loopback, and it is the first row of the comparison this script sets up.
 
 set -u
 
@@ -408,16 +381,8 @@ do_join() {
       say "    printf '%s' '<the h5i1_… ticket>' | scripts/share_two_machines.sh join"
       exit 2
     fi
-    # Through stdin on purpose: an argument would be readable by every other
-    # user on this machine for as long as the join lasts.
-    #
-    # `--shared-jar` because this harness has to run on macOS, where the only
-    # loopback address is `127.0.0.1` and `h5i join` refuses that jar unless it
-    # is asked for — the token it sets there is sent to every other local
-    # service the joiner visits. On Linux the flag changes nothing: the join
-    # still takes an address of its own. It is passed here, in a diagnostic
-    # that fetches from nothing but this share, rather than being left out and
-    # reported as a broken join on half the platforms it supports.
+    # Through stdin on purpose: an argument would be readable by every other user on this
+    # machine for as long as the join lasts.
     printf '%s' "$TICKET" | "$H5I" join - --shared-jar >"$JOINLOG" 2>&1 &
     JOIN_PID=$!
     i=0

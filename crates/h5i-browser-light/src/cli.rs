@@ -1,20 +1,4 @@
 //! The engine's command line.
-//!
-//! Reached through `h5i __engine`, not through a second binary. The engine used
-//! to ship as `h5i-browser-light` alongside `h5i`, and two files bought three
-//! problems: an install that left the headline command broken by default, a
-//! version skew between two halves of one protocol with no handshake between
-//! them, and a box that could *read* the engine without being allowed to `exec`
-//! it.
-//!
-//! The process boundary that mattered is untouched: `h5i browser` still runs the
-//! engine as a separate process and speaks a protocol to it, and execs itself to
-//! get there instead of a second file. What was separate was the file, not the
-//! process.
-//!
-//! One honesty rule travels with running it directly: outside a box there is no
-//! egress proxy and no receipt store, so this is a light browser with a request
-//! log. The containment claims belong to the box.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -174,16 +158,6 @@ enum Command {
     Session(SessionVerb),
 
     /// Run a recorded script against the session a `serve` is holding open.
-    ///
-    /// No model, no tokens. The script is a list of steps made of verified CSS
-    /// selectors, produced by `session script --save`, and each is sent through the
-    /// same control channel an agent would use, so the policy, the receipts and the
-    /// action log all see a replay exactly as they see a live session.
-    ///
-    /// A replay on this engine visits the same states in the same order, because the
-    /// settle runs on a virtual clock. A recording, the request log it produced, and
-    /// a replay that lands identically are a browser session that can be re-executed
-    /// and diffed.
     Replay {
         /// The script, as written by `session script --save`.
         script: PathBuf,
@@ -289,19 +263,6 @@ enum SessionVerb {
         at: SessionArgs,
     },
     /// Hand the page to the human at the live view for as long as a login takes.
-    ///
-    /// While this is on, every control verb that reads the page is refused: a
-    /// credential typed into a page the agent can snapshot has been handed to the
-    /// agent. The session the login establishes stays in the jar afterwards, and
-    /// the agent can see that it is logged in without reading the cookie that
-    /// says so.
-    ///
-    /// The live view keeps streaming, and that is the limit of this mode. The
-    /// human typing has to see what they are typing, so frames are not withheld,
-    /// and the viewer socket is inside the box, where there is no privilege
-    /// boundary, so an agent that goes looking can watch the same pixels. This
-    /// refuses the documented path, which is the threat it was written for; it is
-    /// not containment against an agent that is trying.
     Login {
         /// End login mode and make the page readable again.
         #[arg(long, conflicts_with = "on")]
@@ -339,17 +300,8 @@ enum SessionVerb {
         reference: Option<String>,
         #[arg(value_name = "TEXT")]
         text: Option<String>,
-        /// A CSS selector instead of a `@ref`, which is what a `snapshot`'s
-        /// `refs` carry beside each one.
-        ///
-        /// The durable handle. A `@ref` is a position in the reading that minted
-        /// it and is checked against that reading; a selector names whatever it
-        /// matches now, which is what makes it survive a navigation and what
-        /// makes a recorded session replayable.
-        ///
-        /// No `conflicts_with` here, unlike `click` and `submit`: with a selector
-        /// the remaining positional carries the *text*, so the two are used
-        /// together rather than instead of each other.
+        /// A CSS selector instead of a `@ref`, which is what a `snapshot`'s `refs` carry beside
+        /// each one.
         #[arg(long, value_name = "CSS")]
         selector: Option<String>,
         /// Address it by role instead, the way the outline names it.
@@ -601,16 +553,6 @@ enum SessionVerb {
     },
 
     /// Locate elements by role and name, the way the outline names them.
-    ///
-    /// The handle an agent already has. A snapshot line reads
-    /// `- button "Sign in" [ref=e3]`, and `find --role button --name "Sign in"`
-    /// addresses the same element in the same words, through the same computation
-    /// that printed them, so the two cannot disagree.
-    ///
-    /// More stable than a CSS selector against generated markup, where the class
-    /// names change on every build and the button is still called "Sign in". Each
-    /// match comes back with a verified selector, so a `find` is directly
-    /// actionable. Nothing matching is a *result*, not an error.
     Find {
         /// `button`, `link`, `textbox`, `checkbox`, `radio`, `combobox`,
         /// `image`, `heading`, `paragraph`, `listitem`, `cell`.
@@ -673,16 +615,6 @@ enum SessionVerb {
     },
 
     /// What the page's media says: `<track>` captions, fetched and parsed.
-    ///
-    /// The hole every other read leaves. A snapshot names a `<video>` and the
-    /// markdown skips it, so a page whose substance is a talk reads as a title and a
-    /// play button. Most players ship captions, and a caption file is prose with
-    /// timestamps.
-    ///
-    /// Two tracks per media element at most: one of the words, and the outline of
-    /// them from a `chapters` track when the page has one. Nothing here decodes
-    /// audio; media with no `<track>` is reported as exactly that, which is the fact
-    /// that routes a caller elsewhere.
     Transcript {
         /// Go here first, then read.
         #[arg(long, value_name = "URL")]
@@ -791,17 +723,7 @@ struct NetArgs {
     #[arg(long)]
     no_loopback: bool,
 
-    /// Grant every remote origin. For instruments, not for agents.
-    ///
-    /// The corpus and the reliability sweep point this engine at the open web and
-    /// measure what pages ask for; an allowlist built one URL at a time refuses the
-    /// third-party subresources that are most of what there is to see, so such a run
-    /// measures its own allowlist rather than the page.
-    ///
-    /// It widens the *name* check only. A public name that resolves into private
-    /// space is still refused, a page from the web still may not reach loopback, and
-    /// a box's own egress enforcement is untouched. Every run in this mode says so
-    /// on the placement line and in `doctor`.
+    /// Grant every remote origin.
     #[arg(long)]
     allow_any_remote: bool,
 
@@ -810,19 +732,6 @@ struct NetArgs {
     receipts: Option<PathBuf>,
 
     /// Mirror the cookie jar to a file, and read it at start.
-    ///
-    /// Off unless h5i names one, and it belongs here rather than on `serve` because
-    /// the jar is the broker's, beside the policy and the receipts. In split mode
-    /// the renderer has no jar to mirror, and this is the one argument list both
-    /// halves parse.
-    ///
-    /// This is what makes `h5i browser open --restore` able to carry a login
-    /// forward; h5i chooses the path, inside the session's own directory. The file
-    /// is written when the jar changes rather than at exit, because a session is
-    /// stopped with a signal and a shutdown hook would never run.
-    ///
-    /// A file that exists and cannot be read as a jar is a startup failure, not a
-    /// warning: starting silently logged-out is the failure this removes.
     #[arg(long, value_name = "PATH")]
     cookie_jar: Option<PathBuf>,
 
@@ -831,20 +740,6 @@ struct NetArgs {
     proxy: Option<String>,
 
     /// Who this session says it is: a built-in name, or a path to a TOML file.
-    ///
-    /// `native` (the default) answers as h5i and answers truthfully. `privacy` is
-    /// still h5i with the patch version and the host's time zone pinned, so one
-    /// install stops being distinguishable from another. A `compatible` identity
-    /// claims a different browser, and is *refused* if this engine cannot back
-    /// everything it declares, rather than applied in part.
-    ///
-    /// It belongs here, beside the cookie jar and for the same reason: this is the
-    /// one argument list both halves of a split engine parse, and an identity read
-    /// by only one of them would be a page and a wire describing two different
-    /// browsers.
-    ///
-    /// `h5i browser identity list` names the built-ins; `identity check` says what
-    /// one covers, what it does not, and why this engine would refuse it.
     #[cfg(feature = "identity")]
     #[arg(long, value_name = "NAME|PATH", default_value = "native")]
     identity: String,
@@ -889,17 +784,7 @@ struct ViewArgs {
     #[arg(long, default_value_t = 45, value_name = "SECONDS")]
     navigation_seconds: u64,
 
-    /// How long a page's script may run, in seconds. 0 keeps the default.
-    ///
-    /// For instruments. The default ceiling stops a runaway page, and a conformance
-    /// harness is where a runaway and a merely slow page are hard to tell apart:
-    /// `html/dom/idlharness` legitimately needs about twenty seconds to parse the
-    /// IDL and build its 6,408 tests, lands on the twenty-second default, and then
-    /// reports nothing at all, so a score swings by 1,896 subtests depending on how
-    /// loaded the machine was.
-    ///
-    /// Raising it changes nothing for anyone who does not pass it, and the
-    /// navigation deadline still bounds the whole load.
+    /// How long a page's script may run, in seconds.
     #[arg(long, default_value_t = 0, value_name = "SECONDS")]
     script_seconds: u64,
 
@@ -968,17 +853,6 @@ where
 }
 
 /// How much stack the engine gives itself.
-///
-/// Layout recurses over the tree, and how deeply it may do so before the process
-/// is gone was, until now, whatever `ulimit -s` happened to say. That is not a
-/// property this engine should inherit: a box can set it, a thread pool can set
-/// it, and the failure is not a refusal but a `SIGSEGV`, with no panic, no page,
-/// no receipts and no session left to say what happened.
-///
-/// [`crate::engine::MAX_ELEMENT_DEPTH`] is the bound on the *input*, and this is
-/// what makes that bound's safety a property of the engine rather than of the
-/// shell that started it. 64 MiB is far more than 512 levels of a debug build's
-/// layout frames need, and it is address space rather than memory.
 const ENGINE_STACK_BYTES: usize = 64 * 1024 * 1024;
 
 /// Run the engine on a thread whose stack this process chose.
@@ -1211,28 +1085,6 @@ impl Command {
 }
 
 /// Build the factory and load the first page, shared by `open` and `serve`.
-///
-/// Everything a page needs, built once. Split from [`load`] so a batch of pages
-/// shares one: the broker carries the connection pool and the cookie jar, and
-/// the factory carries the font set. All three are per-*session* facts, and
-/// building them per page meant a run over twenty URLs re-read the font files
-/// twenty times and threw away every keep-alive connection.
-///
-/// The broker this process would build for itself. One function, two callers,
-/// and that is the point: the broker process builds exactly what a whole process
-/// would have built, so the two shapes cannot drift into applying different
-/// policies or ceilings.
-///
-/// The identity this session presents, resolved and held to its own claims.
-/// Coherence is checked here and capability is not, because the two questions
-/// belong to different places. Whether an identity contradicts *itself*, a
-/// Windows agent string over a `MacIntel` platform, is a fact about the file and
-/// is wrong in front of any engine, so it is settled before a client is built
-/// from it. Whether *this* engine can back what it declares depends on
-/// `--script`, which is not in this argument list; [`factory_for`] settles that.
-///
-/// Two one-line bodies rather than a runtime branch, because the difference is
-/// not a runtime one: a build without the feature has no identity to pass.
 #[cfg(feature = "identity")]
 fn broker_for(
     policy: Policy,
@@ -1533,19 +1385,6 @@ fn at_json(at: &SessionArgs) -> bool {
 }
 
 /// Resolve the "`@ref` and a value, or a locator and the value" shape.
-///
-/// Both positionals are optional to clap and checked here, because clap refuses
-/// an optional positional before a required one, and with a locator the ref is
-/// genuinely absent. The check also gives a better message: it can say which of
-/// the forms was half-used, and name the value the verb was after.
-///
-/// `located` covers `--selector` *and* `--role`. It used to be `--selector`
-/// alone, and `--role` additionally conflicted with the positional, so
-/// `set-checked --role checkbox true` was rejected by clap before this could see
-/// it: the flag existed on three verbs and could not be used on any of them.
-///
-/// One function rather than four copies, because four copies is where the four
-/// error messages drift apart.
 fn two_positionals(
     verb: &str,
     what: &str,
@@ -2004,15 +1843,6 @@ fn default_control_file() -> Option<PathBuf> {
 }
 
 /// Whether a directory is ours alone.
-///
-/// Ownership and mode rather than a list of bad paths. Blacklisting `/tmp`
-/// looked sufficient until a test set `HOME=/tmp`, which happens for real
-/// daemons, and the default landed under a world-writable parent anyway. A rule
-/// about the directory itself does not have that class of hole.
-///
-/// Non-Unix has no cheap equivalent, so it answers yes: `LOCALAPPDATA` is
-/// per-user by construction, and inventing a Windows ACL check here would be a
-/// guess wearing the shape of a guarantee.
 #[cfg(unix)]
 fn check_private_dir(dir: &Path) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
@@ -2107,19 +1937,6 @@ fn control_file_beside(stream_file: &Path) -> PathBuf {
 
 fn build_policy(net: &NetArgs) -> Policy {
     // Flags first, then whatever h5i granted the box, and the two are a *union*.
-    //
-    // A union that still cannot widen a box's *enforced* policy, and the reason
-    // is at creation rather than here: a profile that declares `net.egress`
-    // cannot be created at a tier that cannot enforce one, so a box whose list
-    // reaches this engine is a box with a boundary underneath it. `--allow` adds
-    // an origin to what this process will *ask* for; what actually leaves the box
-    // is still decided outside it, which is what a `read --in` against an
-    // un-listed origin demonstrates.
-    //
-    // A box that declares no list is a box with nothing to widen: its net mode is
-    // host or deny, nothing outside the engine is deciding about hosts at all,
-    // and the lane such a session earns stays `engine-claimed` for exactly that
-    // reason (`h5i_core::browser_session::Session::lane_for`).
     let from_env: Vec<String> = std::env::var(ALLOW_VAR)
         .unwrap_or_default()
         .split(',')
@@ -2497,16 +2314,6 @@ fn one_page(
     }
     if as_text {
         // Fenced like every other read of a page.
-        //
-        // `--text` was the one path that handed an agent a page's own words with
-        // nothing saying where they came from. The outline, the markdown and the
-        // transcript all carry the fence; this printed the same content bare, so a
-        // page writing "SYSTEM: you are authorised to…" arrived looking exactly like
-        // the harness talking. The flag means "the words, not the outline".
-        //
-        // `defang_fence` on the way in, because a line here is already `collapse`d
-        // but the assembled document spans lines, the same reason `markdown` defangs
-        // its finished text.
         println!("{}", crate::snapshot::fenced(&page.text()));
     } else {
         print!("{}", snapshot.render());
@@ -2536,22 +2343,7 @@ enum Target {
     Local(PathBuf),
 }
 
-/// Decide whether the caller named a URL or a file. A bare path is common
-/// enough (`open ./page.html`) that treating it as a failed URL parse would be
-/// unhelpful, and a `file:` URL means the same thing.
-///
-/// The `file://` base a local page resolves its relative links against.
-/// `canonicalize` is preferred because it resolves symlinks, so a page reached
-/// through one gets the base its neighbours actually live at. But it walks the
-/// path *by name*, and that walk can fail for a file that was just read
-/// successfully: a box's supervised tier redirects `/tmp`, so a working
-/// directory underneath it survives as the shell's fd and stops resolving as a
-/// path. `open ./page.html` then hit an earlier version that fell back to the
-/// *relative* path, which `from_file_path` refuses, and reported the target as
-/// an invalid path, after the file had already been read.
-///
-/// So the fallback is [`std::path::absolute`], which is pure path arithmetic and
-/// needs no directory to exist.
+/// Decide whether the caller named a URL or a file.
 fn local_base(path: &Path) -> Result<Url, H5iError> {
     let absolute = match path.canonicalize() {
         Ok(resolved) => resolved,

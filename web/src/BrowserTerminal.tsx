@@ -199,18 +199,6 @@ export function BrowserTerminal({
 }
 
 // The fence, mirrored.
-//
-// These strings are the engine's (`crates/h5i-browser-light/src/snapshot.rs`),
-// re-declared here rather than imported because `h5i-core` does not depend on
-// the engine crate and the console is served by `h5i-core`. Kept byte-identical
-// on purpose: a reader who has seen one should recognise the other.
-//
-// Why the console needs it at all. The engine fences page content before it
-// reaches a *model*, because that is the moment attacker-controlled text meets
-// something deciding what to do next. The console showed the same text — page
-// URLs, console output, policy subjects, the rendered frame — to a *person*,
-// with no boundary at all. That left the human reader with less framing than
-// the model got, which is hard to defend once noticed.
 const FENCE_BEGIN = "--- BEGIN UNTRUSTED PAGE CONTENT ---";
 const FENCE_END = "--- END UNTRUSTED PAGE CONTENT ---";
 const FENCE_NOTE =

@@ -1,16 +1,5 @@
 #!/usr/bin/env bash
 # Build the agent core as a wasm32 guest module: crates/h5i-wasm-harness/build/h5i-agent.wasm
-#
-# This is the *guest*, not the CLI: no_std, no I/O, just the loop behind the
-# seven-export ABI. A host (a browser page, a WASI runtime) performs its effects.
-#
-# The library is #![no_std] + alloc with zero dependencies, so the stock
-# wasm32-unknown-unknown target (prebuilt core + alloc) is all that's needed:
-# no -Zbuild-std, no nightly, no crates.io. The cdylib crate-type is requested
-# here rather than in Cargo.toml because a #![no_std] cdylib built for the host
-# has no allocator/panic handler and would break `cargo build --workspace`.
-#
-# Prereq (one time):  rustup target add wasm32-unknown-unknown
 set -euo pipefail
 
 TARGET=wasm32-unknown-unknown

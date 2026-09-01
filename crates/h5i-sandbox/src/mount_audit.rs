@@ -1,19 +1,4 @@
-//! The mount-realization audit (design-policy.md §P3). `validate_effective`
-//! checks the *plan*; this checks what the kernel actually realized. After
-//! setup, the
-//! supervisor reads the child's `/proc/<pid>/mountinfo` and diffs the realized
-//! mounts against the plan (the `EffectiveConfig` binds): a bind that did not
-//! land where planned, or a read-only overlay realized read-write, is the shape
-//! of the runc 2025 mount-swap / masked-path CVEs. Detected here and failed
-//! closed, rather than trusted.
-//!
-//! Honest bounds (§P3): `mountinfo` exposes mount topology and flags, not the
-//! installed Landlock ruleset or seccomp filter, and a symlink race that leaves
-//! topology unchanged is not visible here. Those are prevented by construction
-//! (§P4), and this audit is the net under that discipline, not a substitute.
-//!
-//! The parse and diff are pure (they take the `mountinfo` text), so they are
-//! unit-tested against synthetic input; only reading the file is Linux-only.
+//! The mount-realization audit (design-policy.md §P3).
 
 /// A mount the plan intends: a mount point and whether it must be read-only.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,23 +1,4 @@
 //! The viewer forward: the whole trusted surface between a human and a box.
-//!
-//! agent-browser's stream server assumes a friendly localhost, so connecting to
-//! the WebSocket lets you both watch the viewport and type into it. Inside the
-//! box that holds, nothing else being in there. On a developer machine with a
-//! browser on it, any page the human has open could reach a loopback port.
-//!
-//! So the port is never published. It stays in the box's private network
-//! namespace and `h5i box view` runs a forward the *host* owns, with four
-//! properties: loopback only, on a port h5i chose; a per-box token on every
-//! connection, minted at box creation and never written anywhere the box can
-//! read; cross-origin handshakes refused, so another tab cannot open a WebSocket
-//! to a running box; and the control lock on the input direction, so frames flow
-//! *out* always and *in* only while the human holds the lock
-//! ([`crate::control`]).
-//!
-//! Crossing into the namespace is done the way the supervisor already does it:
-//! h5i is the parent, so it enters the box's user and network namespaces by pid,
-//! connects from inside, and hands the socket back out over `SCM_RIGHTS`.
-//! Nothing is punched through, and the box gains no reachability.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -176,16 +157,6 @@ impl Route {
 }
 
 /// A pid living *inside* the box's namespaces.
-///
-/// The live registry is the starting point, not the answer: it records the
-/// host-side `h5i` process that owns the session, and that process is in the
-/// *host's* network namespace. Its descendants are the box. So this walks the
-/// session's process tree and returns the first descendant whose network
-/// namespace differs from ours.
-///
-/// Getting this wrong is quiet rather than loud, since entering the host's own
-/// netns succeeds and the forward then finds nothing listening, so it is worth
-/// doing by observation rather than by assuming which pid means what.
 pub fn box_pid(env_dir: &Path) -> Option<u32> {
     box_pid_ns(env_dir).map(|(pid, _)| pid)
 }
@@ -266,22 +237,6 @@ pub fn session_pid(env_dir: &Path) -> Option<u32> {
 }
 
 /// [`session_pid`], optionally insisting the record proves whose pid it is.
-///
-/// `verified` is for `h5i box share`, and only for it. Every other reader
-/// tolerates the pid-identity staleness the registry has always had: a crashed
-/// session leaves its record, the kernel reissues its pid, `kill(pid, 0)` says
-/// yes, and the next scan heals it.
-///
-/// Sharing cannot tolerate it. `box_pid` walks this pid's descendants looking
-/// for a network namespace and the share dials `127.0.0.1:<port>` from whichever
-/// one it finds, so an unrelated same-user process that inherited a crashed
-/// session's pid makes `h5i box share` publish a port out of a box nobody
-/// offered.
-///
-/// With `verified`, a record must carry `started_ticks` *and* match. A record
-/// written by an older h5i therefore stops being usable for sharing until the
-/// session is restarted, which is the safe direction: the alternative is a check
-/// that passes because there was nothing to check.
 pub fn session_pid_verified(env_dir: &Path, verified: bool) -> Option<u32> {
     let mut best: Option<(String, u32)> = None;
     for e in std::fs::read_dir(env_dir.join("live")).ok()?.flatten() {
@@ -511,17 +466,7 @@ fn enter_and_connect(pid: u32, port: u16, sock: i32, want_ns: &[u8]) -> i32 {
     0
 }
 
-/// macOS: there is no namespace to enter. Seatbelt confines the box's filesystem
-/// and its *outbound* network, but a box still binds the *host's* loopback,
-/// deliberately, because that is the only way a dev server in the box is
-/// reachable without a netns. So crossing into the box is a plain loopback
-/// connect, and `pid` is not needed.
-///
-/// The difference worth stating rather than hiding: on Linux the box's listener
-/// lives in its own network namespace and this proxy is the only route to it. On
-/// macOS the listener is on shared loopback, so any local process can reach the
-/// port directly. The viewer's token gate still governs *this* path; it cannot
-/// govern the port itself.
+/// macOS: there is no namespace to enter.
 #[cfg(target_os = "macos")]
 pub fn connect_in_netns(
     pid: u32,
@@ -868,19 +813,6 @@ fn read_frame(r: &mut impl Read) -> std::io::Result<Option<ClientFrame>> {
 const MAX_FRAME: u64 = 1 << 20;
 
 /// Copy client→box, dropping input frames while the agent holds the lock.
-///
-/// Dropping rather than closing is deliberate. A human who clicks before taking
-/// control should see nothing happen and still have a live viewer, not a
-/// connection that died on them.
-///
-/// Control frames and the two pacing messages pass whoever holds the lock: one
-/// keeps the socket alive, the other keeps frames arriving at a rate the viewer
-/// can draw. See [`classify`].
-///
-/// Returns how many *input* frames actually reached the page. That count is the
-/// honest answer to "did a human drive this box?", and comparing who held the
-/// lock at open and at close misses the ordinary case of someone taking control,
-/// doing the thing, and handing it straight back.
 pub fn pump_input(mut from_client: impl Read, mut to_box: impl Write, env_dir: &Path) -> Pump {
     let mut pump = Pump::default();
     // Whether a fragmented message is currently being forwarded.
@@ -1165,18 +1097,8 @@ pub struct Session {
     pub command: String,
 }
 
-/// Record a viewer session in the box's receipt log, so it reaches the export
-/// like any other observation.
-///
-/// This lane is *host observed* in the strongest sense available: h5i owns both
-/// viewers, so the box supplies none of it and cannot suppress it. What it
-/// answers is the question an export otherwise cannot: was a human watching, did
-/// they take the controls, and for how long. A patch produced with a human
-/// driving is a different artifact from one an agent produced alone.
-///
-/// Shared by the web forward and the terminal viewer deliberately. Two viewers
-/// writing two nearly-identical formats is how an export ends up reporting the
-/// same session two different ways.
+/// Record a viewer session in the box's receipt log, so it reaches the export like any other
+/// observation.
 pub fn record_session(
     session: &Session,
     opened: chrono::DateTime<chrono::Utc>,
@@ -1355,16 +1277,6 @@ fn respond_html(s: &mut TcpStream, body: &str) -> std::io::Result<()> {
 }
 
 /// The viewer page: JPEG frames in, input events out.
-///
-/// Deliberately one self-contained file with no external asset, because it is
-/// served by a security boundary and every byte it can fetch is a byte someone
-/// has to reason about.
-///
-/// The lock holder is stamped in at serve time rather than pushed to the page
-/// later. The stream is a straight relay of the box's own messages, so there is
-/// no channel on which h5i could send the page an update, and a control display
-/// that never changes is worse than none: someone who takes the lock and still
-/// reads "agent" concludes that taking it failed.
 fn viewer_page(holder: crate::control::Holder) -> String {
     // The substituted value is one of two fixed strings from h5i's own enum, so
     // this cannot become an injection point regardless of what the box does.

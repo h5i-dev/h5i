@@ -1,21 +1,4 @@
 //! Turning the box's JPEG into pixels the terminal can be handed.
-//!
-//! This is the one place in the viewer that parses a non-trivial format produced
-//! *inside* the box, so it is the place a malicious or simply broken page could
-//! try to reach the host process. Three things follow:
-//!
-//! * The decoder is `zune-jpeg`, which forbids unsafe code. A memory-unsafe
-//!   decoder here would hand a box the host's address space.
-//! * Dimensions are capped before decoding, so a header claiming 60000×60000 is
-//!   refused rather than allocating ten gigabytes.
-//! * A frame that fails to decode is dropped, never fatal. The box can produce a
-//!   corrupt frame by crashing at the wrong moment, and a viewer that exits on
-//!   one is a viewer a flaky page can close.
-//!
-//! Scaling lives here too, and it is a bandwidth decision rather than a visual
-//! one. The terminal will happily scale an image into a cell box for us, but
-//! only after every byte of it has crossed the PTY, and over SSH that is the
-//! whole cost.
 
 use zune_jpeg::zune_core::bytestream::ZCursor;
 use zune_jpeg::zune_core::colorspace::ColorSpace;

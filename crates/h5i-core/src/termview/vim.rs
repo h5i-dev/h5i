@@ -1,19 +1,4 @@
 //! The keymap: what a keystroke means when the keyboard is the viewer's.
-//!
-//! A pointer is a poor instrument in a terminal — cells rather than pixels, no
-//! visible cursor to aim with, and feedback only when a frame comes back over a
-//! socket. Naming a target and pressing a key needs none of that.
-//!
-//! Design: `docs/design-interminal-browser.md` V1 and V3. Three rules:
-//!
-//! * **The page never sees these keys.** They are decided in VIEW. INTERACT
-//!   still exists for the canvas and the drag no keyboard can express, but only
-//!   where an engine can be driven that way.
-//! * **A binding that cannot work is not bound.** Which keys mean anything is
-//!   read from what the engine advertises, not inferred from its name, and an
-//!   unavailable key says why ([`Action::Unsupported`]).
-//! * **Movement is portable.** Scrolling goes out as wheel and arrow events
-//!   every engine understands, so the keys a reader uses most work everywhere.
 
 use std::collections::BTreeSet;
 
@@ -233,15 +218,6 @@ pub enum Match {
 }
 
 /// Narrow hint labels by what has been typed so far.
-///
-/// The viewer's half of the hint scheme: the engine mints the labels, each viewer
-/// tracks its own human's typing. The web viewer has the same rule in JavaScript.
-///
-/// Acting on a single hit immediately is sound only because the labels are
-/// prefix-free — a complete label cannot also be the start of another, so there
-/// is nothing to wait for.
-///
-/// Case-insensitive, unlike [`resolve`]: a label is a name.
 pub fn narrow(labels: &[String], typed: &str) -> Match {
     let typed = typed.to_ascii_lowercase();
     if typed.is_empty() {
@@ -261,15 +237,6 @@ pub fn narrow(labels: &[String], typed: &str) -> Match {
 }
 
 /// One message on the wire at a time, and one owed behind it.
-///
-/// Pulled out of the viewer so the ordering can be tested without a socket. The
-/// invariant: everything typed reaches the page, in order, with never more than
-/// one message outstanding.
-///
-/// The caller decides what "owed" carries. For typing it is a *batch* of keys,
-/// not a merge — a keystroke is a delta, so dropping the ones in between would
-/// lose characters. Batching still pays the engine's relayout and render only
-/// once per message, which is where the cost is.
 #[derive(Debug, Default)]
 pub struct Coalesce {
     in_flight: bool,

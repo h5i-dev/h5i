@@ -239,17 +239,6 @@ pub struct BrokerClient {
 }
 
 /// End this process, from a thread that cannot assume the rest of it is well.
-///
-/// `std::process::exit` is the wrong tool here and the difference is not
-/// theoretical. It runs the atexit handlers and flushes stdio on its way out,
-/// and both take locks, so a thread calling it while *another* thread is deep in
-/// allocation gets to wait for that thread, which is precisely the thread we have
-/// given up on. Measured: with the renderer's main thread spinning inside layout,
-/// this path printed "so it is stopping" and then did not stop. Six of them
-/// accumulated on one machine, the oldest running for seven hours.
-///
-/// `_exit` skips all of it. Nothing is lost: there is no result to flush on this
-/// path, and the line above went to stderr, which Rust does not buffer.
 pub(crate) fn stop_now(code: i32) -> ! {
     #[cfg(unix)]
     unsafe {
@@ -704,15 +693,6 @@ impl BrokerClient {
 // ── the broker's side ────────────────────────────────────────────────────────
 
 /// Answer questions until the renderer stops asking.
-///
-/// Unix only, and so is the split: the transport is a socket pair the child
-/// inherits, and there is no second implementation. Everything above this line
-/// is portable, which keeps the trait and the framing testable everywhere.
-///
-/// Returns when the socket closes, which is what a renderer that exited looks
-/// like from here. Cheap answers are given on this thread; the ones that touch
-/// the wire get one of their own, because a fetch that took thirty seconds would
-/// otherwise stall every drain and every cookie read behind it.
 #[cfg(unix)]
 #[cfg(unix)]
 pub fn serve(broker: Arc<LocalBroker>, socket: std::os::unix::net::UnixStream) {
@@ -755,21 +735,7 @@ fn serve_over(
         }
     }
 
-    // The read loop ended, which means the renderer is gone. From here the
-    // broker's only remaining job is to reap it and exit with its status, and
-    // nothing in this function may block that.
-    //
-    // A renderer that has gone away takes its connections with it: nothing can
-    // drain them, and a socket nobody reads is a server left talking to itself.
-    // So they are closed, on a thread of their own that nobody waits for.
-    // `Socket::close` takes the same lock a `send` holds, and a send into a peer
-    // that has stopped reading blocks for as long as the peer likes; doing this
-    // inline would hand a hostile server the ability to keep a session's process
-    // alive after its renderer had exited. The same is why the workers are not
-    // joined.
-    //
-    // Nothing is lost by not waiting: the close frame is politeness, and exit
-    // closes every socket the kernel holds.
+    // The read loop ended, which means the renderer is gone.
     let leaving: Vec<Arc<dyn Channel>> = desk
         .channels
         .lock()

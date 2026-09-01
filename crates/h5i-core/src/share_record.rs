@@ -1,23 +1,4 @@
 //! Reading `<env>/share.json`, for the parts of h5i that are not the share.
-//!
-//! `h5i-share` owns this file: it writes it, locks it, and decides what a grant
-//! means. But three things below that crate need to know whether a box is being
-//! shared right now (`box rm` must not pull a box out from under somebody,
-//! `export` must not produce a bundle that is silent about it, and the console
-//! must say so while it is open) and `h5i-share` sits *above* `h5i-core`.
-//!
-//! They each grew their own `serde_json::Value` probe instead, and by the time
-//! anyone counted there were four definitions of "a live share" in the codebase.
-//! The three down here needed exactly one field, a numeric `pid`, so they
-//! accepted files the real reader rejects, and a `share.json` containing only
-//! `{"pid": 1234}` made `box rm` refuse forever while `box share stop` answered
-//! "not being shared". None of the three knew about `winding_up` either, a field
-//! `h5i-share` added precisely because a live pid is not a share that is
-//! serving.
-//!
-//! So: one reader, here, that fails closed on any file it does not fully
-//! understand, and a test in `h5i-share` that writes a real record and asserts
-//! this reads it.
 
 use std::path::Path;
 
@@ -40,23 +21,6 @@ const GATE_FILE: &str = "share-gate.lock";
 const GATE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Exclusive access to the *decision* about whether this box is shared.
-///
-/// Everything that reads [`read_live`] to decide what to do next (`apply`,
-/// `rebase`, `abort`, `rm`, `export`) and the one thing that changes the answer,
-/// `h5i-share`'s `session::claim`, takes this first and holds it for the whole
-/// operation.
-///
-/// Without it the check and the operation were two steps with a gap between
-/// them, and `run.lock` did not close it: a share does not hold `run.lock`, the
-/// box *session* it stands on does, and a share's own claim happens after its
-/// transport setup, which for `--tunnel` waits up to forty-five seconds for a
-/// URL. So the writer could exit during that wait, releasing `run.lock`;
-/// `rebase` or `export` or `rm` would then see no `share.json` and proceed; and
-/// the in-flight start would claim and announce a public URL while that
-/// operation was running.
-///
-/// Ordered *before* `run.lock` everywhere it is taken with it, and never taken
-/// while holding `run.lock`, so the two cannot deadlock.
 #[derive(Debug)]
 pub struct ShareGate {
     #[allow(dead_code)]
@@ -121,19 +85,6 @@ pub fn share_gate(env_dir: &Path) -> Result<ShareGate, H5iError> {
 const SESSION_VERSION: u8 = 1;
 
 /// The file, as everything below `h5i-share` needs to see it.
-///
-/// Deliberately a *subset* with every field required. Adding a field to the
-/// record in `h5i-share` will not break this; making one required there without
-/// adding it here would, and the round-trip test is what catches that.
-///
-/// "Every field required" was the claim and not the code: `endpoint`,
-/// `started_at`, and a grant's `id` and `secret_sha256` were all required by the
-/// real deserializer and absent from this one, and `transport` took any string
-/// at all. That asymmetry points the wrong way: a record missing `endpoint` read
-/// as *live* down here, so the console advertised it and
-/// `apply`/`rebase`/`abort` refused as "being shared", while `box share status`
-/// and `stop`, which use the real reader, said the box was not being shared and
-/// could not perform the recovery the refusal recommended.
 #[derive(Debug, Clone, Deserialize)]
 struct OnDisk {
     v: u8,

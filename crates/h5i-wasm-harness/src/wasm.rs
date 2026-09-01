@@ -1,28 +1,4 @@
-//! Wasm ABI: the pinned six-symbol boundary over the sans-io core. Compiled
-//! only for `wasm32` (`#[cfg(target_arch = "wasm32")]` in `lib.rs`), so the
-//! native build and `cargo test` never see the allocator / panic handler.
-//!
-//! Exports (no imports at all: loadable by plain `WebAssembly.instantiate` in
-//! a browser/Node AND by any WASI runtime):
-//!   memory
-//!   alloc(len: i32) -> i32          host obtains a guest buffer to write into
-//!   dealloc(ptr: i32, len: i32)     no-op under the bump allocator; kept so
-//!                                   the ABI outlives the allocator choice
-//!   agent_init(ptr, len) -> u64     init JSON in; first effect JSON out
-//!   agent_step(ptr, len) -> u64     event JSON in; next effect JSON out
-//!   agent_resume(ptr, len) -> u64   {"task": str} in; first effect of a new
-//!                                   turn out, keeping the conversation
-//!   agent_dump() -> u64             deterministic transcript JSON out
-//!
-//! Return convention: (ptr << 32) | len of guest-owned UTF-8 JSON, valid until
-//! the NEXT exported call, and `alloc()` IS an export call, so the host must
-//! copy a returned effect out BEFORE calling `alloc` for the next event. (The
-//! current bump allocator would make the lazy order accidentally safe; the
-//! rule is stated strictly so a future real allocator cannot break hosts.)
-//!
-//! Build with `scripts/build-wasm.sh` (needs `rustup target add
-//! wasm32-unknown-unknown`); the target's prebuilt core/alloc mean no
-//! `-Zbuild-std`, no nightly, and no external crates.
+//! Wasm ABI: the pinned six-symbol boundary over the sans-io core.
 
 #![allow(static_mut_refs)]
 

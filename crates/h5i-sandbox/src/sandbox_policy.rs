@@ -239,16 +239,8 @@ impl AgentRuntime {
         }
     }
 
-    /// The API endpoints this runtime may reach, scoped per runtime so a stolen
-    /// cross-runtime token has nowhere allowlisted to go.
-    /// Each runtime needs its *auth* host as well as its API host, or the box
-    /// is a one-session box: the seeded credential expires, the silent refresh
-    /// has nowhere to go, and the in-box login falls over with "invalid token".
-    /// Claude refreshes at `platform.claude.com/v1/oauth/token`, Codex at
-    /// `auth.openai.com`. Not a new capability class, since the box already
-    /// holds the OAuth token. Where a host-side credential exists
-    /// `auth_proxy::engage` is still better: it scrubs the box copy and locks
-    /// egress to the proxy.
+    /// The API endpoints this runtime may reach, scoped per runtime so a stolen cross-runtime
+    /// token has nowhere allowlisted to go.
     pub(crate) fn egress(self) -> &'static [&'static str] {
         match self {
             AgentRuntime::Claude => {
@@ -484,39 +476,11 @@ pub struct Profile {
     /// `AGENTS.md`. Serialized only when non-empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub persona: Vec<String>,
-    /// Allow `AF_UNIX` sockets (`[profile.X.net] unix = true`). Off by default:
-    /// `SCM_RIGHTS` passes file descriptors, which is authority smuggling, so
-    /// the supervised tier's `socket()` gate denies the family unless asked.
-    ///
-    /// What the grant does *not* open, which is why it can be granted at all:
-    ///
-    /// - Abstract-namespace sockets (leading NUL) are scoped by the network
-    ///   namespace, and a supervised box has a private one.
-    /// - Filesystem-bound sockets are scoped by Landlock, so `connect()` can only
-    ///   name a granted path. The usual host sockets (`/tmp/.X11-unix`, `tmux-*`,
-    ///   an `ssh-agent`) live under `/tmp`, which the kernel tiers redirect.
-    ///
-    /// What is left is a host socket inside a granted path, a real residual:
-    /// this widens the box by exactly the IPC endpoints its filesystem grants
-    /// reach. Opt-in and pinned in the digest for that reason. `browser` sets
-    /// it because `agent-browser`'s control socket is a filesystem-bound
-    /// listener; without it the daemon dies at startup. Serialized only when `true`.
+    /// Allow `AF_UNIX` sockets (`[profile.X.net] unix = true`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unix_sockets: bool,
 
     /// macOS only: allow `mach-register` and `iokit-open`.
-    ///
-    /// The base profile grants `mach-lookup`, enough to *find* a service. A
-    /// multi-process browser also registers mach ports of its own (how the
-    /// browser and its renderers talk) and opens IOKit even with `--headless
-    /// --disable-gpu`. Under `(deny default)` Chrome does not report the
-    /// refusal: it dies with `SEGV_ACCERR` at a null address, several layers later.
-    ///
-    /// Bisected against a real profile rather than copied from Chromium's
-    /// sandbox; each operation alone is not enough, both together are. It
-    /// widens the box to registering mach service names in its own bootstrap
-    /// namespace and opening IOKit user clients. Opt-in, set only by `browser`,
-    /// pinned in the digest, serialized only when `true`. Same treatment as [`Profile::unix_sockets`].
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mach_iokit: bool,
 
@@ -529,16 +493,7 @@ pub struct Profile {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub loopback_ports: Vec<u16>,
 
-    /// Which browser engine a `browser` box runs (`[profile.X] engine =
-    /// "..."`).
-    /// Declared rather than discovered, because an engine change is a policy
-    /// change: an API absent by construction in one engine exists in another,
-    /// so a box that silently fell back to Chromium would widen its own
-    /// capability surface with nobody deciding to. There is deliberately no
-    /// fallback; an engine that cannot serve a page fails and names the
-    /// recreate (see `engine_tooling_present`).
-    /// `None` means the profile runs no browser, which is every profile but
-    /// `browser`. Serialized only when set.
+    /// Which browser engine a `browser` box runs (`[profile.X] engine = "..."`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<BrowserEngine>,
 
@@ -592,16 +547,7 @@ pub enum BrowserEngine {
     H5iLight,
 }
 
-/// Browser actions, and action families, a profile may name in
-/// `[profile.X.browser] deny`.
-///
-/// A curated vocabulary rather than free text, because the deny list is
-/// fail-open by nature: an entry matching nothing denies nothing while
-/// `policy.resolved.toml` reads as though the verb were blocked. A misspelling
-/// has to be refused at create, not discovered later by an agent successfully
-/// doing the thing. Family entries (`state`, `credentials`, …) cover their
-/// `name_*` members, so they sit alongside the individual verbs rather than
-/// instead of them. Adding an action upstream means adding it here.
+/// Browser actions, and action families, a profile may name in `[profile.X.browser] deny`.
 pub const BROWSER_DENYABLE_ACTIONS: &[&str] = &[
     // Families. The stored-login family is distinct from `credentials` on the
     // wire and reaches the same secrets, so it is nameable in its own right and
@@ -805,29 +751,7 @@ impl BrowserEngine {
     }
 }
 
-/// Read-only system paths granted by default at the `process` tier. Enough to
-/// exec interpreters and link against system libraries, nothing under `$HOME`.
-/// Includes where `/etc/resolv.conf` actually lives on hosts where it is a
-/// symlink.
-///
-/// `/etc` is granted, so a host whose resolver config is a real file inside it
-/// needs nothing. It is a symlink on more machines than one would like (WSL
-/// points it at `/mnt/wsl/resolv.conf`, systemd-resolved and resolvconf at
-/// somewhere under `/run`), and a Landlock grant follows the link to a path
-/// the domain never granted. That does not read as a sandbox denial:
-/// `getaddrinfo` answers "Temporary failure in name resolution", every fetch
-/// fails before the wire, and a `net.mode = "host"` box looks like a host with
-/// no network.
-///
-/// A static list rather than `canonicalize()`, and that is the whole design:
-/// resolving the link at runtime would give the *same profile a different
-/// digest on each host*, and the one promise a digest makes is that two boxes
-/// with the same digest were allowed the same things. A grant for a path that
-/// does not exist is skipped by the Landlock builder.
-///
-/// Read-only, one file each, and none is a way out: a `deny` box has no
-/// network to resolve for, a `host` box already reaches everything, and `/run`
-/// itself stays ungranted.
+/// Read-only system paths granted by default at the `process` tier.
 const RESOLVER_PATHS: &[&str] = &[
     // WSL2.
     "/mnt/wsl/resolv.conf",
@@ -909,29 +833,8 @@ impl Profile {
         }
     }
 
-    /// Built-in *`agent`* profile (`--profile agent`): the agent-in-box
-    /// defaults, scoped to a single `runtime`. The base built-in confines to
-    /// system paths plus `$WORK`, right for build/test workloads but fatal for
-    /// coding agents, which live under `$HOME`, keep state there, and need
-    /// egress to their APIs. This adds the minimum HOME surface *that runtime* needs:
-    ///
-    /// - read-only (shared, non-secret): `~/.local/bin`, `~/.local/lib`, `~/.nvm`,
-    ///   shell rc files, `~/.gitconfig` + `~/.config/git`, and the runtime's own
-    ///   `~/.local/share/<runtime>` binary;
-    /// - read-write: only this runtime's state (Claude → `~/.claude` and
-    ///   `~/.claude.json`, Codex → `~/.codex`), shared caches (`~/.cache`,
-    ///   `~/.npm`), and `/tmp` (per-env scratch on kernel tiers, private in
-    ///   containers);
-    /// - `net.egress`: only this runtime's API endpoints, DNS-pinned and
-    ///   nftables-enforced at the supervised tier, so `agent` is a
-    ///   supervised/container profile by design;
-    /// - `USER`/`SHELL` passed through; roomier mem/procs for a live agent.
-    ///
-    /// The default deny set (`~/.ssh`, `~/.aws`, `~/.config/gh`, hooks) still
-    /// applies and no grant contains a denied child. The trade: the agent can
-    /// read its *own* credentials, which it cannot function without, and the
-    /// egress allowlist bounds where bytes can go. It gets neither the other
-    /// runtime's credentials nor egress to its API.
+    /// Built-in *`agent`* profile (`--profile agent`): the agent-in-box defaults, scoped to a
+    /// single `runtime`.
     pub fn builtin_agent(isolation: IsolationClaim, runtime: AgentRuntime) -> Profile {
         let mut p = Profile::builtin(runtime.profile_name(), isolation);
         p.fs_read.extend(
@@ -985,29 +888,9 @@ impl Profile {
         p
     }
 
-    /// Built-in *`browser`* profile (`--profile browser`): the agent-in-box
-    /// profile plus the surface a headless Chrome and the `agent-browser`
-    /// daemon need, so the agent can drive a real browser against the dev
-    /// server it just started.
-    ///
-    /// The browser runs in the *same box* as the agent, so the dev server is on
-    /// `localhost:3000` for both with no namespace sharing, no pod and no
-    /// second image. At the kernel tiers the "image" is the host filesystem
-    /// under Landlock grants, so a browser box is a profile, not an
-    /// architecture (roadmap 5.2). What is added:
-    ///
-    /// - read: the discovered Chrome and `agent-browser` binaries and their
-    ///   resource trees, plus fontconfig and system fonts, without which Chrome
-    ///   exits rather than rendering.
-    /// - write: `/dev/shm`, Chrome's shared-memory transport; without it the
-    ///   renderer dies unless every caller remembers `--disable-dev-shm-usage`.
-    /// - Loopback is reachable inside the box's own netns, so the dev server needs
-    ///   no grant. External egress stays whatever the agent profile allows.
-    ///
-    /// Chrome's *own* sandbox does not run here: our seccomp deny-list blocks
-    /// the namespace syscalls it needs at every tier, so Chrome runs with
-    /// `--no-sandbox` and h5i's box is the boundary. One layer fewer than a
-    /// browser on the host has, stated in the roadmap's limits.
+    /// Built-in *`browser`* profile (`--profile browser`): the agent-in-box profile plus the
+    /// surface a headless Chrome and the `agent-browser` daemon need, so the agent can drive a
+    /// real browser against the dev server it just started.
     pub fn builtin_browser(isolation: IsolationClaim, runtime: AgentRuntime) -> Profile {
         let mut p = Profile::builtin_agent(isolation, runtime);
         p.name = "browser".to_string();
@@ -1061,20 +944,6 @@ impl Profile {
     }
 
     /// Does this profile actually *name* an egress allowlist?
-    /// Not `!net_egress.is_empty()`. A blank entry is a `Vec` element and not a
-    /// rule: `parse_egress_rule` skips it, so `net.egress = [""]` builds a
-    /// deny-all while the length test reports that the profile "sets
-    /// net.egress".
-    /// This decides whether the host-side `h5i box allow` list is merged in,
-    /// and SECURITY.md rests on it: that list "merges into a profile that
-    /// already sets `net.egress` and never widens a deny-all one". Under the
-    /// length test a repo could write `net.egress = [""]` and have the
-    /// operator's global allow rules applied to a box meant to reach nothing.
-    /// Deliberately *not* used where the length test decides whether to build
-    /// the enforcement itself (the supervisor's netns, the container proxy).
-    /// There a blank list means "an allowlist with no entries", which is
-    /// deny-all and correct; answering "no allowlist" would hand the box the
-    /// host network.
     pub fn scopes_egress(&self) -> bool {
         self.net_egress.iter().any(|e| !e.trim().is_empty())
     }
@@ -1327,15 +1196,6 @@ fn chrome_binary_within(root: Option<&std::path::Path>, home: Option<&str>) -> O
 }
 
 /// Expand a path with at most one `*` per segment against the real filesystem.
-///
-/// Not a general glob: no `**`, no character classes, no brace expansion. The
-/// only wildcard any browser layout needs is a version directory
-/// (`chromium-1140`, `chrome-141.0.7390.54`), and a glob crate would be a
-/// dependency in the sandbox crate for one `*`.
-///
-/// Matches within a directory come back in *reverse* name order, so
-/// `chromium-1140` is tried before `chromium-1039`. A string sort, not a
-/// version comparison: with two builds installed either one works.
 fn glob_paths(pattern: &std::path::Path) -> Vec<std::path::PathBuf> {
     use std::path::{Component, PathBuf};
     let mut out: Vec<PathBuf> = vec![PathBuf::new()];
@@ -2015,26 +1875,8 @@ pub struct ResolvedPolicy {
     /// them exactly instead of opening the interface. Never serialized.
     #[serde(skip)]
     pub loopback_ports: Vec<u16>,
-    /// Runtime-only: the loopback port the egress allowlist proxy should bind
-    /// for this box, rather than whatever ephemeral port the OS hands out.
-    /// On the macOS supervised tier the proxy is the box's only route out, and
-    /// a `browser` box's Chrome deliberately outlives the `box run` that
-    /// started it. Chrome takes its proxy address once, at launch, so an
-    /// ephemeral port makes every later navigation fail with
-    /// `ERR_PROXY_CONNECTION_FAILED`. Read only by the tier with this problem
-    /// ([`crate::supervisor`]); the container tier's proxy stays ephemeral,
-    /// correctly, since its Chrome dies with the run.
-    /// Allocated and persisted host-side by `env::prepare_browser_shim`, in a
-    /// file under a directory the *box* may write, so the value is
-    /// box-controlled. It is not authority: `remembered_port` refuses a
-    /// nonsense value (`0`, privileged), the number only ever reaches `bind`,
-    /// and the policy grants the box the port the host actually bound. A box
-    /// that writes its own number gets a proxy there or an ephemeral fallback,
-    /// and either way cannot reach a port the profile does not allow.
-    /// That argument is about a *port* and does not carry to the pid file
-    /// beside it: a pid reaches `kill` on the host rather than `bind`. See
-    /// `env::browser_pid`, which checks the pid still names this box's browser
-    /// before signalling. `None` → ephemeral.
+    /// Runtime-only: the loopback port the egress allowlist proxy should bind for this box,
+    /// rather than whatever ephemeral port the OS hands out.
     #[serde(skip)]
     pub egress_proxy_port: Option<u16>,
     /// Runtime-only: where the kernel tiers write `policy.effective.json`, the

@@ -1,18 +1,4 @@
 //! Just enough RFC 6455 to be a server.
-//!
-//! Hand-rolled rather than pulled in, for the same reason h5i-core hand-rolled
-//! its client: the surface actually used is one handshake, four opcodes and no
-//! extensions, and a WebSocket crate would bring an async runtime this engine
-//! does not otherwise need.
-//!
-//! Two rules the h5i viewers depend on, both easy to get wrong:
-//!
-//! - A server never masks. h5i-core's client fails the connection outright on a
-//!   masked server frame, so masking here is a disconnect, not a compatibility
-//!   quirk.
-//! - Nothing follows the handshake's blank line except the first frame byte. A
-//!   stray newline is read as the start of a frame and the viewer hangs with no
-//!   error, which is exactly the CRLF bug the web viewer already hit once.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;

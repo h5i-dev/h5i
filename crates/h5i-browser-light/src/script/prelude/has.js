@@ -1,13 +1,4 @@
 // `:has()`, evaluated here because the engine's selector parser refuses it.
-//
-// Its own source, parsed the first time a selector containing `:has(` reaches
-// `withHasMarkers` — which for most pages is never. The trigger is exact: the
-// core already tests every selector against `HAS_PATTERN` to decide whether any
-// of this is needed, so the test that used to choose between two code paths now
-// chooses whether there is a second path yet.
-//
-// See `TIERS` in `mod.rs` for the rule, and the core's `withHasMarkers` for
-// what calls into this.
 (function () {
   "use strict";
 

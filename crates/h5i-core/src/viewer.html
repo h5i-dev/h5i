@@ -169,33 +169,8 @@ function bytesOfBase64(b64) {
   return bytes;
 }
 
-// Frames are decoded off the main thread, one at a time, and painted at most
-// once per animation frame.
-//
-// `createImageBitmap` decodes on a worker the browser owns; the previous
-// `new Image()` with a `data:` URL built a ~70 KB string, parsed a URL and
-// decoded on the main thread, per frame, and allocated a fresh element to do it.
-//
-// The pacing is the other half, and it has to hold at *every* stage rather than
-// only at the last one, because the box does not wait for this page: under push
-// pacing frames arrive whether or not anything here kept up, so a stage that
-// queues instead of dropping grows without bound. So three things are dropped,
-// each where it accumulates:
-//
-//   * bytes that arrived while a decode was running — only the newest is kept,
-//     and it is the newest that gets decoded next. Starting a decode per
-//     arriving frame instead is the version of this that looks like it drops
-//     frames and does not: the drop happens after the expensive part, so the
-//     decode jobs and their blobs pile up for as long as decoding is slower
-//     than the frame rate.
-//   * a decoded bitmap that was never painted, replaced by a newer one.
-//     Closed explicitly: bitmaps hold decoded pixels, and waiting for the
-//     collector to notice is how a long session grows to a gigabyte.
-//   * a decode that finished after the socket it came from was replaced. One
-//     decode is in flight at a time, so this is the only way a bitmap can
-//     arrive out of order, and it is the reconnect path that produces it.
-//
-// A hidden tab decodes nothing at all.
+// Frames are decoded off the main thread, one at a time, and painted at most once per animation
+// frame.
 let queuedBytes = null;  // newest frame not yet handed to a decoder
 let decoding = false;    // a decode is in flight
 let pending = null;      // newest decoded frame not yet painted

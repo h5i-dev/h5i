@@ -1,20 +1,4 @@
 //! The broker: the only way bytes enter this engine.
-//!
-//! Every fetch (the page itself, every stylesheet, every image, every redirect
-//! hop) goes through [`crate::broker::Broker::send`], which does the same three
-//! things in the same order: check policy, record the decision, then use the
-//! wire. There is no second path, which is what lets the receipt be the network
-//! rather than a report about it.
-//!
-//! # The invariant that is easy to get wrong
-//!
-//! Blitz hands us a [`NetHandler`] per request and counts that request as
-//! pending until the handler is called, and `paint_scene` refuses to paint while
-//! any *critical* resource is pending. So a denial must *complete* the request
-//! with an empty body, not drop the handler: dropping it leaves the document
-//! permanently unpaintable, which reads as "the engine is broken" rather than
-//! "the tracker was blocked". [`BrokerNet::fetch`] therefore has exactly one
-//! exit, and there is a test pinning it.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -28,15 +12,6 @@ use crate::policy::Policy;
 use crate::receipt::{Initiator, RequestRecord, Sink};
 
 /// The agent string [`crate::identity::native`] presents.
-///
-/// Honest rather than imitative: it names this engine and does not claim to be
-/// Chrome. The `Mozilla/5.0 (compatible; ...)` shape is kept because it is the
-/// form content negotiation on real servers is written against.
-///
-/// The identity is what a request now reads, not this. It stays here, and stays
-/// the value `native` is built from, because it is the *default* and a change to
-/// it changes what every h5i user looks like, so it should read as one decision
-/// in one place.
 pub const USER_AGENT: &str = concat!(
     "Mozilla/5.0 (compatible; h5i-browser-light/",
     env!("CARGO_PKG_VERSION"),
@@ -142,21 +117,6 @@ impl FetchOutcome {
 }
 
 /// Policy plus receipts plus a client, in that order of importance.
-///
-/// Addresses this broker has already checked, keyed by host: the other half of
-/// [`Policy::check_address`], and the half that makes the check mean something.
-/// Resolving a name to decide about it and then letting the HTTP client resolve
-/// it again leaves a window between the two, and that window is the whole of DNS
-/// rebinding.
-///
-/// So the checked addresses are *pinned*. The client is built with this as its
-/// resolver, and it answers from what the broker already decided about rather
-/// than asking the network a second time. A name that is not in the map has not
-/// been through the policy, and the answer is a refusal rather than a lookup.
-///
-/// Lightpanda does this at curl's open-socket callback, which sees the resolved
-/// `sockaddr` and can refuse it there. reqwest exposes no such hook; a pinning
-/// resolver reaches the same place from the other side.
 #[derive(Default)]
 struct Pinned {
     by_host: std::sync::Mutex<std::collections::HashMap<String, Vec<std::net::SocketAddr>>>,
@@ -210,24 +170,8 @@ struct CorsContext {
     credentials: crate::cors::Credentials,
 }
 
-/// Who a session presents itself as, reduced to the two values a request carries
-/// and computed once.
-///
-/// The indirection earns its place twice. It is what lets the identity feature
-/// be *absent* rather than merely unused, since without it the wire path would
-/// name a type that does not exist in a build without `identity`, and it is what
-/// keeps the per-request work at zero: both values are settled when the session
-/// is built, because an identity cannot change while a session runs.
-///
-/// `accept_language` is the finished header string, built here and not per
-/// request. That is the whole of the per-request cost question: a request hands
-/// `.header()` a `&str` and it parses one, exactly as it did when the value was
-/// a `&'static str`, so the wire path costs what it cost before identities
-/// existed. 12 ns, measured.
-///
-/// A parsed `HeaderValue` was tried here and is *worse*: cloning one is 18 ns
-/// against the 12 ns to parse a short ASCII header, because the clone touches a
-/// refcount.
+/// Who a session presents itself as, reduced to the two values a request carries and computed
+/// once.
 pub struct Presented {
     user_agent: String,
     accept_language: String,
@@ -547,15 +491,6 @@ impl LocalBroker {
 
 
     /// Ask a server, before the real request, whether it will accept one.
-    ///
-    /// A request in its own right and treated as one: policy-checked and
-    /// receipted like everything else, so it appears in the log rather than
-    /// arriving from nowhere. A caller reading two requests where the page made
-    /// one is reading the truth.
-    ///
-    /// Not cached. `Access-Control-Max-Age` would make this cheaper and is one
-    /// more piece of state that can be wrong; when a corpus page makes the cost
-    /// real it can be added.
     fn preflight(
         &self,
         url: &Url,
@@ -718,18 +653,7 @@ impl LocalBroker {
         Ok(())
     }
 
-    /// The addresses a host was approved for, for a caller that does its own
-    /// connecting.
-    ///
-    /// `reqwest` is handed [`Pinned`] as its resolver and so cannot reach an
-    /// address the policy did not see. The socket client has no resolver to hand
-    /// anything to, calling `TcpStream::connect` itself, so it asks here instead
-    /// and connects to *these* addresses rather than resolving the name a second
-    /// time.
-    ///
-    /// `None` when nothing is pinned at all (an egress proxy in the path, which
-    /// resolves at the far end), the one case a caller may fall back to its own
-    /// lookup.
+    /// The addresses a host was approved for, for a caller that does its own connecting.
     pub fn approved_addresses(&self, host: &str) -> Option<Vec<std::net::SocketAddr>> {
         self.pinned.as_ref()?.get(host)
     }
@@ -798,16 +722,8 @@ impl LocalBroker {
                 let message = if hop == 0 {
                     format!("denied by policy: {reason}")
                 } else if cors.is_some() {
-                    // A page asked, and where a server redirected it is not the page's
-                    // to learn. The chain began at a URL the page named and ended
-                    // somewhere the allowlist refuses; naming that target hands the page
-                    // a URL it had no way to reach and that a redirect off an
-                    // authenticated endpoint routinely carries an identity in (`/me` ->
-                    // `/users/alice`). A browser gives a blocked `fetch` a bare failure
-                    // for the same reason.
-                    //
-                    // The receipt has the target under its own sequence number: the audit
-                    // lane is the agent's, and this string is the page's.
+                    // A page asked, and where a server redirected it is not the page's to
+                    // learn.
                     "the request was redirected somewhere this engine is not allowed to \
                      follow, so it was not followed"
                         .to_string()
@@ -1227,18 +1143,8 @@ impl LocalBroker {
         )
     }
 
-    /// Read at most `max_response_bytes`, so one hostile response cannot become
-    /// this process's memory ceiling.
-    ///
-    /// Decode a compressed body, under the same cap the raw read was under. The
-    /// cap is the point, not the decoding: a response small enough to pass
-    /// `read_capped` can decompress into something enormous, a few kilobytes of
-    /// zeroes being gigabytes of zeroes, so a browser that decoded without a limit
-    /// would let any allowed origin exhaust the box's memory with one response.
-    ///
-    /// An encoding this engine does not have is an error rather than a body passed
-    /// through undecoded: handing compressed bytes to the HTML parser would render
-    /// a page of binary, a wrong answer that looks like a broken site.
+    /// Read at most `max_response_bytes`, so one hostile response cannot become this process's
+    /// memory ceiling.
     fn decode_capped(&self, raw: &[u8], encoding: &str) -> Result<Vec<u8>, H5iError> {
         use std::io::Read;
         let cap = self.policy.max_response_bytes();
@@ -1372,18 +1278,6 @@ impl LocalBroker {
     }
 
     /// Record one frame on an open connection.
-    ///
-    /// Every frame, not just the handshake. A socket open for ten minutes carrying
-    /// four hundred messages could be honoured by receipting the handshake alone,
-    /// and then this engine's central claim would quietly stop covering the bytes
-    /// that followed, which is the CONNECT-gate blindness it exists to remove.
-    ///
-    /// Written as an ordinary request/response pair with `WS-SEND`/`WS-RECV` as the
-    /// method. That is not an HTTP verb and is hyphenated so it cannot be read as
-    /// one, but "a thing that crossed the wire, this size, in this direction" is
-    /// exactly what a [`RequestRecord`] holds, and reusing it means the console,
-    /// `h5i box watch` and the export bundle all show socket traffic without being
-    /// taught a new phase to skip.
     pub fn record_socket_frame(
         &self,
         url: &Url,
@@ -1407,15 +1301,6 @@ impl LocalBroker {
         self.append(&outcome)?;
 
         // And charged, which it was not.
-        //
-        // [`crate::budget`] exists to bound what an untrusted page can spend, and
-        // every limit in it was checked on the way *into a request*, which a socket
-        // makes exactly one of. A page could hold one open and pull gigabytes
-        // through it while `budget` reported a page that had spent almost nothing:
-        // the queue is bounded so the memory was safe, and the bandwidth, the time
-        // and the honesty of the number were not.
-        //
-        // Charged as wire and decoded alike: a frame is not content-encoded.
         self.budget
             .record(bytes, bytes, std::time::Duration::ZERO);
         self.budget.within_totals().map_err(|over| {
@@ -1427,24 +1312,7 @@ impl LocalBroker {
         })
     }
 
-    /// Authorise and begin an event stream, handing back the open response. The half
-    /// that touches the wire; [`crate::broker::Broker::open_event_stream`] is the
-    /// operation callers reach for.
-    ///
-    /// The second exit from the receipt path, and the reason it exists:
-    /// [`crate::broker::Broker::send_from`] reads a whole body before it returns and
-    /// writes one response record with a final byte count. An event stream never
-    /// completes, so it would hit the response cap or the client timeout and be
-    /// reported as an error.
-    ///
-    /// The front half is identical (policy, then the decision record, *then* the
-    /// wire) because that is the half the fail-closed rule lives in.
-    ///
-    /// And the same-origin policy, which this path was missing. [`crate::cors`]
-    /// exists because granting two origins let a script on either `fetch` the other
-    /// and read the body; `EventSource` was a second door into the same room,
-    /// standing open with no `Origin` header, no `Access-Control-Allow-Origin` check
-    /// on the answer, and the session's cookies attached unconditionally.
+    /// Authorise and begin an event stream, handing back the open response.
     pub fn begin_event_stream(
         &self,
         url: &Url,

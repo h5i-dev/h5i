@@ -1,26 +1,4 @@
 //! The cookie jar, and the narrowings that keep it safe.
-//!
-//! A cookie is host-only unless it says otherwise, and a `Domain` must pass all
-//! four rules: it is not a public suffix, or `evil.co.uk` sets a cookie for
-//! `bank.co.uk`; the request host is inside it on a label boundary, so
-//! `attackerexample.com` cannot claim `Domain=example.com`; an IP-address host
-//! gets no `Domain`, there being no tree above an address; and `__Host-` forbids
-//! it outright. The suffix list is compiled in (the `psl` crate), never fetched,
-//! and going stale is safe because the list only grows.
-//!
-//! SameSite and Secure are enforced at store time: `SameSite=None` without
-//! `Secure` is refused, an https cookie never travels over http, and cross-site
-//! is decided on registrable domains so `a.example.com` and `b.example.com` are
-//! one site.
-//!
-//! Persistence is opt-in. The jar dies with the process unless h5i passed
-//! `--cookie-jar`, the only caller of [`Jar::persist_to`]. The file is `0600`,
-//! written temp-then-rename, and rewritten on change rather than at exit,
-//! because `close` and `service_stop` SIGKILL the session.
-//!
-//! Never readable by the agent. No verb returns a cookie value; the request log
-//! counts cookies rather than naming them. The persisted file is for the next
-//! engine via `--restore`.
 
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -244,24 +222,8 @@ impl Jar {
         Ok(loaded)
     }
 
-    /// Merge a jar file's contents into this jar, dropping what has expired, and
-    /// what no server could have set.
-    ///
-    /// The store path enforces four `Domain` rules, the two name prefixes and
-    /// `SameSite=None` requires `Secure`; this path enforced none of them, so a
-    /// jar file was believed about things the wire is not. A row saying
-    /// `{"host": "com", "host_only": false}` widened one cookie to every `.com`
-    /// host, `__Host-sid` could arrive without the flags that name means, and
-    /// `expires` was a number off a file added straight to `SystemTime`, the
-    /// same overflow the `Max-Age` path fixed with `checked_add`.
-    ///
-    /// That matters because the file is not this process's own. It lives in the
-    /// session directory, which inside a box is under a `/tmp` the `agent`
-    /// profile shares with the host, and `--restore` is exactly the feature for
-    /// carrying one session's jar into another.
-    ///
-    /// Refusals are counted rather than silent, and they are not an error: one
-    /// bad row must not cost a login that is fine.
+    /// Merge a jar file's contents into this jar, dropping what has expired, and what no server
+    /// could have set.
     fn load_json(&self, text: &str) -> Result<Restored, String> {
         if text.trim().is_empty() {
             return Ok(Restored::default());
@@ -468,21 +430,6 @@ impl Jar {
     }
 
     /// Store a cookie *page script* set, through `document.cookie`.
-    ///
-    /// Deliberately not [`Self::store`], which is what `write_cookie` called. The
-    /// wire and the script are not the same authority, and `HttpOnly` is the whole
-    /// statement of that difference, so a browser enforces two rules here that the
-    /// response path has no reason to:
-    ///
-    /// * Script may not overwrite an `HttpOnly` cookie. Replacement goes through
-    ///   the same identity match as deletion, so `document.cookie = "sid=attacker"`
-    ///   replaced the server's `HttpOnly` session cookie and the jar then sent the
-    ///   attacker's value on the wire: script could not *read* the credential and
-    ///   could substitute one, which is session fixation. And `document.cookie =
-    ///   "sid=; Max-Age=0"` was a logout the server never asked for.
-    /// * Script may not *set* `HttpOnly`. RFC 6265 §8.6 says a set-cookie-string
-    ///   carrying that attribute from script is ignored entirely, the rule that
-    ///   stops script planting a cookie it can then hide behind.
     pub fn store_from_script(&self, url: &Url, header: &str) -> usize {
         self.store_at(url, [header], SystemTime::now(), Setter::Script)
     }
@@ -576,20 +523,6 @@ impl Jar {
     }
 
     /// Drop everything when a navigation leaves the origin that set it.
-    ///
-    /// The box replaces three of Chromium's four process-model reasons and not the
-    /// fourth: it protects the host from the box, and says nothing about two origins
-    /// sharing one address space. That did not matter until this engine held cookies
-    /// *and* ran script. It cannot be fixed without a process split, so it is
-    /// bounded instead: at any moment the jar holds only cookies for the origin
-    /// currently loaded.
-    ///
-    /// The cost is real and belongs next to the guarantee: a login does not survive
-    /// a redirect through another origin, so OAuth-style flows that bounce via an
-    /// identity provider will not stay signed in.
-    ///
-    /// Returns whether anything was dropped, so a caller can say so rather than
-    /// leaving an agent to discover it by being logged out.
     pub fn retain_origin(&self, origin: &Url) -> bool {
         let Some(host) = origin.host_str().map(|h| h.to_ascii_lowercase()) else {
             return false;
@@ -870,18 +803,8 @@ fn parse_set_cookie(header: &str, host: &str, url: &Url, now: SystemTime) -> Opt
         }
     }
 
-    // Max-Age wins over Expires (RFC 6265 §5.2.2), and a non-positive one is an
-    // immediate deletion.
-    //
-    // `checked_add`, because `SystemTime + Duration` *panics* on overflow and
-    // the addend here is a number off the wire.
-    // `Max-Age=9223372036854775807` in a `Set-Cookie` aborted the engine: any
-    // page the box's browser is pointed at could end the session with one
-    // response header.
-    //
-    // An expiry too far out to represent is stored as a session cookie rather
-    // than clamped to some arbitrary date. In this jar the two are the same
-    // thing, since nothing is persisted.
+    // Max-Age wins over Expires (RFC 6265 §5.2.2), and a non-positive one is an immediate
+    // deletion.
     let expires = match max_age {
         Some(seconds) if seconds > 0 => now.checked_add(Duration::from_secs(seconds as u64)),
         Some(_) => Some(now),

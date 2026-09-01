@@ -77,19 +77,6 @@ pub enum Commands {
     },
 
     /// Browser sessions: open one, drive it, close it.
-    ///
-    /// A session holds the page, the cookie jar, the request log and the policy
-    /// until it is closed. Every request is checked against that policy and
-    /// written down before it reaches the wire, and the engine refuses the fetch
-    /// when it cannot write the record, so a request that is not in `h5i browser
-    /// requests` did not happen.
-    ///
-    /// `open` makes a session and every verb that follows acts on it, so nothing
-    /// here takes a session id. Use `--session <name>` to run several at once.
-    ///
-    /// By default the session runs here, with no containment beyond the engine
-    /// itself. `--in <box>` places the same session inside a box, which changes
-    /// nothing an agent types and changes who saw the network.
     #[cfg(feature = "browser")]
     Browser {
         #[command(subcommand)]
@@ -118,17 +105,6 @@ pub enum Commands {
         #[arg(long, default_value_t = 0)]
         port: u16,
         /// Join even when the only address left is `127.0.0.1`.
-        ///
-        /// Each join normally gets a loopback address of its own, because a
-        /// browser's cookie jar is scoped by host and ignores the port. On
-        /// `127.0.0.1` the jar is shared with every local service you run, so the
-        /// token this proxy sets is sent to any of them you visit while joined,
-        /// and that token reaches the box. macOS configures only `127.0.0.1` on
-        /// `lo0`, so this is the macOS answer unless you add an address yourself
-        /// (`sudo ifconfig lo0 alias 127.0.0.2`).
-        ///
-        /// Your own cookies are not the other half of this: they are filtered on a
-        /// shared jar whether or not you pass this.
         #[arg(long)]
         shared_jar: bool,
         /// Serve on this loopback address instead of a random `127.x.y.z`.
@@ -144,16 +120,6 @@ pub enum Commands {
     },
 
     /// Run boxes on another Linux machine you own.
-    ///
-    /// A runner is a second machine that h5i reaches over SSH. The repository,
-    /// the policy, the credentials and the patch gate all stay on this machine;
-    /// what moves is the execution, onto hardware whose compromise you have
-    /// priced in.
-    ///
-    /// Pairing needs Linux, sshd, and `h5i` installed over there. It does not
-    /// need a container runtime: what a runner can do is advertised, and a box
-    /// asking for something it lacks is refused rather than quietly given
-    /// something weaker.
     #[cfg(feature = "runner")]
     Runner {
         #[command(subcommand)]

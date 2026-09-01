@@ -81,32 +81,7 @@ const RUN_LOCK_FILE: &str = "run.lock";
 #[cfg(unix)] // only the unix-gated RunLock references this
 const OBSERVERS_LOCK_FILE: &str = "observers.lock";
 
-/// Advisory `flock`s that coordinate concurrent work on one environment. The
-/// kernel releases a lock when the holding process exits, including on a crash,
-/// so there are never stale locks to clear.
-///
-/// Two *independent* lock files implement "one read-write session *plus* N
-/// read-only observers, and a worktree teardown that first drains the
-/// observers":
-///
-/// - `run.lock`: writer serialization. [`RunLock::acquire`] takes an exclusive
-///   (`LOCK_EX`) lock, held by every mutating session: `env run`, a read-write
-///   `env shell`, `propose`, `apply`, `rebase`, `abort`, team sync. Observers do
-///   *not* take it, so a writer and observers coexist.
-///
-/// - `observers.lock`: observer presence gate. A read-only observer
-///   (`env shell --readonly`) holds a shared (`LOCK_SH`) lock for its whole life
-///   ([`RunLock::acquire_observer`]); many coexist, and it is not coupled to
-///   `run.lock`, so an observer may attach while a writer is live and see torn
-///   reads. Write-isolation comes from the read-only Landlock/mount on `$WORK`,
-///   never from this lock. The only thing that excludes an observer is a
-///   *teardown*: `gc` and `rm` take an exclusive lock here
-///   ([`RunLock::acquire_teardown`]), so a mounted directory cannot vanish
-///   underneath an observer.
-///
-/// A teardown takes both, always `run.lock` then `observers.lock`. All locks
-/// are non-blocking (`LOCK_NB`), so a contended acquire refuses immediately
-/// with a "busy" message and no acquire order can deadlock.
+/// Advisory `flock`s that coordinate concurrent work on one environment.
 #[cfg(unix)]
 struct RunLock {
     _file: std::fs::File,
@@ -1286,17 +1261,8 @@ pub fn save_manifest(h5i_root: &Path, m: &EnvManifest) -> Result<(), H5iError> {
     Ok(())
 }
 
-/// Write a state file so a reader sees either the old contents or the new ones,
-/// never a truncated middle.
-///
-/// `fs::write` truncates first, and every reader of these files is
-/// unsynchronised: `list`/`find`/`status`/the console all read them, and
-/// `materialize_from_ref` runs at the top of every env command. A torn
-/// `manifest.json` made `load_manifest_at` fail, which `list` turns into
-/// "environment does not exist" for a live box, and worse, in
-/// `materialize_from_ref` it reads as "local is not newer", so the on-disk
-/// manifest is overwritten from the ref copy and local status and captures are
-/// lost. Rename is atomic within a filesystem.
+/// Write a state file so a reader sees either the old contents or the new ones, never a
+/// truncated middle.
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), H5iError> {
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
     std::fs::write(&tmp, bytes).map_err(|e| H5iError::with_path(e, &tmp))?;
@@ -1402,20 +1368,8 @@ pub fn load_policy(h5i_root: &Path, m: &EnvManifest) -> Result<ResolvedPolicy, H
         )));
     }
     let mut policy = policy;
-    // Runtime-only, and set here so every caller gets it: a box that declares
-    // services must not have its microVM guest stopped for idleness. Read from
-    // the *declared* set rather than from what is running, because the guest's
-    // idle bound is fixed when it is created and services start later.
-    // From the *pinned* manifest only, never the worktree fallback
-    // `load_service_defs` allows for pre-pinning envs: that file lives inside
-    // `$WORK`, which the box can write, and this value feeds `--idle-timeout`,
-    // which is hashed into the guest's name. Reading it from a box-writable
-    // path would let an in-box agent change its own guest's identity, so the
-    // next command would resolve to a new name and reap the running guest.
-    // Unknown counts as "may host services". Every env created since service
-    // pinning has a manifest, so this is the pre-pinning tail, and the two
-    // errors are not symmetric: guessing false costs a killed dev server,
-    // guessing true costs a guest that lives until `box rm`.
+    // Runtime-only, and set here so every caller gets it: a box that declares services must not
+    // have its microVM guest stopped for idleness.
     policy.hosts_services = pinned_service_defs(h5i_root, m).is_none_or(|d| !d.is_empty());
     Ok(policy)
 }
@@ -1557,18 +1511,8 @@ impl Default for CreateOpts {
     }
 }
 
-/// Create an environment: pin the base, build the workspace for the requested
-/// source, resolve and persist the policy, record the event.
-/// Build a *detached* workspace: a git repository that lives inside the box and
-/// shares nothing with the host repository. Returns the pinned base commit and
-/// tree. The box's branch is created inside its own repository, so every later
-/// operation (`run`, the mediated commit, `diff`, `export`) works exactly as it
-/// does for a worktree box.
-/// Cloning runs the host's `git` against a URL the operator supplied, the one
-/// moment host-side code touches remote content. Two guards: `core.hooksPath`
-/// points at an empty directory, so a repository cannot ship a hook that runs
-/// on the host, and the clone is shallow by default, since it is a starting
-/// tree rather than an archive.
+/// Create an environment: pin the base, build the workspace for the requested source, resolve
+/// and persist the policy, record the event.
 fn init_detached_workspace(
     work: &Path,
     source: &BoxSource,
@@ -1621,27 +1565,8 @@ fn init_detached_workspace(
     }
 }
 
-/// The `git` argv for cloning a box's source, built here so it can be read as a
-/// whole and tested without a network.
-///
-/// This clone runs on the *host*, unconfined, on a string somebody typed or
-/// pasted. Three things make that safe, and two of them were missing:
-///
-/// * *`core.hooksPath`* at an empty directory, so a hostile repository cannot
-///   ship a hook that runs here. Already the case.
-///
-/// * `protocol.ext.allow=never`. `ext::` is not a URL, it is a command:
-///   `git clone 'ext::sh -c …'` runs it. Git refuses that transport by default,
-///   but the default is *config*, and an operator whose `~/.gitconfig` carries
-///   `protocol.ext.allow = always` turned a pasted "repository URL" into host
-///   command execution. Verified both ways against git 2.50.
-///
-/// * `--end-of-options` before the URL, or git reads a leading `-` as an option,
-///   so `--upload-pack=<cmd>` is an argument rather than a repository.
-///   `source::resolve_pr_base` has carried this guard since it was written; the
-///   clone path never got it. Today the injected option is defanged by the
-///   destination argument that follows, which is an accident of argument order,
-///   not a property to rest a host boundary on.
+/// The `git` argv for cloning a box's source, built here so it can be read as a whole and
+/// tested without a network.
 fn clone_argv(hooks: &Path, url: &str, work: &Path) -> Vec<std::ffi::OsString> {
     use std::ffi::OsString;
     vec![
@@ -1974,16 +1899,6 @@ pub fn create_with_remote(
     let mut policy = sandbox::resolve(&profile, &caps)?;
     policy.audit.capture = opts.audit_capture;
     // Functionally verify the confinement can actually run a command.
-    // Capability bits can be present while a hardened kernel still denies exec
-    // under the full stack, so refuse here rather than letting every later `env
-    // run` fail on EACCES.
-    // design-runner.md R12's refusal, documented and not implemented. Secret
-    // *values* never cross (a `SecretGrant` carries a name and a source
-    // descriptor), so nothing of this machine's leaks. What happens instead is
-    // worse in one way: the runner resolves those descriptors against *its own*
-    // environment, so a box could be handed the runner's credential in place of
-    // the user's, or silently handed none while its policy says it has one.
-    // Both are the silent weakening R1 forbids.
     if remote.is_some() {
         let wants_secrets = !policy.profile.secrets.is_empty() || !policy.profile.secret_grants.is_empty();
         let wants_auth = !policy.profile.auth.is_empty();
@@ -2168,20 +2083,8 @@ pub fn create_with_remote(
     // armed above, undoes exactly what has been built so far unless it is
     // disarmed once the manifest lands.
 
-    // Pin service declarations from the base worktree into an env-local,
-    // box-immutable manifest, recording its digest (review #1). Always Some for
-    // new envs, even pinned-empty, so the legacy fallback below never applies.
-    // Both of the next two read and write the *worktree*, which a runner box
-    // does not have on this machine. `materialize_persona` was not merely wrong
-    // here, it was fatal: it writes `PERSONA.md` into the work directory, so
-    // any repository whose profile declares a persona failed every `--runner`
-    // create, after paying for the whole source transfer.
-    // Always `Some`, including for a runner box. `None` is the sentinel meaning
-    // "an env from before pinning existed", and it re-arms a fallback that
-    // reads the repo-root `.h5i/env.toml`, so making it `None` here silently
-    // reverted that invariant for one class of box while the comment above
-    // still claimed it held. Pinned-empty is also the honest value: a service
-    // cannot run on a runner, so "no services will run in this box" is true.
+    // Pin service declarations from the base worktree into an env-local, box-immutable
+    // manifest, recording its digest (review #1).
     let service_digest = Some(pin_services_at_create(&work_path, &dir)?);
 
     // Bake the profile's persona sources into a single PERSONA.md at the
@@ -2356,19 +2259,8 @@ fn effective_digest_of(_env_dir: &Path) -> Option<String> {
     None
 }
 
-/// Other boxes of this repository whose effective Landlock grants overlap this
-/// env's, as `env/<id> via <path>` strings for the capture record. Per-repo by
-/// construction: [`list`] walks this repo's `.h5i/env`, so a box of a different
-/// repo on the same host is outside the scan and the receipt must not read as a
-/// host-wide claim.
-///
-/// "Materialized" means their `policy.effective.json` exists; a pulled or gc'd
-/// box has none and cannot run here. One more honesty bound: each neighbor's
-/// dump reflects its *latest invocation's shape*, so a box whose last session
-/// was a readonly shell shows a narrower rw set until its next ordinary run.
-/// Both directions are checked, and an empty answer cites the machine-checked
-/// noninterference theorem; see [`crate::receipt::ExecRecord::fs_overlap`] for
-/// the claim's exact scope. Best-effort on read errors.
+/// Other boxes of this repository whose effective Landlock grants overlap this env's, as
+/// `env/<id> via <path>` strings for the capture record.
 #[cfg(target_os = "linux")]
 fn fs_overlap_with_boxes(h5i_root: &Path, m: &EnvManifest) -> Vec<String> {
     let read = |dir: &Path| -> Option<crate::effective::EffectiveConfig> {
@@ -2402,35 +2294,11 @@ fn fs_overlap_with_boxes(_h5i_root: &Path, _m: &EnvManifest) -> Vec<String> {
     Vec::new()
 }
 
-/// Bake the profile's `persona = [...]` sources into a single `PERSONA.md` at
-/// the worktree root. Sources ride in the repo at the pinned base, so they are
-/// present in the freshly checked-out worktree; their contents are concatenated
-/// in declared order, each under an HTML-comment header naming the source. The
-/// file is then git-excluded, so it never appears in `env diff`/propose/commit.
-/// Returns the sha256 of the written `PERSONA.md`, or `None` when the profile
-/// declares no persona. Paths are validated at policy load.
-///
-/// Largest persona source that will be baked in. A standing instruction is
-/// prose; anything past this is not one, and the file is repo-supplied.
+/// Bake the profile's `persona = [...]` sources into a single `PERSONA.md` at the worktree
+/// root.
 const MAX_PERSONA_BYTES: u64 = 1024 * 1024;
 
 /// Read `rel` under `work` without following a symlink at any component.
-/// `validate_profile` pins a persona source inside `$WORK`: relative, no `..`,
-/// no absolute path. What it cannot do is *resolve* it, and both the entry and
-/// the worktree contents are repo-supplied, so a branch that ships `notes.md`
-/// as a symlink to `~/.ssh/id_rsa` turns a valid-looking entry into a read of
-/// the operator's key. Git checks symlinks out faithfully, and `read_to_string`
-/// follows them.
-/// The consequence is worse here than for most reads: what is read is
-/// concatenated into `PERSONA.md` *inside the box*, which the agent is told to
-/// open, so a host file would be handed to the agent by the mechanism whose
-/// whole purpose is to tell it how to behave.
-/// `private_paths` has the same shape and got `create_dirs_within` for the same
-/// reason; this is the read side of that argument.
-/// Resolve `rel` under `work`, refusing a symlink at any component: the check
-/// both [`read_within_work`] and [`resolve_work_rcfile`] need, since each takes
-/// a repo-declared, `validate`-approved relative path and neither validator
-/// resolves anything.
 fn resolve_within_work(work: &Path, rel: &str) -> std::io::Result<PathBuf> {
     let mut cur = work.to_path_buf();
     let comps: Vec<&str> = rel
@@ -2607,22 +2475,7 @@ fn no_workspace_err(m: &EnvManifest, op: &str) -> H5iError {
 
 // ─── opening the env worktree (host side) ────────────────────────────────────
 
-/// Open the env's worktree repository, refusing any handle that is not this
-/// box's own.
-///
-/// Plain `Repository::open(work)` trusts two things the box can write: the
-/// `$WORK/.git` pointer file, in the box's rw workspace, and the worktree admin
-/// dir (`HEAD`, `commondir`, `gitdir`), which [`box_git_plumbing`] grants rw so
-/// in-box git keeps working. A box that rewrites either redirects every
-/// host-side git operation that follows. The consequence is worst in
-/// [`mediated_commit`], which would stage the box's tree into whatever
-/// repository the pointer names and commit it onto whatever ref its HEAD names,
-/// landing unreviewed work on the parent branch without `apply` ever running.
-///
-/// So the invariant [`box_git_plumbing`] states for grant computation, never
-/// derive host behaviour from box-writable state, is enforced here for every
-/// host-side open: the handle must sit on the manifest's branch, and its object
-/// store must be the one this box was created against.
+/// Open the env's worktree repository, refusing any handle that is not this box's own.
 fn open_env_worktree(h5i_root: &Path, m: &EnvManifest) -> Result<Repository, H5iError> {
     let work = m.work_dir(h5i_root);
     let wt_repo = Repository::open(&work)?;
@@ -2727,16 +2580,6 @@ fn box_git_plumbing(repo: &Repository, m: &EnvManifest) -> Result<Vec<BoxGitPath
 }
 
 /// Apply the in-box git plumbing to a loaded policy, per backend:
-///
-/// - process/supervised: appended as Landlock grants, plus ro `~/.gitconfig`
-///   and `~/.config/git`, since git dies rather than skips on an
-///   existing-but-unreadable global config under Landlock.
-/// - container: stashed on `policy.box_git`; the backend bind-mounts each path
-///   at its *identical host path* inside the container, so the worktree's
-///   gitdir/commondir pointers resolve. `$WORK` is dual-mounted at its host path
-///   too. No `~/.gitconfig` here: the host HOME is deliberately not mounted, and
-///   a *missing* global config is skippable.
-/// - workspace: unconfined, nothing to do.
 fn grant_box_git(
     repo: &Repository,
     m: &EnvManifest,
@@ -2922,24 +2765,6 @@ fn prepare_private_paths(
 const TMPDIR_BUDGET: usize = 104 - 58 - 16;
 
 /// Where a box's private `/tmp` is backed on disk.
-///
-/// Linux keeps it inside the env directory. The tier bind-mounts that directory
-/// over `/tmp` in a private mount namespace, so the box sees the short literal
-/// path and the backing's depth is invisible to it.
-///
-/// macOS has no unprivileged bind mount, so `seatbelt::plan` re-expresses the
-/// redirect as `TMPDIR` pointing at the backing, which means the backing's
-/// length *is* what programs inside the box build their paths from. Nested in
-/// the repository it never fits `TMPDIR_BUDGET`:
-/// `/.git/.h5i/env/<agent>/<slug>/tmp` alone spends 26 of the ~30 bytes
-/// available before the repository path is counted, so a browser box failed on
-/// every Mac with Chrome reporting "Failed to create socket directory", which
-/// reads as a permission error and is really `AF_UNIX path too long`.
-///
-/// So on macOS the backing moves to a short path outside the repository, named
-/// by digest so it stays stable for a given env. Isolation is unchanged: it
-/// comes from the directory being per-env, `0700`, and the only `/tmp` write
-/// grant the policy carries, not from where it sits.
 fn private_tmp_backing(logical: &Path) -> PathBuf {
     #[cfg(target_os = "macos")]
     {
@@ -3087,19 +2912,7 @@ const HOME_SEED_SKIP: &[&str] = &[
     "tmp",  // Codex temp cache
 ];
 
-/// Entries the HOME seed *must not* carry into a box, by shape rather than by
-/// size.
-///
-/// The seed exists so each box gets its own copy of the agent's session state
-/// instead of racing the real files. It is not a reason to hand a box every
-/// credential the runtime happens to keep next to that state. These are dropped
-/// even though the runtime wrote them under its own directory: a box that needs
-/// to authenticate does it through the host-side proxy, which never lets the
-/// credential into the box at all (roadmap 5.5).
-///
-/// Deliberately *not* dropped: the runtime's own API token, without which the
-/// runtime cannot function and whose egress the profile already scopes. That
-/// trade is stated in `Profile::builtin_agent`.
+/// Entries the HOME seed *must not* carry into a box, by shape rather than by size.
 const HOME_SEED_CREDENTIAL_SKIP: &[&str] = &[
     // Cloud and VCS credentials that tools drop into an agent's config dir.
     "credentials",
@@ -3211,19 +3024,7 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<(), H5iError> {
     Ok(())
 }
 
-/// Per-env credential and session isolation (#1). The built-in agent profiles
-/// grant the box rw to the *real* `~/.claude`/`~/.claude.json` or `~/.codex`,
-/// so two concurrent agent boxes of the same runtime race on those shared
-/// files, corrupting session history and fighting over a refreshed token. This
-/// redirects each such grant to a per-env *copy*: seeded once from the real
-/// HOME, persisted across this env's runs, granted rw, and bound over the real
-/// absolute path inside the box's mount namespace. The real HOME is only ever
-/// read, never written, so an env can never clobber it.
-/// Kernel tiers only: the container backend's read-only rootfs never mounts
-/// host HOME, so there is no shared inode to race. A no-op at the workspace
-/// tier and for non-agent profiles. A state path that does not exist on the
-/// host is left as today's direct grant, never created in the real HOME merely
-/// to have a mountpoint. Fail-closed on I/O.
+/// Per-env credential and session isolation (#1).
 fn prepare_home_state(
     h5i_root: &Path,
     m: &EnvManifest,
@@ -3358,17 +3159,6 @@ pub fn write_inbox_cursor(
 }
 
 /// Stage the box's write window for observation records.
-/// The receipt-integrity boundary: the box is granted `<env>/spool` and nothing
-/// else under the env directory. The receipt log (`<env>/receipt.jsonl`) and
-/// the stored payloads (`<env>/receipts/`) sit one level up, outside every
-/// grant, so a box can stage a *new* record but can never rewrite one the host
-/// has already recorded. Host-side ingest moves a staged record into the log
-/// and stamps the lane, so box-claimed evidence stays distinguishable from
-/// host-observed evidence forever.
-/// Offer this project's warm dependency caches to the box, read-only. Only
-/// caches whose key matches the project's current lockfiles are offered
-/// (`cache::mounts_for`), and the bind is read-only on every tier, so a cache
-/// is never a mutable surface shared between boxes.
 fn prepare_cache_mounts(h5i_root: &Path, workdir: &Path, policy: &mut ResolvedPolicy) {
     let home = std::env::var("HOME").ok().filter(|h| !h.is_empty());
     for (host, target) in crate::cache::mounts_for(h5i_root, workdir) {
@@ -3549,15 +3339,6 @@ fn inbox_pending_context_path_from(
 }
 
 /// Where this box's private `/tmp` actually is, as the box will see it.
-/// The Linux tiers bind-mount a per-env directory over `/tmp` inside a private
-/// mount namespace, so the literal path is already the private one. macOS has
-/// neither unprivileged bind mounts nor mount namespaces, so `seatbelt::plan`
-/// re-expresses that redirect as `TMPDIR` pointing at a per-env backing, and
-/// rewrites the `/tmp` write grant to that backing, leaving the *literal*
-/// `/tmp` denied.
-/// So a hardcoded `/tmp/<subdir>` is right on Linux and wrong on every Mac: the
-/// agent-browser daemon died at startup with "Failed to create socket
-/// directory: Operation not permitted".
 fn box_tmp_root(policy: &ResolvedPolicy) -> String {
     if !cfg!(target_os = "macos") {
         return "/tmp".to_string();
@@ -3570,19 +3351,8 @@ fn box_tmp_root(policy: &ResolvedPolicy) -> String {
         .unwrap_or_else(|| "/tmp".to_string())
 }
 
-/// Loopback ports this box is allowed to dial: the dynamic host ports of its own
-/// *running* services.
-///
-/// The box's browser has to reach the dev server the box is running, which is
-/// the whole point of a browser box, and on macOS loopback is the host's, so it
-/// is denied wholesale unless a port is named. These ports were allocated by
-/// h5i for this env's services, so naming them grants the box access to itself
-/// and to nothing else on the interface.
-///
-/// Only *live* services count: a record whose process is gone would keep a port
-/// open in the policy that some unrelated host process could later bind.
-/// Re-read on every run, so starting a service and then using it works without
-/// recreating the box.
+/// Loopback ports this box is allowed to dial: the dynamic host ports of its own *running*
+/// services.
 fn live_service_ports(h5i_root: &Path, m: &EnvManifest) -> Vec<u16> {
     let svc_dir = services_dir(h5i_root, m);
     let Ok(entries) = std::fs::read_dir(&svc_dir) else {
@@ -3600,16 +3370,10 @@ fn live_service_ports(h5i_root: &Path, m: &EnvManifest) -> Vec<u16> {
         else {
             continue;
         };
-        // Deliberately `dynamic_port` and *not* [`service_port`], which falls
-        // back to the declared port: these become *host-side* loopback grants,
-        // and a guest service's port is bound inside the box's own network
-        // stack, so granting it on the host would open a port belonging to
-        // nothing.
-        // Liveness goes through [`service_alive`] all the same. It used to call
-        // `pid_alive` directly, which was safe only because `dynamic_port` is
-        // `None` for guest records today: an accident of ordering that port
-        // forwarding would quietly break by testing a guest pid against the
-        // host's pid table.
+        // Deliberately `dynamic_port` and *not* [`service_port`], which falls back to the
+        // declared port: these become *host-side* loopback grants, and a guest service's port
+        // is bound inside the box's own network stack, so granting it on the host would open a
+        // port belonging to nothing.
         if let Some(port) = rec.dynamic_port
             && service_alive(&rec)
         {
@@ -3620,28 +3384,6 @@ fn live_service_ports(h5i_root: &Path, m: &EnvManifest) -> Vec<u16> {
 }
 
 /// The `agent-browser` shim: launch Chrome ourselves, then attach to it.
-/// agent-browser's own *launch* path does not work inside a Seatbelt sandbox.
-/// The failure is not h5i's policy (it reproduces under `sandbox-exec` with a
-/// fully permissive `(allow default)` profile, and disappears entirely when the
-/// sandbox is removed) so no grant fixes it. Its *attach* path (`--cdp <port>`)
-/// works inside a box today.
-/// So this shim makes sure a Chrome is running and hands agent-browser the port
-/// instead of letting it start one. Chrome is launched detached (`setsid`) so
-/// it outlives the single `box run` that started it, and its port is remembered
-/// in the env's own directory rather than in `TMPDIR`, which h5i wipes at the
-/// start of every run.
-/// Not a security control. It is on `PATH` in a directory the box can write, so
-/// the box can replace it or call the real binary directly. The boundary is the
-/// tier, exactly as for every other command in the box.
-/// `--cdp` and `--allowed-domains` are mutually exclusive upstream, so
-/// [`browser_env`] stops setting the domain list when the shim is in play. That
-/// is a real reduction: agent-browser's in-process domain check is gone. The
-/// tier's own egress enforcement, the actual boundary, is untouched.
-/// One [`sandbox::chrome_exec_patterns`] entry as a single `sh` word. Quoting
-/// is per segment, and it has to be: `*` must stay bare so the shell globs the
-/// version directory, while `Google Chrome for Testing.app` must be quoted or
-/// it becomes four words. A segment needing both is refused by
-/// `no_pattern_segment_needs_quoting_and_globbing_at_once`.
 fn shell_glob_word(pattern: &str) -> String {
     let (prefix, rest) = match pattern.strip_prefix("~/") {
         Some(rest) => ("\"$HOME\"/", rest),
@@ -3684,26 +3426,8 @@ alive() {{
   curl -s -m 2 -o /dev/null "http://127.0.0.1:$PORT/json/version"
 }}
 
-# Put Chrome in its own session so it survives the `box run` that started it:
-# h5i `setsid`s the run and `killpg`s that group on exit. There is no `setsid(1)`
-# on macOS, so fall back to perl's; if neither works, still launch — Chrome then
-# lives only for this one command, which is worse but not broken.
-#
-# Every arm `exec`s, and that is load-bearing rather than tidiness. This function
-# is only ever called backgrounded, so `exec` replaces *that* subshell: the `$!`
-# recorded as `chrome.pid` is then Chrome itself. Without it the subshell stays
-# alive as a launcher, `$!` names the launcher, and every later `kill` of that
-# pid — `h5i box rm`'s stop-the-browser, and the host-side restart below — kills
-# the launcher while Chrome, in its own session, carries on. (Called in the
-# foreground it would replace the shim; it is not, and must not be.)
-#
-# One caveat, stated because a wrong pid is now a wrong `kill` rather than a
-# harmless no-op: `setsid(1)` execs in place only when it is not already a
-# process-group leader. Under a job-control shell (`set -m`) it would be one,
-# fork, and `$!` would name a parent that exits at once. This script is
-# `#!/bin/sh` and non-interactive, so job control is off and the pid recorded is
-# Chrome's own — and `browser_pid` on the host re-checks that before signalling
-# anything.
+# Put Chrome in its own session so it survives the `box run` that started it: h5i `setsid`s the
+# run and `killpg`s that group on exit.
 detach() {{
   if command -v setsid >/dev/null 2>&1; then
     exec setsid "$@"
@@ -3722,37 +3446,17 @@ find_chrome() {{
   return 1
 }}
 
-# Where the box's only route out is h5i's host-side allowlist proxy, Chrome has
-# to be *told*: it does not read `HTTPS_PROXY` on macOS (it asks the OS for the
-# system proxy configuration), so it would open its own socket, be denied by the
-# Seatbelt rule, and report `net::ERR_ACCESS_DENIED` — which reads as a page
-# problem and is a route problem.
-#
-# Keyed on `H5I_EGRESS_PROXY`, not on `HTTPS_PROXY`: only a tier that actually
-# runs the proxy sets it, where the conventional vars are ordinary shell state
-# anything in the box may set for its own reasons. So on the Linux supervised
-# tier (nftables, direct connects) nothing is added and Chrome is launched
-# exactly as before, and that stays true whatever the box's own environment says.
-#
-# No bypass list: Chrome always bypasses loopback unless `<-loopback>` is passed,
-# so the dev server under test is still reached directly and never through — or
-# gated by — the allowlist.
+# Where the box's only route out is h5i's host-side allowlist proxy, Chrome has to be *told*: it
+# does not read `HTTPS_PROXY` on macOS (it asks the OS for the system proxy configuration), so
+# it would open its own socket, be denied by the Seatbelt rule, and report
+# `net::ERR_ACCESS_DENIED` — which reads as a page problem and is a route problem.
 PROXY_ARG=
 if [ -n "${{{egress_var}:-}}" ]; then PROXY_ARG="--proxy-server=${egress_var}"; fi
 
-# A running Chrome took its proxy address at launch and will never re-read it,
-# so "already alive" is not on its own a reason to leave it alone: a browser
-# that predates this route (an upgrade, or a run whose proxy moved) would keep
-# failing every navigation until someone thought to restart it.
-#
-# The box cannot do that itself. Chrome deliberately outlives the run that
-# started it, which puts it in a *previous* sandbox instance — Seatbelt's
-# `(allow signal (target same-sandbox))` does not reach across that, so `kill`
-# here is refused, and `agent-browser close` only ends a session it owns rather
-# than the browser process. So this records the mismatch and the **host** acts
-# on it, at the start of the next `h5i box run`/`box shell` (see
-# `stop_stale_browser`) — which is where the pid is reachable. It says so rather
-# than failing later with a proxy error that reads like a page problem.
+# A running Chrome took its proxy address at launch and will never re-read it, so "already
+# alive" is not on its own a reason to leave it alone: a browser that predates this route (an
+# upgrade, or a run whose proxy moved) would keep failing every navigation until someone thought
+# to restart it.
 HAD=$(cat "$STATE/chrome.proxy" 2>/dev/null || printf '')
 if alive && [ "$PROXY_ARG" != "$HAD" ]; then
   printf '%s' "$PROXY_ARG" > "$STATE/chrome.restart"
@@ -3869,19 +3573,7 @@ fn browser_dirs(h5i_root: &Path, m: &EnvManifest) -> (PathBuf, PathBuf) {
 /// (Chrome's CDP endpoint, and the proxy address Chrome was launched with), so
 /// neither can be re-drawn per run.
 fn remembered_port(file: &Path, what: &str, avoid: &[u16]) -> Result<u16, H5iError> {
-    // `file` MUST live outside every write grant the box holds. The value read
-    // back here is pushed into `policy.loopback_ports`, which Seatbelt renders
-    // as `(allow network-outbound (remote ip "localhost:<port>"))`, so a box
-    // that could write it would be choosing which host loopback service its own
-    // next session may reach: the operator's Postgres, another box's dev
-    // server. That is why these files sit in `<env>/browser`, which the box may
-    // read, and not in `<env>/browser/state`, which it can write.
-    // A `0` would ask for an ephemeral port under the name of a pinned one and
-    // a privileged port would fail to bind on every run, so both are rejected
-    // in favour of drawing a fresh port, as is a corrupt file.
-    // `avoid` is the ports this env already holds. A drawn port is found by
-    // binding an ephemeral listener and dropping it, so the next draw can be
-    // handed the same number back.
+    // `file` MUST live outside every write grant the box holds.
     if let Some(p) = std::fs::read_to_string(file)
         .ok()
         .and_then(|t| t.trim().parse::<u16>().ok())
@@ -3901,17 +3593,7 @@ fn remembered_port(file: &Path, what: &str, avoid: &[u16]) -> Result<u16, H5iErr
     Err(fail())
 }
 
-/// Stop a browser the box has asked to have restarted, at the one place that
-/// can: the host.
-/// Chrome takes its proxy address once, at launch, so a browser started before
-/// this box's current route out cannot reach the network through it. The shim
-/// notices, comparing what it would launch with against `chrome.proxy`, and
-/// leaves a `chrome.restart` marker, because inside the box the browser is
-/// unreachable: it deliberately outlives the run that started it, which puts it
-/// in a *previous* sandbox instance, and Seatbelt's `(allow signal (target
-/// same-sandbox))` does not reach across that.
-/// Best-effort throughout. A browser that will not die is a stale browser, not
-/// a broken run.
+/// Stop a browser the box has asked to have restarted, at the one place that can: the host.
 #[cfg_attr(not(unix), allow(unused_variables))]
 fn stop_stale_browser(state: &Path) {
     let marker = state.join("chrome.restart");
@@ -3927,30 +3609,6 @@ fn stop_stale_browser(state: &Path) {
 }
 
 /// Every process that is *this box's* browser.
-///
-/// Found by scanning for the discriminator the host already knows, the
-/// `--user-data-dir` this env's Chrome was launched with, rather than by
-/// trusting `<state>/chrome.pid`. Two reasons, and the second is the one that
-/// matters:
-///
-///  - The number in that file is written by the *box* (`<env>/browser/state` is
-///    granted write; it has to be, it is where Chrome records its port), and it
-///    would be handed to `kill` on the host, outside every sandbox.
-///    `"-1".parse::<i32>()` is `Ok(-1)`, and `kill(-1, …)` signals every process
-///    the user can signal.
-///  - It is also, for the population this restart exists for, simply wrong. A
-///    browser started by a shim from before `detach` `exec`'d was recorded under
-///    its *launcher's* pid, whose argv is the shim rather than Chrome, so a
-///    pid-keyed lookup finds nothing in exactly the case where a stale browser
-///    is certain to exist.
-///
-/// Both checks earn their place. The user-data-dir makes a match *this box's*
-/// browser rather than some Chrome belonging to this user; the executable name
-/// keeps a shell command that merely mentions the flag from being mistaken for
-/// the browser. `--type=` processes are Chrome's own helpers.
-///
-/// `None` means the lookup itself failed: inconclusive, which a caller must not
-/// read as "nothing is running".
 #[cfg(unix)]
 fn browser_pids(profile: &Path) -> Option<Vec<i32>> {
     let needle = format!("--user-data-dir={}", profile.display());
@@ -3988,18 +3646,8 @@ fn browser_pids(profile: &Path) -> Option<Vec<i32>> {
     Some(pids)
 }
 
-/// Stop this box's browser and wait for it to actually be gone, so a caller can
-/// rely on the CDP port being free when this returns.
-/// Waiting is the point, and it does block: SIGTERM then up to 2s, SIGKILL then
-/// up to 1s, synchronously. Chrome's exit is not instant, and the shim decides
-/// whether to launch by polling that port, so a restart that only *asked*
-/// Chrome to stop races it, finds the dying browser alive, and marks it for
-/// restart again, a loop that never converges.
-/// Best-effort in what it stops: a browser that will not die is a stale
-/// browser, not a broken run. Not best-effort in what it *records*:
-/// `chrome.pid` is removed only once the browser is confirmed gone, because
-/// deleting the only handle to a browser that may well be alive is how a
-/// one-run annoyance becomes a permanent one.
+/// Stop this box's browser and wait for it to actually be gone, so a caller can rely on the CDP
+/// port being free when this returns.
 #[cfg_attr(not(unix), allow(unused_variables))]
 fn stop_browser(state: &Path) {
     #[cfg(unix)]
@@ -4135,19 +3783,7 @@ fn prepare_browser_shim(
     Ok(Some(BrowserShim { dir, port }))
 }
 
-/// Environment a `browser` box needs, derived from the policy that is actually
-/// enforced. Two policy decisions rather than conveniences:
-///
-/// * `--allowed-domains` from `net.egress`. The tier's own enforcement is the
-///   boundary (nftables at `supervised`, the proxy at `container`); this is a
-///   second, in-process layer, so a page that tries to pull from an off-list
-///   host fails in the browser with a clear message instead of dying at the
-///   packet level. Loopback is always added: the dev server under test is the
-///   whole point, and it never appears in an egress allowlist.
-/// * AI features off. `agent-browser chat` and the dashboard's AI panel send
-///   page content to an external gateway, which inside a box is an exfiltration
-///   path with a friendly name, so the gateway credential is kept out of the box
-///   entirely.
+/// Environment a `browser` box needs, derived from the policy that is actually enforced.
 pub fn browser_env(policy: &ResolvedPolicy, shim: Option<&BrowserShim>) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     if let Some(BrowserShim { dir, port }) = shim {
@@ -4230,17 +3866,7 @@ fn browser_env_inner(policy: &ResolvedPolicy, shimmed: bool) -> Vec<(String, Str
             "H5I_BROWSER_DAEMON_DIR".to_string(),
             format!("{}/{}", box_tmp_root(policy), DAEMON_DIR_NAME),
         ),
-        // Chat off. There is exactly one gate upstream and it is the presence
-        // of `AI_GATEWAY_API_KEY`, so "off" is spelled by that variable being
-        // absent: it is not in `env.pass` and nothing here injects it.
-        // Two things that look like they would do this and do not. Pinning the
-        // key to an empty string *enables* chat, because the test is presence,
-        // not value: `agent-browser doctor` inside a box reported "chat
-        // enabled" for exactly that reason. And there is no
-        // `AGENT_BROWSER_DISABLE_CHAT`; a variable agent-browser never reads is
-        // a policy line that reviews as enforcement while enforcing nothing.
-        // Chrome's own sandbox needs the namespace syscalls our seccomp policy
-        // denies, at every tier, and without this the renderer dies at startup.
+        // Chat off.
     ]);
 
     // Chrome's own sandbox needs the namespace syscalls our seccomp policy
@@ -4489,29 +4115,8 @@ mod browser_engine_env_tests {
     }
 }
 
-/// The *host-side* path of the box's `/tmp`, or `None` when the box's `/tmp` is
-/// not reachable from the host at all.
-/// [`box_tmp_root`] answers the box's question ("what path do I use?"), which
-/// is not the same answer: on Linux the box says `/tmp` while the host sees
-/// `<env>/tmp`, and on macOS both say the private backing. Confusing the two is
-/// how a mediator ends up bound to a path nobody connects to: bind succeeds,
-/// nothing is listening where the box looks, and enforcement is silently
-/// absent.
-/// `None` for image-backed tiers: a container's `/tmp` lives in the image, so
-/// there is no host path to bind and the caller must say so rather than binding
-/// a decoy.
-/// Host-side path of the request log `h5i-browser-light` writes, when this box
-/// has an engine that writes one and a `/tmp` the host can reach. The box side
-/// is `H5I_BROWSER_RECEIPTS` ([`browser_light_env`]); this is the same file
-/// seen from outside, which is what lets the console read the log without
-/// asking the box for it. `None` rather than a guess when the engine is not
-/// ours.
-/// Not [`host_tmp_root`], and the difference is the whole reason this exists:
-/// that one answers a *live run's* question by reading `home_binds`, which is
-/// `#[serde(skip)]` and therefore empty in any policy loaded back from disk, so
-/// a reader such as the console would get `None` for every box. The path comes
-/// from [`private_tmp_backing`] instead, the same function
-/// `prepare_private_tmp` uses to place the backing.
+/// The *host-side* path of the box's `/tmp`, or `None` when the box's `/tmp` is not reachable
+/// from the host at all.
 pub fn browser_request_log(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf> {
     let policy = load_policy(h5i_root, m).ok()?;
     // Only our own engine writes this log. Chromium's requests are the
@@ -4527,23 +4132,6 @@ pub fn browser_request_log(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf> 
         return None;
     }
     // `None` where the box's `/tmp` is the host's.
-    //
-    // The leaf name is fixed by `browser_light_env`, which injects this path
-    // into the box as `H5I_BROWSER_RECEIPTS` built from `box_tmp_root` and this
-    // literal, so it cannot be qualified here without moving the injection
-    // with it. Unqualified in a shared `/tmp` it is a world-writable path at a
-    // well-known name: a second box, or any local user, can create it first and
-    // have their rows rendered as this box's receipts, in a lane whose whole
-    // claim is that its rows are evidence.
-    //
-    // An earlier comment here said the case was unreachable because these are
-    // gated on the `browser` profile, which is supervised. That was wrong. The
-    // gate above is on the *engine*, and `--engine h5i --isolation workspace`
-    // sets one without the other.
-    //
-    // So it is refused, which an audit already renders honestly as a log this
-    // machine cannot read. Qualifying both sides is the better answer and is a
-    // change to the injection, not to this.
     let backing = box_tmp_on_host(h5i_root, m, &policy)?;
     if !tmp_is_redirected(&policy) {
         return None;
@@ -4607,16 +4195,6 @@ pub fn box_tmp_file(
 }
 
 /// Host-side path of the control file the box's resident session advertises.
-/// The box side needs no path at all: `browser_light_env` points
-/// `H5I_BROWSER_STREAM_FILE` into the box's own `/tmp`, `serve` defaults its
-/// control file to that name with a `.control` extension, and `session`
-/// defaults to the control file beside the stream file, so an engine started
-/// inside a box with no flags and a verb carried in with no flags already
-/// agree.
-/// What the host cannot do without this is *see* whether the engine is there,
-/// which is what a session record needs to answer `h5i browser list` without
-/// opening a socket per row.
-/// `None` for the same two reasons as its siblings.
 pub fn browser_control_file(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf> {
     let policy = load_policy(h5i_root, m).ok()?;
     if policy.profile.engine? != crate::sandbox::BrowserEngine::H5iLight {
@@ -4636,18 +4214,6 @@ pub fn browser_control_file(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf>
 }
 
 /// The box's `/tmp`, as *this machine* sees it, from a *freshly loaded* policy.
-/// [`prepare_private_tmp`] gives a box a `/tmp` of its own at two tiers and
-/// only two, so at the workspace tier a box writes to the host's real `/tmp`.
-/// Every reader of a file in a box's `/tmp` used to assume the redirect always
-/// happened and watch `<env>/tmp/...`, a directory nothing would create:
-/// `browser open --in` on a workspace box started an engine that came up
-/// correctly, put its control socket at `/tmp/h5i-browser.sock`, and was
-/// declared dead thirty seconds later because h5i was watching somewhere else.
-/// The policy must not have been prepared yet. That is the difference between
-/// this and [`host_tmp_root`], which reads the recorded `home_bind` instead:
-/// once `prepare_private_tmp` has run, the bare `/tmp` grant has been rewritten
-/// to the backing path and re-deriving the condition answers "no redirect" for
-/// a box that has one. Here the policy comes straight from [`load_policy`].
 fn box_tmp_on_host(h5i_root: &Path, m: &EnvManifest, policy: &ResolvedPolicy) -> Option<PathBuf> {
     if tmp_is_redirected(policy) {
         return Some(private_tmp_backing(&m.dir(h5i_root).join("tmp")));
@@ -4666,20 +4232,6 @@ fn box_tmp_on_host(h5i_root: &Path, m: &EnvManifest, policy: &ResolvedPolicy) ->
 }
 
 /// A file name for a box's `/tmp`, qualified when that `/tmp` is shared.
-/// With a redirect, `<env>/tmp` already belongs to one box and a bare name in
-/// it is unique. Without one, at the workspace tier, the directory is the
-/// host's own `/tmp`, so a bare name is shared by every box on the machine and
-/// every other process on it: two workspace boxes would bind one control socket
-/// and write one session's logs over another's, and `/tmp` is world-writable so
-/// an unqualified name is also one any local user can create first.
-/// Only for names h5i gives to both sides. [`box_tmp_file`]'s pair is handed
-/// straight to the engine as `--control-socket`/`--receipts`/`--actions`, so
-/// qualifying it moves the writer and the reader together. The three
-/// `browser_*` readers above are not like that: their writer's path is injected
-/// into the box as an environment variable built from a hardcoded literal, so
-/// qualifying the reader alone would put it at a path nothing writes. Those
-/// refuse to answer in a shared `/tmp` instead.
-/// The env id rather than the box's name, because the id is what does not move.
 fn box_tmp_leaf(m: &EnvManifest, name: &str, redirected: bool) -> String {
     if redirected {
         return name.to_string();
@@ -4755,17 +4307,6 @@ use crate::browser::DAEMON_DIR_NAME;
 pub const STDERR_BANNER: &str = "\n----- stderr -----\n";
 
 /// Start mediating the browser daemon's socket for the duration of a run.
-///
-/// The daemon keeps running on a path the box has no grant for; the path the box
-/// *is* given carries h5i's listener. Two details make the CLI accept it, both
-/// learned by driving the real thing (see `browser_proxy`): the sibling files
-/// it checks (`.version`, `.config`, `.stream`) are mirrored into the visible
-/// directory, and the daemon must have been started with the same
-/// `AGENT_BROWSER_*` environment the box's CLI will compute, or the CLI decides
-/// the daemon is stale and tries to replace it.
-///
-/// Returns `None`, never an error, when there is nothing to mediate yet: a
-/// browser box whose agent has not opened anything must still be able to run.
 fn engage_browser_mediation(
     policy: &ResolvedPolicy,
     env_dir: &Path,
@@ -4973,18 +4514,6 @@ impl ProtectedHookConfigGuard {
             push_protected_hook_config(&mut files, rel.to_string(), path, claim)?;
         }
         // Deliberately NOT the host's own `~/.claude` / `~/.codex`.
-        // The box cannot write them in the first place: at the kernel tiers
-        // `prepare_home_state` has already bind-redirected those directories to
-        // a per-env copy, and the container tiers never mount host $HOME. So a
-        // difference at exit could only ever be a *host-side* change: the
-        // operator using Claude Code on the same machine during a long box
-        // session, or a second box's guard.
-        // What the guard then did with that difference was destructive: restore
-        // the pre-session content over the operator's edit, or, if the file had
-        // not existed at session start, delete it outright, and fail the
-        // session with a sandbox-violation error for something the sandbox
-        // never did. Two concurrent boxes did it to each other.
-        // Worktree scope stays: `$WORK` is genuinely box-writable.
         Ok(Self { files })
     }
 
@@ -5258,17 +4787,8 @@ fn write_user_allow(path: &Path, rules: &[String]) -> Result<(), H5iError> {
 /// The env vars [`prepare_box_reach`] wants injected: `(capture spool, inbox)`.
 type BoxReachEnv = (Vec<(String, String)>, Vec<(String, String)>);
 
-/// The runtime-only grants that decide what a box can reach: its capture spool,
-/// its inbox, its warm caches, and the host-side egress extras.
-///
-/// One function because the microvm tier hashes exactly these into its guest's
-/// name. Two paths that prepare different sets resolve to different guests, and
-/// creating one reaps the other, so a `box run` would silently kill a service
-/// started moments earlier with neither looking wrong on its own. That is what
-/// this function was extracted to fix.
-///
-/// Returns the env vars the capture spool and inbox want injected, in the order
-/// `run` already injected them.
+/// The runtime-only grants that decide what a box can reach: its capture spool, its inbox, its
+/// warm caches, and the host-side egress extras.
 fn prepare_box_reach(
     h5i_root: &Path,
     m: &EnvManifest,
@@ -5433,17 +4953,6 @@ pub fn run(
 }
 
 /// Run a command in a box that lives on a runner.
-///
-/// Deliberately a separate function rather than a branch inside [`run_inner`]:
-/// almost nothing they share is real. A local run resolves binds, opens the env
-/// worktree, computes the effective configuration and reads a tree from disk; a
-/// remote one does none of those, because none of them describes anything on
-/// this machine. Threading a placement through the local path would have meant
-/// an `if` at every one of those steps.
-///
-/// What they *do* share is the part that matters: the receipt. The same
-/// evidence, in the same store, under a lane that says where it was observed
-/// (design-runner.md R10).
 pub fn run_remote(
     repo: &Repository,
     h5i_root: &Path,
@@ -5793,19 +5302,8 @@ fn run_inner(
     // pattern.
     raw = scrub_exact(&raw, &brokered.redactions);
 
-    // Browser evidence: when this run drove the browser, ask the page what
-    // happened before recording the run. The drain executes in the same box
-    // under the same policy, and it runs at a moment h5i picks rather than one
-    // the agent picks.
-    // Two gates, and both matter. The run has to have touched the browser, and
-    // a browser has to still be live. The drain command would otherwise *start*
-    // one, so a `cargo test` in a browser box would launch Chrome just to be
-    // told the console was empty, and report a clean page it never looked at.
-    // The drain reuses this run's already-prepared policy rather than going
-    // through `dev run` again, which is what makes it see the run's own
-    // browser: a fresh `dev run` re-runs `prepare_private_tmp`, wiping the
-    // scratch that holds the daemon's socket, and would get a new session with
-    // empty buffers.
+    // Browser evidence: when this run drove the browser, ask the page what happened before
+    // recording the run.
     let env_dir_path = m.dir(h5i_root);
     let browser_evidence = crate::browser::run_touched_browser(argv)
         .filter(|verb| crate::browser::verb_wants_drain(verb))
@@ -6617,32 +6115,6 @@ impl ShellLaunch {
 }
 
 /// Build the argv for a default (no-command) interactive `env shell` session.
-///
-/// On the *kernel tiers* the box runs against the host filesystem, so the host
-/// `$SHELL` is the right binary. On the *image-backed* tiers it is not a binary
-/// that exists at all; see [`box_shell_argv`].
-///
-/// For *bash* the host `~/.bashrc` is *not* sourced by default: under
-/// confinement it routinely calls tools the sandbox blocks, spraying
-/// `Permission denied` noise. Instead bash is pointed at
-///
-///   - a *custom* rcfile when the profile sets `[shell] rcfile`, resolved
-///     relative to `$WORK` so it is version-controlled and reachable in the box
-///     on every tier without an extra grant; or
-///   - a generated *plain* rcfile (clear prompt, a couple of aliases, an
-///     optional `~/.h5i_envrc` hook), written under the env's private dir and
-///     Landlock-granted read on the kernel tiers.
-///
-/// *zsh*, the macOS default and so the common case on a Mac host, gets the same
-/// treatment through the only knob it has: `$ZDOTDIR`. zsh has no `--rcfile`;
-/// it takes its startup files from `$ZDOTDIR`, falling back to `$HOME`, so
-/// pointing that at a generated dir both skips the host `~/.zshrc` and moves
-/// `$HISTFILE` off the real `~/.zsh_history`, which is *outside every grant* in
-/// a box, so zsh's history lock fails on it once at startup and again after
-/// every command. See [`write_plain_zshrc`].
-///
-/// Other shells fall through to a bare `[$SHELL, "-i"]`; the image-backed
-/// tiers, whose shell *and* rc come from the image, fall through to [`box_shell_argv`].
 fn default_shell_argv(
     h5i_root: &Path,
     m: &EnvManifest,
@@ -6755,22 +6227,7 @@ fn shell_launch(
     ]))
 }
 
-/// The default interactive shell inside an image-backed box (container,
-/// microVM).
-///
-/// `$SHELL` names a *host* binary: on a stock macOS it is `/bin/zsh`, which the
-/// box's Linux rootfs does not carry, so passing it in ends the session at exec
-/// before the first prompt. The shell has to come from the image, exactly like
-/// the rc does, and the image is the only thing that knows which shells it has.
-/// So ask it at start-up rather than guess host-side: prefer `bash` (both
-/// shipped agent images carry it, `containers/entrypoint.sh` falls back to it,
-/// and the container tier's observation shim shadows it), and fall back to the
-/// one shell every image is guaranteed to have, the `/bin/sh` this probe is
-/// already running in.
-///
-/// Both arms `exec`, so the probing `sh` is *replaced* rather than left behind
-/// as a parent: the TTY, the signals and the exit code reach the real shell
-/// exactly as if it had been launched directly.
+/// The default interactive shell inside an image-backed box (container, microVM).
 fn box_shell_argv() -> Vec<String> {
     vec![
         "/bin/sh".into(),
@@ -6858,29 +6315,8 @@ struct ZshDirs {
     histdir: String,
 }
 
-/// Write the generated plain zsh rc into the env's private dir and return the
-/// dirs to point `$ZDOTDIR` at and to grant. Idempotent, like the bash one.
-///
-/// Two problems solved by one mechanism, because zsh gives us only one:
-///
-///  1. History. zsh's default `$HISTFILE` is `${ZDOTDIR:-$HOME}/.zsh_history`,
-///     the operator's real history file, which no box grants nor should. zsh
-///     does not treat that as fatal, but it *does* announce it at startup and
-///     again after every command, `zsh: locking failed for ~/.zsh_history:
-///     operation not permitted`, which buries the actual output of the session.
-///  2. The host `~/.zshrc`, for the same reason bash's is skipped: under
-///     confinement a real one reaches for tools and cache dirs the sandbox
-///     blocks, and the failures land on the same line as the prompt.
-///
-/// Setting `$ZDOTDIR` moves both: zsh reads `$ZDOTDIR/.zshenv` and
-/// `$ZDOTDIR/.zshrc` instead of the host's, and macOS's `/etc/zshrc`, which is
-/// what sets `$HISTFILE` in the first place, points at the new dir on its own.
-/// The generated rc sets `$HISTFILE` explicitly anyway, for hosts whose global
-/// rc says nothing about it.
-///
-/// The rc dir stays read-only and the history dir is separate: the box gets a
-/// per-env, persistent shell history and still cannot rewrite the rc that
-/// starts its next session.
+/// Write the generated plain zsh rc into the env's private dir and return the dirs to point
+/// `$ZDOTDIR` at and to grant.
 fn write_plain_zshrc(
     h5i_root: &Path,
     m: &EnvManifest,
@@ -6930,20 +6366,6 @@ fn write_plain_zshrc(
 }
 
 /// Replace every occurrence of each `secrets` value in `raw`, on the *bytes*.
-///
-/// This used to go `String::from_utf8_lossy(&raw).into_owned()` →
-/// `str::replace` → `into_bytes()`, which is two mistakes at once:
-///
-/// * A binary payload came back *rewritten*. Every byte that is not valid UTF-8
-///   became U+FFFD, and `receipt::append` then digested and sized *that*, so
-///   `raw_oid` and `raw_size` described bytes the run never produced, whenever
-///   any secret happened to be brokered. The redaction module's own rule is that
-///   storage keeps the exact bytes; only rendering is sanitised.
-/// * It was a round trip through a lossy decoder to do a search that never
-///   needed one. A credential is a byte string and matching it as one is both
-///   exact and cheaper.
-///
-/// The marker is the same text the string version used.
 fn scrub_exact(raw: &[u8], secrets: &[String]) -> Vec<u8> {
     const MARKER: &[u8] = b"[redacted secret]";
     let mut out = raw.to_vec();
@@ -7007,17 +6429,9 @@ fn read_spool_capped(p: &Path, cap: u64) -> Option<Vec<u8>> {
     Some(buf)
 }
 
-/// Ingest the env's observation spool (`<env>/spool/`) into tagged captures:
-/// the evidence an interactive *container* session leaves behind, one
-/// `cmd-<pid>-<n>.{cmd,out,err,exit}` set per top-level `sh -c`/`bash -c` the
-/// in-box agent ran.
-/// Each becomes a secret-redacted `objects` capture tagged with the env id and
-/// policy digest, the same provenance stream as `env run` execs, plus an `exec`
-/// event, and the spool files are removed. Returns how many captures landed.
-/// `secrets` is the run's brokered values, scrubbed by exact match on top of
-/// the pattern-based redaction `receipt::append` applies. `env run` has done
-/// this since the broker existed, and this lane, the one an interactive agent
-/// actually works in, was not given the same list.
+/// Ingest the env's observation spool (`<env>/spool/`) into tagged captures: the evidence an
+/// interactive *container* session leaves behind, one `cmd-<pid>-<n>.{cmd,out,err,exit}` set
+/// per top-level `sh -c`/`bash -c` the in-box agent ran.
 fn ingest_shell_spool(
     repo: &Repository,
     h5i_root: &Path,
@@ -8115,17 +7529,9 @@ struct ServiceFileToml {
 
 // ─── live-session registry (the env control-plane groundwork) ───────────────
 
-/// One live `env run` / `env shell` session's on-disk record: the daemon-free
-/// registry under `.git/.h5i/env/<agent>/<slug>/live/<pid>.json`, mirroring the
-/// `services/` pid-registry pattern. Written by the session holding the run or
-/// observer lock, removed on clean exit; a crash leaves the file and the reader
-/// reconciles by PID identity (`pid_alive`), not timestamps.
-/// Informational only, never authoritative for security: grants derive
-/// exclusively from the identity-validated manifest and digested policy. The
-/// registry exists so `env list`/`status`/the dashboard can tell a live session
-/// from a stale `running` status, since a SIGKILLed session never resets its
-/// manifest status. The `live/` dir is host state, not part of the box's
-/// grants.
+/// One live `env run` / `env shell` session's on-disk record: the daemon-free registry under
+/// `.git/.h5i/env/<agent>/<slug>/live/<pid>.json`, mirroring the `services/` pid-registry
+/// pattern.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiveSession {
     pub pid: u32,
@@ -8137,20 +7543,8 @@ pub struct LiveSession {
     /// What the session is executing (secret-redacted), when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
-    /// The kernel's own start time for this pid, in clock ticks since boot
-    /// (field 22 of `/proc/<pid>/stat`).
-    /// A pid alone is not an identity. A crashed session leaves its record
-    /// behind, the kernel hands that number to something else, and `kill(pid,
-    /// 0)` says yes, so the registry reports a live session belonging to an
-    /// unrelated process of the same user. For most readers that is cosmetic
-    /// staleness the next scan heals. For `h5i box share` it is not: `box_pid`
-    /// walks that pid's descendants looking for a network namespace, and if the
-    /// impostor or one of its children has one, the share enters *that*
-    /// namespace and publishes `127.0.0.1:<port>` from it.
-    /// Start time closes it: the pair (pid, start time) is unique for as long
-    /// as the process lives, and the kernel cannot reissue it. `None` for a
-    /// record written by an older h5i, which reads as "cannot verify". See
-    /// [`live_identity_holds`].
+    /// The kernel's own start time for this pid, in clock ticks since boot (field 22 of
+    /// `/proc/<pid>/stat`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_ticks: Option<u64>,
 }
@@ -8170,16 +7564,6 @@ pub fn proc_start_ticks(pid: u32) -> Option<u64> {
 }
 
 /// The same identity, from Darwin's process table.
-/// `PROC_PIDTBSDINFO` carries `pbi_start_tvsec`/`pbi_start_tvusec`, the wall
-/// time the process began, which serves the purpose the Linux tick count
-/// serves. The unit differs and nothing compares across platforms: a record is
-/// only ever checked against a pid on the machine that wrote it.
-/// Answering `None` here was not neutral, and that is why this exists. macOS
-/// wrote `started_ticks: None` into every live record, `session_pid_verified`
-/// skips records without one, and `h5i box share` asks for the verified answer,
-/// so the pid-reuse hardening turned into a total refusal on macOS, with `h5i
-/// box share` reporting "has no session running" for boxes whose session was
-/// running the whole time.
 #[cfg(target_os = "macos")]
 pub fn proc_start_ticks(pid: u32) -> Option<u64> {
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
@@ -8470,16 +7854,9 @@ fn pinned_services_path(h5i_root: &Path, m: &EnvManifest) -> PathBuf {
     m.dir(h5i_root).join("services.json")
 }
 
-/// Snapshot the base worktree's `[service.*]` into the env-local pinned
-/// manifest at create, returning the digest to record in the manifest (review
-/// #1: service declarations must be policy-pinned, not read from mutable
-/// workspace content).
-/// ALWAYS writes `services.json` and records a digest, even for the empty set,
-/// so a new env with no services is *pinned-empty* rather than mistaken for a
-/// legacy pre-pinning env. Without this, a no-service env would record a `None`
-/// digest and fall back to reading the mutable worktree config, letting an
-/// agent add `[service.*]` after create and start it unpinned. Fail-closed on a
-/// malformed services section.
+/// Snapshot the base worktree's `[service.*]` into the env-local pinned manifest at create,
+/// returning the digest to record in the manifest (review #1: service declarations must be
+/// policy-pinned, not read from mutable workspace content).
 fn pin_services_at_create(work_path: &Path, env_dir: &Path) -> Result<String, H5iError> {
     let defs = parse_services_file(&work_path.join(".h5i/env.toml"))?;
     let json = serde_json::to_string_pretty(&defs)?;
@@ -8595,20 +7972,8 @@ pub fn service_start(
     start_service_inner(repo, h5i_root, m, name, &def)
 }
 
-/// Start a long-lived in-box process from a definition the *caller* holds,
-/// rather than one declared in the box's `.h5i/env.toml`.
-///
-/// This exists for one caller: a browser session placed in a box (`h5i browser
-/// open --in`). A resident browser is a service in every way that matters here
-/// (it outlives the command that started it, must not hold the writer lock, and
-/// wants the pid registry and the log capture) but it is *not* something the
-/// repository declares. Requiring a `[service.…]` block would mean `--in` could
-/// only work in a repository edited to permit it, and writing that block
-/// ourselves would mean h5i editing the user's tree to run a command.
-///
-/// Everything else is identical, deliberately: same lock, same policy
-/// preparation, same `spawn_background`, same record, same event. A second
-/// launch path for in-box processes is a second set of grants to keep in step.
+/// Start a long-lived in-box process from a definition the *caller* holds, rather than one
+/// declared in the box's `.h5i/env.toml`.
 pub fn service_start_with_def(
     repo: &Repository,
     h5i_root: &Path,
@@ -9484,18 +8849,8 @@ fn is_under_private_path(path: &Path, rels: &[String]) -> bool {
 
 // ─── mediated commit (§4: the critical security boundary) ─────────────────
 
-/// Snapshot the env worktree onto the env branch *host-side*: h5i stages and
-/// commits, and the agent never drives `git` at `process` and above. Every
-/// staged path is validated against the canonicalized-`$WORK` allowlist
-/// invariant; symlink escapes, nested `.git` repos, submodule gitlinks and `..`
-/// traversal are rejected and the whole commit *fails closed*.
-///
-/// Returns `Ok(None)` when the worktree is identical to the branch tip.
-///
-/// `repo` is the primary repository, not the worktree: a fail-closed boundary
-/// trip is recorded as a `violation` event in `refs/h5i/env`, so the refusal is
-/// a permanent, shareable part of the env's provenance and the
-/// highest-confidence "agent probed the sandbox" signal the dashboard surfaces.
+/// Snapshot the env worktree onto the env branch *host-side*: h5i stages and commits, and the
+/// agent never drives `git` at `process` and above.
 pub fn mediated_commit(
     repo: &Repository,
     h5i_root: &Path,
@@ -9619,21 +8974,9 @@ pub fn mediated_commit(
     Ok(Some(oid))
 }
 
-/// Snapshot the env worktree onto its branch for a *team submission*: the
-/// mediated-commit counterpart to `propose`, so `team agent submit` freezes the
-/// agent's working-tree edits instead of the often-unadvanced branch tip.
-///
-/// Best-effort, unlike `propose`. A team submit is ingested *while the agent's
-/// box is still alive*, so the box holds the env run lock for its whole
-/// session. `propose` fails on a contended lock, being a deliberate state
-/// transition that must not race a live run; a team submit must NOT. A
-/// well-behaved agent has already committed its work in-box, so on lock
-/// contention we fall back to the existing branch tip rather than failing the submit. An
-/// *uncommitted* worktree behind a live box is captured later by the at-exit ingest.
-///
-/// Returns `Ok(None)`, no snapshot taken, when the env has no local worktree (a
-/// *pulled* reviewer clone rides the already-shared branch tip), when the box
-/// is alive, or when the worktree already matches the tip.
+/// Snapshot the env worktree onto its branch for a *team submission*: the mediated-commit
+/// counterpart to `propose`, so `team agent submit` freezes the agent's working-tree edits
+/// instead of the often-unadvanced branch tip.
 pub fn snapshot_for_submit(
     repo: &Repository,
     h5i_root: &Path,
@@ -9653,20 +8996,8 @@ pub fn snapshot_for_submit(
     mediated_commit(repo, h5i_root, m)
 }
 
-/// Commit the current worktree onto its checked-out branch from *inside* an env
-/// box: the in-box analogue of [`snapshot_for_submit`]. `team agent submit`
-/// calls this so the agent's edits are frozen even when they were never `git
-/// add`ed, the common case. The host *cannot* do this for a live box: the box
-/// holds the env run lock for its whole session and writing its index from the
-/// host would race the agent's own git use, so the box, which has a functional
-/// checkout and runs with the worktree as its CWD, snapshots itself here.
-///
-/// Returns `Ok(Some(oid))` for a fresh snapshot, `Ok(None)` when the worktree
-/// already matches the branch tip or there is no git checkout to commit. An
-/// `Err` means the box tried but *could not* commit, for instance because a
-/// `box_git_plumbing` grant is too narrow. The caller must surface that error
-/// and continue, because a silently-swallowed failure here is what makes an
-/// agent's work vanish into a "no changes to review" no-op.
+/// Commit the current worktree onto its checked-out branch from *inside* an env box: the in-box
+/// analogue of [`snapshot_for_submit`].
 pub fn commit_box_worktree() -> Result<Option<git2::Oid>, H5iError> {
     commit_worktree_at(Path::new("."))
 }
@@ -9880,21 +9211,7 @@ fn staged_path_violation(canon_work: &Path, rel: &Path) -> Option<String> {
 
 // ─── propose / apply / abort / gc (§9) ──────────────────────────────────────
 
-/// Mediated-commit the worktree, mark the env `proposed`, and return a review
-/// brief. Never touches the parent branch.
-///
-/// Freeze a runner box's work into a host-authored commit on its branch: the
-/// remote counterpart of [`propose`], and the shape of R9 in one function:
-///
-/// 1. The runner commits what the box has and hands back a thin bundle.
-/// 2. It is unpacked into a throwaway repository with its own object database
-///    and inspected there. A ref namespace withholds reachability, not
-///    presence, so it is not a quarantine.
-/// 3. Only the surviving tree crosses, and this side writes the commit. The
-///    runner's history and authorship are discarded by construction: the host
-///    repository only ever contains commits the host itself authored.
-///
-/// After it, everything downstream is the local path unchanged.
+/// Mediated-commit the worktree, mark the env `proposed`, and return a review brief.
 pub fn propose_remote(
     repo: &Repository,
     h5i_root: &Path,
@@ -10095,22 +9412,6 @@ fn conflict_runbook(m: &EnvManifest) -> String {
 }
 
 /// Refuse a lifecycle operation on a box somebody is connected to.
-/// `rm` learned this first and the other verbs did not: `abort`, `apply` and
-/// `rebase` all took `run.lock` and none took notice of a share, so with no
-/// writer session holding the lock they ran straight through. `abort` printed
-/// success and `box ls` said `aborted` while a public tunnel URL and a valid
-/// ticket kept pointing at the box. `rebase` is the sharpest: it
-/// force-checks-out the worktree, changing the files under the dev server a
-/// visitor is looking at.
-/// There is no `--force` on these the way there is on `rm`, and none is added
-/// here: `h5i box share stop <name>` is a documented verb that always works,
-/// and `--force` on it clears even a wedged record, so the way out is never
-/// more than one command, and it is the command that tells the other person
-/// their access has ended.
-/// Take the share gate and refuse if this box is being shared. The two
-/// together, because separately they are a check and then a gap; see
-/// [`crate::share_record::ShareGate`]. The returned guard must be held for the
-/// whole operation.
 fn hold_gate_unless_shared(
     h5i_root: &Path,
     m: &EnvManifest,
@@ -10126,18 +9427,6 @@ fn refuse_if_shared(h5i_root: &Path, m: &EnvManifest, verb: &str) -> Result<(), 
         return Ok(());
     };
     // Any live share process, not only one that could admit somebody new.
-    // `is_admitting` answers "could a fresh connection get in", which was the
-    // wrong question by exactly the width of a drain. A connection already
-    // authorized stays up until its per-connection revocation poll runs, up to
-    // a second, and teardown happens after that; the serving process does not
-    // notice its writer session has gone until `BOX_POLL`, three seconds later.
-    // So with the writer just exited and the last grant just expired,
-    // `abort`/`rebase`/`apply` walked through this guard and changed the box
-    // while a visitor was still uploading.
-    // A live share process is therefore exclusionary until it has cleared its
-    // record, which it does only after its transport is down and `quiesce` has
-    // returned. The cost is a teardown the user might not have needed; the
-    // remedy is one documented command.
     if s.winding_up {
         return Err(H5iError::Metadata(format!(
             "{} is being shared by pid {} and that share is already shutting down — it will be \
@@ -10153,19 +9442,9 @@ fn refuse_if_shared(h5i_root: &Path, m: &EnvManifest, verb: &str) -> Result<(), 
             m.id, s.pid, m.slug
         )));
     }
-    // Naming `--force` as well, because the two verbs read the file with
-    // different rules: this one goes through `share_record`, which requires
-    // every field it knows about, and `share stop` goes through `h5i-share`. A
-    // record one accepts and the other does not leaves two refusals pointing at
-    // each other, and `--force` is the way out.
-    //
-    // Which way `share_record` fails is worth being exact about: a file it
-    // cannot fully parse reads as *no share at all*, so this returns `Ok` and
-    // the verb goes ahead. That is deliberate (a malformed file must not wedge
-    // `box rm` forever) and it is not the cautious direction. It is defensible
-    // only because a record the share itself cannot read admits nobody either,
-    // so the box is not gaining visitors while this decision is made.
-    // Connections already open are the gap.
+    // Naming `--force` as well, because the two verbs read the file with different rules: this
+    // one goes through `share_record`, which requires every field it knows about, and `share
+    // stop` goes through `h5i-share`.
     Err(H5iError::Metadata(format!(
         "{} is being shared right now by pid {} — somebody outside may be connected to it, and \
          `{verb}` would change the box under them. Stop the share first: \
@@ -10187,16 +9466,8 @@ pub fn apply(
     if is_detached(m) {
         return Err(detached_err(m, "apply"));
     }
-    // Serialize the PROPOSED→APPLIED transition against any concurrent run or
-    // shell on the same env.
-    // Above the lock. Below it this was unreachable: a live share implies a
-    // live writer session, so `run.lock` is held and "environment is busy"
-    // fired first. Above the *status* guards too, and deliberately left there:
-    // moving it below them would put it behind `run.lock` again for `apply`,
-    // whose own ordering is pinned by a test.
-    // Held for the whole operation, not checked and let go: see
-    // `hold_gate_unless_shared`. A share cannot claim this box while this guard
-    // is alive.
+    // Serialize the PROPOSED→APPLIED transition against any concurrent run or shell on the same
+    // env.
     let _share_gate = hold_gate_unless_shared(h5i_root, m, "apply")?;
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
@@ -10574,17 +9845,10 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
         if !m.work_dir(h5i_root).exists() {
             continue;
         }
-        // Drain read-only observers before removing this env's worktree: an
-        // observer has it mounted (a `--readonly` shell that attached while the
-        // env was live can outlast the apply or abort that finalized it), so
-        // the prune must not yank the directory out from under it.
-        // Non-blocking: if observers are attached we skip this env and reclaim
-        // it on a later sweep.
-        // Both locks, in the documented order (run.lock then observers.lock).
-        // `gc` took only the teardown lock, so it could prune and
-        // `remove_dir_all` an env while a writer held `run.lock` for it. The
-        // window was narrow, only applied or aborted envs being swept, but that
-        // was incidental rather than designed.
+        // Drain read-only observers before removing this env's worktree: an observer has it
+        // mounted (a `--readonly` shell that attached while the env was live can outlast the
+        // apply or abort that finalized it), so the prune must not yank the directory out from
+        // under it.
         #[cfg(unix)]
         let _run_lock = match RunLock::acquire(&m.dir(h5i_root)) {
             Ok(g) => g,
@@ -10625,45 +9889,15 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
     Ok(reclaimed)
 }
 
-/// Permanently remove an environment from this clone: prune its worktree,
-/// delete its code branch, and erase its on-disk dir (manifest, policy, status).
-///
-/// There is no reasoning branch to delete. `refs/h5i/context/*` was a pre-pivot
-/// namespace; nothing in the workspace reads or writes it any more, and the
-/// structural grant that handed the box rw on it, letting a box create
-/// arbitrary refs in the host repo for a feature that no longer exists, is gone with it.
-///
-/// Unlike `gc` (workspace only) and `abort` (status only), this destroys the
-/// *local* provenance. The env's manifest and policy lines are stripped from
-/// `refs/h5i/env`, or [`materialize_from_ref`] would rewrite the on-disk
-/// manifest right back, leaving only the append-only `removed` event as the
-/// record. The removal is local: a later `pull` from a peer that still holds
-/// the manifest can re-introduce it via union-merge.
-///
-/// `force` is required to remove a still-live env; applied and aborted envs
-/// remove freely.
+/// Permanently remove an environment from this clone: prune its worktree, delete its code
+/// branch, and erase its on-disk dir (manifest, policy, status).
 pub fn rm(
     repo: &Repository,
     h5i_root: &Path,
     m: &EnvManifest,
     force: bool,
 ) -> Result<(), H5iError> {
-    // Checked *before* the status guard below. A box being shared is almost
-    // always also `running`, so behind that guard this message was unreachable:
-    // the operator was told to abort the box and never that somebody outside
-    // was connected to it, which is the more surprising fact and the one that
-    // changes what they do next.
-    // A share is not a session, so neither that guard nor the two locks further
-    // down see it. `--force` still removes the box, but it says what it is
-    // doing.
-    // Held across the removal, and that is not tidiness. A share's claim
-    // happens after its transport setup, so a `box share` can be forty-five
-    // seconds into waiting for a tunnel URL with nothing on disk to see. `rm`
-    // then found no record, deleted the environment directory and the share's
-    // own lock file with it, and the delayed claim, arriving afterwards, called
-    // `create_dir_all` on the parent it had just erased and wrote `share.json`
-    // into a recreated tree: a public endpoint announced for a box that no
-    // longer existed, and a directory only `rm -rf` can clear.
+    // Checked *before* the status guard below.
     let _share_gate = crate::share_record::share_gate(&m.dir(h5i_root))?;
     let shared = crate::share_record::read_live(&m.dir(h5i_root));
     if let Some(s) = &shared
@@ -10743,16 +9977,9 @@ pub fn rm(
     // 5. Erase the on-disk env dir (manifest, policy, status, leftovers), then
     //    tidy the now-empty agent dir.
     let dir = m.dir(h5i_root);
-    // A `browser` box leaves Chrome running on purpose, since it has to outlive
-    // the `box run` that started it, so removing the box has to stop it or the
-    // process outlives everything that knows about it. Best-effort: a survivor
-    // is untidy, not unsafe.
-    //
-    // Through `stop_browser`, which checks the recorded pid still names *this
-    // box's* browser before signalling anything. The pid is written by the box
-    // and read here on the host, outside every sandbox: taken at face value,
-    // `-1` would turn "remove this env" into "SIGTERM everything I own". See
-    // [`browser_pid`].
+    // A `browser` box leaves Chrome running on purpose, since it has to outlive the `box run`
+    // that started it, so removing the box has to stop it or the process outlives everything
+    // that knows about it.
     stop_browser(&dir.join("browser/state"));
     // Same rationale one tier down: a `microvm` box keeps a warm guest alive
     // between commands, so removing the box has to remove the VM or it outlives
@@ -13479,19 +12706,8 @@ mod tests {
         assert!(!state.join("chrome.restart").exists());
     }
 
-    /// A long-lived stand-in for the box's browser: an executable whose name
-    /// reads as Chrome, running on this env's profile dir, the two things the
-    /// host matches on.
-    /// `/bin/sh -c '…'` and not `sleep` directly: `sleep` rejects the
-    /// `--user-data-dir` argument and exits immediately, which would leave
-    /// every assertion below true because nothing was ever running. The script
-    /// is two commands for a second reason of the same kind: a shell given a
-    /// single one `exec`s it, replacing itself with a `sleep` whose argv no
-    /// longer carries the flag the host matches on.
-    /// Returns the pid and a thread that reaps it. The stand-in is this test's
-    /// own child, so without a `wait` it lingers as a zombie that `kill(pid,
-    /// 0)` still finds, and the stop under test would burn its full SIGTERM and
-    /// SIGKILL timeouts on a process that is already dead.
+    /// A long-lived stand-in for the box's browser: an executable whose name reads as Chrome,
+    /// running on this env's profile dir, the two things the host matches on.
     #[cfg(unix)]
     fn spawn_fake_browser(exe: &Path, profile: &Path) -> (i32, std::thread::JoinHandle<()>) {
         let child = std::process::Command::new(exe)
@@ -13537,16 +12753,7 @@ mod tests {
         false
     }
 
-    /// `pid_gone` answers "no such process", not "the call failed". The
-    /// difference is `EPERM`, a process that exists and is simply not ours to
-    /// signal, and reporting that as gone would let `signal_and_wait` claim it
-    /// stopped a browser it never touched.
-    /// No second uid needed: pid 1 is normally unsignalable by an ordinary
-    /// process, and a reaped child's pid is genuinely absent. Where pid 1 *is*
-    /// signalable by us (as root, and equally in a PID namespace whose init
-    /// shares this uid) both readings answer "alive" and this degrades to a
-    /// tautology rather than a false failure. The note it prints says which
-    /// case it landed in.
+    /// `pid_gone` answers "no such process", not "the call failed".
     #[cfg(unix)]
     #[test]
     fn pid_gone_tells_no_such_process_apart_from_not_allowed() {
@@ -14153,17 +13360,8 @@ mod tests {
         );
     }
 
-    /// A share is exclusionary for as long as its process is, not only while it
-    /// could admit somebody new.
-    /// `is_admitting` was the test, and it answers "could a fresh connection
-    /// get in", which is the wrong question by exactly the width of a drain: a
-    /// connection already authorized stays up until its revocation poll runs,
-    /// and teardown follows that, while the serving process does not notice its
-    /// writer has gone until three seconds later. So with the writer just
-    /// exited and the last grant just expired, a lifecycle verb walked through
-    /// this guard and changed the box while a visitor was still connected.
-    /// The two states this covers, every grant revoked and every grant expired,
-    /// are exactly the ones that used to read as "nothing is holding this box".
+    /// A share is exclusionary for as long as its process is, not only while it could admit
+    /// somebody new.
     #[test]
     fn a_share_still_draining_is_not_a_box_free_to_change() {
         let tmp = tempfile::tempdir().expect("tempdir");

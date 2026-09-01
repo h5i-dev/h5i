@@ -1,20 +1,4 @@
 //! What one page is allowed to spend before the engine stops answering it.
-//!
-//! Every other limit is *per request*: a response size cap, a redirect count, a
-//! timeout. None bounds a page that makes *many* requests, so a script in a
-//! loop, each fetch individually well-behaved, could keep the engine busy
-//! indefinitely, and recording a runaway is not bounding it.
-//!
-//! Per navigation, not per session, because of who is spending. A page fetching
-//! in a loop is untrusted code the engine cannot otherwise stop. An agent
-//! navigating twenty times is the principal exercising its own authority, and
-//! bounding that would be the engine deciding how much work its operator may ask
-//! for. So the counters reset on navigation. A session-wide ceiling is coherent
-//! and unbuilt.
-//!
-//! Exceeding is a refusal, not a crash. The next request is denied and recorded
-//! as denied with `budget-exceeded`. The page sees a failed fetch, which pages
-//! handle; the agent sees it in the request log and the snapshot's notes.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -265,27 +249,6 @@ impl Deadline {
 }
 
 /// The stop of last resort, for the half of this engine no deadline reaches.
-///
-/// Every other ceiling here guards the *script realm*: `--script-seconds` bounds
-/// the script phase, the loop-iteration limit bounds one `for`, the job deadline
-/// bounds the queue. All three work by asking Boa to stop between pieces of
-/// work. None can do anything about a *layout* that never returns, because no
-/// script is running while layout walks the tree, and layout is native code with
-/// no interruption point in it.
-///
-/// That gap was not theoretical. A cyclic tree sent blitz walking for ever at
-/// 100% of a core, straight through a 45-second navigation budget and a
-/// 60-second script budget, for *seven hours*. The tree cannot go cyclic any
-/// more, but "no ceiling at all covers half the engine" is the condition that
-/// turned one bug into seven hours.
-///
-/// A separate thread, because the wedged thread cannot help; `_exit`, because
-/// `std::process::exit` waits on the atexit handlers and stdio locks the wedged
-/// thread may be holding. Armed for a *navigation* rather than for the process.
-///
-/// The margin is wide on purpose. This is not a tighter version of the
-/// navigation budget, which reports a page as unfinished and hands back what
-/// rendered. Reaching *this* one ends the process.
 pub struct HardStop {
     done: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
 }

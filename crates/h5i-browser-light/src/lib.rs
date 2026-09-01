@@ -1,33 +1,4 @@
 //! h5i browser light: a lightweight visual browser engine for coding agents.
-//!
-//! The engine exists for one property Chromium cannot give from outside. h5i's
-//! egress proxy is a CONNECT gate that sees a hostname and nothing more, and
-//! CDP's Fetch domain can record a Chromium request but fails *open*: attach
-//! races, new targets and workers, buffer limits and disconnects all leave gaps.
-//! Here the engine *is* the HTTP client, so the receipt is not an observation of
-//! the network, it is the network. No receipt, no request.
-//!
-//! - Fail-closed by construction. [`net::LocalBroker`] appends the decision
-//!   before the wire and the outcome after. A sink that refuses to record is a
-//!   sink that refuses to fetch (see [`receipt::Sink`]).
-//! - The recorder is not in the parsers' process. A broker holds the policy,
-//!   wire, receipts, jar and secrets; a renderer holds the DOM, cascade, decoders
-//!   and script realm. [`broker::Broker`] is the seam, [`ipc`] the transport, so
-//!   a bug in Blitz, Stylo, an image decoder or Boa is a bug in the half holding
-//!   none of it.
-//! - Every hop is a decision. Redirects are followed manually and each hop is
-//!   checked and receipted, so an allowed origin cannot bounce a request to a
-//!   denied one.
-//! - No script in this tier. Page script is never evaluated, so the commonest
-//!   channel for injected instructions is absent rather than filtered. When
-//!   script arrives it is off by default and gated by policy before evaluation,
-//!   never "absent by construction", which is reserved for a build with no JS
-//!   engine in it.
-//!
-//! The rendering half is assembled rather than written: Blitz owns the DOM and
-//! drives Stylo, and vello_cpu rasterises on the CPU because a box has no GPU.
-//! Fidelity is not the goal; docs-grade pages are the compatibility bar, and
-//! roadmap-history.md 7.1 keeps Chromium for the agent's own dev server.
 
 pub mod broker;
 pub mod cli;
@@ -93,31 +64,10 @@ pub struct Capabilities {
     /// Deliberately absent, and owned by the Chromium path instead.
     pub video: bool,
     /// Timed text off a page's media: `<track>` fetched and parsed, not decoded.
-    ///
-    /// Beside `video` rather than inside it, because they are different claims
-    /// and a caller routing on one must not read the other. `video: false` says
-    /// nothing here plays. This says the words are still reachable when the page
-    /// wrote them down, which is what an agent summarising a talk actually
-    /// needs, and it is a text fetch over a URL the document named, so it costs
-    /// no decoder, no script and no new grant.
-    ///
-    /// It does not promise a transcript exists. A page whose captions live
-    /// behind a player's own API rather than in a `<track>` reads as media with
-    /// no text lane, and is reported as exactly that.
     pub captions: bool,
     pub webgl: bool,
     pub downloads: bool,
     /// Canvas 2D that actually rasterises, and composites into the page.
-    ///
-    /// Needs script to be reachable at all, so it follows `javascript` rather
-    /// than being a fixed `true`: a caller routing a chart-drawing page here
-    /// with script off would get a blank canvas, the wrong answer to have
-    /// promised.
-    ///
-    /// Partial, and this flag does not say which part. Text, gradients,
-    /// patterns, shadows and `drawImage` are not built. A page that asks for
-    /// one is *named* in the snapshot's note, which is the finer-grained answer
-    /// and the one to route on.
     pub canvas_2d: bool,
     /// Real WebSocket connections, `ws://` and `wss://`, every frame receipted.
     pub websockets: bool,

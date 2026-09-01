@@ -1,19 +1,5 @@
 #!/usr/bin/env bash
 # Is there a *published* boa we could use instead of the pinned revision?
-#
-# h5i-browser-light depends on boa by git revision because every released version pins
-# `icu_normalizer`, `icu_properties` and `icu_segmenter` to `~2.0.0`, which
-# excludes the versions parley requires — and parley arrives through blitz, so
-# it is not ours to choose. Upstream relaxed those pins after 0.21.1, so the
-# only boa that works here is an unreleased one.
-#
-# That is a thing to undo, not a thing to keep, and "it is on the list" is how a
-# temporary patch becomes permanent. This asks crates.io the question instead:
-# the day a release ships whose icu requirements overlap parley's, this fails
-# and says so. Until then it is quiet.
-#
-# Deliberately fails rather than warns. It fires once, it means the patch can be
-# deleted, and a warning in a log nobody reads is the same as no check at all.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"

@@ -1,26 +1,4 @@
 //! `h5i box watch`: the box's policy decisions, one line each, as they happen.
-//!
-//! The third reader of `browser_events` (roadmap-history.md M11c). M11a built the
-//! model and the console's evidence panes; M11b keeps a pane-based terminal
-//! viewer over the same stream. This is neither: no viewport, no panes, no
-//! cycling, no control lock. It is the `tail -f` of the receipt, meant to be
-//! piped, grepped, and left running in a second pane.
-//!
-//! The reason to have it is behavioural rather than technical. Trust in a sandbox
-//! is built by watching it once, seeing it behave, and then stopping. A surface
-//! that has to be opened and attended to is a surface nobody uses after the first
-//! week; `--deny-only` is the form that can be left on for a whole afternoon and
-//! still say something when it speaks.
-//!
-//! Two rules travel with the terse format:
-//!
-//! - The qualifier is not optional. Every row carries its lane and its grade as
-//!   *words*, because a row that does not say whether the box or the host
-//!   observed it asserts more than h5i knows. Brevity is not licence to drop
-//!   them, and colour never carries them alone.
-//! - Box text is already sanitised. `browser_events` cleans every box-supplied
-//!   field once, at ingest ([`h5i_core::browser_events`]), which is why this can
-//!   write straight to a PTY. Nothing here re-sanitises and nothing bypasses it.
 
 use std::io::Write as _;
 

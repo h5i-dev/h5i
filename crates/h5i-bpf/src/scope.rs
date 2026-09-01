@@ -1,23 +1,4 @@
 //! Which of the host's events belong to this box.
-//! The hard half of a per-run detector. Too permissive and the user's own
-//! editor is reported as box activity; too restrictive and the interesting
-//! child, the `postinstall` that lived forty milliseconds, is the one missed.
-//! Cgroup-id and pid-namespace filters were considered and fail the same test:
-//! the scope has to be decided before the payload exists. A scope programmed
-//! after the child is spawned has already missed the exec that named it, the
-//! most valuable event of the run. A cgroup id is knowable in advance only if
-//! h5i creates the cgroup in advance, which it does not, and a pid-namespace
-//! inode only from a process that does not exist yet.
-//! What *is* knowable in advance is h5i's own process tree, and the kernel can
-//! maintain the descendant set from there. That is the Tetragon idea
-//! (design-detect.md D3): lineage kept in the kernel rather than reconstructed
-//! by racing `/proc`, where the short-lived child is already gone by the time
-//! userspace reads it.
-//! The probe's state machine (`bpf/h5i_event.h`) closes the two holes seeding
-//! from h5i's own tree would leave: h5i's *threads* are told from its
-//! *children* by whether the new task leads its own thread group, and h5i's
-//! `pre_exec` work is held back until the payload's `execve`, so the
-//! confinement machinery is never reported as the box's behaviour.
 
 use serde::{Deserialize, Serialize};
 

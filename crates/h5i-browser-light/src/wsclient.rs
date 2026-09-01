@@ -1,28 +1,4 @@
 //! A WebSocket client, for the one case this engine is uniquely good at.
-//!
-//! This engine's advantage is reach (roadmap-history.md §B11.3): a cloud browser
-//! cannot open `localhost:3000`, a staging host, or anything behind a VPN, which
-//! is most of what a coding agent needs to look at. A dev server's
-//! hot-module-reload channel is a WebSocket, so the place this engine alone can
-//! reach was also the place it rendered a half-built page.
-//!
-//! `ws://` and `wss://`. The old refusal said `wss://` needed a raw TLS stream
-//! the HTTP client does not expose, which was true of `reqwest` and had been
-//! generalised into a property of the engine. A socket that owns its transport
-//! needs nothing from the HTTP client, and this one carries `rustls` directly.
-//! The policy path is untouched: check, receipt, then dial.
-//!
-//! Loopback only whenever an egress proxy is configured. A raw socket does not
-//! go through the proxy `reqwest` was given, and inside a box that proxy is how
-//! the sandbox's allowlist stays in the path. Loopback is exempt because the
-//! proxy already excludes it.
-//!
-//! Every frame is receipted. The receipt is not an observation of the network,
-//! it *is* the network, so a socket open ten minutes carrying four hundred
-//! messages cannot be receipted at the handshake alone: that is the CONNECT-gate
-//! blindness this engine exists to remove. Each frame is written as an ordinary
-//! request/response pair with `WS-SEND` or `WS-RECV` as its method, so the
-//! console, `h5i box watch` and the export bundle need no changes.
 
 use std::io::{BufReader, Read, Write};
 use std::net::TcpStream;
@@ -36,25 +12,6 @@ use crate::net::LocalBroker;
 use crate::ws::{self, Incoming};
 
 /// The bytes underneath a socket, plain or encrypted.
-///
-/// One type so that everything above it (the handshake, the frame reader, the
-/// masked writer) is written once rather than twice. The difference between
-/// `ws://` and `wss://` should be a field, not a parallel code path, because a
-/// parallel path is where the two drift and only one keeps getting the receipt
-/// rule right.
-///
-/// ## Why the TLS side holds a lock
-///
-/// A plain `TcpStream` can be `try_clone`d, so the reader thread and the writer
-/// each get their own handle. A TLS *connection* is one piece of state (sequence
-/// numbers, keys, the record buffer) and cannot be split that way, so both sides
-/// share it under a mutex.
-///
-/// That would deadlock on its own: the reader blocks in `read`, holding the
-/// lock, and a `send` waits behind it forever. The fix is the read timeout set
-/// in [`Socket::open`] for TLS sockets, so the reader wakes every so often,
-/// finds nothing, drops the lock, and goes round again. The cost is a wakeup a
-/// few times a second on an idle socket.
 struct Wire {
     sock: TcpStream,
     /// `None` for `ws://`. Shared with the reader thread for `wss://`.
@@ -194,16 +151,6 @@ const MAX_HANDSHAKE_LINES: usize = 128;
 const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// How many undelivered messages a socket may hold.
-///
-/// A *bounded* channel, which is a stronger statement than the cap this used to
-/// apply on the way out. The old shape trimmed an unbounded queue when the page
-/// happened to drain it, but the page only drains at a settle, and a resident
-/// session is idle between verbs by design, so a chatty socket grew without
-/// limit in exactly the case the cap was written for.
-///
-/// Bounded, the reader thread blocks instead, TCP back-pressures the server, and
-/// nothing is silently lost. That also removes a drop counter which, because it
-/// only ever increased, made every later drain report an error event.
 const MAX_QUEUED: usize = 512;
 
 /// What a socket hands the page.

@@ -1,15 +1,4 @@
 //! Hint labels: the short strings a human types to reach something on screen.
-//!
-//! A hint is a label stuck to a [`crate::snapshot`] ref, so the overlay cannot
-//! offer a target the verb layer would refuse — the snapshot already decided
-//! what is actionable.
-//!
-//! Design: `docs/design-interminal-browser.md` V2.
-//!
-//! Labels are minted here so two viewers watching one page cannot disagree about
-//! what `sd` means. *Matching* them against what has been typed is per-viewer
-//! state and lives with each viewer (`h5i_core::termview::vim::narrow`, and the
-//! same rule in JavaScript). Both halves rest on [`labels`] being prefix-free.
 
 /// The alphabet labels are drawn from, most-reachable first.
 ///

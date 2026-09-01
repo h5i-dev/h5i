@@ -1,23 +1,4 @@
 //! Transport two: a Cloudflare quick tunnel, for a visitor who has no h5i.
-//!
-//! The peer-to-peer transport needs h5i on both ends, because a browser cannot
-//! speak QUIC to an endpoint id, which rules out the person you most often want
-//! clicking a prototype. This transport trades the property P2P has for the one
-//! it does not: anybody with the link can open it in any browser.
-//!
-//! What it costs, stated in the receipt rather than only in the docs. TLS
-//! terminates at Cloudflare, so this path is not end to end and Cloudflare can
-//! read the traffic; usually an acceptable trade for an agent-built prototype
-//! and never ours to assume, so [`crate::bridge::render_receipt`] writes it into
-//! the export. `cloudflared` is somebody else's binary, neither shipped nor
-//! pinned, and its absence is a failure that names the alternative. Quick
-//! tunnels are explicitly not a production service.
-//!
-//! What does not change is the bridge underneath. The URL carries a token
-//! checked against the same grant table on every connection, live connections
-//! drop when a grant is revoked, and the credential is stripped before anything
-//! reaches the box. The capability degrades from "hold the secret" to "hold the
-//! link", not to nothing.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -128,30 +109,7 @@ pub fn extract_url(line: &str) -> Option<String> {
 /// warns about, reintroduced by the fix for unbounded line buffering.
 const MAX_CLOUDFLARED_LINE: usize = 64 * 1024;
 
-/// Kill `target` when `watch` dies. Darwin's answer to `PR_SET_PDEATHSIG`.
-///
-/// The hazard is the one the Linux arm describes above and it is not smaller
-/// here: `kill_on_drop` is a destructor, `SIGKILL` skips destructors, and a
-/// `cloudflared` that outlives its share keeps a public `trycloudflare.com`
-/// hostname pointing at a loopback port that has just been freed. Measured on
-/// Linux at ten to twenty seconds. macOS had no second rope at all.
-///
-/// Darwin has no `PR_SET_PDEATHSIG`, and the difference is not just spelling:
-/// pdeathsig is something a process asks *for itself*, so Linux can set it in
-/// the child between fork and exec, and nothing can ask that on behalf of a
-/// program h5i does not compile. So the job goes to a third process: a watchdog
-/// that waits on `kqueue` for either process to exit and kills `target` if
-/// `watch` went first. Being a separate process is the whole point, since a
-/// `SIGKILL` of the share cannot skip it.
-///
-/// *Both* pids are registered, and that is what makes it safe rather than merely
-/// prompt. A watchdog that waited only on `watch` would, after `cloudflared` had
-/// exited normally and its pid had been recycled, wake up and `SIGKILL` whatever
-/// innocent process now holds that number.
-///
-/// The child is allocation-free below the fork, for the reason
-/// [`crate::dialer`] spells out: this runs inside a tokio runtime, so the child
-/// inherits one thread and whatever locks the others held.
+/// Kill `target` when `watch` dies.
 #[cfg(target_os = "macos")]
 pub(crate) fn arm_parent_death_kill(watch: libc::pid_t, target: libc::pid_t) {
     // SAFETY: fork, then raw syscalls and `_exit` in the child.
@@ -212,20 +170,7 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
-    // And a second, stronger rope. `kill_on_drop` runs a destructor, which a
-    // `SIGKILL` of this process skips entirely, so a killed share left
-    // `cloudflared` alive for another ten to twenty seconds with its public
-    // `trycloudflare.com` hostname still registered and still pointing at
-    // `http://127.0.0.1:<port>`. That port is in the ephemeral range and has just
-    // been freed, so for that window anything on this machine that binds it is on
-    // the public internet under a hostname h5i minted.
-    //
-    // `PR_SET_PDEATHSIG` is the kernel doing it instead, and precisely: when the
-    // *thread* that forked this child exits, the child gets the signal. Pdeathsig
-    // is thread-scoped, which is safe here only because `run::serve` drives
-    // everything through `Runtime::block_on`, so this fork happens on the main
-    // thread. Moving `serve_async` behind a `tokio::spawn` would start killing
-    // `cloudflared` mid-share when the worker thread retired.
+    // And a second, stronger rope.
     #[cfg(target_os = "linux")]
     unsafe {
         // Read before the fork. The first version compared `getppid() == 1`,
@@ -502,17 +447,8 @@ pub async fn serve(bridge: Arc<Bridge>, listener: tokio::net::TcpListener) -> Re
     }
 }
 
-/// The record this grant's traffic is counted against, creating it if this is
-/// the first thing that grant has done.
-///
-/// One entry per grant, because a tunnel genuinely cannot tell two browsers
-/// apart: the peers it sees are Cloudflare's.
-///
-/// The map is taken with a poison recovery, not an `expect`, for the reason
-/// `Bridge::tally` gives: `peer_joined` runs while this lock is held, so an
-/// `expect` would turn a single panic under it into a front where *every later
-/// connection* dies at the same line. The map is a `grant id → PeerId` lookup
-/// with no invariant across entries; a recovered one is at worst missing a row.
+/// The record this grant's traffic is counted against, creating it if this is the first thing
+/// that grant has done.
 fn register(
     bridge: &Arc<Bridge>,
     peers: &Arc<Mutex<HashMap<String, crate::bridge::PeerId>>>,
@@ -611,18 +547,8 @@ async fn handle(
 
     let (head, req) = match next {
         Next::Respond(mut body, refusal) => {
-            // Substituted after the fact rather than threaded through `decide`, which
-            // takes a `bool` and is shared with the joiner's front. Only the `401` is
-            // rewritten: a `400` is about the request's bytes and a `403` about where
-            // it came from, and neither becomes truer for the share having stopped.
-            //
-            // Keyed on the typed reason, not on the rendered status text. The block
-            // below already learned that lesson, and these two were left testing
-            // `starts_with("HTTP/1.1 401")`, which is the same recovery by a different
-            // spelling. It is correct today and correct by coincidence:
-            // `Refusal::status` and `refusal_response`'s format string are both free to
-            // change, and either would silently stop a stopped share from telling its
-            // visitors so.
+            // Substituted after the fact rather than threaded through `decide`, which takes a
+            // `bool` and is shared with the joiner's front.
             let unauthorized = refusal == Some(crate::gate::Refusal::NotAuthorized);
             if unauthorized {
                 match why {
@@ -1194,18 +1120,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_box_that_sends_more_than_it_declared_cannot_smuggle_a_second_response() {
-        // The response-smuggling shape from the box's side. If the front forwarded
-        // everything the box wrote rather than exactly the length it declared, the
-        // bytes after the body would be read by the visitor's client as a *second*
-        // response, one the app appended itself, on a connection the visitor
-        // believes belongs to the page they asked for. Every framing test so far
-        // has been about the head, and this is about what happens after it.
-        //
-        // Verified by construction, and the construction is worth recording: the
-        // length is clamped in *two* places, once for the bytes that arrived in the
-        // same read as the head and once for the relay loop, and removing either
-        // alone leaves the other covering it for this input. So it pins the
-        // property rather than one of the two implementations.
+        // The response-smuggling shape from the box's side.
         let port = overlong_server();
         let dir = tempfile::tempdir().expect("tempdir");
         let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
@@ -1237,21 +1152,8 @@ mod tests {
         serving.abort();
     }
 
-    /// Linux-only, and this one alone among the tests this module recovered when
-    /// macOS got a dialer.
-    ///
-    /// It is the heaviest test here by a distance: it holds `MAX_CONNECTIONS`
-    /// stalled relays open at once and then waits on the scheduler to hand a slot
-    /// back. In isolation on macOS it passes every time (15 for 15). Run as part
-    /// of the whole suite it failed about one run in twelve, and still one in
-    /// fifteen after the poll budget was tripled to fifteen seconds, which is
-    /// long past the point where a longer wait is a fix rather than a way of not
-    /// looking.
-    ///
-    /// So it stays on the platform where it is stable rather than becoming the
-    /// flaky test everybody learns to re-run. What it covers is
-    /// platform-independent logic that Linux CI checks on every push: no
-    /// *behaviour* is unverified on macOS, only this way of verifying it.
+    /// Linux-only, and this one alone among the tests this module recovered when macOS got a
+    /// dialer.
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn a_share_at_its_ceiling_says_so_and_keeps_the_ones_it_has() {
@@ -1756,17 +1658,7 @@ mod tests {
         serving.abort();
     }
 
-    /// A handler that has been accepted and not yet authorized is work the
-    /// teardown waits for.
-    ///
-    /// Quiescence was defined by the sixty-four `Bridge::admit` permits, and a
-    /// handler paused in `read_head`, in parsing, or in authorization holds none
-    /// of them, so `quiesce` acquired all sixty-four immediately, marked the
-    /// receipt settled, and returned while such a handler was still live. On
-    /// Ctrl-C or a transport failure the record is merely `winding_up` and its
-    /// grants are still there, so the handler could then resume, authorize, take
-    /// a now-free permit, dial the box, and change something inside it *after*
-    /// the receipt had snapshotted its tally.
+    /// A handler that has been accepted and not yet authorized is work the teardown waits for.
     #[tokio::test]
     async fn a_connection_accepted_before_the_stop_cannot_reach_the_box_after_it() {
         let port = fake_dev_server();
@@ -1809,15 +1701,6 @@ mod tests {
     }
 
     /// Every refusal that is not about a credential lands in the receipt.
-    ///
-    /// The reason was being recovered by testing the rendered response for
-    /// `HTTP/1.1 400`, which reached the malformed-request refusals and left
-    /// both `403`s counted nowhere. Those two are the gate refusing a
-    /// foreign-origin browser request that arrived with the share cookie
-    /// attached, and refusing a service worker registration that would keep
-    /// control of the joiner's loopback origin after the share ended: at least
-    /// as relevant to an ingress receipt as an unparsable head. A session made
-    /// entirely of them reported no turned-away activity at all.
     #[tokio::test]
     async fn the_refusals_that_are_not_about_a_ticket_reach_the_receipt() {
         let port = fake_dev_server();
@@ -1886,18 +1769,6 @@ mod tests {
     }
 
     /// A head the *reader* refuses reaches the receipt too.
-    ///
-    /// `turned_away` counted only heads that were read and then refused by the
-    /// gate, and the head reader refuses several shapes before the gate ever
-    /// sees them: a header block past `MAX_HEAD`, bytes that are not UTF-8, a
-    /// head the peer stops feeding. Every one was dropped with no response and
-    /// no line anywhere, so the largest smuggling-shaped probe a public share
-    /// can be sent was the one its receipt could not mention.
-    ///
-    /// And the other half, which is why this is two answers and not one: a peer
-    /// that opens a socket and says nothing still leaves no trace. That is a
-    /// browser's speculative preconnect, and recording it would bury every row
-    /// that means something under noise anybody can generate for free.
     #[tokio::test]
     async fn a_head_the_reader_would_not_take_is_still_somebody_turned_away() {
         use tokio::io::AsyncWriteExt;
@@ -2699,16 +2570,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_big_response_reaches_a_client_that_pipelined_another_request() {
-        // Two things at once, and both were broken. The share serves exactly one
-        // request per connection, so a keep-alive client's follow-up sits unread,
-        // and the relay loop, which reads and discards whatever the peer says, has
-        // to keep delivering the response it is in the middle of rather than
-        // treating the peer's traffic as a reason to stop.
-        //
-        // Written first as a test for the linger drain, asserting that the close did
-        // not reset the connection. It passed with that drain deleted, so the claim
-        // was wrong and the name went with it. What it does discriminate is the
-        // megabytes.
+        // Two things at once, and both were broken.
         const BODY: usize = 8 * 1024 * 1024;
         let port = big_server(BODY);
         let dir = tempfile::tempdir().expect("tempdir");

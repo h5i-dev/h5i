@@ -328,16 +328,6 @@ impl Verb {
     }
 
     /// Whether this verb belongs in a replay.
-    ///
-    /// State-mutating verbs only. A replay exists to reach a state again, and
-    /// the reads are how a model decided what to do next rather than part of the
-    /// doing.
-    ///
-    /// Waits are the interesting exclusion. A wait is not a state change, and
-    /// the settle it drives happens anyway on the verbs that are recorded; a
-    /// replay on this engine's virtual clock reaches the same quiescent state
-    /// without being told to wait for it. On a wall-clock engine that would not
-    /// be true, which is why theirs record waits and this does not.
     pub fn is_recorded(self) -> bool {
         match self {
             Verb::Navigate
@@ -381,17 +371,7 @@ impl Verb {
         }
     }
 
-    /// Whether this verb accepts an optional `url` and goes there before it
-    /// reads.
-    ///
-    /// A round trip an agent does not have to spend. `navigate` then `markdown`
-    /// is two turns through a model to answer one question, and the model pays
-    /// for the intervening reply in context as well as latency. The read verbs
-    /// therefore take the URL directly, and the reply says where it ended up.
-    ///
-    /// Only *reads* qualify. Fusing a navigation into `type` or `click` would
-    /// mean acting on a page whose refs the caller has never seen, which is the
-    /// failure the staleness check exists to prevent.
+    /// Whether this verb accepts an optional `url` and goes there before it reads.
     pub fn navigates_first(self) -> bool {
         match self {
             Verb::Snapshot
@@ -447,17 +427,6 @@ impl Verb {
 }
 
 /// Why a verb could not be done, in a form an agent can act on.
-///
-/// Two things travel with every failure and neither is decoration.
-///
-/// *A code*, so a caller branches without parsing prose. The prose is written
-/// for a model and will be reworded; the code is the contract.
-///
-/// *The recovery*, in the message, because the reader is usually a model
-/// deciding what to do next and "no such ref" tells it what happened without
-/// telling it what to do instead. Both reference engines converged on the same
-/// shape, and the one that did not have it reported every failure as one error
-/// code with a free-text string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerbError {
     pub code: Code,

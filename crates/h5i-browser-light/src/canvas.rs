@@ -1,27 +1,4 @@
 //! Canvas 2D, drawn for real.
-//!
-//! Both reference engines fake this: Lightpanda ships sixty-one no-op bridge
-//! functions and Obscura's `DOMSnapshot` invents geometry, because neither has a
-//! rasteriser. This engine does. `blitz-paint` over `vello_cpu` already turns the
-//! page into pixels on the CPU, and `vello_cpu` is a general 2D rasteriser a
-//! canvas can use directly.
-//!
-//! The rule this is built around is roadmap-history.md §B8.4: *missing APIs are
-//! named, never stubbed silently.* A page that draws its content on a canvas and
-//! comes back blank, with nothing saying why, is indistinguishable from a page
-//! that drew nothing. So what is implemented *rasterises* (paths, rectangles,
-//! arcs, fills, strokes, transforms, the state stack, `toDataURL`) and what is
-//! not is reported by name through the same `unsupported()` channel as every
-//! other missing Web API. Text, gradients, patterns, shadows, `drawImage`, `clip`
-//! and the `ImageData` operations are on that list today.
-//!
-//! An agent reading `note: this page used Web APIs this engine does not have
-//! (CanvasRenderingContext2D.fillText x12)` knows to route to Chromium. One
-//! reading a blank canvas knows nothing.
-//!
-//! A canvas keeps an RGBA buffer, attached on flush to the `<canvas>` element as
-//! raster image data, which `blitz-paint` draws for any element carrying it. No
-//! GPU path and no `custom_paint_source_id`: the buffer *is* the surface.
 
 use std::collections::HashMap;
 
@@ -39,16 +16,6 @@ use vello_cpu::{RenderContext, RenderMode, Resources};
 const MAX_SIDE: u32 = 8192;
 
 /// How many bytes of pixels one document's canvases may hold between them.
-///
-/// [`MAX_SIDE`] bounds *one* canvas at 8192x8192x4 = 256 MiB, which left the
-/// interesting number unbounded: a page can make as many `<canvas>` elements as
-/// it likes, so fifty at the maximum side is twelve gigabytes and the session is
-/// killed by the kernel rather than by any decision this engine made. The same
-/// class of defect as the `Max-Age` overflow.
-///
-/// 256 MiB, which is exactly one canvas at the maximum side: the largest thing
-/// [`MAX_SIDE`] already says a page may have still fits, and the *second* one is
-/// where the page is told no. Sixty viewport-sized canvases fit inside it.
 const MAX_TOTAL_BYTES: usize = 256 << 20;
 
 /// What a canvas is when nobody said otherwise. The HTML default.

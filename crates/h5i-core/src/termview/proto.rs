@@ -1,25 +1,4 @@
 //! The stream protocol, as agent-browser actually speaks it.
-//!
-//! Both directions are JSON text frames over one WebSocket. This module is the
-//! single place that knows their shape, so the viewer's event loop deals in typed
-//! values and a change upstream lands in one file.
-//!
-//! Two things here are pinned to observed behaviour rather than to a
-//! specification, and both matter:
-//!
-//! * Input messages are `input_mouse` / `input_keyboard` / `input_touch`.
-//!   agent-browser's dispatcher matches those three names and falls through to
-//!   `_ => {}` for everything else, so a message named after the DOM event
-//!   (`mousedown`, `keydown`) is *accepted by the socket and silently
-//!   discarded*. There is no error, no log line, and no way for a client to
-//!   notice: the connection stays healthy and the page simply never moves. h5i's
-//!   own web viewer shipped with exactly that bug (fixed alongside this module),
-//!   which is why the mapping is tested here rather than trusted.
-//! * An absent string field is omitted, never sent as `null`. Upstream builds its
-//!   CDP parameters by copying string fields through only when they parse as
-//!   strings, and CDP rejects the whole command when one is null. The caller
-//!   there discards the error, so a single null drops the keystroke quietly.
-//!   [`KeyEvent::to_json`] omits, and a test holds it to that.
 
 use serde_json::{json, Value};
 

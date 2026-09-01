@@ -1,23 +1,4 @@
 //! The invite ticket: the whole access model for a P2P share.
-//!
-//! A ticket names one box, one port, one grant and one expiry, and carries the
-//! secret that authorizes a peer plus whatever the transport needs in order to
-//! find the sharer. Possession is authorization. There is no account on either
-//! side, and no directory anywhere that has to agree the two of you know each
-//! other.
-//!
-//! Three properties are deliberate:
-//!
-//! * The secret is in the ticket, not on disk. The sharer keeps only its SHA-256
-//!   ([`crate::session`]), so a stolen box directory does not admit anyone. The
-//!   consequence is that a ticket is printed once and cannot be reprinted; mint
-//!   another with `h5i box share grant`.
-//! * The addressing is opaque here. `addr` is whatever the transport put there,
-//!   carried as JSON. That keeps this module free of the P2P dependency so the
-//!   encoding can be tested, and reviewed, without one.
-//! * Decoding is bounded before it allocates. A ticket arrives by paste from
-//!   wherever, so the length cap is checked on the encoded text, before base64
-//!   and before serde see any of it.
 
 use base64::Engine as _;
 use h5i_error::H5iError;

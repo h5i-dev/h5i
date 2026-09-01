@@ -1,13 +1,4 @@
-//! h5i-sandbox. Multi-tier process/container confinement for h5i.
-//!
-//! The policy model (`sandbox_policy`) plus the confinement machinery and
-//! runtime backends: kernel-tier Landlock/seccomp/namespaces (`sandbox`,
-//! `supervisor`, `seccomp_notify`, `cgroup`), the rootless-Podman container
-//! backend (`container`), the microsandbox microVM backend (`microvm`), the
-//! egress allowlist proxy and secrets handling
-//! (`auth_proxy`, `secrets`, `secrets_broker`). Extracted from `h5i-core` as an
-//! internal workspace crate so it compiles independently of the domain layer
-//! and could back other tools; it depends only on `h5i-error`.
+//! h5i-sandbox.
 
 // Re-export the shared error crate as `crate::error` so every internal
 // `crate::error::*` path in the moved modules resolves unchanged.

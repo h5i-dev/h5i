@@ -1,24 +1,4 @@
 //! The status line: the one row on the screen the page can never reach.
-//!
-//! A web viewer cannot offer this. Browser chrome is drawn by the browser, and a
-//! page that wants to lie about where it is has a long history of tools for doing
-//! so. Here the split is structural rather than conventional: the page is an
-//! image placed below row two, and row one is written by this module from the
-//! viewer's own state. No code path lets a frame from the box put a pixel in it.
-//!
-//! Two rules keep that worth something:
-//!
-//! * Everything the box supplies is sanitized before it is drawn. The URL arrives
-//!   over the WebSocket, so it is page-influenced text going to a terminal: the
-//!   exact shape of thing [`crate::redact::sanitize_display`] exists for, escape
-//!   sequences and bidi overrides alike.
-//! * The origin is never the part that gets truncated. A status line too narrow
-//!   for the whole URL has to drop something, and dropping the *end* of the host
-//!   is precisely the attack: `https://bank.example.evil.test/…` shortened from
-//!   the right reads as `https://bank.example…`. The origin is kept whole and the
-//!   path elided; when even the origin will not fit, everything else goes first
-//!   and it is truncated from the left, so what survives is the registrable end
-//!   of the host rather than its flattering beginning.
 
 use crate::control::Holder;
 use crate::redact::sanitize_display;

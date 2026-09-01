@@ -1,14 +1,4 @@
 // The DOM object model, built on the native primitives in `dom_api.rs`.
-//
-// This is JavaScript on purpose. Event listeners, timer callbacks and promise
-// resolvers are all GC-managed values, and holding them on the Rust side would
-// mean tracing them through Boa's collector. Keeping them here means the engine
-// that already manages their lifetime keeps managing it, and the Rust surface
-// stays plain ids and strings.
-//
-// Nothing here caches the tree. A wrapper holds a node id and asks for
-// everything else, so a JS reference cannot go stale in a way the document
-// disagrees with.
 (function () {
   "use strict";
 
@@ -29,18 +19,6 @@
   });
 
   /// Names that stand for a source this realm has not parsed yet.
-  ///
-  /// Reading one loads its tier, which defines the name for real and takes this
-  /// accessor's place. The read is the trigger because reading is what a page
-  /// does first with an interface it wants: `new WebSocket(...)`, and
-  /// `typeof WebSocket === "function"` for the feature detection that comes
-  /// before it. Both arrive here, so both bring the file in.
-  ///
-  /// The property it leaves behind is WebIDL's shape for an interface object —
-  /// `{ writable: true, enumerable: false, configurable: true }` — which is
-  /// also what the enumerability pass at the end of this file would have given
-  /// it, and it has to be set here because that pass has long since run by the
-  /// time a tier loads.
   function lazyGlobals(tier, names) {
     const install = (name, value) => {
       Object.defineProperty(globalThis, name, {
@@ -121,29 +99,6 @@
   const wrappers = new Map(); // id -> Node, so identity holds across lookups
 
   /// A live-enough `NodeList`/`HTMLCollection`.
-  ///
-  /// An array, because everything in this engine already treats one as a list
-  /// and frameworks reach for `map` and `filter` on the result — but with the
-  /// two methods a real collection has and an array does not. `list.item(0)`
-  /// was `undefined`, and calling it is "not a callable function", which is
-  /// exactly the error fourteen module failures reported and nothing named.
-  ///
-  /// Deliberately *not* watched, and this one was measured rather than argued.
-  /// Wrapping the list in the reporting proxy cost 3.9x on iteration — 674us
-  /// against 174us for a 400-node result — because every index read goes
-  /// through a trap, and `for (const el of query)` is the hottest line in DOM
-  /// code. An array already answers everything a `NodeList` does except `item`
-  /// and `namedItem`, which are right here, so the naming it bought was small
-  /// and the price was not.
-  /// The collection interfaces, as real classes over real arrays.
-  ///
-  /// An instance is a genuine Array whose prototype has been re-pointed at
-  /// the interface's — so indexing, `length`, iteration and the array methods
-  /// this file itself leans on all keep working, while `instanceof NodeList`,
-  /// the class string, and `item`/`namedItem` on the *prototype* are what
-  /// idlharness (and pages) can finally observe. `Symbol.species` is Array so
-  /// a `filter` over a collection hands back a plain array instead of asking
-  /// the throwing constructor for a new one.
   const COLLECTION_CLASSES = {};
   {
     const declare = (name, Parent, members) => {
@@ -212,20 +167,6 @@
   }
 
   /// Take a node out of whatever parent it is in, before putting it somewhere.
-  ///
-  /// The DOM defines insertion as removing the node from its old parent first,
-  /// and this engine was not doing it: the tree underneath drops a node
-  /// inserted while still parented, so *moving* a node deleted it. Three
-  /// appends followed by two moves left one child of three.
-  ///
-  /// That is the operation a keyed diff is built out of. It is why preactjs.com
-  /// rendered its shell and its sidebar and then nothing where the article
-  /// should be: preact reorders by re-inserting nodes it already has, and every
-  /// reorder threw one away.
-  ///
-  /// Deliberately the raw detach rather than `removeChild`: a move is one
-  /// operation, and firing a disconnect for the half of it that is a removal
-  /// would tell a custom element it had left a document it is still in.
   function detachFromParent(node) {
     if (!node || node._id === undefined || node._id === null) return;
     if (api.parent(node._id) === null || api.parent(node._id) === undefined) return;
@@ -240,16 +181,8 @@
     return knownDocumentNode;
   }
 
-  /// Tells "wrap the node that already has this id" apart from "a page called
-  /// `new Text('hello')`".
-  ///
-  /// `Text` and `Comment` are constructible interfaces — DOM §4.10 and §4.11
-  /// say a page may build one — and this file's own classes take a *node id* as
-  /// their first argument. Without a way to tell the two apart, `new Text("x")`
-  /// built a wrapper whose id was the string `"x"`, which the primitives
-  /// converted to 0, which is the document. The page got the document back
-  /// dressed as a text node, and appending it anywhere put the document inside
-  /// itself. See `would_cycle` in `dom_api.rs` for what that cost.
+  /// Tells "wrap the node that already has this id" apart from "a page called `new
+  /// Text('hello')`".
   const FROM_ID = Symbol("h5i node id");
 
   function wrap(id) {
@@ -497,20 +430,6 @@
   const pendingDefinitions = new Map();
 
   /// Whether a string is a valid custom element name, per HTML §4.13.
-  ///
-  /// Eight clauses, of which this engine enforced one (the dash). The rest
-  /// matter for the same reason the dash does: the name space is shared with
-  /// the parser, and a name a browser refuses must be refused here or a page
-  /// gets a component in one engine and an unknown element in the other.
-  ///
-  /// The reserved list is the awkward part and is not guessable: they are
-  /// hyphenated names SVG and MathML already own, so they look like valid
-  /// custom element names and are not.
-  /// XML's `Name` production, which `createElement` and friends validate
-  /// against before anything else happens.
-  ///
-  /// Two errors, kept apart because the spec keeps them apart and pages catch
-  /// them separately: this one is "that is not a name at all".
   const NAME_START = /[:A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]/;
   const NAME_CHAR = /[-.0-9\u00B7\u0300-\u036F\u203F-\u2040:A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]/;
 
@@ -545,18 +464,6 @@
   ]);
 
   /// The characters a name may hold, after the first.
-  ///
-  /// **This is the current rule, not the one that is in most write-ups.** The
-  /// old `PotentialCustomElementNameChar` production listed permitted ranges;
-  /// whatwg/html#7991 replaced it with "a valid element local name", which
-  /// *excludes* rather than includes — everything is allowed except NUL, the
-  /// four ASCII whitespace characters the parser uses, space, `/` and `>`.
-  ///
-  /// The difference is not academic. Implementing the superseded rule rejected
-  /// names like `a-\u0001`, which are legal now, and
-  /// `custom-elements/registries/valid-custom-element-names.html` builds
-  /// exactly those from a code-point sweep — so the old rule failed the file
-  /// in the *other* direction from the one it was written to fix.
   const FORBIDDEN_IN_LOCAL_NAME = new Set([
     0x00, 0x09, 0x0a, 0x0c, 0x0d, 0x20, 0x2f, 0x3e,
   ]);
@@ -652,16 +559,11 @@
     },
     whenDefined(name) {
       const key = String(name);
-      // **An invalid name rejects rather than waiting forever.** `define` and
-      // `whenDefined` validate the same way, and a promise that never settles
-      // is the worst of the three possible answers: a caller cannot tell it
-      // from a component that has not loaded yet, so it waits out its own
-      // timeout instead of handling an error it could have handled at once.
-      //
-      // It is also how `valid-custom-element-names.html` hangs: every
-      // invalid-name case awaits this rejection, so a `whenDefined` that sits
-      // there takes the entire file with it — 5,900 subtests reporting nothing
-      // because one promise never settled.
+      // **An invalid name rejects rather than waiting forever.** `define` and `whenDefined`
+      // validate the same way, and a promise that never settles is the worst of the three
+      // possible answers: a caller cannot tell it from a component that has not loaded yet, so
+      // it waits out its own timeout instead of handling an error it could have handled at
+      // once.
       if (!isValidCustomElementName(key)) {
         return Promise.reject(new DOMException(
           `\`${key}\` is not a valid custom element name`,
@@ -696,35 +598,7 @@
     return out;
   }
 
-  // Report a read that found nothing, without taxing the reads that find
-  // something.
-  //
-  // The corpus found the gap this closes. `missingApi` names globals, so
-  // `WebSocket` reports itself — but a page reading `el.scrollIntoView` or
-  // `document.activeElement` got `undefined`, then threw
-  // `TypeError: not a callable function` somewhere further along, and nothing
-  // anywhere named the property. The measurement could not see what was left,
-  // which is a different thing from nothing being left.
-  //
-  // **This used to be a `Proxy` around every wrapper**, and the reporting was
-  // right while the price was not: a `get` trap in front of an object fires for
-  // every read, including the overwhelming majority that find exactly what they
-  // asked for. Measured at **799 ns of the 882 ns** a known property read cost
-  // against 82 ns for a plain object — a 10x tax on the hottest path in the
-  // engine, to name the reads that miss.
-  //
-  // A missing read already walks the whole prototype chain; a found one stops
-  // where it is found. So the reporting goes at the *end* of the chain instead
-  // of the front of the object, and the two cases separate themselves: a
-  // property we implement is found on a prototype and never reaches here, and
-  // only a genuine miss pays for a trap. Nothing about *what* is reported
-  // changes.
-  //
-  // It also removes a compromise the proxy form had to make. That trap passed
-  // the raw target as the receiver, so a getter the *page* defined on its own
-  // class ran with the proxy stripped and its own missing reads went
-  // unrecorded. A sentinel has no receiver to substitute: `receiver` is the
-  // object the page actually read from, always.
+  // Report a read that found nothing, without taxing the reads that find something.
 
   /// The labels `wrap` gives the three kinds of node it hands out.
   const KIND_LABELS = { 1: "Element", 3: "Text", 8: "Comment" };
@@ -822,22 +696,6 @@
   }
 
   /// Declare the fields this file sets only sometimes.
-  ///
-  /// `get tagName()` reads `this._nsuri` to find out whether the element came
-  /// from `createElementNS`, and for everything the parser made it never did.
-  /// That read found nothing on the instance, nothing on any prototype, and
-  /// arrived at the sentinel — so **the engine was paying a trap to ask itself
-  /// a question about its own bookkeeping**, on the hottest accessor there is.
-  /// It measured 1415 ns against the 196 ns the underlying native call costs.
-  ///
-  /// A value of `undefined` on the prototype answers the same question at the
-  /// first hop. Writable, because an instance that *does* have a namespace
-  /// assigns over it, and a non-writable prototype property would make that
-  /// assignment fail. Non-enumerable, because these are machinery and nothing
-  /// that walks an interface should see them.
-  ///
-  /// `an_internal_read_never_reaches_the_sentinel` is the guard: add a field
-  /// like this and forget to declare it, and that test says so.
   function declareInternals(proto, names) {
     for (const name of names) {
       Object.defineProperty(proto, name, {
@@ -876,23 +734,8 @@
 
   class DOMTokenList {
     constructor(node, attribute) { this._node = node; this._attr = attribute; }
-    /// The ordered token *set*: `class="a a b"` is two tokens, not three, and
-    /// `length`, iteration and indexing all see the deduplicated view. Only
-    /// `value` reports the raw attribute.
-    ///
-    /// **Hand-rolled and memoised, because this is the hot path of the whole
-    /// class API.** It was `raw.split(/\s+/).filter(Boolean)` into a `Set` and
-    /// back out through a spread: four intermediates and a regex, measured at
-    /// **43 us** against 2 us for the `getAttribute` underneath it — Boa is
-    /// slow at regex and at `Set`, and every `add`, `remove`, `contains`,
-    /// `toggle`, `length` and index read pays it. One pass over the string with
-    /// `charCodeAt` allocates one array and touches neither.
-    ///
-    /// Memoised on the attribute text, the way the style declaration is: the
-    /// same class string is tokenised once for the realm however many elements
-    /// carry it, which on a component page is most of them. **The array is
-    /// shared, so no caller may mutate it** — `add` copies, `remove` filters,
-    /// and everything else reads.
+    /// The ordered token *set*: `class="a a b"` is two tokens, not three, and `length`,
+    /// iteration and indexing all see the deduplicated view.
     _all() {
       const raw = api.getAttr(this._node._id, this._attr);
       if (!raw) return [];
@@ -929,20 +772,9 @@
     _write(list) {
       this._node.setAttribute(this._attr, list.join(" "));
     }
-    /// The spec's "update steps", and **which callers run them is the whole
-    /// contract** — a first attempt made the write conditional on the set
-    /// having changed, which is wrong for three of the four mutators.
-    ///
-    /// `add` and `remove` run these *unconditionally*, so `class="a a a  b"`
-    /// with `add("a")` really does rewrite the attribute as the normalised
-    /// `"a b"` even though the set is unchanged. `replace` runs them on its
-    /// true path, which is what `Element-classlist` checks with a
-    /// MutationObserver — "a mutation exactly when replace() returns true" —
-    /// and the conditional version failed all 90 of those. Only `toggle`
-    /// declines, when `force` asks for the state the list is already in.
-    ///
-    /// The one thing the steps themselves skip: an element with no attribute
-    /// and an empty set keeps having none rather than gaining an empty one.
+    /// The spec's "update steps", and **which callers run them is the whole contract** — a
+    /// first attempt made the write conditional on the set having changed, which is wrong for
+    /// three of the four mutators.
     _update(list) {
       if (list.length === 0 && api.getAttr(this._node._id, this._attr) === null) return;
       this._write(list);
@@ -1131,21 +963,7 @@
 
   class Node {
     constructor(id) {
-      // `undefined` means "the element currently being upgraded". A custom
-      // element's constructor runs as `super()` with no arguments — the class
-      // never sees the node it is being attached to — so the id arrives out of
-      // band, exactly as the construction stack works in a real engine.
-      //
-      // Anything else with no id is a page calling `new Element()`, which DOM
-      // §4.4 and §4.9 say is not a thing: `Node`, `Element` and `CharacterData`
-      // are not constructible, and every engine throws here. Ours did not, and
-      // the result was the same defect `new Text("x")` had — `_id` became
-      // `null`, the primitives read that as node 0, and node 0 is the document.
-      // `new Element().textContent = "x"` wrote through to the document and
-      // took the process down with it.
-      //
-      // `Text` and `Comment` *are* constructible, and reach this with a real id
-      // because their own constructors make a node first.
+      // `undefined` means "the element currently being upgraded".
       if (typeof id !== "number" && upgrading === null) {
         // `new MyElement()` on a **defined** element is legal and creates one:
         // HTML says the constructor makes an element with the definition's own
@@ -1313,16 +1131,6 @@
     }
 
     /// The text as *rendered*, which is what separates it from `textContent`.
-    ///
-    /// Two differences, and both are the reason pages reach for this one:
-    /// content in a `display: none` subtree is not in it, and block boundaries
-    /// become line breaks. A page that reads `innerText` to find out what the
-    /// user can see gets a different and better answer than `textContent`,
-    /// which would hand back the contents of every hidden menu on the page.
-    ///
-    /// Walked natively. As a JavaScript walk this cost 142ms on a 6,000-node
-    /// page against `textContent`'s 6ms, because every level built an array of
-    /// wrapped nodes and every read paid a proxy trap.
     get innerText() { return api.innerText(this._id); }
     // The setter is not `textContent`: each line break in the string becomes
     // a real `<br>`, because innerText round-trips through the *rendered*
@@ -1469,15 +1277,6 @@
       return copy;
     }
     /// The namespace lookup trio, with the answers an HTML document gives.
-    ///
-    /// This engine parses HTML and nothing else, and in an HTML parse every
-    /// element lands in the XHTML namespace with no prefix, and `xmlns`
-    /// attributes are ordinary attributes with no namespace of their own —
-    /// which the spec's locate-a-namespace algorithm therefore ignores. So
-    /// the walk collapses to a table: the two reserved prefixes, the default
-    /// namespace for elements, null for everything else. Not a stub — this is
-    /// what the full algorithm computes over the only tree shape this engine
-    /// can hold.
     lookupNamespaceURI(prefix) {
       const p = prefix === undefined || prefix === null || prefix === "" ? null : String(prefix);
       if (p === "xml") return "http://www.w3.org/XML/1998/namespace";
@@ -1791,17 +1590,7 @@
     isDefaultNamespace(ns) { return ns === null || ns === ""; }
   }
 
-  /// An attribute as a node, which is what `attributes` and `createAttribute`
-  /// hand back.
-  ///
-  /// `attributes` used to return plain `{name, value}` literals, so everything
-  /// the interface adds was missing: `localName`, `prefix`, `namespaceURI`,
-  /// `ownerElement`, and the `nodeType` of 2 that tells code it is holding a
-  /// node at all. `dom/nodes/case.html` reads `attributes[0].prefix` on its
-  /// first line and could get no further.
-  ///
-  /// Writing `value` writes through to the element, as a live attribute node
-  /// does — a detached one (from `createAttribute`) keeps its own.
+  /// An attribute as a node, which is what `attributes` and `createAttribute` hand back.
   class Attr {
     constructor(name, value, owner, namespace, prefix) {
       refuseExternal("Attr");
@@ -1947,16 +1736,8 @@
       if (this._nsuri !== undefined && this._nsuri !== "http://www.w3.org/1999/xhtml") {
         return this._prefix ? `${this._prefix}:${this._localName}` : this._localName;
       }
-      // Remembered on the wrapper, because a native call costs ~150 ns of
-      // dispatch however little it does at the end of it — and this is the
-      // most-read property in the engine. The prelude alone branches on it a
-      // dozen times (`=== "SCRIPT"`, `=== "TEMPLATE"`, `=== "TEXTAREA"`), each
-      // of those a round trip into Rust for an answer that cannot change: an
-      // element's tag is fixed when the element is made.
-      //
-      // The same bet `_kind` already makes, and it stands or falls with it: a
-      // wrapper is keyed by node id and kept, so both are wrong together if a
-      // freed id is ever handed to a new node.
+      // Remembered on the wrapper, because a native call costs ~150 ns of dispatch however
+      // little it does at the end of it — and this is the most-read property in the engine.
       return this._tag ?? (this._tag = api.tagName(this._id));
     }
     get nodeName() { return this.tagName; }
@@ -2289,17 +2070,8 @@
       globalThis.__h5iInstallInlineHandlers(this);
     }
 
-    /// `innerHTML`, plus the one thing `innerHTML` is specified *not* to do:
-    /// turn `<template shadowrootmode>` into a real shadow root.
-    ///
-    /// That difference is the entire reason the method exists, and it is how a
-    /// server-rendered component ships its shadow DOM as markup — so an engine
-    /// that aliased this to `innerHTML` would leave every declarative component
-    /// as an inert `<template>` that renders nothing.
-    ///
-    /// "Unsafe" is the spec's word for "does not sanitise", which is the same
-    /// contract `innerHTML` already has here. It is not a new hazard: page
-    /// markup reaching an agent is fenced as untrusted either way.
+    /// `innerHTML`, plus the one thing `innerHTML` is specified *not* to do: turn `<template
+    /// shadowrootmode>` into a real shadow root.
     setHTMLUnsafe(html) {
       api.setInnerHtml(this._id, String(html));
       adoptDeclarativeShadowRoots(this);
@@ -2307,26 +2079,6 @@
     }
 
     /// `innerHTML`, plus any shadow roots the caller asked to have serialised.
-    ///
-    /// The half this engine can answer, answered; the half it cannot, reported.
-    ///
-    /// **What works.** With no options, with `serializableShadowRoots: false`,
-    /// or on an element that has no shadow root, `getHTML()` is defined to
-    /// equal `innerHTML` — and that is the overwhelming majority of real calls,
-    /// because the overwhelming majority of elements are not shadow hosts.
-    ///
-    /// **What does not, and why it is not faked.** Serialising a shadow root
-    /// means emitting `<template shadowrootmode=…>` holding the shadow tree,
-    /// *followed by* the light children. This engine has one tree: a shadow
-    /// root here is a view of its host (see `ShadowRoot`), the component's
-    /// output and the light content are siblings in the same element, and
-    /// nothing distinguishes them afterwards. So the string a browser would
-    /// produce cannot be reconstructed, and emitting the flattened content
-    /// under a `<template shadowrootmode>` header would be a plausible lie —
-    /// markup that parses, looks right, and describes a tree that never
-    /// existed. It is recorded through `unsupported()` instead, which is the
-    /// channel an agent already reads and the one that made this method
-    /// findable in the first place.
     getHTML(options) {
       const wants =
         options != null &&
@@ -2752,19 +2504,6 @@
   }
 
   // What `attachShadow` hands back.
-  //
-  // This engine has one tree, and blitz has no notion of a shadow one — so a
-  // shadow root here is a *view of the host element*, and everything a
-  // component renders into it lands in the host. That is the flattening a
-  // browser's accessibility tree performs anyway, and it is what an agent
-  // wants: the component's rendered output, in the page, readable.
-  //
-  // The cost is stated rather than hidden: **encapsulation is not enforced**.
-  // `document.querySelector` reaches inside a shadow root here and would not in
-  // a browser, and styles do not scope. What is preserved is the part that
-  // decides whether a page can be read at all — the content renders, `host` and
-  // `mode` answer, and light children are projected into a `<slot>` if the
-  // component declares one.
   class ShadowRoot extends Element {
     constructor(hostId, mode) {
       super(hostId);
@@ -2813,16 +2552,6 @@
   }
 
   // What `<template>.content` hands back.
-  //
-  // A template's children are parsed into the tree here rather than into a
-  // separate document, so this is a *view* of the template node that answers
-  // `nodeType` as a fragment. That is enough for the two things pages do with
-  // it — clone it, and query inside it — without pretending there is a second
-  // document underneath.
-  //
-  // Its absence was not a small gap: `template.content.cloneNode(true)` threw
-  // `cannot convert 'null' or 'undefined' to object`, which was the *entire*
-  // text of fifteen module failures across the application corpus.
   class TemplateContent extends Element {
     get nodeType() { return 11; }
     get nodeName() { return "#document-fragment"; }
@@ -2842,25 +2571,6 @@
   // which is strict, assigning to a getter-only property *throws*, and a
   // classic-script test cannot see it because sloppy mode swallows it.
   /// The content attributes every element reflects, because they are global.
-  ///
-  /// It used to hold twelve more, and they were not global: `htmlFor`, `rel`,
-  /// `target`, `charset`, `crossOrigin` and the rest belong to particular
-  /// interfaces, and defining them here put them on *every* element. A page
-  /// asking `"htmlFor" in element` — which is how the platform is feature
-  /// detected, and what WPT's reflection helper gates on — was told yes for
-  /// `<div>`, `<button>`, and everything else.
-  ///
-  /// That is not a cosmetic wrong answer. The helper takes it as licence to
-  /// test a property the element should not have, so one file went from 209
-  /// subtests passing to 330 failing: the engine had claimed a surface it does
-  /// not implement, and was then measured against it.
-  ///
-  /// The interface table below is the right owner for the rest, and already
-  /// declared all but three of them. `dir`, `slot` and `accessKey` stay because
-  /// they really do belong to every element.
-  /// `[LegacyNullToEmptyString]`, which the legacy presentational colour
-  /// attributes carry: `body.bgColor = null` writes "" rather than "null".
-  /// Named once so the flag reads as the IDL annotation it is.
   const NULL_IS_EMPTY = { nullAsEmpty: true };
   // The form-submission enumerations. `enctype` on the form falls back to
   // urlencoded whether missing or garbage; the per-button `form*` overrides
@@ -2895,18 +2605,8 @@
   /// so this is a behaviour difference and not a formatting one.
   const DOCUMENT_URL_WHEN_EMPTY = { emptyIsDocumentUrl: true };
 
-  /// `crossOrigin` is a **nullable** enumerated attribute, and every element
-  /// that has it has the same one. It was spelled out on `<link>` and left as
-  /// a plain string on `<img>`, `<script>`, `<video>` and `<audio>`, so those
-  /// four reported the raw attribute where a browser reports `"anonymous"`,
-  /// and `null` where a browser reports `null` only by accident.
-  /// `preload` and `loading`, shared because more than one element has them
-  /// and the table already keeps `CROSS_ORIGIN` and `REFERRER_POLICY` this way.
-  ///
-  /// `preload`'s missing and invalid values are implementation-defined; the
-  /// spec's only requirement is that the answer be one of the keywords, so
-  /// "auto" is a choice rather than a transcription, and `""` maps to it
-  /// because that is the state an empty attribute names.
+  /// `crossOrigin` is a **nullable** enumerated attribute, and every element that has it has
+  /// the same one.
   const PRELOAD = ["preload", "preload", "enumerated", {
     keywords: ["none", "metadata", "auto"], missing: "auto", invalid: "auto",
     aliases: { "": "auto" },
@@ -2933,20 +2633,7 @@
     });
   }
 
-  /// Reflect an IDL property onto a content attribute, with the *type* the
-  /// spec gives it.
-  ///
-  /// The type is not decoration, and this mechanism exists because passing the
-  /// string through looked like it worked. `dir` is an enumerated attribute:
-  /// its IDL getter answers `""` for anything that is not one of its keywords,
-  /// so `el.setAttribute("dir", "5%")` reads back as `""` in a browser and read
-  /// back as `"5%"` here. WPT sets every reflected attribute to sixty-odd
-  /// hostile values and checks exactly that, which is how an engine can score
-  /// zero on an attribute it believed it supported.
-  ///
-  /// One definition per shape rather than a hand-written getter and setter per
-  /// attribute, because there are a great many of them and the interesting part
-  /// is the conversion, not the plumbing.
+  /// Reflect an IDL property onto a content attribute, with the *type* the spec gives it.
   function reflect(proto, idl, content, type = "string", options = {}) {
     const parseInteger = (raw) => {
       // The spec's rules for parsing integers, which are not `Number()`:
@@ -3275,26 +2962,8 @@
   }
   reflect(Element.prototype, "role", "role", "nullable");
 
-  // The ARIA properties that are *enumerated* rather than free strings —
-  // with the spec's own table, not a uniform rule.
-  //
-  // The first cut of this declared every one as `{missing: null, invalid: ""}`
-  // and that uniformity was the bug: the states are per attribute. Three
-  // shapes actually occur, and the table below is transcribed from the
-  // reflection spec (WPT `html/dom/elements-aria-enumerated.js` is the same
-  // table in test form):
-  //
-  //   * `ariaHidden`-like: missing and invalid both answer "false" — absence
-  //     of the attribute *means* not-hidden, so null would be a lie.
-  //   * `ariaChecked`-like: missing, invalid and the bare `aria-checked=""`
-  //     all answer null — there is no checkedness to report.
-  //   * `ariaCurrent`: invalid answers "true", because writing *anything*
-  //     there is a claim of currency the spec preserves.
-  //
-  // Every one is nullable on the way in — assigning null removes the
-  // attribute — including the ones whose *reading* of a missing attribute is
-  // "false" rather than null, which is why `nullable: true` is its own flag
-  // rather than inferred from the missing value.
+  // The ARIA properties that are *enumerated* rather than free strings — with the spec's own
+  // table, not a uniform rule.
   const EMPTY_IS_FALSE = { "": "false" };
   const EMPTY_IS_NULL = { "": null };
 
@@ -3832,33 +3501,15 @@
           const edited = api.getValue(this._id);
           if (edited && edited.trim()) return edited;
 
-          // A blank editor on a `<textarea>` is the case worth handling. A
-          // textarea's default value is its text content, and blitz lays one
-          // out with an editor holding a single space rather than that content
-          // — so a page whose comment box arrives filled in read back as
-          // blank, which is a filled form reported as empty. Whitespace-only
-          // counts as unseeded for that reason: the space is blitz's, not the
-          // page's.
-          //
-          // The limitation this leaves is small and stated: a textarea a user
-          // has explicitly *cleared* also has an empty editor, and reports its
-          // original text rather than "". Wrong in that one case, right in the
-          // far commoner one, and it fails toward showing content that exists
-          // rather than hiding it.
+          // A blank editor on a `<textarea>` is the case worth handling.
           if (tag === "TEXTAREA" && this._value === undefined) {
             const written = this.textContent;
             if (written) return written;
           }
-          // **A whitespace-only editor on an unedited control is empty.** This
-          // is the same rule the `<textarea>` branch above states, and it was
-          // being applied to textareas only — so a laid-out `<input>` that
-          // nobody had typed into reported `" "`, because that is what blitz
-          // seeds its editor with.
-          //
-          // It is not a validation detail. `if (!input.value)` was *false* for
-          // an empty field, so every page and every agent that tests a form
-          // for emptiness got the wrong answer, and `required` could never
-          // fire.
+          // **A whitespace-only editor on an unedited control is empty.** This is the same rule
+          // the `<textarea>` branch above states, and it was being applied to textareas only —
+          // so a laid-out `<input>` that nobody had typed into reported `" "`, because that is
+          // what blitz seeds its editor with.
           if (edited !== null && edited !== undefined) {
             if (this._value === undefined && !edited.trim()) {
               return api.getAttr(this._id, "value") ?? "";
@@ -3951,17 +3602,7 @@
       },
     });
 
-    // `checked` is state, not the attribute. The attribute is the *default*,
-    // which is why it is reflected separately as `defaultChecked` — writing to
-    // it here made `getAttribute("checked")` change under a page that never
-    // touched the markup, and made a box the user unticked look ticked still.
-    // The popover invoker pair, on the two elements that can be one.
-    //
-    // `popoverTargetElement` is not a reflection: it is an *element* reference
-    // resolved from the `popovertarget` attribute's id, and it is also
-    // settable directly — a page may hand it an element that has no id at all.
-    // That second half is why it needs its own storage rather than reading the
-    // attribute every time.
+    // `checked` is state, not the attribute.
     for (const tag of ["button", "input"]) {
       on([tag], "popoverTargetElement", {
         get() {
@@ -4741,27 +4382,7 @@
                "embed", "frame", "applet", "slot"], "name", "name");
     reflectOn(["button", "param", "data"], "value", "value");
 
-    // Canvas 2D, drawn for real. See `src/canvas.rs`.
-    //
-    // This used to answer `null`, on the argument that a context object which
-    // accepts `fillRect` and paints nothing is a lie the page cannot detect —
-    // which was right, and is exactly what both reference engines ship. The
-    // answer was never "fake it better"; it was that this engine owns a
-    // rasteriser (`blitz-paint` over `vello_cpu`) and can therefore do the
-    // thing itself, which is cheaper here than in an engine with no pixels at
-    // all.
-    //
-    // The honesty rule survives intact and moves down one level. Every call
-    // below routes through `api.canvasOp`, which returns **false** for an
-    // operation that is not built, and a false answer is reported through the
-    // same `unsupported()` channel as any other missing Web API. So a page
-    // that calls `fillText` still gets its name in front of the agent —
-    // `note: this page used Web APIs this engine does not have
-    // (CanvasRenderingContext2D.fillText x12)` — rather than a blank canvas
-    // with no explanation.
-    //
-    // Not built, and reported by name when asked for: text, gradients,
-    // patterns, shadows, `drawImage`, `clip`, and the `ImageData` operations.
+    // Canvas 2D, drawn for real.
     class CanvasRenderingContext2D {
       constructor(canvas) {
         this.canvas = canvas;
@@ -4851,23 +4472,6 @@
     }
 
     // The operations this engine does not have, present and reporting.
-    //
-    // Absent would be worse here than anywhere else in the prelude, and it is
-    // the one place the usual rule inverts. Canvas drawing is *incremental*: a
-    // page issues thirty calls in a row, and if the fourth throws
-    // "fillText is not a function" the remaining twenty-six never run, so a
-    // page that would have rendered most of its chart renders none of it — and
-    // the agent gets a blank canvas plus a stack trace about the wrong thing.
-    //
-    // Present-and-reporting keeps the rest of the drawing, and puts the real
-    // answer where an agent will read it: `note: this page used Web APIs this
-    // engine does not have (CanvasRenderingContext2D.fillText x12)`. That is
-    // the routing signal §B8.4 exists for, and it is only available because
-    // `api.canvasOp` answers `false` for what it does not know rather than
-    // quietly returning.
-    //
-    // These are *not* silent stubs. A silent stub returns `undefined` and says
-    // nothing; every one of these names itself the first time it is called.
     for (const name of [
       "fillText", "strokeText", "drawImage", "clip", "setLineDash",
       "ellipse", "arcTo", "roundRect", "putImageData", "createImageData",
@@ -5614,19 +5218,6 @@
     });
 
     /// `requestSubmit` and `submit`, which differ in the two ways that matter.
-    ///
-    /// `requestSubmit()` is what a button does: it **validates**, and it fires
-    /// a cancelable `submit` event that a page can `preventDefault()`.
-    /// `submit()` is the escape hatch: it does **neither**, which is exactly
-    /// why a page that calls `form.submit()` from inside its own `submit`
-    /// handler does not recurse. Implementing them as the same function — the
-    /// obvious shortcut — would make that recursion real.
-    ///
-    /// Neither *navigates* here. This engine drives navigation through its own
-    /// verbs so an agent and a receipt see it, and a form submitting itself out
-    /// from under that would be a request nothing decided on. What both do is
-    /// build the entry list and fire the events, which is the half a page
-    /// observes and the half these tests check.
     Object.defineProperty(TAG_CLASSES.get("form").prototype, "requestSubmit", {
       configurable: true, writable: true,
       value(submitter) {
@@ -5725,15 +5316,6 @@
     const sameNode = (a, b) => !!a && !!b && a._id === b._id;
 
     /// A control's *form owner*, which is not simply its nearest ancestor form.
-    ///
-    /// **A present `form` attribute wins outright, even when it names
-    /// nothing.** This read the attribute for truthiness, so `form=""` — which
-    /// matches no id and therefore has no owner — fell through to the ancestor
-    /// search and reported the surrounding form. That is the opposite answer:
-    /// the whole point of the attribute is to take a control *out* of the form
-    /// it sits in.
-    ///
-    /// It must also name a `<form>`: `form="some-div"` has no owner either.
     function formOwnerOf(el) {
       const named = api.getAttr(el._id, "form");
       if (named !== null) {
@@ -5926,24 +5508,6 @@
   }
 
   /// Event-handler *content attributes*: `<body onload="run()">`.
-  ///
-  /// These never ran either, and for a different reason than the window
-  /// properties: the `on*` accessors are IDL attributes, reached when *script*
-  /// assigns them, and markup does not go through script. Nothing was
-  /// compiling an attribute into a handler at all, so a page whose entire
-  /// behaviour hangs off `<body onload>` loaded, did nothing, and looked idle
-  /// — which is exactly how it was scored.
-  ///
-  /// The compiled function is the spec's shape: the attribute value is a
-  /// function *body* rather than an expression, it takes `event`, and it is
-  /// called with the element as `this`.
-  ///
-  /// The attribute names are enumerated rather than discovered because they
-  /// have to become a selector. CSS can match an attribute's value by prefix
-  /// but not its *name*, so "every element with some `on*` attribute" is not a
-  /// selector — and the alternative, walking every element and asking for its
-  /// attribute names, is a call into the tree per element on documents that
-  /// run to tens of thousands of them.
   const HANDLER_ATTRS = [
     ...HANDLER_EVENTS, ...WINDOW_HANDLER_EVENTS,
     "focusin", "focusout", "readystatechange",
@@ -6031,32 +5595,6 @@
   }
 
   /// Refuse a selector a browser would refuse, rather than answering "nothing".
-  ///
-  /// `querySelector("!!!")` throws `SyntaxError` in a browser and returned
-  /// `null` here — the same answer as "no such element", so a page with a typo
-  /// took its not-found branch and never learned why.
-  ///
-  /// `:has()` never reaches this validator: stylo's servo parser hardcodes
-  /// `parse_has() -> false`, so `withHasMarkers` below evaluates it in this
-  /// file before the engine sees the selector. (A vendored one-bool stylo
-  /// patch once enabled the parser instead; removed by owner decision — an
-  /// in-tree fork of a rendering-engine crate is not something this project
-  /// maintains.)
-  /// The class this engine toggles to make "popover open" a fact CSS and
-  /// selectors can see.
-  ///
-  /// **This is the one place the engine writes into the page's own attribute
-  /// space, and it is owned rather than hidden.** A browser expresses the
-  /// state as the `:popover-open` pseudo-class, which lives outside the DOM;
-  /// this engine's selector matching is Stylo's, Stylo's servo parser does not
-  /// know the pseudo, and the UA rule that hides a closed popover has to have
-  /// *something* to match. A namespaced class is that something: `showPopover`
-  /// adds it, `hidePopover` removes it, and `:popover-open` in a selector is
-  /// rewritten to it below — so the pseudo works in `matches()` and
-  /// `querySelector` even though the parser never sees it. The cost is that
-  /// the class is visible in `className` and in serialisation, which a real
-  /// pseudo-class would not be; the alternative was every closed menu on every
-  /// page sitting in the agent's outline as if it were open.
   const POPOVER_OPEN_CLASS = "__h5i_popover_open__";
   /// Same arrangement for `:modal`: `showModal` stamps it, `close` lifts it.
   const MODAL_OPEN_CLASS = "__h5i_modal_open__";
@@ -6152,24 +5690,6 @@
   }
 
   /// One declaration's **serialised** value, memoised on what it was given.
-  ///
-  /// CSSOM defines `el.style.backgroundPosition` as the serialisation of the
-  /// specified value, not the text the author typed: `.5%` serialises as
-  /// `0.5%`, `-0` as `0`, and a shorthand comes back re-composed from its
-  /// longhands.
-  ///
-  /// **Memoised because `el.style` builds a new declaration on every access.**
-  /// The first version cached the parsed map on the `StyleDeclaration`, which
-  /// is thrown away immediately — so the cache never hit, and a single
-  /// `el.style.color` read cost one Stylo parse *per declared property*.
-  /// Measured at **33 us against 1 us** for the raw attribute, on an element
-  /// with five declarations: fifty times an ordinary DOM property read, on a
-  /// path that animation and drag code sits in.
-  ///
-  /// Keyed on property and raw text together, so the same declaration is
-  /// parsed once for the life of the realm however many wrappers ask. Bounded,
-  /// because a page that generates unique values every frame would otherwise
-  /// grow this without end.
   const serializedValues = new Map();
   /// Parsed declaration maps, keyed on the `style` text they came from.
   const declarationMaps = new Map();
@@ -6201,18 +5721,7 @@
     /// this one about what `color:red;;` means.
     constructor(source) { this._source = source; }
 
-    /// The declarations, as the author wrote them. Serialising happens in
-    /// `getPropertyValue`, one property at a time — see `serializedValue`.
-    ///
-    /// **Memoised on the declaration text**, and the reason is that `el.style`
-    /// builds a fresh `StyleDeclaration` on every access, so a per-instance
-    /// cache can never hit: `el.style.color` re-split the whole `style`
-    /// attribute into a new Map every time. Measured at 21 us against 1 us for
-    /// `getAttribute` on the same element — the split is the cost, not the
-    /// reading, and animation and drag code sits in this path.
-    ///
-    /// The map handed back is shared, so nothing may mutate it; every caller
-    /// here reads. Bounded for the same reason `serializedValues` is.
+    /// The declarations, as the author wrote them.
     _read() {
       const raw = this._source.get();
       const known = declarationMaps.get(raw);
@@ -6692,27 +6201,6 @@
   }
 
   // An API this engine does not implement, made to say so.
-  //
-  // The corpus run found the gap this closes: a global we never defined throws
-  // a bare `ReferenceError`, and a method on a half-defined object throws
-  // `TypeError: not a callable function`. Neither names the API, so neither
-  // reaches the unsupported list an agent reads — the page just looks broken.
-  // These record themselves on *any* access and throw a message that names what
-  // was wanted, so a missing API is legible from both directions.
-  // There was a `missingApi(name)` helper here that returned a proxy throwing a
-  // named TypeError for anything this engine lacked. It is gone, and its
-  // removal is the point.
-  //
-  // It made `typeof WebSocket` answer "function" and `'serviceWorker' in
-  // navigator` answer true — so every page that *correctly* feature-detects
-  // took the branch for an API that then threw. That is the plausible-wrong
-  // answer this engine exists to refuse, written by us, and it cost three real
-  // sites their whole bundle.
-  //
-  // An API we do not have is now simply absent, which is what a browser lacking
-  // it looks like, and absence is already named: a global reports itself
-  // through the ReferenceError parser in `Script::name_missing_global`, and a
-  // property through the reporting proxy in `observed`.
 
   // Real, because the engine already contains a correct URL parser and a
   // second one written in JavaScript would disagree with it about exactly the
@@ -7117,23 +6605,6 @@
   }
 
   /// Build a form's *entry list*, which is the algorithm submission is made of.
-  ///
-  /// It was a `querySelectorAll` over the form's descendants that skipped a
-  /// handful of types. Four things were wrong with that, and each is a
-  /// different wrong answer rather than a missing nicety:
-  ///
-  /// * **Ownership, not containment** (see `formOwnerOf`): a control with
-  ///   `form="thisId"` is submitted from anywhere on the page, and a descendant
-  ///   pointing elsewhere is not submitted here at all.
-  /// * **The submitter is an entry.** `<button name=action value=save>` is the
-  ///   whole reason a form can have two buttons, and skipping every button
-  ///   meant the server could not tell which one was pressed.
-  /// * **`_charset_`** is filled in with the encoding rather than with the
-  ///   control's own value, which is the one field whose value the *browser*
-  ///   supplies.
-  /// * **The `formdata` event** fires while the list is being built, which is
-  ///   how a page adds entries that no control holds — the documented
-  ///   replacement for the hidden inputs it used to inject.
   function buildEntryList(form, submitter) {
     const entries = [];
     for (const field of form.elements) {
@@ -7232,17 +6703,6 @@
   // feature. The features below have real answers here; anything else records
   // itself and reports no match, so the gap is visible instead of guessed at.
   /// What `matchMedia` hands back.
-  ///
-  /// It was an object literal carrying the right answers under the wrong shape:
-  /// `media` and `matches` were data properties, the interface did not exist to
-  /// name, and `addEventListener` was a local stub rather than the one every
-  /// other event target here uses. A real class over `EventTarget` fixes all
-  /// three at once and costs nothing at runtime — the answers are the same.
-  ///
-  /// The viewport never changes size mid-session, so a `change` listener can
-  /// never fire. That is accepted silently rather than recorded: a page adding
-  /// one is not asking for anything this engine lacks, it is asking for an
-  /// event that will not happen.
   class MediaQueryList extends EventTarget {
     constructor(text) {
       super();
@@ -8047,34 +7507,11 @@
   }
 
   /// `document.implementation`, for whichever document asked.
-  ///
-  /// It used to be an object literal inside the page document's getter, so a
-  /// document produced by `createHTMLDocument` — which is a real thing pages
-  /// build and then call `createDocumentType` on — had no `implementation` at
-  /// all, and the whole of `DOMImplementation-createDocumentType` died on
-  /// `aDocument.implementation` being undefined.
-  ///
-  /// `owner` is null for the page's own document, because `document` is built
-  /// further down this file and cannot be named here.
   function domImplementation(owner) {
     return observed({
       hasFeature: () => true,
-      /// A doctype is three strings and a nodeType; refusing it was never a
-      /// capability question. Validated like any qualified name — the test file
-      /// is mostly a sweep of names that must be rejected.
-      /// A doctype is three strings and a nodeType; refusing it was never a
-      /// capability question.
-      ///
-      /// It validated against XML's `Name` production, and **that is no longer
-      /// the rule.** DOM dropped the Name check from `createDocumentType`: of
-      /// the 81 cases the suite tests, 79 must *succeed* — `""`, `"1foo"`,
-      /// `"@foo"` and `"a.b:c"` among them — and the only two that throw are
-      /// `"edi:>"` and `"edi:a "`. What is left is the pair of characters that
-      /// would break the serialisation `<!DOCTYPE name>`: a `>` ends the
-      /// declaration early and whitespace splits the name, turning the rest
-      /// into markup. That is the same reasoning `createProcessingInstruction`
-      /// already applies to `?>` a few lines above, and it is the reason the
-      /// check survives at all rather than an inherited habit.
+      /// A doctype is three strings and a nodeType; refusing it was never a capability
+      /// question.
       createDocumentType: (name, publicId, systemId) => {
         const text = String(name);
         if (/[>\s]/.test(text)) {
@@ -8181,16 +7618,6 @@
     // the element is created under its local name, which is what the renderer
     // can do something with.
     /// `createElementNS`, with the two validations that are most of what it is.
-    ///
-    /// It accepted anything and returned an element, so
-    /// `dom/nodes/Document-createElementNS.html` scored **1 of 596**: the file
-    /// is almost entirely a sweep of names that must be rejected, and every one
-    /// of them succeeded.
-    ///
-    /// The two errors are different questions and the spec keeps them apart:
-    /// `InvalidCharacterError` is "that is not a name", and `NamespaceError` is
-    /// "that name and that namespace may not go together". A page catching one
-    /// and not the other is relying on the difference.
     createElementNS(namespace, qualifiedName) {
       const ns = namespace === null || namespace === undefined ? null : String(namespace);
       const name = String(qualifiedName);
@@ -8231,20 +7658,6 @@
       return wrapper;
     },
     // `document.write`, emulated where it can be and refused where it cannot.
-    //
-    // A browser inserts the markup at the parser's position, which is right
-    // after the script doing the writing. This engine parses the whole document
-    // before running anything, so "the parser's position" does not exist — but
-    // `currentScript` does, and inserting after it is the same place for the one
-    // use that is deliberate: an inline script emitting markup in situ, which is
-    // what caniuse.com does with `<style>.static-only{display:none}</style>`.
-    //
-    // Called with no script running — from a timer, a promise, a module — a
-    // browser would implicitly `document.open()` and **wipe the page**. That is
-    // not emulated. Doing so would destroy a document over a call that in a
-    // browser would have happened during parsing and been harmless; the
-    // difference is this engine's script timing, not the page's intent. It is
-    // refused by name instead.
     write(...parts) {
       const markup = parts.join("");
       const id = globalThis.__h5iCurrentScript;
@@ -8311,21 +7724,8 @@
     // The pre-constructor way of making an event, still emitted by older
     // libraries and by anything compiled for old targets. The event is inert
     // until `initEvent` names it, which is exactly how the legacy API works.
-    /// `createEvent`, with the table the spec carries rather than a generic
-    /// Event for every name.
-    ///
-    /// Both directions of the table matter. An alias constructs the *mapped*
-    /// interface — `createEvent("MouseEvents")` has MouseEvent.prototype, and
-    /// the test asserts exactly that — and a name **off** the table throws
-    /// NotSupportedError even when the interface exists (`CloseEvent` is
-    /// constructible and still refused here, because createEvent is a legacy
-    /// door the spec deliberately stopped widening). Returning a plain Event
-    /// for everything got both directions wrong at once: 207 subtests in one
-    /// file, all of them table rows.
-    ///
-    /// Matched case-insensitively by ASCII lowercase, which is the spec's rule
-    /// and also why `"U\u0130Event"` must not match "uievent" — Unicode
-    /// case-folding would say it does.
+    /// `createEvent`, with the table the spec carries rather than a generic Event for every
+    /// name.
     createEvent(kind) {
       const table = {
         "beforeunloadevent": BeforeUnloadEvent,
@@ -8713,16 +8113,7 @@
   const timers = new Map();
   let clock = 0;
 
-  // How long a chain of timers that arm each other goes on holding the page
-  // open. A loop that re-arms itself from inside its own callback — an
-  // animation frame, a poller, a progress tick — is not on its way to
-  // finishing, so counting it as outstanding work means the page can never be
-  // described as anything but busy, and every read of it rides the settle
-  // budget to the end before saying so.
-  //
-  // Past this depth the timers still fire; they stop *counting*. The page is
-  // then reported as running periodic work rather than as unfinished, which is
-  // a different fact and the one an agent can act on.
+  // How long a chain of timers that arm each other goes on holding the page open.
   const NESTING_LIMIT = 10;
   let timerDepth = 0;
 
@@ -8772,32 +8163,7 @@
     return ran;
   };
 
-  // Only *converging* timers count as work outstanding. An interval is
-  // perpetual by definition, so waiting for the queue to drain would mean a
-  // page with a polling loop — a clock, a carousel, an autosave — could never
-  // be described as settled, and every snapshot of it would carry a "still
-  // busy" note that told an agent nothing.
-  //
-  // A one-shot that re-arms itself is the same thing wearing a different hat,
-  // and it took `NESTING_LIMIT` to see that: `requestAnimationFrame` is a
-  // `setTimeout` here, so an animation loop presented as a fresh one-shot every
-  // frame and rode the whole settle budget before reporting "still busy". Both
-  // kinds still fire while the clock advances; neither holds the page open.
-  // ── websockets ─────────────────────────────────────────────────────────
-  //
-  // Real, or absent. The rule at the top of the "absent, not stubbed" section
-  // applies here more than anywhere: `typeof WebSocket === "function"` answering
-  // true for a stub cost three sites their entire bundle. This is a working
-  // object over a real connection, or the identifier is not defined at all.
-  //
-  // **In its own source**, because a page that opens no socket should not parse
-  // it: `prelude/sockets.js`, reached by reading either name. `typeof
-  // WebSocket === "function"` still answers true — reading the name is what
-  // brings the file in — so the rule above is unchanged by the move.
-  //
-  // Delivery is at settle-round boundaries rather than the instant a frame
-  // lands, because the session has no pump at rest. See `socket_drain` in
-  // dom_api.rs.
+  // Only *converging* timers count as work outstanding.
   lazyGlobals("sockets", ["WebSocket", "EventSource"]);
 
   /// What the settle loop asks every round. A page that never opened a socket
@@ -8867,47 +8233,6 @@
   let documentReadyState = "loading";
 
   /// Fire the document lifecycle: DOMContentLoaded, then load.
-  ///
-  /// Called once by the host after every script in the document has been
-  /// evaluated, and before settling, so the callbacks these wake are settled
-  /// along with everything else they start.
-  ///
-  /// Both are dispatched at the root element because that is where this engine
-  /// puts `window` and `document` listeners alike, so a page that waits on
-  /// either sees them. `load` deliberately does not bubble, matching a browser:
-  /// a page that listens for `load` on a container to catch its images must not
-  /// be told the document is one.
-  /// Expose elements with an `id` as globals, the way a browser does.
-  ///
-  /// `<div id="target">` makes `window.target` that element. It is a legacy
-  /// corner of the platform and it is *everywhere* in test suites and in older
-  /// page script: "target is not defined" was the single largest cause of files
-  /// this engine could not report on at all — 267 in `css` alone, plus `main`,
-  /// `container`, `host` and a long tail. A ReferenceError on the first line
-  /// stops a file before it can say anything, which is why one missing legacy
-  /// behaviour cost more than most missing APIs.
-  ///
-  /// Getters rather than values, so the global follows the element if the page
-  /// replaces it, and never a name `globalThis` already has: an element with
-  /// `id="document"` must not be able to take `document` away from the page.
-  ///
-  /// The setter is not optional, and leaving it out was a quiet way to hand a
-  /// page the wrong value. A getter-only accessor swallows every assignment in
-  /// sloppy mode, so with `<div id="thing">` on the page, `var thing = [1,2,3]`
-  /// left `thing` as the element and `Array.isArray(thing)` false — the page's
-  /// own variable never took. A browser lets the page win: the named property
-  /// lives behind the window in the prototype chain, so any assignment creates
-  /// an own property that shadows it. Replacing the accessor with a plain data
-  /// property on first write is the same behaviour with the machinery this
-  /// engine has, and it is what the platform calls a [Replaceable] attribute.
-  ///
-  /// This also fixes a symptom that looked like something else entirely. A page
-  /// that did `var el = document.getElementById("el"); el.remove();` and then
-  /// read `el.parentNode` got a TypeError about converting null to an object —
-  /// not because `parentNode` was broken on a detached node, but because `el`
-  /// was still the *named access* getter, which stops resolving the moment the
-  /// element leaves the document. The variable, not the property, was the thing
-  /// that had gone.
   globalThis.__h5iInstallNamedAccess = function () {
     for (const id of api.queryAll("[id]", 0)) {
       const name = api.getAttr(id, "id");
@@ -8961,16 +8286,8 @@
 
   // ── the rest of the window ───────────────────────────────────────────────
 
-  // Every part, from the engine's own parser rather than from string surgery —
-  // `pathname` came back undefined, and client-side routing is written against
-  // exactly these. A second parser written in JavaScript would disagree with
-  // the one that actually fetched the page about precisely the cases that
-  // matter.
-  // The address the *page* is at, which starts as the document URL and moves
-  // with `history.pushState`. Held here rather than by writing to
-  // `globalThis.__h5iUrl`, which the host defines read-only on purpose: that one
-  // is the URL the broker actually fetched, and an engine whose record of what
-  // it requested could be edited by the page would be worth nothing.
+  // Every part, from the engine's own parser rather than from string surgery — `pathname` came
+  // back undefined, and client-side routing is written against exactly these.
   let currentAddress = globalThis.__h5iUrl;
 
   function locationParts() {
@@ -8986,15 +8303,6 @@
     get search() { return locationParts().search ?? ""; },
     get hash() { return locationParts().hash ?? ""; },
     /// Hash routing, which a great many single-page applications are built on.
-    ///
-    /// Assigning to a getter-only property is a silent no-op outside strict
-    /// mode, so `location.hash = "/x"` did nothing at all and a hash router
-    /// simply never navigated — no error, no route change, no explanation.
-    ///
-    /// A same-document fragment change moves the address, pushes a history
-    /// entry and fires `hashchange`. It deliberately does *not* reload: that is
-    /// what makes it a fragment change rather than a navigation, and it is the
-    /// whole reason routers use it.
     set hash(value) {
       const wanted = String(value);
       const fragment = wanted.startsWith("#") ? wanted : "#" + wanted;
@@ -9366,16 +8674,6 @@
       return raw || null;
     }
     /// A `MediaList`, not a string.
-    ///
-    /// It answered the raw attribute text, and CSSOM says this is an object
-    /// with `mediaText`, a length and an item list — so every `sheet.media`
-    /// check read a String where an interface belonged. Cached per sheet so a
-    /// page that keeps the list keeps something real, as it does for `cssRules`.
-    /// Rebuilt from the attribute when the attribute has changed, and writing
-    /// `mediaText` writes back. The first version cached one `MediaList` for
-    /// the life of the sheet and never wrote through, so
-    /// `styleEl.setAttribute("media", "print")` left `sheet.media.mediaText`
-    /// reporting the old text — a snapshot pretending to be a live object.
     get media() {
       const text = this._media !== undefined
         ? this._media
@@ -9881,16 +9179,6 @@
   }
 
   /// Interface objects for shapes this engine builds without a class.
-  ///
-  /// One factory rather than twenty literals, so the brand-check rule is
-  /// written once. `brand(name, test)` builds a constructor that:
-  ///
-  ///   * **throws when called**, because none of these is constructible here
-  ///     and a constructor that silently produced something else would be the
-  ///     plausible lie §B8.4 refuses;
-  ///   * answers `instanceof` through `test`, which inspects the real shape;
-  ///   * carries the right `name`, because `assert_class_string` and every
-  ///     `Object.prototype.toString` check reads it.
   function interfaceObjects() {
     const brand = (name, test) => {
       const ctor = function () {
@@ -9937,18 +9225,10 @@
       StyleSheetList: COLLECTION_CLASSES.StyleSheetList,
       NamedNodeMap: brand("NamedNodeMap", isCollection),
       Storage: brand("Storage", isStorage),
-      // **Constructible, unlike its neighbours here.** `new Document()` is
-      // legal — DOM §4.5 gives Document a constructor — and getting that wrong
-      // is not a small error: `html/dom/idlharness` builds one in its setup,
-      // so a `Document` that threw took the whole file from 269 passing
-      // subtests to reporting nothing at all. A name that exists and answers
-      // wrongly is worse than one that is absent (§B8.4), and "not
-      // constructible" was exactly such a wrong answer.
-      //
-      // What comes back is a parsed empty document, which is what this engine
-      // can honestly produce: there is one live tree and it is the page, so a
-      // second *live* document is out of reach, but a detached one to hold
-      // nodes and answer `nodeType === 9` is not.
+      // **Constructible, unlike its neighbours here.** `new Document()` is legal — DOM §4.5
+      // gives Document a constructor — and getting that wrong is not a small error:
+      // `html/dom/idlharness` builds one in its setup, so a `Document` that threw took the
+      // whole file from 269 passing subtests to reporting nothing at all.
       Document: documentConstructor("Document"),
       HTMLDocument: documentConstructor("HTMLDocument"),
       DocumentType: brand("DocumentType", (v) => v && v.nodeType === 10),
@@ -10232,18 +9512,6 @@
     opener: null,
 
     /// `window.open`: a named refusal carrying the recovery, per §B15.6.
-    ///
-    /// A popup is a second page, and h5i's answer to a second page is a second
-    /// *session* — the boundary an agent can see, drive and audit. Returning
-    /// `null` is what a browser does when a popup blocker fires, so every page
-    /// already has a code path for this answer; the difference is that this
-    /// engine also says why on the console and in the unsupported list, where
-    /// the agent reads it and can act: open the URL in another session.
-    ///
-    /// Deliberately not a silent stub and not a same-realm fake window. A fake
-    /// window that shared this realm would hand the opened page's globals to
-    /// the opener, which is the two-origins-one-realm hazard §B20.15 keeps the
-    /// iframe refusal for.
     open(url, target, features) {
       void target; void features;
       const named = url === undefined || url === null || url === "" ? "about:blank" : String(url);
@@ -10430,22 +9698,8 @@
     Node, Element, Text, Comment, CharacterData, DocumentFragment, DOMTokenList, Range,
     EventTarget, DOMParser, CSSStyleSheet, ShadowRoot,
     HTMLElement: Element,
-    // The per-tag constructors, which pages use two ways: `instanceof
-    // HTMLAnchorElement` to ask what they are holding, and `extends
-    // HTMLButtonElement` to build on one. Every one is `Element` because this
-    // engine has a single element class, so `instanceof` answers "is this an
-    // element" rather than "is this a button" — a coarser answer than a browser
-    // gives, and a far better one than `ReferenceError`, which is what these
-    // were and which took whole bundles down with them.
-    // **Fallback only.** The reflection table already exported real per-tag
-    // classes for most of these names, and this literal used to overwrite
-    // every one of them with the bare `Element` alias — so
-    // `HTMLOptionElement.prototype` was `Element.prototype`, empty of `label`
-    // and `value`, while the actual option elements used an internal class
-    // idlharness could never see. The clobber cost about 1,500 subtests in
-    // one file and, worse, made `instanceof HTMLOptionElement` true for a
-    // `<div>`. `globalThis[name]` is already the real class here because the
-    // per-tag block assigned first; the alias fills only the names it left.
+    // The per-tag constructors, which pages use two ways: `instanceof HTMLAnchorElement` to ask
+    // what they are holding, and `extends HTMLButtonElement` to build on one.
     ...Object.fromEntries(
       [
         "Anchor", "Area", "Audio", "Base", "Body", "BR", "Button", "Canvas", "Data",
@@ -10465,24 +9719,6 @@
     customElements, NodeFilter, NodeIterator, TreeWalker,
 
     // Interface objects for the shapes this engine builds without a class.
-    //
-    // **Why these are not stubs, and why they are not lies.** §B8.4's rule is
-    // that a name which exists but answers wrongly is worse than a name that is
-    // absent: `'x' in navigator` answering true for a property we do not have
-    // sends a page down a branch it can never recover from. That rule is about
-    // *feature detection*, and it is why `missingApi` was deleted.
-    //
-    // These are the opposite case. A page writing `nodes instanceof NodeList`
-    // is not detecting a feature, it is asking what it is holding — and the
-    // honest answers are "yes" or "no", not `ReferenceError`. So each carries a
-    // `Symbol.hasInstance` that performs the real brand check against the shape
-    // this engine actually builds. Nothing claims to be constructible that is
-    // not, and `new NodeList()` still throws, as it does in a browser.
-    //
-    // The shapes are genuinely ours: `collection()` returns an array with
-    // `item`/`namedItem`, `makeStorage()` returns a proxy over a Map, and the
-    // document is an object literal. Each check tests for what that shape
-    // actually has rather than for a marker we could have set anywhere.
     ...interfaceObjects(),
 
     // The three legacy factory constructors, which are real and are the only
@@ -10537,16 +9773,8 @@
             if (typeof key !== "string" || key in target) return Reflect.get(target, key);
             return read(camelToDash(key));
           },
-          // `"color" in getComputedStyle(el)` asks `has`, not `get`, and
-          // without this trap it fell through to the bare backing object and
-          // answered **false for every property**. A computed style declares
-          // every property the engine knows, so that is what it now reports.
-          //
-          // WPT's `test_computed_value` asserts this on its first line and it
-          // is the standard helper for CSS parsing tests, so thousands of
-          // subtests failed before comparing a single value — all of
-          // `css-color` among them, where Stylo already supported every
-          // feature under test.
+          // `"color" in getComputedStyle(el)` asks `has`, not `get`, and without this trap it
+          // fell through to the bare backing object and answered **false for every property**.
           has(target, key) {
             if (typeof key !== "string") return Reflect.has(target, key);
             if (key in target) return true;
@@ -10569,20 +9797,7 @@
   // `prelude/screen.js`.
   if (identity.screen) __h5iTier("screen");
 
-  // Interface objects are **not enumerable** on the global, and every one of
-  // ours was.
-  //
-  // WebIDL §3.7 puts an interface object on the global as
-  // { writable: true, enumerable: false, configurable: true }, and
-  // `Object.assign` above creates enumerable data properties — so `Node`,
-  // `Element`, `Event` and the rest were all wrong, long before this pass
-  // added any. `idlharness` asserts it once per interface as its *first*
-  // check, so the cost was a subtest per interface across every `idlharness`
-  // file in the suite, spent before anything about the interface was examined.
-  //
-  // Applied by shape rather than by a list: a capitalised name bound to a
-  // function is an interface object, and nothing else on the global is. A list
-  // would be a second place that has to agree with the one above.
+  // Interface objects are **not enumerable** on the global, and every one of ours was.
   for (const name of Object.getOwnPropertyNames(globalThis)) {
     if (!/^[A-Z]/.test(name)) continue;
     const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
@@ -10720,16 +9935,8 @@
       get length() { return map.size; },
     };
 
-    // `storage.theme` is not a property that might be missing — it *is* the
-    // Storage API for a key, and it reads and writes the same map `getItem`
-    // does. Watching this object with the reporting proxy therefore turned
-    // every key any page ever read into a "missing API": the document corpus
-    // listed `localStorage.currentTheme` and `sessionStorage.sveltekit:scroll`
-    // as gaps in this engine, which would have buried the real ones.
-    //
-    // So it is a proxy that implements the named-property access instead of
-    // reporting it. The methods win over keys, as they do in a browser — a page
-    // storing something under "getItem" gets it back through `getItem("getItem")`.
+    // `storage.theme` is not a property that might be missing — it *is* the Storage API for a
+    // key, and it reads and writes the same map `getItem` does.
     return new Proxy(api, {
       get(target, key) {
         if (typeof key === "symbol" || key in target) return Reflect.get(target, key);

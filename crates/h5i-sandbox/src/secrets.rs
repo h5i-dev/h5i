@@ -1,22 +1,4 @@
 //! In-process secret scanner.
-//!
-//! A high-precision regex pack, with no runtime dependency on the gitleaks
-//! binary, covering the credential formats that produce the fewest false
-//! positives in real repos: AWS keys, GitHub PATs, Slack tokens, Stripe keys,
-//! Google / Anthropic / OpenAI API keys, JWTs, private-key PEM blocks, and a
-//! Shannon-entropy fallback for opaque high-entropy assignments next to a
-//! credential-like keyword.
-//!
-//! What drove the rule choices:
-//!
-//! - Each rule is anchored on a known prefix or structure. Prefix-anchored rules
-//!   (`AKIA…`, `ghp_…`, `sk-ant-…`) have effectively zero false positives.
-//! - A path allowlist prunes lockfiles, vendor trees, fonts, binaries and
-//!   well-known test-fixture directories before regex matching, those being the
-//!   biggest sources of false positives in any secret scanner.
-//! - A per-line stoplist suppresses obvious placeholders.
-//! - An entropy floor on the generic rule catches the long tail without firing
-//!   on every `key = "config"` line.
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -500,25 +482,8 @@ pub fn scan_text(path: &Path, text: &str) -> Vec<SecretFinding> {
 /// Marker substituted for a redacted secret span.
 const REDACTION_MARKER: &str = "‹redacted›";
 
-/// Replace every secret-like span in `text` with [`REDACTION_MARKER`], reusing
-/// the same rule pack as [`scan_lines`]. Returns a scrubbed copy safe to embed
-/// in published output.
-///
-/// Differences from [`scan_lines`], which exists to *report* findings:
-///
-/// - There is no path argument and no path allowlist. The caller is redacting
-///   arbitrary untrusted text, not a file.
-/// - It redacts *every* matching rule on a line, not just the first, because a
-///   single untrusted line may carry more than one credential.
-///
-/// The guillemet marker is free of Markdown and HTML metacharacters so it
-/// survives a later escaping pass unchanged.
-///
-/// Redact every line, preserving the payload's exact framing. Line endings and
-/// a trailing newline are kept byte-for-byte: `lines()` would fold `\r\n` into
-/// `\n` and drop a trailing newline, which mattered little while redaction was
-/// conditional but rewrites every receipt now that it is unconditional, and
-/// `raw_oid`/`raw_size` are supposed to describe the bytes the run produced.
+/// Replace every secret-like span in `text` with [`REDACTION_MARKER`], reusing the same rule
+/// pack as [`scan_lines`].
 pub fn redact_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -539,20 +504,7 @@ pub fn redact_text(text: &str) -> String {
     out
 }
 
-/// Redact one line. Mirrors the per-line *matching* in [`scan_lines`] but
-/// substitutes every matched span instead of recording a finding.
-///
-/// Redaction is a publication safety control, so it deliberately diverges from
-/// detection in two fail-closed ways:
-///
-/// - No [`STOPLIST`] early-return. In detection the stoplist suppresses
-///   placeholder false positives; applied to redaction it would be *fail-open*,
-///   since a line like `example token ghp_<real>` contains `example` and would
-///   be emitted verbatim, real credential included.
-/// - Every match of every rule is scrubbed, not just the first per rule.
-///
-/// Matches are collected as byte spans, merged, and the line rebuilt. Overlaps
-/// across rules collapse to a single marker.
+/// Redact one line.
 fn redact_line(line: &str) -> String {
     let lowered = line.to_ascii_lowercase();
     let mut spans: Vec<(usize, usize)> = Vec::new();

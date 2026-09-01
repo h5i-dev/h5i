@@ -1,19 +1,4 @@
 //! Taking a tree from a machine we agreed might be compromised.
-//! A runner box's work comes home as a git bundle. Bundles are data, and this
-//! one was written by the machine whose whole purpose is to be the one that
-//! gets broken into, so nothing in it may touch the repository's object
-//! database before it has been looked at (design-runner.md R9).
-//! A ref namespace is not a quarantine. Fetching into `refs/h5i/...` writes
-//! every object into the *shared* store and only withholds reachability; the
-//! objects are there, and a later `git cat-file` finds them. So the bundle is
-//! unpacked into a throwaway bare repository with its own object database,
-//! checked there, and only the surviving tree is brought across.
-//! The bundle is *thin*, carrying `base..tip`, so the quarantine is first given
-//! the base commit from the repository we own and only then the untrusted
-//! bundle. That keeps the return trip proportional to the work done rather than
-//! to the history.
-//! What comes out is a tree, never a commit: the history and authorship the
-//! runner wrote are discarded, and the caller writes its own commit.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -372,15 +357,6 @@ fn is_under_private(path: &str, private_rels: &[String]) -> bool {
 }
 
 /// `git fetch`, with the options that make a refspec mean what it appears to.
-/// A refspec is *not* a limit on what a fetch writes. git follows tags by
-/// default: any `refs/tags/*` on the source side whose target lands in the
-/// downloaded set arrives too, under its own name. A compromised runner
-/// crafting its own bundle therefore got an arbitrary `refs/tags/<name>` into
-/// the quarantine and, on the carrier fetch, into the host repository, with a
-/// runner-authored tag object carrying an attacker-chosen tagger and message.
-/// That is exactly what this module's header promises cannot happen, and it
-/// happened on the *success* path, silently.
-/// `--no-write-fetch-head` for the smaller half of the same point.
 fn fetch(dir: &PathBuf, from: &str, refspec: &str) -> Result<(), H5iError> {
     git(
         dir,

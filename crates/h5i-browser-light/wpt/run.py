@@ -80,16 +80,6 @@ SKIP_FILE = re.compile(r"(-ref|-notref|-manual|\.tentative\.tentative)\.x?html?$
 MARKER = serve.MARKER
 
 # How many failing subtests a result file keeps, per test file.
-#
-# Five is the right default: a result file is read for its counts, and the
-# handful of messages is enough to name the shape behind them. It is the wrong
-# number when the question is "what are the 2,539 failures in *this* file", and
-# §B12.2's lesson — an hour reading failure text beats a week implementing what
-# a count seemed to ask for — is exactly the one a cap of five defeats on the
-# largest files. Raised per-run rather than in the default, because a sweep that
-# keeps every message writes hundreds of megabytes nobody asked for.
-#
-#   WPT_MAX_FAILURES=100000 python3 wpt/run.py --dirs html/dom ...
 MAX_FAILURES = int(os.environ.get("WPT_MAX_FAILURES", "5"))
 
 # testharness.js status codes.
@@ -149,15 +139,7 @@ def find_tests(root: Path, dirs, limit=None):
                 unscoreable += 1
                 continue
             # The multi-origin security suites — referrer-policy, mixed-content,
-            # upgrade-insecure-requests and their kin — are built on
-            # `common/security-features`. Two of the three things they need now
-            # exist: `serve.py` does wptserve's `{{...}}` substitution, and the
-            # domains resolve to distinct loopback addresses, so the origins are
-            # genuinely different. The third does not: their subresources are
-            # `.py` handlers, and running those means a wptserve shim (request,
-            # response and stash objects) that this harness has not got. Until
-            # it does, these cannot report no matter how good the engine is, so
-            # they are named rather than counted as engine failures.
+            # upgrade-insecure-requests and their kin — are built on `common/security-features`.
             if "common/security-features" in body:
                 needs_server += 1
                 continue

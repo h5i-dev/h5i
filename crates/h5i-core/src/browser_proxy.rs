@@ -1,31 +1,4 @@
 //! Mediating the browser daemon's control socket.
-//!
-//! The control lock was half-enforced: the viewer honoured it, but nothing stood
-//! between the agent and `agent-browser`. A PATH shim is bypassed by an absolute
-//! path and a convention enforces nothing, but every verb walks through the
-//! socket, and the protocol is one line of JSON each way under a single mutex,
-//! which is why a few hundred lines can sit in front of it.
-//!
-//! This is enforcement against an agent following the documented path: the CLI
-//! reads `AGENT_BROWSER_SOCKET_DIR`, that directory is h5i's listener, and every
-//! verb is decided here.
-//!
-//! It is not containment against a deliberately evasive agent, structurally: the
-//! daemon runs inside the box and Landlock grants are per-box, so any socket the
-//! daemon can bind the agent can connect to. Moving the daemon out would break
-//! what boxes are for, since it could no longer reach the dev server on the box's
-//! own loopback.
-//!
-//! Two things learned by driving the real daemon:
-//!
-//! 1. `__agent_browser_internal_shutdown` is an escape hatch, not an action. The
-//!    CLI sends it when the daemon does not match the options it wants, then
-//!    starts its own; forwarded, it kills the daemon we mediate and the next one
-//!    is the agent's on a socket we do not own. Refused here always.
-//! 2. The daemon's config fingerprint covers its options, not its path, which is
-//!    what lets the real daemon run somewhere the box cannot reach: mirror
-//!    `.version`/`.config` into the box-visible directory and the CLI is
-//!    satisfied. Get the environment wrong and it decides the daemon is stale.
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, Write};
@@ -76,16 +49,6 @@ const READ_ONLY_ACTIONS: &[&str] = &[
 ];
 
 /// What a profile permits the agent to do with the browser.
-///
-/// Modelled on agent-browser's own `ActionPolicy`, which is the right vocabulary
-/// and about the right size. `deny` is the interesting half: `evaluate` is
-/// arbitrary code in the page, and `credentials_*`/`state_*` reach the browser's
-/// stored secrets, so a profile that wants a reading browser can say so.
-///
-/// The spelling is the *action* name, not the CLI verb: `evaluate`, which is
-/// what `agent-browser eval` sends on the wire. Entries are checked against
-/// `sandbox_policy::BROWSER_DENYABLE_ACTIONS` at create, because one that
-/// matches nothing denies nothing while reading as if it did.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActionPolicy {
     /// Actions refused outright. Matched on the action name, and on a `_`
@@ -94,20 +57,8 @@ pub struct ActionPolicy {
     pub deny: BTreeSet<String>,
 }
 
-/// Verbs that reach the same capability as the one a profile named, and are
-/// therefore denied with it.
-///
-/// The list exists because a denylist over a ~250-verb protocol is only as good
-/// as its synonyms, and this one had none. `evaluate` is documented as the entry
-/// "most profiles want, because it is arbitrary code in the page", and denying it
-/// left `evalhandle` (a `Runtime.evaluate` under another name), `waitforfunction`,
-/// `addscript`, `addinitscript`, `expose` and `setcontent` all forwarding, so a
-/// profile that had asked for a reading browser got one that still ran whatever
-/// the agent wrote. `credentials` was the same shape.
-///
-/// The left-hand name is what a profile writes; the right-hand names are what it
-/// also means. Extending this is how a *new* daemon verb that reaches an
-/// existing capability is covered without every profile being rewritten.
+/// Verbs that reach the same capability as the one a profile named, and are therefore denied
+/// with it.
 const DENY_ALSO_COVERS: &[(&str, &[&str])] = &[
     (
         "evaluate",
@@ -396,20 +347,8 @@ pub fn mediate_observed(
     mediation
 }
 
-/// Send one request and relay exactly one response line back, and the longest
-/// single protocol line either side may send.
-///
-/// The protocol is one line of JSON each way. `BufRead::lines` and `read_line`
-/// grow a `String` until they meet a newline, so without a ceiling a peer that
-/// sends a gigabyte and no `\n` makes *this host process* allocate a gigabyte,
-/// and both peers here are inside the box: the client is the agent's CLI on a
-/// socket in `<env>/tmp`, and the daemon is a process in the box too.
-///
-/// `refuse_no_daemon` has capped its one read since it was written. It is the
-/// path taken when no daemon answered; the path taken the rest of the time had
-/// no cap at all.
-///
-/// 8 MiB, well past any real line and far below what a host notices.
+/// Send one request and relay exactly one response line back, and the longest single protocol
+/// line either side may send.
 const MAX_LINE: u64 = 8 * 1024 * 1024;
 
 /// Read one `\n`-terminated line, refusing one that outruns [`MAX_LINE`].
@@ -569,17 +508,8 @@ pub fn spawn(
             socket_path.display()
         ))
     })?;
-    // Whoever can connect here drives the browser: every verb the mediator
-    // forwards, which includes reading the page and, subject to the policy
-    // above, running script in it. Linux checks write permission on the socket
-    // file at `connect`, so the mode is the access control, and leaving it to
-    // the umask made it 0755 on a default one. The path is
-    // `AGENT_BROWSER_SOCKET_DIR`, under a box's `/tmp`, shared with the host
-    // under the `agent` profile.
-    //
-    // This does not make the mediator containment against a deliberately
-    // evasive agent inside the box. It stops the socket from being everyone
-    // *else* on the machine's, which is a different question.
+    // Whoever can connect here drives the browser: every verb the mediator forwards, which
+    // includes reading the page and, subject to the policy above, running script in it.
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600));
@@ -742,20 +672,6 @@ pub fn spawn(
 }
 
 /// Write what the mediator saw into the receipt, in its own lane.
-///
-/// Its own lane (`browser-proxy`) rather than a field on `BrowserEvidence`,
-/// because the two are different kinds of claim: the existing evidence is
-/// drained from the page *after* a run and is box-claimed, while this is
-/// host-observed, h5i having sat on the socket and watched each verb go by. A
-/// reviewer should be able to tell those apart without reading the code, which
-/// is what `HOST_OBSERVED_LANES` is for.
-///
-/// Records nothing when nothing happened. Where the structured copy lives is a
-/// sibling of `receipt.jsonl` and deliberately *not* under `<env>/spool` or
-/// `<env>/tmp`, the two paths a box can write. It exists because the receipt
-/// carries these actions as *rendered text*, and a reader that wanted them back
-/// as data would have to parse a display format, which is the quiet-wrong-answer
-/// shape this codebase keeps getting bitten by.
 pub fn actions_log(env_dir: &Path) -> std::path::PathBuf {
     env_dir.join("browser-actions.jsonl")
 }
@@ -870,16 +786,7 @@ fn read_first_line_within(
 fn refuse_no_daemon(client: &std::os::unix::net::UnixStream) {
     use std::io::Write;
 
-    // Read one line: the request the client is waiting on a reply to. Best
-    // effort, and *bounded*, because a client that connects to probe liveness
-    // and waits for the peer to speak first would otherwise block this thread
-    // forever and never receive the refusal. Threads here are detached, so an
-    // unbounded wait also leaks one per retry while a daemon is failing to
-    // start.
-    //
-    // Bounded in *bytes* as well as time, which is the half the timeout does
-    // not cover: `SO_RCVTIMEO` ends one `read()`, while `read_line` keeps
-    // calling it and growing its `String` until a newline arrives.
+    // Read one line: the request the client is waiting on a reply to.
     const MAX_FIRST_LINE: u64 = 64 * 1024;
     // And bounded overall, which the two above still do not add up to. The
     // timeout ends one `read()` and the cap ends the *bytes*; the loop between
@@ -1405,15 +1312,6 @@ mod tests {
     }
 
     /// The dribble the byte cap and the per-read timeout both miss.
-    ///
-    /// A peer that lets every `read()` *succeed*, one byte comfortably inside
-    /// the per-read interval, forever, never trips that timeout, because a
-    /// timeout is an error and a byte is not. `read_line` keeps going, and the
-    /// only other bound is 64 KiB of bytes: at this rate that is a day and a
-    /// half of a host thread.
-    ///
-    /// Driven at production's shape with the clock scaled down, which is why the
-    /// bounds are parameters.
     #[test]
     #[cfg(unix)]
     fn a_dribbling_peer_cannot_hold_the_refusal_thread() {

@@ -965,20 +965,6 @@ pub fn native() -> Identity {
 }
 
 /// h5i, with what varies between installations taken out.
-///
-/// Two values and no more, because two is what actually distinguishes one h5i
-/// from another today:
-///
-/// - The patch version, which splits every h5i user into cohorts by release
-///   date. Reduced to the major, so an install that has not updated looks like
-///   one that has. Chrome did the same thing to its own agent string.
-/// - The host's time zone, which is a region, read through `Date` by any page
-///   that asks. Pinned to UTC.
-///
-/// `hardwareConcurrency` is left at 1 rather than raised to a "typical" number:
-/// every h5i reports 1 today, so 1 *is* the largest anonymity set there is, and
-/// a mode called privacy that made the value more distinctive would be doing the
-/// opposite of what it says.
 pub fn privacy() -> Identity {
     let major = env!("CARGO_PKG_VERSION")
         .split('.')
@@ -1015,16 +1001,6 @@ pub fn privacy() -> Identity {
 }
 
 /// A Firefox identity this engine can actually back, end to end.
-///
-/// Firefox rather than Chrome for one reason that decides the whole thing:
-/// Firefox sends no client hints. Chrome has sent `Sec-CH-UA` on every request
-/// since it shortened its agent string, and exposes `navigator.userAgentData` to
-/// match; an engine with neither cannot claim Chrome without the absence being
-/// the giveaway. Firefox's identity surface is the agent string, `navigator`,
-/// `screen` and the locale, exactly the set this module covers.
-///
-/// It is still not Firefox on the wire: the ClientHello and the HTTP/2 SETTINGS
-/// are this engine's. See [`Identity::DOES_NOT_COVER`].
 pub fn firefox_linux() -> Identity {
     Identity {
         name: "firefox-143-linux".to_string(),

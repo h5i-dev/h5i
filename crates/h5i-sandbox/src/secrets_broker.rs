@@ -1,15 +1,4 @@
 //! Host-side secrets broker (`docs/secrets-broker-design.md`).
-//!
-//! Resolves a profile's [`SecretGrant`]s from host-side sources at *run time*,
-//! never at policy load, and materializes them for injection into the env's
-//! child process. Capability-scoped, audited, redacted, and *fail-closed*: a
-//! declared grant that cannot be resolved or delivered aborts the run rather
-//! than running with the credential silently absent.
-//!
-//! The broker never writes a value to the policy, the manifest, or any git ref.
-//! It records only the grant id, source, injection method, ttl, and a value
-//! *fingerprint*. File-injected secrets are written `0600` outside `$WORK` and
-//! unlinked when the [`Brokered`] guard drops.
 
 use std::path::{Path, PathBuf};
 
@@ -79,16 +68,7 @@ impl Drop for TempFiles {
     }
 }
 
-/// `fp:<12 hex>` of a value under a per-repository key. Lets a reviewer confirm
-/// "same token across runs" without ever seeing it.
-///
-/// Keyed, not a bare digest. This lands in `GrantRecord::detail`, the env event
-/// log, and `h5i box secrets` output, all of which are durable and reviewable
-/// and may be mirrored through `refs/h5i/*`. An unsalted `sha256(value)` prefix
-/// is 48 bits of an offline oracle: against a deploy password or a PIN-shaped
-/// token, anyone holding the log can enumerate candidates. HMAC under a key that
-/// never leaves the repository gives the same answer with nothing to grind
-/// against.
+/// `fp:<12 hex>` of a value under a per-repository key.
 pub fn fingerprint(key: &[u8], value: &str) -> String {
     let mac = hmac_sha256(key, value.as_bytes());
     let hex: String = mac.iter().take(6).map(|b| format!("{b:02x}")).collect();

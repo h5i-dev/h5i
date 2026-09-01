@@ -1,18 +1,4 @@
 //! Session tokens: the one place h5i mints a secret.
-//!
-//! Two surfaces hand a bearer token to a human's browser and then trust it.
-//! The box console ([`crate::server`]) and the per-box viewer forward
-//! ([`crate::view`]). Both listen on loopback, which on a developer machine
-//! means every local process and every page the human has open can *reach*
-//! them; the token is the whole of what separates the operator from all of
-//! that. So it comes from the operating system's CSPRNG.
-//!
-//! Not `fastrand`, which the rest of the codebase uses for retry jitter and
-//! WebSocket masking. It is a small non-cryptographic generator seeded from
-//! ambient values, and its documentation says plainly that it is not suitable
-//! for anything security-sensitive: an attacker who can observe or guess that
-//! seed can reproduce the sequence, and a viewer token is long-lived on disk.
-//! Jitter can be predictable. A token cannot.
 
 use crate::error::H5iError;
 

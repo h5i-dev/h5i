@@ -1,20 +1,4 @@
 //! The share session on disk: which box is shared, over what, and to whom.
-//!
-//! One file, `<env>/share.json`, and where it sits is the security property. It
-//! is a sibling of `receipt.jsonl` and `view-token`, so outside `<env>/spool`
-//! and `<env>/tmp`, the only two paths a box can write. An agent cannot mint
-//! itself a grant, cannot un-revoke one, and cannot read the file to learn who
-//! is connected.
-//!
-//! What it holds is a *grant table*, not a password. Each grant stores the
-//! SHA-256 of its secret, so the file admits nobody even to a reader who has it.
-//! The cost is that a ticket is printed once and never again, the right trade
-//! for a capability that reaches into a running box from another machine.
-//!
-//! Revocation lives here rather than in the sharer's memory on purpose: `h5i box
-//! share revoke` is a *different process* from the one serving the share, and a
-//! revoke that only reached the process that happened to run it would silently
-//! do nothing.
 
 use std::path::{Path, PathBuf};
 
@@ -93,18 +77,6 @@ pub struct ShareSession {
     #[serde(default)]
     pub winding_up: bool,
     /// The box is claimed and the transport is not up yet.
-    ///
-    /// Written *before* `Setup::start`, which for `--tunnel` waits up to
-    /// forty-five seconds for `cloudflared` to publish a URL. Nothing was
-    /// written during that wait, so for its whole length `h5i box share stop`
-    /// and `stop --force` both answered "this box is not being shared", printed
-    /// a successful result and returned 0, and the start then completed, claimed
-    /// the box and began admitting visitors. An operator could explicitly revoke
-    /// access and have public access begin afterwards.
-    ///
-    /// A record in this state admits nobody: it carries no grants, and no
-    /// transport exists to present one to. What it does is make the share
-    /// *visible*, to `stop` and to the lifecycle verbs.
     #[serde(default)]
     pub starting: bool,
     pub grants: Vec<Grant>,
@@ -276,20 +248,6 @@ pub fn mint_grant(label: Option<String>, expires_at: i64) -> Result<(Grant, Stri
 }
 
 /// Mint a grant whose id no grant in `existing` already uses.
-///
-/// The id is eight hex characters, a handle to type rather than a secret, and it
-/// was chosen without looking at the table at all. That is a correctness
-/// property rather than a secrecy one, and thirty-two bits is not many for it:
-/// the birthday bound puts a collision at about one per cent by nine thousand
-/// grants, which a long-lived tunnel share reaches.
-///
-/// What a collision costs: `revoke` always finds the *first* matching row, so
-/// the second grant can never be revoked individually, and a connection admitted
-/// by the first survives revoking it, because `grant_is_live` still finds the
-/// colliding row alive. The tunnel's accounting coalesces them too, so the
-/// receipt describes two visitors as one.
-///
-/// Callers hold the session lock across this and the write that follows.
 pub fn mint_grant_unlike(
     existing: &[Grant],
     label: Option<String>,
@@ -328,29 +286,6 @@ pub fn mint_grant_unlike(
 // ─── the file ───────────────────────────────────────────────────────────────
 
 /// An exclusive lock over the grant table, held for as long as this value is.
-///
-/// `flock` on an open descriptor, not a file somebody has to remember to remove.
-/// The mechanism was `create_new` plus a pid stamp plus an age heuristic, and it
-/// could not be made race free: any "is the holder gone?" test is separated from
-/// the break that follows it by a window, and there is no portable primitive
-/// that says *remove this inode*. Two rounds tried. Breaking by `remove_file`
-/// deleted whatever was at the path rather than the file just examined, so two
-/// processes both removed and both created; breaking by `rename` has exactly the
-/// same property. Measured with the harness in this file's `concurrency` module:
-/// eight processes, twelve rounds each, twelve runs out of twelve, with the
-/// losing worker naming a sibling that was still alive.
-///
-/// `flock` has no staleness to reason about. The kernel releases it when the
-/// holder's last descriptor closes, which includes every way a process can die,
-/// so there is nothing to break and no heuristic to be wrong about. It is also
-/// already this repository's answer one layer down, in
-/// `h5i_core::share_record::share_gate`.
-///
-/// The file is never unlinked, and that is deliberate: unlinking under `flock`
-/// restores the whole defect, since a waiter holds a descriptor to an inode that
-/// no longer has a name while a newcomer creates a fresh file at the path and
-/// locks *that*. A zero-byte `share.lock` left in the box's directory is the
-/// correct end state.
 pub struct Lock {
     /// Held only to keep the descriptor open: closing it is what unlocks, so
     /// the field is the lock.
@@ -409,18 +344,6 @@ impl Lock {
                     )));
                 }
                 // Backed off from a millisecond, not a flat fifty.
-                //
-                // Two things wanted this. A grant table is held for well under a
-                // millisecond (a read, an edit, a write, a rename) so a waiter that sleeps
-                // fifty spends almost all of its wait on a lock that is free. And the
-                // throughput of a poll is one acquisition per interval per waiter, which is
-                // what the harness below runs out of at thirty-two processes: no overlap,
-                // no lost write, just waiters that never got a turn inside the deadline.
-                //
-                // Jittered as well as backed off, because `flock` promises no fairness and
-                // waiters sleeping the same interval keep colliding on the same instants.
-                // The spread comes from the pid and the attempt rather than from a random
-                // source.
                 attempt = attempt.wrapping_add(1);
                 let step = 1u64 << attempt.min(4); // 2, 4, 8, 16, 16 ms
                 let spread = (u64::from(std::process::id()).wrapping_mul(2_654_435_761)
@@ -443,16 +366,6 @@ impl Lock {
 }
 
 /// A pid that `kill` will treat as one process, or nothing.
-///
-/// `pid_t` is signed and every one of these numbers arrives from a file on disk.
-/// `4294967295` fits the `u32` these records store and reaches `kill` as `-1`,
-/// *every process this user may signal*, which succeeds, so a corrupt or crafted
-/// record read as permanently live: `share` refused to start, cleanup refused to
-/// clear it, and grant operations trusted a process that was never there. `0` is
-/// the caller's own process group. Both are out of range for a pid.
-///
-/// `h5i-core`'s reader has had this bound since it was written; these two
-/// callers did not, and they are the ones that decide whether a share starts.
 fn as_pid(pid: u32) -> Option<i32> {
     i32::try_from(pid).ok().filter(|p| *p > 0)
 }
@@ -564,15 +477,6 @@ pub fn write(env_dir: &Path, s: &ShareSession) -> Result<(), H5iError> {
 }
 
 /// Claim this box for a new share, under the lock.
-///
-/// The check and the write have to be one step. Done apart, two `h5i box share`
-/// starts can both pass the check and the second overwrites the first's grant
-/// table, so the first share's tickets stop working with no explanation to
-/// whoever is holding one.
-///
-/// A record whose process is gone is a leftover from a crash and is taken over
-/// rather than obeyed; the caller is told, because silently clearing somebody's
-/// share record is not something to do without saying so.
 pub fn claim(env_dir: &Path, s: &ShareSession, name: &str) -> Result<Option<u32>, H5iError> {
     // The share gate first, then the session lock, and never the other way
     // round: `h5i-core`'s lifecycle verbs take the gate and then `run.lock`, and
@@ -595,16 +499,7 @@ pub fn claim(env_dir: &Path, s: &ShareSession, name: &str) -> Result<Option<u32>
     }
     let _lock = Lock::acquire(env_dir)?;
     let mut cleared = None;
-    // On `read_state`, not on `read`. `read` maps *both* `Gone` and
-    // `Unreadable` to `None`, and this treated `None` as permission to write a
-    // fresh table, so a share that was still serving, whose record had become
-    // malformed, was silently replaced while its endpoint stayed alive.
-    //
-    // Not a cosmetic loss. Every bridge rereads the shared table on every
-    // connection, so share A's still-running bridge would then authorize share
-    // B's grant secrets while continuing to dial the port A pinned: somebody
-    // holding A's endpoint and a ticket minted for B reaches the port B never
-    // advertised.
+    // On `read_state`, not on `read`.
     match read_state(env_dir) {
         ReadState::Present(existing) => {
             if is_live(&existing) {
@@ -680,17 +575,7 @@ pub fn already_shared(existing: &ShareSession, name: &str) -> H5iError {
 /// well above that rounding.
 const CLOCK_SKEW_TOLERANCE: i64 = 5;
 
-/// How far this shell's clock is *behind* the one the share started on, if it is
-/// behind at all.
-///
-/// A share cannot have started after now, so a positive answer means the wall
-/// clock moved backwards between the two readings. That matters to more than
-/// display: the serving process floors every expiry against elapsed monotonic
-/// time and a management process cannot reproduce that floor, so a grant minted
-/// against the raw clock can be born already expired in the bridge's view.
-///
-/// One function for both readers, so the countdown and the minting cannot end up
-/// disagreeing about whether there is a problem.
+/// How far this shell's clock is *behind* the one the share started on, if it is behind at all.
 pub fn started_in_the_future(s: &ShareSession, now: i64) -> Option<i64> {
     let started = chrono::DateTime::parse_from_rfc3339(&s.started_at).ok()?;
     let ahead = started.timestamp() - now;
@@ -706,26 +591,6 @@ pub fn started_in_the_future(s: &ShareSession, now: i64) -> Option<i64> {
 const WINDING_UP_ATTEMPTS: usize = 6;
 
 /// Mark the share as winding up, so the other verbs stop pretending it serves.
-///
-/// The gap this closes: between the serving process deciding to stop and the
-/// moment it removes the record, `is_live` is still true, the pid being right
-/// there. So `share grant` in that window minted a ticket, printed a secret that
-/// by contract is printed once, and then the serving process deleted the table
-/// it was written into. The peer got a URL that never worked.
-///
-/// The error is returned. It was discarded, and `update` fails for exactly the
-/// case this guard exists for: a live `share.lock` held past the five-second
-/// retry window. `begin_winding_up` then returned having changed nothing, and a
-/// concurrent `grant` saw a live pid and `winding_up == false`, succeeded, and
-/// printed a link that teardown deleted seconds afterwards.
-///
-/// Retried before it is reported, because the transient lock is the common case;
-/// and reported when the retries run out, because a shutdown that could not
-/// close the door is not one the operator should believe happened quietly.
-///
-/// `started_at` identifies *which* share this process is winding up. Without it,
-/// a bridge whose record had been force-deleted and replaced marked the *new*
-/// share as winding up on its way out.
 pub fn begin_winding_up(env_dir: &Path, started_at: &str) -> Result<(), H5iError> {
     let mut last = None;
     for attempt in 0..WINDING_UP_ATTEMPTS {
@@ -760,18 +625,6 @@ pub fn begin_winding_up(env_dir: &Path, started_at: &str) -> Result<(), H5iError
 }
 
 /// Remove the record outright, whatever it says.
-///
-/// The escape hatch for a record whose pid has been reused by an unrelated
-/// process. `is_live` is `kill(pid, 0)`, so such a record reads as serving
-/// forever: `stop` revokes grants nobody reads and leaves the file, and `share`
-/// refuses because the box is "already shared". No verb got out of that.
-///
-/// What `forget` actually achieved. A `bool` could not say the third thing, and
-/// the third thing is the one that matters: the removal is deliberately not
-/// serialised against anything, so a serving process rewriting its table can put
-/// the record straight back a microsecond later. Reported as success, that told
-/// an operator they had cut access off when the share was still admitting
-/// people.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Forgotten {
     Deleted,
@@ -850,21 +703,7 @@ pub fn update<T>(
     Ok(out)
 }
 
-/// Forget the session. Called when the sharer exits, so `share ls` describes
-/// what is running rather than what once ran. Under the lock like every other
-/// mutation: without it, a `revoke` that had already read the table can write it
-/// back *after* this deletes it.
-///
-/// Is the record on disk the one *this* process wrote? The premise every
-/// unconditional delete rested on, now actually checked. It is reachable without
-/// it: `share stop --force` removes a live share's record, a second `h5i box
-/// share` legitimately claims the box and prints its ticket to somebody, and
-/// then the first process finishes its teardown and deletes the *second*
-/// share's table, whose ticket has already been sent to a human.
-///
-/// `started_at` as well as the pid, because a bridge whose record was
-/// force-deleted and replaced by a share started from the *same* wrapper process
-/// would match on pid alone.
+/// Forget the session.
 fn record_is_ours(env_dir: &Path, started_at: &str) -> bool {
     read(env_dir)
         .map(|s| s.pid == std::process::id() && s.started_at == started_at)
@@ -1454,31 +1293,6 @@ mod tests {
 }
 
 /// Concurrency, tested with concurrency: real processes, racing on purpose.
-///
-/// Everything this module protects is guarded *across processes*, and none of
-/// the tests above run more than one. `h5i box share grant`, `revoke`, `stop`
-/// and the serving process are four programs, and the lock they take is a file
-/// whose whole mechanism is `create_new` plus a pid stamp, so a thread would not
-/// be testing the thing: two threads share a pid, which is exactly what the
-/// stale break keys on, and they share an address space, which is exactly what
-/// the temp-file-per-writer fix does not assume.
-///
-/// This file's own comments record the last real defect here ("8 of 20 runs
-/// broke mutual exclusion with no jitter at all, and 6 of 6 with a single 30 ms
-/// preemption injected between the stat and the remove") measured with a harness
-/// that was never committed. So the code has a history of races and no standing
-/// test for one. This is that test.
-///
-/// How a child is made: the test binary re-executes itself with a filter naming
-/// [`worker`] and a job in the environment, and `worker` is inert without it, so
-/// an ordinary run costs nothing. That is a new idiom for this repository, and
-/// it is what buys genuinely distinct pids running the real code.
-///
-/// Why they start together: contention is the point, and processes that drift
-/// apart by a scheduler quantum test nothing. Every child spins until a shared
-/// wall-clock instant the parent picks a few hundred milliseconds out.
-///
-/// `H5I_SHARE_CONCURRENCY_WORKERS` and `_ROUNDS` turn any of these into a soak.
 #[cfg(all(test, unix))]
 mod concurrency {
     use super::*;
@@ -1738,23 +1552,8 @@ mod concurrency {
         now_ms() + 400
     }
 
-    /// Every append lands, and nothing reading alongside them sees a table that
-    /// is neither the old one nor the new one.
-    ///
-    /// Two defects this file records would show here and nowhere else. A
-    /// read-modify-write that is not serialised loses appends, and the count
-    /// comes out short. And a shared temp file, "two processes that both held
-    /// the lock wrote into the same temp file and one renamed the other's
-    /// partial bytes into place", makes a reader see a truncated `share.json`,
-    /// which reads as *absent*, which is every verb answering "this box is not
-    /// being shared" while it is.
-    ///
-    /// What limits a soak of this one is arithmetic, not the lock. Every
-    /// mutation rewrites the whole grant table, so N appends cost O(N²), and
-    /// past about a thousand a worker runs out of the five-second deadline.
-    /// Measured: 640 appends in 2.0s, 960 in 3.7s, 1920 over the deadline, and
-    /// 960 costs the same 3.7s whether it is sixteen workers or forty-eight,
-    /// which is what says the cost tracks the table and not the contention.
+    /// Every append lands, and nothing reading alongside them sees a table that is neither the
+    /// old one nor the new one.
     #[test]
     fn concurrent_grants_all_land_and_a_reader_never_sees_a_half_written_table() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1820,20 +1619,8 @@ mod concurrency {
         assert_eq!(before, ids.len(), "two grants were minted with one id");
     }
 
-    /// A lock left behind by a dead holder, and every process piling onto it in
-    /// the same instant, and still only one holder.
-    ///
-    /// The shape this file records losing to twice. A lock whose holder is gone
-    /// used to be *stale to everybody at once*, so every process decided to break
-    /// it with no jitter at all, and the break removed whatever was at the path
-    /// rather than the file it had judged. Unlinking lost it; renaming aside lost
-    /// it too, for the identical reason, because a rename also moves whatever is
-    /// there *now*: the winner's fresh live lock, created in the microseconds
-    /// since the loser looked.
-    ///
-    /// This harness measured that at twelve failures in twelve runs. Under
-    /// `flock` there is nothing to break, so the whole race has no state to
-    /// happen in.
+    /// A lock left behind by a dead holder, and every process piling onto it in the same
+    /// instant, and still only one holder.
     #[test]
     fn a_stampede_onto_a_dead_holders_lock_leaves_a_single_holder() {
         let dir = tempfile::tempdir().expect("tempdir");
