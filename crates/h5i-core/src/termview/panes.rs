@@ -1,5 +1,6 @@
 //! Developer mode: the page is not the only thing worth looking at.
 
+use super::cells;
 use crate::redact::sanitize_display;
 
 /// A rectangle in terminal cells, 1-indexed like the escape sequences that
@@ -216,26 +217,13 @@ pub fn render_pane(log: &LogBuffer, cols: u16, rows: u16) -> Vec<String> {
     out
 }
 
-/// Truncate or pad to exactly `cols` characters.
+/// Truncate or pad to exactly `cols` terminal cells.
 ///
-/// Character-count based, matching `status::render`: the same caveat applies
-/// for wide glyphs, and being consistently slightly wrong beats two different
-/// kinds of wrong on one screen.
+/// Cells rather than characters, matching `status::render`: a console message
+/// is page-written, and a row of double-width glyphs counted as characters is
+/// twice as wide as the pane, so it wraps and repaints the viewer's chrome.
 fn pad(text: &str, cols: usize) -> String {
-    let mut out = String::with_capacity(cols);
-    let mut used = 0usize;
-    for ch in text.chars() {
-        if used + 1 > cols {
-            break;
-        }
-        out.push(ch);
-        used += 1;
-    }
-    while used < cols {
-        out.push(' ');
-        used += 1;
-    }
-    out
+    cells::fit(text, cols)
 }
 
 #[cfg(test)]

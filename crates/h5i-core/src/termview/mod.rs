@@ -25,6 +25,7 @@
 //! runs.
 
 // Portable: these parse, encode and decode, and none of them touch a terminal.
+pub mod cells;
 pub mod image;
 pub mod input;
 pub mod kitty;
