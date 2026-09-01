@@ -170,16 +170,24 @@ jobs:
 
       # ── Package ───────────────────────────────────────────────────────────
 
+      # `TAG` through the environment, never interpolated into the script.
+      # Actions substitutes an expression into the *text* of `run:` before any
+      # shell sees it, and a git ref name may contain a backtick, `$`, `(` or
+      # `|`. A tag is pushable by anyone with write access, so a tag named to
+      # close the quoting would run its own commands on four runners holding a
+      # `contents: write` token.
       - name: Package (Unix)
         if: matrix.archive_ext == 'tar.gz'
         shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           package() {
             local name="$1"
             local bin="target/${{ matrix.target }}/release/$name"
             test -x "$bin" || { echo "::error::$bin was not built"; exit 1; }
-            local archive="$name-${{ github.ref_name }}-${{ matrix.target }}.tar.gz"
+            local archive="$name-$TAG-${{ matrix.target }}.tar.gz"
             tar -czf "$archive" -C "$(dirname "$bin")" "$(basename "$bin")"
             sha256sum "$archive" > "$archive.sha256"
           }
@@ -188,12 +196,14 @@ jobs:
       - name: Package (Windows)
         if: matrix.archive_ext == 'zip'
         shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           $ErrorActionPreference = "Stop"
           function Package($name) {
             $bin = "target\${{ matrix.target }}\release\$name.exe"
             if (-not (Test-Path $bin)) { throw "$bin was not built" }
-            $archive = "$name-${{ github.ref_name }}-${{ matrix.target }}.zip"
+            $archive = "$name-$env:TAG-${{ matrix.target }}.zip"
             Compress-Archive -Path $bin -DestinationPath $archive
             $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
             "$hash  $archive" | Out-File -FilePath "$archive.sha256" -Encoding ASCII
@@ -354,8 +364,9 @@ jobs:
         working-directory: crates/h5i-wasm-harness/dist
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
           for f in h5i_agent-*.whl; do sha256sum "$f" > "$f.sha256"; done
-          gh release upload "${{ github.ref_name }}" \
+          gh release upload "$TAG" \
             h5i_agent-*.whl h5i_agent-*.whl.sha256 \
             --repo "${{ github.repository }}" --clobber
