@@ -481,6 +481,20 @@ impl Jar {
                 continue;
             }
 
+            // Bounds, checked before the jar grows. A cookie that replaces one
+            // already held is never refused by them: only a *new* one can push
+            // the jar past a limit, and a page must always be able to rotate
+            // or clear what it set.
+            let replaces = jar.iter().any(|c| same_cookie(c, &cookie));
+            if !replaces {
+                let too_big = cookie.name.len() + cookie.value.len() > MAX_COOKIE_BYTES;
+                let host_full = jar.iter().filter(|c| c.host == cookie.host).count()
+                    >= MAX_COOKIES_PER_HOST;
+                if too_big || host_full || jar.len() >= MAX_COOKIES {
+                    continue;
+                }
+            }
+
             // Replacing by identity is what makes deletion work: a server
             // clears a cookie by re-sending it with an expiry in the past, so
             // the removal has to happen through the same door as the write.
@@ -597,6 +611,23 @@ fn is_secure(url: &Url) -> bool {
 /// `document.cookie` is a string from page script and a jar file is a string
 /// from a file. Both reached the `Cookie:` header unchecked, so one malformed
 /// cookie made *every* later request's header unparseable.
+/// Largest cookie this jar will hold, name plus value, in bytes.
+///
+/// Browsers cap this at about four kilobytes, and for the same reason: a
+/// `Cookie:` header is built by concatenating every match on every request, so
+/// one enormous cookie is a cost the page pays for the rest of the session.
+const MAX_COOKIE_BYTES: usize = 4096;
+
+/// Most cookies one host may hold, and most the whole jar may hold.
+///
+/// `document.cookie = "c" + i + "=" + "A".repeat(1e6)` in a loop had no bound
+/// at all: each assignment grew a `Vec`, re-serialised the *entire* jar and
+/// wrote it to disk, so the cost was quadratic in what the page had already
+/// written and the `--cookie-jar` file grew with it. Browsers cap per-host at
+/// about 180.
+const MAX_COOKIES_PER_HOST: usize = 180;
+const MAX_COOKIES: usize = 3000;
+
 fn is_wire_safe(name: &str, value: &str) -> bool {
     // Narrower than the grammar, deliberately. RFC 6265's cookie-octet also
     // excludes space, comma, quote and backslash, and refusing those would
@@ -871,6 +902,32 @@ mod tests {
 
     fn url(s: &str) -> Url {
         Url::parse(s).expect("test url")
+    }
+
+    #[test]
+    fn a_page_cannot_grow_the_jar_without_limit() {
+        let jar = Jar::new();
+        let u = url("https://a.example/");
+
+        // One cookie per assignment, and every assignment re-serialised the
+        // whole jar to disk: quadratic in what the page had already written.
+        for i in 0..(MAX_COOKIES_PER_HOST + 50) {
+            jar.store(&u, [format!("c{i}=v").as_str()]);
+        }
+        assert_eq!(jar.len(), MAX_COOKIES_PER_HOST);
+
+        // ...and the ones already held can still be rotated and cleared, which
+        // is the property a cap must not take away.
+        assert_eq!(jar.store(&u, ["c0=rotated"]), 1);
+        assert!(jar.header_for(&u).expect("sent").0.contains("c0=rotated"));
+        assert_eq!(jar.store(&u, ["c0=; Max-Age=0"]), 1);
+        assert_eq!(jar.len(), MAX_COOKIES_PER_HOST - 1);
+
+        // A single enormous cookie is refused rather than carried on every
+        // later request.
+        let fat = format!("big={}", "A".repeat(MAX_COOKIE_BYTES));
+        assert_eq!(jar.store(&u, [fat.as_str()]), 0);
+        assert_eq!(jar.store(&u, ["small=ok"]), 1);
     }
 
     #[test]
