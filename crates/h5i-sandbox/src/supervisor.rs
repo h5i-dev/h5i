@@ -344,6 +344,11 @@ pub struct ResolvedEgress {
     /// filtering resolver returns for a name it blocks. Unpinnable like the
     /// above and reported like it, but *not* fatal: see [`is_sinkhole`].
     pub sinkholed: Vec<(String, IpAddr)>,
+    /// `(entry, why)` for a rule this tier cannot express: one the shared
+    /// grammar refuses, and one whose meaning needs a name rather than an
+    /// address. Fatal, because a rule that contributes nothing must not read
+    /// like one that was applied.
+    pub unenforceable: Vec<(String, String)>,
 }
 
 /// May a `net.egress` entry pin to this address?
@@ -388,13 +393,34 @@ pub fn resolve_egress(egress: &[String]) -> ResolvedEgress {
         if raw.is_empty() {
             continue;
         }
-        // Split a trailing :port only when numeric (IPv6 literals have colons).
-        let (host, port) = match raw.rsplit_once(':') {
-            Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => {
-                (h, p.parse::<u16>().unwrap_or(443))
+        // The shared grammar, not a second reading of it. The local copy
+        // parsed a port with `unwrap_or(443)`, so `example.com:99999` became an
+        // accept rule for a port nobody wrote, and it handed `*.example.com`
+        // straight to the resolver, which answers nothing: a wildcard grant
+        // enforced at container and microvm and silently absent here.
+        let (host, wildcard, port) = match crate::container::parse_egress_rule(raw) {
+            Ok(Some(parsed)) => parsed,
+            Ok(None) => continue,
+            Err(e) => {
+                r.unenforceable.push((raw.to_string(), e.to_string()));
+                continue;
             }
-            _ => (raw, 443u16),
         };
+        // A suffix rule needs something that can see the name. nftables sees
+        // addresses, and there is no set of addresses that is "the subdomains
+        // of example.com". Reported rather than dropped: a rule this tier
+        // cannot hold must not read as one it is holding.
+        if wildcard {
+            r.unenforceable.push((
+                raw.to_string(),
+                "a subdomain wildcard needs enforcement that can see the name, and this tier \
+                 filters by address"
+                    .to_string(),
+            ));
+            continue;
+        }
+        let host = host.as_str();
+        let port = port.unwrap_or(443);
         let Ok(addrs) = (host, port).to_socket_addrs() else { continue };
         let mut first_ip: Option<IpAddr> = None;
         for a in addrs {
@@ -749,6 +775,13 @@ fn setup_egress(
             // facts only make sense together. Dropping it quietly would leave
             // a box that fails to reach something its policy plainly allows,
             // with the reason nowhere.
+            if let Some((entry, why)) = resolved.unenforceable.first() {
+                return Err(H5iError::Metadata(format!(
+                    "net.egress entry {entry:?} cannot be enforced at this tier: {why}. \
+                     Refusing rather than running a box whose announced egress scope is \
+                     wider than the one in force (fail-closed)."
+                )));
+            }
             if let Some((entry, ip)) = resolved.refused.first() {
                 return Err(H5iError::Metadata(format!(
                     "net.egress entry {entry:?} resolves to {ip}, which this tier refuses to \
@@ -1432,6 +1465,27 @@ mod tests {
         // Neither is pinned, either way, and the good entry is untouched.
         assert_eq!(r.dests, vec![EgressDest { ip: "127.0.0.1".parse().unwrap(), port: 443 }]);
         assert!(r.host_pins.is_empty(), "IP literals need no /etc/hosts pin");
+    }
+
+    /// The grammar has one definition. This copy read a port with
+    /// `unwrap_or(443)`, so `example.com:99999` — which `container` refuses
+    /// outright — became an accept rule for a port nobody wrote; and it handed
+    /// `*.example.com` to the resolver, which answers nothing, so a wildcard
+    /// grant enforced at container and microvm was silently absent here.
+    #[test]
+    fn a_rule_this_tier_cannot_hold_is_named_rather_than_dropped() {
+        let r = resolve_egress(&["example.com:99999".into()]);
+        assert_eq!(r.unenforceable.len(), 1, "{:?}", r.unenforceable);
+        assert!(r.dests.is_empty(), "and it certainly pins nothing");
+
+        let r = resolve_egress(&["*.example.com".into()]);
+        assert_eq!(r.unenforceable.len(), 1, "{:?}", r.unenforceable);
+        assert!(r.unenforceable[0].1.contains("address"), "{:?}", r.unenforceable);
+
+        // Ordinary entries are unaffected.
+        let r = resolve_egress(&["localhost".into(), "localhost:8080".into()]);
+        assert!(r.unenforceable.is_empty(), "{:?}", r.unenforceable);
+        assert!(r.dests.iter().any(|d| d.port == 8080));
     }
 
     #[test]
