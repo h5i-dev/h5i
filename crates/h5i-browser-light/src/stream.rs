@@ -181,6 +181,27 @@ struct Session {
     /// against; this is the evidence that an agent's `@e5` still means what the
     /// agent read. See [`resolve_ref`].
     served_refs: Option<Vec<crate::snapshot::RefEntry>>,
+    /// The refs this session last handed to a *viewer*, as a hint overlay.
+    ///
+    /// A third handle set rather than a reuse of `served_refs`, and the reason is
+    /// the same one that made `served_refs` separate from `last_snapshot`: they
+    /// answer different questions and share nothing but a shape. An agent holds
+    /// refs from the reading it took; a human at a viewer holds labels from the
+    /// overlay they are looking at. Minting one must not silently expire the
+    /// other, because the human pressing `f` is not asking the agent to
+    /// re-snapshot, and an agent whose next `@e5` failed because somebody looked
+    /// at the page would be an agent broken by an observer.
+    ///
+    /// `resolve_ref` honours either, under the same `same_target` rule. Neither
+    /// set is trusted further than the other: both are evidence that a ref was
+    /// minted in a reading which still describes the same thing.
+    hint_refs: Option<Vec<crate::snapshot::RefEntry>>,
+    /// Where this session has been, so a viewer can go back.
+    ///
+    /// Held here rather than in the page because a page is replaced on every
+    /// navigation and history is the one thing that has to outlive that. See
+    /// [`History`] for what is and is not a history entry.
+    history: History,
     /// Verb names callers asked for that this session does not have, counted.
     ///
     /// Free telemetry on the gap between what this engine offers and what the
@@ -211,6 +232,66 @@ struct Session {
     /// frames. roadmap-history.md §5.10 specified withholding frames *and*
     /// snapshots; only the snapshot half is built, and the refusal text says so.
     login: bool,
+}
+
+/// Where this session has been, and where forward is.
+///
+/// The back button is the one piece of browser chrome a viewer cannot fake from
+/// outside: `navigate` to the previous URL is a *new* visit, which is why the
+/// engine has to keep this rather than letting the viewer hold a list of its
+/// own. Two viewers watching one page would otherwise disagree about what back
+/// means, and neither would agree with the session.
+///
+/// What counts as an entry is deliberately narrow. A navigation the session
+/// performed is one; a navigation that *failed* is not, because the page never
+/// changed and a back button that steps through pages the human never saw is a
+/// back button that lies. Re-visiting the URL already on top is not one either:
+/// a reload is not a place.
+#[derive(Debug, Clone, Default)]
+struct History {
+    entries: Vec<Url>,
+    /// Index of the current page in `entries`. Meaningless when `entries` is
+    /// empty, which is the state before the first navigation lands.
+    index: usize,
+}
+
+impl History {
+    /// Record a navigation the session actually performed.
+    ///
+    /// Going somewhere new after stepping back discards the forward entries,
+    /// which is what every browser does and what makes forward safe to offer:
+    /// the alternative is a forward button that jumps to a page unrelated to
+    /// the one being read.
+    fn visit(&mut self, url: Url) {
+        if self.entries.get(self.index) == Some(&url) {
+            return;
+        }
+        if !self.entries.is_empty() {
+            self.entries.truncate(self.index + 1);
+            self.index += 1;
+        }
+        self.entries.push(url);
+        self.index = self.entries.len() - 1;
+    }
+
+    /// Where stepping `delta` would land, without moving.
+    ///
+    /// Returns `None` at either end rather than clamping, so a viewer can say
+    /// "there is nothing back there" instead of silently reloading the page the
+    /// human is already looking at.
+    fn peek(&self, delta: isize) -> Option<Url> {
+        let target = self.index.checked_add_signed(delta)?;
+        self.entries.get(target).cloned()
+    }
+
+    /// Commit a step that [`History::peek`] approved.
+    fn step(&mut self, delta: isize) {
+        if let Some(target) = self.index.checked_add_signed(delta)
+            && target < self.entries.len()
+        {
+            self.index = target;
+        }
+    }
 }
 
 impl Session {
@@ -284,6 +365,16 @@ impl Session {
         match self.factory.open(url) {
             Ok(page) => {
                 self.page = page;
+                // Recorded only on success, and only here and in `navigate_to`:
+                // those are the two places a navigation actually lands, so they
+                // are the two places history can be kept honest.
+                self.history.visit(url.clone());
+                // The overlay described the page being left. Dropping the labels
+                // is what stops a hint minted on one document from being
+                // honoured against the next; `resolve_ref` would refuse it, but
+                // refusing late reads as a bug and refusing early reads as a
+                // page that moved.
+                self.hint_refs = None;
                 Ok(vec![self.url_message()])
             }
             Err(error) => Ok(vec![json!({
@@ -402,6 +493,9 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         None => None,
     };
 
+    // Captured before `page` is moved into the session, which is also why the
+    // history seed below cannot simply ask the page where it is.
+    let page_url = page.url().clone();
     let session = Session {
         factory,
         page,
@@ -410,6 +504,16 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         actions,
         last_snapshot: None,
         served_refs: None,
+        hint_refs: None,
+        // Seeded with the page the session opened on. Without this the first
+        // `back` from the second page would find an empty list and refuse, so
+        // the human's way out of the first link they followed would be the one
+        // navigation history did not record.
+        history: {
+            let mut history = History::default();
+            history.visit(page_url);
+            history
+        },
         unknown_verbs: std::collections::BTreeMap::new(),
         recording: crate::replay::Recording::default(),
         login: false,
@@ -1221,6 +1325,8 @@ fn navigate_to(session: &mut Session, target: &str) -> Result<(), Value> {
     match session.factory.open(&resolved) {
         Ok(page) => {
             session.page = page;
+            session.history.visit(resolved.clone());
+            session.hint_refs = None;
             // The refs the caller last read describe a page this session is no
             // longer on. Dropping them here is what makes a fused navigation
             // safe: without it a `@ref` from before would be checked against a
@@ -2535,17 +2641,31 @@ fn resolve_ref(
     // No snapshot has been served, so the caller cannot have read this ref
     // anywhere. Distinguished from a stale one because the fix differs: this is
     // "take a snapshot", that is "take another".
-    let Some(served) = session.served_refs.as_ref() else {
+    // Either reading counts: the agent's own snapshot, or the overlay a human is
+    // looking at. Chained rather than merged so the "no reading at all" case
+    // stays distinguishable from "a reading that no longer matches", which is
+    // the distinction the two error messages exist to make.
+    let readings = [
+        session.served_refs.as_ref(),
+        session.hint_refs.as_ref(),
+    ];
+    if readings.iter().all(Option::is_none) {
         return Err(VerbError::no_snapshot(reference));
-    };
+    }
     let wanted = reference.trim_start_matches('@');
-    match served.iter().find(|e| e.id == wanted) {
-        Some(before) if same_target(before, entry) => Ok(entry.clone()),
-        // Either it named something else in the served reading, or it was not
-        // in it at all. Both mean the same thing to the caller and get the same
-        // answer, which names what the ref points at *now*. The one piece of
-        // evidence the session has and the agent does not.
-        Some(_) | None => Err(VerbError::stale_ref(reference, &describe(entry))),
+    let minted = readings
+        .into_iter()
+        .flatten()
+        .flat_map(|refs| refs.iter())
+        .find(|e| e.id == wanted && same_target(e, entry))
+        .cloned();
+    match minted {
+        Some(_) => Ok(entry.clone()),
+        // Either it named something else in every reading served, or it was not
+        // in any of them. Both mean the same thing to the caller and get the
+        // same answer, which names what the ref points at *now*. The one piece
+        // of evidence the session has and the agent does not.
+        None => Err(VerbError::stale_ref(reference, &describe(entry))),
     }
 }
 
@@ -2668,6 +2788,23 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
             _ => false,
         },
 
+        // ─── the hint lane ──────────────────────────────────────────────
+        //
+        // What a viewer asks for instead of aiming a pointer. Three messages,
+        // and the split between them is a security boundary rather than a
+        // tidiness one: `hints` and `act` go through the verb layer, which is
+        // where refusals, staleness and the action log already live, while
+        // `insert` deliberately does *not*, because the verb layer's `type`
+        // resolves `$H5I_SECRET_…` against the broker and a viewer socket must
+        // never be a way to ask for a credential. See `viewer_insert`.
+        "hints" => return Ok(vec![viewer_hints(session)]),
+
+        "act" => return viewer_act(session, message),
+
+        "insert" => return viewer_insert(session, message),
+
+        "history" => return viewer_history(session, message),
+
         // keyUp never scrolls: acting on both halves would double every press.
         "input_keyboard"
             if message.get("eventType").and_then(Value::as_str) == Some("keyDown") =>
@@ -2687,6 +2824,176 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
     } else {
         Ok(Vec::new())
     }
+}
+
+/// The overlay: every actionable element on screen, labelled.
+///
+/// Minting the labels here rather than in each viewer is what keeps two viewers
+/// watching one page from disagreeing about what `sd` means. The refs are
+/// remembered as `hint_refs` so the `act` that follows can be checked against
+/// the reading the human was actually looking at.
+///
+/// The viewport is reported alongside, because a viewer has to scale these
+/// coordinates into whatever it is drawing on and deriving the scale from the
+/// last frame's dimensions would be deriving it from a different message.
+fn viewer_hints(session: &mut Session) -> Value {
+    let targets = session.page.hint_targets();
+    let labels = crate::hints::labels(targets.len());
+    let (viewport_width, viewport_height) = session.viewport();
+
+    let items: Vec<Value> = targets
+        .iter()
+        .zip(labels.iter())
+        .map(|(target, label)| {
+            json!({
+                "label": label,
+                "ref": target.entry.id,
+                "role": target.entry.role,
+                // Collapsed, like every other page-derived string that leaves
+                // this engine. The viewers sanitize on arrival as well: this is
+                // the engine keeping its own output on one line, not the
+                // boundary check.
+                "name": crate::snapshot::one_line(&target.entry.name),
+                "href": target.entry.href.as_deref().map(crate::snapshot::one_line),
+                "x": target.x,
+                "y": target.y,
+                "w": target.width,
+                "h": target.height,
+            })
+        })
+        .collect();
+
+    session.hint_refs = Some(targets.into_iter().map(|t| t.entry).collect());
+    json!({
+        "type": "hints",
+        "viewportWidth": viewport_width,
+        "viewportHeight": viewport_height,
+        "items": items,
+    })
+}
+
+/// Act on a hint, through the same verb the agent would have sent.
+///
+/// The whole argument for hints over a synthetic pointer is here in one line:
+/// this dispatches `click @e7`, so the receipt says which role and which
+/// accessible name were activated. A pixel click records a coordinate, which
+/// tells a reviewer nothing about what the human pressed.
+fn viewer_act(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError> {
+    let Some(reference) = message.get("ref").and_then(Value::as_str) else {
+        return Ok(vec![viewer_refusal("`act` needs `ref`.")]);
+    };
+    let action = message
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("click");
+
+    // An allowlist, not a pass-through of whatever `verb` the viewer names.
+    // The viewer socket is not the control socket and must not become a second
+    // way to reach every verb: `script`, `env` and `requests` are not things a
+    // hint overlay has any business asking for.
+    let request = match action {
+        "click" => json!({"verb": "click", "ref": reference}),
+        "press" => {
+            let Some(key) = message.get("key").and_then(Value::as_str) else {
+                return Ok(vec![viewer_refusal("`act press` needs `key`.")]);
+            };
+            json!({"verb": "press", "ref": reference, "key": key})
+        }
+        "check" | "uncheck" => json!({
+            "verb": "set_checked",
+            "ref": reference,
+            "checked": action == "check",
+        }),
+        other => {
+            return Ok(vec![viewer_refusal(&format!(
+                "a viewer may act with `click`, `press`, `check` or `uncheck`, not `{}`.",
+                crate::snapshot::one_line(other)
+            ))]);
+        }
+    };
+
+    let (reply, moved) = control_verb(session, &request);
+    let mut out = vec![json!({"type": "act", "action": action, "reply": reply})];
+    if moved {
+        // The overlay described the page before the click. Whatever it named is
+        // at best still true and at worst points into a document that has been
+        // replaced, so it is dropped and the viewer asks again.
+        session.hint_refs = None;
+        out.push(session.url_message());
+        out.push(session.frame_message()?);
+    }
+    Ok(out)
+}
+
+/// Put text into a field a hint named.
+///
+/// Deliberately not `Verb::Type`. That verb substitutes `$H5I_SECRET_…` from the
+/// broker, which is exactly right for an agent that was granted a credential and
+/// exactly wrong here: the viewer socket carries no grant, and a path from it to
+/// the broker would let anything that can reach the stream port resolve a secret
+/// into a DOM it is already watching. `type_into` is the primitive underneath
+/// the verb, with no broker in it, so what the human typed is what the field
+/// gets and a literal `$H5I_SECRET_TOKEN` stays literal.
+fn viewer_insert(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError> {
+    let Some(reference) = message.get("ref").and_then(Value::as_str) else {
+        return Ok(vec![viewer_refusal("`insert` needs `ref`.")]);
+    };
+    let text = message.get("text").and_then(Value::as_str).unwrap_or("");
+
+    let snapshot = session.page.snapshot();
+    let entry = match resolve_ref(session, &snapshot, reference) {
+        Ok(entry) => entry,
+        Err(e) => return Ok(vec![json!({"type": "act", "action": "insert", "reply": e.reply()})]),
+    };
+    let node_id = entry.node_id;
+    let role = entry.role.clone();
+    if !session.page.type_into(node_id, text) {
+        let refusal = VerbError::wrong_role(reference, &role, "a field to type into").reply();
+        return Ok(vec![json!({"type": "act", "action": "insert", "reply": refusal})]);
+    }
+    Ok(vec![
+        json!({"type": "act", "action": "insert", "reply": {"ok": true, "ref": reference}}),
+        session.frame_message()?,
+    ])
+}
+
+/// Step back or forward through the pages this session actually visited.
+fn viewer_history(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError> {
+    let delta = message.get("go").and_then(Value::as_i64).unwrap_or(0) as isize;
+    if delta == 0 {
+        return Ok(vec![viewer_refusal("`history` needs `go` to be -1 or 1.")]);
+    }
+    let Some(target) = session.history.peek(delta) else {
+        let edge = if delta < 0 { "back" } else { "forward" };
+        return Ok(vec![viewer_refusal(&format!(
+            "there is nothing {edge} from here in this session's history."
+        ))]);
+    };
+    match session.factory.open(&target) {
+        Ok(page) => {
+            session.page = page;
+            // Stepping, not visiting: a back that pushed an entry would make
+            // the list grow every time somebody changed their mind, and forward
+            // would never be reachable.
+            session.history.step(delta);
+            session.hint_refs = None;
+            session.served_refs = None;
+            Ok(vec![session.url_message(), session.frame_message()?])
+        }
+        Err(error) => Ok(vec![json!({
+            "type": "page_error",
+            "text": format!("going to {target} failed: {error}"),
+        })]),
+    }
+}
+
+/// A refusal shaped like every other viewer reply, so a viewer has one thing to
+/// read rather than a reply on success and a silence on failure.
+fn viewer_refusal(reason: &str) -> Value {
+    json!({
+        "type": "act",
+        "reply": {"ok": false, "error": reason},
+    })
 }
 
 /// How far a key should scroll, or `None` if it is not a scrolling key.
@@ -2806,6 +3113,8 @@ mod tests {
             actions: None,
             last_snapshot: None,
             served_refs: None,
+            hint_refs: None,
+            history: History::default(),
             unknown_verbs: std::collections::BTreeMap::new(),
             recording: crate::replay::Recording::default(),
             login: false,
@@ -3891,6 +4200,8 @@ mod tests {
             actions: None,
             last_snapshot: None,
             served_refs: None,
+            hint_refs: None,
+            history: History::default(),
             unknown_verbs: std::collections::BTreeMap::new(),
             recording: crate::replay::Recording::default(),
             login: false,
@@ -5238,6 +5549,246 @@ mod tests {
         broadcast_change(&mut session, &mut nobody);
         assert_eq!(session.seq, before, "no viewers, no frame");
     }
+
+    // ─── the hint lane ──────────────────────────────────────────────────────
+
+    /// The claim the whole design rests on: a label taken off the overlay can be
+    /// acted on with no other reading first, because the overlay is made of the
+    /// same refs the verb layer resolves.
+    ///
+    /// `check` rather than `click`, so the assertion is about the ref and the
+    /// action rather than about where a link goes: following one asks the
+    /// allowlist a question this test is not about.
+    #[test]
+    fn every_hint_names_a_ref_the_verb_layer_will_honour() {
+        let mut session = session_with(
+            "<body><a href='/one'>One</a><input type='checkbox'><p>just words</p></body>",
+        );
+        let out = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let items = out[0]["items"].as_array().expect("items").clone();
+        assert!(items.len() >= 2, "{items:?}");
+
+        let box_item = items
+            .iter()
+            .find(|item| item["role"] == "checkbox")
+            .expect("the checkbox is on the overlay");
+        let reference = box_item["ref"].as_str().expect("a ref").to_string();
+        let out = handle(
+            &mut session,
+            &json!({"type": "act", "ref": reference, "action": "check"}),
+        )
+        .expect("act");
+        assert_eq!(out[0]["reply"]["ok"], true, "{:?}", out[0]);
+    }
+
+    /// And a link on the overlay reaches the verb layer too, which is visible
+    /// from the refusal it comes back with: the allowlist's, about where the
+    /// link goes, not the ref machinery's about a handle it does not recognise.
+    #[test]
+    fn a_link_on_the_overlay_is_refused_by_policy_rather_than_by_the_ref_check() {
+        let mut session = session_with("<body><a href='/one'>One</a></body>");
+        let out = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let reference = out[0]["items"][0]["ref"]
+            .as_str()
+            .expect("a ref")
+            .to_string();
+        let out = handle(
+            &mut session,
+            &json!({"type": "act", "ref": reference, "action": "click"}),
+        )
+        .expect("act");
+        let code = out[0]["reply"]["code"].as_str().unwrap_or_default();
+        assert!(
+            !matches!(code, "no-snapshot" | "stale-ref" | "no-such-ref"),
+            "the overlay's own label was not honoured as a ref: {:?}",
+            out[0]
+        );
+    }
+
+    /// The other half of the same claim, from the failure direction: a label the
+    /// overlay never minted is refused rather than acted on.
+    #[test]
+    fn a_ref_no_overlay_ever_served_is_refused() {
+        let mut session = session_with("<body><button>Press</button></body>");
+        let out = handle(
+            &mut session,
+            &json!({"type": "act", "ref": "@e99", "action": "click"}),
+        )
+        .expect("act");
+        assert_eq!(out[0]["reply"]["ok"], false, "{:?}", out[0]);
+    }
+
+    /// Prose is not a target. A page whose every paragraph got a label would be
+    /// a page with no usable labels.
+    #[test]
+    fn only_actionable_elements_get_a_label() {
+        let mut session = session_with("<body><p>one</p><p>two</p><p>three</p></body>");
+        let out = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        assert_eq!(out[0]["items"].as_array().expect("items").len(), 0);
+    }
+
+    /// The labels are the engine's, so two viewers watching one page cannot
+    /// disagree about what a keystroke means.
+    #[test]
+    fn labels_are_minted_by_the_engine_and_are_prefix_free() {
+        let mut links = String::from("<body>");
+        for i in 0..40 {
+            links.push_str(&format!("<a href='/{i}'>link {i}</a>"));
+        }
+        links.push_str("</body>");
+        let mut session = session_with(&links);
+        let out = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let labels: Vec<String> = out[0]["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|item| item["label"].as_str().expect("a label").to_string())
+            .collect();
+        assert_eq!(labels.len(), 40);
+        for a in &labels {
+            for b in &labels {
+                if a != b {
+                    assert!(!b.starts_with(a.as_str()), "`{a}` is a prefix of `{b}`");
+                }
+            }
+        }
+    }
+
+    /// Offscreen elements are dropped rather than clamped: a label pointing at
+    /// something the human cannot see is worse than no label.
+    #[test]
+    fn a_target_below_the_fold_gets_no_label_until_it_is_scrolled_to() {
+        let mut session = session_with(
+            "<body><div style='height:4000px'>top</div><a href='/deep'>Deep</a></body>",
+        );
+        let before = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        assert_eq!(before[0]["items"].as_array().expect("items").len(), 0);
+
+        session.page.scroll_by(0.0, 4000.0);
+        let after = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        assert_eq!(after[0]["items"].as_array().expect("items").len(), 1);
+    }
+
+    /// The security rule the `insert` lane exists to keep. `Verb::Type` resolves
+    /// `$H5I_SECRET_…` against the broker; a viewer socket carries no grant, so
+    /// the same string typed there has to stay literal.
+    #[test]
+    fn a_viewer_cannot_resolve_a_secret_by_typing_its_placeholder() {
+        let (mut session, broker) = session_and_broker(
+            "<body><input id='f' type='text'></body>",
+            crate::secrets::Secrets::from_pairs(&[("TOKEN", "hunter2")]),
+        );
+        let _ = &broker;
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        let reference = session.hint_refs.as_ref().expect("refs")[0].id.clone();
+
+        handle(
+            &mut session,
+            &json!({"type": "insert", "ref": reference, "text": "$H5I_SECRET_TOKEN"}),
+        )
+        .expect("insert");
+
+        let node_id = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        let value = session.page.field_value(node_id).expect("a field value");
+        assert_eq!(
+            value, "$H5I_SECRET_TOKEN",
+            "the viewer lane resolved a credential; it must stay literal"
+        );
+        assert!(!value.contains("hunter2"), "the secret reached the DOM");
+    }
+
+    /// The viewer socket is not a second control socket. It may click and type;
+    /// it may not ask for the request log or run script.
+    #[test]
+    fn a_viewer_may_not_reach_a_verb_the_hint_lane_does_not_offer() {
+        let mut session = session_with("<body><a href='/one'>One</a></body>");
+        let out = handle(
+            &mut session,
+            &json!({"type": "act", "ref": "@e1", "action": "script"}),
+        )
+        .expect("act");
+        assert_eq!(out[0]["reply"]["ok"], false, "{:?}", out[0]);
+        let error = out[0]["reply"]["error"].as_str().unwrap_or_default();
+        assert!(error.contains("`click`"), "{error}");
+    }
+
+    /// Looking at a page must not expire the agent's handles.
+    #[test]
+    fn minting_an_overlay_leaves_the_agents_own_refs_alone() {
+        let mut session = session_with("<body><input type='checkbox'></body>");
+        control_verb(&mut session, &json!({"verb": "snapshot"}));
+        let agents = session.served_refs.clone().expect("the agent read the page");
+
+        handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        assert_eq!(
+            session.served_refs.as_ref(),
+            Some(&agents),
+            "a human looking at the page expired the agent's refs"
+        );
+
+        // And the agent's ref still resolves afterwards.
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({
+                "verb": "set_checked",
+                "ref": format!("@{}", agents[0].id),
+                "checked": true,
+            }),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+    }
+
+    // ─── history ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn back_returns_to_the_page_the_link_was_followed_from() {
+        let mut history = History::default();
+        let first = Url::parse("https://example.com/one").unwrap();
+        let second = Url::parse("https://example.com/two").unwrap();
+        history.visit(first.clone());
+        history.visit(second.clone());
+
+        assert_eq!(history.peek(-1), Some(first.clone()));
+        history.step(-1);
+        assert_eq!(history.peek(1), Some(second));
+        assert_eq!(history.peek(-1), None, "there is nothing before the first page");
+    }
+
+    /// A reload is not a place, so it does not earn a history entry.
+    #[test]
+    fn revisiting_the_page_already_on_top_is_not_a_new_entry() {
+        let mut history = History::default();
+        let url = Url::parse("https://example.com/one").unwrap();
+        history.visit(url.clone());
+        history.visit(url.clone());
+        assert_eq!(history.entries.len(), 1);
+        assert_eq!(history.peek(-1), None);
+    }
+
+    /// Going somewhere new after stepping back discards forward, which is what
+    /// stops forward from jumping to a page unrelated to the one being read.
+    #[test]
+    fn a_new_navigation_after_going_back_drops_the_forward_entries() {
+        let mut history = History::default();
+        for path in ["one", "two", "three"] {
+            history.visit(Url::parse(&format!("https://example.com/{path}")).unwrap());
+        }
+        history.step(-1);
+        history.step(-1);
+        assert_eq!(history.index, 0);
+
+        let fresh = Url::parse("https://example.com/elsewhere").unwrap();
+        history.visit(fresh.clone());
+        assert_eq!(history.peek(1), None, "forward still pointed at a discarded page");
+        assert_eq!(history.entries.last(), Some(&fresh));
+    }
+
+    #[test]
+    fn a_viewer_at_the_first_page_is_told_there_is_nothing_back_there() {
+        let mut session = session_with("<body><p>only page</p></body>");
+        let out = handle(&mut session, &json!({"type": "history", "go": -1})).expect("history");
+        assert_eq!(out[0]["reply"]["ok"], false, "{:?}", out[0]);
+    }
 }
 
 #[cfg(test)]
@@ -5267,6 +5818,8 @@ mod delta_and_login_tests {
             actions: None,
             last_snapshot: None,
             served_refs: None,
+            hint_refs: None,
+            history: History::default(),
             unknown_verbs: std::collections::BTreeMap::new(),
             recording: crate::replay::Recording::default(),
             login: false,

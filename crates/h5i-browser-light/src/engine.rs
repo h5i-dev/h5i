@@ -94,6 +94,13 @@ impl Default for PageOptions {
     }
 }
 
+/// How many nodes an inline union will walk before giving up.
+///
+/// The union is per hint target and hints are per keystroke, so this is a
+/// budget on a loop the page can shape. Far above any real anchor's subtree and
+/// far below anything that would make an overlay feel slow.
+const MAX_INLINE_NODES: usize = 4096;
+
 /// What [`Page::select_option`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectOutcome {
@@ -105,6 +112,141 @@ pub enum SelectOutcome {
     NoSuchOption,
     /// It was never a `<select>`.
     NotASelect,
+}
+
+/// Where an element is on screen, in viewport pixels.
+///
+/// Two sources, because a document has two layout systems and the interesting
+/// half of the web lives in the one with no boxes in it.
+///
+/// A block, a replaced element and an inline-block all get a taffy box, and for
+/// those the answer is the document's own `getBoundingClientRect`. A *non-replaced
+/// inline* element does not: `<a href="…">read the docs</a>` inside a paragraph
+/// has no box of its own, its text is laid out by parley into the containing
+/// block's inline formatting context, and its taffy size is zero. That is not a
+/// corner case. It is the ordinary shape of a link on a real page, and reading
+/// only the box layout produced an overlay that could label a form and could not
+/// label a single link in an article.
+///
+/// So the fallback walks the inline root's own layout and unions the runs
+/// belonging to this element, which is what `getClientRects` does and what
+/// [`Page::link_at`]'s hit test already relies on from the other direction.
+///
+/// Returns `None` when there is nothing to point at: an element with no box and
+/// no glyphs (`display: none`, an empty control, a `display: contents` wrapper)
+/// is one no label could usefully be stuck to.
+fn hint_rect(doc: &BaseDocument, node_id: usize) -> Option<(f64, f64, f64, f64)> {
+    if let Some(rect) = doc.get_client_bounding_rect(node_id)
+        && rect.width > 0.0
+        && rect.height > 0.0
+    {
+        return Some((rect.x, rect.y, rect.width, rect.height));
+    }
+    inline_rect(doc, node_id)
+}
+
+/// The union of an inline element's line boxes, in viewport pixels.
+fn inline_rect(doc: &BaseDocument, node_id: usize) -> Option<(f64, f64, f64, f64)> {
+    let node = doc.get_node(node_id)?;
+    let root = node.inline_root_ancestor()?;
+    let layout = &root.element_data()?.inline_layout_data.as_ref()?.layout;
+
+    // Which nodes count as "this element's text". Parley labels every glyph run
+    // with the node whose style it took, which for `<a><b>bold link</b></a>` is
+    // the `<b>`, so matching the anchor alone would find nothing on exactly the
+    // markup that needs this most.
+    let mut owned = std::collections::HashSet::new();
+    let mut stack = vec![node_id];
+    // Bounded, like the snapshot walk it accompanies: this runs on a keystroke
+    // over a document the page controls, and an unbounded walk of a pathological
+    // tree is a viewer that stops answering.
+    let mut budget = MAX_INLINE_NODES;
+    while let Some(id) = stack.pop() {
+        if budget == 0 {
+            break;
+        }
+        budget -= 1;
+        if !owned.insert(id) {
+            continue;
+        }
+        if let Some(child) = doc.get_node(id) {
+            stack.extend(child.children.iter().copied());
+        }
+    }
+
+    let (mut x0, mut y0) = (f64::MAX, f64::MAX);
+    let (mut x1, mut y1) = (f64::MIN, f64::MIN);
+    let mut found = false;
+    for line in layout.lines() {
+        for item in line.items() {
+            let (a, b, c, d) = match item {
+                parley::layout::PositionedLayoutItem::GlyphRun(run) => {
+                    if !owned.contains(&run.style().brush.id) {
+                        continue;
+                    }
+                    let metrics = run.run().metrics();
+                    let baseline = run.baseline() as f64;
+                    (
+                        run.offset() as f64,
+                        baseline - metrics.ascent as f64,
+                        run.advance() as f64,
+                        (metrics.ascent + metrics.descent) as f64,
+                    )
+                }
+                parley::layout::PositionedLayoutItem::InlineBox(ibox) => {
+                    if !owned.contains(&(ibox.id as usize)) {
+                        continue;
+                    }
+                    (
+                        ibox.x as f64,
+                        ibox.y as f64,
+                        ibox.width as f64,
+                        ibox.height as f64,
+                    )
+                }
+            };
+            found = true;
+            x0 = x0.min(a);
+            y0 = y0.min(b);
+            x1 = x1.max(a + c);
+            y1 = y1.max(b + d);
+        }
+    }
+    if !found || x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+
+    // Inline coordinates are relative to the inline root's *content* box, so
+    // the padding and border it carries have to be added back before the
+    // position means anything on screen. The same correction `hit_inner` makes
+    // on the way in, applied on the way out.
+    let origin = root.absolute_position(0.0, 0.0);
+    let inset_x = (root.final_layout.padding.left + root.final_layout.border.left) as f64;
+    let inset_y = (root.final_layout.padding.top + root.final_layout.border.top) as f64;
+    let scroll = doc.viewport_scroll();
+
+    Some((
+        origin.x as f64 + inset_x + x0 - scroll.x,
+        origin.y as f64 + inset_y + y0 - scroll.y,
+        x1 - x0,
+        y1 - y0,
+    ))
+}
+
+/// One actionable element, with the geometry an overlay needs to label it.
+///
+/// The ref is carried whole rather than reduced to its id, because a viewer has
+/// to *show* the target as well as address it: a hint that says only `e7` makes
+/// a human read the page to find out what they are about to press, which is the
+/// work the label existed to save.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HintTarget {
+    pub entry: crate::snapshot::RefEntry,
+    /// Viewport pixels: the left edge, past the scroll offset.
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 /// A request a form asked for, caught on its way to the network.
@@ -2186,6 +2328,49 @@ impl Page {
             node_id = node.parent?;
         }
         None
+    }
+
+
+    /// Everything on screen a human could act on, and where it is.
+    ///
+    /// The hint overlay both viewers draw is this list rendered as labels. It is
+    /// deliberately *the snapshot's* refs rather than a second opinion about what
+    /// is clickable: an overlay that offered a target the verb layer would then
+    /// refuse is worse than no overlay, and a second walk with its own idea of
+    /// "actionable" is how the two drift. What this adds is the one thing the
+    /// outline leaves out because a model has no use for it, geometry.
+    ///
+    /// Viewport coordinates, already past the scroll offset, because that is the
+    /// frame both viewers draw in: the terminal maps cells through the image
+    /// placement and the web viewer maps CSS pixels through the canvas, and both
+    /// arrive at "where on the visible page". Offscreen elements are dropped
+    /// rather than clamped, so a label never points at something the human
+    /// cannot see.
+    pub fn hint_targets(&self) -> Vec<HintTarget> {
+        let snapshot = self.snapshot();
+        let doc = self.doc.borrow();
+        let (width, height) = (self.options.width as f64, self.options.height as f64);
+
+        snapshot
+            .refs
+            .iter()
+            .filter_map(|entry| {
+                let (x, y, w, h) = hint_rect(&doc, entry.node_id)?;
+                // Intersection, not containment: a link half off the right edge
+                // is still one a human can see and click.
+                let visible = x < width && y < height && x + w > 0.0 && y + h > 0.0;
+                if !visible {
+                    return None;
+                }
+                Some(HintTarget {
+                    entry: entry.clone(),
+                    x,
+                    y,
+                    width: w,
+                    height: h,
+                })
+            })
+            .collect()
     }
 
     /// The document's visible text, for the case where the caller wants prose
