@@ -5311,7 +5311,7 @@ fn run_inner(
     // the pattern-based redaction the capture already applies. A token echoed
     // to stdout must never reach refs/h5i/objects even if it matches no
     // pattern.
-    raw = scrub_exact(&raw, &brokered.redactions);
+    raw = crate::secrets::scrub_exact(&raw, &brokered.redactions);
 
     // Browser evidence: when this run drove the browser, ask the page what happened before
     // recording the run.
@@ -5385,7 +5385,15 @@ fn run_inner(
         // same.
         runtime: runtime_evidence,
     };
-    let captured = crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, &raw)?;
+    // The brokered values reach every field the pattern scan reaches, not just
+    // the payload the caller scrubbed above: `cmd` is the argv the host shell
+    // expanded, and the kernel-observed exemplars are box-chosen command lines.
+    let captured = crate::receipt::append_with_secrets(
+        &env_dir(h5i_root, &m.agent, &m.slug),
+        input,
+        &raw,
+        &brokered.redactions,
+    )?;
     let capture_id = captured.id.clone();
 
     m.captures.push(capture_id.clone());
@@ -5843,7 +5851,7 @@ pub fn shell(
     let runtime_note = match runtime_evidence {
         Some(ev) => {
             let note = format!(" runtime={}", ev.summary());
-            match capture_shell_runtime(h5i_root, m, &work, ev, exit_code) {
+            match capture_shell_runtime(h5i_root, m, &work, ev, exit_code, &brokered.redactions) {
                 Ok(id) => m.captures.push(id),
                 Err(e) => eprintln!("warning: shell runtime capture failed: {e}"),
             }
@@ -6017,6 +6025,7 @@ fn capture_shell_runtime(
     work: &Path,
     runtime: h5i_bpf::RuntimeEvidence,
     exit_code: i32,
+    secrets: &[String],
 ) -> Result<String, H5iError> {
     let mut raw = format!("runtime detection ({}): {}\n", runtime.lane, runtime.summary());
     raw.push_str(&format!(
@@ -6058,7 +6067,13 @@ fn capture_shell_runtime(
         runtime: Some(runtime),
         ..Default::default()
     };
-    Ok(crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, raw.as_bytes())?.id)
+    Ok(crate::receipt::append_with_secrets(
+        &env_dir(h5i_root, &m.agent, &m.slug),
+        input,
+        raw.as_bytes(),
+        secrets,
+    )?
+    .id)
 }
 
 /// Persist an interactive session's egress tally as an env-tagged capture. The
@@ -6376,30 +6391,6 @@ fn write_plain_zshrc(
     })
 }
 
-/// Replace every occurrence of each `secrets` value in `raw`, on the *bytes*.
-fn scrub_exact(raw: &[u8], secrets: &[String]) -> Vec<u8> {
-    const MARKER: &[u8] = b"[redacted secret]";
-    let mut out = raw.to_vec();
-    for secret in secrets {
-        let needle = secret.as_bytes();
-        if needle.is_empty() {
-            continue;
-        }
-        let mut next = Vec::with_capacity(out.len());
-        let mut i = 0;
-        while i < out.len() {
-            if out[i..].starts_with(needle) {
-                next.extend_from_slice(MARKER);
-                i += needle.len();
-            } else {
-                next.push(out[i]);
-                i += 1;
-            }
-        }
-        out = next;
-    }
-    out
-}
 
 // ─── shell-spool ingest (in-box observation evidence) ────────────────────────
 
@@ -6501,13 +6492,13 @@ fn ingest_shell_spool(
             raw.extend_from_slice(&stderr);
         }
 
-        let raw = scrub_exact(&raw, secrets);
+        let raw = crate::secrets::scrub_exact(&raw, secrets);
 
         // The command string is box-controlled: redact secrets, flatten to one
         // line, and cap it before it lands in a manifest or event detail. The
         // brokered values go too. A credential passed on a command line is at
         // least as likely as one echoed to stdout.
-        let cmd_text = String::from_utf8_lossy(&scrub_exact(cmd_text.as_bytes(), secrets))
+        let cmd_text = String::from_utf8_lossy(&crate::secrets::scrub_exact(cmd_text.as_bytes(), secrets))
             .into_owned();
         let safe_cmd: String = crate::secrets::redact_text(&cmd_text)
             .replace(['\n', '\r'], " ")
@@ -6525,7 +6516,12 @@ fn ingest_shell_spool(
             git_tree: head_tree.clone(),
             ..Default::default()
         };
-        let captured = crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, &raw)?;
+        let captured = crate::receipt::append_with_secrets(
+            &env_dir(h5i_root, &m.agent, &m.slug),
+            input,
+            &raw,
+            secrets,
+        )?;
         m.captures.push(captured.id.clone());
         append_event(
             repo,
@@ -6584,12 +6580,12 @@ fn ingest_shell_spool(
         // The same exact-value scrub the tee-shim branch above gets. These are
         // two branches of one function reading one spool, and a credential does
         // not care which of them recorded it.
-        let raw = scrub_exact(
+        let raw = crate::secrets::scrub_exact(
             &read_spool_capped(&path_of("raw"), SPOOL_MAX_OUTPUT_BYTES).unwrap_or_default(),
             secrets,
         );
         let meta_cmd =
-            String::from_utf8_lossy(&scrub_exact(meta.cmd.as_bytes(), secrets)).into_owned();
+            String::from_utf8_lossy(&crate::secrets::scrub_exact(meta.cmd.as_bytes(), secrets)).into_owned();
         let safe_cmd: String = crate::secrets::redact_text(&meta_cmd)
             .replace(['\n', '\r'], " ")
             .chars()
@@ -6607,7 +6603,12 @@ fn ingest_shell_spool(
             files,
             ..Default::default()
         };
-        let captured = crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, &raw)?;
+        let captured = crate::receipt::append_with_secrets(
+            &env_dir(h5i_root, &m.agent, &m.slug),
+            input,
+            &raw,
+            secrets,
+        )?;
         m.captures.push(captured.id.clone());
         append_event(
             repo,
@@ -11537,14 +11538,14 @@ mod tests {
 
         // Binary in, byte-identical out.
         let binary: Vec<u8> = vec![0x00, 0xff, 0xfe, 0x80, b'o', b'k', 0xc3];
-        assert_eq!(scrub_exact(&binary, &secrets), binary);
+        assert_eq!(crate::secrets::scrub_exact(&binary, &secrets), binary);
 
         // ...and the secret goes even when it sits next to bytes that are not
         // UTF-8 at all, which is where the lossy round trip did its damage.
         let mut payload = vec![0xffu8, 0xfe];
         payload.extend_from_slice(b"token=sk-live-abcdef\n");
         payload.push(0x80);
-        let out = scrub_exact(&payload, &secrets);
+        let out = crate::secrets::scrub_exact(&payload, &secrets);
         assert!(!out.windows(14).any(|w| w == b"sk-live-abcdef"), "{out:?}");
         assert_eq!(&out[..2], &[0xff, 0xfe], "the surrounding bytes are untouched");
         assert_eq!(out.last(), Some(&0x80));
@@ -11552,10 +11553,10 @@ mod tests {
 
         // Every occurrence, and an empty entry is a no-op rather than an
         // infinite marker.
-        let out = scrub_exact(b"a sk-live-abcdef b sk-live-abcdef", &secrets);
+        let out = crate::secrets::scrub_exact(b"a sk-live-abcdef b sk-live-abcdef", &secrets);
         assert_eq!(out, b"a [redacted secret] b [redacted secret]");
-        assert_eq!(scrub_exact(b"abc", &["".to_string()]), b"abc");
-        assert_eq!(scrub_exact(b"abc", &[]), b"abc");
+        assert_eq!(crate::secrets::scrub_exact(b"abc", &["".to_string()]), b"abc");
+        assert_eq!(crate::secrets::scrub_exact(b"abc", &[]), b"abc");
     }
 
     /// `validate_profile` pins a persona source inside `$WORK` (relative, no

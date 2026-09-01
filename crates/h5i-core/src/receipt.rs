@@ -231,6 +231,20 @@ fn redact_runtime_evidence(
     r
 }
 
+/// The exact half of [`redact_runtime_evidence`]: the same exemplars, told the
+/// values rather than asked to recognise them.
+fn scrub_runtime_exact(
+    mut r: h5i_bpf::RuntimeEvidence,
+    secrets: &[String],
+) -> h5i_bpf::RuntimeEvidence {
+    for d in &mut r.detections {
+        for e in &mut d.examples {
+            *e = crate::secrets::scrub_exact_str(e, secrets);
+        }
+    }
+    r
+}
+
 fn log_path(env_dir: &Path) -> PathBuf {
     env_dir.join(LOG_FILE)
 }
@@ -325,6 +339,50 @@ fn run_id(timestamp: &str, input: &RecordInput, digest: &str) -> String {
 /// The payload and the command are secret-redacted before anything is written.
 /// Returns the record as stored, whose `id` is the handle the CLI shows.
 pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecRecord, H5iError> {
+    append_with_secrets(env_dir, input, raw, &[])
+}
+
+/// [`append`], told the brokered secret values this run was given.
+///
+/// Two halves, and they have to cover the same ground. The pattern scan
+/// describes what a credential looks like and is best-effort by construction;
+/// this exact scrub is told the values and is the guaranteed half. The exact
+/// half was being applied by callers, to the payload only, so `cmd`, `cwd`,
+/// `files`, the browser strings and the kernel-observed exemplars got the
+/// best-effort half alone — and an opaque token with no vendor prefix matches
+/// no pattern. A `sh -c` line that the host shell expanded a brokered value
+/// into reached `refs/h5i/objects` intact. Applying it here means every field
+/// the pattern scan reaches, the exact scrub reaches too.
+pub fn append_with_secrets(
+    env_dir: &Path,
+    mut input: RecordInput,
+    raw: &[u8],
+    secrets: &[String],
+) -> Result<ExecRecord, H5iError> {
+    let exact_holder;
+    let raw: &[u8] = if secrets.is_empty() {
+        raw
+    } else {
+        exact_holder = crate::secrets::scrub_exact(raw, secrets);
+        &exact_holder[..]
+    };
+    let exact = |text: String| crate::secrets::scrub_exact_str(&text, secrets);
+    input.cmd = input.cmd.map(&exact);
+    input.cwd = input.cwd.map(&exact);
+    input.files = input.files.into_iter().map(&exact).collect();
+    input.browser = input.browser.map(|mut b| {
+        for v in [&mut b.console, &mut b.errors, &mut b.failed_requests] {
+            for s in v.iter_mut() {
+                *s = exact(std::mem::take(s));
+            }
+        }
+        b
+    });
+    input.runtime = input.runtime.map(|r| scrub_runtime_exact(r, secrets));
+    append_inner(env_dir, input, raw)
+}
+
+fn append_inner(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecRecord, H5iError> {
     // Redact first: hashing, sizing and storing all happen on the scrubbed
     // bytes, so a credential can never reach the stored payload.
     let mut redactions: Vec<String> = Vec::new();
@@ -682,6 +740,42 @@ fn bytecount_lines(bytes: &[u8]) -> usize {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// The exact scrub is the guaranteed half and the pattern scan is the
+    /// best-effort one, so they have to cover the same fields. The exact half
+    /// reached the payload only, and an opaque token with no vendor prefix
+    /// matches no pattern: a `sh -c` line the host shell expanded a brokered
+    /// value into was stored verbatim, and so were the kernel-observed
+    /// exemplars, which are box-chosen command lines.
+    #[test]
+    fn a_brokered_value_is_scrubbed_from_every_field_not_only_the_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        // No vendor prefix, no credential keyword: nothing to recognise.
+        let secret = "Zx7Qm2Lp9Rt4Vw8Ka1Nb6Yd".to_string();
+        let mut input = input();
+        input.cmd = Some(format!("sh -c 'curl -H x:{secret} https://api.test'"));
+        input.cwd = Some(format!("/work/{secret}"));
+        input.files = vec![format!("out-{secret}.txt")];
+        input.browser = Some(BrowserEvidence {
+            console: vec![format!("posted {secret}")],
+            ..Default::default()
+        });
+
+        let rec = append_with_secrets(
+            dir.path(),
+            input,
+            format!("body {secret}").as_bytes(),
+            std::slice::from_ref(&secret),
+        )
+        .expect("appends");
+
+        assert!(!rec.cmd.unwrap().contains(&secret));
+        assert!(!rec.cwd.unwrap().contains(&secret));
+        assert!(!rec.files[0].contains(&secret));
+        assert!(!rec.browser.unwrap().console[0].contains(&secret));
+        let raw = raw_bytes(dir.path(), &rec.id).expect("payload");
+        assert!(!String::from_utf8_lossy(&raw).contains(&secret));
+    }
 
     fn input() -> RecordInput {
         RecordInput {
