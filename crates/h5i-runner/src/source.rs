@@ -213,6 +213,14 @@ pub fn materialize(bundle: &Path, work: &Path, base_commit: &str) -> Result<(), 
         &[
             "fetch",
             "--quiet",
+            // Tag auto-following is on even with an explicit refspec, so a
+            // bundle carrying `refs/tags/*` into the fetched history lands
+            // those objects and refs here, with a tagger, a message and a
+            // signature the bundle chose. The sibling fetch in
+            // `h5i_core::quarantine` carries these two for that reason and
+            // this one did not.
+            "--no-tags",
+            "--no-write-fetch-head",
             // Before any string this process did not choose. Without it a path
             // beginning with `-` is read as an option, and
             // `--upload-pack=<cmd>` is an option that runs a command.

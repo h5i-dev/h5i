@@ -180,6 +180,13 @@ fn pair(
         );
     }
     let (user, host) = split_destination(destination);
+    // Shape-checked for the same reason `validated_worker_path` is: `argv()`
+    // pushes the destination *before* the worker path and there is no `--`
+    // separator anywhere in it, so ssh keeps reading options past it and a
+    // leading `-` is one. These two strings are also persisted to
+    // `runner.toml` and re-read by every later verb.
+    let host = validated_ssh_word("host", &host)?;
+    let user = user.map(|u| validated_ssh_word("user", &u)).transpose()?;
 
     UI::action(&format!("Pairing `{name}` with {destination}"));
 
@@ -782,6 +789,29 @@ fn destination_of(record: &RunnerRecord) -> String {
     }
 }
 
+/// One half of an ssh destination, checked before it can become argv.
+///
+/// Not a hostname grammar: a `Host` alias from the operator's ssh config is a
+/// legitimate destination and looks nothing like a DNS name. What this refuses
+/// is what makes the word stop being a destination — a leading `-`, so ssh
+/// reads it as an option (`-oProxyCommand=…` runs one), and the characters
+/// that would end the line or the quoting.
+fn validated_ssh_word(what: &str, word: &str) -> anyhow::Result<String> {
+    let ok = !word.is_empty()
+        && !word.starts_with('-')
+        && word.len() <= 253
+        && !word.contains(['\n', '\r', '\t', ' ', '"', '\'', '\\', '\0']);
+    if ok {
+        Ok(word.to_string())
+    } else {
+        anyhow::bail!(
+            "`{}` is not a usable ssh {what} — it must be one word, must not begin with `-` \
+             (ssh would read it as an option), and must carry no quotes or whitespace",
+            h5i_core::redact::sanitize_display(word)
+        )
+    }
+}
+
 /// `user@host` or `host`.
 fn split_destination(destination: &str) -> (Option<String>, String) {
     match destination.split_once('@') {
@@ -884,6 +914,25 @@ mod tests {
         // the string the user typed and reports on it in its own words.
         assert_eq!(split_destination("@pi.local"), (None, "@pi.local".into()));
         assert_eq!(split_destination("h5i@"), (None, "h5i@".into()));
+    }
+
+    /// `argv()` pushes the destination before the worker path and never emits
+    /// a `--`, so ssh keeps parsing options past it: a leading `-` is one, and
+    /// `-oProxyCommand=…` runs a command.
+    #[test]
+    fn an_ssh_destination_that_would_be_read_as_an_option_is_refused() {
+        for bad in [
+            "-oProxyCommand=touch /tmp/pwned",
+            "",
+            "pi.local host2",
+            "pi.local\nHostName evil",
+            "pi'local",
+        ] {
+            assert!(validated_ssh_word("host", bad).is_err(), "accepted {bad:?}");
+        }
+        for good in ["pi.local", "10.0.0.7", "my-runner", "h5i_box"] {
+            assert_eq!(validated_ssh_word("host", good).unwrap(), good);
+        }
     }
 
     #[test]
