@@ -5,7 +5,7 @@
 //! and leaves the caret at the end, which suits an agent; a person needs a caret
 //! that moves and a page that hears `keydown`.
 //!
-//! Two rules run through the table:
+//! Design: `docs/design-interminal-browser.md` V4. Two rules run through it:
 //!
 //! * **An unmapped key is not swallowed.** It becomes [`Edit::Ignore`], which
 //!   still delivers the DOM events, so a page's own shortcut keeps working.

@@ -961,18 +961,13 @@ h5i browser view --web                # serve it to your browser instead
 h5i browser view --session auth       # when more than one is open
 ```
 
-The live view used to be reachable only through `h5i box view`, which means a
-box — but most sessions are not in one, so they were serving a live view nothing
-could open.
+`h5i box view` reaches the same viewer for a session in a box. The difference
+that shows on screen is what the status line can claim: a boxed session's egress
+is enforced outside the engine, while a host session's rests on the engine's own
+word, so it reads `engine-claimed` rather than naming a box. Watching changes
+neither; `--in` is what makes the claim checkable.
 
-Both are the same viewer over two routes, and the difference is a security story
-rather than a transport. A boxed session's stream port is never published and its
-egress is enforced outside the engine. A host session's engine is on loopback,
-held by its own sandbox, so the status line says `engine-claimed` rather than
-naming a box. `--in` is what makes the claim checkable from outside.
-
-The keys are the ones under [h5i box view](#h5i-box-view), which is the same
-viewer.
+The keys are the ones under [h5i box view](#h5i-box-view).
 
 ### The control lock
 
@@ -980,10 +975,10 @@ Two clients can drive one page: the agent, and a human at the live view.
 
 - The agent holds control by default. A session exists to let an agent work; it
   should not have to ask.
-- A human takes control, never asks for it. `h5i browser take <session>`, or
-  simply by reaching for the controls at either live view, which takes it for
-  you. The agent's mutating verbs are refused with a typed message rather than
-  fighting for the pointer; read-only verbs keep working, because watching never
+- A human takes control, never asks for it: `h5i browser take <session>`, or by
+  reaching for the controls at either live view, which takes it for you. The
+  agent's mutating verbs are refused with a typed message rather than fighting
+  for the pointer; read-only verbs keep working, because watching never
   collides.
 - Handing control back invalidates what the agent knew. The page moved, so every
   `@ref` from its last snapshot may point somewhere else. It must re-snapshot
@@ -1387,98 +1382,41 @@ letters safe to bind. `?` lists them in the viewer itself.
 | `space` `b` | Scroll a page |
 | `gg` `G` | Top, bottom |
 | `f` | Label everything on screen, then follow the one you type |
-| `F` | Label everything, then type into the one you choose |
+| `F` | Label the fields, then type into the one you choose |
 | `yf` | Label everything, then copy that link |
 | `gi` | Type into the first field on the page |
 | `yy` | Copy this page's URL |
 | `H` `L` | Back, forward |
 | `r` | Reload |
+| `i` | Hand the keyboard to the page, where an engine can use it |
 | `D` | The console pane: what the page logged and what it threw |
+| `?` | The key list |
 | `q` | Leave |
-| `i` | Hand the keyboard to the page, where an engine can use it (below) |
 
-#### Typing
+Once a hint puts the caret in a field, the keyboard is that field's and it
+behaves like a keyboard: the arrows and `Home` and `End` move the caret,
+`Backspace` and `Delete` cut where the caret is rather than off the end, `Ctrl`
+or `Alt` with a motion works by word, `Tab` moves to the next field, `Ctrl-A`
+selects all. `Enter` submits and hands the keyboard back, `Esc` hands it back
+without submitting.
 
-`F` labels the fields — only the fields, since a link is not somewhere to type —
-and puts the caret in the one you pick, at the end of whatever is already in it.
-`gi` skips the labels and goes to the first field on the page. From there the
-keyboard is that field's, and it is a real keyboard: the arrows and `Home` and
-`End` move the caret, `Backspace` and `Delete` cut where the caret is rather than
-off the end, `Ctrl` or `Alt` with a motion works by word, `Tab` moves to the next
-field, and `Ctrl-A` selects all. `Enter` submits and hands the keyboard back;
-`Esc` hands it back without submitting.
+Which keys do anything depends on the session. The viewer reads what the engine
+says it offers, so scrolling always works while `f`, `F`, `gi`, `H`, `L` and `r`
+say so plainly when the engine on the other end does not offer them. `i` is
+refused on h5i's own engine, which cannot be driven by pointer; it stays bound on
+a box running one that can.
 
-What reaches the page is the keystroke, not the value it would have produced. A
-page listening for typing — an autocomplete, an input a framework is controlling
-— hears `keydown`, `keypress` and `input` in the order it was written against.
-Setting a field's whole value fires none of those.
-
-Three things keep it feeling immediate, all of them about not doing work.
-
-**Only what changed is sent.** A keystroke moves a caret and a character or two;
-redrawing the whole viewport for it cost about 40KB per key, a megabyte to type
-one word. The viewer now compares the new frame against what is on screen and
-sends that rectangle — a few hundred bytes. An identical frame is not sent at all.
-
-**The engine does not render for nobody.** Rendering is around 13ms against under
-1ms to apply a keystroke, and it used to be paid even while the viewer was still
-drawing the last frame; the result was held, then discarded. On a single-threaded
-page that is time the next keystroke waits for. It now happens when somebody can
-receive it.
-
-**Keys go out in batches.** A keystroke cannot be answered locally — nothing
-appears until the page is laid out again and a frame encoded, around 40ms — so
-sending each on its own makes them queue end to end. At most one message is in
-flight and every key struck while it is away rides out together. Nothing is
-dropped: a keystroke is a difference, not a snapshot, so they are gathered rather
-than replaced.
-
-#### Why keys and not a pointer
-
-"Add a mouse" sounds easier, but a terminal reports cells rather than pixels, the
-viewer hides the cursor, and the only feedback is a frame arriving over a socket.
-Closing that gap means pixel mouse reporting, the progressive keyboard protocol,
-a composited cursor and input prediction — and a drag still would not work.
-
-`f` is the interesting one. The labels are the same refs `h5i browser snapshot`
-hands an agent, so the overlay cannot offer you something the engine would
-refuse, and pressing one sends `click @e7`. The receipt names a role and an
-accessible name where a pixel click would record a coordinate. You and the agent
-leave the same shaped trail.
-
-Which keys do anything depends on the session: the viewer reads what the engine
-says it offers rather than guessing from its name. Scrolling is wheel events
-everything understands and always works; `f`, `H`, `L`, `r` and `gi` say so
-plainly when an engine does not offer them.
-
-Reaching for the controls takes the control lock, including putting the overlay
-up — the labels describe the page as it is now. Leaving without acting hands it
-straight back, and all of it reaches the receipt.
-
-`i` hands the keyboard and the pointer to the page, and is offered only where
-that means something. On h5i's own engine it does not: the viewer lane drops a
-pointer press and a move, and acts only on a release over a link. So there the
-key says so and points at `f`, which reaches every actionable element.
-
-It stays bound on a box running an engine that *can* be driven that way, where
-the canvas and the drag live. The rule is asymmetric on purpose: every other
-gated key is new, so silence means no, while handing over the keyboard predates
-all of this. An engine that describes its lane and omits the pointer has said no;
-one that describes nothing keeps what worked.
-
-Where it is bound it keeps its old limits: a terminal reports presses and not
-releases, so a held key is not expressible, and clicks land at cell resolution.
-
-#### The same keys in the browser viewer
+Reaching for the controls takes the control lock, and putting the hint overlay up
+counts. Leaving without acting hands it straight back. All of it reaches the
+receipt, under the same lane the browser viewer uses.
 
 The loopback viewer binds the same keys to the same things, hint overlay
-included. A test parses its key table out of the page and compares it against the
-terminal viewer's, since two hand-maintained keymaps drift silently.
+included, so there is one thing to learn whichever you open. It keeps its mouse
+live, since a browser has a real pointer.
 
-Two honest differences. The browser has a real pointer, so the mouse stays live
-without a mode — though what it can *reach* is still whatever the engine
-implements, which here is links and the wheel. And it takes the control lock for
-you, which used to mean leaving the page to run `h5i browser take`.
+Why the keyboard rather than the pointer, what the hint labels actually are, and
+how the latency is kept down are in
+[`docs/design-interminal-browser.md`](docs/design-interminal-browser.md).
 
 ### The engine, underneath
 

@@ -141,7 +141,7 @@ pub fn fit(src_w: u32, src_h: u32, cols: u16, rows: u16, cell_w: u16, cell_h: u1
 /// Typing changes a few hundred pixels of a 1280×720 frame, and retransmitting
 /// all of them cost about 40KB per keystroke. One bounding box rather than a set
 /// of rectangles: a scattered change should be sent whole
-/// ([`Damage::worth_patching`]).
+/// ([`Damage::worth_patching`]). See `docs/design-interminal-browser.md` V5.
 pub fn damage(before: &Rgb, now: &Rgb) -> Option<Damage> {
     if before.width != now.width || before.height != now.height {
         return Some(Damage::whole(now.width, now.height));

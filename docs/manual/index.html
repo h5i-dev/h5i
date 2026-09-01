@@ -1077,25 +1077,21 @@ under the session's own <code>artifacts/</code> directory.</p>
 h5i browser view --web                # serve it to your browser instead
 h5i browser view --session auth       # when more than one is open
 </code></pre>
-<p>The live view used to be reachable only through <code>h5i box view</code>, which means a
-box — but most sessions are not in one, so they were serving a live view nothing
-could open.</p>
-<p>Both are the same viewer over two routes, and the difference is a security story
-rather than a transport. A boxed session's stream port is never published and its
-egress is enforced outside the engine. A host session's engine is on loopback,
-held by its own sandbox, so the status line says <code>engine-claimed</code> rather than
-naming a box. <code>--in</code> is what makes the claim checkable from outside.</p>
-<p>The keys are the ones under <a href="#h5i-box-view">h5i box view</a>, which is the same
-viewer.</p>
+<p><code>h5i box view</code> reaches the same viewer for a session in a box. The difference
+that shows on screen is what the status line can claim: a boxed session's egress
+is enforced outside the engine, while a host session's rests on the engine's own
+word, so it reads <code>engine-claimed</code> rather than naming a box. Watching changes
+neither; <code>--in</code> is what makes the claim checkable.</p>
+<p>The keys are the ones under <a href="#h5i-box-view">h5i box view</a>.</p>
 <h3 id="the-control-lock">The control lock</h3>
 <p>Two clients can drive one page: the agent, and a human at the live view.</p>
 <ul>
 <li>The agent holds control by default. A session exists to let an agent work; it
   should not have to ask.</li>
-<li>A human takes control, never asks for it. <code>h5i browser take &lt;session&gt;</code>, or
-  simply by reaching for the controls at either live view, which takes it for
-  you. The agent's mutating verbs are refused with a typed message rather than
-  fighting for the pointer; read-only verbs keep working, because watching never
+<li>A human takes control, never asks for it: <code>h5i browser take &lt;session&gt;</code>, or by
+  reaching for the controls at either live view, which takes it for you. The
+  agent's mutating verbs are refused with a typed message rather than fighting
+  for the pointer; read-only verbs keep working, because watching never
   collides.</li>
 <li>Handing control back invalidates what the agent knew. The page moved, so every
   <code>@ref</code> from its last snapshot may point somewhere else. It must re-snapshot
@@ -1530,7 +1526,7 @@ letters safe to bind. <code>?</code> lists them in the viewer itself.</p>
 </tr>
 <tr>
 <td><code>F</code></td>
-<td>Label everything, then type into the one you choose</td>
+<td>Label the fields, then type into the one you choose</td>
 </tr>
 <tr>
 <td><code>yf</code></td>
@@ -1553,84 +1549,43 @@ letters safe to bind. <code>?</code> lists them in the viewer itself.</p>
 <td>Reload</td>
 </tr>
 <tr>
+<td><code>i</code></td>
+<td>Hand the keyboard to the page, where an engine can use it</td>
+</tr>
+<tr>
 <td><code>D</code></td>
 <td>The console pane: what the page logged and what it threw</td>
+</tr>
+<tr>
+<td><code>?</code></td>
+<td>The key list</td>
 </tr>
 <tr>
 <td><code>q</code></td>
 <td>Leave</td>
 </tr>
-<tr>
-<td><code>i</code></td>
-<td>Hand the keyboard to the page, where an engine can use it (below)</td>
-</tr>
 </tbody>
 </table>
-<h4 id="typing">Typing</h4>
-<p><code>F</code> labels the fields — only the fields, since a link is not somewhere to type —
-and puts the caret in the one you pick, at the end of whatever is already in it.
-<code>gi</code> skips the labels and goes to the first field on the page. From there the
-keyboard is that field's, and it is a real keyboard: the arrows and <code>Home</code> and
-<code>End</code> move the caret, <code>Backspace</code> and <code>Delete</code> cut where the caret is rather than
-off the end, <code>Ctrl</code> or <code>Alt</code> with a motion works by word, <code>Tab</code> moves to the next
-field, and <code>Ctrl-A</code> selects all. <code>Enter</code> submits and hands the keyboard back;
-<code>Esc</code> hands it back without submitting.</p>
-<p>What reaches the page is the keystroke, not the value it would have produced. A
-page listening for typing — an autocomplete, an input a framework is controlling
-— hears <code>keydown</code>, <code>keypress</code> and <code>input</code> in the order it was written against.
-Setting a field's whole value fires none of those.</p>
-<p>Three things keep it feeling immediate, all of them about not doing work.</p>
-<p><strong>Only what changed is sent.</strong> A keystroke moves a caret and a character or two;
-redrawing the whole viewport for it cost about 40KB per key, a megabyte to type
-one word. The viewer now compares the new frame against what is on screen and
-sends that rectangle — a few hundred bytes. An identical frame is not sent at all.</p>
-<p><strong>The engine does not render for nobody.</strong> Rendering is around 13ms against under
-1ms to apply a keystroke, and it used to be paid even while the viewer was still
-drawing the last frame; the result was held, then discarded. On a single-threaded
-page that is time the next keystroke waits for. It now happens when somebody can
-receive it.</p>
-<p><strong>Keys go out in batches.</strong> A keystroke cannot be answered locally — nothing
-appears until the page is laid out again and a frame encoded, around 40ms — so
-sending each on its own makes them queue end to end. At most one message is in
-flight and every key struck while it is away rides out together. Nothing is
-dropped: a keystroke is a difference, not a snapshot, so they are gathered rather
-than replaced.</p>
-<h4 id="why-keys-and-not-a-pointer">Why keys and not a pointer</h4>
-<p>"Add a mouse" sounds easier, but a terminal reports cells rather than pixels, the
-viewer hides the cursor, and the only feedback is a frame arriving over a socket.
-Closing that gap means pixel mouse reporting, the progressive keyboard protocol,
-a composited cursor and input prediction — and a drag still would not work.</p>
-<p><code>f</code> is the interesting one. The labels are the same refs <code>h5i browser snapshot</code>
-hands an agent, so the overlay cannot offer you something the engine would
-refuse, and pressing one sends <code>click @e7</code>. The receipt names a role and an
-accessible name where a pixel click would record a coordinate. You and the agent
-leave the same shaped trail.</p>
-<p>Which keys do anything depends on the session: the viewer reads what the engine
-says it offers rather than guessing from its name. Scrolling is wheel events
-everything understands and always works; <code>f</code>, <code>H</code>, <code>L</code>, <code>r</code> and <code>gi</code> say so
-plainly when an engine does not offer them.</p>
-<p>Reaching for the controls takes the control lock, including putting the overlay
-up — the labels describe the page as it is now. Leaving without acting hands it
-straight back, and all of it reaches the receipt.</p>
-<p><code>i</code> hands the keyboard and the pointer to the page, and is offered only where
-that means something. On h5i's own engine it does not: the viewer lane drops a
-pointer press and a move, and acts only on a release over a link. So there the
-key says so and points at <code>f</code>, which reaches every actionable element.</p>
-<p>It stays bound on a box running an engine that <em>can</em> be driven that way, where
-the canvas and the drag live. The rule is asymmetric on purpose: every other
-gated key is new, so silence means no, while handing over the keyboard predates
-all of this. An engine that describes its lane and omits the pointer has said no;
-one that describes nothing keeps what worked.</p>
-<p>Where it is bound it keeps its old limits: a terminal reports presses and not
-releases, so a held key is not expressible, and clicks land at cell resolution.</p>
-<h4 id="the-same-keys-in-the-browser-viewer">The same keys in the browser viewer</h4>
+<p>Once a hint puts the caret in a field, the keyboard is that field's and it
+behaves like a keyboard: the arrows and <code>Home</code> and <code>End</code> move the caret,
+<code>Backspace</code> and <code>Delete</code> cut where the caret is rather than off the end, <code>Ctrl</code>
+or <code>Alt</code> with a motion works by word, <code>Tab</code> moves to the next field, <code>Ctrl-A</code>
+selects all. <code>Enter</code> submits and hands the keyboard back, <code>Esc</code> hands it back
+without submitting.</p>
+<p>Which keys do anything depends on the session. The viewer reads what the engine
+says it offers, so scrolling always works while <code>f</code>, <code>F</code>, <code>gi</code>, <code>H</code>, <code>L</code> and <code>r</code>
+say so plainly when the engine on the other end does not offer them. <code>i</code> is
+refused on h5i's own engine, which cannot be driven by pointer; it stays bound on
+a box running one that can.</p>
+<p>Reaching for the controls takes the control lock, and putting the hint overlay up
+counts. Leaving without acting hands it straight back. All of it reaches the
+receipt, under the same lane the browser viewer uses.</p>
 <p>The loopback viewer binds the same keys to the same things, hint overlay
-included. A test parses its key table out of the page and compares it against the
-terminal viewer's, since two hand-maintained keymaps drift silently.</p>
-<p>Two honest differences. The browser has a real pointer, so the mouse stays live
-without a mode — though what it can <em>reach</em> is still whatever the engine
-implements, which here is links and the wheel. And it takes the control lock for
-you, which used to mean leaving the page to run <code>h5i browser take</code>.</p>
+included, so there is one thing to learn whichever you open. It keeps its mouse
+live, since a browser has a real pointer.</p>
+<p>Why the keyboard rather than the pointer, what the hint labels actually are, and
+how the latency is kept down are in
+<a href="docs/design-interminal-browser.md"><code>docs/design-interminal-browser.md</code></a>.</p>
 <h3 id="the-engine-underneath">The engine, underneath</h3>
 <p>The engine is part of the <code>h5i</code> binary. <code>h5i browser</code> runs it as a separate
 process and speaks a protocol to it, the way it always has; what changed is that

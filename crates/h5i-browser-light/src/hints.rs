@@ -4,6 +4,8 @@
 //! offer a target the verb layer would refuse — the snapshot already decided
 //! what is actionable.
 //!
+//! Design: `docs/design-interminal-browser.md` V2.
+//!
 //! Labels are minted here so two viewers watching one page cannot disagree about
 //! what `sd` means. *Matching* them against what has been typed is per-viewer
 //! state and lives with each viewer (`h5i_core::termview::vim::narrow`, and the

@@ -4,7 +4,7 @@
 //! visible cursor to aim with, and feedback only when a frame comes back over a
 //! socket. Naming a target and pressing a key needs none of that.
 //!
-//! Three rules:
+//! Design: `docs/design-interminal-browser.md` V1 and V3. Three rules:
 //!
 //! * **The page never sees these keys.** They are decided in VIEW. INTERACT
 //!   still exists for the canvas and the drag no keyboard can express, but only
