@@ -41,11 +41,16 @@ use std::collections::BTreeSet;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Features(BTreeSet<String>);
 
-impl Features {
-    pub fn from_iter<I: IntoIterator<Item = S>, S: Into<String>>(names: I) -> Features {
+/// Built from whatever the `status` message listed, which is a list of strings
+/// off a socket. The standard trait rather than an inherent constructor of the
+/// same name, so `collect()` works and there is only one spelling.
+impl<S: Into<String>> FromIterator<S> for Features {
+    fn from_iter<I: IntoIterator<Item = S>>(names: I) -> Features {
         Features(names.into_iter().map(Into::into).collect())
     }
+}
 
+impl Features {
     pub fn has(&self, name: &str) -> bool {
         self.0.contains(name)
     }

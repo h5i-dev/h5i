@@ -951,15 +951,44 @@ it just did, repainting a prompt. Nothing a browser has to say needs `ESC`.
 Files a session produces are named by the host, never by the session, and land
 under the session's own `artifacts/` directory.
 
+### h5i browser view
+
+Watch the page and take the controls, without a box.
+
+```bash
+h5i browser view                      # draw it in this terminal
+h5i browser view --web                # serve it to your browser instead
+h5i browser view --session auth       # when more than one is open
+```
+
+Until now the live view was reachable only through `h5i box view`, which means a
+box: the frames were found inside a box's private `/tmp` and reached by entering
+its namespaces. Most sessions are not in a box, because `h5i browser open` runs
+one here by default and says so. Those sessions were serving a live view that
+nothing could open.
+
+The two are the same viewer over two different routes, and the difference is a
+security story rather than a transport. A boxed session's stream port is never
+published, and what the page may reach is enforced outside the engine. A host
+session's engine is on this machine's loopback, and what holds it is the
+engine's own sandbox: the status line says `engine-claimed` there rather than
+naming a box, because that is the strongest thing this machine can honestly say.
+`--in` is what makes the claim checkable from outside; watching does not change
+it either way.
+
+The keys are the ones under [h5i box view](#h5i-box-view), which is the same
+viewer.
+
 ### The control lock
 
 Two clients can drive one page: the agent, and a human at the live view.
 
 - The agent holds control by default. A session exists to let an agent work; it
   should not have to ask.
-- A human takes control, never asks for it. `h5i browser take <session>`. The
-  agent's mutating verbs are refused with a typed message rather than fighting
-  for the pointer; read-only verbs keep working, because watching never
+- A human takes control, never asks for it. `h5i browser take <session>`, or
+  simply by reaching for the controls at either live view, which takes it for
+  you. The agent's mutating verbs are refused with a typed message rather than
+  fighting for the pointer; read-only verbs keep working, because watching never
   collides.
 - Handing control back invalidates what the agent knew. The page moved, so every
   `@ref` from its last snapshot may point somewhere else. It must re-snapshot
@@ -1351,23 +1380,72 @@ gets shortened at the expense of the truth: a long URL loses its path, and a
 host too long for the row is cut from the left, because shortening
 `bank.example.evil.test` from the right is the trick itself.
 
-Two modes:
+#### Driving it
+
+The keyboard is the viewer's until you hand it over, which is what makes single
+letters safe to bind. `?` lists them in the viewer itself.
 
 | Key | Does |
 | --- | --- |
-| `i` | Take the control lock and start driving the page |
-| `Ctrl-]` | Hand control back and return to watching |
+| `j` `k` | Scroll a line |
+| `d` `u` | Scroll half a page |
+| `space` `b` | Scroll a page |
+| `gg` `G` | Top, bottom |
+| `f` | Label everything on screen, then follow the one you type |
+| `F` | Label everything, then type into the one you choose |
+| `yf` | Label everything, then copy that link |
+| `gi` | Type into the first field on the page |
+| `yy` | Copy this page's URL |
+| `H` `L` | Back, forward |
+| `r` | Reload |
+| `i` | Hand the keyboard to the page. `Esc` (or `Ctrl-]`) takes it back |
+| `D` | The console pane: what the page logged and what it threw |
 | `q` | Leave |
 
-Watching is read-only and leaves the mouse to your terminal, so selection and
-scrollback still work. Driving takes the lock, because in a terminal viewer
-there is no second window to run `h5i browser take` in. Leaving hands it back.
-Both are recorded in the receipt, under the same lane the browser viewer uses.
+The reason it works this way is worth stating, because "add a mouse" sounds
+easier. A terminal reports cells rather than pixels, so a click lands at the
+corner of the cell it was in; the viewer hides the cursor, so there is nothing
+to aim with; and the only feedback is a frame arriving over a socket. Closing
+that gap means pixel-resolution mouse reporting, the progressive keyboard
+protocol, a composited cursor and input prediction, and a drag still would not
+work. Naming a target and pressing a key needs none of it.
 
-Two limits. A terminal reports key presses and not releases, so h5i sends a
-press and a release together: typing works exactly, and holding a key down does
-not. Clicks are placed at the resolution of a terminal cell, which is fine for a
-form and coarse for a dense canvas.
+`f` is the interesting one. The labels are not a second opinion about what is
+clickable: they are the same refs `h5i browser snapshot` hands an agent, which
+is a decision the engine already makes and the verb layer already honours. So
+the overlay cannot offer you something the engine would refuse, and pressing a
+label sends `click @e7` — the receipt names a role and an accessible name, where
+a pixel click would record a coordinate that tells a reviewer nothing. You and
+the agent leave the same shaped trail.
+
+Which keys do anything depends on the session. The viewer watches boxes running
+an engine that is not ours, so it reads what the engine says it offers rather
+than guessing from its name: scrolling is expressed as wheel events everything
+understands and always works, while `f`, `H`, `L`, `r` and `gi` say so plainly
+when the engine on the other end does not offer them.
+
+Reaching for the controls takes the control lock, and that includes putting the
+overlay up: the labels describe the page as it is now, and an agent navigating
+underneath them would leave every one of them stale. Leaving without acting
+hands it straight back. All of it is recorded in the receipt, under the same
+lane the browser viewer uses.
+
+The pointer is still there under `i`, for canvases, maps and drags. It has the
+same two limits it always had: a terminal reports presses and not releases, so
+h5i sends a press and a release together and a held key is not expressible, and
+clicks land at the resolution of a cell.
+
+#### The same keys in the browser viewer
+
+The loopback viewer binds the same keys to the same things, down to the hint
+overlay, so there is one thing to learn whichever you open. A test parses the
+key table out of the viewer page and compares it against the terminal viewer's,
+because two keymaps maintained by hand drift and the drift is silent.
+
+Two differences, both honest. The browser has a real pointer with pixel
+coordinates and a visible cursor, so the mouse stays live there without a mode.
+And it takes the control lock for you when you reach for the controls, which
+until now meant leaving the page to run `h5i browser take` and reloading.
 
 ### The engine, underneath
 

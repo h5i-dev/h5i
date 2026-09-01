@@ -98,83 +98,75 @@ pub fn size(label: &str) -> (i32, i32) {
 /// a page that can make this function index past the end of a host buffer is a
 /// page with a memory bug to hand.
 pub fn draw(rgb: &mut [u8], width: u32, height: u32, chips: &[Chip]) {
+    let mut surface = Surface { rgb, width, height };
     for chip in chips {
         let (w, h) = size(&chip.label);
-        fill(rgb, width, height, chip.x, chip.y, w, h, CHIP_EDGE);
-        fill(
-            rgb,
-            width,
-            height,
-            chip.x + 1,
-            chip.y + 1,
-            w - 2,
-            h - 2,
-            CHIP_BG,
-        );
+        surface.fill(chip.x, chip.y, w, h, CHIP_EDGE);
+        surface.fill(chip.x + 1, chip.y + 1, w - 2, h - 2, CHIP_BG);
 
         let mut pen = chip.x + 1 + PAD;
         for (index, ch) in chip.label.chars().enumerate() {
             let colour = if index < chip.typed { CHIP_DIM } else { CHIP_FG };
-            glyph(rgb, width, height, pen, chip.y + 1 + PAD, ch, colour);
+            surface.glyph(pen, chip.y + 1 + PAD, ch, colour);
             pen += GLYPH_W * SCALE + GAP;
         }
     }
 }
 
-fn fill(
-    rgb: &mut [u8],
+/// A frame being drawn into: the pixels and the two numbers that say what
+/// counts as inside them.
+///
+/// A type rather than three arguments threaded through every helper, because
+/// the three must never be separated: the whole safety of this file is that no
+/// coordinate is trusted until it has been checked against *these* bounds, and
+/// a helper taking a buffer and someone else's dimensions is how that stops
+/// being true.
+struct Surface<'a> {
+    rgb: &'a mut [u8],
     width: u32,
     height: u32,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    colour: [u8; 3],
-) {
-    for row in y..y + h {
-        for col in x..x + w {
-            put(rgb, width, height, col, row, colour);
-        }
-    }
 }
 
-fn glyph(rgb: &mut [u8], width: u32, height: u32, x: i32, y: i32, ch: char, colour: [u8; 3]) {
-    let Some(bitmap) = bitmap(ch) else {
-        return;
-    };
-    for (row, bits) in bitmap.iter().enumerate() {
-        for col in 0..GLYPH_W {
-            // Bit 4 is the leftmost column.
-            if bits & (1 << (GLYPH_W - 1 - col)) == 0 {
-                continue;
+impl Surface<'_> {
+    fn fill(&mut self, x: i32, y: i32, w: i32, h: i32, colour: [u8; 3]) {
+        for row in y..y + h {
+            for col in x..x + w {
+                self.put(col, row, colour);
             }
-            for dy in 0..SCALE {
-                for dx in 0..SCALE {
-                    put(
-                        rgb,
-                        width,
-                        height,
-                        x + col * SCALE + dx,
-                        y + row as i32 * SCALE + dy,
-                        colour,
-                    );
+        }
+    }
+
+    fn glyph(&mut self, x: i32, y: i32, ch: char, colour: [u8; 3]) {
+        let Some(bitmap) = bitmap(ch) else {
+            return;
+        };
+        for (row, bits) in bitmap.iter().enumerate() {
+            for col in 0..GLYPH_W {
+                // Bit 4 is the leftmost column.
+                if bits & (1 << (GLYPH_W - 1 - col)) == 0 {
+                    continue;
+                }
+                for dy in 0..SCALE {
+                    for dx in 0..SCALE {
+                        self.put(x + col * SCALE + dx, y + row as i32 * SCALE + dy, colour);
+                    }
                 }
             }
         }
     }
-}
 
-fn put(rgb: &mut [u8], width: u32, height: u32, x: i32, y: i32, colour: [u8; 3]) {
-    if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {
-        return;
+    fn put(&mut self, x: i32, y: i32, colour: [u8; 3]) {
+        if x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 {
+            return;
+        }
+        let index = (y as usize * self.width as usize + x as usize) * 3;
+        if index + 2 >= self.rgb.len() {
+            return;
+        }
+        self.rgb[index] = colour[0];
+        self.rgb[index + 1] = colour[1];
+        self.rgb[index + 2] = colour[2];
     }
-    let index = (y as usize * width as usize + x as usize) * 3;
-    if index + 2 >= rgb.len() {
-        return;
-    }
-    rgb[index] = colour[0];
-    rgb[index + 1] = colour[1];
-    rgb[index + 2] = colour[2];
 }
 
 /// A 5×7 uppercase face, one byte per row.
