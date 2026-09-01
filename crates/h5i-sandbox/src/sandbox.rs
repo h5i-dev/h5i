@@ -793,15 +793,31 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
             .map(|p| p.display().to_string())
             .unwrap_or(expanded)
     };
+    let under = |child: &str, parent: &str| -> bool {
+        child == parent || child.starts_with(&format!("{}/", parent.trim_end_matches('/')))
+    };
     for grant in p.fs_read.iter().chain(p.fs_write.iter()) {
         let g = resolve(grant);
         for deny in &p.fs_deny {
             let d = resolve(deny);
-            if d == g || d.starts_with(&format!("{}/", g.trim_end_matches('/'))) {
+            if under(&d, &g) {
                 return Err(H5iError::Metadata(format!(
                     "policy refused: granted path '{grant}' contains denied child '{deny}' \
                      (Landlock is allowlist-only and cannot subtract a child from a granted \
                      parent — narrow the grant)"
+                )));
+            }
+            // And the other way round, which the lint did not ask. `fs.read =
+            // ["~/.ssh/id_ed25519"]` under the default deny of `~/.ssh` is not
+            // a narrower grant, it is the deny list saying one thing and the
+            // Landlock ruleset doing another — and the ruleset is what runs.
+            // The same shape reaches `~/.config/h5i/egress-allow`, which is the
+            // file `h5i box allow` refuses to let a box edit.
+            if under(&g, &d) {
+                return Err(H5iError::Metadata(format!(
+                    "policy refused: granted path '{grant}' is inside denied path '{deny}' \
+                     — the deny list would say it is out of reach and Landlock would grant \
+                     it anyway. Remove one of the two (fail-closed)."
                 )));
             }
         }
@@ -4351,6 +4367,27 @@ fs.deny = ["~/.ssh"]
         );
         let err = load_from_str(&toml_text, "default", None).unwrap_err();
         assert!(err.to_string().contains("granted path"), "{err}");
+    }
+
+    /// The lint asked one of the two questions. A grant *inside* a denied path
+    /// is the same contradiction seen from the other end, and the ruleset is
+    /// what runs: `fs.read = ["~/.ssh/id_ed25519"]` under the default deny of
+    /// `~/.ssh` read as narrowed and was a grant of the key.
+    #[test]
+    fn fs_deny_lint_rejects_a_grant_inside_a_denied_path() {
+        for grant in ["~/.ssh/id_ed25519", "~/.config/h5i/egress-allow"] {
+            let toml_text = format!(
+                r#"
+[profile.default]
+isolation = "process"
+fs.read = ["{grant}"]
+"#
+            );
+            let err = load_from_str(&toml_text, "default", None)
+                .map(|_| ())
+                .unwrap_err();
+            assert!(err.to_string().contains("inside denied path"), "{grant}: {err}");
+        }
     }
 
     /// The lint is the only thing standing between a grant and a denied child
