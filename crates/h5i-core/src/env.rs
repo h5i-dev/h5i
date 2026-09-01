@@ -5197,7 +5197,10 @@ fn run_inner(
         &policy.profile.secret_grants,
         &secret_dir,
         is_workspace,
-        policy.profile.allow_command_extractors,
+        // Both halves: the profile's opt-in is in the digest, and the host's
+        // is the one the repository cannot write. See
+        // `sandbox::HOST_COMMAND_EXTRACTOR_VAR`.
+        policy.profile.allow_command_extractors && sandbox::host_permits_command_extractors(),
         &crate::secrets_broker::fingerprint_key(h5i_root)?,
     )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
@@ -5632,7 +5635,10 @@ pub fn shell(
         &policy.profile.secret_grants,
         &secret_dir,
         is_workspace,
-        policy.profile.allow_command_extractors,
+        // Both halves: the profile's opt-in is in the digest, and the host's
+        // is the one the repository cannot write. See
+        // `sandbox::HOST_COMMAND_EXTRACTOR_VAR`.
+        policy.profile.allow_command_extractors && sandbox::host_permits_command_extractors(),
         &crate::secrets_broker::fingerprint_key(h5i_root)?,
     )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;

@@ -709,17 +709,33 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
                 g.name
             )));
         }
-        // A command: source executes host-side code outside the sandbox. Refuse
-        // it at policy-load unless the profile explicitly opts in, so the gate
-        // is pinned in the (tamper-evident) digest, not just enforced at run
-        // time.
-        if src.starts_with("command:") && !p.allow_command_extractors {
-            return Err(H5iError::Metadata(format!(
-                "secret grant '{}' uses a command: extractor (host-side code outside the \
-                 sandbox) but the profile does not set `allow_command_extractors = true` \
-                 (fail-closed)",
-                g.name
-            )));
+        // A command: source executes host-side code outside the sandbox. It
+        // needs *both* halves of the opt-in. The profile flag is what pins the
+        // decision in the (tamper-evident) digest, so a receipt can say what
+        // this box was allowed to do; it cannot also be the authority, because
+        // `.h5i/env.toml` is part of the repository. A branch adding seven
+        // lines of TOML would otherwise run `sh -c` on a reviewer's machine,
+        // unconfined, on their first `h5i box run`.
+        if src.starts_with("command:") {
+            if !p.allow_command_extractors {
+                return Err(H5iError::Metadata(format!(
+                    "secret grant '{}' uses a command: extractor (host-side code outside the \
+                     sandbox) but the profile does not set `allow_command_extractors = true` \
+                     (fail-closed)",
+                    g.name
+                )));
+            }
+            if !host_permits_command_extractors() {
+                return Err(H5iError::Metadata(format!(
+                    "secret grant '{}' uses a command: extractor, which runs host-side code \
+                     outside the sandbox as you. The profile opts in, but the profile is in \
+                     the repository, so that opt-in was written by whoever wrote the \
+                     repository and cannot also be the authority for it. Read the extractor, \
+                     then set {HOST_COMMAND_EXTRACTOR_VAR}=1 on the host if you mean it \
+                     (fail-closed).",
+                    g.name
+                )));
+            }
         }
         match g.inject_or_default() {
             "file" | "env" => {}
@@ -1031,6 +1047,22 @@ pub(crate) fn expand_tilde(path: &str) -> String {
         return format!("{}{}", home, &path[1..]);
     }
     path.to_string()
+}
+
+/// The host-side half of the `command:` extractor opt-in.
+///
+/// The profile flag stays: it is what puts the decision in the policy digest,
+/// which is how a receipt says what this box was allowed to do. What it cannot
+/// be is the *authority*, because the file it lives in is checked into the
+/// repository. A branch that adds seven lines of TOML would otherwise run
+/// `sh -c` on the reviewer's machine, unconfined, on their first
+/// `h5i box run`. Both halves, or no extractor.
+pub const HOST_COMMAND_EXTRACTOR_VAR: &str = "H5I_ALLOW_COMMAND_EXTRACTORS";
+
+/// Whether the host has said yes, separately from the repository.
+pub fn host_permits_command_extractors() -> bool {
+    std::env::var(HOST_COMMAND_EXTRACTOR_VAR)
+        .is_ok_and(|v| matches!(v.trim(), "1" | "true" | "yes"))
 }
 
 /// Parse a memory size like "4G", "512M", "1024K", or plain bytes.
