@@ -1026,10 +1026,19 @@ pub fn parse_mem(s: &str) -> Result<u64, H5iError> {
         Some('K') | Some('k') => (&t[..t.len() - 1], 1024),
         _ => (t, 1),
     };
+    // `checked_mul`, because `n * mult` wraps in a release build and a cap that
+    // wrapped to `0` is not a small cap: `--memory 0` is how Podman spells *no
+    // limit*, while `policy.resolved.toml` and its digest record `mem_bytes = 0`
+    // as though one were in force.
     num.trim()
         .parse::<u64>()
-        .map(|n| n * mult)
-        .map_err(|_| H5iError::Metadata(format!("invalid resources.mem '{s}' (expected e.g. \"4G\", \"512M\")")))
+        .ok()
+        .and_then(|n| n.checked_mul(mult))
+        .ok_or_else(|| {
+            H5iError::Metadata(format!(
+                "invalid resources.mem '{s}' (expected e.g. \"4G\", \"512M\")"
+            ))
+        })
 }
 
 /// Parse a wall-clock duration like "30m", "90s", "2h".
@@ -1041,10 +1050,17 @@ pub fn parse_wall(s: &str) -> Result<Duration, H5iError> {
         Some('s') => (&t[..t.len() - 1], 1),
         _ => (t, 1),
     };
+    // As in [`parse_mem`]: an overflowing multiply is a refusal, never a wrap.
     num.trim()
         .parse::<u64>()
-        .map(|n| Duration::from_secs(n * mult))
-        .map_err(|_| H5iError::Metadata(format!("invalid resources.wall '{s}' (expected e.g. \"30m\", \"90s\")")))
+        .ok()
+        .and_then(|n| n.checked_mul(mult))
+        .map(Duration::from_secs)
+        .ok_or_else(|| {
+            H5iError::Metadata(format!(
+                "invalid resources.wall '{s}' (expected e.g. \"30m\", \"90s\")"
+            ))
+        })
 }
 
 // ─── capability probing (§5, mandatory) ─────────────────────────────────────
@@ -4421,6 +4437,11 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         assert_eq!(parse_mem("64k").unwrap(), 64 * 1024);
         assert_eq!(parse_mem("12345").unwrap(), 12345);
         assert!(parse_mem("lots").is_err());
+        // A cap that wraps to zero is not a small cap: `--memory 0` is how
+        // Podman spells *no limit*, and the policy digest records the zero as
+        // though a cap were in force.
+        assert!(parse_mem("17179869184G").is_err());
+        assert!(parse_wall("18446744073709551615h").is_err());
     }
 
     #[test]
