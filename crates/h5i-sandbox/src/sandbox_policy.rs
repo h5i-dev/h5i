@@ -139,6 +139,10 @@ pub struct SecretGrant {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inject: Option<String>,
     /// Advisory validity window for sources that mint a credential.
+    ///
+    /// Advisory in the strong sense: h5i resolves a grant once, at run start,
+    /// and nothing here expires it. The string travels into the audit record
+    /// marked `(advisory)` so nobody reads it as a bound h5i holds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl: Option<String>,
 }

@@ -7563,10 +7563,13 @@ pub fn render_secrets(env_id: &str, rows: &[SecretStatus]) -> String {
         return out;
     }
     for s in rows {
+        // Marked advisory here for the reason `GrantRecord::detail` marks it:
+        // h5i resolves a grant once and never expires it, so the number is
+        // what the source was asked for, not a bound h5i holds.
         let ttl = s
             .ttl
             .as_deref()
-            .map(|t| format!(" ttl={t}"))
+            .map(|t| format!(" ttl={t}(advisory)"))
             .unwrap_or_default();
         let fp = s
             .fingerprint
