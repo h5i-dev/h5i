@@ -3711,67 +3711,8 @@ fn code_bytes(source: &str) -> usize {
 
 #[test]
 fn the_eagerly_parsed_prelude_stays_within_its_budget() {
-    // The exchange rate fell, and the budget is still the floor under noticing.
-    // Parse and compile were 67 ms of the 83 a realm cost and were paid per
-    // page; sharing the compiled prelude across realms moved them to once per
-    // thread, and a later realm now spends under a microsecond there. What every
-    // page still pays per KiB is the *running* of it, 12.4 ms for the whole
-    // 273 KiB, about 45 µs of per-page realm cost per KiB against the ~150 µs it
-    // was. The first page a renderer serves still pays the compile, at roughly
-    // 245 µs per KiB.
-    //
-    // The reason for a budget is unchanged. The prelude grew by 4,692 lines in
-    // two commits during a coverage push, the realm went from 15.9 ms to 82.8 ms
-    // per page, and nothing said so: the tests all passed, because a slower
-    // engine is not a wrong one. A budget that has to be raised on purpose puts
-    // the price in the diff that pays it. Raising it is a normal thing to do,
-    // not a failure. The question the number asks is only whether it could be a
-    // tier instead: see `TIERS` in `mod.rs`, and `lazyGlobals` in the prelude.
-    //
-    // 278, raised 2026-08-30, and the honest reason is *not* the coverage
-    // number: 2.4 KiB bought 32 subtests, a ratio of 0.013 against the 0.4 this
-    // branch averages. What it bought that is worth having:
-    //
-    //   * `Attr` as a real node class. `attributes` returned plain
-    //     `{name, value}` literals, so `localName`, `prefix`, `namespaceURI`,
-    //     `ownerElement` and a `nodeType` of 2 were all missing.
-    //   * `checkVisibility`, CSSOM-View's "would a person see this", which the
-    //     snapshot and the verbs ask constantly, so it earns core space on its
-    //     own terms rather than on WPT's.
-    //   * `compatMode`, a fact about this engine rather than a guess.
-    //
-    // The earlier history is worth keeping too. It went 275 -> 276 for CSSOM
-    // shapes that were real objects wearing no interface (`matchMedia()`
-    // returning a `MediaQueryList`, `sheet.media` being a `MediaList` and not a
-    // *String*) and came straight back down when the reflection table turned out
-    // to write every attribute name twice, returning 3.9 KiB, more than the
-    // features cost.
-    //
-    // And the budget is not a performance guard, which was measured rather than
-    // assumed. `examples/perf` puts `prelude run` at 15.9 ms of a 16.2 ms later
-    // realm, and a deliberately padded 50 KiB build measured the slope at
-    // 40-52 us/KiB. But the run-to-run spread on this box is +/-4 ms, so even an
-    // 18% size delta is not statistically resolvable (t ~ 1.2). What the budget
-    // actually does is force the question, and it has twice: it put the
-    // interface-prototype mirror in the `conformance` tier where pages pay
-    // nothing for it, and it found the table redundancy above.
-    //
-    // 280, raised after an adversarial review of this branch. The extra 2 KiB is
-    // almost entirely bug fixes to what the branch already added, not new
-    // surface: `classList.toggle` doing WebIDL boolean conversion,
-    // `Attr`/`MediaList`/`MediaQueryList` refusing `new`, `Attr.localName` not
-    // splitting a colon it has no prefix for, `removeProperty` returning the
-    // serialised value `getPropertyValue` would, and `sheet.media` being live.
-    // Those found 67 subtests between them.
-    //
-    // 281, and this KiB is a *speed* purchase rather than a surface one, a first
-    // for this budget. `classList.add` measured 100 us against 2 us for the
-    // `setAttribute` underneath it, the largest single JS cost on a
-    // component-shaped page: 35 ms of an 88 ms load. Two causes, both in code
-    // this file guards: `_all()` tokenised with a regex into a `Set` and back
-    // out through a spread, and the indexed proxy sat in front of every internal
-    // `this._node` read inside every method. Hand-rolled tokenising plus binding
-    // methods to the target takes `add` to 25 us and `contains` to 10 us.
+    // Force prelude growth to be reviewed; move optional APIs into `TIERS` when
+    // possible. This is a size budget, not a stable performance benchmark.
     const BUDGET_KIB: usize = 281;
 
     assert!(
@@ -7325,5 +7266,4 @@ fn assigning_the_width_clears_the_surface() {
         "and what is left must be an empty surface:\n{rendered}"
     );
 }
-
 

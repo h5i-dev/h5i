@@ -9,30 +9,13 @@ import {
   type ViewerEvent,
 } from "./api";
 
-// The browser terminal (ROADMAP M11a): what the agent did, what moved on the
-// wire, what the page said, and what h5i refused — as peer panes rather than a
-// page with a debugger bolted to the side. For an agent's overseer the rendered
-// page is the least informative pane, so it does not get to be the whole screen.
-//
-// Two rules the panes exist to keep, both inherited from the event model:
-//
-//   * Every row states its lane (who observed it) and its grade (how complete
-//     that observation is). They are different questions and the UI never
-//     collapses them: the light engine's request log is box-claimed *and*
-//     fail-closed, which no single "trusted" badge can say.
-//   * Correlation is drawn only where the stream carried it. Selecting a row
-//     lights the rows whose `caused_by` names it. Nothing here infers a link
-//     from two things having happened at about the same time.
-//
-// Box text is rendered as text. React escapes by default and there is no
-// `dangerouslySetInnerHTML` anywhere in this file — the page's own strings
-// reach the DOM as text nodes, never as markup.
+// Keep observation source (`lane`) separate from completeness (`grade`), and
+// correlate rows only through `caused_by`. React renders all box output as text.
 
 /** Quiet enough not to hammer a box, live enough to watch. */
 const POLL_MS = 1000;
 
-/** Rows a pane keeps. The stream is already bounded server-side; this bounds
- *  what the DOM holds, which is a different limit with a different reason. */
+/** Maximum rows retained per pane in the DOM. */
 const PANE_CAP = 400;
 
 type PaneKey = "actions" | "network" | "console" | "policy";

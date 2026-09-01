@@ -1,11 +1,2 @@
-# Pinned deps for the manual generators (scripts/gen_manual.py).
-# Pinned so the checked-in docs/manual/index.html is byte-reproducible: CI's
-# freshness gate regenerates and diffs, so the generator version must match the
-# one that produced the committed file. Bump this in the same commit that
-# regenerates docs/manual/index.html.
-#
-#   python3 -m pip install -r scripts/requirements.txt
-# 3.10.2 was pinned here but has never existed on PyPI (3.9 is the newest),
-# so `pip install -r` failed outright and the freshness gate could not run.
-# 3.9 reproduces the committed docs/manual/index.html byte for byte.
+# Pinned for reproducible manual output; regenerate the manual when updating.
 markdown==3.9

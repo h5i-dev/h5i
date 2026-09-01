@@ -382,36 +382,11 @@ impl SshTransport {
         }
     }
 
-    /// The whole argv, as a pure function of the configuration.
+    /// Build a non-interactive SSH command from trusted runner configuration.
     ///
-    /// Every option here matters, and none of it comes from the user's
-    /// `~/.ssh/config`, because a runner's security property must not depend on
-    /// a file this code did not write.
-    ///
-    /// That last sentence used to be false, which is why it is now enforced by
-    /// `-F /dev/null` rather than asserted by a comment. Passing `-o` does not
-    /// stop ssh reading the config: it stops the config winning *for the
-    /// options named*. `GlobalKnownHostsFile` was not named, ssh consults both
-    /// host-key files, and a `~/.ssh/config` setting it alongside a
-    /// `ProxyCommand` sent every RPC to another machine with
-    /// `StrictHostKeyChecking=yes` and the pinned `UserKnownHostsFile` both
-    /// still in force, while `runner list` went on showing the honestly paired
-    /// fingerprint. That breaks the attestation, not merely the transport: `runner_id` is what a manifest and a receipt record.
-    ///
-    /// The cost is real and worth naming: a user's `ProxyJump` for this host is
-    /// not picked up either. A runner that needs one should carry it in its own record.
-    ///
-    /// - `BatchMode=yes`: never prompt. A prompt on a non-interactive channel is a
-    ///   hang, and a password prompt would mean the pair key is not being used.
-    /// - `IdentitiesOnly=yes` with `IdentityFile`: offer the pair key and nothing
-    ///   else, so the agent cannot substitute a key with wider rights.
-    /// - `UserKnownHostsFile` plus `StrictHostKeyChecking=yes`: the runner
-    ///   authenticates to us with the key pinned at pair time, the half of mutual
-    ///   authentication the pair key does not provide.
-    /// - `ControlMaster`/`ControlPersist`: session-per-RPC is only cheap because
-    ///   these make the second session free.
-    /// - `ServerAlive*`: a dead link becomes an error rather than a channel that
-    ///   never ends.
+    /// `-F /dev/null` prevents user SSH settings from changing routing or host
+    /// verification. The paired identity and host key are the only credentials;
+    /// multiplexing and keepalives make repeated RPCs bounded and inexpensive.
     pub fn argv(&self) -> Vec<String> {
         let mut a: Vec<String> = vec!["ssh".into()];
         // No configuration file, at all. See the note above.
