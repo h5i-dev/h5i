@@ -8982,7 +8982,7 @@ pub fn mediated_commit(
             if is_under_private_path(path, &private_rels) {
                 return 1; // skip, and not a violation: h5i created it
             }
-            match staged_path_violation(&canon_work, path) {
+            match staged_path_violation(&canon_work, path, Absent::IsAViolation) {
                 None => 0, // stage it
                 Some(v) => {
                     violations.push(v);
@@ -9005,6 +9005,35 @@ pub fn mediated_commit(
         // staging paths is an invariant that depends on the other one never
         // changing.
         index.update_all(["*"].iter(), Some(&mut cb as &mut git2::IndexMatchedPath))?;
+    }
+
+    // The same filter again, over the index libgit2 actually built.
+    //
+    // The callback above answers about a path, and libgit2 then resolves that
+    // path a second time to read it: two resolutions of a name in a directory
+    // the box writes. A box process still alive (a service outlives the run
+    // that started it, and at the workspace tier there is no pid namespace to
+    // end it) can turn a checked directory into a symlink in between, and it
+    // is the *host* process, confined by nothing, that does the read. Asking
+    // again over the finished index catches a swap that is still in place.
+    //
+    // It does not catch one flipped back inside a single `add_all`. Closing
+    // that needs `openat2(RESOLVE_BENEATH)` and fd-relative staging, which
+    // libgit2 does not offer here; this narrows the window rather than shutting
+    // it, and says so.
+    for entry in index.iter() {
+        // A symlink is staged as a link blob and never followed, so the entry
+        // is exactly what it claims whatever the path resolves to now.
+        if entry.mode == 0o120000 {
+            continue;
+        }
+        let path = PathBuf::from(String::from_utf8_lossy(&entry.path).into_owned());
+        if is_under_private_path(&path, &private_rels) {
+            continue;
+        }
+        if let Some(v) = staged_path_violation(&canon_work, &path, Absent::IsFine) {
+            violations.push(v);
+        }
     }
 
     // Post-stage sweep: reject submodule gitlink entries (mode 160000) that
@@ -9241,10 +9270,22 @@ fn scan_nested_git(work: &Path, base_gitlinks: &HashMap<String, git2::Oid>) -> V
     out
 }
 
+/// What a path that is not there means, which depends on when we are asking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Absent {
+    /// Before staging: libgit2 named a path it is about to read, so a path
+    /// that is gone is a worktree changing under the commit.
+    IsAViolation,
+    /// After staging: the entry is already in the index, and a box process
+    /// still running may have removed the file since. Refusing over that would
+    /// make `propose` flaky rather than safe.
+    IsFine,
+}
+
 /// The path filter behind the mediated-commit invariant. `rel` is the
 /// repo-relative path libgit2 wants to stage; returns a human-readable
 /// violation, or `None` when the path is safe.
-fn staged_path_violation(canon_work: &Path, rel: &Path) -> Option<String> {
+fn staged_path_violation(canon_work: &Path, rel: &Path, absent: Absent) -> Option<String> {
     for comp in rel.components() {
         match comp {
             std::path::Component::Normal(c) => {
@@ -9262,6 +9303,7 @@ fn staged_path_violation(canon_work: &Path, rel: &Path) -> Option<String> {
     let abs = canon_work.join(rel);
     let md = match std::fs::symlink_metadata(&abs) {
         Ok(md) => md,
+        Err(_) if absent == Absent::IsFine => return None,
         Err(_) => return Some(format!("{}: vanished while staging", rel.display())),
     };
     if md.file_type().is_symlink() {
@@ -9278,6 +9320,7 @@ fn staged_path_violation(canon_work: &Path, rel: &Path) -> Option<String> {
             rel.display(),
             canon.display()
         )),
+        Err(_) if absent == Absent::IsFine => None,
         Err(e) => Some(format!("{}: cannot canonicalize ({e})", rel.display())),
     }
 }
@@ -13248,17 +13291,25 @@ mod tests {
         let canon = work.canonicalize().unwrap();
 
         // Ordinary file: fine.
-        assert!(staged_path_violation(&canon, Path::new("src/main.rs")).is_none());
+        assert!(staged_path_violation(&canon, Path::new("src/main.rs"), Absent::IsAViolation).is_none());
 
         // `.git` components: rejected (gitlink/hooks smuggling).
-        assert!(staged_path_violation(&canon, Path::new(".git")).is_some());
-        assert!(staged_path_violation(&canon, Path::new("vendor/.git/config")).is_some());
+        assert!(staged_path_violation(&canon, Path::new(".git"), Absent::IsAViolation).is_some());
+        assert!(staged_path_violation(&canon, Path::new("vendor/.git/config"), Absent::IsAViolation).is_some());
 
         // `..` traversal: rejected.
-        assert!(staged_path_violation(&canon, Path::new("../escape.txt")).is_some());
+        assert!(staged_path_violation(&canon, Path::new("../escape.txt"), Absent::IsAViolation).is_some());
 
         // Vanished file: rejected (TOCTOU).
-        assert!(staged_path_violation(&canon, Path::new("nope.txt")).is_some());
+        assert!(staged_path_violation(&canon, Path::new("nope.txt"), Absent::IsAViolation).is_some());
+        // ...but not on the post-stage pass, where a box process removing a
+        // file it already committed is an ordinary race and not a boundary
+        // crossing. Refusing there would make `propose` flaky, not safe.
+        assert!(staged_path_violation(&canon, Path::new("nope.txt"), Absent::IsFine).is_none());
+        // The escape is still an escape on either pass.
+        assert!(
+            staged_path_violation(&canon, Path::new("../escape.txt"), Absent::IsFine).is_some()
+        );
     }
 
     #[cfg(unix)]
@@ -13275,11 +13326,11 @@ mod tests {
 
         // A symlink itself is stored as a link blob, never followed. Allowed.
         symlink(outside.join("secret.txt"), work.join("link.txt")).unwrap();
-        assert!(staged_path_violation(&canon, Path::new("link.txt")).is_none());
+        assert!(staged_path_violation(&canon, Path::new("link.txt"), Absent::IsAViolation).is_none());
 
         // A file REACHED THROUGH a symlinked directory escapes $WORK. Rejected.
         symlink(&outside, work.join("sneaky")).unwrap();
-        let v = staged_path_violation(&canon, Path::new("sneaky/secret.txt"));
+        let v = staged_path_violation(&canon, Path::new("sneaky/secret.txt"), Absent::IsAViolation);
         assert!(v.is_some(), "dir-symlink traversal must be rejected");
         assert!(v.unwrap().contains("escapes $WORK"));
     }
