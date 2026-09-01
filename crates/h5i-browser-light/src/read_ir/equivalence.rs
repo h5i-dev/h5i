@@ -143,6 +143,40 @@ fn corpus() -> Vec<(&'static str, String)> {
             "control characters",
             "<html><body><p>a\u{202e}b\u{200d}c</p><p>tab\there</p></body></html>".to_string(),
         ),
+        (
+            "hidden wrappers around disclosure",
+            // A closed `<details>` is handled before the visibility check, so
+            // this is the shape where a hidden summary could leak. Both
+            // readings must agree, and neither may carry the word.
+            "<html><body>\
+             <details style='display:none'><summary>secret-a</summary><p>body</p></details>\
+             <div style='display:none'><details><summary>secret-b</summary></details></div>\
+             <div aria-hidden='true'><details><summary>secret-c</summary></details></div>\
+             <details open style='display:none'><summary>secret-d</summary></details>\
+             <p>visible</p></body></html>"
+                .to_string(),
+        ),
+        (
+            "empty and degenerate controls",
+            "<html><body>\
+             <select name='s'></select>\
+             <a href=''>empty href</a>\
+             <a href='/x'></a>\
+             <img src='' alt=''>\
+             <button></button>\
+             <label for='nothing'>orphan label</label>\
+             <input aria-labelledby='missing'>\
+             <input aria-labelledby='hidden-label'>\
+             <span id='hidden-label' style='display:none'>named by hidden</span>\
+             </body></html>"
+                .to_string(),
+        ),
+        (
+            "table parts out of place",
+            "<html><body><table><td>loose cell</td><tr><th>head</th></tr></table>\
+             <pre>a<a href='/in-pre'>link in pre</a>b\nsecond</pre></body></html>"
+                .to_string(),
+        ),
         ("long prose", format!("<html><body>{long_prose}</body></html>")),
         ("deep nesting", deep),
         ("over budget", over_budget),
@@ -150,10 +184,18 @@ fn corpus() -> Vec<(&'static str, String)> {
 }
 
 fn factory() -> (PageFactory, url::Url) {
+    // The font paths are discovered once per thread rather than once per
+    // fixture. `fonts::load` walks the system font directories, and the
+    // differential tests below build a page for every fixture at every budget;
+    // rediscovering the same paths for each of them was most of their runtime.
+    thread_local! {
+        static FONT_SOURCES: Vec<std::path::PathBuf> =
+            crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2)).sources;
+    }
     let broker =
         LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
-    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let factory = PageFactory::new(broker, fonts.sources.clone(), PageOptions::default());
+    let sources = FONT_SOURCES.with(|paths| paths.clone());
+    let factory = PageFactory::new(broker, sources, PageOptions::default());
     (factory, url::Url::parse(URL).unwrap())
 }
 
@@ -258,12 +300,33 @@ fn no_ir_line_but_the_fence_starts_at_the_left_margin() {
 #[test]
 fn an_unchanged_ir_delta_matches_the_walker() {
     for (name, html) in corpus() {
-        let (walker, ir) = both(&html, 500, false);
-        assert!(ir.same_reading_as(&ir), "{name}: a reading differs from itself");
+        // Two separately captured readings of one document, not one reading
+        // compared with itself. Self-comparison would pass on any
+        // implementation that short-circuits on identity, which is precisely
+        // the bug this is meant to catch.
+        let (factory, base) = factory();
+        let page = factory.from_html(&html, &base);
+        let dom = page.dom();
+        let doc = dom.borrow();
+        let before_walker = Snapshot::capture(&doc, URL, 500, false);
+        let after_walker = Snapshot::capture(&doc, URL, 500, false);
+        let before_ir = ReadTree::capture(&doc, URL, 500, false);
+        let after_ir = ReadTree::capture(&doc, URL, 500, false);
+
+        assert!(
+            after_ir.same_reading_as(&before_ir),
+            "{name}: two readings of one document differ"
+        );
         assert_eq!(
-            ir.delta(&ir),
-            walker.delta(&walker),
+            after_ir.delta(&before_ir),
+            after_walker.delta(&before_walker),
             "{name}: unchanged delta differed"
+        );
+        // ...and it really is the no-change answer, so the comparison above
+        // cannot be satisfied by both sides being wrong in the same way.
+        assert!(
+            after_walker.delta(&before_walker).is_empty() || before_walker.lines.is_empty(),
+            "{name}: an unchanged page reported a change"
         );
     }
 }
@@ -385,26 +448,41 @@ fn long_way(after: &Snapshot, before: &Snapshot) -> crate::snapshot::Delta {
     delta
 }
 
-/// A frame subtree is styled by nobody, so the walk judges it by markup: no
-/// resolved style means "outside the styled tree" rather than "hidden", and
-/// only the `hidden` attribute and an inline `display:none` still hide.
+/// The in-frame flag reaches a text node through an `<iframe>`.
 ///
-/// Reachable here without a network fetch because the flag is set on the tag,
-/// not on the graft. The real grafted-document path needs a broker and is
-/// covered by the engine's own frame tests.
+/// Narrower than it looks, and the narrowness is the point of saying so.
+/// html5ever parses `<iframe>` content as raw text, so this fixture produces a
+/// single text node whose content happens to look like markup; the element
+/// branches of the in-frame rule, the `hidden` attribute and the inline
+/// `display:none` that stand in for style resolution inside a graft, are not
+/// reachable from parsed markup at all. They need a document grafted by
+/// `load_frames`, which needs a broker, and the engine's own frame tests are
+/// where that is covered.
+///
+/// What this pins is that the IR carries `in_frame` down the same path the
+/// walker does, and that the reading is not empty, so the assertion cannot
+/// pass by both sides seeing nothing.
 #[test]
-fn the_ir_reads_a_frame_subtree_the_way_the_walker_does() {
-    let fixtures = [
+fn the_ir_carries_the_in_frame_flag_like_the_walker() {
+    for html in [
         "<html><body><iframe><p>inside</p></iframe></body></html>",
-        "<html><body><iframe><p hidden>gone</p><p>kept</p></iframe></body></html>",
-        "<html><body><iframe><p style='display: none'>gone</p><a href='/x'>kept</a></iframe></body></html>",
-        "<html><body><frame><p>inside a frame</p></frame></body></html>",
-    ];
-    for html in fixtures {
+        "<html><body><iframe>plain words</iframe></body></html>",
+        "<html><body><frame><p>after a void frame</p></frame></body></html>",
+    ] {
         let (walker, ir) = both(html, 500, false);
+        assert!(!walker.lines.is_empty(), "fixture reads as nothing: {html}");
         assert_eq!(ir.render(), walker.render(), "frame fixture rendered differently: {html}");
         assert_eq!(ir.to_snapshot(), walker, "frame fixture materialised differently: {html}");
     }
+
+    // And the flag is actually set, rather than the two agreeing on not
+    // setting it. `<iframe>` content is raw text, so this is the text node.
+    let (_, ir) = both("<html><body><iframe>inside</iframe></body></html>", 500, false);
+    let node = ir.nodes().first().expect("one line");
+    assert!(
+        node.flags.contains(crate::read_ir::ReadFlags::IN_FRAME),
+        "the text inside a frame should be marked as such"
+    );
 }
 
 /// `--text` reads the same words the outline does.
@@ -425,4 +503,278 @@ fn plain_text_reads_what_the_outline_reads() {
             .join("\n");
         assert_eq!(ir.plain_text(), was, "{name}: --text changed");
     }
+}
+
+/// A ref resolves through the IR exactly when it resolves through the walker.
+///
+/// The walker compares against the literal `e3` it printed. Rust's integer
+/// parser is more forgiving than that, so an IR that parsed would honour
+/// handles no reading ever offered.
+#[test]
+fn the_ir_resolves_the_refs_the_walker_resolves_and_no_others() {
+    let html = "<html><body><a href='/one'>one</a><a href='/two'>two</a>\
+                <button>three</button></body></html>";
+    let (walker, ir) = both(html, 500, false);
+    assert_eq!(walker.refs.len(), 3, "fixture should mint three refs");
+
+    for spelling in [
+        // Both spellings the outline offers.
+        "e1", "@e1", "e3", "@e3",
+        // Past the end, and the zero that never names anything.
+        "e4", "e0", "@e0",
+        // Not canonical decimal: the walker prints none of these.
+        "e01", "e+1", "e 1", "e1 ", "e1.0", "e-1", "e1e1",
+        // Not a ref at all.
+        "", "@", "e", "1", "@1", "button", "@ee1",
+    ] {
+        let walker_hit = walker.resolve(spelling).map(|entry| entry.node_id);
+        let ir_hit = ir.resolve(spelling).map(|record| record.dom_id as usize);
+        assert_eq!(
+            ir_hit, walker_hit,
+            "{spelling:?} resolved differently: ir={ir_hit:?} walker={walker_hit:?}"
+        );
+    }
+}
+
+/// Every shape that could make the transcription diverge, at every budget.
+///
+/// The corpus tests above read a page the way a person would describe one.
+/// This is the opposite: shapes chosen because a transcription is likely to
+/// get them wrong, crossed with both script modes and with the budgets around
+/// the edges where truncation lands part way through a node. Roughly eight
+/// hundred readings, each compared four ways.
+///
+/// The budget sweep is the point of it. Truncation is a decision taken part
+/// way through a walk, and the walker mints a ref *before* it tries to print
+/// the line, so the states worth reaching are the ones where the cut falls
+/// between those two acts, or inside a code block that emits several lines
+/// from a single element.
+#[test]
+fn the_ir_matches_the_walker_on_shapes_built_to_break_it() {
+    let mut cases: Vec<String> = vec![
+        "<html><body><pre>a\nb\nc</pre></body></html>".into(),
+        "<html><body><pre>only</pre></body></html>".into(),
+        "<html><body><pre>\n\nonly\n\n</pre></body></html>".into(),
+        "<html><body><pre></pre></body></html>".into(),
+        "<html><body><pre>   \n \n  </pre></body></html>".into(),
+        "<html><body><pre role='button'>a\nb</pre></body></html>".into(),
+        "<html><body><pre role='img'>a\nb</pre></body></html>".into(),
+        "<html><body><pre role='paragraph'>a\nb</pre></body></html>".into(),
+        "<html><body><pre role='link'>a\nb</pre></body></html>".into(),
+        "<html><body><pre aria-label='named'>a\nb</pre></body></html>".into(),
+        "<html><body><li>lead<pre>a\nb</pre></li></body></html>".into(),
+        "<html><body><label>lead<pre>a\nb</pre></label></body></html>".into(),
+        "<html><body><p>lead<code>x</code></p></body></html>".into(),
+        "<html><body><label>text<a href='/z'>in label</a></label></body></html>".into(),
+        "<html><body><a href='   '>ws href</a></body></html>".into(),
+        "<html><body><a href=''>empty href</a></body></html>".into(),
+        "<html><body><img src='  ' alt='x'></body></html>".into(),
+        "<html><body><a href='\n/nl\n'>newline href</a></body></html>".into(),
+        "<html><body><a href='/a' src='/b'>both</a></body></html>".into(),
+        "<html><body><img src='' alt=''></body></html>".into(),
+        "<html><body><details><summary>s</summary><pre>a\nb</pre></details></body></html>".into(),
+        "<html><body><details style='display:none'><summary>s</summary><p>x</p></details></body></html>".into(),
+        "<html><body><details aria-hidden='true'><summary>s</summary></details></body></html>".into(),
+        "<html><body><details><p>no summary</p></details></body></html>".into(),
+        "<html><body><details><summary><a href='/x'>link</a></summary></details></body></html>".into(),
+        "<html><body><div aria-hidden='true'><pre>a\nb</pre></div></body></html>".into(),
+        "<html><body><select><option>a</option><option selected>b</option></select></body></html>".into(),
+        "<html><body><div role='combobox'><p>inner</p></div></body></html>".into(),
+        "<html><body><div role='listbox'><a href='/x'>x</a></div></body></html>".into(),
+        "<html><body>bare text<!--c--><p>p</p></body></html>".into(),
+        "<html><body><p>\u{1}\u{202e}\u{200d}</p></body></html>".into(),
+        "<html><body><p>   </p></body></html>".into(),
+        "<html><body><noscript><a href='/n'>n</a></noscript></body></html>".into(),
+        "<html><body><iframe>plain</iframe><p>after</p></body></html>".into(),
+        "<html><body><frame><pre>a\nb</pre></frame></body></html>".into(),
+        "<html><body><li>a<ul><li>b<pre>c\nd</pre></li></ul></li></body></html>".into(),
+        "<html><body><blockquote>q<p>inner</p></blockquote></body></html>".into(),
+        "<html><body><td>cell<h1>h</h1></td></body></html>".into(),
+        "<html><body><h1>h<p>p</p></h1></body></html>".into(),
+        "<html><body><code>a\nb</code></body></html>".into(),
+        "<html><body><pre><code>a\nb</code></pre></body></html>".into(),
+        "<html><body><pre>a\nb</pre><a href='/1'>1</a><pre>c\nd</pre><a href='/2'>2</a></body></html>".into(),
+    ];
+    // Depth boundary.
+    for n in [22usize, 23, 24, 25, 26, 30] {
+        cases.push(format!(
+            "<html><body>{}<p>deep</p><a href='/d'>dl</a>{}</body></html>",
+            "<div>".repeat(n),
+            "</div>".repeat(n)
+        ));
+    }
+    // Budget edges around code blocks and refs.
+    cases.push(format!(
+        "<html><body>{}</body></html>",
+        (0..30)
+            .map(|n| format!("<pre>l{n}a\nl{n}b\nl{n}c</pre><a href='/l{n}'>a{n}</a>"))
+            .collect::<String>()
+    ));
+
+    for (at, html) in cases.iter().enumerate() {
+        for scripted in [false, true] {
+            for budget in [0usize, 1, 2, 3, 5, 8, 13, 40, 500] {
+                let (walker, ir) = both(html, budget, scripted);
+                assert_eq!(
+                    ir.render(),
+                    walker.render(),
+                    "case {at} budget {budget} scripted {scripted} RENDER\n{html}"
+                );
+                assert_eq!(
+                    ir.ref_entries(),
+                    walker.refs,
+                    "case {at} budget {budget} scripted {scripted} REFS\n{html}"
+                );
+                assert_eq!(
+                    ir.to_snapshot(),
+                    walker,
+                    "case {at} budget {budget} scripted {scripted} SNAPSHOT\n{html}"
+                );
+                assert_eq!(
+                    ir.truncated(),
+                    walker.truncated,
+                    "case {at} budget {budget} scripted {scripted} TRUNCATED\n{html}"
+                );
+            }
+        }
+    }
+}
+
+/// Content the page does not display does not reach a reader through the IR.
+///
+/// Aimed at the one ordering in the walk where it could: a closed `<details>`
+/// is handled *before* the visibility check, so its summary is walked without
+/// that gate having run on the `<details>` itself. Both readings must agree,
+/// which the corpus tests already say, and neither may carry the word, which
+/// is the part equality alone cannot tell you.
+#[test]
+fn neither_reading_carries_content_the_page_hides() {
+    let html = "<html><body>\
+                <details style='display:none'><summary>secret-a</summary></details>\
+                <div style='display:none'><details><summary>secret-b</summary></details></div>\
+                <div aria-hidden='true'><details><summary>secret-c</summary></details></div>\
+                <p>visible</p></body></html>";
+    let (walker, ir) = both(html, 500, false);
+    let walker_text = walker.render();
+    let ir_text = ir.render();
+    assert_eq!(ir_text, walker_text);
+    assert!(walker_text.contains("visible"), "the fixture reads as nothing: {walker_text}");
+    for secret in ["secret-a", "secret-b", "secret-c"] {
+        assert!(!ir_text.contains(secret), "{secret} reached the reading:\n{ir_text}");
+    }
+}
+
+/// A password never reaches the arena, let alone the outline.
+///
+/// The walker masks in `accessible_name`, and the IR interns whatever that
+/// returns, so this is really a check that no other path in the builder reads
+/// the value: the arena is searched directly rather than the rendered text.
+#[test]
+fn a_password_never_enters_the_text_arena() {
+    let html = "<html><body><form>\
+                <input type='password' name='p' value='hunter2'>\
+                <input type='text' name='t' value='ordinary'>\
+                </form></body></html>";
+    let (walker, ir) = both(html, 500, false);
+    assert_eq!(ir.render(), walker.render());
+    for node in ir.nodes() {
+        assert_ne!(ir.text(node.name), "hunter2", "a password reached a node");
+    }
+    for record in ir.refs() {
+        assert_ne!(ir.text(record.name), "hunter2", "a password reached a ref");
+    }
+    assert!(!ir.render().contains("hunter2"), "{}", ir.render());
+    // The masked form is what is carried instead, so this is not passing by
+    // the field being dropped entirely.
+    assert!(ir.render().contains("********"), "{}", ir.render());
+}
+
+#[test]
+fn the_ir_matches_the_walker_on_randomly_grown_markup() {
+    // A fixed seed, so a failure is a bug someone can reproduce rather than a
+    // story about a build that once went red. The generator is deliberately
+    // ignorant of what the walk finds interesting: hand-picked fixtures test
+    // what their author thought of, and this tests the combinations nobody
+    // did, which is the half that catches a transcription slip.
+    // xorshift, so the corpus is reproducible.
+    let mut state: u64 = 0x9E3779B97F4A7C15;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let tags = [
+        "div", "span", "p", "li", "td", "label", "pre", "code", "blockquote", "h1", "h3",
+        "details", "summary", "a", "button", "select", "option", "textarea", "img", "input",
+        "iframe", "noscript", "script", "style", "table", "tr", "section",
+    ];
+    let attrs = [
+        "", " href='/x'", " src='/y'", " href='  '", " aria-hidden='true'", " role='button'",
+        " role='heading'", " role='img'", " role='paragraph'", " style='display:none'",
+        " hidden", " open", " aria-label='L'", " type='hidden'", " type='checkbox'",
+        " href='a\nb'", " alt='A'",
+    ];
+    let texts = ["", "word", "a b", "  ", "x\ny\nz", "\u{202e}q", "line1\n  line2\nline3"];
+
+    fn grow(
+        depth: usize,
+        next: &mut impl FnMut() -> u64,
+        tags: &[&str],
+        attrs: &[&str],
+        texts: &[&str],
+        out: &mut String,
+    ) {
+        if depth > 6 {
+            return;
+        }
+        let kids = (next() % 4) as usize;
+        for _ in 0..kids {
+            let tag = tags[(next() % tags.len() as u64) as usize];
+            let attr = attrs[(next() % attrs.len() as u64) as usize];
+            out.push('<');
+            out.push_str(tag);
+            out.push_str(attr);
+            out.push('>');
+            out.push_str(texts[(next() % texts.len() as u64) as usize]);
+            grow(depth + 1, next, tags, attrs, texts, out);
+            out.push_str("</");
+            out.push_str(tag);
+            out.push('>');
+            out.push_str(texts[(next() % texts.len() as u64) as usize]);
+        }
+    }
+
+    // A generator that quietly emitted nothing would pass every assertion
+    // below while testing none of them, so how much it actually produced is
+    // counted and checked at the end.
+    let mut read_something = 0u32;
+    for case in 0..150u32 {
+        let mut body = String::new();
+        grow(0, &mut next, &tags, &attrs, &texts, &mut body);
+        let html = format!("<html><head><title>T {case}</title></head><body>{body}</body></html>");
+        for budget in [0usize, 4, 500] {
+            for scripted in [false, true] {
+                let (walker, ir) = both(&html, budget, scripted);
+                assert_eq!(ir.render(), walker.render(), "case {case} b{budget} s{scripted}\n{html}");
+                assert_eq!(ir.ref_entries(), walker.refs, "refs case {case} b{budget}\n{html}");
+                assert_eq!(ir.to_snapshot(), walker, "snap case {case} b{budget}\n{html}");
+                let was: String = walker
+                    .lines
+                    .iter()
+                    .filter(|l| !l.text.is_empty())
+                    .map(|l| l.text.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert_eq!(ir.plain_text(), was, "text case {case} b{budget}\n{html}");
+                if budget == 500 && !walker.lines.is_empty() {
+                    read_something += 1;
+                }
+            }
+        }
+    }
+    assert!(
+        read_something > 150,
+        "the generator produced too little to be testing anything: {read_something}"
+    );
 }

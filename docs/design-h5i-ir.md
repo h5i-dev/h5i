@@ -50,8 +50,10 @@ is *read*, not what it loads or renders.
 
 ## Why this exists
 
-Every read of a page today is a full walk of the Blitz DOM, and so is every
-action. The costs are structural, not incidental:
+This is the state the work started from, in September 2026, before any of it
+landed. Every read of a page was a full walk of the Blitz DOM, and so was every
+action. The costs were structural, not incidental. Where one has since been
+paid off, it says so, and [Measured](#measured) has the numbers.
 
 1. **Reads and actions both re-walk everything.** `Snapshot::capture`
    (`snapshot.rs`) runs for the `snapshot` verb, but also inside `click`,
@@ -59,13 +61,16 @@ action. The costs are structural, not incidental:
    internal capture to get a live node id before resolving the aim, see
    `resolve_aim` and `resolve_ref` in `stream.rs`), inside `hint_targets` and
    `text()` in `engine.rs`, and once per poll iteration inside `wait_for`.
-   A `wait_for` that polls ten times walks the page ten times.
+   A `wait_for` that polls ten times walks the page ten times. *`text()` now
+   reads through the IR; the rest still hold, and are phase 2's target.*
 
 2. **Delta is quadratic and starts from scratch.** `Snapshot::delta` builds a
    `String` identity per line on both sides, then a dense
    `(n+1) x (m+1)` LCS table (`longest_common_subsequence` in `snapshot.rs`).
    The common case in an agent loop, "nothing changed", pays for a full
-   capture, two identity vectors and the whole table.
+   capture, two identity vectors and the whole table. *Fixed for the unchanged
+   case: `Snapshot::delta` now answers it directly. A page that really moved
+   still builds the table.*
 
 3. **Refs are positional and disposable.** `Walker.next_ref` starts at 1 on
    every capture; an insertion near the top of the page renumbers everything
@@ -82,10 +87,11 @@ action. The costs are structural, not incidental:
    with many labelled controls goes quadratic in the number of nodes.
 
 5. **The walk allocates per node.** `element.name.local.as_ref().to_string()`
-   per element, `node.children.clone()` per recursion step, `role.to_string()`
-   per line even though `Descriptor.role` is `&'static str`, a fresh `String`
-   from `collapse` per text node, `format!` per rendered field, and an owned
-   four-string `Line` per output row collected into `Vec<Line>`.
+   per element, `node.children.clone()` per recursion step, a `String` per role
+   word, a fresh `String` from `collapse` per text node, `format!` per rendered
+   field, and an owned four-string `Line` per output row collected into
+   `Vec<Line>`. *The IR path has none of these; the walker still has all of
+   them, and `Descriptor.role` is now the `ReadRole` enum both of them share.*
 
 6. **Markdown is a second, divergent walker.** `markdown.rs` re-implements
    visibility as a bare `primary_styles` check (`is_displayed`). It has no
@@ -96,7 +102,9 @@ action. The costs are structural, not incidental:
    closes (see the comment on `hidden_from_assistive_tech`).
 
 The Read IR removes all six by computing the semantic reading once, keeping it,
-and re-deriving only what a mutation touched.
+and re-deriving only what a mutation touched. Phase 1 removed the fifth
+outright and the second for the case that dominates; the rest need the retained
+tree.
 
 ## What it is not
 
@@ -696,6 +704,22 @@ point in the rollout.
   semantics has failed review by definition.
 - Snapshot and markdown agree on hidden judgment (from Phase 4 on).
 
+`read_ir/equivalence.rs` is where this lives, and it compares four outputs, not
+one: the rendered outline, the ref list, the materialised `Snapshot` and the
+`truncated` flag. Four rather than one because the rendered outline is the
+weakest of them. Rendering collapses every line on the way out, so a reading
+can be wrong in the structured `Line.text` a delta serialises and identical in
+the text an agent sees; that is exactly the bug the gate caught first.
+
+Three layers, in increasing distrust of the author:
+
+1. A hand-written corpus of the shapes the walk treats specially.
+2. Those shapes crossed with both script modes and with budgets around the
+   edges where truncation lands part way through a node, about eight hundred
+   readings.
+3. Randomly grown markup from a fixed seed, which tests the combinations
+   nobody thought of. Reproducible by construction: a failure names its case.
+
 ### Mutation sequences
 
 Text insert/remove/replace; node insert/remove/move; role and ARIA changes;
@@ -768,6 +792,12 @@ producing the same bytes.
 Absolute times move with what else the box is doing, by up to 40% between
 runs. Ratios and allocation counts do not, and allocation counts are exact, so
 those are what the claims below rest on.
+
+The unchanged delta is measured between two *separately captured* readings of
+one document rather than one reading compared with itself. Self-comparison
+hands every string comparison two identical pointers, which is not the shape of
+an agent's second snapshot and would let the answer come back without the bytes
+being read.
 
 Fixture `large-static`: 500 lines (at the budget), 72 refs, 26.6 KB of outline,
 19.1 ms to load.

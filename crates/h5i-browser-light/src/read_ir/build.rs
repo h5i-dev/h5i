@@ -60,7 +60,10 @@ impl ReadTree {
             next_ref: 1,
             tree: ReadTree {
                 nodes: Vec::with_capacity(reserve + 1),
-                text: TextArena::with_capacity(FLOOR_TEXT.min(max_lines * 32 + 64), reserve),
+                text: TextArena::with_capacity(
+                    FLOOR_TEXT.min(max_lines.saturating_mul(32).saturating_add(64)),
+                    reserve,
+                ),
                 refs: Vec::new(),
                 url: url.to_string(),
                 title: TextId::EMPTY,
@@ -83,9 +86,6 @@ impl ReadTree {
             level: 0,
         });
 
-        let title = find_title(doc).unwrap_or_default();
-        builder.tree.title = builder.tree.text.intern(&title);
-
         // Blitz keys nodes by slab index, and this arena addresses them with a
         // `u32`. A document that outgrew that cannot be read here, and the one
         // thing that must not happen is reading it anyway with the high bits
@@ -94,8 +94,16 @@ impl ReadTree {
         // this engine refuses. Four billion nodes is far past anything the line
         // budget or the parser's own nesting limit would let through, so this
         // is a guard rather than a case.
+        //
+        // Checked before the title is read, so the refusal is total. A reading
+        // that says it read nothing must not still be carrying the page's own
+        // words above the fence's first line.
         if doc.tree().capacity() > u32::MAX as usize {
-            builder.tree.truncated = true;
+            // A note rather than the `truncated` flag. That flag means one
+            // specific thing to every reader of it, "the walk hit its line
+            // budget", and this is not that; saying so would trade a silent
+            // wrong answer for a loud wrong reason. The note is the channel
+            // for what the engine has to say about its own reading.
             builder.tree.notes.push(
                 "this document has more nodes than this engine can address, so none of it was \
                  read. Nothing below describes the page."
@@ -103,6 +111,9 @@ impl ReadTree {
             );
             return builder.tree;
         }
+
+        let title = find_title(doc).unwrap_or_default();
+        builder.tree.title = builder.tree.text.intern(&title);
 
         let root_id = doc.root_element().id;
         builder.walk(root_id, ReadId::ROOT, 0, false, false);
@@ -130,10 +141,6 @@ impl ReadTree {
 
     pub fn notes(&self) -> &[String] {
         &self.notes
-    }
-
-    pub fn push_note(&mut self, note: String) {
-        self.notes.push(note);
     }
 
     /// The lines, in the order they print.

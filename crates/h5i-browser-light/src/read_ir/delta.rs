@@ -4,14 +4,16 @@
 //! be had from a transient tree: the unchanged answer, without materialising
 //! either reading's lines. Two trees of the same page compare as fixed-width
 //! nodes and interned spans, so "nothing moved" costs a scan of the node arena
-//! and no allocation at all.
+//! and the single allocation the returned answer's own URL needs.
 //!
-//! The revision-stamped change log, and with it an unchanged delta that costs
-//! nothing because no second tree was ever built, arrives with the retained
-//! cache in phase 3. What is deliberately *not* here is a second diff
-//! algorithm: when a page really did change, this defers to the walker's
-//! longest common subsequence, so the engine holds exactly one opinion about
-//! which lines were added and which were removed.
+//! What it still costs is the second tree. Not building one at all needs the
+//! retained cache of phase 2, and reducing a changed page to a list of what
+//! moved needs the revision-stamped change log of phase 3.
+//!
+//! What is deliberately *not* here is a second diff algorithm. When a page
+//! really did change, this defers to the walker's longest common subsequence,
+//! so the engine holds exactly one opinion about which lines were added and
+//! which were removed.
 
 use crate::snapshot::{Delta, REPLACED_SURVIVAL};
 

@@ -74,14 +74,26 @@ impl ReadRole {
         match self {
             ReadRole::Document => "document",
             ReadRole::Text => "text",
-            ReadRole::Heading => match level {
-                1 => "heading1",
-                2 => "heading2",
-                3 => "heading3",
-                4 => "heading4",
-                5 => "heading5",
-                _ => "heading6",
-            },
+            ReadRole::Heading => {
+                // A heading always knows its level: the tag table sets 1 to 6,
+                // and an explicit `role="heading"` is given 2, which is what
+                // the outline printed before the level moved out of the role
+                // name. A zero here would silently print `heading6`, the
+                // quietest possible wrong answer, so it is caught in tests
+                // rather than shipped as a default.
+                debug_assert!(
+                    (1..=6).contains(&level),
+                    "a heading reached the renderer with level {level}"
+                );
+                match level {
+                    1 => "heading1",
+                    2 => "heading2",
+                    3 => "heading3",
+                    4 => "heading4",
+                    5 => "heading5",
+                    _ => "heading6",
+                }
+            }
             ReadRole::Paragraph => "paragraph",
             ReadRole::ListItem => "listitem",
             ReadRole::Cell => "cell",
@@ -219,13 +231,22 @@ mod tests {
 
     #[test]
     fn every_role_prints_the_word_the_outline_uses() {
-        assert_eq!(ReadRole::Heading.as_str(1), "heading1");
-        assert_eq!(ReadRole::Heading.as_str(6), "heading6");
-        // Out of range clamps to the deepest, which is what the tag table can
-        // never produce and an explicit ARIA role should not be able to either.
+        for level in 1..=6u8 {
+            assert_eq!(
+                ReadRole::Heading.as_str(level),
+                format!("heading{level}"),
+                "heading level {level}"
+            );
+        }
+        // A level a heading cannot have. Debug builds trip the assertion
+        // instead of quietly printing the deepest heading, so this is only
+        // asserted where the assertion is compiled out.
+        #[cfg(not(debug_assertions))]
         assert_eq!(ReadRole::Heading.as_str(9), "heading6");
+        // Every other role ignores the level entirely.
         assert_eq!(ReadRole::Textbox.as_str(0), "textbox");
         assert_eq!(ReadRole::Text.as_str(0), "text");
+        assert_eq!(ReadRole::Link.as_str(3), "link");
     }
 
     #[test]

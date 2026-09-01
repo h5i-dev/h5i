@@ -100,15 +100,21 @@ impl ReadTree {
     pub fn resolve(&self, reference: &str) -> Option<&super::model::RefRecord> {
         let wanted = reference.trim_start_matches('@').strip_prefix('e')?;
         let ordinal: u32 = wanted.parse().ok()?;
+        // Only the spelling the outline actually printed.
+        //
+        // The walker compares against the literal `e3` it wrote, so `e03` and
+        // `e+3` are not refs there. Rust's integer parser accepts both, which
+        // would have made this resolve handles no reading ever offered, and a
+        // ref an agent could not have read is a ref it should not be able to
+        // act on. Round-tripping the number is the cheapest way to say
+        // "canonical decimal" exactly.
+        if wanted != ordinal.to_string() {
+            return None;
+        }
         // Ordinals are handed out from one upward in emission order, so the
         // ref list is indexed rather than searched. The walker scans its list
         // linearly for the same answer.
         self.refs.get(ordinal.checked_sub(1)? as usize)
-    }
-
-    /// The role word for a ref, as the outline printed it.
-    pub fn ref_role(&self, record: &super::model::RefRecord) -> &'static str {
-        record.role.as_str(record.level)
     }
 }
 
@@ -173,7 +179,7 @@ mod tests {
             ReadRole::Checkbox,
             ReadRole::Radio,
         ] {
-            for level in 0..=6u8 {
+            for level in 1..=6u8 {
                 let word = role.as_str(level);
                 assert_eq!(word, one_line(word), "{word} is not inert under one_line");
                 assert!(

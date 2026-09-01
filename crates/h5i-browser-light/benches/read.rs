@@ -303,15 +303,28 @@ impl Bench {
         };
 
         // Unchanged: the commonest step in an agent loop.
-        let (_, walker_unchanged_allocs) = counted(|| walker.delta(&walker));
-        let (_, ir_unchanged_allocs) = counted(|| tree.delta(&tree));
+        //
+        // Against a *separately captured* reading of the same document, not
+        // against itself. Comparing a reading with itself hands every string
+        // comparison two identical pointers, which is not what an agent's
+        // second snapshot looks like and could let `memcmp` answer without
+        // reading the bytes. The two readings here are equal and unrelated,
+        // which is the real case.
+        let walker_again = Snapshot::capture(&doc, url, BUDGET, false);
+        let tree_again = ReadTree::capture(&doc, url, BUDGET, false);
+        assert!(
+            walker_again.delta(&walker).is_empty(),
+            "{name}: two readings of one document should not differ"
+        );
+        let (_, walker_unchanged_allocs) = counted(|| walker_again.delta(&walker));
+        let (_, ir_unchanged_allocs) = counted(|| tree_again.delta(&tree));
         let delta_unchanged = Pair {
             walker: median(|| {
-                std::hint::black_box(walker.delta(&walker));
+                std::hint::black_box(walker_again.delta(&walker));
             }),
             walker_allocs: walker_unchanged_allocs,
             ir: median(|| {
-                std::hint::black_box(tree.delta(&tree));
+                std::hint::black_box(tree_again.delta(&tree));
             }),
             ir_allocs: ir_unchanged_allocs,
         };
