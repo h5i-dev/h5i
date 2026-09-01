@@ -6,32 +6,8 @@
 // `#[cfg(target_os = "linux")]` run path, so they read as dead code on non-Linux
 // targets. Allow it module-wide rather than cfg-gating every helper + its tests.
 #![allow(dead_code)]
-//!
-//! The rlimit the process tier falls back to for `mem` (`RLIMIT_DATA`) caps the
-//! writable data segment, not resident memory, and is per-process, not per-tree.
-//! It is deliberately *not* `RLIMIT_AS`: capping virtual address space breaks
-//! runtimes that reserve huge PROT_NONE regions (V8/Node, Go, the JVM,
-//! sanitizers). cgroup v2 `memory.max` and `pids.max` are the production-grade
-//! controls: a hierarchical, whole-subtree limit plus accurate `memory.peak` and
-//! `cpu.stat` accounting.
-//!
-//! ## Rootless reality (honest)
-//!
-//! Creating a cgroup as a non-root user requires the kernel to have *delegated*
-//! a writable subtree to the session (a systemd user manager with
-//! `Delegate=yes`). Many hosts, notably WSL2 and most CI, run h5i in a
-//! root-owned cgroup with no delegation, so cgroup management is simply
-//! *unavailable* there. [`probe`] detects this by actually attempting a create,
-//! controller-enable and remove; when it fails we fall back to the rlimit path
-//! and say so. We never silently pretend a limit is enforced.
-//!
-//! ## The "no internal processes" rule
-//!
-//! cgroup v2 forbids a non-root cgroup from both holding processes *and*
-//! enabling controllers for its children. So we never manage limits on h5i's own
-//! cgroup; instead we create a fresh *parent* under the delegated root, enable
-//! `+memory +pids` in *its* `subtree_control`, and put each run in a leaf child
-//! of that parent. h5i's own process is never moved.
+//! The rlimit the process tier falls back to for `mem` (`RLIMIT_DATA`) caps the writable data
+//! segment, not resident memory, and is per-process, not per-tree.
 
 #[cfg(target_os = "linux")]
 use std::path::{Path, PathBuf};

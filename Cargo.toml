@@ -36,26 +36,8 @@ path = "src/main.rs"
 # `--no-default-features` for a build that needs no Node toolchain.
 default = ["web", "share", "runner", "browser", "ytdlp", "identity"]
 web = ["h5i-core/web"]
-# `browser` links the rendering engine into this binary, which is what
-# `h5i browser` execs itself to become (`h5i __engine`).
-#
-# **This is the product, not one of four parts.** ROADMAP.md is the scope
-# authority and its one-liner is "give an AI agent a browser it can drive and
-# you can audit"; a build without this cannot do the thing h5i is for, and
-# `h5i browser open` has nothing to render a page with. The switch is not a
-# statement that the engine is optional, and the comment that used to sit here
-# read like one — it predated the pivot.
-#
-# What it is instead is a build-time convenience, and a measured one: the engine
-# is blitz + stylo + boa, and dropping it takes the graph from 455 crates to
-# 314. Someone spending the afternoon on boxes or the runner should not pay for
-# a browser they are not touching. That is the whole of the reason,
-# and it is enough of one.
-#
-# Note that `ytdlp` implies it, which is correct — `--via` is a flag on
-# `h5i browser transcript`, so there is nowhere to put it without the engine —
-# and which means "everything except the browser" has to drop `ytdlp` too, or
-# the feature comes straight back in.
+# `browser` links the rendering engine into this binary, which is what `h5i browser` execs
+# itself to become (`h5i __engine`).
 browser = ["dep:h5i-browser-light"]
 # `identity` adds `--identity` and `h5i browser identity`: one coherent browser
 # identity, read by the header layer and the script realm from the same object.
@@ -67,20 +49,9 @@ browser = ["dep:h5i-browser-light"]
 # the one agent string it has always sent. It implies `browser`, because the
 # thing being given an identity is the engine.
 identity = ["browser", "h5i-browser-light/identity"]
-# `ytdlp` adds the helper lane: `h5i browser transcript --via yt-dlp`, which
-# runs yt-dlp to reach the transcripts that are not in a page's markup at all —
-# YouTube's above all, whose captions live behind the player's own API.
-#
-# On by default, and gated anyway, because the two switches promise different
-# things. Without the feature the binary has **no code path that execs a
-# helper**, which is a claim a hardened deployment can make about the file it
-# installed rather than about how someone invokes it. With it, the lane still
-# never runs unless `--via` is typed: it is not a fallback from the engine's own
-# read, and it never becomes one, because a fetch that quietly left the engine's
-# request log is the one thing `h5i browser requests` promises cannot happen.
-#
-# Implies `browser`: both lanes answer with one reply shape and parse WebVTT
-# with one parser, which is what stops them disagreeing about a timestamp.
+# `ytdlp` adds the helper lane: `h5i browser transcript --via yt-dlp`, which runs yt-dlp to
+# reach the transcripts that are not in a page's markup at all — YouTube's above all, whose
+# captions live behind the player's own API.
 ytdlp = ["browser", "dep:url"]
 # `bpf` adds the runtime-detection collector: an eBPF probe that watches a run
 # from the kernel and files what it saw as its own evidence lane (ROADMAP.md
@@ -97,17 +68,7 @@ bpf = ["h5i-core/bpf"]
 # end of it is this same binary: a runner is an h5i install, so a build that
 # could not serve could not be a runner.
 runner = ["dep:h5i-runner"]
-# `share` adds `h5i box share` / `h5i join` and, through h5i-share, the iroh
-# QUIC stack. Drop it for a build with no sharing in it at all;
-# `share-tunnel` is the narrower switch that keeps `--tunnel` and drops iroh.
-#
-# The two are layered rather than parallel because the dependency below is
-# declared `default-features = false`: `share-tunnel` buys the crate and its
-# loopback/`cloudflared` half, and `share` adds `h5i-share/p2p` on top. Written
-# the other way round — an optional dependency carrying its own defaults —
-# `--no-default-features --features share-tunnel` still resolved to
-# `h5i-share/default`, so the tunnel-only build this comment described could
-# not actually be selected.
+# `share` adds `h5i box share` / `h5i join` and, through h5i-share, the iroh QUIC stack.
 share = ["share-tunnel", "h5i-share/p2p"]
 share-tunnel = ["dep:h5i-share", "dep:tokio"]
 
@@ -176,38 +137,8 @@ serde_json = { workspace = true }
 [profile.dev]
 debug = false
 
-# There was a `[patch.crates-io]` here pointing stylo at a vendored one-bool
-# fork that enabled `:has()` parsing. Removed by owner decision (2026-08-28):
-# an in-tree copy of a rendering-engine crate is not something this project
-# will maintain, whatever the WPT arithmetic says. `:has()` is a named gap
-# again (`selector :has()` in the unsupported channel) until a Blitz release
-# depends on stylo >= 0.20, which is where to check `parse_has` next.
-
-# Boa, patched — and the distinction from the ruling above is the point.
-#
-# That ruling was against an in-tree *copy* of an engine crate: a vendored
-# directory this project would have had to maintain, diverging silently from
-# the crate it was forked from. This is the other shape. The fork lives outside
-# the tree, is pinned to one commit, and carries one commit of difference:
-# `Script::bind_to_realm`, which compiles a script once and runs it in many
-# fresh realms. Nothing in it is specific to this engine or this project, it is
-# written as an upstream pull request, and the exit is the same as every pin
-# here — when it lands upstream this goes back to plain crates.io.
-#
-# What it buys is in §B15.12a: parse and compile were 67 ms of the 83 ms a
-# realm cost, on every page, for a source that never changes. That section
-# refused a fork and asked for an upstream issue instead; the owner has since
-# ruled a minimal fork acceptable. Of its other two conclusions, one stands and
-# one did not survive being checked. Realm *reuse* stays refused, permanently,
-# and `bind_to_realm` is careful not to be it. The claim that inline caches
-# would carry one page's object shapes into the next was wrong — entries are
-# weak and matched by shape identity, so a second realm can never hit them —
-# but the remedy it named, clearing them, is still right for a different
-# reason: the megamorphic flag is permanent and would otherwise accumulate.
-#
-# `boa_gc` is patched with it because this crate depends on it directly: left
-# on crates.io it would resolve to a second copy, and the cancellation token
-# would then be two incompatible types with the same name.
+# Pinned fork providing `Script::bind_to_realm`; return to crates.io when the
+# upstream change lands. Patch `boa_gc` too to avoid incompatible duplicate types.
 [patch.crates-io]
 boa_engine = { git = "https://github.com/h5i-dev/boa", rev = "05a10e4ecf7ae72324138d80be2e9c47e99e7b3d" }
 boa_gc = { git = "https://github.com/h5i-dev/boa", rev = "05a10e4ecf7ae72324138d80be2e9c47e99e7b3d" }

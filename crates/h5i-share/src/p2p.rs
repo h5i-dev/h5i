@@ -1,25 +1,4 @@
 //! Transport one: peer to peer, over iroh.
-//!
-//! Both sides run h5i, and the bytes go between them. QUIC, end-to-end
-//! encrypted, hole-punched to a direct path when the networks allow it and
-//! carried by a relay when they do not. The relay moves sealed packets: it
-//! learns both addresses, the timing and the volume, and none of the content.
-//! Nothing about the shared app is visible to any third party on this path,
-//! which is why it is the default and the tunnel is not.
-//!
-//! What is on the wire, in order:
-//!
-//! 1. QUIC, with an ALPN of [`crate::wire::ALPN`]. A peer that does not speak
-//!    exactly this is dropped by the transport before either side is asked
-//!    anything.
-//! 2. Per stream, a fixed-size greeting carrying the ticket secret
-//!    ([`crate::wire`]). One stream is one TCP connection into the box,
-//!    authorized on its own, so revoking a grant stops the *next* connection.
-//! 3. Raw bytes, both ways, until someone hangs up.
-//!
-//! Live connections are not left to the per-stream check alone: a watchdog
-//! closes the whole QUIC connection when the grant table stops admitting
-//! anyone, so `revoke` reaches a WebSocket that is already open.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -77,22 +56,6 @@ const DIRECT_WAIT: Duration = Duration::from_secs(12);
 const MAX_PEER_STREAMS: u32 = 12;
 
 /// Bind an endpoint that can accept shares.
-///
-/// The transport limits are set here for the same reason [`bind_joiner`] sets
-/// them, and this side had the harder version of the problem: it is the side
-/// anyone can dial.
-///
-/// quinn's defaults are 100 bidirectional and 100 unidirectional streams per
-/// connection with about 1.25 MiB of receive window each, and data on a stream
-/// nobody accepts stays buffered. This protocol never accepts a unidirectional
-/// stream at all, so an unauthenticated peer could fill a hundred of them and
-/// have the memory held by a connection whose application code would never read
-/// a byte. The 256-connection ceiling turned that into tens of gigabytes, and
-/// the same hundred bidirectional streams into 25,600 tasks parked in the
-/// greeting read, each holding its slot for the full [`HELLO_TIMEOUT`].
-///
-/// So: no remote unidirectional streams, and a bidirectional limit sized for a
-/// browser rather than for a protocol nobody wrote down.
 pub async fn bind_sharer() -> Result<Endpoint, H5iError> {
     let transport = iroh::endpoint::QuicTransportConfig::builder()
         .max_concurrent_uni_streams(0u32.into())
@@ -107,21 +70,6 @@ pub async fn bind_sharer() -> Result<Endpoint, H5iError> {
 }
 
 /// Bind an endpoint that only dials.
-///
-/// No address lookup is configured, and that is the security property. The
-/// obvious build (`PkarrResolver` plus `DnsAddressLookup`, iroh's usual pair)
-/// was here, and it went around the ticket filter below entirely. Every address
-/// in a ticket is checked before iroh is handed it; discovered addresses are
-/// not, because they arrive later, inside the endpoint, and are merged straight
-/// into the dial candidates. The endpoint id is chosen by whoever wrote the
-/// ticket, so they hold the key that signs that endpoint's pkarr record:
-/// publish `127.0.0.1:11434` under it, hand out a ticket whose own address list
-/// is impeccable, and the joiner's machine dials its own loopback anyway.
-///
-/// A ticket is self-contained by construction, [`addressing`] refusing to mint
-/// one that names nowhere, so there is nothing for discovery to add. What is
-/// given up is the case where the sharer's addressing changed between minting
-/// and joining; the joiner gets a dial failure and asks for a fresh ticket.
 pub async fn bind_joiner() -> Result<Endpoint, H5iError> {
     // No ALPN is configured and `accept()` is never called, so a third party
     // cannot open a connection here. What it *could* do is open streams on the
@@ -134,17 +82,7 @@ pub async fn bind_joiner() -> Result<Endpoint, H5iError> {
         .max_concurrent_bidi_streams(0u32.into())
         .max_concurrent_uni_streams(0u32.into())
         .build();
-    // `presets::N0` minus the publisher, assembled by hand. That preset
-    // installs a `PkarrPublisher`, which puts *this* endpoint's direct
-    // addresses (every local interface, so the LAN and any VPN) into a public
-    // directory keyed by its public key, and leaves them there for the record's
-    // lifetime. The sharer learns that key from the QUIC handshake, so it can
-    // look the joiner up afterwards.
-    //
-    // A joiner has no use for it: it configures no ALPN, never calls `accept()`,
-    // and nobody needs to find it by id. The *resolvers* are gone for the reason
-    // in this function's doc comment. The relay stays, to reach a sharer behind
-    // a NAT.
+    // `presets::N0` minus the publisher, assembled by hand.
     Endpoint::builder(presets::Minimal)
         .relay_mode(iroh::endpoint::default_relay_mode())
         .transport_config(transport)
@@ -165,26 +103,6 @@ pub async fn bind_joiner() -> Result<Endpoint, H5iError> {
 const RELAY_WAIT: Duration = Duration::from_secs(10);
 
 /// Wait until this endpoint knows how it can be reached, then describe it.
-///
-/// Done before the ticket is printed rather than after: a ticket minted before
-/// the endpoint has any addresses names nowhere, and the person holding it has
-/// no way to tell that from a network problem on their end.
-///
-/// Three things happen here, and only the first was happening before.
-///
-/// 1. Wait for a relay, but not forever. See [`RELAY_WAIT`]. Past the deadline
-///    this carries on with whatever direct addresses the endpoint has, which on
-///    a LAN is the whole answer.
-/// 2. Refuse to mint a ticket that names nowhere. With the wait bounded, "no
-///    relay *and* no direct addresses" is now reachable, and it is a failure
-///    with a sentence rather than a ticket that cannot work. It is also what
-///    lets the joiner drop address discovery: see [`bind_joiner`].
-/// 3. Apply the join side's own policy to what is about to be printed.
-///    `ep.addr()` is the current relay plus *every* direct address, and a host
-///    with enough Docker bridges, VPN tunnels and dual-stack interfaces
-///    produced more than [`MAX_TICKET_ADDRS`] of them, so the sharer printed a
-///    confident invite that this same version of `h5i join` refused as
-///    attacker-shaped.
 pub async fn addressing(ep: &Endpoint) -> Result<(String, serde_json::Value), H5iError> {
     let _ = tokio::time::timeout(RELAY_WAIT, ep.online()).await;
     let addr = trim_addressing(ep.addr());
@@ -244,31 +162,8 @@ fn parse_addr(value: &serde_json::Value) -> Result<EndpointAddr, H5iError> {
     Ok(addr)
 }
 
-/// Refuse a ticket that would make the joiner dial its own machine, and cap how
-/// many places one ticket may point at.
-///
-/// The addressing in a ticket is chosen by whoever wrote it, and a ticket is
-/// something people paste out of a chat window. Two things have to be true of it
-/// before iroh is handed it.
-///
-/// Nowhere on the joiner's own machine. The first version of this check
-/// formatted each address with `{:?}` and looked for an IP literal in the text,
-/// which caught `127.0.0.1` and missed every other spelling of the same place:
-/// `0.0.0.0` and `[::ffff:127.0.0.1]` both `connect()` to loopback on Linux, and
-/// neither is `is_loopback()`. Demonstrated: a ticket naming
-/// `http://0.0.0.0:39271/` made `h5i join` open a plaintext connection to a
-/// listener on `127.0.0.1:39271` and send it a request. The unauthenticated
-/// admin surfaces on a developer's loopback are unauthenticated *because* they
-/// are loopback-only. It decides on parsed addresses now, and refuses loopback,
-/// unspecified and link-local, after unwrapping IPv4-mapped IPv6.
-///
-/// Not very many places. The 8 KiB ticket cap leaves room for about two hundred
-/// addresses, and iroh probes every one: measured, one pasted ticket produced
-/// 2,940 packets and 3.5 MB of UDP to 196 destinations of the ticket author's
-/// choosing, sent from inside the joiner's network and attributed to them.
-///
-/// What is deliberately *not* refused is a private LAN address. Two machines on
-/// one office network is the case direct P2P exists for.
+/// Refuse a ticket that would make the joiner dial its own machine, and cap how many places one
+/// ticket may point at.
 fn refuse_addresses_that_point_inward(value: &serde_json::Value) -> Result<(), H5iError> {
     let addrs = value.get("addrs").and_then(|a| a.as_array());
     let listed = addrs.map(|a| a.len()).unwrap_or(0);
@@ -317,25 +212,6 @@ fn refuse_addresses_that_point_inward(value: &serde_json::Value) -> Result<(), H
 const RELAY_SUFFIX: &str = ".relay.n0.iroh.link";
 
 /// May the joiner's relay client dial this URL?
-///
-/// An allowlist, and it took two goes to get here.
-///
-/// First the parsing. The authority was being taken apart by hand (split on
-/// `://`, split on `/`, `rsplit` on `:`) and that is not how a URL parser reads
-/// one. `http://attacker@localhost:11434/` came out of the hand-rolled version
-/// as the host `attacker@localhost`, which is not `localhost`, so it passed.
-/// `RelayUrl` is a `url::Url` underneath and the relay client asks *it* for the
-/// host, which is `localhost`, and dials loopback. So the check reads the host
-/// through the same parser that will do the dialling, and refuses userinfo
-/// outright: no legitimate relay URL has any, and its only use here is to make
-/// the two readings disagree.
-///
-/// Then the resolution. Refusing loopback literals and `.localhost` still
-/// accepted every other name, and a name is resolved *later*, by the relay
-/// client, which then dials whatever came back. `evil.example.com A 127.0.0.1`
-/// restores the whole problem, and re-resolving it here would only add a
-/// rebinding window between the check and the dial. A hostname allowlist has
-/// neither hole.
 fn relay_is_allowed(url: &str) -> bool {
     let Ok(parsed) = url.parse::<iroh::RelayUrl>() else {
         return false;
@@ -396,20 +272,6 @@ fn observed_path(conn: &Connection) -> Option<Path> {
 }
 
 /// Is a *relay* carrying this connection right now?
-///
-/// The one question `--direct-only` asks, in the one place both of its
-/// enforcement points can read it, and they did not agree. The watchdog polls
-/// `observed_path` and acts only on `Some(Path::Relayed)`, deliberately: a
-/// connection has no selected path for an instant after a NAT rebinding or a
-/// local address change, and treating that as a relay closed healthy
-/// connections and put a false relay claim in the receipt. The per-write gate
-/// added later to close the one-second window between polls asked the opposite
-/// question, `== Some(Path::Direct)`, so the same instant barred the write,
-/// ended that direction of the pump, and took the connection with it. Silently,
-/// since nothing on that path records a turned-away connection.
-///
-/// "No path selected" is not a relay carrying traffic; it is nothing carrying
-/// traffic, which is what makes barring on it both wrong and unnecessary.
 fn a_relay_is_carrying_it(conn: &Connection) -> bool {
     relay_is_carrying(observed_path(conn))
 }
@@ -525,20 +387,6 @@ async fn serve_connection(
     let grant_id: Arc<std::sync::Mutex<Option<String>>> = Default::default();
 
     // What this connection's watchdog keeps doing for its whole life.
-    //
-    // *Revocation*, for the connection's own grant. Per-stream enforcement
-    // covers a stream that is carrying traffic; this covers the joiner sitting
-    // on a checked ticket with no page open yet, and it closes the whole
-    // connection because one connection is one grant.
-    //
-    // *`--direct-only`*, because a direct path can die and iroh will fall back
-    // to a relay, so a promise checked only at setup is a preference. The poll
-    // is the coarse half of that enforcement; the fine half is the gate in
-    // `serve_stream`, consulted before every write.
-    //
-    // The receipt's record of the path, because a long-lived stream sampled once
-    // at its start would be recorded as direct for a session that spent most of
-    // itself on a relay.
     let watchdog = AbortOnDrop({
         let bridge = bridge.clone();
         let conn = conn.clone();
@@ -696,17 +544,8 @@ async fn serve_connection(
 struct OnThisConnection<'a> {
     who: &'a str,
     path: Option<Path>,
-    /// Set by the first stream that authorizes; every later one is counted
-    /// against the same record.
-    ///
-    /// Both mutexes are taken with a poison recovery rather than an `expect`,
-    /// the discipline `Bridge::tally` states, and the reason matters here:
-    /// `peer_joined` is called while the first is held, and the *watchdog* reads
-    /// both once a second. An `expect` therefore turned one panic under either
-    /// lock into a connection whose watchdog was dead, which is the task that
-    /// closes it on a revoke, so the share would keep carrying that peer's open
-    /// streams with nothing left to cut them off. Neither value has an invariant
-    /// across fields for a recovery to break.
+    /// Set by the first stream that authorizes; every later one is counted against the same
+    /// record.
     peer_id: &'a std::sync::Mutex<Option<crate::bridge::PeerId>>,
     /// The grant this connection belongs to, set by whichever stream
     /// authorized first. See [`serve_stream`] for why a second grant on the
@@ -762,17 +601,7 @@ async fn serve_stream(
         }
     };
 
-    // One grant per connection. A stream carries its own ticket, so two
-    // streams on one QUIC connection could in principle present two different
-    // grants, and everything downstream assumed they could not. The peer record
-    // is created once per connection by whichever stream authorized first, so a
-    // second grant's connections, bytes, path and duration were all added to
-    // the *first* grant's row in the receipt; and the watchdog that closes a
-    // connection when its probe grant is revoked would have cut off streams
-    // belonging to a grant that was still perfectly live.
-    //
-    // Keeping the accounting per grant is the other way to fix it and buys
-    // nothing: `h5i join` holds one ticket and opens one connection.
+    // One grant per connection.
     let mismatch = {
         let mut owner = grant_id.lock().unwrap_or_else(|p| p.into_inner());
         match &*owner {
@@ -812,16 +641,7 @@ async fn serve_stream(
         bridge.peer_path(id, p);
     }
 
-    // A ticket check and nothing else. Answered from the grant table, without a
-    // slot and without touching the box: `h5i join` does this once at startup,
-    // and if it went the whole way it would open a connection to the dev server
-    // per join, spend one of the share's 64 slots on it, and, for any dev server
-    // that does not close when its client stops writing, leave a pump parked on
-    // that slot until the joiner went away.
-    //
-    // The peer is still recorded. Somebody presented a valid ticket for this
-    // share; that they then never loaded the page shows as a peer with no
-    // connections.
+    // A ticket check and nothing else.
     if intent == wire::Intent::Probe {
         // The connection's grant is already recorded above, which is what lets
         // a revoke reach a joiner who has connected and not yet opened the
@@ -851,18 +671,9 @@ async fn serve_stream(
     // serving the other connections of the same page.
     let upstream = {
         let bridge2 = bridge.clone();
-        // Raced against this stream's own grant and the share ending, which is
-        // not what the watchdog below can do for it: the `revoked` arm of that
-        // `select!` is installed *after* this await returns. The dialer serialises
-        // every request behind one mutex and allows each namespace connect ten
-        // seconds, so a dev server with a full accept queue let authorized
-        // requests pile up in exactly this gap, and `revoke`, which promises open
-        // connections are dropped within a second, returned to a terminal while
-        // sixty-four of them sat here holding every permit, ready to forward into
-        // the box the moment the port started accepting.
-        //
-        // The blocking dial itself cannot be cancelled, being a syscall on a pool
-        // thread, so this drops the *result* rather than interrupting the work.
+        // Raced against this stream's own grant and the share ending, which is not what the
+        // watchdog below can do for it: the `revoked` arm of that `select!` is installed
+        // *after* this await returns.
         let opened = tokio::select! {
             r = tokio::task::spawn_blocking(move || bridge2.open_upstream()) => {
                 r.map_err(|e| H5iError::Metadata(format!("the box dialer panicked: {e}")))?
@@ -908,31 +719,12 @@ async fn serve_stream(
         .map_err(|e| H5iError::Metadata(format!("could not answer a peer: {e}")))?;
 
     let (up_r, up_w) = upstream.into_split();
-    // A raw pipe, deliberately, and worth saying why when the tunnel front goes
-    // to such lengths not to be one. There the gate runs because a single TCP
-    // connection is shared by `cloudflared`'s pool across visitors, so "this
-    // connection was authorized" says nothing about the request now arriving on
-    // it. Here the unit of authorization *is* this stream: it carried its own
-    // ticket, one greeting, one grant. A peer with a ticket may make as many
-    // requests as it likes, which is what the ticket is. The HTTP framing that
-    // matters for this path happens on the joiner's side.
-    //
-    // Counted into atomics rather than taken from a return value, because none
-    // of the three ways this ends returns one.
+    // A raw pipe, deliberately, and worth saying why when the tunnel front goes to such lengths
+    // not to be one.
     let from_peer = std::sync::atomic::AtomicU64::new(0);
     let to_peer = std::sync::atomic::AtomicU64::new(0);
-    // `--direct-only`, enforced where the bytes are rather than only by the
-    // watchdog that polls once a second. A direct path that falls back to a
-    // relay just after a poll used to mean up to a second of application
-    // traffic across a third party, for a flag that promises none crosses one
-    // at all. Asked immediately before every write, the residue is what QUIC
-    // had already accepted at the instant the path changed.
-    //
-    // The question is "is a relay carrying this", not "is a direct path
-    // carrying this", and they are not complements: between them sits the
-    // instant with no selected path at all, which the watchdog has always
-    // tolerated and this gate used to bar, ending the pump and the connection
-    // on an ordinary NAT rebinding. See [`a_relay_is_carrying_it`].
+    // `--direct-only`, enforced where the bytes are rather than only by the watchdog that polls
+    // once a second.
     let barred: Option<Box<crate::pump::Gate>> = direct_only.then(|| {
         let conn = conn.clone();
         Box::new(move || !a_relay_is_carrying_it(&conn)) as Box<crate::pump::Gate>
@@ -1126,17 +918,7 @@ impl From<OpenError> for H5iError {
     }
 }
 
-/// Open one authorized stream: the joiner's half of the handshake. Returns the
-/// two halves of a stream that is already through the gate.
-///
-/// How long the joiner will wait on any single step of the handshake. Every one
-/// of the three was unbounded, and a hostile sharer controls all three:
-/// advertise no stream credit and `open_bi` parks, advertise a zero window and
-/// the write parks, simply never answer and the read parks. iroh keeps the
-/// connection alive from both sides, so nothing times out on its own. The
-/// sharer's side of the same frame has had a deadline since it was written
-/// (`HELLO_TIMEOUT`); the joiner's never got one, so `h5i join` printed nothing
-/// at all and hung, before the listener was even bound.
+/// Open one authorized stream: the joiner's half of the handshake.
 const JOINER_HANDSHAKE: Duration = Duration::from_secs(15);
 
 async fn deadlined<T, F>(what: &str, f: F) -> Result<T, OpenError>
@@ -1197,20 +979,6 @@ pub async fn open_stream(
 }
 
 /// Present the ticket once, right after connecting, and close the stream again.
-///
-/// Two things this buys, and the second is a bug fix.
-///
-/// `h5i join` finds out now whether the ticket works. Before this it printed
-/// "joined", along with the warning about running somebody else's agent's code,
-/// on the strength of a QUIC handshake alone, so a revoked or expired ticket
-/// looked exactly like a good one until the first page load answered `502`.
-///
-/// A joiner that nobody has visited yet stops being killed. The sharer hangs up
-/// on a connection that has never authorized a stream, after
-/// `UNAUTHENTICATED_GRACE`, because an endpoint anyone can dial must not be
-/// holdable for free. But the normal way this feature is used is: send someone a
-/// ticket, they run `h5i join`, and *then* they open the browser, so the real
-/// client was the one being cut off thirty seconds in.
 pub async fn verify_ticket(conn: &Connection, secret: &str) -> Result<(), OpenError> {
     let hello = wire::encode_probe(secret)
         .ok_or_else(|| OpenError::Transport("this ticket's secret is malformed".into()))?;
@@ -1272,19 +1040,6 @@ mod tests {
     use crate::session::{self, ShareSession, Transport};
 
     /// `--direct-only`'s two enforcement points answer the same question.
-    ///
-    /// The watchdog polls once a second and the pump's gate is consulted before
-    /// every write, and they were written to opposite predicates: the watchdog
-    /// acted on "a relay is carrying it" and the gate on "a direct path is
-    /// carrying it". Those are not complements. Between them is the instant with
-    /// no selected path at all, which happens after a NAT rebinding or a local
-    /// address change. The watchdog tolerates it *by name*; the gate barred it,
-    /// which ends that direction of the pump and takes the connection with it.
-    /// Silently, too, so the flag h5i advertises as its strongest guarantee
-    /// dropped streams during ordinary rebinding and the receipt said nothing.
-    ///
-    /// Stated over the three answers `observed_path` can give, because the middle
-    /// one is the whole defect and a test using a real relay could not produce it.
     #[test]
     fn the_two_halves_of_direct_only_agree_about_a_path_that_is_settling() {
         // The gate bars exactly when the watchdog would close, and no oftener.
@@ -1394,15 +1149,6 @@ mod tests {
     }
 
     /// One QUIC connection carries one ticket.
-    ///
-    /// The protocol authorizes per stream, so two streams on one connection could
-    /// present two different grants, and everything downstream assumed they could
-    /// not. The peer record is created once per connection by whichever stream
-    /// authorized first, so the second grant's connections, bytes and duration
-    /// landed on the first grant's row in the receipt; and the connection-wide
-    /// watchdog would close streams belonging to a live grant when a *different*
-    /// one was revoked. Refused here rather than accounted for: `h5i join` holds
-    /// one ticket and opens one connection.
     #[tokio::test]
     async fn a_second_grant_on_one_connection_is_refused() {
         let port = fake_dev_server();

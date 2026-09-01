@@ -1,24 +1,5 @@
-//! h5i's own confinement for the `process` isolation tier, plus the policy
-//! model shared by every tier (docs/environments-design.md §5–§7).
-//!
-//! Design (a minimal, embedded Sandlock):
-//!   - *Policy* comes from a checked-in `.h5i/env.toml` profile, fail-closed
-//!     when absent. A profile requests a *minimum* isolation claim; the
-//!     resolved claim is recorded in the manifest and every capture.
-//!   - *Capability probing*: hosts vary (Landlock may be compiled out, userns
-//!     may be disabled), so we probe what the kernel supports and *refuse*,
-//!     never silently downgrade, when the claim cannot be satisfied.
-//!   - *Enforcement* (Linux, `process` tier v1, static, no supervisor):
-//!     Landlock filesystem allowlist, a seccomp deny-list,
-//!     `unshare(CLONE_NEWUSER|CLONE_NEWNET)` for `net.mode = deny`,
-//!     `PR_SET_NO_NEW_PRIVS`, and rlimits with a wall-clock kill. Domain
-//!     egress allowlists need the supervisor or a container backend, so they
-//!     fail closed here.
-//!
-//! Cross-platform honesty: the kernel tiers run on Linux (this module) and on
-//! macOS via Seatbelt ([`crate::seatbelt`]), a *different* mechanism with a
-//! different residual set. [`capabilities_report`] states which one a host
-//! gets. Windows is explicitly not claimed (§5).
+//! h5i's own confinement for the `process` isolation tier, plus the policy model shared by
+//! every tier (docs/environments-design.md §5–§7).
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -65,33 +46,9 @@ pub const POLICY_FILE: &str = ".h5i/env.toml";
 // `Profile` (impl builtin/builtin_agent/wall) and the
 // `default_fs_read`/`default_fs_deny` helpers moved to src/sandbox_policy.rs.
 
-/// Agent config paths whose mutation could disable the in-box observation
-/// hook, locked *read-only* (bind + remount,ro) inside the box's mount
-/// namespace for interactive agent sessions. Landlock is allowlist-only and
-/// cannot subtract a writable child from a granted parent, so this mount-level
-/// lock is how the kernel tiers make config immutable in-box without a
-/// managed-settings tier, which they cannot reach: `/etc/claude-code` cannot
-/// be created from the userns.
-///
-/// Two shapes, by scope:
-///
-/// - Project scope (`$WORK/.claude`, `$WORK/.codex`): the whole directory. A
-///   read-only directory blocks editing existing config *and creating*
-///   `settings.local.json`, the `disableAllHooks` create-bypass that per-file
-///   pinning cannot stop. Agents read project config but do not write it.
-/// - User scope: the single settings file only. `~/.claude` itself must stay
-///   writable for session state, and locking the whole dir would brick the
-///   runtime. There is no `~/.claude/settings.local.json` in Claude's
-///   precedence chain, and Codex's `[features] hooks=false` kill switch lives
-///   only in `config.toml`, so pinning the one file closes user scope.
-///
-/// Only *existing* paths are returned, since a bind needs a target. An absent
-/// project config dir is a documented residual: the agent could create
-/// `$WORK/.claude` and a local-scope `disableAllHooks`, which the tee-shim
-/// floor covers instead.
-///
-/// macOS reaches the same end differently: [`crate::seatbelt`] turns this list
-/// into `(deny file-write* (subpath …))` rules, which need no mount namespace.
+/// Agent config paths whose mutation could disable the in-box observation hook, locked
+/// *read-only* (bind + remount,ro) inside the box's mount namespace for interactive agent
+/// sessions.
 #[cfg(unix)]
 pub(crate) fn config_lock_paths(work: &Path, home: Option<&Path>) -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -561,18 +518,8 @@ fn profile_declared_isolation(repo_workdir: &Path, name: &str) -> Result<Option<
     }
 }
 
-/// Pick the isolation tier for `env create` when none is pinned: the
-/// *strongest* tier the host can actually run for this profile
-/// (`container > supervised > process > workspace`). Each candidate is gated
-/// by the same checks `create` applies (`resolve` + `verify_exec`), so a
-/// picked tier is guaranteed runnable rather than one that fails at run time.
-///
-/// `force_probe = false` (no `--isolation`) honors a tier the profile
-/// declares; `force_probe = true` (`--isolation auto`) re-probes regardless.
-/// Explicit `--isolation <tier>` never reaches here and stays fail-closed.
-///
-/// `image_override` is the caller-supplied container image, visible here so
-/// the container tier becomes a candidate for a profile declaring no image.
+/// Pick the isolation tier for `env create` when none is pinned: the *strongest* tier the host
+/// can actually run for this profile (`container > supervised > process > workspace`).
 pub fn effective_auto(
     repo_workdir: &Path,
     name: &str,
@@ -621,22 +568,6 @@ pub fn effective_auto(
 }
 
 /// Fail-closed policy lints (§7), rejecting *policies* before any env exists.
-///
-/// Validate a container image reference before it becomes an argument. The
-/// image is repo-supplied, the same untrusted file every other policy field
-/// comes from, and it reaches two places where its bytes are syntax:
-///
-/// * Podman's positional argument. `podman run <flags> <image> <argv…>` has no
-///   `--` before the image, so a reference beginning with `-` is parsed as a
-///   flag and `argv[0]` becomes the image. That mostly self-destructs, and
-///   "mostly" is not a property to rest a boundary on.
-/// * `--mount type=image,source=<image>,…`, where a comma ends the value and
-///   starts an option. `private_paths` already refuses a comma for exactly
-///   this reason; the image was the field that did not.
-///
-/// The charset is every byte a real reference uses (registry host, path,
-/// `:tag`, `@sha256:…`, and the `oci-archive:` / `docker-archive:`
-/// transports) and nothing else.
 pub fn validate_image(image: &str) -> Result<(), H5iError> {
     let bad = |why: &str| {
         // `{:?}`, not `{}`: the value is going to a terminal and the thing
@@ -666,21 +597,7 @@ pub fn validate_image(image: &str) -> Result<(), H5iError> {
     Ok(())
 }
 
-/// Filesystem entries that name `~` when there is no `$HOME` to resolve it
-/// against.
-///
-/// The lint below is the *only* thing standing between a grant and a denied
-/// child inside it: Landlock has no deny rules, so `fs.deny` is a preflight
-/// refusal and nothing else. With `$HOME` unset, `expand_tilde` leaves
-/// `~/.ssh` as that literal string, `canonicalize` fails, and the prefix test
-/// finds no overlap with `/Users/dev`, so a profile granting a home directory
-/// and denying the keys inside it loaded clean and Landlock granted the lot.
-///
-/// Grants are included for the mirror-image reason: one expands to nothing,
-/// Landlock skips it, and the policy confers none of the access it names.
-///
-/// Takes `home_set` rather than reading the environment, so this is testable
-/// without a `remove_var` every other test in the process would see.
+/// Filesystem entries that name `~` when there is no `$HOME` to resolve it against.
 fn unresolvable_tilde_entries(p: &Profile, home_set: bool) -> Vec<&String> {
     if home_set {
         return Vec::new();
@@ -848,16 +765,9 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
             p.isolation.as_str()
         )));
     }
-    // Nothing below can reason about a `~` it cannot resolve, and the lint that
-    // follows is the only thing standing between a grant and a denied child
-    // inside it: Landlock has no deny rules, so `fs.deny` is a preflight
-    // refusal.
-    // With `$HOME` unset, `expand_tilde` leaves `~/.ssh` literal,
-    // `canonicalize` fails, and the prefix test finds no overlap with
-    // `/Users/dev`, so a profile granting a home directory and denying the keys
-    // inside it granted them. A `~` grant fares no better: it expands to
-    // nothing and Landlock skips it. Both are refused. `$`-prefixed entries are
-    // excluded, being h5i's own tokens.
+    // Nothing below can reason about a `~` it cannot resolve, and the lint that follows is the
+    // only thing standing between a grant and a denied child inside it: Landlock has no deny
+    // rules, so `fs.deny` is a preflight refusal.
     let unresolvable = unresolvable_tilde_entries(p, std::env::var_os("HOME").is_some());
     if !unresolvable.is_empty() {
         return Err(H5iError::Metadata(format!(
@@ -909,15 +819,6 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
 pub(crate) const EGRESS_READY_TIMEOUT_MS: libc::c_int = 15_000;
 
 /// Largest amount of one captured child stream h5i will hold in memory.
-///
-/// The box decides how much it writes, and every tier drained stdout and
-/// stderr with a bare `read_to_end`: an unbounded host allocation driven by
-/// the confined process. `yes` inside a box with the default wall clock is
-/// tens of gigabytes of host RAM before anything stops it, and the receipt
-/// store's own 4 MiB cap applies long after the bytes are buffered.
-///
-/// Generous, sixteen times what a receipt stores, so nothing a real build or
-/// test suite prints comes near it.
 pub(crate) const MAX_CAPTURED_STREAM: usize = 64 * 1024 * 1024;
 
 /// Drain a child's pipe to EOF, retaining at most [`MAX_CAPTURED_STREAM`]
@@ -970,15 +871,6 @@ fn random_suffix() -> Result<String, H5iError> {
 }
 
 /// A private scratch directory under the system temp dir.
-///
-/// `<tmp>/<prefix>-<pid>-<seq>` was guessable, and both `create_dir_all` and
-/// `fs::write` are happy to land inside a directory, or through a symlink,
-/// another user pre-created. That matters most for the nftables ruleset, which
-/// a child then `execve`s `nft -f` on with CAP_NET_ADMIN: an attacker-supplied
-/// ruleset becomes the box's entire L3/L4 egress policy.
-///
-/// So: an unguessable name, and `mkdir(0700)`, which fails if the path exists
-/// and sets the mode atomically rather than leaving a window at the umask.
 pub fn private_scratch_dir(prefix: &str) -> Result<PathBuf, H5iError> {
     let dir = std::env::temp_dir().join(format!("{prefix}-{}", random_suffix()?));
     #[cfg(unix)]
@@ -996,16 +888,8 @@ pub fn private_scratch_dir(prefix: &str) -> Result<PathBuf, H5iError> {
     Ok(dir)
 }
 
-/// Create the directory chain for `rel` under `work` without ever traversing a
-/// symlink, and return the joined path. `keep_last` decides whether the final
-/// component is created too (the Linux bind mountpoint) or left for the caller
-/// (the macOS redirect, which puts a symlink there).
-///
-/// `validate_private_paths` rejects a leading `/`, `..` and `,`, but never
-/// *resolves* the path, and both `private_paths` and the worktree contents are
-/// repo-supplied. A branch shipping `a` as a symlink to `$HOME` turns a valid
-/// `a/bin` entry into a write outside `$WORK`. Walking component by component
-/// refuses both shapes.
+/// Create the directory chain for `rel` under `work` without ever traversing a symlink, and
+/// return the joined path.
 fn create_dirs_within(work: &Path, rel: &str, keep_last: bool) -> Result<PathBuf, H5iError> {
     let comps: Vec<&str> = rel
         .trim_matches('/')
@@ -1219,29 +1103,8 @@ impl HostCaps {
     }
 }
 
-/// Can a box push characters into the *input* queue of the terminal it shares
-/// with the operator (`TIOCSTI`)? An interactive session at a kernel tier
-/// keeps the caller's session and controlling terminal, which is what makes
-/// job control work, so this is a real residual of the shared tty. Reported by
-/// `box probe` and disclosed in the manual's Limits.
-///
-/// The two platforms answer from different places, which is why this takes
-/// both the probed host *and* the tier rather than collapsing to a constant:
-///
-/// - *Linux*: `dev.tty.legacy_tiocsti`, a kernel-global property, the same at
-///   every tier. H5i's seccomp policy does not filter `ioctl`, so the kernel's
-///   setting is the whole answer. 6.2 made TIOCSTI disableable
-///   (`CONFIG_LEGACY_TIOCSTI`, default *`y`* upstream) and exposed this
-///   sysctl; a missing file means an older kernel, where it cannot be closed.
-/// - *macOS*: a property of the Seatbelt *profile*, which subtracts that one
-///   ioctl from the tty grant, so it holds exactly where a profile is applied.
-///   `isolation=workspace` applies none by design, and a host whose Seatbelt
-///   is unusable applies none either.
-///
-/// Fails *open* throughout: anything we cannot positively establish is
-/// reported as injectable, because telling an operator a door is shut when we
-/// could not check is worse than telling them to look. It never gates a tier;
-/// the shared terminal is a disclosed limit, not a regression.
+/// Can a box push characters into the *input* queue of the terminal it shares with the operator
+/// (`TIOCSTI`)?
 pub fn tty_input_injection(caps: &HostCaps, claim: IsolationClaim) -> bool {
     // These tiers give the box a terminal of its own (Podman's `-t`, the
     // guest's console) rather than the operator's, so its input queue is its
@@ -2260,17 +2123,9 @@ fn apply_injected_env(cmd: &mut std::process::Command, injected_env: &[(String, 
     }
 }
 
-/// Give `cmd` exactly the environment the profile allows: nothing inherited
-/// wholesale, the `env.pass` names forwarded from the host, then the brokered
-/// secrets layered on top so a grant is never shadowed by a passed-through
-/// host var.
-///
-/// Every tier goes through this, `workspace` included. That tier applies no
-/// kernel confinement, which is a reason to skip the *sandbox*, not the
-/// allowlist: `env_pass` is part of the resolved policy, covered by the pinned
-/// digest, and shown by `box status` as the environment that was enforced. A
-/// tier that quietly handed the child the operator's whole environment would
-/// make that display say something untrue.
+/// Give `cmd` exactly the environment the profile allows: nothing inherited wholesale, the
+/// `env.pass` names forwarded from the host, then the brokered secrets layered on top so a
+/// grant is never shadowed by a passed-through host var.
 fn apply_env_allowlist(
     cmd: &mut std::process::Command,
     profile: &Profile,
@@ -2314,19 +2169,7 @@ fn augment_injected_env(
 static PROBE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static VERIFIED_EXEC_POLICIES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
-/// Functionally verify the resolved policy can actually *execute* a command on
-/// this host. Capability bits (Landlock, user namespaces, seccomp present) are
-/// necessary but *not sufficient*: a hardened kernel can satisfy every bit and
-/// still deny `exec` under the full stack. Notably AppArmor-restricted
-/// unprivileged user namespaces on Ubuntu 24.04 and the GitHub Actions runners
-/// built on it, where `unshare(CLONE_NEWUSER)` succeeds but the resulting
-/// namespace is too restricted to run a program.
-///
-/// A no-op for non-`process` claims. For `process` it runs a trivial `true`
-/// inside a throwaway directory under the *same* confinement the environment
-/// will use, bypassing the tool allowlist since the probe command is ours.
-/// Failing here lets `env create` fail closed instead of letting every later
-/// `env run` die on EACCES.
+/// Functionally verify the resolved policy can actually *execute* a command on this host.
 pub fn verify_exec(policy: &ResolvedPolicy) -> Result<(), H5iError> {
     if policy.claim != IsolationClaim::Process {
         return Ok(());
@@ -2421,22 +2264,6 @@ pub(crate) struct EgressJail {
 }
 
 /// Close every descriptor above stdio in the calling process.
-///
-/// Called by the PID-namespace supervisor immediately after its `fork`.
-/// `Command::spawn` hands the child a `CLOEXEC` status pipe and returns only
-/// once *every* copy of that pipe's write end is closed. The workload's copy
-/// closes at `execve`, but the supervisor, forked from the same child and
-/// never exec'ing, keeps its copy for the whole run. Holding it makes
-/// `spawn()` block until the workload exits, so the stdout/stderr drain
-/// threads never run: any command whose output fills the 64 KiB pipe
-/// deadlocks, and the wall-clock deadline is not armed until after the run it
-/// was meant to bound. The supervisor needs no inherited descriptor.
-///
-/// Allocation-free and async-signal-safe, as everything post-fork must be.
-///
-/// # Safety
-/// Closes descriptors process-wide; only call it in a forked child that owns
-/// no other users of those descriptors.
 #[cfg(target_os = "linux")]
 unsafe fn close_inherited_fds() {
     // Safety: discharged by this function's own contract. The caller promises
@@ -2519,27 +2346,10 @@ unsafe fn write_proc_file(path: *const libc::c_char, bytes: &[u8]) -> Result<(),
     Ok(())
 }
 
-/// Build a fully-confined `std::process::Command` for `argv`: the shared
-/// confinement core used by both the `process` tier ([`run_confined`]) and the
-/// `supervised` tier ([`crate::supervisor::run`]), so the security-critical
-/// setup (Landlock, seccomp deny-list, namespaces, rlimits, no-new-privs,
-/// uid/gid maps) has one audited implementation.
-///
-/// - `force_netns`: always create a fresh network namespace (`supervised`
-///   does; `process` only when `net.mode = deny`).
-/// - `notify_sock`: when `Some`, the child also installs a seccomp
-///   *user-notification* filter and hands the listener fd to this `AF_UNIX`
-///   socket via `SCM_RIGHTS`. The notify filter stacks *after* the deny-list,
-///   and seccomp precedence (ERRNO > USER_NOTIF > ALLOW) composes them.
-/// - `egress`: when `Some`, install the netns egress allowlist ([`EgressJail`]).
-/// - `pidns`: run the workload in a fresh PID namespace with a private procfs
-///   (design §5), so it cannot read `/proc/<pid>/environ` of host processes.
-///   Implemented by forking inside `pre_exec`: the parent becomes a thin
-///   supervisor mirroring the workload's exit, the child is PID 1. The
-///   `process` tier sets this; `supervised` has its own model.
-/// - `cgroup_procs`: path to the run cgroup's `cgroup.procs`, consulted only
-///   with `pidns`. The supervisor writes the *workload's* pid there so
-///   `memory.max` binds the real process, not the supervisor.
+/// Build a fully-confined `std::process::Command` for `argv`: the shared confinement core used
+/// by both the `process` tier ([`run_confined`]) and the `supervised` tier
+/// ([`crate::supervisor::run`]), so the security-critical setup (Landlock, seccomp deny-list,
+/// namespaces, rlimits, no-new-privs, uid/gid maps) has one audited implementation.
 #[cfg(target_os = "linux")]
 #[allow(clippy::too_many_arguments)] // the security-critical setup is intentionally one audited fn
 pub(crate) fn build_confined_command(
@@ -2731,16 +2541,7 @@ pub(crate) fn build_confined_command(
         cmd.pre_exec(move || {
             use std::io::Error;
 
-            // 0. New session/process group so the wall-clock kill can reap the WHOLE
-            //    tree (killpg), not just the direct child. Interactive (agent-in-box)
-            //    sessions skip this: setsid detaches the child from the controlling
-            //    terminal, which breaks job control and every TUI. They keep the
-            //    caller's session, exactly how a nested shell runs, and have no
-            //    wall-clock kill, so the killpg guarantee is not needed. The residual
-            //    is TIOCSTI keystroke injection through the shared tty; kernel 6.2 made
-            //    it disableable but upstream defaults `CONFIG_LEGACY_TIOCSTI` to `y`,
-            //    so whether the door is shut is the host's choice. h5i reads the sysctl
-            //    and reports it rather than assuming a hardened kernel.
+            // 0.
             if !interactive && libc::setsid() == -1 {
                 return Err(Error::last_os_error());
             }
@@ -2756,16 +2557,8 @@ pub(crate) fn build_confined_command(
                 flags |= libc::CLONE_NEWNET;
             }
             if pidns {
-                // A new mount namespace, so we can mount a private procfs over
-                // /proc without touching the host. The userns in the same call
-                // grants the CAP_SYS_ADMIN it needs, unprivileged.
-                // CLONE_NEWPID is deliberately NOT requested here; it is
-                // unshared later, immediately before the fork that uses it
-                // (1c). A PID namespace claims the *next* child as its init,
-                // and on the egress path (1b) that child is the short-lived
-                // `nft` helper: it would become PID 1, exit as soon as the
-                // ruleset loaded, and leave a dead namespace in which the
-                // workload's own fork fails with ENOMEM.
+                // A new mount namespace, so we can mount a private procfs over /proc without
+                // touching the host.
                 flags |= libc::CLONE_NEWNS;
             }
             // Config lockdown needs a private mount namespace to ro-bind in
@@ -3094,17 +2887,7 @@ pub(crate) fn build_confined_command(
 
             // 2. Resource caps (cooperative, no cgroups needed).
             if let Some(bytes) = mem {
-                // RLIMIT_DATA, not RLIMIT_AS. RLIMIT_AS caps *virtual address
-                // space*, which modern runtimes over-reserve by design: V8/Node
-                // maps a ~1TiB PROT_NONE heap-sandbox cage at startup, Go
-                // reserves large arenas, none of it resident. An AS cap rejects
-                // those reservations and the process aborts at trivial RSS
-                // ("JavaScript heap out of memory" at ~100MiB). RLIMIT_DATA
-                // caps the writable data segment (brk plus writable-anonymous
-                // mmaps, Linux >=4.7), bounding actual heap growth. This is the
-                // rlimit-tier fallback; cgroup `memory.max`, when the host
-                // delegates one, is the accurate whole-subtree RSS cap layered
-                // on top.
+                // RLIMIT_DATA, not RLIMIT_AS.
                 let lim = libc::rlimit { rlim_cur: bytes, rlim_max: bytes };
                 if libc::setrlimit(libc::RLIMIT_DATA, &lim) != 0 {
                     return Err(Error::last_os_error());
@@ -3140,18 +2923,7 @@ pub(crate) fn build_confined_command(
                 return Err(Error::last_os_error());
             }
 
-            // 4. Landlock filesystem allowlist. Fail closed if not fully enforced,
-            //    which is what the comment always said and what the check did not do:
-            //    it refused `NotEnforced` and let `PartiallyEnforced` through. That
-            //    middle state is the one worth refusing. It means the box is confined
-            //    by some of the access rights that were asked for and not the others,
-            //    so the boundary is a shape nobody wrote down while `h5i doctor`
-            //    still reports the tier as enforced.
-            //
-            //    `CompatLevel::HardRequirement` is supposed to make it unreachable by
-            //    turning an unsupported right into an error while the ruleset is
-            //    built, and on a real kernel it does. "Supposed to" is the reason to
-            //    check rather than the reason not to.
+            // 4.
             let rs = ruleset_slot
                 .take()
                 .ok_or_else(|| Error::other("landlock ruleset consumed twice"))?;
@@ -3432,18 +3204,7 @@ fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
     Ok(prepend_x32_guard(program))
 }
 
-/// Refuse the x32 ABI before the deny-list runs. Linux only, like
-/// `seccompiler` and its caller.
-///
-/// On x86_64, x32 reports `AUDIT_ARCH_X86_64` in `seccomp_data.arch`, so
-/// seccompiler's own arch check passes, but ORs `X32_SYSCALL_BIT` into `nr`.
-/// Every syscall-number comparison in the compiled deny-list therefore misses,
-/// and an x32 `mount`/`ptrace`/`unshare` falls through to the default Allow.
-/// seccompiler has no knob for this, so the guard is prepended to the compiled
-/// program: BPF jumps are relative, so shifting the original block is safe.
-///
-/// Architecture-independent by construction: no aarch64 syscall number comes
-/// near `0x4000_0000`.
+/// Refuse the x32 ABI before the deny-list runs.
 #[cfg(target_os = "linux")]
 fn prepend_x32_guard(program: seccompiler::BpfProgram) -> seccompiler::BpfProgram {
     use seccompiler::sock_filter;
@@ -3936,21 +3697,8 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         assert!(seccomp_deny_program().is_ok());
     }
 
-    /// The deny-list is a security *contract*: removing any of these syscalls
-    /// silently widens the sandbox. This asserts membership directly, with no
-    /// kernel needed, so dropping `SYS_mount` or `SYS_ptrace` fails the build.
-    /// The old test only checked that the program compiled, which would not
-    /// catch a deletion.
-    ///
-    /// Live, capability-gated: the ruleset build must come back *fully*
-    /// enforced on a kernel that has Landlock. `restrict_self` reports three
-    /// states, and the middle one is dangerous: `PartiallyEnforced` is a
-    /// sandbox whose shape nobody wrote down. `CompatLevel::HardRequirement` is
-    /// set precisely so that cannot happen, and this is that claim checked
-    /// against a real kernel rather than against the crate's docs.
-    ///
-    /// Forked, because `restrict_self` cannot be undone and the confinement
-    /// would otherwise follow every test after it in the process.
+    /// The deny-list is a security *contract*: removing any of these syscalls silently widens
+    /// the sandbox.
     #[cfg(target_os = "linux")]
     #[test]
     fn landlock_enforces_fully_or_not_at_all() {

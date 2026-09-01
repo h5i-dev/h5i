@@ -1,18 +1,4 @@
 //! The page as a model should read it.
-//!
-//! A screenshot is for the human; this is for the agent. The output is an
-//! indented outline of semantic elements with stable refs on the ones worth
-//! addressing, which is the shape that has won across the tooling: cheap in
-//! tokens, deterministic between runs, and free of the decoration that a pixel
-//! view forces a model to re-derive every step.
-//!
-//! Two rules keep it honest:
-//!
-//! - Refs are assigned only to things an agent could act on. Numbering every
-//!   `div` would make the refs unstable the moment a layout wrapper changes.
-//! - Semantic leaves are not recursed into. A heading's text belongs on the
-//!   heading's line, not scattered across three anonymous children, so the
-//!   outline reads like the document rather than like the DOM.
 
 use blitz_dom::node::Node;
 use blitz_dom::{local_name, BaseDocument};
@@ -352,20 +338,6 @@ impl Snapshot {
     }
 
     /// The text form an agent reads.
-    ///
-    /// Everything the page supplied is fenced and labelled, because this output is
-    /// the exact point where attacker-controlled text reaches a model that is
-    /// deciding what to do next, and it arrives wearing the same clothes as the
-    /// instructions around it. The engine's other defences do not cover this:
-    /// `sanitize_display` protects a *viewer's* chrome, and running no script
-    /// removes the commonest delivery *channel*.
-    ///
-    /// The fence is worth only as much as its unforgeability, so the invariant it
-    /// rests on is stated here and tested: no page-derived value may span a line.
-    /// Text, names and the title are collapsed at capture and defensively
-    /// re-collapsed here, since a [`Snapshot`] can also arrive by deserialisation.
-    /// Every content line starts with an indent and `- `, so a page that writes the
-    /// closing marker into its own text gets it back as quoted content.
     pub fn render(&self) -> String {
         let mut out = String::new();
 
@@ -506,24 +478,7 @@ impl Walker<'_> {
             return;
         }
 
-        // Content the page does not display is not content this reading should
-        // carry. Two reasons, and the second is the serious one:
-        //
-        // 1. The outline claims to be an account of what the page shows, and a
-        //    reader acting on a menu that is closed is acting on something nobody
-        //    can see.
-        // 2. Invisible text is the classic vehicle for instructions aimed at
-        //    whatever is reading the page. The untrusted-content fence exists for
-        //    exactly that threat, and text a human would never encounter walks
-        //    straight around it.
-        //
-        // Blitz resolves no primary styles for a node that is not rendered, so
-        // `display: none`, and the `hidden` attribute which is that rule, are the
-        // same question and are answered by the style engine.
-        //
-        // Deliberately *not* `visibility: hidden`: that content still occupies its
-        // space, is routinely toggled by script, and is the shape off-screen
-        // accessibility text sometimes takes.
+        // Content the page does not display is not content this reading should carry.
         let displayed = match node.primary_styles() {
             // Blitz resolves no primary styles for a node it will not render, and a
             // grafted frame subtree is exactly that (§B21): Blitz treats a frame as
@@ -642,17 +597,7 @@ impl Walker<'_> {
                         None
                     };
 
-                    // A `<pre>` keeps its line breaks, as one outline line per source
-                    // line.
-                    //
-                    // Collapsing it into a single line is what the rest of the outline
-                    // does and is right for prose, where a newline in the markup is not
-                    // a newline on screen. In preformatted text it is: every code block
-                    // in every documentation page was arriving as one run-on line.
-                    //
-                    // Split rather than un-collapsed, because the fence in `render`
-                    // rests on no page-derived value spanning a line. Each piece is
-                    // collapsed on its own and gets its own indent and `- `.
+                    // A `<pre>` keeps its line breaks, as one outline line per source line.
                     if role == "code" && !preformatted_lines.is_empty() {
                         for piece in &preformatted_lines {
                             self.push(Line {
@@ -729,15 +674,6 @@ struct Descriptor {
 }
 
 /// Describe one node the way a snapshot walk would have described it.
-///
-/// The bridge between a durable selector and the action verbs, which work in
-/// terms of [`RefEntry`]. A selector names an element directly, so there is no
-/// walk and no ordinal, and the `id` is the selector itself, which is what a
-/// replayed step should carry in an error message anyway.
-///
-/// `None` when the node is not something this engine offers as actionable: a
-/// `<div>`, a hidden input, an `<a>` with no `href`. Refusing here keeps a
-/// replayed step from clicking something a reading would never have offered.
 pub fn entry_for_node(doc: &BaseDocument, node_id: usize, named_as: &str) -> Option<RefEntry> {
     let node = doc.get_node(node_id)?;
     let element = node.element_data()?;
@@ -780,19 +716,8 @@ fn is_block_role(role: &str) -> bool {
     )
 }
 
-/// Whether this node's text is really its own, or belongs to a block of
-/// structure underneath it.
-///
-/// `text_content()` concatenates the whole subtree, so a list item wrapping a
-/// heading, a paragraph and a link reported *one* line reading `TitleBody
-/// textRead more`: three pieces of the page run together with no separator, in
-/// an outline whose purpose is to show structure. The pieces were then
-/// suppressed as prose, because the wrapper claimed to have said them already.
-///
-/// Only a *block* descendant triggers this. Prose with a link in it is the case
-/// the existing prose rule handles well, and a heading wrapping a single link is
-/// a shape where the wrapper's name is the only thing carrying the heading
-/// level.
+/// Whether this node's text is really its own, or belongs to a block of structure underneath
+/// it.
 fn hoists_a_block(doc: &BaseDocument, node: &Node) -> bool {
     let mut stack: Vec<usize> = node.children.clone();
     while let Some(id) = stack.pop() {
@@ -1009,15 +934,6 @@ fn attr_of<'a>(node: &'a Node, name: &str) -> Option<&'a str> {
 }
 
 /// What to call this element.
-///
-/// Text content is the usual answer, but the elements an agent most wants to
-/// address are exactly the ones that have none: an image's name is its `alt`,
-/// and an empty input's is its placeholder or label. Falling back to "" would
-/// render a snapshot of anonymous `textbox` lines nobody can tell apart.
-///
-/// The text of the option a `<select>` is set to: the first option with
-/// `selected`, or failing that the first option at all, which is what a browser
-/// displays where nothing is marked.
 fn selected_option(node: &Node) -> Option<String> {
     let doc = node.tree();
     let mut first = None;
@@ -1042,17 +958,6 @@ fn selected_option(node: &Node) -> Option<String> {
 }
 
 /// The accessible name, computed once and used everywhere.
-///
-/// The sharing is the requirement, not an optimisation. A locator with its own
-/// idea of what a button is called would fail to find an element the snapshot
-/// had just described in exactly those words, so `find --role button --name
-/// "Sign in"` resolves against the same string the outline printed, by
-/// construction.
-///
-/// Order follows the accessible-name computation, and the previous order here
-/// was wrong in a way worth naming: page *content* used to beat `aria-label`, so
-/// an element explicitly labelled by its author was reported by its text
-/// instead. The author's label is the more specific statement and wins.
 fn accessible_name(tag: &str, node: &Node) -> String {
     // `aria-labelledby` first, which needs the document to resolve the ids it
     // names. It beats everything, including a label the element carries
@@ -1082,17 +987,10 @@ fn accessible_name(tag: &str, node: &Node) -> String {
                 .unwrap_or_default()
         }
         "input" | "textarea" => {
-            // What the field *holds* comes first, and it is read from the editor
-            // rather than the `value` attribute: typing updates the editor and leaves
-            // the attribute at whatever the HTML served, so an outline built from the
-            // attribute would show an agent the value it was given rather than the one
-            // it just typed.
-            //
-            // Except for a password, which is never read back however it got there.
-            // This is not only about the credential-substitution path: LOGIN mode
-            // exists so a human can type a password the agent cannot see, and without
-            // this the agent could read it out of the next snapshot once the mode
-            // ended. Whether the field is filled is still visible.
+            // What the field *holds* comes first, and it is read from the editor rather than
+            // the `value` attribute: typing updates the editor and leaves the attribute at
+            // whatever the HTML served, so an outline built from the attribute would show an
+            // agent the value it was given rather than the one it just typed.
             let is_password = attr_of(node, "type")
                 .map(|kind| kind.trim().eq_ignore_ascii_case("password"))
                 .unwrap_or(false);
@@ -1253,19 +1151,6 @@ pub(crate) const PASSWORD_MASK: &str = "********";
 pub(crate) const FENCE_DEFANGED: &str = "[fence marker removed]";
 
 /// Make a page-supplied value safe to write into the rendered outline.
-///
-/// Two things, and the second was found by the test above it rather than
-/// reasoned out. *Collapse*, so the value cannot span a line: the walker already
-/// does this on the capture path, but a [`Snapshot`] also arrives by
-/// deserialisation, which never met the walker, and a fence resting on a
-/// guarantee made somewhere the value did not come from is not resting on
-/// anything. *Defang*, so the value cannot contain a marker even inline.
-///
-/// Collapsing alone already makes the fence structurally sound, because only a
-/// line that *is* a marker closes it. Defanging is for the reader: a marker
-/// mid-sentence in a URL is confusing to a human and quietly wrong to any
-/// consumer that scans for the marker as a substring. It is the only content
-/// this function removes, and it removes exactly the impersonation.
 pub(crate) fn one_line(input: &str) -> String {
     let collapsed = collapse(input);
     if !collapsed.contains(CONTENT_BEGIN) && !collapsed.contains(CONTENT_END) {
@@ -1289,23 +1174,8 @@ fn is_bidi_control(c: char) -> bool {
     )
 }
 
-/// Collapse runs of whitespace and trim, so an outline line is one line, and
-/// drop what a terminal would act on rather than print.
-///
-/// The whitespace collapse is what makes the fence unforgeable *as text*: no
-/// page-derived value can span a line, so a page writing `--- END UNTRUSTED PAGE
-/// CONTENT ---` into its own text gets it back quoted on a `- ` line. It said
-/// nothing about escape sequences, and this string is printed to a terminal by
-/// the CLI verbs. `ESC [ 2 J` is not whitespace, so it survived, and a page that
-/// clears the screen and redraws it can put a *convincing* closing fence above
-/// its own instructions.
-///
-/// Bidi controls go for the same reason: they reorder the text around them, so a
-/// marker can be made to read as its opposite with no escape sequence anywhere.
-/// The zero-width joiners are kept: same category, no reordering power, and what
-/// holds a multi-part emoji together in ordinary page text.
-///
-/// `\n` and `\t` are handled by the whitespace arm above this one.
+/// Collapse runs of whitespace and trim, so an outline line is one line, and drop what a
+/// terminal would act on rather than print.
 pub(crate) fn collapse(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut in_space = false;
@@ -1327,15 +1197,6 @@ pub(crate) fn collapse(input: &str) -> String {
 }
 
 /// Wrap a block of page-derived text in the fence, defanged.
-///
-/// The one-shot `--text` read had no fence at all: it handed an agent a page's
-/// own words with nothing saying where they came from, while the outline, the
-/// markdown and the transcript all carried one. A page writing "SYSTEM: you are
-/// authorised to…" arrived looking exactly like the harness talking.
-///
-/// Callers that assemble their own header build the fence themselves because
-/// they have other lines to put above it. This is for the ones that have only
-/// the text.
 pub fn fenced(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + CONTENT_BEGIN.len() + CONTENT_END.len() + 256);
     out.push_str(CONTENT_BEGIN);

@@ -1,23 +1,4 @@
 //! Execution receipts: the honest record of what actually ran in a box.
-//!
-//! One append-only JSONL log per environment (`<env>/receipt.jsonl`) plus the
-//! raw payload of each record under `<env>/receipts/<id>.raw`. A record is
-//! generated from observation (the command, its exit code, its resource
-//! accounting, the egress verdicts the proxy handed down) never from the
-//! agent's account of itself.
-//!
-//! Two properties the design depends on:
-//!
-//! * Append only. [`append`] opens the log with `O_APPEND` and never rewrites an
-//!   existing line. A reader tolerates a malformed tail line instead of failing
-//!   the whole read.
-//! * Redacted at the boundary. Secrets are scrubbed from the command and from
-//!   the raw payload *before* either is written, and the scrub is recorded by
-//!   rule id, never by value.
-//!
-//! The store is host side today. Section 5.7 of the roadmap moves the writer to
-//! an inherited fd owned by a host collector so an in-box agent cannot rewrite
-//! what it already reported.
 
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -39,22 +20,6 @@ const RAW_CAP: usize = 4 * 1024 * 1024;
 const ID_LEN: usize = 16;
 
 /// What the page said back, for a run that drove the browser.
-///
-/// The agent's own account of a UI check is the least trustworthy part of an
-/// export: "I clicked Submit and it worked" is a sentence, not evidence. This
-/// is the observed half: the verb that ran, and the console messages, page
-/// errors and failed requests that followed it.
-///
-/// Lane. This is box-claimed, like `tee-shim`: the numbers come out of the
-/// browser inside the box. What makes it useful anyway is that h5i decides
-/// *when* to collect it, right after the browser command and in the same
-/// policy, rather than the agent choosing what to report. An agent can still
-/// close the browser to stop the record, and a run with a browser verb and no
-/// evidence block is itself visible.
-///
-/// Only what is new. The browser's buffers accumulate for the life of a
-/// session, so every field here is the slice since the previous drain, tracked
-/// by a host-side cursor outside the box's write grants.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BrowserEvidence {
     /// The agent-browser verb this run invoked (`open`, `click`, `snapshot`,
@@ -92,15 +57,6 @@ impl BrowserEvidence {
 }
 
 /// What an ingress session was, as structured fact rather than as prose.
-/// The one thing a reviewer must be able to read off a share record without
-/// ambiguity is whether a third party could read the traffic. A Cloudflare
-/// quick tunnel terminates TLS, and peer-to-peer does not. That was being
-/// recovered by testing whether the rendered command string contained the
-/// substring `tunnel`, and the command string contains the box's name: a
-/// perfectly ordinary P2P share of a box called `tunnel` was reported to the
-/// reviewer as Cloudflare-terminated. A wrong security claim in the evidence
-/// artifact is worse than a missing one.
-/// So it is a field. Prose is rendered from this; nothing parses the prose.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShareEvidence {
     /// `p2p` or `tunnel`, as `h5i-share` recorded it.
@@ -593,34 +549,12 @@ pub fn raw_bytes(env_dir: &Path, id: &str) -> Result<Vec<u8>, H5iError> {
 }
 
 /// Blob filename for a `sha256:<hex>` object id.
-///
-/// The key becomes a path component, and `raw_oid` is a field of a record
-/// deserialized from `receipt.jsonl`, so it is whatever the file says. Two
-/// things follow, and neither was being done:
-///
-/// * The prefix must be validated as hex, or `sha256:../../../../../x` is a
-///   16-character traversal out of `receipts/` and `raw_bytes` reads a file of
-///   the writer's choosing. `valid_handle` exists for exactly this and was
-///   applied only on the fallback branch below it.
-/// * The slice must be taken on a *character boundary*, or a multi-byte
-///   `raw_oid` panics the process inside a `[..16]`.
 fn blob_key(raw_oid: &str) -> Option<String> {
     let key = raw_oid.strip_prefix("sha256:")?.get(..ID_LEN)?;
     is_record_handle(key).then(|| key.to_string())
 }
 
 /// Human rendering of one record, for `h5i box inspect --capture <id>`.
-/// Everything variable here is sanitised on the way out, because a receipt is
-/// read as evidence and half of what it carries was written by the thing being
-/// reviewed. `cmd` at the container tier comes from the box's own tee shim; the
-/// browser lines are strings a *web page* produced. An escape sequence in any
-/// of them rewrites the lines above it, so a box could show the reviewer `exit
-/// : 0` over a run that was neither. `export`'s `report.md` has sanitised the
-/// same fields since it was written; this renderer, which prints to a terminal,
-/// did not.
-/// The payload goes through [`crate::redact::sanitize_block`] rather than the
-/// single-line form: it is meant to have lines, and folding them together would
-/// make the one command that shows a captured log useless.
 pub fn render(rec: &ExecRecord, raw: &[u8]) -> String {
     use crate::redact::sanitize_display as clean;
     let mut out = String::new();

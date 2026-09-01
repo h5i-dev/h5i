@@ -1,26 +1,4 @@
 //! A durable handle for an element, beside the ordinal one.
-//!
-//! `@e5` names a position in the walk that minted it, and the session refuses one
-//! against a reading the page has moved on from (`stream::resolve_ref`). That
-//! makes the ordinal safe, not durable: a recorded session made of ordinals
-//! replays into a different page.
-//!
-//! So each ref also carries the simplest CSS selector whose first match is that
-//! element, built the way Lightpanda's `SelectorPath` builds one: start from the
-//! element's own segment; if that is not already unique-first, walk ancestors and
-//! prepend one only when it shrinks the match count, since an ancestor that
-//! narrows nothing is length with no information; then fall back to a strict
-//! `a > b > c` chain.
-//!
-//! Every candidate is verified with the same matcher the action verbs use. A
-//! generated selector the engine's own `querySelectorAll` would resolve
-//! differently is worse than no selector, because it looks like a handle.
-//!
-//! Not built: Lightpanda disambiguates with `:has()` before falling back to
-//! `:nth-of-type`, which is markedly more robust on machine-generated markup. It
-//! needs `:has()` in the borrowed selector parser, which is unverified here, and
-//! emitting selectors the matcher then rejects would produce exactly the
-//! plausible-looking handle this module exists to avoid.
 
 use blitz_dom::BaseDocument;
 
@@ -35,16 +13,6 @@ const STABLE_ATTRS: &[&str] = &["data-testid", "data-test-id", "data-test", "nam
 const MAX_ANCESTORS: usize = 32;
 
 /// Selector results already computed against one unchanged document.
-///
-/// Every candidate here is verified with a full-document query, and a snapshot
-/// mints a selector for *every* ref it serves. The candidates repeat heavily
-/// across siblings (fifty rows in a table share every ancestor segment above the
-/// row), so without this the same query runs once per ref that shares it.
-///
-/// Correct only for as long as the document does not change, which is why it is
-/// created per snapshot rather than held on the session: a cache that outlived a
-/// mutation would verify selectors against a page that had moved on, the exact
-/// failure the verification exists to prevent.
 #[derive(Default)]
 pub struct Cache {
     seen: std::collections::HashMap<String, Vec<usize>>,

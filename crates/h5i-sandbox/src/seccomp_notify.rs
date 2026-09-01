@@ -6,20 +6,9 @@
 //! supervised execve-notify integration is a documented follow-up. They are
 //! intentionally retained, hence `allow dead_code` at module scope.
 #![allow(dead_code)]
-//!
-//! A filter installed with `SECCOMP_FILTER_FLAG_NEW_LISTENER` returns a
-//! *listener fd*; the supervisor reads `socket()` notifications on it and replies
-//! allow (`CONTINUE`) or deny (`errno`) per [`crate::supervisor`]'s default-deny
-//! gate. This module is the fail-closed plumbing:
-//!
-//! - the kernel ABI structs and ioctl numbers, validated against
-//!   `SECCOMP_GET_NOTIF_SIZES` and refused on any mismatch,
-//! - a pure, unit-tested BPF program builder,
-//! - the notify loop, which re-validates each notification id before replying
-//!   (TOCTOU safety) and treats every error as fail-closed.
-//!
-//! Supports x86_64 and aarch64; other arches make the supervisor probe report
-//! seccomp-notify unavailable, so the tier refuses.
+//! A filter installed with `SECCOMP_FILTER_FLAG_NEW_LISTENER` returns a *listener fd*; the
+//! supervisor reads `socket()` notifications on it and replies allow (`CONTINUE`) or deny
+//! (`errno`) per [`crate::supervisor`]'s default-deny gate.
 
 #![cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 
@@ -96,39 +85,8 @@ fn jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
     SockFilter { code, jt, jf, k }
 }
 
-/// Build the filter that NOTIFYs on `socket`/`socketpair`, ALLOWs everything
-/// else, and KILLs on an unexpected architecture. Returns a fixed-size *stack*
-/// array so [`install_listener`] is allocation-free and therefore
-/// async-signal-safe in a `fork`ed child; a `Vec` would risk a malloc-lock
-/// deadlock when the parent is multithreaded.
-///
-/// ### Why this set cannot simply grow
-///
-/// An allow here is `SECCOMP_USER_NOTIF_FLAG_CONTINUE`, and `seccomp_unotify(2)`
-/// says that flag "should not be used for security purposes", because between
-/// the supervisor's verdict and the kernel re-running the syscall another thread
-/// can rewrite whatever the syscall reads. That warning is about arguments
-/// living in the tracee's *memory*.
-///
-/// It does not apply here, which is why `CONTINUE` is sound in this tier:
-/// `socket(domain, type, protocol)` and the first three arguments of
-/// `socketpair` are scalars the kernel already captured into the notification
-/// when it trapped. They are register values, so no other thread can change them.
-///
-/// Adding a comparison for anything taking a pointer, `connect`, `bind` or
-/// `sendto`, is therefore not a local edit. Deciding on `*sockaddr` means
-/// reading the tracee's memory, and with `CONTINUE` that is the textbook
-/// double-fetch. Such a syscall has to be answered with `Decision::Deny`, or
-/// mediated by `SECCOMP_IOCTL_NOTIF_ADDFD`.
-/// `only_syscalls_whose_arguments_are_registers_are_notified` pins the set.
-///
-/// The other half of the argument is in [`crate::sandbox::denied_syscalls`].
-/// This filter's fall-through is ALLOW, and io_uring executes submitted
-/// operations without passing a syscall filter: `IORING_OP_SOCKET` builds the
-/// `AF_PACKET`/`SOCK_RAW` socket [`crate::supervisor::decide_socket`] exists to
-/// refuse, generating no notification. Measured on 7.1/aarch64. The deny-list
-/// blocks the whole io_uring interface, and its `ERRNO` still outranks this
-/// filter's `ALLOW` once the two are stacked, also measured.
+/// Build the filter that NOTIFYs on `socket`/`socketpair`, ALLOWs everything else, and KILLs on
+/// an unexpected architecture.
 pub fn build_socket_notify_program() -> [SockFilter; 10] {
     [
         // 0: A = arch
@@ -301,16 +259,7 @@ pub struct ServeStats {
     pub denied: u64,
 }
 
-/// Serve notifications on `listener` until `stop` is set. The listener is driven
-/// non-blocking via `poll()` so the loop can observe `stop` even when no
-/// notification is pending; otherwise a final blocking `RECV` would wait forever
-/// after the last syscall and deadlock the supervisor.
-///
-/// For each `socket`/`socketpair` notification: apply [`decide_socket`],
-/// re-validate the id immediately before replying (stale-id guard), and reply.
-/// A stale id is skipped; an unexpected error is fail-closed, so we stop serving
-/// and the tracee blocks on its unanswered notify rather than proceeding
-/// unmediated.
+/// Serve notifications on `listener` until `stop` is set.
 pub fn serve(listener: RawFd, unix_granted: bool, stop: &std::sync::atomic::AtomicBool) -> ServeStats {
     use std::sync::atomic::Ordering;
     let mut stats = ServeStats::default();
@@ -616,18 +565,8 @@ mod tests {
         );
     }
 
-    /// The notified set is a closed list, and closing it is a security
-    /// property rather than tidiness.
-    ///
-    /// Every allow this filter can produce is `CONTINUE`, which re-runs the real
-    /// syscall after the verdict. That is only safe while every argument the
-    /// verdict looks at is a scalar the kernel already copied into the
-    /// notification, which no other thread can rewrite. `socket` and
-    /// `socketpair` are such syscalls; `connect`, `bind` and `sendto` are not,
-    /// their address argument being a pointer into the tracee's memory.
-    ///
-    /// So a new comparison here is a decision to give up `CONTINUE` for that
-    /// syscall, not a one-line addition.
+    /// The notified set is a closed list, and closing it is a security property rather than
+    /// tidiness.
     #[test]
     fn only_syscalls_whose_arguments_are_registers_are_notified() {
         let p = build_socket_notify_program();

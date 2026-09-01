@@ -76,16 +76,7 @@ struct ReceiptBundle<'a> {
     browser_sessions: Vec<ExportedSession>,
 }
 
-/// Freeze the box and write the bundle to `out`. Refuses rather than overwrites:
-/// an existing non-empty directory is an error unless `force`, because an export
-/// is evidence and silently replacing one is how evidence goes missing.
-///
-/// Escape the markdown a box can steer. `sanitize_display` strips control
-/// characters and bidi marks, which is the right job for a terminal, but this
-/// text lands in `report.md`, a document a reviewer reads as evidence. A
-/// recorded command containing a backtick closes the code span around it, so
-/// `` x`. Reviewed and approved ` `` renders as authoritative prose next to the
-/// run it describes.
+/// Freeze the box and write the bundle to `out`.
 fn md_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -101,17 +92,6 @@ fn md_escape(s: &str) -> String {
 }
 
 /// A command, as a Markdown code span inside a table cell.
-///
-/// Not [`md_escape`] plus backticks, which is what this was. Backslash escapes
-/// are not processed inside a code span, so every command containing a
-/// parenthesis rendered to the reviewer with the backslashes still in it. The
-/// one character a table cell genuinely needs escaped is the pipe, which GFM
-/// splits on before any inline parsing and which is honoured inside code spans
-/// for exactly that reason.
-///
-/// A backtick in the content is handled the way CommonMark intends: a fence
-/// longer than the longest run inside it, padded with spaces when the content
-/// starts or ends with one.
 fn md_code(s: &str) -> String {
     let escaped = s.replace('|', "\\|");
     let longest = escaped
@@ -163,24 +143,7 @@ pub fn export_with_remote(
         }
     }
 
-    // Asked before the freeze, purely so the answer is the true one. A share
-    // needs a live process inside the box, that process holds `run.lock`, and
-    // `propose` below takes the same lock, so an export attempted during a share
-    // has always failed with "environment is busy". True, and not the fact the
-    // operator needs: what is holding it is the session their share is standing
-    // on.
-    //
-    // Held for the whole bundle, so "no share" stays true while the evidence is
-    // gathered. The snapshot below reads the receipt log and then probes for a
-    // live share again at the end; those two reads and everything between them
-    // were unsynchronised with `session::claim` and with the receipt append at
-    // teardown, so a short share that started and finished inside the window
-    // appeared in neither.
-    //
-    // Ordering makes the other half work without a second lock: a teardown
-    // writes its receipt *before* it clears its record, so a share this holds
-    // out is either still recorded, and refused here, or already fully written
-    // down.
+    // Asked before the freeze, purely so the answer is the true one.
     let _share_gate = crate::share_record::share_gate(&m.dir(h5i_root))?;
     if let Some(sh) = crate::share_record::read_live(&m.dir(h5i_root)) {
         return Err(H5iError::Metadata(format!(
@@ -301,17 +264,7 @@ pub fn export_with_remote(
     Ok(summary)
 }
 
-/// The human half of the bundle: what this box was, what it changed, and every
-/// command it ran. Written from the identity-validated manifest and the
-/// receipts, never from anything the box wrote into `$WORK`.
-///
-/// Copy the raw payload of every share record into `<out>/receipts/<id>.raw`,
-/// returning the record ids whose payload made it, so the report names the file
-/// for the sessions that have one and says so for the sessions that do not. A
-/// missing payload is a fact a reviewer needs.
-///
-/// Failures are per record and never fail the export: a bundle without one
-/// session's detail is worth more than no bundle at all.
+/// The human half of the bundle: what this box was, what it changed, and every command it ran.
 #[derive(Debug, Clone, Serialize)]
 pub struct ExportedSession {
     pub id: String,
@@ -704,16 +657,7 @@ fn report(
         }
     }
 
-    // Who was let *in*. Every other lane in an export is about what left the
-    // box; this is the one path that let a second person reach inside it while
-    // it was running, and a reviewer who cannot see it is reviewing a different
-    // artifact from the one that exists. It was rendered as an ordinary row in
-    // "What ran", which reads as a command the box happened to execute.
-    //
-    // A share that is *still running* has written no receipt, writing one when
-    // it ends, so an export taken during a demo was silent about the box having
-    // been opened to somebody, which is the moment somebody is most likely to
-    // take one.
+    // Who was let *in*.
     if live_share.is_some() {
         out.push_str("\n## Shared with someone, right now\n\n");
         out.push_str(

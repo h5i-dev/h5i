@@ -1,24 +1,4 @@
 //! The script realm: a JavaScript engine wired to the one real DOM.
-//!
-//! # Why Boa
-//!
-//! Boa is pure Rust, which keeps the build hermetic: this crate refuses C build
-//! dependencies (`system-fonts` is off to avoid libfontconfig), and the
-//! cross-check matrix compiles it for windows-msvc, darwin and musl from Linux,
-//! where `ring`'s C build is already a known blocker. QuickJS or V8 would add
-//! another dependency of that kind. See roadmap-history.md §12.2.
-//!
-//! `boa_engine` and `boa_gc` come from the `h5i-dev/boa` fork of 0.22.0, pinned
-//! by revision in the workspace `Cargo.toml`. The fork is one commit, adding
-//! `bind_to_realm` so [`compiled_prelude`] can be reused across realms. Patch
-//! both crates together or the two halves disagree about GC types.
-//!
-//! # The DOM is not here
-//!
-//! Every JS object that names a node is a wrapper over a `NodeId`, and the Blitz
-//! document remains the only tree. A second tree inside the engine would let the
-//! snapshot, the paint, the events and the script state drift apart, with
-//! nothing downstream able to tell which one was right.
 
 pub(crate) mod dom_api;
 pub mod host;
@@ -38,28 +18,6 @@ use host::{ConsoleLine, Host, HostHandle};
 const PRELUDE: &str = include_str!("prelude.js");
 
 /// The pieces of the prelude a page has to *ask* for.
-///
-/// What this is worth changed, and it is worth less than it was. Parse and
-/// compile were 67 ms of the 83 a realm cost and were paid by every page; they
-/// are now paid once per thread (see [`compiled_prelude`]) and a later realm
-/// spends under a microsecond there. What a tier still saves per page is the
-/// *running* of its code, building its classes and prototypes, which is 12.4 ms
-/// for the whole 273 KiB core, so roughly 45 µs per KiB. It still saves the
-/// compile for the first page a renderer serves, and that is the page a person
-/// is waiting on.
-///
-/// Code, not bytes: blanking all 164 KiB of comments in a 443 KiB prelude
-/// changed parse time by nothing measurable, so the documentation is free and
-/// only what the parser tokenises is not. So a surface most pages never touch
-/// lives in its own file, is not given to the parser with the core, and arrives
-/// when something reads the name it defines. See `lazyGlobals` in the core
-/// prelude, which installs the getter that calls back into [`load_tier`].
-///
-/// The bar for moving something here is that a page which *does* use it pays
-/// slightly more, one extra parse of a small file on every realm that asks,
-/// since tiers are not shared the way the core is, and a page which does not
-/// pays nothing. Anything the first paint of an ordinary page touches belongs in
-/// the core.
 const TIERS: &[(&str, &str)] = &[
     ("conformance", include_str!("prelude/conformance.js")),
     ("sockets", include_str!("prelude/sockets.js")),
@@ -102,48 +60,13 @@ fn load_tier(
 }
 
 thread_local! {
-    /// The prelude, parsed and compiled once for this thread. A renderer serves
-    /// every navigation of a session on one thread, so this is once per process
-    /// in the product and once per test in the suite.
-    ///
-    /// The context it was compiled against is kept with it, and is deliberately a
-    /// plain one: no host, no document, no broker. It exists to own the realm the
-    /// compiler resolved names against and nothing else, so holding it for the
-    /// life of the thread cannot pin a page's DOM, which storing the *first
-    /// page's* context here would have done.
-    ///
-    /// Deliberately holds nothing that will be dropped. See [`PreludeTemplate`].
+    /// The prelude, parsed and compiled once for this thread.
     static PRELUDE_TEMPLATE:
         std::cell::RefCell<Option<std::mem::ManuallyDrop<PreludeTemplate>>> =
         const { std::cell::RefCell::new(None) };
 }
 
 /// The compiled prelude and the realm it was compiled against.
-///
-/// # Why this is never dropped
-///
-/// It holds `Gc` handles, and freeing those needs Boa's garbage-collected heap,
-/// which lives in a thread-local of its own (`BOA_GC`). Rust does not specify
-/// the order thread-local destructors run in, so a thread ending could destroy
-/// that heap first and leave this dropping handles into freed memory. It does
-/// exactly that, reproducibly, and the symptom is not a panic but
-/// `tcache_thread_shutdown(): unaligned tcache chunk detected` and `SIGABRT` as
-/// the thread exits, with the work already finished and correct.
-///
-/// It depended on the order the two thread-locals were *first touched*, which is
-/// why it appeared only once the compile moved into the navigation: building a
-/// realm touches Boa's heap first, so its destructor was registered first and
-/// ran last. Warming inverts that order, and warming before a realm exists is
-/// the whole point of the overlap (§B15.12a).
-///
-/// Wrapping it in `ManuallyDrop` means this thread-local has no drop glue at
-/// all, so no destructor is registered and the order cannot matter. What is left
-/// behind is the `Context` and `Script` structs; the GC heap they point into is
-/// freed by `BOA_GC`'s own teardown, so this leaks a bounded amount per thread
-/// that compiled a prelude rather than a growing one.
-///
-/// `the_compile_survives_a_thread_that_warmed_before_it_had_a_realm` is the
-/// guard, and it fails as an abort rather than an assertion.
 struct PreludeTemplate {
     /// Held only to keep the compilation realm alive; never run.
     _context: Context,
@@ -184,18 +107,6 @@ fn compiled_prelude() -> Result<boa_engine::Script, String> {
 }
 
 /// Compile the prelude now, so the next realm on this thread does not have to.
-///
-/// Speculative by nature: this is called while a navigation is in flight, before
-/// anyone knows whether the page has any script at all, because that is the only
-/// window in which the compile overlaps anything (§B15.12a). A page that turns
-/// out to have no script has thrown the work away, which is why the caller is
-/// careful about *when* it speculates, and why the compile is only ever paid
-/// once per thread however many times this is called.
-///
-/// Errors are dropped rather than returned. A prelude that will not compile is a
-/// broken build, it will fail again at [`Script::with_options`] a moment later
-/// with the realm's own error, and reporting it here would attach it to the
-/// navigation instead of to the realm it actually stops.
 pub fn warm_prelude() {
     let _ = compiled_prelude();
 }
@@ -237,18 +148,7 @@ impl RealmCost {
 /// this engine, and it should say so.
 const PRELUDE_PATH: &str = "<h5i browser prelude>";
 
-/// How much *virtual* time a settle may cover before it is cut off and reported
-/// as cut off.
-///
-/// Raised from two seconds once there was a real bound to lean on. Virtual time
-/// is free, advancing it costs only the work the page actually does, so this
-/// number was never protecting against a slow page: it was standing in for a
-/// wall-clock guard that did not exist, and [`JOB_QUEUE_BUDGET`] is that guard
-/// now.
-///
-/// Two seconds was cutting real applications off mid-render: preactjs.com
-/// fetches its content, then needs five virtual seconds to render it, and was
-/// being stopped at two with its own data already in hand.
+/// How much *virtual* time a settle may cover before it is cut off and reported as cut off.
 pub(crate) const SETTLE_BUDGET_MS: u64 = 10_000;
 
 /// How far the virtual clock advances per settle round.
@@ -273,15 +173,6 @@ const NETWORK_BUDGET_MS: u64 = 10_000;
 const NETWORK_POLL_MS: u64 = 2;
 
 /// How deep script may recurse before the engine stops it.
-///
-/// Boa's default is 512 frames, which a production bundle exceeds during its own
-/// initialisation: deeply nested module factories and framework internals get
-/// there without anything being wrong, and Next.js's chunk hit it while merely
-/// starting up.
-///
-/// Still a bound: the point of the limit is that a runaway page cannot take the
-/// stack with it, and this engine runs untrusted script inside a box with a
-/// memory ceiling.
 const RECURSION_LIMIT: usize = 4_000;
 
 /// How many value slots the interpreter stack may hold.
@@ -294,51 +185,13 @@ const RECURSION_LIMIT: usize = 4_000;
 const STACK_SIZE_LIMIT: usize = 128 * 1024;
 
 /// How many times a single loop may go round before the engine stops it.
-///
-/// The settle loop bounds virtual time and network waiting, but neither covers
-/// the one case that matters most: a single `eval` that never returns. A page
-/// that loops forever would hang this engine indefinitely, and an agent waiting
-/// on it has no way to tell that from a slow page.
-///
-/// Generous, since a real page parsing or laying out its own data can
-/// legitimately iterate millions of times, but finite, because "always returns"
-/// is a property worth more than the last page that needed one more round. A
-/// page that trips it still renders what it managed, and the limit is
-/// *reported*.
-///
-/// Worth being exact about what this does not do: it bounds one loop, not total
-/// work. Boa exposes no wall-clock interrupt, so a page with a thousand slow
-/// loops is still slow, and a caller that cannot wait must impose its own
-/// timeout. Raising this to 50 million turned a site that returned in three
-/// minutes into one that had not returned in four.
 const LOOP_ITERATION_LIMIT: u64 = 5_000_000;
 
-/// How long the job queue may run before the engine tells it to stop, when
-/// nobody has said otherwise. `Page::run_scripts` overrides this with whatever
-/// is left of the script phase, so the two budgets do not add up.
-///
-/// This is the wall-clock bound the other limits could not provide. A module
-/// graph evaluates entirely inside `run_jobs`, so neither the settle budget nor
-/// the script-phase budget ever got a turn, and lit.dev spent *seven minutes*
-/// there. Boa checks a cancellation token between jobs, and a watchdog thread
-/// sets it, because by the time the deadline matters this thread is stuck.
-///
-/// It bounds work *between* jobs, not inside one: a single job that never
-/// returns is still beyond reach, and the loop-iteration limit is the only guard
-/// there. Together they cover the two shapes that occur.
+/// How long the job queue may run before the engine tells it to stop, when nobody has said
+/// otherwise.
 const JOB_QUEUE_BUDGET: Duration = Duration::from_secs(15);
 
 /// Host hooks, for the one thing the default implementation drops on the floor.
-///
-/// A promise that rejects with nothing attached to it is how asynchronous code
-/// dies, and it was completely silent here: a page could reject three times and
-/// the console said nothing, so a half-built page came with no explanation at
-/// all.
-///
-/// Only reported when the rejection goes *unhandled*. A rejection that is caught
-/// later is not an error, and `Reject` fires before anyone has had the chance to
-/// attach a handler, so reporting there would blame every page that uses
-/// `.catch`.
 #[derive(Debug)]
 /// The realm's host hooks, carrying the one thing an identity can change about
 /// how the engine computes time.
@@ -419,19 +272,6 @@ enum Ready<'a> {
 }
 
 /// How a wait ended.
-///
-/// Four outcomes, kept apart because they ask the caller for different things.
-/// `Met` is the answer. `Quiescent` means the page has nothing left to run, so
-/// waiting longer cannot change anything: a different fact from `Budget`, which
-/// means time ran out with work still pending and the condition might yet have
-/// come true.
-///
-/// `Periodic` is the one the others hid. A page whose only remaining work is a
-/// loop that re-arms itself (an animation frame, a poll, a carousel) is neither
-/// finished nor converging. Reporting it as `Quiescent` would claim nothing can
-/// change, which is false; reporting it as `Budget` claims the page was on its
-/// way somewhere and merely ran out of time, which is the claim that sent agents
-/// back to wait again on a page that will never arrive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WaitEnd {
     /// The condition came true.
@@ -551,24 +391,9 @@ impl Settled {
 /// caller that wants none of them should not have to say so.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RealmOptions {
-    /// Install the WebIDL member decoration: enumerable interface members, and
-    /// the brand check that makes an accessor reached on the prototype object
-    /// itself throw rather than run against nothing.
-    ///
-    /// For instruments. `idlharness` checks both on every member of every
-    /// interface, and nothing else does: a page reads `el.href`, it does not ask
-    /// whether the descriptor is enumerable. Installing it walks every own
-    /// property of every interface prototype and rebuilds each descriptor with
-    /// two closures, which measured 15 ms of the 83 ms a realm cost, paid by
-    /// every page and observed by one harness.
-    ///
-    /// Not the `get x`/`set x` accessor naming, which reads as the third thing
-    /// this does and is not: Boa names class accessors correctly on its own.
-    /// `the_webidl_decoration_arrives_only_when_an_instrument_asks` pins all
-    /// three so the distinction cannot rot.
-    ///
-    /// So it is off unless asked for, `wpt/run.py` asks for it, and the
-    /// conformance number is unchanged.
+    /// Install the WebIDL member decoration: enumerable interface members, and the brand check
+    /// that makes an accessor reached on the prototype object itself throw rather than run
+    /// against nothing.
     pub webidl_conformance: bool,
 }
 
@@ -706,16 +531,6 @@ impl Script {
         cost.primitives = at.elapsed();
 
         // Compiled once for this thread, run once per realm.
-        //
-        // Parse and compile were 67 ms of the 83 a realm cost (§B8.9), paid again
-        // by every page for a source that never changes. They are now paid by the
-        // first page a renderer serves and by no other, taking a later realm to
-        // ~15 ms: the largest saving this engine has taken.
-        //
-        // The sibling item, reusing the *realm* across navigations, stays refused.
-        // Only the instructions are shared; every page still gets its own realm,
-        // globals and prototypes, and nothing a page did is reachable from the next
-        // one. See `bind_to_realm` in our Boa fork, and §B15.12a.
         let at = std::time::Instant::now();
         let template = compiled_prelude()?;
         cost.prelude_compile = at.elapsed();
@@ -866,15 +681,6 @@ impl Script {
     }
 
     /// Run until `ready` answers true, or until nothing is left to wait on.
-    ///
-    /// The wait an agent needs, and the reason it is the *same* loop rather than
-    /// one beside it: the ordering rules in here were each paid for by a bug (wait
-    /// on the network in real time before advancing the virtual clock; re-ask
-    /// after the last `run_queued_jobs`; `max` then `min` rather than `clamp`). A
-    /// second copy would start correct and drift.
-    ///
-    /// The rule borrowed from Lightpanda's `Runner`: resolve when there is nothing
-    /// left to wait on, even when the condition never came true.
     pub fn settle_until(&mut self, ready: &mut dyn FnMut() -> bool) -> Waited {
         let mut ready = Ready::Rust(ready);
         self.settle_with(&mut ready)
@@ -1154,16 +960,8 @@ impl Script {
     /// off rather than left to look merely thin.
     fn with_job_deadline<T>(&mut self, budget: Duration, body: impl FnOnce(&mut Self) -> T) -> (T, bool) {
         let cancel = self.cancel.clone();
-        // A condition variable rather than a polled flag, because this thread is
-        // *joined*: whatever it is still doing when the body finishes, the page
-        // waits for.
-        //
-        // It used to sleep 20 ms between checks, so a page that settled in 50 µs,
-        // which is most pages most of the time, then sat in `join` until the
-        // watchdog next woke up: a 20 ms tax on every settle and on every agent
-        // `wait`, spent asleep. It read as script time in the profile and was not.
-        // It was intermittent too, being a plain race between the body and the
-        // watchdog's first check.
+        // A condition variable rather than a polled flag, because this thread is *joined*:
+        // whatever it is still doing when the body finishes, the page waits for.
         let done = std::sync::Arc::new((
             std::sync::Mutex::new(false),
             std::sync::Condvar::new(),
@@ -1363,16 +1161,6 @@ impl Script {
     }
 
     /// Install the page's `<script type="importmap">`, before anything imports.
-    ///
-    /// Set once, from the parsed tree, for the reason the specification gives: a map
-    /// that arrived after the first import would change what that import had already
-    /// meant. The engine reads it out of the document rather than letting script
-    /// register one, so nothing a page does at runtime can move a module graph that
-    /// is already resolving.
-    ///
-    /// A map that could not be parsed is reported on the console and then ignored
-    /// whole, because half a map resolves half a page's imports and leaves the rest
-    /// failing for a reason nobody can see.
     pub fn set_import_map(&mut self, source: &str) {
         match crate::script::import_map::ImportMap::parse(source, &self.host.base) {
             Ok(map) => {

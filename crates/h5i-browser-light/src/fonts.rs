@@ -1,21 +1,4 @@
 //! Fonts, found at runtime rather than linked at build time.
-//!
-//! Blitz can use fontconfig to enumerate system fonts, but that pulls
-//! `yeslogic-fontconfig-sys`, which needs libfontconfig headers *when the engine
-//! is compiled*. For something meant to build anywhere and run inside a box,
-//! trading a build-time native dependency for a font list is a bad deal: it
-//! breaks CI on a host without the dev package and makes the render depend on
-//! whatever the host happens to have installed.
-//!
-//! So fonts are discovered by walking directories at startup and registered into
-//! parley directly. Two consequences worth knowing:
-//!
-//! - A box with no fonts renders no text, and that is a state the engine reports
-//!   ([`FontSetup::is_empty`]) rather than a blank screenshot nobody can
-//!   explain.
-//! - Generic families must be mapped explicitly. With system fonts off,
-//!   `font-family: sans-serif` resolves to nothing at all unless something
-//!   points it at a real family.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -123,19 +106,6 @@ fn preference_rank(path: &Path) -> u32 {
         }
     }
     // An emoji face, ranked ahead of the weight and slant variants below.
-    //
-    // Measured, not guessed: on this Debian host the scan finds 817 files, the
-    // seventeen DejaVu bold/italic/condensed variants fill ranks 100-105, and
-    // `NotoColorEmoji.ttf` came out twenty-fifth against a cap of twenty-four.
-    // One slot short, which is why every emoji on every page was a tofu box on
-    // a machine that had the font installed the whole time.
-    //
-    // Ahead of them is the right call rather than a bigger cap: an oblique
-    // DejaVu is a nicety the shaper can synthesise, and an emoji face is the
-    // only cover for a range no other font on the system has at all.
-    //
-    // It still never becomes body text: it is behind all thirteen regular text
-    // faces here, and a bitmap-only face is ordered behind every drawable one.
     if name.contains("emoji") || name.contains("symbola") {
         return 50;
     }
@@ -154,23 +124,6 @@ fn preference_rank(path: &Path) -> u32 {
 }
 
 /// Whether a face carries glyph outlines, as opposed to only bitmaps.
-///
-/// This matters because of one specific, silent and very confusing failure.
-/// `NotoColorEmoji.ttf`, the emoji font on essentially every Linux desktop, has
-/// `CBDT`/`CBLC` colour bitmaps and no `glyf` table, so a painter that draws
-/// outlines can draw nothing from it. That alone would be harmless.
-///
-/// What is not harmless is its `cmap`. To support keycap sequences (`1️⃣`) the
-/// font claims `space`, `#`, `*` and the digits `0`-`9`. Put it in front of the
-/// text faces and it wins those characters, draws none of them, and reports each
-/// one's advance as a full emoji square. The page loses every number and every
-/// word space, and reads as a layout engine that has broken.
-///
-/// So a bitmap-only face is registered, since it may still be the only cover for
-/// some codepoint, but it is ordered behind every face that can actually draw.
-///
-/// Unparseable input answers `true`: the cost of a wrong `false` is the bug
-/// above, and the cost of a wrong `true` is the ordering we already had.
 fn has_outlines(bytes: &[u8]) -> bool {
     fn tables_at(bytes: &[u8], base: usize) -> Option<bool> {
         let count = u16::from_be_bytes(bytes.get(base + 4..base + 6)?.try_into().ok()?) as usize;
@@ -305,15 +258,6 @@ pub fn load(explicit: &[PathBuf], dirs: &[PathBuf], limit: Option<usize>) -> Fon
     families.extend(bitmap_only.iter().copied());
 
     // Emoji is a query of its own, and it is the one that was going unanswered.
-    // Parley appends `GenericFamily::Emoji` to the candidate list for any
-    // cluster it has identified as emoji, ahead of whatever the stylesheet asked
-    // for. With nothing mapped to that generic the appended family contributed
-    // no candidates at all, so the search fell back to the Latin faces and drew
-    // `.notdef`.
-    //
-    // Mapping only the emoji faces, rather than every family the way the
-    // generics below do: this generic exists to answer "which font draws a
-    // pictograph".
     let emoji_families: Vec<_> = emoji
         .iter()
         .filter(|id| families.contains(id) || bitmap_only.contains(id))
@@ -479,4 +423,3 @@ mod tests {
         assert!(setup.sources.is_empty());
     }
 }
-

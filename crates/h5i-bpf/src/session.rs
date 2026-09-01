@@ -1,14 +1,4 @@
 //! Loading the probe, attaching it, and reading what comes back.
-//!
-//! Linux only, and only with the `load` feature: everything above this module
-//! (the event model, the rules, the receipt types) compiles and is tested on
-//! every target h5i releases for, and this is the one file that needs a kernel.
-//!
-//! The lifetime of a [`Session`] is the lifetime of one run. It is started
-//! before the payload is spawned, so the payload's own `execve` is the first
-//! thing it sees, and stopped when the run returns. Nothing survives it: the
-//! programs are detached when the [`aya::Ebpf`] is dropped, and there is no
-//! daemon and no pinning anywhere in this file (design-detect.md D12).
 
 use std::os::fd::AsRawFd;
 use std::sync::Arc;

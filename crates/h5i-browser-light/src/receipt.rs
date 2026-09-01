@@ -1,14 +1,4 @@
 //! The request log, and the reason it is not merely a log.
-//!
-//! A record is written *before* the wire and again after it. The first write is
-//! what makes the fail-closed claim true rather than aspirational: if the sink
-//! refuses the decision record, [`crate::net::LocalBroker`] refuses the fetch, so
-//! there is no path from "the engine made a request" to "nobody recorded it".
-//! The second write carries the outcome, which is the part a human reads.
-//!
-//! Two phases rather than one record written at the end, because a single
-//! trailing record cannot describe a request that hung, crashed the process, or
-//! was still in flight when the page was screenshotted.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -88,15 +78,6 @@ pub struct RequestRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
     /// What actually crossed the wire, when that is a different number.
-    ///
-    /// Recorded separately rather than replacing `bytes`, because the two answer
-    /// different questions and a log that reported one under the other's name
-    /// would be wrong for whichever reader wanted the other. "How much did this
-    /// cost the network" and "how much did the page get" diverge by a factor of
-    /// three to five once compression is negotiated.
-    ///
-    /// `None` when the response was not encoded, so an uncompressed request
-    /// records one number and not the same number twice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wire_bytes: Option<u64>,
     /// How the body was encoded on the wire, when it was.
@@ -418,16 +399,6 @@ mod tests {
 // ── the agent's own verbs ───────────────────────────────────────────────────
 
 /// One verb an agent asked the resident session for.
-///
-/// A *separate* record from [`RequestRecord`], and a separate lane, because they
-/// answer different questions with different evidence. A request row is what
-/// crossed the wire; this is what the agent asked for. Correlating the two is
-/// not attempted here: the link has to be stamped by whoever knows it, and
-/// inferring it from adjacency in a file would be inventing evidence.
-///
-/// Written by the engine, inside the box, so this lane is *box-claimed*. h5i
-/// sits on no socket between an agent and this engine, because there is none:
-/// the engine *is* the browser.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionRecord {
     pub seq: u64,
@@ -447,22 +418,6 @@ pub struct ActionRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Receipt sequence numbers written while this verb ran.
-    ///
-    /// The differentiator, and the field a reviewer joins against the request
-    /// log's own numbering: not "a request happened somewhere in this session"
-    /// but "this click is the verb the page was under when these fetches went
-    /// out".
-    ///
-    /// Deliberately a *window*, and named as one. The engine could only claim
-    /// strict causation for the one path that dispatches a script event and gets
-    /// a list back; every other verb that moves the page produces fetches it
-    /// never enumerates. A window covers all of them, and its one weakness is
-    /// stated rather than hidden: a viewer's own traffic can land inside the
-    /// window and be attributed to a verb that did not ask for it.
-    ///
-    /// The earlier version read the reply's `requests` key, which the `requests`
-    /// verb uses for the rows it *returns*, so the one verb that causes nothing
-    /// was recorded as having caused everything it read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requests: Vec<u64>,
 }

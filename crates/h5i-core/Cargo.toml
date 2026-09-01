@@ -44,22 +44,7 @@ getrandom = "0.3"
 console = "0.16.2"
 libc = "0.2.186"
 
-# The terminal viewer (`termview`). All four are on the path between an
-# untrusted box and the host's terminal, so each is chosen for having a small,
-# auditable job rather than for features:
-#
-# * `sha1` — only to verify the WebSocket `Sec-WebSocket-Accept` handshake.
-#   RustCrypto, the same family as the `sha2` above.
-# * `base64` — the stream's JPEG payloads arrive base64-encoded, and the Kitty
-#   graphics protocol wants base64 going out.
-# * `zune-jpeg` — a `#![forbid(unsafe_code)]` JPEG decoder. This one is the
-#   security-relevant pick: it parses bytes produced inside the box, so a
-#   memory-unsafe decoder here would hand the box the host process.
-# * `miniz_oxide` — zlib for the `o=z` frame payload. Pure Rust, and it only
-#   ever *compresses* here, so unlike the decoder it is not parsing anything the
-#   box produced. It earns its place on bandwidth alone: a frame fitted to a
-#   120x30 pane is 2.1 MiB of base64 raw RGB and 326 KiB deflated, which is the
-#   difference between a viewer that works over SSH and one that does not.
+# The terminal viewer (`termview`).
 sha1 = "0.10"
 base64 = "0.22"
 zune-jpeg = "0.5"

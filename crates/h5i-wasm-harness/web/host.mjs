@@ -1,14 +1,5 @@
-// The wasm host loop, environment-agnostic: the same code drives the module in
-// a browser and under Node, because both expose the identical `WebAssembly`
-// API. Nothing here is browser-specific — the page (index.html) only supplies a
-// model callback, a tool executor, and the DOM.
-//
-// The ABI (see ../src/wasm.rs): the host calls `alloc(n)`, writes UTF-8 JSON at
-// the returned pointer, then calls an export with `(ptr, len)`. Every export
-// returns a packed `u64 = (ptr << 32) | len` pointing at guest-owned JSON valid
-// only until the next call — so we decode it immediately. Memory can grow (the
-// module's bump allocator calls `memory.grow`), which detaches the old
-// ArrayBuffer, so we always re-view `memory.buffer` right before touching it.
+// The wasm host loop, environment-agnostic: the same code drives the module in a browser and
+// under Node, because both expose the identical `WebAssembly` API.
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();

@@ -32,16 +32,6 @@ MARKER = "H5I-WPT-RESULT-6a7f2c1b"
 REPORTER = (
     """
 // Do not build the results table.
-//
-// testharness renders one DOM row per subtest into `#log` when it finishes, and
-// a file like `html/dom/reflection-tabular.html` has forty thousand of them.
-// That rendering — not the tests — was most of the forty seconds those files
-// took, and it is pure overhead here because the results come back through the
-// completion callback below rather than by being read off the page.
-//
-// This is what the official WPT runner does too: `output: false` is a
-// documented harness setting, not a trick. It changes how results are
-// *reported*, never which tests run or what they conclude.
 setup({ output: false });
 
 add_completion_callback(function (tests, status) {
@@ -257,43 +247,6 @@ def generated_source(root: str, path: str):
 
 
 # The *second* empty vendor seam, and the reason it is worth filling.
-#
-# `resources/testdriver-vendor.js` ships as a zero-byte file for exactly the
-# same reason `testharnessreport.js` does: it is where a vendor plugs its own
-# automation in. Unfilled, `test_driver.click()` rejects with "not implemented
-# by testdriver-vendor.js" and every test built on it fails on a missing
-# harness rather than on anything about the engine — 633 files in the core tier
-# (roadmap-history.md §B19).
-#
-# **What is implemented, and why from inside the page.** testdriver's contract
-# is "the user agent performs this action". A browser routes it out through
-# WebDriver; a headless engine can perform it directly, and that is what the
-# functions below do — dispatch the events the action would produce, on the
-# element named. That is the action, not a simulation of it: the page's
-# listeners run, in order, with the fields they expect.
-#
-#   click        552 uses directly, and `bless` (706 more) is built on it, so
-#                this one function unlocks both.
-#   send_keys    457 uses. Focus, then per-character key events, then `input`.
-#
-# **What is refused, and refused loudly.** Anything needing authority this
-# engine does not have — permissions, virtual sensors, virtual authenticators,
-# a second browsing context — keeps testdriver's own rejection. A shim that
-# resolved those would turn "the harness cannot do this" into "the engine got
-# the wrong answer", which is the same plausible lie the engine refuses
-# everywhere else.
-#
-#   action_sequence  383 subtests in `html/semantics` alone rejected on it.
-#                    It *was* refused, for a narrower and better reason than
-#                    the others: it is a pointer/key state machine with its own
-#                    tick semantics, and approximating it would make a class of
-#                    failures untraceable. That reasoning is kept and satisfied
-#                    rather than overruled — the implemented subset is exact
-#                    (pointerMove/Down/Up, keyDown/Up, pause, with real tick
-#                    ordering and `elementFromPoint` hit-testing), and every
-#                    action type outside it throws by name. A test that fails
-#                    still says whether it failed on the engine or on the shim,
-#                    which is the property the refusal was protecting.
 TESTDRIVER = """
 (function () {
   function fire(element, type, init) {
@@ -355,22 +308,6 @@ TESTDRIVER = """
     async release_actions() { return null; },
 
     /// The WebDriver action sequence, performed rather than approximated.
-    ///
-    /// It used to be refused, on the grounds that a pointer/key state machine
-    /// with its own tick semantics would make a class of failures untraceable
-    /// if it were half-built. That reasoning is kept and satisfied a different
-    /// way: **what is implemented is exact, and what is not is refused by
-    /// name** — so a test that fails still says whether it failed on the
-    /// engine or on this shim.
-    ///
-    /// Implemented: pointerMove / pointerDown / pointerUp, keyDown / keyUp,
-    /// and pause. Those are what the suite actually uses; a survey of the
-    /// action calls under `html/` counts 158 pointerMove, 110 pointerDown,
-    /// 105 pointerUp, 49 keyDown, 50 keyUp and nothing else outside `scroll`.
-    ///
-    /// Ticks are honoured: index *i* of every source happens before index
-    /// *i+1* of any of them, which is the ordering the popover light-dismiss
-    /// tests are actually asserting on.
     async action_sequence(sources) {
       if (!Array.isArray(sources)) return refuse('action_sequence');
       // **Pointer state outlives the call**, because a real pointer does.

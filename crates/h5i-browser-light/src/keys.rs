@@ -1,16 +1,4 @@
 //! What a key does to a text field.
-//!
-//! The decision half of real keyboard input, kept apart from the document half
-//! in [`crate::engine::Page::key_to_focused`]. `type` sets a field's whole value
-//! and leaves the caret at the end, which suits an agent; a person needs a caret
-//! that moves and a page that hears `keydown`.
-//!
-//! Design: `docs/design-interminal-browser.md` V4. Two rules run through it:
-//!
-//! * **An unmapped key is not swallowed.** It becomes [`Edit::Ignore`], which
-//!   still delivers the DOM events, so a page's own shortcut keeps working.
-//! * **Modified keys are commands, not text.** `Ctrl-S` types no `s`. Shift is
-//!   the exception, since shifted characters arrive already shifted.
 
 use serde::{Deserialize, Serialize};
 

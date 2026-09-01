@@ -1,25 +1,4 @@
 //! The broker, as a named set of operations rather than a struct.
-//!
-//! Everything that decides and records is behind this trait: the allowlist, the
-//! wire, the receipt sink, the cookie jar, the per-page budget and the secrets.
-//! Everything that parses a stranger's bytes calls *through* it and holds none
-//! of it.
-//!
-//! Two implementations, and the second is the point.
-//! [`crate::net::LocalBroker`] does the work in this process, exactly as the
-//! engine has always run. [`crate::ipc::BrokerClient`] asks another process,
-//! leaving the renderer a socket to its parent and nothing else: no policy to
-//! edit, no jar to read, no sink to silence, no `H5I_SECRET_*` in its
-//! environment.
-//!
-//! The rule for adding a method: every one becomes a message a hostile renderer
-//! may send at will, in any order, with any arguments. So the operations are the
-//! ones that were measured (roadmap-history.md §B18.6) and no more. Nothing
-//! hands back a live reference to broker state, and nothing lets the caller name
-//! a *thing* the broker holds rather than a *request* it decides about. The jar
-//! is the worked example: it used to be `broker.jar()`, which cannot cross a
-//! process boundary and on this side of it would have handed the page's parsers
-//! the session. It is three operations now, with `HttpOnly` enforced inside.
 
 use std::sync::Arc;
 
@@ -123,16 +102,6 @@ pub struct Allowance {
 }
 
 /// A long-lived connection, from the side that does not own it.
-///
-/// WebSocket and server-sent events are the two things in this engine that are
-/// not request-and-answer, and the two the split has to carry rather than
-/// transport. The socket itself stays with the broker, being the wire, and the
-/// renderer holds this: send a message, take what has arrived, stop.
-///
-/// `drain` is a poll rather than a callback deliberately. The renderer's settle
-/// loop already asks "has anything happened" on a tick, and a broker that pushed
-/// would need a queue on the renderer's side that a chatty server could grow
-/// without bound.
 pub trait Channel: Send + Sync {
     /// Send a text frame. `Err` for a stream that cannot be written to, which
     /// is what a server-sent event stream is.
@@ -152,18 +121,6 @@ pub trait Broker: Send + Sync {
     fn send(&self, fetch: &Fetch) -> FetchOutcome;
 
     /// The same send, with `while_waiting` run while the answer is in flight.
-    ///
-    /// For work that would otherwise sit on the critical path behind a request
-    /// this process is only waiting on. The renderer's broker is a *separate
-    /// process*, so [`Self::send`] is one round trip and the renderer thread is
-    /// idle for all of it, long enough to hide the browser prelude's compile in
-    /// (§B15.12a). Boa's heap is thread-local, so that compile cannot go to a
-    /// worker thread.
-    ///
-    /// `while_waiting` must be speculative work, in the sense that skipping it
-    /// entirely has to be correct. The default implementation does exactly that:
-    /// a broker doing the fetch on this thread has no idle window. It must also
-    /// not touch this broker, which is mid-request.
     fn send_while(&self, fetch: &Fetch, while_waiting: &mut dyn FnMut()) -> FetchOutcome {
         let _ = while_waiting;
         self.send(fetch)
@@ -268,19 +225,7 @@ pub trait Broker: Send + Sync {
         document: Option<&Url>,
     ) -> Result<Arc<dyn Channel>, String>;
 
-    /// The credentials this session may substitute, by name. Never values. That
-    /// is the whole of [`crate::secrets`].
-    ///
-    /// Who this session says it is. On the trait rather than read from a
-    /// constant because the two halves of a split engine both need it and only
-    /// one of them has it: the broker holds the identity because the broker
-    /// writes the headers, and the renderer has to answer `navigator` from the
-    /// *same* object.
-    ///
-    /// An `Arc` rather than a borrow or a copy. It cannot be a borrow because
-    /// across the process split there is nothing to borrow from. It must not be
-    /// a copy because this is read once per realm and a realm is per navigation,
-    /// so the strings would be reallocated on every page.
+    /// The credentials this session may substitute, by name.
     #[cfg(feature = "identity")]
     fn identity(&self) -> std::sync::Arc<crate::identity::Identity>;
 

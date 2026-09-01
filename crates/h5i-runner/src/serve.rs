@@ -1,14 +1,4 @@
 //! The worker: one process per RPC, speaking frames on its own stdio.
-//! This is what an SSH forced command runs. It is stateless across invocations
-//! by design (design-runner.md R3): box state lives in the container runtime
-//! and the state dir, never in a resident daemon, because there is no daemon.
-//! Nothing listens on any interface, of any kind, ever.
-//! Nothing but frames may reach stdout. A stray `println!` here is not a
-//! cosmetic bug but a corrupt stream: the client would read the text as a
-//! length prefix. Diagnostics go to stderr, which the client captures.
-//! The loop is a small state machine with an explicit disposition for every
-//! failure, because "what happens to the session when a peer sends something
-//! wrong" is the question a protocol most often leaves to accident.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -400,15 +390,6 @@ pub fn serve_stdio(_worker: &mut Worker) -> Result<(), ServeError> {
 }
 
 /// A reader that gives up when the peer goes quiet.
-/// A pipe has no read timeout, so the wait has to be made explicit. `poll` on
-/// the descriptor before each read is the whole mechanism: it turns a peer that
-/// stops talking into an ordinary end of stream.
-/// It reads the descriptor directly, with no buffering layer underneath. Not a
-/// performance choice: `FrameReader` does its own buffering, and wrapping a
-/// `BufReader` here is a deadlock, because `poll` asks the *kernel* whether
-/// bytes are available, so a reader holding the next frame in a userspace
-/// buffer reports nothing readable and the worker waits out its own timeout on
-/// data it already has.
 #[cfg(unix)]
 pub struct IdleTimeout<'fd> {
     fd: std::os::unix::io::RawFd,
@@ -492,32 +473,10 @@ const HEADROOM_MB: u64 = 256;
 const MAX_BOXES: usize = 64;
 
 /// How long the worker will wait for a frame that never comes.
-/// The worker had no clock at all, and the client's watchdog is not a
-/// substitute: a peer that opens a session, declares a frame and then trickles
-/// one byte an hour costs a worker process, an sshd session, the buffer for the
-/// declared frame, and, inside an exec or an export, a held box lock that
-/// blocks every export of that box until the process dies.
-/// Generous, because it bounds *silence between frames* rather than a command's
-/// runtime: nothing is read while a build runs.
-/// Gated with the reader it configures, since `-D warnings` counts an unused
-/// constant as an error.
 #[cfg(unix)]
 const IDLE_SECS: u64 = 300;
 
 /// Run a command in a box.
-///
-/// The shape is E2B's, and the reason is theirs too: `EXEC_STARTED` goes out
-/// *before* the run, so "it spawned" and "here is what it printed" are separate
-/// facts and the client can clear its handshake clock before starting the long
-/// one.
-///
-/// Output arrives at the end, not progressively. `sandbox::run_with_env` is the
-/// same function the local path calls and it captures rather than streams, so
-/// this milestone gets the exit code, the timings and the egress evidence
-/// across correctly, and a long build says nothing until it finishes. Making it
-/// progressive means a streaming variant inside `h5i-sandbox`, which is real
-/// work on the local path's most load-bearing function. The frames are already
-/// the right shape for it.
 fn handle_exec<W: Write>(
     payload: &[u8],
     worker: &mut Worker,
@@ -765,20 +724,6 @@ fn load_policy(
 }
 
 /// Make a box, or hand back the one that is already there.
-///
-/// The order is the whole design (design-runner.md R7):
-///
-/// 1. Validate the request, so nothing peer-supplied becomes a path first.
-/// 2. Check the tier against what this runner advertises. A capability it lacks
-///    is a refusal naming the capability, never a quiet downgrade (R1).
-/// 3. Decide the idempotent case *before* building anything: a matching request
-///    digest returns the existing box, a differing one is a conflict.
-/// 4. Rebuild the policy locally and check its digest. The client sent the three
-///    fields a `ResolvedPolicy` serialises; every host path in it is deliberately
-///    not among them, so this side reconstructs its own and the digests still
-///    have to agree.
-/// 5. Build under `creating/<operation_id>`, and rename. The rename is the
-///    instant the box exists.
 fn handle_create<R: Read>(
     payload: &[u8],
     worker: &mut Worker,

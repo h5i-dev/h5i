@@ -1,20 +1,4 @@
-//! Putting the terminal into the state a viewer needs, and reliably putting it
-//! back.
-//!
-//! Everything here is an RAII guard rather than a pair of functions, for one
-//! reason: a viewer that exits on an error path without restoring cooked mode
-//! leaves the human with a terminal that does not echo, has no line editing and
-//! shows no cursor. That is a worse outcome than whatever the original error was,
-//! and "remember to call `restore()`" is not a mechanism. [`Guard`] holds the
-//! saved `termios` and undoes every mode it set on every path out, panics
-//! included.
-//!
-//! Mouse reporting is deliberately *not* enabled for the whole session. It goes
-//! on when the human is driving the page and off again when they are only
-//! watching, because a terminal in mouse-reporting mode has taken the mouse away
-//! from the terminal emulator: no text selection, no scrollback with the wheel,
-//! no copy. Watching is the common case, and it should leave the terminal feeling
-//! like a terminal.
+//! Putting the terminal into the state a viewer needs, and reliably putting it back.
 
 //! Gated to unix by its parent, not by an inner attribute: an empty module
 //! whose users still name its types is a compile error somewhere confusing,
@@ -72,21 +56,8 @@ pub fn size(fd: RawFd) -> Size {
 }
 
 impl Size {
-    /// A geometry that can actually be drawn in, even when the terminal will
-    /// not say what its own is.
-    ///
-    /// `TIOCGWINSZ` succeeding and reporting zeroes is not hypothetical: a pty
-    /// opened without a window size does exactly that, which is what `script`
-    /// and several CI harnesses produce. Taking it literally is a quiet wrong
-    /// answer of the worst kind. The page gets scaled to fit one cell, the
-    /// viewer draws a single pixel, and nothing reports a problem. Found by
-    /// running the viewer under `script` against a live box, where it dutifully
-    /// transmitted a 1×1 image.
-    ///
-    /// 80×24 is the conventional fallback. 8×16 for the cell is the usual
-    /// bitmap-font shape and only affects aspect correction: guessing it
-    /// stretches the page a little, while leaving it at zero would make every
-    /// cell square and stretch it a lot.
+    /// A geometry that can actually be drawn in, even when the terminal will not say what its
+    /// own is.
     pub fn or_fallback(self) -> Size {
         Size {
             cols: if self.cols == 0 { 80 } else { self.cols },

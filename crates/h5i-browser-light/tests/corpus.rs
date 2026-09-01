@@ -1,20 +1,4 @@
 //! The corpus, as a gate CI can actually run.
-//!
-//! `corpus/run.py` points this engine at real sites and is the instrument that
-//! finds new work, but it needs the network, the sites change under it, and a
-//! run takes minutes. What it finds, once fixed, belongs here: the same
-//! *patterns* against local fixtures, so a regression is caught by `cargo test`.
-//!
-//! Every fixture below is here because the network corpus found it, and the
-//! comment on each says which finding it stands for. The two assertions that
-//! matter are the ones the corpus itself reports on:
-//!
-//!   1. the page asks for *nothing* this engine lacks, and
-//!   2. no console error is *anonymous*: every one names either a request that
-//!      was refused or the script that threw.
-//!
-//! An empty ask list beside an unattributable error is the failure mode this
-//! whole apparatus exists to prevent (roadmap-history.md §B8.3).
 
 use std::sync::Arc;
 

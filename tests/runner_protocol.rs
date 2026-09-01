@@ -4,17 +4,6 @@
 #![cfg(feature = "runner")]
 
 //! The runner protocol over a real process boundary.
-//!
-//! `h5i-runner`'s own tests drive the worker loop through two in-memory buffers,
-//! which is where the framing and the state machine are pinned down. This is the
-//! other half of R13.1's exit criterion: the same protocol against the *real
-//! binary*, spawned as a child, with pipes and an exit status in between, and
-//! still no sshd, no second machine and no network.
-//!
-//! What the child-process transport is *for* is the failure half. A peer that
-//! sends an oversized frame, or stops mid-message, or speaks a protocol from the
-//! future, is trivial to arrange here and near-impossible to arrange against a
-//! real runner on demand.
 
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};

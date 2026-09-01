@@ -1,16 +1,4 @@
 //! How the frames get there.
-//! A [`Transport`] is a *factory*, not a connection: `connect()` opens one
-//! [`Channel`] and one channel carries one RPC (design-runner.md R4). That is
-//! the whole reason this protocol needs no request ids, no channel numbers and
-//! no multiplexer. Concurrency is several channels, and over SSH those are
-//! several sessions on one TCP connection, multiplexed by OpenSSH's
-//! ControlMaster in battle-tested C rather than by us.
-//! Both implementations are the same mechanism: spawn a child, speak frames on
-//! its stdin and stdout, read its stderr for diagnosis. [`SshTransport`] puts
-//! `ssh` in front of the worker; [`ChildProcessTransport`] runs the worker
-//! directly, which makes the whole protocol testable in CI with no sshd.
-//! Because the difference is only argv, the argv is built by pure functions a
-//! test can read without spawning anything.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -286,16 +274,6 @@ impl Channel {
 }
 
 /// Kills a channel's child if the exchange outlives its deadline.
-/// The clock has to live somewhere, and a pipe has no read timeout. Killing the
-/// child turns "the peer stopped talking" into an ordinary end of stream, which
-/// every reader above already handles, so the deadline needs no special case
-/// anywhere else.
-/// It kills the child, not a process group. A reader unblocks when the last
-/// holder of the write end of the pipe closes it, so if the child had left a
-/// grandchild holding that end, the read would keep blocking past the kill.
-/// Both transports here are single-process by construction, so the kill is
-/// sufficient. A transport that ever spawns a shell wrapper would need the
-/// child in its own process group.
 struct Watchdog {
     disarm: mpsc::Sender<()>,
 }
@@ -382,36 +360,11 @@ impl SshTransport {
         }
     }
 
-    /// The whole argv, as a pure function of the configuration.
+    /// Build a non-interactive SSH command from trusted runner configuration.
     ///
-    /// Every option here matters, and none of it comes from the user's
-    /// `~/.ssh/config`, because a runner's security property must not depend on
-    /// a file this code did not write.
-    ///
-    /// That last sentence used to be false, which is why it is now enforced by
-    /// `-F /dev/null` rather than asserted by a comment. Passing `-o` does not
-    /// stop ssh reading the config: it stops the config winning *for the
-    /// options named*. `GlobalKnownHostsFile` was not named, ssh consults both
-    /// host-key files, and a `~/.ssh/config` setting it alongside a
-    /// `ProxyCommand` sent every RPC to another machine with
-    /// `StrictHostKeyChecking=yes` and the pinned `UserKnownHostsFile` both
-    /// still in force, while `runner list` went on showing the honestly paired
-    /// fingerprint. That breaks the attestation, not merely the transport: `runner_id` is what a manifest and a receipt record.
-    ///
-    /// The cost is real and worth naming: a user's `ProxyJump` for this host is
-    /// not picked up either. A runner that needs one should carry it in its own record.
-    ///
-    /// - `BatchMode=yes`: never prompt. A prompt on a non-interactive channel is a
-    ///   hang, and a password prompt would mean the pair key is not being used.
-    /// - `IdentitiesOnly=yes` with `IdentityFile`: offer the pair key and nothing
-    ///   else, so the agent cannot substitute a key with wider rights.
-    /// - `UserKnownHostsFile` plus `StrictHostKeyChecking=yes`: the runner
-    ///   authenticates to us with the key pinned at pair time, the half of mutual
-    ///   authentication the pair key does not provide.
-    /// - `ControlMaster`/`ControlPersist`: session-per-RPC is only cheap because
-    ///   these make the second session free.
-    /// - `ServerAlive*`: a dead link becomes an error rather than a channel that
-    ///   never ends.
+    /// `-F /dev/null` prevents user SSH settings from changing routing or host
+    /// verification. The paired identity and host key are the only credentials;
+    /// multiplexing and keepalives make repeated RPCs bounded and inexpensive.
     pub fn argv(&self) -> Vec<String> {
         let mut a: Vec<String> = vec!["ssh".into()];
         // No configuration file, at all. See the note above.

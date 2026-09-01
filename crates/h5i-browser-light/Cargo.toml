@@ -4,34 +4,13 @@ version = "0.1.0"
 edition = "2024"
 description = "h5i browser light: a lightweight visual browser engine for coding agents, where every request is policy-checked and receipted before it reaches the wire."
 
-# A library only. The engine used to ship as its own binary beside `h5i`; it is
-# now reached through `h5i __engine`, which `h5i browser` execs.
-#
-# The design rule that used to live here — "not so another crate can link past
-# the process boundary" — was protecting the *process* boundary, and self-exec
-# keeps that exactly: `h5i browser` still runs the engine as a separate process
-# and speaks a protocol to it. What went away is the second file, which bought
-# an install whose default left the headline command broken, a version skew
-# between two halves of one protocol, and a box that could read the engine
-# without being allowed to exec it.
+# A library only.
 
 [features]
 default = ["identity"]
 
-# Browser identities: `--identity`, the coherence validator, and the one object
-# the header layer and the script realm both answer from. See `identity.rs`.
-#
-# On by default, and a feature anyway, for the reason `ytdlp` is one: the two
-# switches promise different things. `--identity native` is the default and
-# costs nothing at run time — the wire values are computed once when the session
-# is built, and with `--script` off there is no realm to read them from at all.
-# Without the *feature*, the code is not in the binary: there is no identity
-# module, no `Screen` interface, no per-realm crossing to build one, and no
-# `--identity` to type. That is a claim a hardened deployment can make about the
-# file it installed rather than about how someone invokes it.
-#
-# It carries `sha2` and `toml` with it, which nothing else in this crate needs:
-# a digest for the session record, and the format an identity is written in.
+# Browser identities: `--identity`, the coherence validator, and the one object the header layer
+# and the script realm both answer from.
 identity = ["dep:sha2", "dep:toml"]
 
 [dependencies]
@@ -50,21 +29,7 @@ blitz-traits = { version = "=0.3.0-beta.1", default-features = false }
 anyrender = "0.11"
 anyrender_vello_cpu = "0.14"
 
-# Not called from this crate. It is here for one feature.
-#
-# vello_cpu's glyph painter reaches colour emoji two ways: COLR outlines, which
-# are always compiled in, and embedded bitmap strikes, which are PNG-encoded and
-# so sit behind `glifo?/png`. `anyrender_vello_cpu` takes vello_cpu with
-# `default-features = false` and does not re-add `png`, which switches off the
-# only path that can draw a CBDT face — and CBDT is what `NotoColorEmoji.ttf`
-# is, on essentially every Linux desktop. The symptom is not a warning; it is
-# every emoji on every page silently rendering as a tofu box, because the bitmap
-# branch returns `None` and falls through to an outline the font does not have.
-#
-# Cargo features are additive across a graph, so naming the feature here turns
-# it on for the copy `anyrender_vello_cpu` already uses. Pinned exactly, for the
-# same reason the Blitz crates above are: this is reaching into a transitive
-# dependency's feature set, and a range would let the two drift apart silently.
+# Not called from this crate.
 vello_cpu = { version = "=0.0.9", default-features = false, features = ["png"] }
 
 # `system-fonts` is deliberately OFF: it pulls `yeslogic-fontconfig-sys`,
@@ -151,55 +116,11 @@ base64 = "0.22"
 boa_engine = { version = "0.22.0", default-features = false, features = ["annex-b"] }
 boa_gc = "0.22.0"
 # The public suffix list, compiled in as a static table rather than fetched.
-#
-# This is what makes the `Domain` attribute safe to honour. The rule a browser
-# actually enforces is "the domain must not be a public suffix", and without the
-# list there is no way to know that `co.uk` is one — so a page on `evil.co.uk`
-# could set `Domain=co.uk` and every later request to `bank.co.uk` would carry
-# the cookie. Pure Rust, no build script, no network at runtime: it is a
-# generated match table, which is the only shape that keeps the build hermetic.
-#
-# The list does rot, which was the argument against embedding one. It rots
-# *slowly* and in a known direction — new suffixes are added, so a stale list
-# is conservative about what it refuses rather than permissive — and a version
-# bump is how it is refreshed. See `cookies::registrable_domain`.
 psl = "2.1.226"
 # TLS for `wss://`, and only for that.
-#
-# The refusal it replaces said `wss://` "needs a raw TLS stream, which the HTTP
-# client here does not expose" — true of `reqwest`, and quietly generalised into
-# a property of the engine. It is not one. A socket that owns its transport
-# needs no help from the HTTP client, which is how Lightpanda gets `wss://` for
-# free through curl.
-#
-# `ring` rather than aws-lc-rs, because aws-lc-rs has a C build and this crate
-# refuses those (see `system-fonts` above): the cross-check matrix compiles for
-# windows-msvc, darwin and musl from Linux. Both crates are already in the tree
-# through reqwest's `rustls-tls`, so this adds a name to the manifest and no
-# code to the build.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 webpki-roots = "1.0"
 # Compression, decoded here rather than by the HTTP client.
-#
-# The engine had never sent an `Accept-Encoding` header at all, so every
-# document, stylesheet and bundle it fetched arrived identity-encoded — three
-# to five times its compressed size, an omission the receipts question never
-# caught because a receipt recorded that bytes moved and not that three times
-# too many did.
-#
-# `reqwest` will negotiate and decode transparently, and that was tried first.
-# It **strips `Content-Encoding` and `Content-Length` after decoding**, so the
-# compressed size — the number that says what the request actually cost — is
-# gone by the time a body is in hand. An engine whose whole claim is that its
-# request log is the truth rather than an observation of it cannot delegate the
-# measurement to a layer that then hides it. That is the CONNECT-gate blindness
-# this engine exists to remove, in miniature.
-#
-# So the client asks for encodings, and this crate decodes them: `wire_bytes` is
-# *measured*, not read off a header, so it is right under chunked transfer too;
-# and the decoded size is capped as well as the compressed one, which is what
-# stops a small response decompressing into an enormous one. Both crates are
-# pure Rust (flate2 on miniz_oxide), so the hermetic build is unchanged.
 flate2 = "1.1.9"
 brotli = { version = "8.0.4", default-features = false, features = ["std"] }
 

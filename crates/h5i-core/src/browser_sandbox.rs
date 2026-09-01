@@ -1,27 +1,4 @@
 //! The default confinement for a browser session.
-//!
-//! A session is not a box: no repository, no worktree, nothing to export. But
-//! the reason a box exists applies here more than almost anywhere, since the
-//! engine parses bytes a stranger wrote and a bug in Blitz, Stylo, an image
-//! decoder or Boa runs as whoever started the session. So the engine gets the
-//! *tier* without the box: the Landlock scoping, seccomp filter and rlimits of
-//! `isolation = process`, built from a profile rather than a repository.
-//!
-//! It contains the *consequences* of a compromised engine: the filesystem it
-//! reaches, the environment it reads, what it can allocate, and the escalation
-//! surface seccomp denies. It does not stop the engine starting a program, which
-//! is survivable because Landlock's domain is inherited across `execve` and
-//! cannot be relaxed.
-//!
-//! It does not contain the *connection*. A browser needs the network, so a
-//! compromised engine keeps the host's reachability, and the policy deciding
-//! which origins is in-process and therefore past it. Containing that needs a
-//! boundary outside the engine: `--in` a box whose tier enforces egress, or the
-//! broker/renderer split.
-//!
-//! Where Landlock, seccomp or user namespaces are missing the session runs
-//! unconfined and *says so*, on the summary line and in the record. A sandbox
-//! nobody can see is indistinguishable from one that was never applied.
 
 use std::path::{Path, PathBuf};
 
@@ -66,15 +43,6 @@ impl Default for Confinement {
 }
 
 /// Where a font might be, in the engine's own order of preference.
-///
-/// A copy of the engine's `default_font_dirs`, and it has to be: inside the
-/// sandbox the environment is cleared, so `$HOME` is gone and the engine's own
-/// discovery would skip every personal directory whether or not Landlock granted
-/// it. So h5i computes the list, grants exactly it, and passes exactly it back as
-/// `--font-dir`: one list used for both, because a grant and a search path
-/// derived separately are two things that can disagree.
-///
-/// Only directories that exist.
 pub fn font_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
@@ -119,15 +87,6 @@ pub struct Wants<'a> {
     /// `$HOME` is granted by default and that is the rule worth keeping.
     pub reads: &'a [PathBuf],
     /// Names of `H5I_SECRET_*` variables this session may substitute.
-    ///
-    /// Empty by default, and that is the change worth noticing: outside a
-    /// sandbox the engine inherits the whole environment, so a compromised one
-    /// reads every secret on the machine. Here it reads the ones that were
-    /// named.
-    ///
-    /// Full variable names, `H5I_SECRET_` prefix included. The caller
-    /// normalizes, because the prefix is the namespace the engine substitutes
-    /// from and it has to survive all the way to the variable the child reads.
     pub secrets: &'a [String],
     /// The wall-clock bound, in seconds, or `0` for none.
     ///
@@ -242,41 +201,13 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
         p.fs_read.push(path.display().to_string());
     }
 
-    // *Not* an exec denial, because there is none to make here. `tools` gates
-    // the *initial* command and an empty list means no restriction at all;
-    // `execve` is not on the seccomp deny list, which covers privilege
-    // escalation and kernel surface rather than process creation.
-    //
-    // What makes that acceptable is Landlock's own rule: the domain is
-    // inherited across `execve` and cannot be relaxed. A compromised engine can
-    // start a shell, and the shell reads and writes exactly what the engine
-    // could, which is nothing. The containment is the filesystem domain, not a
-    // list of permitted programs.
-    //
-    // The ceiling is a ceiling, not a ban: the engine is multi-threaded and
-    // this counts threads.
+    // *Not* an exec denial, because there is none to make here.
     p.max_procs = Some(64);
 
     p.secrets = wants.secrets.to_vec();
-    // ...and the grants that deliver them, which is a separate field and was
-    // the bug: a profile that declares `secrets` and no `secret_grants` names a
-    // credential nothing fills, and `h5i browser env` answered "no credentials"
-    // for a session started with `--secret`.
-    //
-    // A box gets both from `merge_secret_grants` when its `env.toml` is loaded.
-    // A session has no `env.toml`, so the grants are assembled here, from the
-    // same list, and the broker resolves them at spawn time.
-    //
-    // The grant's name is the variable the child will see, so it keeps the
-    // `H5I_SECRET_` prefix: `inject = env` injects `(name, value)`, and the
-    // engine substitutes from exactly that namespace. A grant named `ACME_PASS`
-    // would arrive as `ACME_PASS` and `$H5I_SECRET_ACME_PASS` would resolve to
-    // nothing.
-    //
-    // `inject` is left at its default of `env`, the only one reachable here:
-    // `broker` refuses `inject = file` off the workspace tier, and that refusal
-    // matters, because a file-injected secret is unlinked when the `Brokered`
-    // guard drops while the session keeps running.
+    // ...and the grants that deliver them, which is a separate field and was the bug: a profile
+    // that declares `secrets` and no `secret_grants` names a credential nothing fills, and `h5i
+    // browser env` answered "no credentials" for a session started with `--secret`.
     p.secret_grants = grants_for(wants.secrets);
 
     // A page can allocate. The budgets in the engine bound what one navigation
@@ -311,23 +242,6 @@ pub fn grants_for(names: &[String]) -> Vec<SecretGrant> {
 }
 
 /// The resolver's configuration, when it does not live where it appears to.
-///
-/// `/etc` is granted to every confined profile, so on most hosts this finds
-/// nothing and returns empty. But `/etc/resolv.conf` is a symlink on more
-/// machines than one would like (WSL points it at `/mnt/wsl/resolv.conf`,
-/// `resolvconf` and `systemd-resolved` at somewhere under `/run`) and a Landlock
-/// grant follows the link to a path the domain never granted.
-///
-/// The failure that causes is why this is a function rather than a line in the
-/// default grants: `getaddrinfo` returns "Temporary failure in name resolution",
-/// every fetch is refused before it reaches the wire, and the message reads like
-/// the network is down rather than like the sandbox denied one file.
-///
-/// The box profiles carry the well-known locations themselves, as a static list,
-/// because a box's policy is serialized and digested and a runtime-resolved
-/// grant would give one profile a different digest on every host. This is the
-/// other half: a browser session on *this machine* pins no such digest, so it
-/// can follow the link wherever it goes.
 fn resolver_grants() -> Vec<PathBuf> {
     let conf = Path::new("/etc/resolv.conf");
     match conf.canonicalize() {

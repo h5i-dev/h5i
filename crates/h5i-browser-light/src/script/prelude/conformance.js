@@ -1,15 +1,4 @@
 // The WebIDL member decoration, which only a conformance harness observes.
-//
-// Parsed and evaluated only when `RealmOptions::webidl_conformance` is set,
-// which `wpt/run.py` sets and nothing else does. It lived in the core prelude
-// until it was measured: rebuilding every descriptor of every interface
-// prototype cost **15 ms of the 83 ms** a realm took, on every page, for two
-// properties no page reads. See `TIERS` in `mod.rs` for the rule this file is
-// an instance of.
-//
-// A separate `eval` has no way into the core's closure, so what it needs
-// arrives through `__h5iInternals`: the interfaces that are not reachable by
-// name at the point this runs, and the tag-to-interface map.
 (function () {
   "use strict";
 

@@ -1,19 +1,4 @@
 //! What the frames mean.
-//! [`crate::wire`] moves bodies; this module says what a type code is and what
-//! its payload deserialises to. The split is deliberate: an unknown type code
-//! is a framing success and a meaning failure, and only the second one ends the
-//! session.
-//! Two rules run through everything here.
-//! `HELLO` is static, `PROBE` is dynamic, and neither does the other's job
-//! (design-runner.md R5). The handshake carries what cannot change while a
-//! worker binary sits on disk: the protocol version, the h5i version, the
-//! architecture. Everything that drifts between one minute and the next belongs
-//! to [`Capabilities`] and arrives only in answer to a `PROBE`. A field in the
-//! wrong one of those two goes stale in a cache and lies later.
-//! Identity never rides in a frame. `runner_id` is computed on the client from
-//! the host key SSH verified against the pinned `known_hosts`
-//! ([`crate::identity`]). [`HelloAck::runner_id_echo`] exists so a mismatch can
-//! be *noticed*, and is never the source of the value.
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

@@ -1,24 +1,4 @@
 //! The one way into the box, and the only place a share touches a namespace.
-//!
-//! A shared port is never published. It stays inside the box's private network
-//! namespace and the bridge reaches it the way the viewer forward does: h5i is
-//! the parent process, so it can enter the box's user and network namespaces by
-//! pid, connect from inside, and pass the connected socket back out over
-//! `SCM_RIGHTS`.
-//!
-//! Two things are different here, and both are deliberate.
-//!
-//! The fork happens once, at startup, not per connection. A share runs an async
-//! runtime, and `fork()` in a process with a thread pool is a trap: the child
-//! inherits one thread and any lock another thread held at fork time, the
-//! allocator's among them. So the dialer forks while the process is still
-//! single-threaded and keeps the child alive as a small helper that answers
-//! "connect me" over a socketpair.
-//!
-//! The destination is pinned at spawn. The child holds `port` in its own memory
-//! and reads nothing but a one-byte request, so there is no field on the wire
-//! that can redirect where this connects and the bridge cannot be turned into a
-//! general-purpose proxy into the box's namespace.
 
 use std::net::TcpStream;
 #[cfg(target_os = "linux")]
@@ -116,19 +96,6 @@ impl Dialer {
     }
 
     /// The route this dialer actually holds, as an identity to compare later.
-    ///
-    /// Read off the *helper*, not off the box process it was pointed at, and that
-    /// is the whole point. `spawn` forks a helper which enters the box's
-    /// namespaces and then reports; only afterwards did the caller read
-    /// `/proc/<box_pid>/ns/net` for something to compare against. If the box
-    /// process exited in that gap, the helper was holding the namespace perfectly
-    /// well and the read returned `None`, and `box_went_away` treated `None` as
-    /// "nothing to check". Start the box again before the next writer poll and the
-    /// share stayed up for its whole ticket, reporting healthy, while every dial
-    /// went into the abandoned namespace.
-    ///
-    /// The helper is alive for as long as the dialer is, so this cannot fail for
-    /// that reason. `None` means there is genuinely nothing to pin.
     pub fn pinned_route(&self) -> Option<String> {
         #[cfg(target_os = "linux")]
         {
@@ -149,17 +116,7 @@ impl Dialer {
         }
     }
 
-    /// Open a fresh connection to the box's port. Every peer connection gets its
-    /// own: the bridge never multiplexes two peers onto one upstream socket, so
-    /// one peer's keep-alive cannot carry another's request.
-    ///
-    /// Why a dial failed, kept apart because the receipt says different things
-    /// about them and one of them blames the wrong person. `unreached N
-    /// connection(s) were authorized but found nothing listening on port 3000` is
-    /// a sentence about the *user's dev server*, and it was printed for every
-    /// dial failure, including the ones where the route into the box had broken.
-    /// The broken-channel case is sticky, so one lost reply produced a receipt
-    /// asserting hundreds of times that somebody's dev server was down.
+    /// Open a fresh connection to the box's port.
     pub fn connect(&self) -> Result<TcpStream, DialError> {
         #[cfg(target_os = "linux")]
         {
@@ -273,22 +230,6 @@ fn unsupported() -> H5iError {
 // ─── everywhere else ────────────────────────────────────────────────────────
 
 /// The two constructors, refusing.
-///
-/// `Inner::Unsupported` and a `connect` arm for it have been here since the
-/// module was written, and nothing ever built the object on those platforms:
-/// `run::serve` calls `Dialer::spawn`, `run.rs` is compiled everywhere, and
-/// `spawn` existed only under `cfg(target_os = "linux")`. So h5i did not compile
-/// at all for `aarch64-apple-darwin` or `x86_64-pc-windows-msvc`. Found by CI's
-/// cross-check job the first time this branch was pushed through it.
-///
-/// Refusing here rather than returning a dialer that cannot dial: the failure
-/// belongs at `h5i box share`, with a sentence saying why, not at the first
-/// visitor's first request.
-///
-/// macOS left this arm when [`crate::owner`] gave it a route of its own. What
-/// was wrong with the *old* macOS arm was not that it lacked a namespace, but
-/// that it connected to `127.0.0.1:<port>` and called whatever answered "the
-/// box".
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 impl Dialer {
     pub fn spawn(_box_pid: u32, _port: u16) -> Result<Dialer, H5iError> {
@@ -303,24 +244,6 @@ impl Dialer {
 // ─── macOS ──────────────────────────────────────────────────────────────────
 
 /// The macOS route into a box.
-///
-/// There is no namespace here and no helper process: a Seatbelt box's dev server
-/// listens on the *host's* loopback, so the connect is an ordinary one. What is
-/// not ordinary is deciding *what to connect to*, and that is the whole of this
-/// arm.
-///
-/// An earlier version connected to `127.0.0.1:<port>` and treated whatever
-/// answered as the box. It was deleted for the right reason: the box's port and
-/// the host's port are the same port, so that code published whatever happened
-/// to be listening. [`crate::owner`] is what makes the question answerable, and
-/// every dial asks it again.
-///
-/// How many times [`Dialer::resolve`] re-runs a whole attribution pass that
-/// ended on a listener pid which had already exited. Small on purpose: a reaped
-/// pid does not come back, so the next pass sees the surviving listener instead.
-/// More than one attempt is only needed because a box mid-build produces these
-/// continuously. A dial that loses four times in a row is refused rather than
-/// retried forever.
 #[cfg(target_os = "macos")]
 const ATTRIBUTION_ATTEMPTS: usize = 4;
 
@@ -346,20 +269,6 @@ enum Pass {
 #[cfg(target_os = "macos")]
 impl Dialer {
     /// Pin a dialer to one port of one box.
-    ///
-    /// `box_pid` is the box's *session* process, the `h5i` running the shell or the
-    /// command, whose descendants are the box. This differs from the Linux meaning
-    /// of the same argument, a pid *inside* the box's namespaces, because the two
-    /// platforms identify a box differently: there by the namespace a process is in,
-    /// here by the tree a process is under.
-    ///
-    /// Resolved once here so `h5i box share` can refuse with a sentence rather than
-    /// print a ticket that cannot work.
-    ///
-    /// A port with *nothing* on it is not a refusal, and that asymmetry is
-    /// deliberate: an agent about to start its dev server is a perfectly good reason
-    /// to share a port that is not up yet. A port held by a *stranger* is a refusal,
-    /// because there is nothing to wait for.
     pub fn spawn(box_pid: u32, port: u16) -> Result<Dialer, H5iError> {
         // Pinned with its start time, not as a bare number: everything below
         // treats the root pid as the box itself, so a pid that changes hands
@@ -470,21 +379,9 @@ impl Dialer {
             Ownership::Box { addr, pid } if owner::is_descendant(pid, self.mac.root) => {
                 Pass::Settled(Ok(addr))
             }
-            // The re-ask can fail for two reasons that look identical here and are
-            // not the same fact, and reading both as a refusal is what made a busy
-            // box refuse its own visitors.
-            //
-            // A pid that is *still alive* and no longer under the root did change
-            // hands: the number was reused while h5i was looking at it, and what
-            // holds the port now is a process the operator never offered to share.
-            // Refused, and not retried.
-            //
-            // A pid that is *gone* held nothing at all. It is the same shape
-            // `is_alive` already filters out of the listener list one step earlier,
-            // arriving one step later: a box child that inherited the dev server's
-            // listening descriptor across `fork` and exited before the re-ask reached
-            // it. The address it was found on is still the box's, so the pass is
-            // re-run.
+            // The re-ask can fail for two reasons that look identical here and are not the same
+            // fact, and reading both as a refusal is what made a busy box refuse its own
+            // visitors.
             Ownership::Box { pid, .. } if !owner::is_alive(pid) => {
                 Pass::Vanished(DialError::NotTheBox(H5iError::Metadata(format!(
                     "the process found holding port {} (pid {pid}) exited before h5i could \
@@ -583,18 +480,8 @@ impl Dialer {
         Dialer::spawn_inner(Some(box_pid), port)
     }
 
-    /// For a box with no network namespace of its own: the `workspace` tier, where
-    /// nothing is unshared and the port is already on this machine's loopback.
-    ///
-    /// Still forks a helper rather than connecting inline, and that is worth a
-    /// sentence: one code path means one thing to get right, and the caller gets the
-    /// same object with the same pinned destination either way. It also means the fd
-    /// handoff is exercised by every share.
-    ///
-    /// The difference worth stating rather than hiding: with a namespace, this
-    /// dialer is the only route to the shared port. Without one, the port is on
-    /// shared loopback and any local process can reach it directly. The grant table
-    /// governs *this* path; it cannot govern the port itself.
+    /// For a box with no network namespace of its own: the `workspace` tier, where nothing is
+    /// unshared and the port is already on this machine's loopback.
     pub fn spawn_local(port: u16) -> Result<Dialer, H5iError> {
         Dialer::spawn_inner(None, port)
     }
@@ -802,16 +689,7 @@ fn ns_path(buf: &mut [u8; 64], pid: u32, kind: &[u8]) -> *const libc::c_char {
     buf.as_ptr() as *const libc::c_char
 }
 
-/// The helper. Enters the namespaces once, then answers connect requests until
-/// the parent closes its end of the socketpair.
-///
-/// Everything below the fork is allocation-free, and that is a requirement
-/// rather than a style. `Dialer::spawn` is documented as being called before a
-/// runtime starts, but "documented" is not "enforced". A caller that gets it
-/// wrong forks a multi-threaded process, and the child then inherits whatever
-/// locks the other threads held, the allocator's among them. So the path is
-/// built on the stack and the connect takes a `SocketAddr` rather than a
-/// `(&str, u16)`, whose `ToSocketAddrs` allocates.
+/// The helper.
 #[cfg(target_os = "linux")]
 fn helper_main(box_pid: Option<u32>, port: u16, sock: i32) -> i32 {
     // Order matters: the netns is owned by the box's user namespace, so we have
@@ -1003,15 +881,6 @@ impl Drop for Dialer {
 }
 
 /// The macOS route, driven end to end through the real `Dialer`.
-///
-/// [`crate::owner`] tests the decision rule against a table of listeners; these
-/// test that the dialer built on it actually reaches the right socket and
-/// refuses the wrong one: the difference between a correct rule and a correct
-/// feature.
-///
-/// The trick that makes the refusal testable in one process: root the dialer at
-/// a *child* process rather than at ourselves. The box is then a tree that this
-/// test is not in, so a socket the test binds is, by construction, a stranger's.
 #[cfg(all(test, target_os = "macos"))]
 mod mac_tests {
     use super::*;

@@ -1,22 +1,4 @@
 //! What encoding a document is in, and what that changes.
-//!
-//! This engine used to decode every document as UTF-8 and encode every URL as
-//! UTF-8, which is right for most of the web and wrong for the part of it that
-//! predates it. A page served as `euc-jp` came out as replacement characters,
-//! `document.characterSet` did not exist, and a link's query string was
-//! percent-encoded from the wrong bytes, so an agent reading a legacy Japanese
-//! page got the wrong answer and was told nothing.
-//!
-//! Two things follow from a document's encoding, and both are here:
-//!
-//! * Decoding the bytes. [`sniff`] works out which encoding, [`decode`] applies
-//!   it.
-//! * Encoding a URL's query. The URL Standard says a query is encoded with the
-//!   *document's* encoding rather than UTF-8, and that a code point the encoding
-//!   cannot represent becomes an HTML numeric character reference.
-//!
-//! `encoding_rs` owns the label table and the codecs, so the answers come from
-//! the table the standard defines rather than one of ours that would drift.
 
 use encoding_rs::Encoding;
 
@@ -51,23 +33,7 @@ pub fn sniff(bytes: &[u8], content_type: Option<&str>) -> &'static Encoding {
         return encoding;
     }
 
-    // Nothing declared. Browsers do two things here and this engine used to do
-    // only the first, which destroyed exactly the documents this module exists
-    // to rescue.
-    //
-    // Valid UTF-8 is taken as UTF-8: the detection every browser performs, and
-    // right for almost every undeclared page written this century.
-    //
-    // Anything else falls back to windows-1252 rather than to UTF-8, and the
-    // reason is asymmetry of damage. A windows-1252 page read as UTF-8 has every
-    // high byte replaced by U+FFFD and the text is gone, where Chromium reads it
-    // correctly. A UTF-8 page read as windows-1252 is mojibake but lossless.
-    // Given a guess has to be made, the recoverable wrong answer is the better
-    // one, and it is what a browser would show.
-    //
-    // Detection only fires on bytes that *demonstrate* UTF-8. A document of pure
-    // ASCII decodes identically either way, so nothing observable turns on it
-    // except the label, and a browser reports the fallback there.
+    // Nothing declared.
     let has_multibyte = bytes.iter().any(|byte| *byte >= 0x80);
     if has_multibyte && std::str::from_utf8(bytes).is_ok() {
         return encoding_rs::UTF_8;

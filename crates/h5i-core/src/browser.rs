@@ -1,23 +1,4 @@
 //! Browser evidence: collecting what the page said after the agent touched it.
-//!
-//! `h5i box run <box> -- agent-browser click @e2` already produces a receipt for
-//! the command. What it does not produce, and what a reviewer needs, is the
-//! page's answer: the console error the click raised, the exception it threw,
-//! the request that came back 500. Without those the browser half of an export
-//! is the agent's own testimony.
-//!
-//! So h5i drains them itself, right after the run, in the same box under the
-//! same policy. Three properties fall out of doing it here:
-//!
-//! * Timing is ours. The drain happens at a point the agent does not choose, so
-//!   evidence cannot be collected only when it is flattering.
-//! * Scope is ours. The cursor lives host-side, outside every write grant the
-//!   box has (roadmap 5.7), so a record already written cannot be walked back.
-//! * Absence is visible. A run that invoked a browser verb and produced no
-//!   evidence block is marked `unavailable`, not rendered as a clean page.
-//!
-//! What this is not: a containment boundary. The strings come from a browser
-//! inside the box, so the lane is box-claimed and the docs say so.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -70,16 +51,10 @@ struct Cursor {
 /// is a serviceable session fingerprint, readable from the host without asking
 /// the box anything.
 pub(crate) fn session_id(tmp_root: &Path) -> Option<String> {
-    // Both directories: under mediation the daemon's pid file is in the private
-    // one and the shim mirrors only .version/.config/.stream, so looking at the
-    // visible directory alone returns None on every mediated run, and a cursor
-    // that never sees a session change never resets.
-    //
-    // Bounded in both directions, because this walks `<env>/tmp`, one of the two
-    // paths a box can write, from the *host*. A pid file holds a decimal
-    // integer; without a cap, a box could put four gigabytes in one and have the
-    // host allocate it, or fill the directory and have the host build an
-    // unbounded `ids` vector out of the names.
+    // Both directories: under mediation the daemon's pid file is in the private one and the
+    // shim mirrors only .version/.config/.stream, so looking at the visible directory alone
+    // returns None on every mediated run, and a cursor that never sees a session change never
+    // resets.
     const MAX_PID_FILES: usize = 64;
     const MAX_PID_BYTES: u64 = 64;
     let mut ids: Vec<String> = std::fs::read_dir(daemon_dir(tmp_root))
@@ -129,17 +104,6 @@ fn write_cursor(env_dir: &Path, c: &Cursor) {
 }
 
 /// Host path of the box's agent-browser socket directory.
-///
-/// `browser_env` points the daemon at `/tmp/agent-browser`, and at the kernel
-/// tiers `/tmp` is the per-env scratch backed by `<env>/tmp`, so the socket the
-/// box created is visible from here. That is what makes the "is there a browser
-/// to ask?" check free: no exec, no daemon launch, just a directory listing.
-///
-/// Takes the root rather than deriving `<env>/tmp` itself: that derivation is
-/// only correct on Linux kernel tiers, and getting it wrong means the liveness
-/// gate is always false and the evidence drain is silently skipped, so a run
-/// looks clean because nothing was ever collected. `env::host_tmp_root` is the
-/// single place that knows the mapping.
 fn socket_dir(tmp_root: &Path) -> PathBuf {
     tmp_root.join("agent-browser")
 }
@@ -153,20 +117,6 @@ fn daemon_dir(tmp_root: &Path) -> PathBuf {
 }
 
 /// Is a browser actually running in this box right now?
-///
-/// This gate exists because the drain command *starts* a browser if none is
-/// running. Without it, a `cargo build` in a browser box would launch Chrome
-/// purely to be told the console was empty, and every run would report a
-/// spuriously clean page.
-///
-/// A session is a socket *and* a pid file together, in one directory. Either
-/// alone is a leftover: a stale `.pid` outlives a daemon that died, and since
-/// h5i began mediating, a `.sock` in the box-visible directory may be h5i's own
-/// listener, bound before the box starts, which would make this gate
-/// unconditionally true. Only a running daemon leaves both.
-///
-/// Both directories are searched, because under mediation the real daemon binds
-/// the private one while an unmediated box still uses the visible one.
 pub fn browser_is_live(tmp_root: &Path) -> bool {
     [socket_dir(tmp_root), daemon_dir(tmp_root)]
         .iter()

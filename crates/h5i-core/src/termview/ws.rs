@@ -1,20 +1,4 @@
 //! A WebSocket client, cut down to what a viewer needs.
-//!
-//! The box's stream server is a WebSocket server, so reaching it means being a
-//! WebSocket client. What there *is* a way around is taking a full async stack
-//! for it: this viewer opens exactly one connection, to one server, over a
-//! socket the host already holds, and never negotiates an extension or a
-//! subprotocol. That is a few hundred lines of RFC 6455 rather than a
-//! dependency, and it keeps the code between an untrusted box and the host's
-//! terminal small enough to read in one sitting.
-//!
-//! Everything the box sends is untrusted input. The reader therefore treats
-//! every length as hostile until it is under a cap, refuses reserved opcodes,
-//! and never lets a fragmented message grow without bound.
-//!
-//! Deliberately *not* implemented: `permessage-deflate`, never negotiated so
-//! never received, and server-to-client masking, which RFC 6455 forbids and
-//! which we reject rather than accommodate.
 
 use std::io::{Read, Write};
 

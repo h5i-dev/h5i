@@ -347,21 +347,7 @@ fn box_dir(h5i_root: &std::path::Path, name: &str) -> anyhow::Result<std::path::
     Ok(h5i_core::env::env_dir(h5i_root, &m.agent, &m.slug))
 }
 
-/// The box must have a network namespace of its own, and a live process to
-/// borrow it from. Without one, "the box's port 3000" and "this machine's port
-/// 3000" are the same port, and a share would publish whatever happened to be
-/// listening on the host.
-///
-/// The condition is deliberately "does this box have a netns of its own", not a
-/// list of tiers. A `process`-tier box gets one when its profile denies egress
-/// and shares the host's when it does not, so naming tiers here would be advice
-/// that is wrong half the time.
-///
-/// One function per platform rather than one function with three `cfg` blocks
-/// inside it. The unsupported branch used to be written as `let box_pid: u32 =
-/// anyhow::bail!(…)`, and `bail!` expands to a `return`: on any other target
-/// that binding diverged, which made every binding above it unused and every
-/// statement below it unreachable, four hard errors under `-D warnings`.
+/// The box must have a network namespace of its own, and a live process to borrow it from.
 #[cfg(target_os = "linux")]
 fn box_process(
     dir: &std::path::Path,

@@ -1,19 +1,4 @@
 //! End-to-end tests for the box console (`h5i ui`).
-//!
-//! The unit tests in `crates/h5i-core/src/server.rs` cover the pure decisions:
-//! who is authorized, what a receipt adds up to. They cannot catch the failures
-//! that actually take a dashboard down: a route path that no longer matches its
-//! handler's extractor, a gate layered so it never runs, a handler that panics on
-//! a repository with no boxes, an embedded bundle that is really the build-script
-//! stub. Those need the server up and something talking to it.
-//!
-//! So these drive the *compiled binary*, not the router: spawn `h5i ui` in a
-//! throwaway repository, read the URL it prints, and speak HTTP/1.1 at it over a
-//! socket. That covers the CLI wiring, the token print, the gate, the embedded
-//! assets and the JSON in one pass, and needs no HTTP client dependency to do it.
-//! The same reason `crates/h5i-core/src/view.rs` writes its own requests.
-//!
-//! Gated on the `web` feature: without it there is no `ui` subcommand to spawn.
 #![cfg(feature = "web")]
 
 use std::io::{BufRead, BufReader, Read, Write};

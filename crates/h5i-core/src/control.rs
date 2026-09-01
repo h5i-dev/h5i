@@ -1,25 +1,4 @@
 //! The browser control lock.
-//!
-//! Two clients can drive one browser: the agent, through `agent-browser`, and a
-//! human, through the viewer's input channel. Neither CDP nor agent-browser
-//! arbitrates between them. Both dispatch input, and the result is a mess neither
-//! can reason about. So the lock is h5i's, and it copies Neko's semantics
-//! (`request` / `take` / `release`) rather than inventing new ones.
-//!
-//! Three rules the design depends on:
-//!
-//! * The agent holds control by default. A box exists to let an agent work; it
-//!   should not have to ask.
-//! * A human takes control, never asks for it. Someone reaching for the viewer
-//!   wants the pointer now, and the agent is a program that can wait.
-//! * Handing control back invalidates what the agent knew. The human moved the
-//!   page, so every `@ref` from the agent's last snapshot may now point at
-//!   something else. The agent is told to re-snapshot before its next action, and
-//!   acting without one is refused rather than mis-clicked.
-//!
-//! State lives at `<env>/control.json`, host-owned like the rest of the env
-//! directory: the box can read who holds control but cannot grant itself the lock
-//! (roadmap 5.4, 5.7).
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

@@ -1,24 +1,5 @@
-//! End-to-end tests for `h5i env`: isolated agent environments
-//! (worktree + sandbox + provenance, docs/environments-design.md).
-//!
-//! These drive the compiled binary as a subprocess against real git
-//! repositories and prove the properties that define the feature:
-//!
-//!   1. `create` fuses a frozen base, a code branch, a git worktree under
-//!      `.git/.h5i/env/`, a forked reasoning branch, and a pinned policy.
-//!   2. `run` is capture-wrapped and policy-enforced: evidence lands in
-//!      `refs/h5i/objects` tagged with the env id and policy digest, and the
-//!      child's exit code passes through.
-//!   3. `propose`/`apply` is the only road into the parent branch. Apply
-//!      refuses without propose, and the mediated commit fails closed on
-//!      path-allowlist violations.
-//!   4. Isolation claims fail closed: an unsatisfiable claim refuses at
-//!      `create` rather than silently downgrading.
-//!   5. The kernel sandbox actually confines. These assertions are
-//!      *capability-gated* and skip cleanly on hosts without Landlock or
-//!      userns.
-//!
-//! Run with `cargo test --test env_integration -- --nocapture`.
+//! End-to-end tests for `h5i env`: isolated agent environments (worktree + sandbox +
+//! provenance, docs/environments-design.md).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -514,19 +495,8 @@ fn create_names_the_fix_when_there_is_no_repo_or_no_commit() {
     );
 }
 
-/// A directory under `.git/worktrees/` that is not a worktree registration must
-/// not be able to stop `create`, for this env or any other.
-/// libgit2's `git_worktree_lookup` fails on such a directory, and
-/// `git_repository_foreach_worktree` hands that failure up as `1` rather than
-/// as an error, which is what `git_branch_is_checked_out` reads as "yes". So
-/// one leftover directory made libgit2 answer *checked out* for every branch in
-/// the repo, and `create` died on a branch it had made two lines earlier.
-/// Nothing about that message points at the leftover, and no amount of picking
-/// a different name gets past it.
-/// Several leftovers, not one: libgit2 filters the invalid entries out of
-/// `git_worktree_list` by removing them from a vector *while iterating it*, so
-/// adjacent entries survive the filter and reach the lookup that poisons the
-/// answer.
+/// A directory under `.git/worktrees/` that is not a worktree registration must not be able to
+/// stop `create`, for this env or any other.
 #[test]
 fn stale_worktree_registrations_do_not_break_create() {
     let r = Repo::new();
@@ -1895,19 +1865,9 @@ fn supervised_profile_env(slug: &str, profile: &str) -> Option<Repo> {
     }
 }
 
-/// The private `/tmp` bind must not hide the box's own workspace when the
-/// repository itself lives under `/tmp`, which every `tempfile` repo in this
-/// suite does and which is the common case for CI.
-/// This is the M4 write-up's first finding, and the write-up is wrong: it
-/// recorded the `supervised` plus agent-profile `EINVAL` as "the workspace is
-/// under `/tmp`, so the private-`/tmp` redirect shadows the worktree", and
-/// called it an unfixed footgun that `create` should refuse. The bind-ordering
-/// fix (`home_binds_in_mount_order`, which mounts `/tmp` last) already made
-/// this work, and a `create`-time refusal would have rejected a configuration
-/// that runs correctly, including this suite's own fixtures.
-/// So the test pins the working behaviour: the workspace is visible from
-/// inside, and `/tmp` is still the empty per-env scratch rather than the
-/// host's.
+/// The private `/tmp` bind must not hide the box's own workspace when the repository itself
+/// lives under `/tmp`, which every `tempfile` repo in this suite does and which is the common
+/// case for CI.
 #[test]
 fn a_workspace_under_tmp_survives_the_private_tmp_bind() {
     let _serial = supervised_guard();
@@ -1941,18 +1901,9 @@ fn a_workspace_under_tmp_survives_the_private_tmp_bind() {
     );
 }
 
-/// The gap the M4 live run exposed: no test ran an agent-family profile at
-/// `supervised`, and `supervised` is the only kernel tier that can host one,
-/// since `process` refuses the egress these profiles need. Both M4 surprises
-/// lived in that gap.
-///
-/// The property under test is the socket gate's `AF_UNIX` verdict, because that
-/// is what silently bricked the browser box: the `agent-browser` daemon's
-/// control socket is a filesystem-bound `AF_UNIX` listener, the gate denied the
-/// family for every profile, and the daemon died before writing a word. A
-/// profile-scoped grant is the fix, so the test has to be per-profile:
-/// `browser` gets `AF_UNIX`, and the neighbouring profile that did not ask for
-/// it still does not.
+/// The gap the M4 live run exposed: no test ran an agent-family profile at `supervised`, and
+/// `supervised` is the only kernel tier that can host one, since `process` refuses the egress
+/// these profiles need.
 #[test]
 fn a_browser_box_at_supervised_gets_af_unix_and_its_neighbours_do_not() {
     let _serial = supervised_guard();
@@ -1974,16 +1925,9 @@ fn a_browser_box_at_supervised_gets_af_unix_and_its_neighbours_do_not() {
         return;
     }
 
-    // Bind a real filesystem-bound listener, which is what the daemon does,
-    // rather than just socket(), so a gate that allowed the family but a
-    // Landlock grant that refused MAKE_SOCK would still be caught.
-    // Under `TMPDIR`, not a literal `/tmp`: only the Linux tiers bind-mount a
-    // per-env directory over `/tmp`, and on macOS the literal path is denied
-    // outright. Bound from *inside* the directory, so `sun_path` stays a bare
-    // filename: a box's private tmp is
-    // `<repo>/.git/.h5i/env/<agent>/<slug>/tmp`, and with the repo under a temp
-    // dir the absolute socket path runs past the 104-byte `sun_path` limit,
-    // which would read here as a policy denial.
+    // Bind a real filesystem-bound listener, which is what the daemon does, rather than just
+    // socket(), so a gate that allowed the family but a Landlock grant that refused MAKE_SOCK
+    // would still be caught.
     let script = "import socket,os,errno\n\
         d=os.path.join(os.environ.get('TMPDIR','/tmp'),'gate-probe')\n\
         os.makedirs(d,exist_ok=True)\n\

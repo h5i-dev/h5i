@@ -1,25 +1,4 @@
 //! ES modules, loaded through the broker like everything else.
-//!
-//! # Bare specifiers are an error, not a CDN
-//!
-//! `import "lodash"` has no meaning on the web without an import map: the
-//! specifier names nothing a browser can fetch. A loader that quietly rewrites
-//! it (Thalora maps bare specifiers to `https://esm.sh/{}`) turns one line of
-//! page script into an unrequested request to a third party chosen by the engine
-//! rather than by the page. Inside a sandbox whose claim is that every request is
-//! policy-checked and receipted, an engine that invents destinations is the wrong
-//! kind of helpful.
-//!
-//! So a bare specifier is refused, by name, with what would have to exist for it
-//! to work. The agent reads that and knows the page needs a bundle it did not
-//! get; it does not silently acquire a dependency on a CDN.
-//!
-//! # Every module fetch is a brokered fetch
-//!
-//! Same broker, same policy, same receipts, same document origin, so a module
-//! cannot reach the box's dev server from a page the web served
-//! (roadmap-history.md §B3.1). A private HTTP client here would be the one
-//! request class in the engine with no record.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -169,20 +148,8 @@ impl ModuleLoader for BrokerModuleLoader {
             return Ok(cached.clone());
         }
 
-        // `send_script`, not `send_from`, and that is the same-origin policy
-        // rather than bookkeeping.
-        //
-        // A module script is a `cors` request in every browser (unlike a classic
-        // `<script src>`, which is why JSONP exists) and this fetched one with no
-        // CORS context at all: no `Origin` header, no `Access-Control-Allow-Origin`
-        // check on the answer, and the response handed back with full exposure.
-        // `import("https://other.example/x.js")` was a cross-origin body fetched,
-        // parsed and *evaluated in this page's realm*, the one thing the CORS rule
-        // on module scripts exists to refuse. Same shape as the hole `EventSource`
-        // had.
-        //
-        // `same-origin` credentials, which is what a module script without a
-        // `crossorigin` attribute gets.
+        // `send_script`, not `send_from`, and that is the same-origin policy rather than
+        // bookkeeping.
         let outcome = self.host.broker.send_script(
             &resolved,
             "GET",

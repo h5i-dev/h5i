@@ -1,17 +1,5 @@
-//! Wire protocol: JSON encoding of the Effect / Event types that cross the
-//! wasm<->host boundary, plus the init contract and the dump() shape. One
-//! place defines the schema so the wasm wrapper and native hosts cannot drift.
-//!
-//! init input:   {"task": str, "tools": [str...], "workspace_note": str,
-//!                "model": str?, "max_steps": n?}
-//! step input:   {"model_reply": {"body": str}}
-//!             | {"model_failed": {"status": n, "body": str}}   (0 = transport)
-//!             | {"tool_finished": {"call_id": str, "ok": bool, "output": str}}
-//! effect out:   {"call_model": {"request": str}}   (raw chat-completions body)
-//!             | {"run_tool": {"call_id": str, "name": str, "args": obj}}
-//!             | {"done": {"status": str, "result": str}}
-//!             | {"fatal": {"message": str}}        (init/protocol failures)
-//! dump out:     {"steps": n, "messages": [chat-completions message objs]}
+//! Wire protocol: JSON encoding of the Effect / Event types that cross the wasm<->host
+//! boundary, plus the init contract and the dump() shape.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;

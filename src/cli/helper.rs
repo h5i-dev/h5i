@@ -1,26 +1,4 @@
 //! The helper lane: an outside program, run deliberately, recorded as one.
-//!
-//! `h5i browser transcript` reads the captions a page declares. YouTube keeps its
-//! transcript behind the player's JSON API instead, reachable only by a program
-//! that knows that API. yt-dlp is that program, and this module runs it.
-//!
-//! Why a lane and not a feature. The engine's log claims a request not in it did
-//! not happen, which holds because the engine *is* the HTTP client. A helper
-//! opens its own sockets, so its fetches cannot appear there, and writing them
-//! in anyway would dress an observation up as a decision record. They stay out
-//! and get recorded elsewhere: a *host-observed* row in
-//! [`bs::HELPERS_FILE`](h5i_core::browser_session::HELPERS_FILE) naming the
-//! program and the exact argv h5i built.
-//!
-//! Opt-in at every layer: a cargo feature, then `--via yt-dlp`, never a default
-//! and never a fallback. Containment is the session's placement and nothing
-//! more, so [`evidence`] reports the network boundary from the session's lane
-//! rather than assuming a box bought one. A boxed session whose box lacks yt-dlp
-//! is refused rather than served from the host.
-//!
-//! The child gets no credential: its environment is built here from a short list
-//! excluding `H5I_SECRET_*`, and `--ignore-config` keeps a host config from
-//! adding flags that would make the recorded argv untrue.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -120,17 +98,6 @@ pub struct Outcome {
 }
 
 /// Read a transcript with the helper.
-///
-/// `url` is the media to read. It is *not* navigated to first, which is the one
-/// place this lane's flags differ in meaning from the engine's: the engine reads
-/// the page it is on, and the helper reads a URL directly, so moving the session
-/// to a page nobody is going to read would be a page load spent on nothing.
-///
-/// Where a run is placed, and what it is recorded against: the three facts this
-/// lane takes from a session and no others, an id to name the workspace and the
-/// log, a placement to run in, and a lane to report honestly. Naming them makes
-/// the second case expressible: a `--via` run with a `--url` needs no page, so
-/// it needs no session.
 pub enum Site<'a> {
     /// A session: the helper runs where that session runs, inside its box for a
     /// boxed one, and its row lands in that session's helper log.
@@ -189,19 +156,8 @@ pub fn transcript(
     let work = workspace(root, site)?;
     scrub(&work)?;
 
-    // The default is written down once, here, and used for *both* the pattern
-    // yt-dlp is given and the file chosen out of what comes back. Deriving it
-    // twice is what went wrong the first time this ran against a real video.
-    //
-    // Exact, not a prefix. yt-dlp matches `--sub-langs` with a regex `fullmatch`,
-    // so `en` means `en` and `en.*` means every tag beginning with it. Against
-    // YouTube that widening is three downloads instead of one: a video's `en.*`
-    // is `en` plus `en-de` and `en-en`, the author's captions and two machine
-    // translations of them. The first live run asked that way, got rate-limited
-    // on the third file, lost the metadata that is written after the last one,
-    // and returned a translation of a translation.
-    //
-    // The value is still a regex, so `--lang 'en.*'` is the escape hatch.
+    // The default is written down once, here, and used for *both* the pattern yt-dlp is given
+    // and the file chosen out of what comes back.
     let want = lang.unwrap_or("en");
 
     // One tag, one invocation, both kinds of caption for it.
@@ -316,18 +272,6 @@ fn check_url(raw: &str) -> anyhow::Result<String> {
 }
 
 /// Start from a directory this run just made, or refuse.
-///
-/// Not a tidy-up. [`collect`] reads whatever `.vtt` and `.info.json` it finds
-/// here and reports it as the transcript, so anything left in this directory by
-/// anyone becomes an answer h5i hands a model with an `evidence:` line and a box
-/// receipt beside it. The directory is host-global on a workspace-tier box,
-/// whose `/tmp` *is* the host's, so on a shared machine any other user can
-/// create it first, plant a file, and make it undeletable.
-///
-/// This used to be `let _ = remove_dir_all(...)` followed by `create_dir_all`,
-/// exactly the wrong pair: the wipe's failure was discarded and `create_dir_all`
-/// is happy with a directory that already exists, so a planted transcript
-/// survived both calls and was read. `create_dir` refuses an existing directory.
 fn scrub(work: &Workspace) -> anyhow::Result<()> {
     match std::fs::remove_dir_all(&work.host) {
         Ok(()) => {}
@@ -362,24 +306,6 @@ struct Workspace {
 }
 
 /// Pick a directory both h5i and the helper can name.
-///
-/// For a host session that is the session directory, which h5i already owns. For
-/// a boxed one it is beside the control socket in the box's `/tmp`, whose two
-/// views the session record already carries: `control.file` is the box's and
-/// `control.witness` is this machine's. Deriving them here rather than
-/// re-computing the box's tmp mapping is the same rule the rest of this file
-/// follows: two places that must agree about a path are two places that can stop
-/// agreeing.
-///
-/// The workspace directory's name has to carry the session id. A bare `helper`
-/// is unique per session on the host, where the parent is the session's own
-/// directory. In a box it is not: the parent is the box's `/tmp`, and on a
-/// workspace-tier box that is the *host's* `/tmp`, so every box on the machine
-/// would share one `/tmp/helper`. Two boxes reading transcripts at once would
-/// clear each other's output mid-run.
-///
-/// The id rather than the name: a name can be reused once the session it named
-/// has ended, which is what makes it comfortable to type and useless here.
 fn leaf(site: &Site) -> String {
     format!("helper-{}", site.id())
 }
@@ -419,16 +345,9 @@ fn workspace(root: &Path, site: &Site) -> anyhow::Result<Workspace> {
                     anyhow::anyhow!("this session's record does not name the box's own /tmp")
                 })?
                 .join(leaf(site));
-            // `None` means this machine cannot see the box's `/tmp` at all: an
-            // image-backed tier is the designed reason, and a session that died before
-            // its record was complete is the accidental one. Either way it is refused
-            // rather than worked around, because the helper would run, write somewhere
-            // h5i cannot read, and hand back a successful-looking run that produced
-            // nothing.
-            //
-            // The message does not name a cause it cannot check. It used to say "keeps
-            // its /tmp inside its image", which is one of the two and reads as a fact
-            // about the tier, wrong and confidently so for a workspace box.
+            // `None` means this machine cannot see the box's `/tmp` at all: an image-backed
+            // tier is the designed reason, and a session that died before its record was
+            // complete is the accidental one.
             let on_host = session
                 .control
                 .witness
@@ -728,16 +647,8 @@ struct Read {
     automatic: bool,
     cues: Vec<h5i_browser_light::transcript::Cue>,
     truncated: Option<String>,
-    /// The language tags this video *has*, from the info file rather than from
-    /// what happened to be downloaded.
-    ///
-    /// The difference matters now that one tag means one file: a run that matched
-    /// nothing would otherwise have nothing to say about why, and "there are no
-    /// captions" and "there are captions, in tags you did not ask for" are the
-    /// two answers a caller must be able to tell apart.
-    ///
-    /// Authored captions first and separately, because YouTube lists a couple of
-    /// hundred machine translations beside them.
+    /// The language tags this video *has*, from the info file rather than from what happened to
+    /// be downloaded.
     authored: Vec<String>,
     automatic_tags: Vec<String>,
 }
@@ -797,16 +708,8 @@ fn collect(dir: &Path, want: Option<&str>, max_bytes: usize) -> Read {
 
     if let Some(first) = chosen {
         read.language = tag_of(first);
-        // yt-dlp's own spelling for an automatic track, from the info file's two
-        // lists rather than from the filename.
-        //
-        // The marker in a filename only appears on a *translated* automatic track
-        // (`en-orig`, `a.en`). The case this lane exists to serve, a video with
-        // automatic captions and no authored ones, gets written as plain
-        // `<id>.en.vtt`, identical to an authored track. Reading the name therefore
-        // said `automatic: false` exactly where the warning matters most, and
-        // dropped "machine-transcribed, names are frequently wrong" from the one
-        // transcript that needed it.
+        // yt-dlp's own spelling for an automatic track, from the info file's two lists rather
+        // than from the filename.
         read.automatic = read
             .language
             .clone()
@@ -982,18 +885,6 @@ fn render(url: &str, site: &Site, read: &Read, note: &str) -> Value {
 }
 
 /// What saw this lane's traffic, said without rounding up.
-///
-/// Branching on the session's lane, not on its placement, and that distinction
-/// is the whole of this function. Being in a box is not the same as being behind
-/// a boundary: [`bs::Session::lane_for`] awards `HostObserved` only for
-/// enforcement outside the engine, and a boxed session on a tier that confines
-/// files and environment but not network is `EngineClaimed`.
-///
-/// The first version claimed the boundary for every boxed session, and on this
-/// host that was already false the moment it was written: the tiers that enforce
-/// egress cannot hold a resident browser session on Linux today, so a boxed
-/// session is on `workspace` or `process`, and neither has a network boundary at
-/// all.
 fn evidence(site: &Site) -> String {
     let common = "It is not the engine, so none of its fetches are in `h5i browser requests`. \
                   The run itself is in `h5i browser audit`.";

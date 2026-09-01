@@ -1,31 +1,4 @@
-//! Whose port is this? The macOS answer to what Linux answers with a namespace.
-//!
-//! On Linux the box's server listens in its own netns and [`crate::dialer`] is
-//! the only route in. A Seatbelt box binds the *host's* loopback, deliberately,
-//! so the two ports are one port and the command used to refuse rather than
-//! guess. It no longer has to: Darwin will say which process holds a listening
-//! socket, and h5i knows the box's process tree.
-//!
-//! The hazard is not theoretical. Port 3000 once held the box's `python3 -m
-//! http.server` on `*:3000` and a leftover `serve.py` on `127.0.0.1:3000`; a
-//! plain connect reached the stranger and would have published it under a
-//! hostname h5i minted. So the test is not "is the box listening" but "is the
-//! box the unambiguous winner for this address".
-//!
-//! Asked of the kernel: `proc_listallpids`, `PROC_PIDTBSDINFO` for the tree,
-//! `PROC_PIDLISTFDS` and `PROC_PIDFDSOCKETINFO`, all unprivileged for our own
-//! processes.
-//!
-//! Two limits, recorded rather than argued away. Only same-uid processes answer
-//! `PROC_PIDLISTFDS`, so another user's listener can never be attributed to the
-//! box but cannot be counted as a competitor either; that bites only when the
-//! box holds a *wildcard* and another user holds a *more specific* address on
-//! the same port. And the answer is a snapshot: a same-uid process can add a
-//! more specific bind before the connect and Darwin offers no handle on "the
-//! socket I resolved". Nothing is cached, so the window is one connection wide.
-//!
-//! [`decide`] is pure and compiled everywhere, so the rule that decides what
-//! gets published is unit-tested on both CI platforms.
+//! Whose port is this?
 
 // Only `process_tree` needs it, and that is a Darwin syscall walk, so on any
 // other target this import is unused, which `-D warnings` makes fatal.
@@ -64,16 +37,6 @@ pub enum Ownership {
 }
 
 /// Where h5i would dial, in the order it would prefer, and what beats what.
-///
-/// The kernel picks the listener for an incoming connection by *specificity*: a
-/// socket bound to the exact address beats one bound to the wildcard. So "the
-/// box is listening on port 3000" is not enough to know the box will answer.
-/// The address decides, and a stranger on `127.0.0.1:3000` takes the connection
-/// from a box on `0.0.0.0:3000`.
-///
-/// Both loopback addresses are candidates because a dev server may bind either,
-/// and the IPv4 one is preferred only as a tie-break: it is what a browser
-/// resolving `localhost` most often reaches.
 const DIAL_CANDIDATES: [IpAddr; 2] = [
     IpAddr::V4(Ipv4Addr::LOCALHOST),
     IpAddr::V6(Ipv6Addr::LOCALHOST),
@@ -102,27 +65,6 @@ fn specificity(listen: &SocketAddr, dial: IpAddr) -> Option<u8> {
 }
 
 /// Decide who answers, for one port, given every listener on it.
-///
-/// Fail-closed by construction: the box is reported as the owner only when it
-/// wins a candidate address outright. Every other shape (nobody, a stranger, a
-/// tie) is returned as itself, so the caller can say which one happened instead
-/// of printing one message for four different situations.
-///
-/// `is_box` is asked rather than a set consulted, and that carries weight. A
-/// precomputed set is a snapshot, and the thing it describes moves: a box spawns
-/// processes constantly and a child inherits its parent's descriptors across
-/// `fork`, so for the moment before `exec` it genuinely *does* hold the dev
-/// server's listening socket. Judged against a snapshot taken microseconds
-/// earlier it is not yet in the box, so it looks like a *stranger* on the same
-/// address, which is `Contested`, and a refusal.
-///
-/// Not theoretical: it is what a concurrency test found on the first run, with
-/// `/usr/bin/true` reported as co-holding the dev server's port. In production
-/// it means a share that intermittently refuses its own visitors while the box
-/// is busy, the worst shape a bug can take, because it looks like the network.
-///
-/// Asking a predicate lets the caller answer for a pid the snapshot has never
-/// heard of, by walking its ancestry live ([`is_descendant`]).
 pub fn decide(listeners: &[Listener], port: u16, is_box: impl Fn(u32) -> bool) -> Ownership {
     let on_port: Vec<&Listener> = listeners.iter().filter(|l| l.addr.port() == port).collect();
     if on_port.is_empty() {
@@ -130,17 +72,6 @@ pub fn decide(listeners: &[Listener], port: u16, is_box: impl Fn(u32) -> bool) -
     }
 
     // Dial in the family the box actually binds, and try that one first.
-    //
-    // Not a preference but a correctness fix, and the case that forces it
-    // cannot be seen in `insi_vflag` at all: a socket bound `[::]` with
-    // `IPV6_V6ONLY` *on* and one with it *off* are both reported as `[::]`, and
-    // only the second answers a connection to `127.0.0.1`. Measured, not
-    // assumed. So a box whose only listener is `[::]` must be dialled at
-    // `[::1]`, and dialling it at `127.0.0.1` gets `ECONNREFUSED` from a
-    // v6-only server that is running perfectly well, reported to its owner as
-    // "nothing is listening".
-    //
-    // A box that binds a real IPv4 socket keeps the IPv4 dial.
     let box_binds_v4 = on_port.iter().any(|l| is_box(l.pid) && l.addr.is_ipv4());
     let candidates: [IpAddr; 2] = if box_binds_v4 {
         DIAL_CANDIDATES
@@ -232,24 +163,6 @@ pub fn decide(listeners: &[Listener], port: u16, is_box: impl Fn(u32) -> bool) -
 }
 
 /// Is the box's root still the process h5i pinned, or has its pid changed hands?
-///
-/// The rule, kept pure so it is compiled and tested on both CI platforms.
-///
-/// Why the root needs this at all. `is_descendant(pid, root)` returns true the
-/// instant `pid == root`, and [`process_tree`] seeds its set with `root`, so
-/// whoever holds the root pid is the box *wholesale*, along with everything
-/// beneath it. h5i verifies that pid's identity when it resolves it and again on
-/// its three-second poll, but the dialer held a bare number in between and every
-/// dial trusted it.
-///
-/// A same-user process can end the box's session and race for its pid (Darwin
-/// hands them out sequentially and wraps) and until the next poll its listener
-/// on the shared port is attributed to the box and published. It does not even
-/// need an attacker: an unrelated process that inherits the pid and happens to
-/// listen on the same port is the same outcome.
-///
-/// Fails closed on `None`: a root whose start time cannot be read is a root that
-/// is gone, and "cannot tell" is not "unchanged".
 pub fn root_unchanged(pinned: u64, now: Option<u64>) -> bool {
     now == Some(pinned)
 }
@@ -382,21 +295,6 @@ fn display_name(raw: &str) -> Option<String> {
 }
 
 /// Does this process still exist?
-///
-/// Asked about the *owner of a listening socket*, and the answer decides whether
-/// that socket is a competitor at all. A pid that has exited holds nothing, the
-/// kernel having closed its descriptors, so a scan that caught it a moment ago
-/// is describing something already gone.
-///
-/// Without this, such a listener is worse than stale, it is *hostile*:
-/// [`is_descendant`] cannot resolve the ancestry of a process that no longer
-/// exists, so it answers "not the box", and [`decide`] reads a listener that is
-/// not the box's on the box's own address as a stranger, which is a refusal. A
-/// busy box's transient children are exactly this shape, and they inherit the
-/// dev server's socket on the way past.
-///
-/// `kill(pid, 0)` rather than a table walk: one syscall, and it answers the only
-/// question being asked.
 #[cfg(target_os = "macos")]
 pub fn is_alive(pid: u32) -> bool {
     // SAFETY: signal 0 performs the permission and existence checks and sends
@@ -405,21 +303,6 @@ pub fn is_alive(pid: u32) -> bool {
 }
 
 /// Is `pid` still under `root`, asked *now* and walked upwards?
-///
-/// [`process_tree`] answers the same question downwards, and the two differ in
-/// when they are true rather than in what they mean. The tree is a snapshot, and
-/// [`listening_sockets`] runs after it, so between the two a box child can exit,
-/// the kernel can hand its pid to something else, and that something else can
-/// bind the shared port. Its socket is then found under a pid the snapshot
-/// vouches for, and h5i dials a stranger believing it is the box.
-///
-/// Re-asking upwards from the winner closes it without being wrong in the other
-/// direction: intersecting two tree snapshots would also drop a *legitimate* dev
-/// server that started between them, and turn a millisecond of timing into "port
-/// 3000 is held by something that is not part of this box".
-///
-/// Bounded, because a walk over `ppid` is only a tree while the process table is
-/// consistent, and this reads it one entry at a time without a lock.
 #[cfg(target_os = "macos")]
 pub fn is_descendant(pid: u32, root: u32) -> bool {
     let mut at = pid;
@@ -437,24 +320,6 @@ pub fn is_descendant(pid: u32, root: u32) -> bool {
 }
 
 /// Every pid on the machine, grown until the answer provably fits.
-///
-/// The same truncation as [`fds_of`] and the same consequence: a process that
-/// falls off the end of this list has all of its sockets go unseen, so a
-/// stranger holding the shared port becomes invisible and the box looks like the
-/// only listener.
-///
-/// A unit this gets away with. `proc_listallpids` returns a count of *bytes*, as
-/// `proc_listpids` does throughout `proc_info`, which is why [`fds_of`] divides
-/// its answer by the element size and this does not. The arithmetic below
-/// therefore treats four bytes as four pids: the buffer comes out four times
-/// larger than it needs to be, and `n < count` compares a byte count against a
-/// slot count.
-///
-/// It is correct anyway, and only by that oversizing: the buffer is never the
-/// binding constraint, so the answer is never truncated, and the comparison errs
-/// towards growing. It is recorded because it is a trap for the next person:
-/// making the allocation "right" by dividing by four, without also fixing the
-/// comparison, turns a harmless overshoot into silent truncation.
 #[cfg(target_os = "macos")]
 fn all_pids() -> Vec<u32> {
     /// Far past any attainable process count (`kern.maxproc` is in the
@@ -502,22 +367,7 @@ fn parent_of(pid: u32) -> Option<u32> {
     (got == size).then_some(info.pbi_ppid)
 }
 
-/// Every descriptor a process holds. *All* of them, or none.
-///
-/// The kernel fills the buffer it is given and reports how much it wrote; it
-/// does not say "there was more". So a buffer that comes back exactly full is
-/// indistinguishable from a complete answer, and the list is ordered by
-/// descriptor number, so what a full buffer drops is the *highest* fds.
-///
-/// Sizing once and adding fixed slack made that a hole rather than a rough edge.
-/// A process can open descriptors between the sizing call and the fetch, and one
-/// that wants to can do it deliberately: open past the slack, bind the shared
-/// port late so its listening socket has a high number, and keep opening so the
-/// count stays ahead. Its listener then falls off the end of the scan, and a
-/// listener h5i cannot see is a listener [`decide`] cannot refuse.
-///
-/// So the buffer grows until the answer provably fits: strictly fewer entries
-/// than the room offered means nothing was left behind.
+/// Every descriptor a process holds.
 #[cfg(target_os = "macos")]
 fn fds_of(pid: u32) -> Vec<libc::proc_fdinfo> {
     /// Far past any attainable descriptor limit (`proc_fdinfo` is 8 bytes, so
@@ -1073,16 +923,6 @@ mod tests {
     }
 
     /// A process cannot write escape sequences into h5i's refusal.
-    ///
-    /// The name in that sentence is chosen by whoever started the process being
-    /// complained about, and a file name takes any byte but `/` and NUL, so it is
-    /// hostile input printed to the operator's terminal at exactly the moment
-    /// they are trying to understand a security refusal. Darwin reports such a
-    /// name verbatim, confirmed against a real binary named with a literal `ESC`.
-    ///
-    /// Not gated to macOS, though the path that feeds it is: `display_name` takes
-    /// a `&str` and returns a `String`, and the escape, the bidi override and the
-    /// forged newline are properties of that function alone.
     #[test]
     fn a_process_name_cannot_carry_escapes_into_the_refusal() {
         // The exact bytes measured from the kernel for the compiled probe.
@@ -1273,18 +1113,6 @@ mod ownership_fuzz {
     ];
 
     /// Which listener the kernel hands a connection to `dial`.
-    ///
-    /// Written from the rule rather than from `decide`: the most specific bind
-    /// wins, an exact address beats a wildcard of the same family, a dual-stack
-    /// `[::]` can answer an IPv4 connection, and anything else on the port is not
-    /// in the running. `None` means nothing would answer.
-    ///
-    /// Ties are returned as ties, because a tie is the one shape where the
-    /// kernel, not h5i, picks, and h5i must therefore refuse rather than name a
-    /// winner.
-    ///
-    /// Written out longhand rather than calling [`specificity`]: an oracle that
-    /// shares the function under test agrees with its bugs.
     fn who_answers<'a>(on_port: &[&'a Listener], dial: IpAddr) -> Vec<&'a Listener> {
         let rank_of = |listen: IpAddr| -> Option<u8> {
             match (listen, dial) {

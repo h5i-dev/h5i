@@ -1,25 +1,5 @@
 #!/usr/bin/env bash
-#
 # Does a share of a box at each tier and profile actually move a byte?
-#
-# Written because it turned out one whole configuration could not: a
-# `process`-tier box with a profile that denies egress gets a network namespace
-# of its own with no loopback brought up in it, so nothing inside can reach even
-# itself. The share started, printed a ticket, and left both people reading
-# messages about a dev server that was running the whole time — and twenty-seven
-# rounds of review walked past it, because every test used one configuration.
-#
-# The unit tests cannot see this: it is a property of how the sandbox builds a
-# namespace, not of the share's own code. So it is a script, and it is the
-# cheapest insurance against the next configuration that silently cannot work.
-#
-#   scripts/share_matrix.sh              # every combination this host can run
-#   scripts/share_matrix.sh supervised   # just one tier
-#
-# Each row ends in one of:
-#   serves      a visitor got the bytes            (the only good answer)
-#   refused     h5i declined to share it, and said why  (acceptable)
-#   BROKEN      the share started and moved nothing     (the bug this hunts)
 
 set -uo pipefail
 

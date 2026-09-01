@@ -1,54 +1,9 @@
-//! The one browser identity, shared by every layer that can be asked about it.
+//! A session-wide browser identity shared by HTTP, JavaScript, display, and
+//! time-zone reporting.
 //!
-//! A page can ask this engine who it is in at least four places: the
-//! `User-Agent` and `Accept-Language` it sent, the `navigator` object it
-//! exposes, the `screen` geometry it reports, and the offset `Date` computes
-//! local time from. Before this module those four answers came from four
-//! different places and nothing kept them from disagreeing. Disagreement is the
-//! *only* thing a fingerprinting script needs: it does not have to know what h5i
-//! is to notice that the browser claiming Windows on the wire reports `MacIntel`
-//! in script.
-//!
-//! So there is one [`Identity`], resolved once when a session starts, frozen,
-//! digested into the receipts, and read by every layer. Nothing derives a second
-//! copy and nothing randomises per page load, which is itself a tell: a browser
-//! whose canvas hash changes between two loads of the same site is announcing
-//! itself.
-//!
-//! ## The three modes, and why not a `--stealth` flag
-//!
-//! `--stealth` would be one boolean standing for two strategies that pull in
-//! opposite directions, and W3C's fingerprinting guidance separates them for the
-//! same reason: shrinking the surface and enlarging the anonymity set are
-//! different things.
-//!
-//! - [`Mode::Native`] answers as h5i, honestly. The default, and byte-for-byte
-//!   what this engine sent before this module existed.
-//! - [`Mode::Privacy`] is still h5i, with the two values that vary between
-//!   *installations* pinned so they stop distinguishing one from another: the
-//!   patch version in the agent string, and the host's time zone.
-//! - [`Mode::Compatible`] claims a different browser, coherently, and only as
-//!   far as this engine can back the claim. See [`Identity::covers`].
-//!
-//! ## What a compatible identity does not get to pretend
-//!
-//! An identity declares [`Identity::requires`], and one requiring something
-//! [`crate::Capabilities`] does not have is *refused* rather than partly
-//! applied. A half-applied Chrome identity is worse than none, because it puts a
-//! Chrome agent string in front of a browser with no `navigator.userAgentData`
-//! behind it, and the *absence* is the signal. `chrome-151-windows` ships here
-//! and is refused on this engine today, deliberately: it documents what a Chrome
-//! claim costs.
-//!
-//! ## What is deliberately not checked here
-//!
-//! The exit address. "A Japanese IP with a New York time zone" is a real
-//! incoherence and not one an identity can see: the address a request leaves
-//! from is the egress proxy's business.
-//!
-//! Language against time zone is not checked either, and that one is a judgement
-//! rather than a limitation. `navigator.languages` is a preference, not a
-//! location; `en-US` with `Asia/Tokyo` describes every English speaker in Japan.
+//! Identity is resolved once and recorded in receipts. Compatible identities
+//! are rejected unless the engine supports every capability they require;
+//! network location and language/time-zone consistency are outside this module.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -1010,20 +965,6 @@ pub fn native() -> Identity {
 }
 
 /// h5i, with what varies between installations taken out.
-///
-/// Two values and no more, because two is what actually distinguishes one h5i
-/// from another today:
-///
-/// - The patch version, which splits every h5i user into cohorts by release
-///   date. Reduced to the major, so an install that has not updated looks like
-///   one that has. Chrome did the same thing to its own agent string.
-/// - The host's time zone, which is a region, read through `Date` by any page
-///   that asks. Pinned to UTC.
-///
-/// `hardwareConcurrency` is left at 1 rather than raised to a "typical" number:
-/// every h5i reports 1 today, so 1 *is* the largest anonymity set there is, and
-/// a mode called privacy that made the value more distinctive would be doing the
-/// opposite of what it says.
 pub fn privacy() -> Identity {
     let major = env!("CARGO_PKG_VERSION")
         .split('.')
@@ -1060,16 +1001,6 @@ pub fn privacy() -> Identity {
 }
 
 /// A Firefox identity this engine can actually back, end to end.
-///
-/// Firefox rather than Chrome for one reason that decides the whole thing:
-/// Firefox sends no client hints. Chrome has sent `Sec-CH-UA` on every request
-/// since it shortened its agent string, and exposes `navigator.userAgentData` to
-/// match; an engine with neither cannot claim Chrome without the absence being
-/// the giveaway. Firefox's identity surface is the agent string, `navigator`,
-/// `screen` and the locale, exactly the set this module covers.
-///
-/// It is still not Firefox on the wire: the ClientHello and the HTTP/2 SETTINGS
-/// are this engine's. See [`Identity::DOES_NOT_COVER`].
 pub fn firefox_linux() -> Identity {
     Identity {
         name: "firefox-143-linux".to_string(),

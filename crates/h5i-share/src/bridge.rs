@@ -1,22 +1,4 @@
 //! The bridge: everything a share does that is not about how the bytes travel.
-//!
-//! Both transports sit on this, and holding the three boundary jobs in one place
-//! is the point. A second transport must not be a second chance to get
-//! authorization or evidence wrong:
-//!
-//! * Reach the dev server, through [`crate::dialer`], pinned to one port of one
-//!   box for the bridge's whole life.
-//! * Hold the capability, by resolving a presented secret against the grant
-//!   table on disk ([`crate::session`]) on *every* connection, so a revoke
-//!   written by another process takes effect on the next one.
-//! * Write the ingress receipt. Every other lane in a box's receipt observes
-//!   what left; this is the first that records what came in.
-//!
-//! The receipt lane is host observed in the strongest sense available: h5i owns
-//! both ends of the bridge, the box supplies none of it, and the box cannot
-//! suppress it. A box that was shared and an identical box that was not are
-//! different artifacts, and an export should not be silent about which one it
-//! came from.
 
 use std::sync::{Arc, Mutex};
 
@@ -180,16 +162,6 @@ struct Tally {
 }
 
 /// How many connections into the box a share will carry at once.
-///
-/// A share is a door on the open internet in tunnel mode, and an iroh endpoint
-/// anyone may dial in P2P mode. Without a ceiling, a peer holding a valid link,
-/// or a page on the shared app opening sockets in a loop, turns into unbounded
-/// tasks on the host and unbounded sockets into the box: a denial of service
-/// against the box the share was meant to show off.
-///
-/// Sixty-four is chosen to be uninteresting: a browser opens about six
-/// connections per origin, so this is roughly ten simultaneous viewers, and a
-/// share is for one person. Reaching it is a signal, and it is recorded.
 const MAX_CONNECTIONS: usize = 64;
 
 /// Ceiling on accepted-but-not-yet-authorized handlers, across both
@@ -210,22 +182,6 @@ const MAX_PEER_RECORDS: usize = 256;
 pub struct PeerId(usize);
 
 /// The live share, and which `share.json` a serving process is the server of.
-///
-/// A bridge reads that file on every connection, to authorize, to check a grant,
-/// to notice the share ending, and it was reading whatever file was at that
-/// path, not the one it wrote. `share stop --force` exists precisely to delete a
-/// live record without stopping its process, relying on that process to notice
-/// within a second, and a new `h5i box share` may legitimately claim the
-/// now-empty path inside that second.
-///
-/// What the old bridge did next: read the *replacement* record, find a live
-/// grant in it, and keep serving. A second transport into the old box, on the
-/// old port, for the whole life of the new share, admitting the new share's
-/// tickets. And when it eventually did exit, its unconditional
-/// `begin_winding_up` marked the *new* share as winding up.
-///
-/// Identity is the pid plus the recorded start: a pid alone is reusable, and two
-/// shares of one box a second apart are exactly the case to tell apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimedRecord {
     pub pid: u32,
@@ -345,18 +301,8 @@ impl Bridge {
         }
     }
 
-    /// Take a slot for one connection into the box, or `None` if the share is
-    /// already carrying its limit.
-    ///
-    /// Refuses rather than queues on purpose. A queue would turn a flood into
-    /// latency for the person who is legitimately using the share, and hide the
-    /// fact that anything unusual happened; a refusal is immediate, visible in
-    /// the receipt, and leaves the connections already in flight alone.
-    ///
-    /// How many slots are free, for tests that need to show a path did *not* take
-    /// one, since "a later stream still works" leaves leaked permits invisible.
-    /// The tally as it stands, for a test that asserts about a counter rather than
-    /// about the sentence it eventually produces.
+    /// Take a slot for one connection into the box, or `None` if the share is already carrying
+    /// its limit.
     pub fn snapshot(&self) -> Summary {
         self.summarise(Utc::now())
     }
@@ -392,31 +338,8 @@ impl Bridge {
         }
     }
 
-    /// Now, but never earlier than the share's own start plus the time that has
-    /// actually passed.
-    ///
-    /// Every expiry decision here was a bare `Utc::now()`, and the wall clock is
-    /// not a clock a share can rely on: an NTP step after boot, a VM resumed from
-    /// a snapshot, a dual-boot laptop whose RTC holds local time. Stepping a
-    /// running share's clock back an hour was measured to extend *every* live
-    /// grant by an hour of real time, past what its holder was told and past what
-    /// the sharer was told, with nothing recording that the clock had moved.
-    ///
-    /// Deliberately one-directional. A backward step is refused; a forward step is
-    /// honoured, because expiring a ticket early is the safe direction and because
-    /// a machine whose clock was wrong at start-up should be allowed to find out.
-    ///
-    /// A *step*, not drift. The first version floored the wall clock against
-    /// `started + elapsed` outright, which assumes the two clocks run at the same
-    /// rate. Measured on the WSL2 host this was written on, `CLOCK_REALTIME`
-    /// advances 56.9s per 60s of `CLOCK_MONOTONIC`: five per cent, continuous,
-    /// with nothing wrong. Under that floor a one-hour ticket died at fifty-seven
-    /// minutes. [`SeenClock`] tells the two apart.
-    ///
-    /// Recovered rather than unwrapped, for the reason [`Self::tally`] gives and
-    /// with more at stake: this is on the path of *every* authorization, so an
-    /// `expect` here turns one panic anywhere under this lock into a share that
-    /// answers nothing for the rest of its life.
+    /// Now, but never earlier than the share's own start plus the time that has actually
+    /// passed.
     fn now(&self) -> DateTime<Utc> {
         let mut seen = self.clock.lock().unwrap_or_else(|p| p.into_inner());
         seen.observe(Utc::now(), self.started_mono.elapsed())
@@ -607,16 +530,8 @@ impl Bridge {
         self.claimed = ClaimedRecord::on_disk(&self.env_dir);
     }
 
-    /// Open a fresh connection into the box: a socket, and the accounting that
-    /// goes with failing to get one.
-    ///
-    /// The two failures are recorded apart because the receipt says different
-    /// things about them, and one blames the wrong person: `unreached N
-    /// connection(s) ... found nothing listening on port 3000` is a sentence
-    /// about the user's dev server, and it was printed for a broken dialer too.
-    /// That case is sticky, since a retired channel fails every later request the
-    /// same way, so one lost reply produced a receipt asserting hundreds of times
-    /// that a dev server was down while it was running the whole time.
+    /// Open a fresh connection into the box: a socket, and the accounting that goes with
+    /// failing to get one.
     pub fn open_upstream(&self) -> Result<std::net::TcpStream, H5iError> {
         match self.dialer.connect() {
             Ok(s) => Ok(s),
@@ -646,18 +561,7 @@ impl Bridge {
         }
     }
 
-    /// Note that a peer has arrived. Returns the handle its traffic is counted
-    /// against.
-    ///
-    /// Bounded, like the denial list and for the same reason: one entry carries a
-    /// `String` and becomes a line in the receipt, and a peer cycling connections
-    /// would grow both without limit.
-    ///
-    /// Past the cap the connection is still served, being authorized, and its
-    /// handle names no record, so its traffic is counted nowhere. That is
-    /// deliberate and not free: the *number* of such peers is counted here and
-    /// reported, because folding them into the last record corrupted that record,
-    /// and dropping them silently made a busy share look like a quiet one.
+    /// Note that a peer has arrived.
     pub fn peer_joined(&self, peer: String, grant: &AuthorizedGrant, path: Option<Path>) -> PeerId {
         // Fail soft like every other accessor here. This one used to `expect`,
         // and it is called while the tunnel front holds its own peer map, so a
@@ -705,19 +609,6 @@ impl Bridge {
     }
 
     /// The last moment this peer was seen doing anything.
-    ///
-    /// The tunnel has no connection lifecycle to hang `peer_left` on, a visitor
-    /// being a grant whose connections come and go, so without this `closed`
-    /// stayed `None` and every tunnel peer rendered as held to the end of the
-    /// share: somebody who opened one page in minute two of a six-hour share was
-    /// written down as having been connected for six hours.
-    ///
-    /// Somebody turned away for a reason that has nothing to do with their ticket
-    /// left no trace anywhere. A user behind a symmetric NAT running
-    /// `--direct-only`, the flag this feature advertises as its strongest
-    /// guarantee, watched `refused ... no direct path` scroll past and then got a
-    /// receipt saying `peers none. The share was open but nobody connected`.
-    /// Likewise every smuggling attempt the gate exists to refuse.
     pub fn record_turned_away(&self, why: TurnedAwayReason) {
         let mut t = self.tally();
         // Bounded like the denial list, and, unlike the first version of this
@@ -742,18 +633,8 @@ impl Bridge {
         }
     }
 
-    /// Counted against a peer's record, or, for a peer past the record cap,
-    /// against the aggregate.
-    ///
-    /// Every one of these was a silent no-op for an overflow handle, and byte
-    /// accounting is a stated purpose of this receipt, so that made the evidence
-    /// deliberately evadable: fill the record list with 256 probe-only
-    /// connections, which cost nothing and record nothing, then do the real
-    /// transfer on connection 257. The receipt said overflow peers existed and
-    /// reported zero of their connections and zero of their bytes.
-    ///
-    /// The individual-record cap stays, since a record carries a `String` and
-    /// becomes a line, but the totals no longer have a hole in them.
+    /// Counted against a peer's record, or, for a peer past the record cap, against the
+    /// aggregate.
     pub fn peer_connection(&self, id: PeerId) {
         let mut t = self.tally();
         match t.peers.get_mut(id.0) {
@@ -797,42 +678,11 @@ impl Bridge {
     }
 
     /// Wait for every connection into the box to finish, or give up.
-    ///
-    /// Called between shutting the transport down and writing the receipt. The
-    /// connection tasks are spawned and detached, and closing the endpoint tells
-    /// them to stop without waiting for them, so without this the receipt is
-    /// written while peers are still mid-copy and their bytes and closing times
-    /// are missing from it. Uses the capacity permits as the count of live
-    /// connections, which they already are.
-    ///
-    /// Tell every connection the share is winding up. Separate from
-    /// [`Self::quiesce`], and called before the transport is torn down, because
-    /// the order is the whole point: `Endpoint::close` closes every connection
-    /// with code `0` and an empty reason, so anything that wanted to close one
-    /// with an *explanation* has to have done it already. Setting the flag inside
-    /// `quiesce`, after the shutdown, meant the task that closes with a reason
-    /// could never win.
     pub fn begin_shutdown(&self) {
         let _ = self.shutdown.send_replace(true);
     }
 
     /// Mark a connection as accepted and being handled.
-    ///
-    /// The permit is held from before the head is read until the handler returns,
-    /// which is the span [`Self::quiesce`] could not see. Quiescence waited only
-    /// on [`Self::admit`] permits, and a handler paused in `read_head`, in
-    /// parsing, or in authorization holds none of those, so `quiesce` acquired
-    /// all sixty-four immediately, marked the receipt settled and returned while
-    /// such a handler was still live. On Ctrl-C or a transport failure the record
-    /// is merely `winding_up` and its grants are still there, so that handler
-    /// could then resume, authorize, take a now-free permit, dial the box and
-    /// send a state-changing request *after* the receipt had snapshotted its
-    /// tally. Killing `cloudflared` does not help: a complete request may already
-    /// be buffered on an accepted loopback socket.
-    ///
-    /// `None` once the share is winding up: a connection accepted after that
-    /// point is not owed a handler, and refusing it here is what makes quiescence
-    /// a barrier rather than a hope.
     pub fn enter_front(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
         if *self.shutdown.borrow() {
             return None;
@@ -1070,20 +920,6 @@ pub struct Summary {
 }
 
 /// The wall clock, watched for jumps.
-///
-/// Two clocks disagreeing is not one thing. A *step* is a discontinuity (an NTP
-/// correction, a VM resumed from a snapshot, somebody running `date -s`) and it
-/// moves a ticket's expiry relative to the time its holder was promised. *Drift*
-/// is the two clocks running at different rates, which is ordinary: the machine
-/// this was written on runs `CLOCK_REALTIME` five per cent slower than
-/// `CLOCK_MONOTONIC`, all day, with nothing wrong.
-///
-/// The first version of the floor could not tell them apart, and treating drift
-/// as a step shortened every ticket on this host by five per cent. So each
-/// observation is compared against what the monotonic clock says should have
-/// passed since the last one, with a tolerance proportional to that gap: drift
-/// stays inside the tolerance by definition, being a rate, and a step of any
-/// size that matters does not.
 #[derive(Debug, Default)]
 struct SeenClock {
     /// The raw wall reading at the last observation.
@@ -2112,17 +1948,8 @@ mod tests {
 
     #[test]
     fn a_receipt_measures_the_session_and_says_when_the_clock_moved() {
-        // This is the real receipt from a share that ran two minutes and moved
-        // 2.7 KiB, with the clock stepped back an hour mid-session:
-        //
-        //     share session, 0s (p2p transport)
-        //     opened   2026-08-11T14:22:14+00:00
-        //     closed   2026-08-11T13:23:51+00:00
-        //
-        // `closed` before `opened`, and `0s`: from `(ended - started)
-        // .num_seconds().max(0)`, where the clamp turned an absurdity a reader
-        // would question into a plausible zero. The length is now measured on a
-        // clock nothing can move.
+        // This is the real receipt from a share that ran two minutes and moved 2.7 KiB, with
+        // the clock stepped back an hour mid-session:
         let mut s = summary(vec![], vec![]);
         s.started = at("2026-08-11T14:22:14Z");
         s.ended = at("2026-08-11T13:23:51Z");

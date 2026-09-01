@@ -1,13 +1,4 @@
 //! M8 against the real thing.
-//!
-//! The unit tests in `browser_proxy` prove the policy path with fake streams.
-//! This proves the part that only a real daemon can: that the actual
-//! `agent-browser` CLI, unmodified, works through an h5i mediator sitting on
-//! the socket it was told to use, and is refused when h5i says no.
-//!
-//! Skipped (loudly) when the host has no agent-browser or no Chrome, because a
-//! test that silently passes on a machine that cannot run it is worse than one
-//! that says why it did not.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

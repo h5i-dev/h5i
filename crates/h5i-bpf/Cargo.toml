@@ -5,23 +5,8 @@ edition = "2024"
 description = "h5i runtime detection: a kernel-observed evidence lane built on eBPF syscall tracepoints (ROADMAP.md D1–D14)."
 
 [features]
-# `load` is what turns the crate from a model into a collector: aya, the
-# compiled probe object, and the attach/read path.
-#
-# **Off by default, and the default matters more than it looks.** Cargo unifies
-# features across a `--workspace` build, so a crate whose own default turned
-# `load` on would put aya and a clang invocation into every `cargo build
-# --workspace` — including builds by contributors who never asked for the
-# detector and never passed `--features bpf`. It was written that way first, to
-# get the loader linted by the main CI job, and the price was that "is this
-# optional?" had two different answers depending on how you built. It has one
-# now: the collector arrives only when something explicitly asks for it. The
-# dedicated `bpf` CI job asks, which is where the loader is linted and tested.
-#
-# Everything outside `session` compiles with the feature off, on every target
-# in the release matrix, which is what keeps the event model, the rules and the
-# receipt types testable on a Mac — and what lets a build with no collector
-# still *read* a receipt written by one that had it.
+# `load` is what turns the crate from a model into a collector: aya, the compiled probe object,
+# and the attach/read path.
 default = []
 load = ["dep:aya", "dep:libc"]
 

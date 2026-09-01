@@ -32,17 +32,7 @@ import {
   thirdPartyCanRead,
 } from "./api";
 
-// The box console: a read-only operator view of the h5i fleet. It answers, at
-// a glance: which boxes exist, what each one's policy actually allows, what ran
-// inside it, and what pressed on a boundary.
-//
-// Honesty is the design constraint, and it is the same one the original
-// dashboard had. Red means enforcement *fired* — the egress proxy refused a
-// destination. Amber means something worth a look (a failed run, a wall-clock
-// kill, a page throwing errors) with no claim that a boundary was tested. Grey
-// means the evidence itself is weak: nothing was confined, or every record came
-// from inside the box. None of the three is an accusation, and no number on
-// this screen is computed from anything but the receipts.
+// The box console: a read-only operator view of the h5i fleet.
 
 const LANES: { key: LaneKey; label: string; hint: string }[] = [
   { key: "fs", label: "FS", hint: "filesystem reach" },

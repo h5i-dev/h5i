@@ -1,33 +1,6 @@
-//! Host-side *credential-injecting* egress proxy (see
-//! `docs/credential-proxy-design.md`): what lets an agent box authenticate to
-//! its provider API without the long-lived token ever entering the box.
-//!
-//! The [`crate::container`] egress proxy tunnels TLS and so can never inject an
-//! `Authorization` header. This one terminates the box-to-proxy hop in cleartext
-//! on host loopback and re-originates a fresh TLS request upstream. The agent
-//! gets a base-URL override and a *dummy* token; the genuine one lives only in
-//! this process's memory.
-//!
-//! All fail-closed:
-//!
-//! - Token never in the box. The real credential is resolved from h5i's own host
-//!   environment and handed to the upstream request, never an env var, mount or
-//!   argv in the box.
-//! - No SSRF. The origin is pinned to [`RuntimeProxy::upstream_host`] and the
-//!   box's `Host` is discarded. Ignoring the authority is not sufficient: the
-//!   target is appended to that origin, and one not beginning with `/` extends
-//!   the *authority* rather than the path, so `@evil.example/v1` makes the pinned
-//!   name mere userinfo. The target must be origin-form ([`is_origin_form`]), and
-//!   the assembled URL is re-parsed and required to resolve to the pinned origin
-//!   before a byte is sent.
-//! - DNS-rebinding resistant. The host is resolved and pinned once at spawn.
-//! - Loopback plus shared secret. Other host processes can reach loopback too, so
-//!   the credential is injected only for a request presenting the per-run dummy
-//!   token.
-//! - Never logs the token or bodies. [`Credential`]'s `Debug` is redacted.
-//!
-//! The forwarder uses `reqwest` (blocking, rustls) so TLS, chunked decoding and
-//! SSE come from a vetted client rather than hand-rolled.
+//! Host-side *credential-injecting* egress proxy (see `docs/credential-proxy-design.md`): what
+//! lets an agent box authenticate to its provider API without the long-lived token ever
+//! entering the box.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
@@ -338,16 +311,7 @@ fn spawn_to_upstream(
     });
 
     let join = std::thread::spawn(move || {
-        // Consecutive non-`WouldBlock` accept failures. `accept` reports
-        // per-connection conditions that say nothing about the listener:
-        // `ECONNABORTED` when a client RSTs between SYN and accept,
-        // `EMFILE`/`ENFILE` under fd pressure. Treating any as fatal killed the
-        // accept loop for good, and with it the box's only authenticated egress
-        // for the rest of its life. Both are triggerable by any local process,
-        // which is precisely the actor the token gate exists for, so "the
-        // listener dies" cannot be their reward. Retry instead, and keep a
-        // consecutive count so a genuinely dead listener still terminates the
-        // thread rather than burning a core.
+        // Consecutive non-`WouldBlock` accept failures.
         let mut consecutive_errors = 0usize;
         while !stop_thread.load(Ordering::SeqCst) {
             match listener.accept() {
@@ -492,20 +456,6 @@ fn is_stripped_request_header(name: &str) -> bool {
 }
 
 /// Is `target` a safe *origin-form* request target (`/v1/messages?beta=1`)?
-///
-/// The SSRF gate, and it holds something up rather than decorating. The
-/// outgoing URL is the pinned origin with this string appended, and a URL's
-/// authority runs until the first `/`, so a target that does not start with `/`
-/// can extend the *authority* instead of the path. The sharp case is userinfo:
-/// `@evil.example/v1/messages` turns `https://api.anthropic.com` + target into
-/// `https://api.anthropic.com@evil.example/v1/messages`, whose host is
-/// `evil.example` and whose userinfo is the name we thought we had pinned. The
-/// proxy would then open TLS to the attacker, with SNI and certificate
-/// validation following the *attacker's* name, and attach the real credential.
-///
-/// Origin-form is also all these SDKs ever send, so nothing legitimate is lost.
-/// A leading `//` is refused too, being the protocol-relative form. Control
-/// characters and whitespace are refused because they are request smuggling.
 fn is_origin_form(target: &str) -> bool {
     target.starts_with('/')
         && !target.starts_with("//")
@@ -645,16 +595,6 @@ fn write_status(client: &mut TcpStream, code: u16, reason: &str) {
 }
 
 /// [`write_status`], with the drain policy named.
-///
-/// The over-capacity `503` is the one refusal answered on the accept thread,
-/// and a [`Drain::Waiting`] drain there is a stall the box can ask for: a peer
-/// that sends a request and then holds the connection open parks the accept
-/// loop for the whole window, once per excess connection. The loop is the
-/// proxy's only way to pick up the connections that would *free* the slots the
-/// 503 is about, so waiting on the box's slowest peer is exactly backwards.
-/// That path drains non-blocking instead: the request head is already in the
-/// receive buffer in the ordinary case, so the refusal still lands rather than
-/// being discarded by an RST.
 fn write_status_draining(client: &mut TcpStream, code: u16, reason: &str, drain: Drain) {
     let _ = client.write_all(
         format!("HTTP/1.1 {code} {reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
@@ -704,16 +644,8 @@ fn is_stripped_response_header(name: &str) -> bool {
 }
 
 fn handle_client(mut client: TcpStream, state: &ProxyState) -> std::io::Result<()> {
-    // `read_head` and the `read_exact` below are blocking reads, so say so
-    // rather than assume it. The listener is non-blocking (the accept loop polls
-    // `stop`) and on macOS the accepted socket *inherits* that flag. Left
-    // inherited, any read that has to wait for the next packet fails with
-    // `WouldBlock`, and a well-formed request is answered `400`: a request body
-    // only has to exceed one segment to arrive split, which every real prompt
-    // does. That is the primary path on the macOS supervised tier.
-    //
-    // `?`, not `let _ =`: continuing with a non-blocking socket reinstates the
-    // bug silently.
+    // `read_head` and the `read_exact` below are blocking reads, so say so rather than assume
+    // it.
     client.set_nonblocking(false)?;
     client.set_read_timeout(Some(Duration::from_secs(60)))?;
     let head = read_head(&mut client)?;
@@ -888,17 +820,7 @@ pub struct Engagement {
     pub runtime: AgentRuntime,
 }
 
-/// Decide and spawn the credential-injecting proxy for a run. Shared by both the
-/// container and supervised backends, whose only difference is `tier_ok`.
-///
-/// `Ok(None)` means the proxy does not apply: opted out, an unsupported tier, a
-/// non-agent profile, or no host credential to broker. Those keep the box on its
-/// existing in-box-login path and are not a downgrade of anything.
-///
-/// `Err` means the proxy was *supposed* to engage and could not, which must not
-/// be swallowed: the caller would keep the real credential in the box's HOME
-/// copy *and* open the full `net.egress` allowlist instead of narrowing to the
-/// proxy port.
+/// Decide and spawn the credential-injecting proxy for a run.
 pub fn engage(profile_name: &str, tier_ok: bool) -> Result<Option<Engagement>, H5iError> {
     engage_at(profile_name, tier_ok, SLIRP_GATEWAY_HOST)
 }
@@ -1169,16 +1091,6 @@ mod tests {
     }
 
     /// A request whose body arrives after its head must still be forwarded.
-    ///
-    /// The accept loop polls a non-blocking listener, and on macOS the accepted
-    /// socket inherits that flag, so `read_head`/`read_exact` returned
-    /// `WouldBlock` the moment a request spanned more than one read, and a
-    /// well-formed call was answered `400`. Every real prompt is larger than one
-    /// segment, and this proxy is the *primary* egress path on the macOS
-    /// supervised tier.
-    ///
-    /// Driven through `handle_client` with a deliberately non-blocking socket, so
-    /// the Darwin condition is reproduced on every platform.
     #[test]
     fn a_request_split_across_reads_is_forwarded_not_rejected() {
         use std::sync::mpsc;

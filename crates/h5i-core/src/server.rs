@@ -1,25 +1,4 @@
 //! The box console: `h5i ui`.
-//! One screen for what the CLI answers a box at a time: what is the fleet
-//! doing, and what has pressed on a boundary? Built over manifests, the
-//! resolved policy, the env event log and [`crate::receipt`].
-//! Read-only, structurally. Every route is a `GET`, so there is no mutating
-//! handler to guard, no CSRF story, and no way to turn this into a remote
-//! control for someone's boxes. A monitoring surface that cannot act is a much
-//! smaller thing to get wrong.
-//! The old `h5i serve` bound loopback and trusted everyone who could reach it,
-//! which on a developer machine is every process and every page. This follows
-//! [`crate::view`]'s discipline: loopback only, a per-session token minted at
-//! `bind` and held in memory rather than on disk, traded by the page for a
-//! `SameSite=Strict` cookie, and foreign origins refused by `Origin` *and*
-//! `Sec-Fetch-Site`. The second is not belt-and-braces: `Origin` is absent on a
-//! markup-driven GET, and two loopback ports are different origins on the same
-//! site, so without it any other local port could `<img src>` this console with
-//! its cookie attached.
-//! Honesty. The dashboard this replaces had a risk classifier; nothing here
-//! invents a score to replace it. [`Signals`] is arithmetic over receipts: red
-//! means enforcement fired, amber means a run failed or the page reported
-//! errors, grey means the evidence is weak. None is an accusation, and the UI
-//! never renders a number the receipts do not hold.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,16 +37,8 @@ pub struct AppState {
     pub repo_path: PathBuf,
     /// This session's token. Never written to disk.
     pub token: String,
-    /// One [`crate::browser_events::BoxStream`] per box the console has looked
-    /// at, kept for the life of the process.
-    /// State in a server whose whole pitch is that it holds none takes a
-    /// justification, and it is not caching: it is what makes the event ids
-    /// stable. Rebuilding the stream per request renumbers from 1 over whatever
-    /// the sources currently hold, and a run clears the box's `/tmp`, so a
-    /// viewer's cursor would silently swallow the next session. Bounded twice
-    /// over, one entry per box *viewed* and each capped at [`STREAM_CAP`]
-    /// events, and derived from files on disk, so losing it costs nothing but a
-    /// re-read.
+    /// One [`crate::browser_events::BoxStream`] per box the console has looked at, kept for the
+    /// life of the process.
     browser: Arc<std::sync::Mutex<std::collections::HashMap<String, crate::browser_events::BoxStream>>>,
     /// One live-view reader per box currently being watched. Separate from
     /// `browser` because their lifetimes differ: the event stream is cheap and
@@ -116,24 +87,8 @@ impl Refusal {
     }
 }
 
-/// The whole authorization decision, as a pure function of the four things it
-/// depends on, so it can be tested without a socket.
-/// `Origin` is checked first: a request from another origin is refused even
-/// when it somehow carries the right token, because at that point the token is
-/// the thing that has leaked and honouring it would be the bug.
-/// `sec_fetch_site` is every value of that header, because a second copy is a
-/// disagreement about where a request came from. It closes the gap `Origin`
-/// alone cannot: `Origin` is not sent on a subresource GET at all, and the
-/// cookie is `SameSite=Strict`, which constrains cross-*site* requests only.
-/// Two loopback ports are different origins and the *same site*, so a page
-/// served by any other local service, and `h5i join` puts somebody else's
-/// agent-written app on exactly such a port, could `<img
-/// src="http://127.0.0.1:<console>/api/…">` with this console's cookie
-/// attached.
-/// A `cross-site` request that carries the token in the query is the printed
-/// invite link being followed, and is allowed for the same reason `h5i-share`'s
-/// gate allows it: the capability arrived with the request rather than out of
-/// the browser's jar.
+/// The whole authorization decision, as a pure function of the four things it depends on, so it
+/// can be tested without a socket.
 pub fn authorize(
     query: Option<&str>,
     cookie_header: Option<&str>,
@@ -290,19 +245,6 @@ async fn asset(Path(path): Path<String>) -> Response {
 // ── API types ────────────────────────────────────────────────────────────────
 
 /// Boundary activity for one box, as arithmetic over its receipts.
-///
-/// Every field is a count of something recorded. Nothing here is a model of
-/// intent, and the two `..._observed` counters exist so a reader can tell
-/// evidence h5i collected from evidence the box handed it: the lanes h5i itself
-/// writes, from the host, outside the box's reach, against anything else
-/// (`tee-shim`, `inbox-capture`, or a lane added later) which is the box's own
-/// account.
-///
-/// The browser mediator is host-observed like the viewer: the records are
-/// written by an h5i process sitting on the socket. `share` is on this list
-/// because h5i owns both ends of the share bridge and the box cannot suppress
-/// it. Leaving it off inverted the badge: a box whose only receipt was a share
-/// read as having no host-observed evidence at all.
 const HOST_OBSERVED_LANES: [&str; 5] = [
     "host-env-run",
     "shell-egress",

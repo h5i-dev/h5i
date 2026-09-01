@@ -7,19 +7,7 @@
 // are reached only from the `#[cfg(target_os = "linux")]` run path, so they read
 // as dead code on non-Linux targets. Allow it module-wide.
 #![allow(dead_code)]
-//!
-//! The security keystone: the first tier that may claim untrusted-code
-//! containment. Its defining property, implemented and tested here in phase A,
-//! is *fail-closed admission*: the claim is satisfiable only when *every*
-//! component probes green, and is otherwise *refused*, never downgraded. A
-//! half-present stack is a refusal, not a "best-effort pass".
-//!
-//! This module: the honest [`probe`], the pure syscall-decision model, and a
-//! fully-enforcing [`run`]. The shared process-tier confinement plus an
-//! always-on network namespace and the live seccomp-notify socket gate
-//! ([`serve_with_pidfd`]), with an optional netns+nftables+slirp4netns egress
-//! allowlist. The full stack does not probe green on every host (WSL2 and CI
-//! lack cgroup delegation and rootless nftables), and the tier refuses there.
+//! The security keystone: the first tier that may claim untrusted-code containment.
 
 use crate::error::H5iError;
 
@@ -114,22 +102,6 @@ fn probe_uncached() -> SupervisorCaps {
 }
 
 /// macOS readiness for `isolation=supervised`.
-///
-/// The Linux stack (seccomp user-notification, a network namespace, nftables,
-/// cgroup delegation) does not exist on Darwin and is not faked. What the tier
-/// promises is *untrusted-code containment plus an enforced domain egress
-/// allowlist*, and macOS reaches both a different way:
-///
-/// - containment: Seatbelt's `(deny default)` covers filesystem, network, mach
-///   and sysctl in one policy, and, unlike Landlock, it can subtract, so
-///   `fs.deny` and the agent-config lock are enforced rather than linted;
-/// - egress allowlist: the box is left with *no* outbound route except h5i's own
-///   DNS-pinned allowlist proxy on loopback, the same proxy the container tier
-///   uses, enforced by the kernel rather than by proxy env vars.
-///
-/// What is genuinely absent is the syscall filter: there is no macOS equivalent
-/// of a seccomp deny-list, so native code in the box can attempt any syscall. It
-/// just cannot reach a path or a socket the profile does not name.
 #[cfg(target_os = "macos")]
 pub fn probe() -> SupervisorCaps {
     static SUPERVISOR_CAPS: std::sync::OnceLock<SupervisorCaps> = std::sync::OnceLock::new();
@@ -375,32 +347,6 @@ pub struct ResolvedEgress {
 }
 
 /// May a `net.egress` entry pin to this address?
-///
-/// The policy an operator reads is a *hostname*, and the thing nftables enforces
-/// is whatever that name resolved to, so the readable policy and the enforced
-/// destination are only as close as DNS chooses to make them. A repo that ships
-/// `.h5i/env.toml` picks the names, and it can equally pick what they answer.
-///
-/// What that buys, on the tier whose whole claim is airtight L3/L4 filtering:
-///
-/// * *`169.254.169.254`*: the cloud instance metadata service, and the
-///   highest-value target on any cloud host. slirp4netns NATs through the host's
-///   routing, and `--disable-host-loopback` does not cover it: it hides the
-///   host's *loopback*, not its link-local. A name resolving here hands the box
-///   the instance's role credentials.
-/// * *`fe80::/10`*, the same thing over IPv6, and `::ffff:169.254.169.254`, the
-///   same thing spelled as a mapped address so a v4-only test misses it.
-/// * multicast, broadcast, unspecified: no reachable service a repo could mean.
-///
-/// Loopback is deliberately *not* refused. Inside the netns `127.0.0.1` is the
-/// box's own, `oif "lo" accept` already permits it, and the host's loopback is
-/// reached through the slirp gateway rather than through this address, so a name
-/// answering `127.0.0.1` is redundant rather than dangerous.
-///
-/// RFC1918 and IPv6 unique-local are deliberately *not* refused either: an
-/// internal registry or a company mirror is a real thing to name. They are
-/// reachable through the host's routing and that is worth knowing, which is what
-/// `refused` reporting and the receipt's pinned addresses are for.
 fn is_pinnable(ip: &IpAddr) -> bool {
     // A v4 address written as `::ffff:a.b.c.d` is the same address. Unwrap it
     // and judge it once, or every check below is one spelling short.
@@ -419,20 +365,8 @@ fn is_pinnable(ip: &IpAddr) -> bool {
     }
 }
 
-/// Is this answer a resolver saying "blocked" rather than a name pointing
-/// somewhere it should not?
-///
-/// `0.0.0.0` and `::` are what a filtering resolver returns for a name on a
-/// blocklist: pi-hole, a corporate DNS policy, several consumer ISPs. That is a
-/// statement about the *operator's network*, not about the repo's policy, and it
-/// is the one unpinnable answer an ordinary well-meaning `net.egress` entry runs
-/// into. Treating it like a link-local answer refuses the whole box over a name
-/// the resolver had already made unreachable anyway.
-///
-/// It is also the safe half of the split. `0.0.0.0` is not a destination this
-/// tier could be tricked into allowing: it gets no nftables rule and no
-/// `/etc/hosts` pin, and inside the netns a connect to it lands on the box's own
-/// loopback, which `oif "lo" accept` already permits.
+/// Is this answer a resolver saying "blocked" rather than a name pointing somewhere it should
+/// not?
 fn is_sinkhole(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(*ip),
@@ -1045,16 +979,7 @@ fn run_supervised(
         true,
         Some(sv_child),
         egress_jail,
-        // A PID namespace, exactly as the process tier gets. Without it the box
-        // shares the host's PID namespace, which is not a cosmetic difference: it
-        // can enumerate host processes, read their `/proc/<pid>/cmdline`, and,
-        // because the userns maps back to the operator's real uid, send signals to
-        // any of their processes, h5i itself included. A tier that claims
-        // untrusted-code containment cannot leave `kill -9` pointed at the host.
-        //
-        // Ordering note: the netns/egress handshake in `pre_exec` runs BEFORE the
-        // pidns fork and reports `getpid()`, which CLONE_NEWPID leaves in the host
-        // namespace, so `slirp4netns` still targets a pid it can see.
+        // A PID namespace, exactly as the process tier gets.
         true,
         procs.as_deref(),
         interactive,
@@ -1185,26 +1110,8 @@ fn run_supervised(
     })
 }
 
-/// The macOS supervised tier: Seatbelt confinement plus a host-side allowlist
-/// proxy the box has no way to route around.
-///
-/// The security argument is the mirror image of the Linux one, and it is worth
-/// stating because "point the box at a proxy" is normally *not* an enforcement
-/// mechanism: a program that ignores `HTTPS_PROXY` and opens its own socket
-/// escapes it. That is not the case here, because the Seatbelt profile denies
-/// `network-outbound` to everything except the proxy's loopback port, so
-/// ignoring the env var gets the box a connection refused at the kernel. The
-/// proxy env vars are a convenience for well-behaved clients; the kernel rule is
-/// the boundary.
-///
-/// Two shapes, matching the Linux path exactly:
-///
-/// - credential proxy engaged (an agent box with a resolvable host token): the
-///   only reachable port is the credential-injecting auth proxy, the real token
-///   never enters the box, and it is scrubbed from the box's per-env HOME copy.
-///   No general egress at all.
-/// - *otherwise*: the DNS-pinned `net.egress` allowlist proxy is the only
-///   reachable port, and its allow/deny tally becomes the run's egress evidence.
+/// The macOS supervised tier: Seatbelt confinement plus a host-side allowlist proxy the box has
+/// no way to route around.
 #[cfg(target_os = "macos")]
 fn run_supervised(
     policy: &crate::sandbox::ResolvedPolicy,

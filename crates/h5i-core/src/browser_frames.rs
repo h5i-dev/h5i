@@ -1,26 +1,4 @@
 //! Pixels, from the box to the console (roadmap-history.md M11a).
-//!
-//! The evidence panes answer *what did the agent do*; this answers *what did the
-//! page look like while it did it*.
-//!
-//! This does not make the console a remote control. `h5i ui`'s guarantee is that
-//! every route is a `GET` ([`crate::server`]), and the relay does not spend it,
-//! being one-directional by construction: the console connects out into the box
-//! and reads, so nothing new listens and the box gains no reachability. The only
-//! upstream messages are `config` and `ack`, the pacing the stream server needs,
-//! and no code path runs from an HTTP request to a message on this socket.
-//! Typing still goes through [`crate::view`]'s forward with its own per-box
-//! token and the control lock.
-//!
-//! A frame is box-claimed: the box's rendering of its own page, arriving as
-//! pixels the box chose. Nothing derived from a frame reaches the trusted status
-//! row.
-//!
-//! One caveat this module cannot fix: `h5i-browser-light` has no resident
-//! session, so a live view served by it shows the page *it* was started on
-//! rather than the one the agent is driving. Chromium's agent-browser is one
-//! daemon owning one session, so its frames really are the agent's page. The
-//! console reports which case it is in.
 
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};

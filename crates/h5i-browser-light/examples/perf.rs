@@ -1,14 +1,4 @@
 //! What this engine costs, measured rather than assumed.
-//!
-//! roadmap-history.md §B5 Tier 4. Nothing here had numbers after script landed:
-//! not the time to read a page, not the memory a page holds, and not the price of
-//! the reporting proxy that now sits in front of every DOM property read.
-//!
-//!     cargo run --release --example perf
-//!
-//! Deliberately not a `#[test]`: a timing that fails CI on a loaded runner
-//! teaches nothing, and a number nobody looks at is worse than no number. Run it
-//! when changing the hot paths, and put the result in the commit.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

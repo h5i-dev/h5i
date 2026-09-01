@@ -1,24 +1,4 @@
 //! What a page's media *says*, when the page has written it down.
-//!
-//! A `<video>` is a hole in every reading this engine produces, so a page whose
-//! substance is a forty-minute talk reads as a title and a play button. Most of
-//! the time the content is already there in text: HTML has carried `<track
-//! kind="captions">` since 2010, and a caption file is prose with timestamps,
-//! which is the shape a model reads well. So this verb decodes nothing. It finds
-//! the tracks the page declared, fetches them through the broker like any other
-//! subresource, and parses the cues out.
-//!
-//! This is not audio support. [`crate::Capabilities::video`] stays `false`: no
-//! decoder, no media element that plays, no `MediaSource`. A text fetch over a
-//! URL the document named moves no capability, so this needs no `--script` and
-//! no grant.
-//!
-//! What changes is that "this page has media" stops being the end of the answer.
-//! A media element with no track is reported as one, with its source URL,
-//! because that routes a caller somewhere else while silence reads as "no media".
-//!
-//! The fence applies: a caption file is a stranger's bytes landing in front of a
-//! model, so it is [`collapse`]d per cue.
 
 use blitz_dom::{BaseDocument, Node};
 use serde::{Deserialize, Serialize};
@@ -190,19 +170,8 @@ pub struct Cue {
     pub text: String,
 }
 
-/// Which tracks to actually fetch: at most two per media element, what was
-/// *said* and the *outline* of it.
-///
-/// Not all of them, because a well-localised player declares thirty languages
-/// and fetching every one is thirty requests to answer a question about one. The
-/// listing is complete either way, so a caller that wanted a different language
-/// can see it is there and ask again.
-///
-/// There used to be an `all` here that fetched every readable track, and it was
-/// the wrong axis. Thirty languages of one video are the same words thirty
-/// times; a `chapters` track is *different information*. Sorting them into one
-/// flag meant the only thing that flag was good for could not be had without
-/// paying for the twenty-nine that were redundant.
+/// Which tracks to actually fetch: at most two per media element, what was *said* and the
+/// *outline* of it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Selection {
     /// Prefer this language. Matched against `srclang` case-insensitively, by
@@ -282,15 +251,6 @@ impl Transcript {
     }
 
     /// The reading, fenced, as a model should receive it.
-    ///
-    /// Fenced over the finished document rather than per value, the way
-    /// [`crate::markdown`] does it: the per-line invariant holds for a cue,
-    /// which is collapsed, but the assembled transcript spans lines.
-    ///
-    /// A track that was listed and not fetched says so, and a media element with
-    /// no text lane says *that*, because both are answers. A reader handed a page
-    /// with one captioned video and one silent one must be able to tell which is
-    /// which.
     pub fn render(&self, url: &str) -> String {
         let mut out = format!("url: {url}\n");
         if self.media.is_empty() {
@@ -802,17 +762,9 @@ fn strip_markup(text: &str) -> String {
     while let Some(ch) = chars.next() {
         match ch {
             '<' => {
-                // One pass, and the buffer is what makes the unterminated case safe:
-                // scan to `>`, and if the input ends first put back the `<` and
-                // everything after it rather than dropping it.
-                //
-                // Two cleverer versions preceded this and both were worse. A
-                // 128-character bound made a legitimately long closed tag come out as
-                // markup in the transcript. Looking ahead for `>` fixed that and made
-                // this quadratic, taking a fresh copy of the remaining text per `<` on
-                // input that is *not yet* bounded, since `MAX_CUE_BYTES` is applied to
-                // what this returns. A caption body with no blank line and fifty
-                // thousand `<` is then tens of gigabytes of copying.
+                // One pass, and the buffer is what makes the unterminated case safe: scan to
+                // `>`, and if the input ends first put back the `<` and everything after it
+                // rather than dropping it.
                 let mut tag = String::new();
                 let mut closed = false;
                 for inner in chars.by_ref() {

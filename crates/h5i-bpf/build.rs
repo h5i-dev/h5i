@@ -1,25 +1,4 @@
 //! Compile the eBPF probe, when this host can.
-//!
-//! The build is deliberately *soft*. A missing or BPF-incapable `clang` does not
-//! fail the build; it leaves the object out, and the loader then reports
-//! `unavailable: built without the eBPF object` at run time rather than
-//! pretending it collected nothing. That keeps `cargo build` working for a
-//! contributor who has no LLVM installed and is only touching the CLI, which is
-//! the ordinary case.
-//!
-//! It is soft in exactly one direction, though. `H5I_BPF_REQUIRE=1` turns every
-//! skip below into a hard failure, and that is what the CI job for this lane
-//! sets. A binary that silently shipped without its detector would be the worst
-//! of both worlds: a `runtime` block that always says `unavailable` and a reader
-//! who takes that for a quiet box.
-//!
-//! The released binaries do *not* carry the probe today, and that is stated
-//! rather than left to be discovered: the release matrix cross-builds musl
-//! targets inside containers that have no LLVM, and `h5i box detect probe`
-//! reports the consequence in one line with the command that fixes it (`cargo
-//! install --path . --features bpf`). Putting a BPF-capable clang into four
-//! cross-build images to ship a feature that also needs `CAP_BPF` on the user's
-//! machine is work that should follow somebody wanting it, not precede them.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

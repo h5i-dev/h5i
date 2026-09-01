@@ -1,23 +1,4 @@
 //! The live view: the engine as something a human can watch.
-//!
-//! Speaks the wire format h5i's viewers already use, so `h5i box view` and
-//! `--term` work unchanged: base64 JPEG frames in a JSON envelope, a `status`
-//! message carrying the viewport so mouse coordinates mean something, and
-//! `config`/`ack` pacing from the client.
-//!
-//! Zero frames per second at rest. The loop is driven by client messages rather
-//! than a timer, and tier 1 has no script, so a frame is produced when something
-//! *did* change rather than encoding identical JPEGs thirty times a second.
-//! `pacing: "ack"` is tracked per viewer: one that owes an ack is marked dirty
-//! and gets the newest frame when the ack arrives.
-//!
-//! One thread owns the page, because [`Page`] is not `Send`: Blitz's
-//! `BaseDocument` holds an `Arc<dyn HtmlParserProvider>` and a
-//! `Box<dyn FontMetricsProvider>`, neither thread-safe. [`run_session`] is that
-//! owner. Viewers and control clients each own only their socket and reach the
-//! page by sending a [`Command`]; replies and frames travel back over channels
-//! carrying JSON, which is `Send`. A command is handled to completion before the
-//! next starts, so there is no interleaving to reason about.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -98,17 +79,6 @@ pub struct ServeOptions {
     pub control_file: Option<PathBuf>,
 
     /// Also listen for control clients on a Unix socket at this path.
-    ///
-    /// The TCP listener above is unconditional and stays the simple case. This
-    /// is for the one arrangement it cannot serve: a session inside a box. Every
-    /// `h5i box run` gets a fresh network namespace, so a verb carried into the
-    /// box afterwards has a loopback of its own and the resident session's port
-    /// is not on it. The connection fails with `ENETUNREACH`, which reads
-    /// exactly like a session that is not running.
-    ///
-    /// A filesystem path has no such problem: the box's `/tmp` is one filesystem
-    /// across every run in it. Unix-only and optional, so the crate stays
-    /// portable.
     pub control_socket: Option<PathBuf>,
     /// Where to record the verbs an agent asks for. `None` on a bare host,
     /// where there is no console to feed.
@@ -216,16 +186,6 @@ struct Session {
     /// [`History`] for what is and is not a history entry.
     history: History,
     /// Verb names callers asked for that this session does not have, counted.
-    ///
-    /// Free telemetry on the gap between what this engine offers and what the
-    /// things driving it expect, and the only source of that fact which does not
-    /// depend on somebody filing a report. Lightpanda keeps the same counter for
-    /// CDP methods and it is the sharpest item in its metrics: the published
-    /// conformance list says what is honestly absent, and this says which
-    /// absences anyone actually hits.
-    ///
-    /// Names only, and only names that failed to resolve, so nothing here
-    /// describes what an agent did with the page. Reported by `status`.
     unknown_verbs: std::collections::BTreeMap<String, u64>,
     /// What this session has done, in a form that can be run again.
     ///
@@ -312,15 +272,6 @@ impl History {
 
 impl Session {
     /// Why a read was refused while a human is logging in.
-    ///
-    /// The whole point of the mode: a credential typed into a page the agent can
-    /// snapshot has been handed to the agent. Refusing the *read* is what makes
-    /// "log in for me" a thing a person can reasonably do, and it is
-    /// deliberately not a refusal of the session. The page still works, the jar
-    /// still fills, and everything resumes when the human says so.
-    ///
-    /// The message says what is refused rather than that the page is
-    /// unreadable. It is not: frames still go to the live view, by design.
     fn login_refusal(verb: crate::verbs::Verb) -> Value {
         json!({
             "ok": false,
@@ -460,15 +411,6 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
     let port = local_port(&viewers)?;
 
     // A port, or a socket, but never both.
-    //
-    // A loopback port has no access control of any kind: any process on the
-    // machine that guesses it drives the session, and driving the session
-    // includes `type $H5I_SECRET_…`. That is the accepted cost of the port
-    // channel, which is why `cli::default_control_file` goes to such lengths
-    // over a private directory to hold it. A session that asked for a *socket*
-    // has already chosen the addressable, permission-checked channel, and
-    // binding a second unauthenticated one beside it would hand back everything
-    // the choice bought.
     #[cfg(unix)]
     let want_port = options.control_socket.is_none();
     #[cfg(not(unix))]
@@ -899,19 +841,9 @@ fn bind_control_socket(path: &Path) -> Result<UnixListener, H5iError> {
     }
     let _ = std::fs::remove_file(path);
     let listener = UnixListener::bind(path).map_err(|e| H5iError::with_path(e, path))?;
-    // Whoever can connect to this socket *is* the agent: they can navigate,
-    // evaluate script in the page, and `type $H5I_SECRET_…`, which resolves a
-    // credential into the DOM they can then read back with `snapshot`. Linux
-    // checks write permission on the socket file at `connect`, so its mode is
-    // the access control, and leaving it to the umask made it 0755 on a default
-    // one and 0775 or 0777 on a laxer one. That would be theoretical if the
-    // path were private, and it is not: a boxed session's socket lives under
-    // the box's `/tmp`, which the `agent` profile shares with the host.
-    //
-    // Narrowed after the bind rather than by fiddling with the process umask,
-    // which is global to a process that has threads in it. The remaining window
-    // is between `bind` and here, and closing it needs a private parent
-    // directory, which is what `cli::make_private_dir` gives the default path.
+    // Whoever can connect to this socket *is* the agent: they can navigate, evaluate script in
+    // the page, and `type $H5I_SECRET_…`, which resolves a credential into the DOM they can
+    // then read back with `snapshot`.
     restrict_to_owner(path)?;
     Ok(listener)
 }
@@ -1075,15 +1007,6 @@ fn exchange<S: ControlStream>(stream: S, request: &Value) -> Result<Value, H5iEr
 }
 
 /// Add one step to the replay recording, if this verb belongs in one.
-///
-/// Called only after a verb succeeded, and only from [`recorded_verb`], so
-/// there is one place where "did it" and "recorded it for replay" can drift.
-///
-/// The handle is rewritten on the way in: a caller that named a `@ref` gets its
-/// *verified selector* looked up now, while the reading that minted it is still
-/// current; a caller that named a selector already has the durable form. Where
-/// no selector can be verified the step is dropped and counted, because a
-/// handle that resolves elsewhere is worse than no handle.
 fn record_step(session: &mut Session, request: &Value, answer: &Value) {
     let Some(verb) = request
         .get("verb")
@@ -1184,16 +1107,6 @@ fn durable_handle(session: &Session, request: &Value) -> Option<(String, String)
 }
 
 /// Record a verb, run it, record how it went.
-///
-/// Wrapped around [`control_verb`] rather than folded into it so the verbs stay
-/// testable without a file, and so there is exactly one place where "acted" and
-/// "recorded" can drift apart.
-///
-/// The pane this feeds says *agent actions*, and until now it could only be
-/// filled by the mediated socket in front of agent-browser. There is no such
-/// socket here, so before this the console showed an empty pane for a session
-/// an agent was actively driving, which reads as "the agent did nothing" and is
-/// the one thing a monitoring surface must never say by accident.
 fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
     let verb = request.get("verb").and_then(Value::as_str).unwrap_or("");
     // Whatever the verb aims at, under one name, so a reader does not have to
@@ -1264,19 +1177,6 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
 }
 
 /// Put credential placeholders back into anything on its way out.
-///
-/// [`crate::secrets`] describes this as the rule that anything written back out
-/// goes through, and until now nothing called it. It is applied here, at the one
-/// point every reply passes through, rather than at each site that might echo
-/// something.
-///
-/// Not only tidiness. A login form that reflects what was typed, into a hidden
-/// field, a validation message, a page title, puts the value into the DOM, and
-/// the next `snapshot` or `markdown` would carry it back to the agent the
-/// indirection exists to keep it from.
-///
-/// The cost is a string scan per reply against a handful of values, on a path
-/// that has already done a policy check and a layout pass.
 fn redact_reply(broker: &dyn crate::broker::Broker, value: Value) -> Value {
     // One pass to collect, one call, one pass to put back. The middle step is
     // the reason for the shape: redaction happens where the values are, which
@@ -1673,16 +1573,6 @@ fn control_verb_inner(
         }
 
         // A picture of the page, written where the *caller* said.
-        //
-        // The path comes in on the request and is never derived here. h5i names
-        // every artifact a session produces (`browser_session::artifact_path`) for
-        // the reason that module gives: the engine, and anything a page talked it
-        // into, chooses the bytes and nothing else.
-        //
-        // The bytes go to a file rather than into the reply because the reply is
-        // scrubbed and capped. A base64 PNG would be silently truncated at 256 KiB
-        // and arrive as a corrupt image, which is precisely the plausible-wrong
-        // answer this engine refuses to hand anyone.
         Verb::Screenshot => {
             let Some(path) = request.get("path").and_then(Value::as_str) else {
                 return (
@@ -2028,16 +1918,6 @@ fn control_verb_inner(
 
 
         // The verb no other engine can offer honestly.
-        //
-        // Chromium's request list is an *observation* of the network made from
-        // beside it, and it fails open: attach races, freshly created targets,
-        // workers, buffer limits. Obscura's CDP `Network.*` events are batched and
-        // emitted after navigation completes, so anything reading them live sees a
-        // compressed, out-of-time picture. Lightpanda has no equivalent.
-        //
-        // Here the engine *is* the HTTP client, so this is the decision record the
-        // broker wrote before the bytes moved. If it is not here, it did not
-        // happen.
         Verb::Requests => {
             // `since` lets an agent ask what happened after its last look, the same
             // shape `snapshot --delta` has: the whole log re-read after every click
@@ -2491,30 +2371,6 @@ fn control_verb_inner(
 }
 
 /// Resolve a `@ref`, refusing one that no longer means what the agent read.
-///
-/// `click`, `type` and `submit` each need a *live* node id, so each takes a
-/// fresh snapshot at action time. That much is right, and on its own it was the
-/// bug: refs are minted by walk order, so if the page moved between the snapshot
-/// the agent read and the one taken here, `@e5` resolves to a different element,
-/// the action succeeds, and the reply says `ok`.
-///
-/// Nothing detected that. There was no memory-safety problem, the node id being
-/// freshly minted, and that is exactly what made it bad: a plausible wrong
-/// answer that looks like a right one.
-///
-/// So the fresh capture is checked against the refs this session last *served*.
-/// An identical entry (same id, node, role and name) means the reading the agent
-/// acted on still describes the page. It is an equality check on one ref, not a
-/// proof that the document is unchanged: a page that mutates something the walk
-/// does not record still passes, and two different elements agreeing on all four
-/// fields would too. What it catches is every case where the *handle* has come
-/// to mean something else.
-///
-/// Two handle types, deliberately, and the difference is the whole of §B15.4. A
-/// `@ref` is a position in the reading that minted it: cheap, checked against
-/// that reading, and meaningless anywhere else. A selector is a handle that
-/// survives the reading, and survives a *navigation*, which is what makes a
-/// recorded session replayable at all.
 #[derive(Debug, Clone)]
 enum Aim {
     /// `@e3`, checked against the reading it came from.
@@ -2522,16 +2378,6 @@ enum Aim {
     /// A CSS selector, resolved with `querySelector` semantics.
     Selector(String),
     /// A role and, optionally, the accessible name that goes with it.
-    ///
-    /// The handle an agent already has: a snapshot line reads
-    /// `- button "Sign in" [ref=e3]`, and this addresses the same element in the
-    /// same words. More stable than a selector against generated markup, where
-    /// the class names change on every build and the button is still called
-    /// "Sign in".
-    ///
-    /// Resolved through the same role and name computation the snapshot printed
-    /// ([`crate::snapshot::role_and_name`]), which is what makes the words
-    /// match. A second implementation would drift.
     Role { role: String, name: Option<String> },
 }
 
@@ -2762,24 +2608,6 @@ fn resolve_ref(
 }
 
 /// Whether two readings of a ref name the same thing.
-///
-/// The id it was served under, the node it resolved to, its role, and, for a
-/// link, where it goes. A page that changed any of those changed the thing the
-/// agent read.
-///
-/// And its name, for the roles whose name the page writes. Leaving the name out
-/// was one step too far: a page that renames a button from `Cancel` to `Confirm
-/// payment` between the snapshot and the click has changed exactly the thing the
-/// agent read it by, with the same node, the same role and no href. The refusal
-/// already names what the ref points at *now*, which makes that the most useful
-/// message this session can send.
-///
-/// The exception is the two roles whose accessible name *is* the control's own
-/// value, and which the agent's own verbs change by design:
-/// [`crate::snapshot::accessible_name`] reports a text input's current text and
-/// a `<select>`'s chosen option. Comparing those refused the second `type` on
-/// the same field and the second `select` on the same dropdown. A button's
-/// label, a link's text and an image's alt are the author's.
 fn same_target(before: &crate::snapshot::RefEntry, now: &crate::snapshot::RefEntry) -> bool {
     before.id == now.id
         && before.node_id == now.node_id

@@ -1,13 +1,4 @@
 //! The agent skill, carried by the binary.
-//!
-//! `skills/h5i/` in this repository is the single source of the skill, and it
-//! is embedded here at build time. That is what lets `h5i skill install` write
-//! it *inside a box*, where there is no npm and no host-to-box file path, and
-//! it makes version drift impossible, since the skill ships with the binary
-//! that implements it.
-//!
-//! `npx skills add h5i-dev/h5i` installs the same bytes for people who do not
-//! have the binary yet.
 
 use std::path::{Path, PathBuf};
 

@@ -1,29 +1,4 @@
 // The display, for a session whose identity declares one.
-//
-// Its own source, and loaded on a condition rather than on a property read.
-// That distinction is the whole reason this file exists rather than sitting in
-// the core prelude or behind `lazyGlobals`:
-//
-//   - Not in the core, because `native` and `privacy` declare no display and
-//     most sessions are one of those. They should not parse or run a Screen
-//     interface they will never expose.
-//   - Not behind `lazyGlobals`, because that installs an accessor on the global
-//     and turns it into a data property on first read. For `WebSocket` that is
-//     invisible and free. For `screen` it would be the exact tell this whole
-//     feature exists to avoid: a page that reads
-//     `Object.getOwnPropertyDescriptor(window, "screen")` before touching it
-//     would find a getter whose `toString` is this engine's own source, where
-//     every browser has a plain value. A fingerprinting script reads
-//     descriptors; it is the first thing it does.
-//
-// So the core prelude loads this the moment it knows the identity declares a
-// display, before the page runs a statement. A session that pays for it gets
-// `screen` as an ordinary own property that was simply always there, and a
-// session that does not never sees the file.
-//
-// The numbers are the identity's, and they were validated at the session's
-// door: `availWidth <= width`, a colour depth a browser actually reports, and
-// a viewport that fits inside the display. See `identity.rs`.
 (function () {
   "use strict";
 

@@ -126,11 +126,7 @@ Base image for isolation=container and isolation=microvm (pre\-pulled; runs neve
 Browser engine for the `browser` profile: chromium (default), lightpanda, or h5i. Overrides the profile\*(Aqs `engine`. Pinned in the policy digest, and never falls back: a box whose engine cannot serve a page fails and names the recreate, because switching engine changes what a page is able to do
 .TP
 \fB\-\-runner\fR \fI<NAME>\fR
-Run this box on a paired runner instead of this machine.
-
-The source is copied across as a git bundle and the box is built there; the repository, the policy and the credentials stay here. The box is bound to that machine\*(Aqs host key, not to its name, so a name re\-pointed at other hardware never silently moves a box.
-
-`h5i runner pair` sets one up and `h5i runner probe` says what it can do. A tier the runner does not offer is refused with the capability named, never quietly swapped for a weaker one.
+Run this box on a paired runner instead of this machine
 .TP
 \fB\-\-backend\fR \fI<BACKEND>\fR [default: auto]
 Workspace backend (auto|worktree)
@@ -358,7 +354,7 @@ Frame\-rate ceiling asked of the box, for `\-\-term`
 Skip the graphics probe and render anyway, for `\-\-term`. Frames are then sent uncompressed (about six times the bytes), because the probe is also what asks whether this terminal accepts deflated ones
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Print help
 .TP
 <\fINAME\fR>
 
@@ -952,7 +948,7 @@ Browser sessions: open one, drive it, close it
 .SS OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Print help
 .SH "H5I BROWSER OPEN"
 Open a URL, making a session if there is not one already
 .ie \n(.g .ds Aq \(aq
@@ -974,9 +970,7 @@ Make a new session even if one is already open.
 Without this, `open` navigates the session it finds, because that is what opening a URL means when a browser is already up.
 .TP
 \fB\-\-in\fR \fI<BOX>\fR
-Run the session inside this box instead of on this machine.
-
-The box must already exist (`h5i box`). A box that declares an egress allowlist has a tier that enforces it, because creation is fail\-closed on that combination, so the session\*(Aqs request lane becomes host\-observed: what it reached was also seen outside the engine. A box that declares none corroborates nothing and the lane stays engine\-claimed. `h5i browser status` prints which of the two this session got; read it rather than assuming the box earned the stronger one. Note the standing Linux trade\-off: the tiers that enforce egress cannot hold a resident session yet, so today that combination is `microvm`, or a one\-shot `h5i browser read \-\-in`.
+Run the session inside this box instead of on this machine
 .TP
 \fB\-\-allow\fR \fI<ORIGIN>\fR
 Grant an origin. Repeatable. Without any, nothing remote is reachable except the URL\*(Aqs own origin
@@ -993,20 +987,10 @@ Run the engine unconfined.
 By default a session on this machine runs in a process\-tier sandbox: it may read the system and its own directory, write only its own directory, execute nothing, and see only the secrets named with `\-\-secret`. That contains what a parser bug could *do*; it does not contain the network, which needs a boundary outside the engine.
 .TP
 \fB\-\-secret\fR \fI<NAME>\fR
-Let this session substitute `$H5I_SECRET_<NAME>`. Repeatable.
-
-Nothing is granted by default. Unconfined, the engine inherits the whole environment and a compromised one reads every secret on the machine; inside the sandbox it reads the ones that were named.
-
-The value is resolved from the environment this command runs in and delivered to this session alone. Fail\-closed: a name whose variable is not set refuses the session rather than starting one that cannot use it. `ACME_PASS` and `H5I_SECRET_ACME_PASS` name the same thing.
-
-Not for `\-\-in`: a session in a box takes its credentials from that box\*(Aqs policy, in `.h5i/env.toml`.
+Let this session substitute `$H5I_SECRET_<NAME>`
 .TP
 \fB\-\-identity\fR \fI<NAME|PATH>\fR [default: native]
-Who this session says it is: a built\-in name, or a path to a TOML file.
-
-One identity, read by every layer that can be asked. `native` (the default) answers as h5i and answers truthfully. `privacy` is still h5i with the patch version and the host\*(Aqs time zone pinned, so one install stops being distinguishable from another. A `compatible` identity claims a different browser, and the session is *refused* if this engine cannot back everything that identity declares, rather than started with the claim half applied.
-
-`h5i browser identity list` names the built\-ins, and `identity check` says what one covers, what it does not, and why it would be refused. Nothing here promises a session is undetectable: it promises the answers agree with each other.
+Who this session says it is: a built\-in name, or a path to a TOML file
 .TP
 \fB\-\-width\fR \fI<WIDTH>\fR [default: 1280]
 Viewport width
@@ -1043,7 +1027,7 @@ List, show or check a browser identity
 .SS OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Print help
 .TP
 <\fIARGS\fR>
 `list`, `show <name>`, or `check <name>`
@@ -1058,11 +1042,7 @@ Read one page, or a batch of them, and leave no session behind
 .SS OPTIONS
 .TP
 \fB\-\-in\fR \fI<BOX>\fR
-Read inside this box.
-
-The box\*(Aqs profile is where a strict egress allowlist belongs, pinned in `.h5i/env.toml` and digested, and a box at the supervised tier enforces it at a network namespace boundary outside the engine. The one thing a session cannot have, because that tier cannot hold a resident process and a read does not need it to.
-
-Without this, the read runs here under the same built\-in sandbox a session gets: its files and its environment, and the origin allowlist is the engine\*(Aqs alone.
+Read inside this box
 .TP
 \fB\-\-text\fR
 Print the page\*(Aqs prose instead of its outline
@@ -1483,13 +1463,7 @@ The ceiling on caption text carried out of *one* track.
 Per track rather than per reply, so a media element with both words and an outline can carry up to twice this.
 .TP
 \fB\-\-via\fR \fI<HELPER>\fR
-Read it with an outside program instead of from the page\*(Aqs markup.
-
-`\-\-via yt\-dlp` reaches the transcripts that are not in the markup at all, YouTube\*(Aqs above all, whose captions live behind the player\*(Aqs own API. About 1,700 sites, and the same reply shape.
-
-It is a different lane, not a better one. yt\-dlp opens its own sockets from a process the engine never sees, so nothing it fetches is in `h5i browser requests` and nothing can be: the reply says so, and `h5i browser audit` carries the run as a host\-observed row. It runs where the session runs, inside the box for a boxed session, and it is never a fallback: an engine read that found no captions stays a read that found none.
-
-With `\-\-via`, `\-\-url` names the media and the session does not move: there is no page here to render. With no session open at all, `\-\-url` is the whole of what this lane needs: the run happens on this machine, contained by nothing h5i enforces, says so in its `evidence` line, and is recorded in `h5i browser audit \-\-no\-session`. To place it behind a boundary, open a session with `\-\-in <box>`.
+Read it with an outside program instead of from the page\*(Aqs markup
 .TP
 \fB\-\-json\fR
 
@@ -1794,11 +1768,7 @@ Open a box someone else is sharing, from a ticket they sent you
 Local port to serve it on. 0 picks a free one and prints it
 .TP
 \fB\-\-shared\-jar\fR
-Join even when the only address left is `127.0.0.1`.
-
-Each join normally gets a loopback address of its own, because a browser\*(Aqs cookie jar is scoped by host and ignores the port. On `127.0.0.1` the jar is shared with every local service you run, so the token this proxy sets is sent to any of them you visit while joined, and that token reaches the box. macOS configures only `127.0.0.1` on `lo0`, so this is the macOS answer unless you add an address yourself (`sudo ifconfig lo0 alias 127.0.0.2`).
-
-Your own cookies are not the other half of this: they are filtered on a shared jar whether or not you pass this.
+Join even when the only address left is `127.0.0.1`
 .TP
 \fB\-\-bind\fR \fI<ADDR>\fR
 Serve on this loopback address instead of a random `127.x.y.z`.
@@ -1823,9 +1793,9 @@ Run boxes on another Linux machine you own
 .SS OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Print help
 .SH "H5I RUNNER PAIR"
-Pair with a Linux machine so boxes can run on it. Pairing generates a keypair used for this runner and nothing else, pins the machine's SSH host key, and installs a forced command that lets the key do exactly one thing: speak h5i's protocol on stdin and stdout. No port is opened on the runner and no daemon is left behind. The runner needs `h5i` installed and an account you can already reach over SSH. It does NOT need a container runtime: what it can do is reported by `h5i runner probe`, and a box asking for something the runner does not have is refused rather than quietly given something weaker
+Pair with a Linux machine so boxes can run on it
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS

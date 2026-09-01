@@ -35,18 +35,6 @@ REPO = HERE.parent.parent
 ENGINE_SUBCOMMAND = "__engine"
 
 # What an instrument has to be granted, and why it is a flag rather than a list.
-#
-# The engine denies every remote origin unless one is granted, which is right
-# for an agent and wrong for a corpus: the third-party subresources are most of
-# what there is to *see*, and a run that refuses them is measuring its own
-# allowlist. `corpus/run.py` used to build a per-URL wildcard list plus six
-# hard-coded CDNs, which is the same decision made quietly and less completely
-# — a page pulling from a seventh CDN looked like a page that failed.
-#
-# `--allow-any-remote` is that decision made out loud. It widens the *name*
-# check only: a public name resolving into private space is still refused, a
-# page from the web still may not reach loopback, and a box's own egress
-# enforcement is untouched. See `policy.rs`.
 ENGINE_GRANT = "--allow-any-remote"
 
 

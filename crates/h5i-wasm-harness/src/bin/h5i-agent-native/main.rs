@@ -1,24 +1,4 @@
-//! `h5i-agent-native`: the native host for the `h5i-wasm-harness` agent core. It drives the
-//! same sans-io state machine (compiled natively rather than to wasm) against a
-//! real directory, playing the "WASI-style" host role: real filesystem, an
-//! optional plain-HTTP local model. The wasm module (`scripts/build-wasm.sh`)
-//! runs byte-identical logic behind the six-symbol ABI; this binary is what you
-//! run at a terminal.
-//!
-//! Default mode is interactive: type a task per line and the agent runs it,
-//! keeping the conversation across turns. Pass `--task` for a one-shot,
-//! scriptable run instead.
-//!
-//! Model source (required either way):
-//!   --script replies.json   scripted mock model (a JSON array of
-//!                           chat-completions response envelopes, replayed in
-//!                           order: the shape of mini-swe-agent's
-//!                           DeterministicModel, models/test_models.py)
-//!   --model-url http://...  real OpenAI-compatible endpoint, http:// only
-//!                           (no TLS without dependencies; meant for
-//!                           llama.cpp / Ollama on localhost). Responses stream
-//!                           by default (tokens render live); --no-stream falls
-//!                           back to a single blocking request.
+//! `h5i-agent-native`: the native host for the `h5i-wasm-harness` agent core.
 
 use std::io::{self, Read, Write as IoWrite};
 use std::path::{Path, PathBuf};

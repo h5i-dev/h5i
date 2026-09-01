@@ -1,36 +1,5 @@
-//! macOS confinement: the *Seatbelt* backend for the `process` and `supervised`
-//! tiers, counterpart to the Linux stack in [`crate::sandbox`].
-//!
-//! macOS has no Landlock, seccomp, namespaces, cgroups or nftables. It has
-//! Seatbelt, default-deny over every operation class at once and able to
-//! *subtract*, which Landlock cannot. Subtraction earns its keep in one place,
-//! the agent-config lockdown: `$WORK` read-write with `$WORK/.claude` unwritable
-//! is one rule here and a bind plus remount-ro in a private mount namespace on
-//! Linux.
-//!
-//! | property                  | Linux                          | macOS (here)                                   |
-//! |---------------------------|--------------------------------|------------------------------------------------|
-//! | filesystem allowlist      | Landlock                       | SBPL `(deny default)` + `file-read*`/`file-write*` |
-//! | subtracting from a grant  | impossible (bind + remount-ro) | one `(deny …)` rule, last match wins            |
-//! | syscall deny-list         | seccomp-bpf                    | *absent*                                      |
-//! | egress allowlist          | netns + nftables + slirp4netns | loopback-only + host allowlist proxy            |
-//! | net deny                  | empty network namespace        | `(deny network*)`                               |
-//! | pid isolation             | PID namespace + private procfs | partial: `(deny process-info*)` for non-self    |
-//! | per-env path redirects    | bind mounts in a mount ns      | symlinks + runtime env vars (see [`plan`])      |
-//! | memory cap                | cgroup `memory.max` + rlimit   | *not enforceable* (see [`RESOURCE_NOTE`])     |
-//! | cpu / fsize / nproc caps  | rlimits                        | rlimits (same)                                  |
-//!
-//! [`probe`] reports that right-hand column honestly, so a caller adapts to what
-//! the host enforces rather than to a tier name.
-//!
-//! `sandbox-exec`, not `sandbox_init(3)`: the latter parses the profile, which
-//! allocates, and allocating in a forked child of a tokio process is the classic
-//! malloc-lock deadlock. `sandbox-exec` also `execvp`s in the same process, so
-//! the pid, the exit status and the process-group SIGKILL all still work. The
-//! profile goes by file, never argv, which `ps` publishes.
-//!
-//! The module compiles on every Unix so the generator and plan translation are
-//! tested on Linux CI; only [`probe`] is platform-aware, and it fails closed.
+//! macOS confinement: the *Seatbelt* backend for the `process` and `supervised` tiers,
+//! counterpart to the Linux stack in [`crate::sandbox`].
 
 // Compiled on all Unix targets so the pure logic is covered by the Linux test
 // job; the exec paths are only *called* from the macOS dispatch arms.
@@ -413,18 +382,6 @@ fn expand_home(path: &str, home: Option<&Path>) -> Option<String> {
 }
 
 /// `fs.deny` entries this host cannot turn into an SBPL rule.
-///
-/// [`expand_home`] answers `None` for a `~`-relative path when `HOME` is unset,
-/// and [`build_profile`] then leaves it out of the deny block. For a *grant*
-/// that is fail-closed, the box losing access it was offered. For a *deny* it is
-/// fail-open, and this is the one file whose header says `fs.deny` is "genuinely
-/// enforced" here rather than being the lint it is on Linux: a profile granting
-/// `/Users/dev` and denying `~/.ssh` handed the box the key material, and
-/// `validate_profile`'s containment lint did not catch it either, because its
-/// own `expand_tilde` leaves `~/.ssh` unexpanded under the same condition.
-///
-/// `$`-prefixed entries are excluded on purpose: `$REPO`-relative denies are a
-/// repo-scoped lint on every tier and were never meant to be SBPL rules.
 fn unexpandable_denies(p: &crate::sandbox_policy::Profile, home: Option<&Path>) -> Vec<String> {
     p.fs_deny
         .iter()
@@ -568,33 +525,8 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
         s.push_str(&r);
         s.push('\n');
     }
-    // Terminals: an interactive session inherits the operator's, and a program in
-    // the box may allocate its own pty pair. Neither lives under any path grant. A
-    // captured run reaches none of this: it gets `setsid`, so it has no
-    // controlling terminal and `/dev/tty` cannot be opened at all.
-    //
-    // `file-ioctl` is a *separate* SBPL operation: `file-write*` does not imply
-    // it, so without this rule every terminal ioctl returns EPERM under `(deny
-    // default)`. Not a cosmetic gap. An interactive zsh puts itself in its own
-    // process group and calls `tcsetpgrp` to make that group the terminal's
-    // foreground one; the EPERM surfaces as
-    //
-    //     zsh: can't set tty pgrp: operation not permitted
-    //
-    // and leaves the shell in a *background* process group, where reading the
-    // terminal raises SIGTTIN and no line ever reaches it. The box prompt renders
-    // and keystrokes echo, so the session looks alive while `ls` does nothing. The
-    // same EPERM denies `tcsetattr`, so raw mode is gone too.
-    //
-    // The grant names exactly the nodes the two rules above it name, so the ioctl
-    // reach can never exceed the path reach. `/dev/tty` is spelled out even though
-    // `^/dev/tty[a-z0-9]*$` already subsumes it: it is the node a program actually
-    // opens, and a reader comparing the three rules should see one node set.
-    // `/dev/ptmx` is not optional, `^/dev/pty…$` does not match it (`ptm` ≠ `pty`),
-    // and without it `posix_openpt`'s `TIOCPTYGRANT`/`TIOCPTYUNLK` fail.
-    //
-    // This is the only rule the generator emits with more than one filter clause;
-    // `every_sbpl_construct_we_emit_is_accepted` hands it to the real parser.
+    // Terminals: an interactive session inherits the operator's, and a program in the box may
+    // allocate its own pty pair.
     if opts.interactive {
         s.push_str("(allow file-write* file-read* (regex #\"^/dev/tty[a-z0-9]*$\"))\n");
         s.push_str("(allow file-write* file-read* (regex #\"^/dev/pty[a-z0-9]*$\"))\n");
@@ -741,28 +673,8 @@ fn network_rules(policy: &ResolvedPolicy, opts: &SeatbeltOptions) -> String {
 
 // ─── plan: the macOS stand-in for bind mounts ────────────────────────────────
 
-/// Translate the policy's bind-mount redirects into what macOS can actually do,
-/// and say plainly what it cannot.
-///
-/// Linux shadows a path by bind-mounting over it in a private mount namespace.
-/// macOS has no unprivileged bind mount and no mount namespace, so each redirect
-/// is re-expressed as whichever of these preserves its *purpose*:
-///
-/// - *private paths* (`target/`, `.next/`) exist so concurrent envs of one repo
-///   do not fight over a single build-cache inode. A symlink from the worktree
-///   path to the per-env backing achieves that, and the backing is already the
-///   granted path.
-/// - *HOME state* (`~/.claude`, `~/.codex`) exists so boxes do not race on
-///   shared credential files. Both runtimes honour an explicit config directory
-///   (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), which points them at the per-env copy,
-///   and the real one is denied outright by [`build_profile`].
-/// - *private `/tmp`* becomes `TMPDIR`, which every well-behaved macOS program
-///   honours.
-/// - *read-only caches* need no redirect at all: the grant is read-only because
-///   nothing grants write to it.
-///
-/// Anything that does not fit lands in [`SeatbeltPlan::unmapped`] and is
-/// reported, never dropped in silence.
+/// Translate the policy's bind-mount redirects into what macOS can actually do, and say plainly
+/// what it cannot.
 pub fn plan(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOptions) -> SeatbeltPlan {
     // NOTE: the `/usr/bin` tool shims cache their toolchain lookup in the
     // *host's* per-user temp dir, located with
@@ -1983,17 +1895,6 @@ mod tests {
     }
 
     /// When a run under the real profile dies, say what would have saved it.
-    ///
-    /// Bisecting *forms* was the wrong tool and gave a misleading answer, for a
-    /// reason worth recording: macOS *kills* a process whose exec or library
-    /// mapping the profile denies, so "died on a signal" does not distinguish
-    /// "the profile is invalid" from "the profile compiled and forbade something
-    /// the program needed". A prefix carrying `(allow process-exec*)` but no read
-    /// grants dies exactly like a malformed profile does, which is how
-    /// `(allow process-exec*)` got fingered as the culprit.
-    ///
-    /// So probe from the other side: append a candidate permission to the real
-    /// profile and see whether the run starts working.
     #[test]
     #[cfg(target_os = "macos")]
     fn locate_what_the_real_profile_is_missing() {
@@ -2129,16 +2030,9 @@ mod tests {
             return;
         }
         let (_tmp, work, pol) = functional_env();
-        // Both option sets, because they generate *different* profiles: the
-        // interactive one adds the tty grants and the agent-config lockdown, and a
-        // rule the parser rejects takes the whole profile with it. Checking only
-        // the captured shape would leave every interactive box shell resting on
-        // `String::contains`.
-        //
-        // The interactive lockdown comes from `config_lock_paths(work, home)`,
-        // which lists only paths that *exist*, so `home: None` yields an empty
-        // lockdown and the rules production actually generates never reach the
-        // parser. Create both scopes.
+        // Both option sets, because they generate *different* profiles: the interactive one
+        // adds the tty grants and the agent-config lockdown, and a rule the parser rejects
+        // takes the whole profile with it.
         let home = work.join("home");
         std::fs::create_dir_all(work.join(".claude")).unwrap();
         std::fs::create_dir_all(home.join(".claude")).unwrap();
