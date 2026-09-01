@@ -94,11 +94,8 @@ impl Default for PageOptions {
     }
 }
 
-/// How many nodes an inline union will walk before giving up.
-///
-/// The union is per hint target and hints are per keystroke, so this is a
-/// budget on a loop the page can shape. Far above any real anchor's subtree and
-/// far below anything that would make an overlay feel slow.
+/// How many nodes an inline union walks before giving up. Far above any real
+/// anchor's subtree, far below anything that would make an overlay feel slow.
 const MAX_INLINE_NODES: usize = 4096;
 
 /// What [`Page::select_option`] did.
@@ -116,25 +113,11 @@ pub enum SelectOutcome {
 
 /// Where an element is on screen, in viewport pixels.
 ///
-/// Two sources, because a document has two layout systems and the interesting
-/// half of the web lives in the one with no boxes in it.
-///
-/// A block, a replaced element and an inline-block all get a taffy box, and for
-/// those the answer is the document's own `getBoundingClientRect`. A *non-replaced
-/// inline* element does not: `<a href="…">read the docs</a>` inside a paragraph
-/// has no box of its own, its text is laid out by parley into the containing
-/// block's inline formatting context, and its taffy size is zero. That is not a
-/// corner case. It is the ordinary shape of a link on a real page, and reading
-/// only the box layout produced an overlay that could label a form and could not
-/// label a single link in an article.
-///
-/// So the fallback walks the inline root's own layout and unions the runs
-/// belonging to this element, which is what `getClientRects` does and what
-/// [`Page::link_at`]'s hit test already relies on from the other direction.
-///
-/// Returns `None` when there is nothing to point at: an element with no box and
-/// no glyphs (`display: none`, an empty control, a `display: contents` wrapper)
-/// is one no label could usefully be stuck to.
+/// Two sources, because a document has two layout systems. Blocks and
+/// inline-blocks get a taffy box; a *non-replaced inline* element has zero taffy
+/// size, its text laid out by parley into the containing block. That is the
+/// ordinary shape of a link, so the fallback unions its inline runs, as
+/// `getClientRects` does. `None` when there is nothing to point at.
 fn hint_rect(doc: &BaseDocument, node_id: usize) -> Option<(f64, f64, f64, f64)> {
     if let Some(rect) = doc.get_client_bounding_rect(node_id)
         && rect.width > 0.0
@@ -151,15 +134,12 @@ fn inline_rect(doc: &BaseDocument, node_id: usize) -> Option<(f64, f64, f64, f64
     let root = node.inline_root_ancestor()?;
     let layout = &root.element_data()?.inline_layout_data.as_ref()?.layout;
 
-    // Which nodes count as "this element's text". Parley labels every glyph run
-    // with the node whose style it took, which for `<a><b>bold link</b></a>` is
-    // the `<b>`, so matching the anchor alone would find nothing on exactly the
-    // markup that needs this most.
+    // Which nodes count as "this element's text". Parley labels a glyph run with
+    // the node whose style it took, which for `<a><b>bold</b></a>` is the `<b>`,
+    // so matching the anchor alone would find nothing.
     let mut owned = std::collections::HashSet::new();
     let mut stack = vec![node_id];
-    // Bounded, like the snapshot walk it accompanies: this runs on a keystroke
-    // over a document the page controls, and an unbounded walk of a pathological
-    // tree is a viewer that stops answering.
+    // Bounded: this runs on a keystroke over a tree the page controls.
     let mut budget = MAX_INLINE_NODES;
     while let Some(id) = stack.pop() {
         if budget == 0 {
@@ -216,10 +196,9 @@ fn inline_rect(doc: &BaseDocument, node_id: usize) -> Option<(f64, f64, f64, f64
         return None;
     }
 
-    // Inline coordinates are relative to the inline root's *content* box, so
-    // the padding and border it carries have to be added back before the
-    // position means anything on screen. The same correction `hit_inner` makes
-    // on the way in, applied on the way out.
+    // Inline coordinates are relative to the inline root's content box, so its
+    // padding and border are added back — the correction `hit_inner` makes on
+    // the way in, applied on the way out.
     let origin = root.absolute_position(0.0, 0.0);
     let inset_x = (root.final_layout.padding.left + root.final_layout.border.left) as f64;
     let inset_y = (root.final_layout.padding.top + root.final_layout.border.top) as f64;
@@ -235,10 +214,8 @@ fn inline_rect(doc: &BaseDocument, node_id: usize) -> Option<(f64, f64, f64, f64
 
 /// One actionable element, with the geometry an overlay needs to label it.
 ///
-/// The ref is carried whole rather than reduced to its id, because a viewer has
-/// to *show* the target as well as address it: a hint that says only `e7` makes
-/// a human read the page to find out what they are about to press, which is the
-/// work the label existed to save.
+/// The ref is carried whole, not reduced to its id: a viewer has to show what
+/// the target is as well as address it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HintTarget {
     pub entry: crate::snapshot::RefEntry,
@@ -2182,14 +2159,12 @@ impl Page {
 
     /// Put the caret in a field without disturbing what it holds.
     ///
-    /// The counterpart of [`Page::type_into`], and the difference is the whole
-    /// reason both exist. `type_into` sets a value: right for an agent, which
-    /// knows what the field should say. This puts a human at the end of whatever
-    /// is already there, which is what focusing a field means to a person who
-    /// may have come to append to it, correct a character, or select a word.
+    /// The counterpart of [`Page::type_into`], which sets a value — right for an
+    /// agent that knows what the field should say. This is right for a person who
+    /// came to append to it or correct a character.
     ///
-    /// Returns whether there is a field here at all, so a viewer that aimed at a
-    /// button gets an answer rather than a caret nowhere.
+    /// Returns whether there is a field here, so aiming at a button gets an
+    /// answer rather than a caret nowhere.
     pub fn focus(&mut self, node_id: usize) -> bool {
         let mut doc = self.doc.borrow_mut();
         let takes_text = doc
@@ -2201,38 +2176,26 @@ impl Page {
             return false;
         }
         doc.set_focus_to(node_id);
-        // At the end, not at the start: a caret dropped at position zero puts
-        // every character the human types before what is already in the field.
+        // At the end: a caret at zero puts everything typed before what is there.
         doc.with_text_input(node_id, |mut driver| driver.move_to_text_end());
         true
     }
 
-    /// Whether anything on the page has keyboard focus.
-    ///
-    /// Asked so a key that a focused field declined is not then handed to the
-    /// scroller. Space in a search box is a space; space with nothing focused is
-    /// a page down; and the difference is which of those the human meant.
+    /// Whether anything on the page has keyboard focus, so a key a focused field
+    /// declined is not then handed to the scroller.
     pub fn has_focus(&self) -> bool {
         self.doc.borrow().get_focussed_node_id().is_some()
     }
 
     /// What a key does to the focused element.
     ///
-    /// The mapping from a DOM key name to an edit is a pure decision and lives in
-    /// [`crate::keys`], so it can be argued about and tested without a document.
-    /// This is the half that needs one.
+    /// The key-to-edit mapping is a pure decision and lives in [`crate::keys`];
+    /// this is the half that needs a document.
     ///
-    /// Returns whether anything changed, which is what keeps the live view at
-    /// zero frames per second when a key does nothing: an arrow at the end of a
-    /// field moves no caret and is not a reason to encode a frame.
-    ///
-    /// The event dispatch is deliberately *around* the edit rather than instead
-    /// of it. A page listening for `keydown` sees the key before the field
-    /// changes and can still `preventDefault` in the ordinary sense of reading
-    /// it; a page listening for `input` sees the change after. That ordering is
-    /// what an autocomplete and a controlled input are written against, and it
-    /// is the whole reason this exists beside `type_into`, which sets a value and
-    /// fires nothing a keystroke would.
+    /// Returns whether anything changed, so a key that does nothing costs no
+    /// frame. The events are dispatched *around* the edit — `keydown` before,
+    /// `input` after — which is the order an autocomplete or a controlled input
+    /// is written against, and the reason this exists beside `type_into`.
     pub fn key_to_focused(&mut self, key: &crate::keys::Key) -> bool {
         use crate::keys::Edit;
 
@@ -2249,8 +2212,7 @@ impl Page {
             let moved = {
                 let mut doc = self.doc.borrow_mut();
                 // Blitz offers forward only. Backwards is left unhandled rather
-                // than faked by cycling all the way round, which on a long form
-                // is a caret that appears to jump somewhere arbitrary.
+                // than faked by cycling round the whole form.
                 match edit {
                     Edit::FocusNext => doc.focus_next_node().is_some(),
                     _ => false,
@@ -2268,9 +2230,8 @@ impl Page {
                 .is_some()
         };
         if !takes_text {
-            // Not a field. The key is still delivered, because a page may be
-            // listening for it on a button or on the document, and that is a
-            // real thing keyboards do.
+            // Not a field, but the key is still delivered: a page may be
+            // listening for it on a button or on the document.
             for kind in ["keydown", "keypress", "keyup"] {
                 self.dispatch_key(node_id, kind, &key.name);
             }
@@ -2304,8 +2265,7 @@ impl Page {
                 Edit::SelectToLineEnd => driver.select_to_line_end(),
                 Edit::FocusNext | Edit::FocusPrevious | Edit::Ignore => {}
             });
-            // Typing reflows a form, and nothing else here re-resolves on the
-            // caller's behalf.
+            // Typing reflows a form.
             let _ = lay_out_doc(&mut doc);
         }
 
@@ -2316,9 +2276,8 @@ impl Page {
         }
         self.dispatch_key(node_id, "keyup", &key.name);
 
-        // A *user* edit fires `input`, and `change` only when the value moved.
-        // Script setting `.value` does neither, and must not, or a framework
-        // that re-renders on its own write would loop.
+        // A user edit fires `input`; script setting `.value` must not, or a
+        // framework that re-renders on its own write would loop.
         if changed
             && let Some(script) = self.script.as_mut()
         {
@@ -2331,8 +2290,7 @@ impl Page {
             }
         }
 
-        // The caret moved even when the text did not, and the caret is drawn, so
-        // a viewer still has a new picture to be shown.
+        // The caret is drawn, so a motion is still a new picture.
         changed || edit.moves_the_caret()
     }
 
@@ -2489,19 +2447,13 @@ impl Page {
 
     /// Everything on screen a human could act on, and where it is.
     ///
-    /// The hint overlay both viewers draw is this list rendered as labels. It is
-    /// deliberately *the snapshot's* refs rather than a second opinion about what
-    /// is clickable: an overlay that offered a target the verb layer would then
-    /// refuse is worse than no overlay, and a second walk with its own idea of
-    /// "actionable" is how the two drift. What this adds is the one thing the
-    /// outline leaves out because a model has no use for it, geometry.
+    /// The snapshot's own refs rather than a second opinion about what is
+    /// clickable, so the overlay cannot offer a target the verb layer refuses.
+    /// What this adds is the geometry the outline leaves out.
     ///
-    /// Viewport coordinates, already past the scroll offset, because that is the
-    /// frame both viewers draw in: the terminal maps cells through the image
-    /// placement and the web viewer maps CSS pixels through the canvas, and both
-    /// arrive at "where on the visible page". Offscreen elements are dropped
-    /// rather than clamped, so a label never points at something the human
-    /// cannot see.
+    /// Viewport coordinates, past the scroll offset. Offscreen elements are
+    /// dropped rather than clamped, so a label never points at something
+    /// invisible.
     pub fn hint_targets(&self) -> Vec<HintTarget> {
         let snapshot = self.snapshot();
         let doc = self.doc.borrow();

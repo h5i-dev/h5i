@@ -1,44 +1,29 @@
 //! Drawing hint labels over the page.
 //!
-//! The labels are composited into the decoded frame rather than written as
-//! terminal text on top of the image, and that is a decision worth stating
-//! because the other way looks easier.
+//! Composited into the decoded frame rather than written as terminal text with a
+//! negative z-index. The protocol's z-index would work, but terminals disagree
+//! about whether an image below the text is also below *cell backgrounds*, so a
+//! label's background would paint on some and not others. Compositing behaves
+//! the same everywhere.
 //!
-//! The graphics protocol does have a z-index, so an image could be placed under
-//! the text and the labels written as cells. What it does not have is a
-//! consistent answer about *cell backgrounds*: an image below the text is above
-//! the cell backgrounds in one reading of the spec and below them in another,
-//! and terminals differ. A label whose background sometimes paints and
-//! sometimes does not is a label that is sometimes unreadable, over page pixels
-//! we do not control. Compositing into the frame has one behaviour everywhere,
-//! costs a few thousand pixel writes, and needs nothing of the terminal beyond
-//! what it is already doing.
-//!
-//! It also puts the labels at *screen* resolution. The frame is downscaled to
-//! the cell box before transmission, so drawing after that step means a chip is
-//! the size it will actually be looked at, rather than a chip drawn at viewport
-//! scale and then shrunk into illegibility.
+//! Done after the downscale, so a chip is the size it will actually be read at.
 
 /// One label, positioned in the scaled frame's own pixels.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chip {
     /// The whole label, including whatever has been typed already.
     pub label: String,
-    /// How many leading characters the human has typed.
-    ///
-    /// Drawn dimmed rather than removed. Removing them would make the remaining
-    /// text jump left as it was typed, and a label that moves while it is being
-    /// aimed at is a label that gets mistyped.
+    /// How many leading characters the human has typed. Drawn dimmed rather than
+    /// removed, so the label does not shift under the fingers aiming at it.
     pub typed: usize,
     pub x: i32,
     pub y: i32,
 }
 
-/// Amber, which is legible over both a white page and a dark one, and is not a
-/// colour a page is likely to be using for something else at this size.
+/// Amber: legible over both a light and a dark page.
 const CHIP_BG: [u8; 3] = [255, 200, 40];
 const CHIP_FG: [u8; 3] = [20, 20, 20];
-/// The part already typed. Still legible, clearly spent.
+/// The part already typed.
 const CHIP_DIM: [u8; 3] = [150, 120, 30];
 const CHIP_EDGE: [u8; 3] = [60, 45, 0];
 
@@ -54,13 +39,9 @@ const GAP: i32 = 1;
 
 /// Where the label for a target goes, and how big it will be.
 ///
-/// The rect is in viewport pixels; the answer is in the scaled frame's pixels.
-/// The label sits at the target's top-left, which is where every implementation
-/// of this idea puts it and where a reader's eye already is when they are
-/// deciding what to press.
-///
-/// Nudged back inside the frame rather than clipped: a chip half off the left
-/// edge is a label that cannot be read, and a target at `x = 0` is common.
+/// `rect` is in viewport pixels; the answer is in the scaled frame's. The chip
+/// sits at the target's top-left, nudged back inside the frame rather than
+/// clipped — a target at `x = 0` is common and a half-drawn label is unreadable.
 pub fn place(
     label: &str,
     typed: usize,
@@ -93,9 +74,8 @@ pub fn size(label: &str) -> (i32, i32) {
 
 /// Composite every chip into a tightly packed RGB frame.
 ///
-/// Bounds are checked per pixel rather than per chip. The chips are positioned
-/// from a rect the *page* supplied, by way of a scale this viewer computed, and
-/// a page that can make this function index past the end of a host buffer is a
+/// Bounds are checked per pixel, not per chip: the positions derive from rects
+/// the *page* supplied, and one that could index past this buffer would be a
 /// page with a memory bug to hand.
 pub fn draw(rgb: &mut [u8], width: u32, height: u32, chips: &[Chip]) {
     let mut surface = Surface { rgb, width, height };
@@ -113,14 +93,10 @@ pub fn draw(rgb: &mut [u8], width: u32, height: u32, chips: &[Chip]) {
     }
 }
 
-/// A frame being drawn into: the pixels and the two numbers that say what
-/// counts as inside them.
+/// A frame being drawn into: the pixels and the bounds they are checked against.
 ///
-/// A type rather than three arguments threaded through every helper, because
-/// the three must never be separated: the whole safety of this file is that no
-/// coordinate is trusted until it has been checked against *these* bounds, and
-/// a helper taking a buffer and someone else's dimensions is how that stops
-/// being true.
+/// A type rather than three arguments, so a helper cannot end up holding one
+/// buffer and somebody else's dimensions.
 struct Surface<'a> {
     rgb: &'a mut [u8],
     width: u32,
@@ -171,11 +147,8 @@ impl Surface<'_> {
 
 /// A 5×7 uppercase face, one byte per row.
 ///
-/// Uppercase for a lower-case alphabet on purpose: at five pixels wide the
-/// letters with descenders and the ones without are hard to tell apart, and
-/// every implementation of hint labels shows them capitalised for that reason.
-/// The matching is still case-insensitive, so what is shown and what is typed
-/// stay the same name.
+/// Uppercase for a lower-case alphabet: at five pixels wide, letters with
+/// descenders are hard to tell apart. Matching stays case-insensitive.
 fn bitmap(ch: char) -> Option<[u8; GLYPH_H as usize]> {
     let rows = match ch.to_ascii_uppercase() {
         'A' => [0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
@@ -217,8 +190,7 @@ mod tests {
         vec![0u8; (w * h * 3) as usize]
     }
 
-    /// Every character the hint alphabet can produce has a face. A label drawn
-    /// as a blank chip is a label nobody can type.
+    /// A label drawn as a blank chip is one nobody can type.
     #[test]
     fn every_letter_a_label_can_contain_has_a_glyph() {
         for ch in b'a'..=b'z' {
@@ -233,8 +205,7 @@ mod tests {
         assert_eq!((chip.x, chip.y), (200, 100));
     }
 
-    /// A target at the very edge still gets a readable label, which means the
-    /// chip is nudged inside rather than drawn half off the frame.
+    /// A target at the edge still gets a whole, readable label.
     #[test]
     fn a_chip_at_the_edge_is_nudged_inside_the_frame() {
         let (w, h) = size("sd");
@@ -245,8 +216,8 @@ mod tests {
         assert!(chip.x >= 0 && chip.y >= 0, "{chip:?}");
     }
 
-    /// The page supplies the rects these are derived from, so a chip positioned
-    /// past the buffer must be dropped pixel by pixel rather than indexed.
+    /// The rects come from the page, so an out-of-range chip must draw nothing
+    /// rather than index past the buffer.
     #[test]
     fn a_chip_positioned_outside_the_buffer_writes_nothing_and_does_not_panic() {
         let (w, h) = (40u32, 30u32);
@@ -284,8 +255,7 @@ mod tests {
         }
     }
 
-    /// What has been typed is dimmed rather than dropped, so the label does not
-    /// shift left under the fingers aiming at it.
+    /// The typed prefix is dimmed, not dropped, so the label does not shift.
     #[test]
     fn typing_a_prefix_dims_it_without_moving_the_rest() {
         let (w, h) = (80u32, 40u32);

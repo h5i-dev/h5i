@@ -81,20 +81,9 @@ const TICK: Duration = Duration::from_millis(250);
 
 /// Where the browser being watched is, and how this process reaches its frames.
 ///
-/// The two arms are not two transports for one thing. They are two different
-/// security stories, and the viewer has to be able to say which one it is in
-/// rather than presenting them identically:
-///
-/// * A boxed session's stream port is advertised inside the box's own `/tmp`
-///   and reached through a fork that enters the box's namespaces, so nothing is
-///   bound on the host and no token is minted. What the page may reach is
-///   enforced outside the engine, and the status line can say so.
-/// * A host session's engine is on this machine's loopback, because there is no
-///   namespace between the two. There is also no boundary: the engine's own
-///   confinement is what is holding it, and an egress claim here rests on the
-///   engine's word. The status line says that too. The alternative, showing the
-///   same chrome for both, would be the viewer implying containment that is not
-///   there.
+/// Two different security stories rather than two transports, and the status
+/// line has to be able to tell them apart: a boxed session is enforced outside
+/// the engine, a host session is not.
 #[derive(Debug, Clone)]
 pub enum Attach {
     /// A browser inside an h5i box.
@@ -133,13 +122,8 @@ pub struct Options {
 }
 
 /// Find this browser's stream, with a sentence a human can act on if it is not
-/// there.
-///
-/// The resolution itself lives in [`crate::view::Route`], shared with the web
-/// forward. What is here is the *refusals*, which differ between the two ways
-/// of attaching in a way the shared type should not have to know about: a box
-/// that is not running is a different problem, with a different fix, from a
-/// session that never became resident.
+/// there. The resolution lives in [`crate::view::Route`]; what is here is the
+/// refusals, which differ between the two ways of attaching.
 #[cfg(unix)]
 fn resolve_route(opts: &Options) -> Result<crate::view::Route, H5iError> {
     match &opts.attach {
@@ -365,11 +349,8 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
         // Leave the page as we found it. A viewer that exits still holding the
         // lock leaves the agent refusing to act, with nothing on screen to
         // explain why.
-        // Asked of the mode rather than matched here, so a mode added later
-        // cannot leave the lock held by forgetting to be listed. INSERT drives
-        // the page too, and a viewer that exited from it still holding the lock
-        // would leave the agent refusing to act with nothing on screen to
-        // explain why.
+        // Asked of the mode, so a mode added later cannot leave the lock held by
+        // forgetting to be listed.
         if app.mode.holds_control() {
             let _ = control::release(&opts.state_dir);
         }
@@ -466,12 +447,10 @@ fn unsupported() -> H5iError {
     )
 }
 
-/// How long to wait for an `insert` before assuming it is not coming.
-///
-/// Not a guess about engine speed. It guards against a reply that will never
-/// arrive: an engine that does not know the message answers with nothing, and
-/// the web viewer's forward drops input outright when the control lock is not
-/// the human's. Without it, one lost reply wedges typing for the session.
+/// How long to wait for a reply before assuming it is not coming. An engine that
+/// does not know the message answers nothing, and the web viewer's forward drops
+/// input when the control lock is not the human's — without this, one lost reply
+/// wedges typing for the session.
 #[cfg(unix)]
 const INSERT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -485,25 +464,15 @@ enum Moved {
     Layout,
 }
 
-/// The roles `gi` will accept as "a field to type into".
-///
-/// The roles [`crate::browser`]'s outline mints for text-bearing controls. A
-/// list rather than "the first hint", because the first actionable thing on a
-/// page is almost never a field and `gi` that focused a navigation link would
-/// be a key nobody could use twice.
+/// The roles `gi` accepts as "a field to type into". A list rather than "the
+/// first hint", because the first actionable thing on a page is rarely a field.
 #[cfg(unix)]
 const FIELD_ROLES: &[&str] = &["textbox", "searchbox", "combobox"];
 
 /// One terminal keystroke, in the vocabulary a browser uses.
 ///
-/// The terminal reports what was pressed and, for a printable key, what it
-/// produced; both are needed and they are not the same question. `text` is what
-/// gets inserted and is reported rather than re-derived, because deriving it
-/// means re-deciding what a shifted key produces on a keyboard layout nothing
-/// here can see — the terminal already read the byte.
-///
-/// `None` for the keys the viewer keeps for itself, which the caller has already
-/// handled, and for anything with no DOM spelling worth inventing.
+/// `text` is what gets inserted, reported rather than re-derived: the terminal
+/// already read the byte. `None` for keys the viewer keeps for itself.
 #[cfg(unix)]
 fn dom_key(key: &input::Key) -> Option<proto::Typed> {
     use input::KeyCode;
@@ -522,9 +491,8 @@ fn dom_key(key: &input::Key) -> Option<proto::Typed> {
         KeyCode::PageDown => ("PageDown", None),
         KeyCode::Insert | KeyCode::Function(_) | KeyCode::Escape | KeyCode::Enter => return None,
         KeyCode::Char(ch) => {
-            // A chord is a command and types nothing, which the engine's own
-            // table enforces as well. Said here too, so a viewer cannot be the
-            // thing that sends `Ctrl-S` as an `s`.
+            // A chord types nothing. Enforced in the engine's table too; said
+            // here so a viewer cannot send `Ctrl-S` as an `s`.
             let text = (!ctrl).then(|| ch.to_string());
             return Some(proto::Typed {
                 key: ch.to_string(),
@@ -540,11 +508,8 @@ fn dom_key(key: &input::Key) -> Option<proto::Typed> {
     })
 }
 
-/// Collapse a page-derived string to one line for the status row.
-///
-/// The row's whole claim is that nothing from the page can put a pixel in it,
-/// and [`status`] sanitizes escape sequences on the way in. This is the other
-/// half: a name carrying a newline would push the row off its line.
+/// Collapse a page-derived string to one line for the status row. [`status`]
+/// strips escape sequences; this stops a newline pushing the row off its line.
 #[cfg(unix)]
 fn one_line(text: &str) -> String {
     text.chars()
@@ -565,20 +530,14 @@ struct App<'a> {
     /// The last frame, kept so a resize can redraw without waiting for the box
     /// to send another. A static page sends nothing at all.
     last_frame: Option<Vec<u8>>,
-    /// The scaled image the terminal is currently showing.
-    ///
-    /// What the next frame is compared against, so only the part that moved has
-    /// to be sent. Dropped on a resize by the placement changing shape, which
-    /// `damage` reports as "all of it" rather than comparing images of different
-    /// sizes.
+    /// The scaled image the terminal is showing, so only the part that moved has
+    /// to be sent. A resize changes its shape, which `damage` reports as "all of
+    /// it".
     shown: Option<image::Rgb>,
-    /// The same frame, already decoded.
-    ///
-    /// Most redraws are not caused by new pixels: narrowing a hint label,
-    /// opening the key list, a mode change. Those used to re-decode the JPEG
-    /// every time, which is about 1.7ms of a keystroke's budget spent
-    /// reproducing a buffer that has not changed. Dropped whenever a new frame
-    /// arrives, so it can never be stale by construction.
+    /// The same frame, already decoded. Most redraws are not caused by new
+    /// pixels — a hint keystroke, a mode change — and re-decoding for those
+    /// costs about 1.7ms to reproduce an identical buffer. Dropped whenever a
+    /// new frame arrives, so it cannot go stale.
     decoded: Option<image::Rgb>,
     /// Developer layout: page plus what the page said.
     developer: bool,
@@ -648,23 +607,13 @@ impl Hinting {
 
 /// The field INSERT is typing into.
 ///
-/// Typing is the one thing here that cannot be answered locally: the viewer
-/// draws pixels the engine rendered, so a character is not on screen until the
-/// engine has put it in the DOM, laid the page out again and encoded a frame.
-/// Measured on this machine that round trip is about 40ms, and 80ms at the tail.
+/// A keystroke cannot be answered locally: nothing appears until the page is
+/// laid out again and a frame encoded, around 40ms. Sent one at a time those
+/// serialize, so at most one message is on the wire and every key struck while
+/// it is away goes out together.
 ///
-/// Sent one keystroke at a time it is worse than it sounds, because the requests
-/// *serialize*: nineteen characters typed at a normal pace is nineteen full
-/// relayouts queued end to end, and the text crawls in behind the fingers long
-/// after they have stopped. So at most one message is ever on the wire, and
-/// every key struck while it was away goes out together when it lands.
-///
-/// Batched rather than coalesced, and the difference matters. A keystroke is a
-/// *delta*: dropping the ones in between would lose characters, which is exactly
-/// what coalescing does and why the earlier whole-value `insert` could get away
-/// with it. What is actually expensive is the relayout and the render, and those
-/// are paid once per batch however many keys it carries — so nothing is lost and
-/// the win is the same.
+/// Batched, not coalesced: a keystroke is a delta, so dropping the ones in
+/// between would lose characters.
 #[cfg(unix)]
 struct Inserting {
     reference: String,
@@ -779,10 +728,8 @@ impl<'a> App<'a> {
                     }) => {
                         self.streaming = screencasting;
                         self.viewport = (viewport_width, viewport_height);
-                        // What the keymap is allowed to bind, from the engine's
-                        // own account rather than from its name. Re-read on
-                        // every status: a session that gains a capability
-                        // mid-run gains the keys with it.
+                        // What the keymap may bind, from the engine's own
+                        // account. Re-read on every status.
                         self.features = vim::Features::from_iter(features);
                         self.draw_status();
                     }
@@ -794,17 +741,13 @@ impl<'a> App<'a> {
                         self.on_hints(items, (viewport_width, viewport_height), writer);
                     }
                     Some(proto::ServerMessage::Acted { action, ok, error }) => {
-                        // The reply is what releases the next insert. Done
-                        // before the refusal is shown, so a rejected keystroke
-                        // does not also wedge the ones after it.
-                        // `focus` releases the first batch; `input_keys`
-                        // releases each one after it.
+                        // Released before the refusal is shown, so a rejected
+                        // keystroke does not wedge the ones after it.
+                        // `focus` releases the first batch, `input_keys` the rest.
                         if matches!(action.as_deref(), Some("input_keys" | "focus")) {
                             self.insert_landed(writer);
                         }
-                        // Only the refusals are shown. A click that worked
-                        // announces itself by the page changing, and a viewer
-                        // that said so as well would be narrating.
+                        // Only refusals: a click that worked shows on the page.
                         if !ok {
                             let why = error.unwrap_or_else(|| "refused".into());
                             self.say(Some(one_line(&why)));
@@ -874,9 +817,8 @@ impl<'a> App<'a> {
         // produce one by crashing at the wrong moment, and a viewer that exits
         // on it is a viewer any flaky page can close.
         //
-        // Decoded once per frame rather than once per redraw. `on_frame` clears
-        // the cache before calling here, so a hit means these are the same
-        // pixels and a miss means they are not; nothing else has to be checked.
+        // Decoded once per frame, not once per redraw: `on_frame` clears the
+        // cache, so a hit means the same pixels.
         if self.decoded.is_none() {
             let Ok(frame) = image::decode(jpeg) else {
                 return;
@@ -934,20 +876,17 @@ impl<'a> App<'a> {
             viewport_height: self.viewport.1,
         });
 
-        // Only what changed, when only a little did.
-        //
-        // Typing moves a caret and a character or two. Sending the whole frame
-        // for that cost about 40KB of deflated JPEG per keystroke and made the
-        // terminal decode and blit a full screen each time; a megabyte to type
-        // one word, most of it identical to what was already on screen.
+        // Only what changed, when only a little did. Sending the whole frame for
+        // a keystroke cost about 40KB of deflated JPEG each time, a megabyte to
+        // type one word, nearly all of it already on screen.
         let patch = self.shown.as_ref().and_then(|shown| {
             if self.placer.should_refresh() {
-                // Patches have piled up. A whole frame releases them all.
+                // Patches have piled up; a whole frame releases them.
                 return None;
             }
             let hurt = image::damage(shown, &scaled)?;
-            // Cell-aligned, because a placement lands on the grid, and grown
-            // outwards so no changed pixel is left showing the older frame.
+            // Cell-aligned, grown outwards so no changed pixel is left showing
+            // the older frame.
             let cell_w = scaled.width / u32::from(fit.cols.max(1));
             let cell_h = scaled.height / u32::from(fit.rows.max(1));
             let hurt = hurt.to_cells(cell_w, cell_h, scaled.width, scaled.height);
@@ -956,8 +895,7 @@ impl<'a> App<'a> {
         });
 
         let bytes = match patch {
-            // Identical to what is on screen. `damage` says so by answering
-            // `None`, and the cheapest frame is the one never sent.
+            // Identical to what is on screen: the cheapest frame is unsent.
             None if self.shown.as_ref().is_some_and(|shown| *shown == *scaled) => Vec::new(),
             None => self
                 .placer
@@ -980,18 +918,13 @@ impl<'a> App<'a> {
             let _ = out.write_all(&bytes);
             let _ = out.flush();
         }
-        // What the terminal is showing now, which is what the next frame is
-        // compared against. Kept whatever was sent: after a patch the screen
-        // holds the new frame just as it does after a whole one.
+        // What the next frame is compared against. Kept whatever was sent: after
+        // a patch the screen holds the new frame just as after a whole one.
         self.shown = Some(scaled.into_owned());
         self.decoded = Some(frame);
     }
 
     /// Where each still-matching label goes in the frame just decoded.
-    ///
-    /// Only the ones still matching. Leaving the rest up would make the overlay
-    /// no easier to read after typing than before, which is the whole point of
-    /// typing.
     fn chips(&self, hinting: &Hinting, width: u32, height: u32) -> Vec<overlay::Chip> {
         hinting
             .matching()
@@ -1012,11 +945,8 @@ impl<'a> App<'a> {
             .collect()
     }
 
-    /// The key list, drawn over the page.
-    ///
-    /// Terminal text rather than a composited overlay, because unlike a hint
-    /// chip this does not have to line up with anything on the page: it is the
-    /// viewer talking about itself, and it may sit wherever it fits.
+    /// The key list, drawn over the page as terminal text — unlike a hint chip
+    /// it does not have to line up with anything, so it may sit where it fits.
     fn draw_help(&mut self) {
         if !self.help {
             return;
@@ -1172,23 +1102,21 @@ impl<'a> App<'a> {
         };
         let ctrl = key.modifiers & proto::modifiers::CTRL != 0;
 
-        // Ctrl-C is a keystroke here, not a signal; raw mode saw to that. So
-        // leaving on it has to be arranged rather than assumed, and it is
-        // checked before the keymap because a prefix must not swallow it.
+        // Ctrl-C is a keystroke here, not a signal — raw mode saw to that — so
+        // leaving on it is arranged, before the keymap, so no prefix eats it.
         if ctrl && key.code == KeyCode::Char('c') {
             return true;
         }
-        // Escape abandons a half-typed prefix and clears whatever the viewer
-        // was last saying. Nothing else, so it is safe to press when unsure.
+        // Escape abandons a half-typed prefix and clears the notice. Nothing
+        // else, so it is safe to press when unsure.
         if key.code == KeyCode::Escape {
             self.prefix.clear();
             self.say(None);
             return false;
         }
 
-        // The arrows and page keys do what they say, whatever the keymap thinks
-        // of the letters. Someone who has never read the key list should still
-        // be able to move around the page.
+        // The arrows and page keys work whatever the keymap says, so someone who
+        // has not read the key list can still move around.
         let arrow = match key.code {
             KeyCode::Down => Some(vim::Scroll::LineDown),
             KeyCode::Up => Some(vim::Scroll::LineUp),
@@ -1206,9 +1134,7 @@ impl<'a> App<'a> {
         let KeyCode::Char(ch) = key.code else {
             return false;
         };
-        // A control chord is not a keymap letter. Without this `Ctrl-D` would
-        // scroll, which is nearly right and would make `Ctrl-D` for something
-        // else impossible to add later.
+        // A control chord is not a keymap letter: `Ctrl-D` must not scroll.
         if ctrl {
             return false;
         }
@@ -1226,8 +1152,7 @@ impl<'a> App<'a> {
             Action::Quit => return true,
             Action::Pending => {
                 self.prefix.push(key);
-                // Shown rather than kept quiet: a prefix that is waiting looks
-                // exactly like a viewer that has stopped responding.
+                // Shown: a waiting prefix looks like a viewer that has stopped.
                 self.say(Some(format!("{key}…")));
                 return false;
             }
@@ -1250,24 +1175,18 @@ impl<'a> App<'a> {
                 let url = self.url.clone().unwrap_or_default();
                 self.yank(&url, "this page's URL");
             }
-            // Said rather than swallowed. A key that does nothing and explains
-            // nothing gets pressed harder.
+            // Said rather than swallowed: a silent key gets pressed harder.
             Action::Unsupported(why) => self.say(Some(why.to_string())),
             Action::Unbound => self.say(None),
         }
         false
     }
 
-    /// Ask the engine for the overlay.
-    ///
-    /// The reply is what puts the viewer into HINT; nothing changes here, so a
-    /// session whose engine ignores the message stays exactly where it was
-    /// rather than sitting in a mode with no labels in it.
+    /// Ask the engine for the overlay. The *reply* is what enters HINT, so an
+    /// engine that ignores the message leaves the viewer where it was.
     fn ask_for_hints(&mut self, then: vim::HintThen, auto_first: bool, writer: &mut impl Write) {
-        // Taken before the request goes out, not when a label is chosen. The
-        // labels describe the page as it is at this moment, and an agent that
-        // navigates between the ask and the answer would leave every one of
-        // them pointing into a document that is gone.
+        // Taken before the request goes out: the labels describe the page as it
+        // is now, and an agent navigating in between would make them all stale.
         let _ = control::take(&self.env_dir);
         self.hinting = Some(Hinting {
             then,
@@ -1276,8 +1195,7 @@ impl<'a> App<'a> {
             typed: String::new(),
             viewport: self.viewport,
         });
-        // Narrowed when the human is about to type, so every label they can
-        // reach is one they can actually use.
+        // Narrowed when the human is about to type.
         self.send(writer, &proto::hints(then == vim::HintThen::Insert));
     }
 
@@ -1285,8 +1203,7 @@ impl<'a> App<'a> {
     fn on_hints(&mut self, items: Vec<proto::Hint>, viewport: (u32, u32), writer: &mut impl Write) {
         let Some(hinting) = self.hinting.as_mut() else {
             // An overlay nobody asked for, or one that arrived after the human
-            // gave up. Dropped: acting on it would act on a page they are no
-            // longer looking at the same way.
+            // gave up.
             return;
         };
         hinting.items = items;
@@ -1299,8 +1216,7 @@ impl<'a> App<'a> {
             return;
         }
 
-        // `gi` wanted a field, not a choice. The overlay was only ever the
-        // thing that knows where the fields are.
+        // `gi` wanted a field, not a choice.
         if hinting.auto_first {
             let first = hinting
                 .items
@@ -1327,18 +1243,16 @@ impl<'a> App<'a> {
         self.repaint();
     }
 
-    /// In HINT the keys narrow the labels. Nothing reaches the page, but the
-    /// lock is held all the same: see [`Mode::holds_control`] for why an overlay
-    /// takes it.
+    /// In HINT the keys narrow the labels and nothing reaches the page. The lock
+    /// is held anyway: see [`Mode::holds_control`].
     fn on_hint_key(&mut self, ev: input::Event, writer: &mut impl Write) {
         use input::{Event, KeyCode};
         let Event::Key(key) = ev else {
             return;
         };
         let ctrl = key.modifiers & proto::modifiers::CTRL != 0;
-        // Both ways out, checked before the label matcher so that neither can
-        // be swallowed as a keystroke. `c` is in the hint alphabet's reach, so
-        // the modifier is what separates "get me out" from "narrow to c".
+        // Both ways out, before the label matcher: `c` is in the hint alphabet,
+        // so the modifier separates "get me out" from "narrow to c".
         if key.code == KeyCode::Escape || (ctrl && key.code == KeyCode::Char('c')) {
             self.leave_hint();
             return;
@@ -1349,9 +1263,7 @@ impl<'a> App<'a> {
                     Some(hinting) => hinting.typed.pop().is_some(),
                     None => false,
                 };
-                // Backspace at an empty prefix changes nothing on screen, and
-                // redrawing for it would send the whole frame again to show the
-                // same picture.
+                // Backspace at an empty prefix changes nothing on screen.
                 if changed {
                     self.repaint();
                 }
@@ -1361,9 +1273,8 @@ impl<'a> App<'a> {
                     self.leave_hint();
                     return;
                 };
-                // Tried before it is kept: a key that matches nothing must not
-                // be added, or the overlay would be stuck behind a prefix no
-                // label starts with and only Backspace would get it out.
+                // Tried before it is kept, or the overlay sticks behind a prefix
+                // no label starts with.
                 let mut attempt = hinting.typed.clone();
                 attempt.push(ch);
                 let labels: Vec<String> =
@@ -1392,13 +1303,10 @@ impl<'a> App<'a> {
     fn act_on(&mut self, then: vim::HintThen, item: proto::Hint, writer: &mut impl Write) {
         match then {
             vim::HintThen::Click => {
-                // The click goes out under the lock this overlay took, and the
-                // lock is given back after it: a human who followed a link is
-                // not still driving.
+                // The lock this overlay took is given back after the click.
                 self.mode = Mode::View;
-                // Through the verb layer, which is the whole argument for hints
-                // over a synthetic pointer: the receipt records which role and
-                // which accessible name were activated, not a coordinate.
+                // Through the verb layer, so the receipt names a role and an
+                // accessible name rather than a coordinate.
                 self.send(writer, &proto::act(&item.reference, "click"));
                 let _ = control::release(&self.env_dir);
                 self.say(Some(format!("{} {}", item.role, one_line(&item.name))));
@@ -1421,17 +1329,12 @@ impl<'a> App<'a> {
     }
 
     /// Put the caret in a field and start typing into it.
-    ///
-    /// This *is* driving the page, so unlike HINT it takes the control lock,
-    /// under the same rule `enter_interact` follows: reaching for the controls
-    /// is taking them, because there is nowhere else to ask from.
     fn enter_insert(&mut self, reference: String, writer: &mut impl Write) {
         let _ = control::take(&self.env_dir);
         self.inserting = Some(Inserting {
             reference: reference.clone(),
             pending: Vec::new(),
-            // The focus below is already on the wire, and is acknowledged on the
-            // same lane, so it is what releases the first batch.
+            // The focus below is already on the wire and releases the first batch.
             wire: {
                 let mut wire = vim::Coalesce::default();
                 wire.typed();
@@ -1441,37 +1344,29 @@ impl<'a> App<'a> {
         });
         self.mode = Mode::Insert;
         self.say(Some("typing — Enter to submit, Esc to stop".into()));
-        // The caret goes to the end of what is there, and what is there stays.
-        // Emptying it would be a viewer deciding that anyone who focuses a field
-        // meant to replace it, which is wrong for every field somebody came to
-        // correct a character in or append to.
+        // The caret goes to the end and what is there stays: emptying it would
+        // assume anyone focusing a field meant to replace it.
         self.send(writer, &proto::focus(&reference));
         self.repaint();
     }
 
     /// In INSERT every key goes to the field, as a real key.
     ///
-    /// One destination, known to the viewer, which is what makes this different
-    /// from INTERACT. What it sends is the keystroke itself rather than the
-    /// value it would produce: the caret moves, `Backspace` deletes where the
-    /// caret is rather than off the end, `Delete` and the arrows and `Home` mean
-    /// what they mean everywhere else, and a page listening for typing hears it.
-    /// None of that is expressible by sending a field's whole value.
+    /// The keystroke itself rather than the value it would produce, so the caret
+    /// moves, `Backspace` deletes where it is, and a page listening for typing
+    /// hears it. None of that is expressible by sending a whole value.
     fn on_insert_key(&mut self, ev: input::Event, writer: &mut impl Write) {
         use input::{Event, KeyCode};
         let typed = match ev {
-            // A paste is text, whole, and its control bytes are text too. Same
-            // rule the viewer already follows in INTERACT and for the same
-            // reason bracketed paste is enabled at all. It rides as one key
-            // carrying all of it, which inserts it at the caret in one edit.
+            // A paste is text, whole, control bytes included. It rides as one
+            // key carrying all of it, inserted at the caret in one edit.
             Event::Paste(pasted) => proto::Typed {
                 key: "Paste".into(),
                 text: Some(pasted),
                 modifiers: 0,
             },
-            // The terminal still has the mouse in INSERT: nothing here took it,
-            // because there is one destination and it is already known. A click
-            // is the terminal's own selection, not the page's.
+            // The terminal keeps the mouse in INSERT: a click is its own
+            // selection, not the page's.
             Event::Mouse(_) => return,
             Event::Key(key) => {
                 let ctrl = key.modifiers & proto::modifiers::CTRL != 0;
@@ -1484,9 +1379,8 @@ impl<'a> App<'a> {
                         self.leave_insert();
                         return;
                     }
-                    // Submitting is the viewer's decision rather than the
-                    // field's: `Enter` in a single-line input submits a form,
-                    // and a human who pressed it is done with the field.
+                    // Submitting is the viewer's decision: a human who pressed
+                    // `Enter` is done with the field.
                     KeyCode::Enter => {
                         if let Some(inserting) = self.inserting.as_ref() {
                             let reference = inserting.reference.clone();
@@ -1503,9 +1397,8 @@ impl<'a> App<'a> {
             }
         };
 
-        // Re-read rather than assumed, the same rule INTERACT follows: another
-        // process can take the lock while a human is typing, and the keystrokes
-        // must stop the moment it does.
+        // Re-read, not assumed: another process can take the lock mid-word, and
+        // the keystrokes must stop the moment it does.
         if control::read(&self.env_dir).holder != Holder::Human {
             self.leave_insert();
             return;
@@ -1518,11 +1411,7 @@ impl<'a> App<'a> {
         self.flush_insert(writer);
     }
 
-    /// Put the buffer on the wire, if the last one has landed.
-    ///
-    /// The whole of the coalescing. Nothing is dropped: `dirty` remembers that
-    /// the buffer moved, and [`App::insert_landed`] sends whatever it says when
-    /// the reply arrives.
+    /// Put the pending keys on the wire, if the last batch has landed.
     fn flush_insert(&mut self, writer: &mut impl Write) {
         let Some(inserting) = self.inserting.as_mut() else {
             return;
@@ -1531,17 +1420,12 @@ impl<'a> App<'a> {
             return;
         }
         inserting.sent_at = Instant::now();
-        // Taken rather than copied: these keys are on the wire now, and a batch
-        // that left a copy behind would type everything twice.
+        // Taken, not copied: a batch that left a copy would type twice.
         let batch = std::mem::take(&mut inserting.pending);
         self.send(writer, &proto::keys(&batch));
     }
 
-    /// Release an insert that is never going to be answered.
-    ///
-    /// Resending is correct rather than merely safe: `insert` carries the whole
-    /// value, so a late arrival and a resend cannot disagree about what the
-    /// field should hold.
+    /// Release a batch that is never going to be answered.
     fn unwedge_insert(&mut self, writer: &mut impl Write) {
         let stuck = self
             .inserting
@@ -1553,29 +1437,22 @@ impl<'a> App<'a> {
         let Some(inserting) = self.inserting.as_mut() else {
             return;
         };
-        // `timed_out` first, unconditionally: short-circuiting past it on an
-        // empty queue would leave the wire marked busy for a batch that is never
-        // coming, and the next keystroke would then wait for a tick instead of
-        // going straight out.
+        // `timed_out` first, unconditionally: skipping it on an empty queue
+        // leaves the wire marked busy for a batch that is never coming.
         let released = inserting.wire.timed_out();
         if !released || inserting.pending.is_empty() {
             return;
         }
-        // Sent from here rather than left for the next keystroke: someone who
-        // typed a word and stopped would otherwise be looking at a field that
-        // never caught up, with nothing to press to fix it.
-        //
-        // What is sent is only what has *not* been sent. Unlike a whole-value
-        // insert, a batch cannot be safely repeated: the earlier one may have
-        // arrived and been applied, and sending it again would type the word
-        // twice. So a batch already on the wire is given up on rather than
-        // retried, and only the keys behind it go out.
+        // Sent from here, not left for the next keystroke: someone who typed a
+        // word and stopped would be looking at a field that never caught up.
+        // Only what has *not* been sent goes out — repeating a batch that may
+        // already have arrived would type the word twice.
         inserting.sent_at = Instant::now();
         let batch = std::mem::take(&mut inserting.pending);
         self.send(writer, &proto::keys(&batch));
     }
 
-    /// An insert came back. Send what was typed while it was away.
+    /// A batch came back. Send what was typed while it was away.
     fn insert_landed(&mut self, writer: &mut impl Write) {
         let Some(inserting) = self.inserting.as_mut() else {
             return;
@@ -1583,9 +1460,8 @@ impl<'a> App<'a> {
         if !inserting.wire.landed() {
             return;
         }
-        // Keys were struck while that batch was away. `landed` has already
-        // marked the replacement as in flight, so this writes it rather than
-        // going back through `flush_insert`, which would hold it.
+        // `landed` already marked the replacement in flight, so this writes it
+        // rather than going back through `flush_insert`, which would hold it.
         inserting.sent_at = Instant::now();
         let batch = std::mem::take(&mut inserting.pending);
         self.send(writer, &proto::keys(&batch));
@@ -1607,12 +1483,8 @@ impl<'a> App<'a> {
         self.repaint();
     }
 
-    /// Turn a scroll intent into events the engine on the other end already
-    /// understands.
-    ///
-    /// Wheel deltas and the Home/End keys, never a message of ours, which is
-    /// what makes the keys a reader uses most work on a box running an engine
-    /// that has never heard of any of this.
+    /// Turn a scroll intent into events any engine understands: wheel deltas and
+    /// the Home/End keys, never a message of ours.
     fn scroll(&mut self, scroll: vim::Scroll, writer: &mut impl Write) {
         use vim::Scroll;
         // The engine's own line step. Named here rather than guessed, so a
@@ -1652,11 +1524,9 @@ impl<'a> App<'a> {
         self.say(None);
     }
 
-    /// Put text on the human's clipboard with OSC 52.
-    ///
-    /// Said honestly, because it cannot be confirmed: OSC 52 is a write with no
-    /// reply, and many terminals disable it. A viewer that reported "copied" and
-    /// was silently ignored would be worse than one that says what it tried.
+    /// Put text on the clipboard with OSC 52. It cannot be confirmed — the write
+    /// has no reply and many terminals disable it — so the notice says what was
+    /// tried rather than claiming success.
     fn yank(&mut self, text: &str, what: &str) {
         if text.is_empty() {
             self.say(Some(format!("no {what} to copy")));
@@ -1673,12 +1543,8 @@ impl<'a> App<'a> {
         self.say(Some(format!("sent {what} to the clipboard (OSC 52)")));
     }
 
-    /// Say one line to the human, on the row the page can never reach.
-    ///
-    /// Draws as well as stores. Keeping the two together is what stops a
-    /// refusal from being written into a field and then only appearing on the
-    /// next tick, a quarter of a second later, by which time the human has
-    /// pressed the key again.
+    /// Say one line to the human, on the row the page can never reach. Draws as
+    /// well as stores, so a refusal appears now rather than on the next tick.
     fn say(&mut self, notice: Option<String>) {
         if self.notice == notice {
             return;
@@ -1694,23 +1560,17 @@ impl<'a> App<'a> {
         self.repaint_with(Moved::Layout);
     }
 
-    /// Redraw everything from the frame already in hand.
-    ///
-    /// A static page sends nothing, so anything that moves the page on screen,
-    /// a split, an overlay, a mode change, has to repaint from what is already
-    /// here or the viewport stays as it was until the page happens to change.
+    /// Redraw everything from the frame already in hand. A static page sends
+    /// nothing, so a mode or layout change has to repaint from what is here.
     fn repaint(&mut self) {
         self.repaint_with(Moved::Nothing);
     }
 
     /// Repaint, saying whether the image is about to land somewhere else.
     ///
-    /// The distinction is worth a parameter because the screen clear is not
-    /// free and is not invisible. Toggling the console pane or the key list
-    /// resizes the page and the old placement has to go, or the two overlap.
-    /// Narrowing a hint label does not move anything, and clearing the screen
-    /// for it makes every keystroke flash — which reads as the viewer
-    /// struggling to keep up, on the one path where it is doing no work at all.
+    /// A pane toggle resizes the page and the old placement has to go. Narrowing
+    /// a hint label moves nothing, and clearing the screen for it makes every
+    /// keystroke flash.
     fn repaint_with(&mut self, moved: Moved) {
         if moved == Moved::Layout {
             let _ = std::io::stdout().write_all(b"\x1b[2J");

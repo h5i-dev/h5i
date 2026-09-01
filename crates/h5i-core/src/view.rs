@@ -116,39 +116,27 @@ pub fn stream_port(env_dir: &Path) -> Option<u16> {
 
 /// The port a host session's engine is listening on, from the file it wrote.
 ///
-/// The counterpart of [`stream_port`], and separate from it because the two
-/// answer the same question about two different arrangements. A box advertises
-/// inside its own `/tmp`, where several sessions can be found by scanning; a
-/// host session writes one file at a path h5i chose, so there is nothing to
-/// scan and nothing to disambiguate.
+/// The counterpart of [`stream_port`]: a box advertises inside its own `/tmp`
+/// and is found by scanning, while a host session writes one known file.
 pub fn session_stream_port(stream_file: &Path) -> Option<u16> {
     let port = std::fs::read_to_string(stream_file)
         .ok()?
         .trim()
         .parse::<u16>()
         .ok()?;
-    // Port 0 is not an address. A stream file holding one means the engine
-    // wrote it before it had bound, and saying so here is better than a
-    // connection refused much further along.
+    // Port 0 means the engine wrote the file before it had bound.
     (port != 0).then_some(port)
 }
 
 /// Where a browser's frame stream is, and how to reach it.
 ///
-/// Both viewers resolve one of these before they do anything else. Two arms,
-/// because they are two different security stories rather than two transports:
+/// Two arms, because they are two security stories rather than two transports:
+/// [`Route::Boxed`] enters a box's namespaces and nothing is bound on the host,
+/// with egress enforced outside the engine; [`Route::Host`] is plain loopback,
+/// where the engine's own confinement is all there is.
 ///
-/// * [`Route::Boxed`] reaches a stream advertised inside a box's own `/tmp`,
-///   through a fork that enters the box's namespaces. Nothing is bound on the
-///   host, and what the page may reach is enforced outside the engine.
-/// * [`Route::Host`] reaches an engine on this machine's loopback, because
-///   there is no namespace between the two. There is no boundary either: the
-///   engine's own confinement is what holds it, and any claim about egress
-///   there rests on the engine's word.
-///
-/// Keeping this a type rather than a pair of code paths is what stops the
-/// second arm from being bolted on twice, once per viewer, with two different
-/// ideas of what "not streaming" should say.
+/// A type rather than a pair of code paths, so the second arm is not bolted on
+/// once per viewer with two ideas of what "not streaming" should say.
 #[derive(Debug, Clone)]
 pub enum Route {
     Boxed {
@@ -168,10 +156,8 @@ impl Route {
         }
     }
 
-    /// Whether what is on the other end is held by something outside the engine.
-    ///
-    /// Read by the status line, which must not present a host session's chrome
-    /// as though a box were enforcing it.
+    /// Whether something outside the engine is holding it. Read by the status
+    /// line, which must not imply containment a host session does not have.
     pub fn is_boxed(&self) -> bool {
         matches!(self, Route::Boxed { .. })
     }
@@ -741,16 +727,10 @@ const PACING_MESSAGES: [&str; 2] = ["config", "ack"];
 
 /// Messages the forward acts on itself and never passes upstream.
 ///
-/// Exactly one, and it is the control lock. The web viewer needs a way to take
-/// the controls, and until now the only one was to leave the page, run
-/// `h5i browser take` in a terminal and reload — which is why the viewer's own
-/// footer said so. The terminal viewer has no such problem: it holds the lock
-/// file directly, and reaching for the controls there takes them.
-///
-/// Handling it here rather than upstream is not a shortcut. The lock is a
-/// *host* fact, kept in a file beside the box, and the thing on the other end
-/// of this socket is inside the box and has no business writing it. The forward
-/// is the only party in the conversation that can.
+/// Exactly one: the control lock. It is a *host* fact kept in a file beside the
+/// box, and the thing on the other end of this socket is inside the box — the
+/// forward is the only party that can write it. Without this the web viewer's
+/// only way to take the controls was to leave the page and reload.
 const FORWARD_MESSAGES: [&str; 1] = ["control"];
 
 /// Largest text frame worth parsing to see whether it is a pacing message.
@@ -817,13 +797,8 @@ fn message_type(payload: &[u8]) -> Option<String> {
 /// Take or hand back the control lock, on a viewer's say-so.
 ///
 /// Whoever is on this socket reached a loopback port with the box's viewer
-/// token, which is the same standing `h5i browser take` runs with on this
-/// machine. So this grants nothing new; it removes a detour that made the
-/// obvious thing hard, and it is what lets one keymap mean the same in both
-/// viewers.
-///
-/// A take always succeeds, following the lock's own rule: someone at the viewer
-/// wants the controls now, and the agent is a program that can wait.
+/// token — the same standing `h5i browser take` has — so this grants nothing
+/// new. A take always succeeds: the agent is a program that can wait.
 fn apply_control(payload: &[u8], env_dir: &Path) {
     let Some(v) = serde_json::from_slice::<serde_json::Value>(payload).ok() else {
         return;
@@ -962,8 +937,7 @@ pub fn pump_input(mut from_client: impl Read, mut to_box: impl Write, env_dir: &
             }
             Ok(Some(frame)) => {
                 let verdict = classify(frame.opcode, frame.fin, &frame.payload);
-                // Answered here and dropped, never written upstream: the box
-                // does not know this message and the lock is not its to write.
+                // Never written upstream: the lock is not the box's to write.
                 if verdict == FrameVerdict::Forward {
                     apply_control(&frame.payload, env_dir);
                     continue;
@@ -1025,9 +999,7 @@ pub struct Forward {
     env_id: String,
     policy_digest: String,
     token: String,
-    /// Where the frames come from, resolved once at bind time so a connection
-    /// arriving later does not re-ask a question that could by then answer
-    /// differently.
+    /// Where the frames come from, resolved once at bind time.
     route: Route,
 }
 
@@ -1070,12 +1042,8 @@ impl Forward {
         )
     }
 
-    /// Bind a forward onto an already-resolved route.
-    ///
-    /// The half of `bind` that does not care whether there is a box. A host
-    /// session reaches this directly: it has a stream port and a directory to
-    /// keep its token in, which is all a forward needs, and the box-shaped
-    /// questions above have no answer there rather than a different one.
+    /// Bind a forward onto an already-resolved route: the half of `bind` that
+    /// does not care whether there is a box.
     pub fn on(
         state_dir: &Path,
         subject: &str,
@@ -1228,13 +1196,9 @@ pub struct Session {
     pub env_id: String,
     pub policy_digest: String,
     pub transport: Transport,
-    /// The command that started this viewer, as it was actually invoked.
-    ///
-    /// Carried rather than reconstructed from `transport`, because there is now
-    /// more than one command that opens a terminal viewer and a receipt naming
-    /// a flag the reader did not type is a receipt nobody can retrace. It was
-    /// reconstructed here once, and the day a second entry point appeared every
-    /// receipt it wrote said `h5i box view --term`.
+    /// The command that started this viewer, as invoked. Carried rather than
+    /// reconstructed: more than one command opens a viewer now, and a receipt
+    /// naming a flag the reader did not type cannot be retraced.
     pub command: String,
 }
 
@@ -1599,11 +1563,8 @@ mod tests {
         assert!(rewritten.ends_with("\r\n\r\n"), "{rewritten:?}");
     }
 
-    /// The web viewer's way of reaching for the controls.
-    ///
-    /// Handled by the forward and never written upstream: the lock is a host
-    /// fact kept in a file beside the box, and the thing on the other end of
-    /// that socket is inside the box.
+    /// The web viewer's way of reaching for the controls, handled by the forward
+    /// and never written upstream.
     #[test]
     fn a_viewer_can_take_the_lock_without_leaving_the_page() {
         let dir = TempDir::new().unwrap();
@@ -1628,9 +1589,8 @@ mod tests {
         assert!(upstream.is_empty());
     }
 
-    /// The verdicts are three, not two, and the third must not widen the second.
-    /// Anything that is neither pacing nor the forward's own message is input,
-    /// including a message whose name merely looks like one.
+    /// Three verdicts, and the third must not widen the second: anything that is
+    /// neither pacing nor the forward's own message is input.
     #[test]
     fn only_the_named_messages_escape_the_lock() {
         let text = |body: &[u8]| classify(0x1, true, body);
@@ -2037,8 +1997,7 @@ mod tests {
         target_os = "linux",
         any(target_arch = "x86_64", target_arch = "aarch64")
     ))]
-    /// A host session advertises one port in one file. Nothing to scan, and no
-    /// second session to be confused with.
+    /// A host session advertises one port in one file.
     #[test]
     fn a_host_sessions_stream_port_is_read_from_the_file_the_engine_wrote() {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -2047,9 +2006,7 @@ mod tests {
         assert_eq!(session_stream_port(&path), Some(45123));
     }
 
-    /// Port 0 is not an address. A stream file holding one means the engine
-    /// wrote it before it had bound, and the viewer says so rather than dialling
-    /// it and reporting a connection refused from somewhere less informative.
+    /// Port 0 means the file was written before the engine bound.
     #[test]
     fn a_stream_file_written_before_the_engine_bound_is_not_an_address() {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -2062,9 +2019,8 @@ mod tests {
         assert_eq!(session_stream_port(&dir.path().join("absent")), None);
     }
 
-    /// The one thing the status line reads off a route, and the reason the two
-    /// arms are a type rather than an `Option<pid>`: a host session must not be
-    /// presented with a boxed session's chrome.
+    /// Why the two arms are a type: a host session must not be shown a boxed
+    /// session's chrome.
     #[test]
     fn only_a_boxed_route_claims_a_boundary_outside_the_engine() {
         assert!(!Route::Host { port: 1 }.is_boxed());

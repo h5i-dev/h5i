@@ -32,12 +32,10 @@ pub enum Mode {
     /// Driving with the pointer. Input goes to the page, and only the
     /// control-lock holder's input is sent at all.
     Interact,
-    /// The hint overlay is up. Keys narrow the labels; nothing reaches the
-    /// page until one is chosen.
+    /// The hint overlay is up. Keys narrow the labels.
     Hint,
-    /// Typing into a field a hint named. Keys become that field's text, and
-    /// nothing else, which is the difference between this and INTERACT: there
-    /// is one destination and the viewer knows what it is.
+    /// Typing into a field a hint named. Unlike INTERACT there is one
+    /// destination and the viewer knows what it is.
     Insert,
 }
 
@@ -51,36 +49,17 @@ impl Mode {
         }
     }
 
-    /// Whether keystrokes in this mode are the page's rather than the viewer's.
+    /// Whether this mode holds the control lock. Asked of the mode, so a new one
+    /// cannot leave it held by forgetting to be listed.
     ///
-    /// Asked of the mode rather than matched at each call site, so a mode added
-    /// later cannot leave the lock held by forgetting to be listed.
-    ///
-    /// HINT is in the list, which is worth arguing for because it looks like it
-    /// should not be: an overlay is a read, and the human has not touched the
-    /// page yet. Two things settle it. Asking for the overlay is an intent to
-    /// act, and the lock's own rule is that a human takes control rather than
-    /// asking for it, so making them take it as a separate step is a step with
-    /// no decision in it. And the labels describe the page *as it is now*: an
-    /// agent that navigates while the overlay is up leaves every label pointing
-    /// into a document that is gone, which the ref check would catch and refuse,
-    /// having already spent the human's keystroke. Holding the lock for the
-    /// second or two an overlay is up prevents that race rather than reporting
-    /// it afterwards.
-    ///
-    /// It is also what keeps the two viewers the same. The web viewer's messages
-    /// pass through a forward that gates everything except pacing, so an overlay
-    /// there is reachable only by the lock holder; a terminal viewer that did not
-    /// take it would make one key behave differently depending on which viewer
-    /// somebody happened to open.
+    /// HINT is included even though an overlay is a read: asking for one is an
+    /// intent to act, and the labels describe the page *as it is now*.
     pub fn holds_control(self) -> bool {
         matches!(self, Mode::Interact | Mode::Insert | Mode::Hint)
     }
 
-    /// Whether keystrokes in this mode reach the page.
-    ///
-    /// A different question from [`Mode::holds_control`], and HINT is where the
-    /// two part: it holds the lock and sends the page nothing.
+    /// Whether keystrokes in this mode reach the page. HINT is where this parts
+    /// from [`Mode::holds_control`]: it holds the lock and sends nothing.
     pub fn types_into_the_page(self) -> bool {
         matches!(self, Mode::Interact | Mode::Insert)
     }
@@ -103,12 +82,9 @@ pub struct Status {
     pub errors: u32,
     /// Whether the box's browser is still streaming.
     pub streaming: bool,
-    /// One line of the viewer talking to the human: what a hint is for, what a
-    /// refusal said, why a key did nothing.
-    ///
-    /// Never dropped when the row is short, because a message that appears only
-    /// on wide terminals is a message that cannot be relied on to explain a
-    /// refusal. It gives way only to the mode and the lock.
+    /// One line of the viewer talking to the human. It gives way only to the
+    /// mode and the lock: a refusal that shows on wide terminals only is one
+    /// nobody can rely on.
     pub notice: Option<String>,
 }
 
@@ -171,8 +147,7 @@ fn compose(s: &Status, width: usize) -> String {
         0,
         format!("{} control:{}", s.mode.as_str(), s.holder.as_str()),
     ));
-    // Priority 1, beside the error count: worth more than the URL, because it
-    // is the viewer answering something the human just did.
+    // Worth more than the URL: it answers something the human just did.
     if let Some(notice) = &s.notice {
         segs.push(seg(1, sanitize_display(notice)));
     }
@@ -441,9 +416,7 @@ mod tests {
         assert!(out.contains("err:3"), "{out:?}");
     }
 
-    /// The viewer's own answer to what the human just did. It gives way only to
-    /// the mode and the lock, because a refusal that appears on wide terminals
-    /// and not on narrow ones is a refusal nobody can rely on reading.
+    /// A refusal must survive a narrow row, or nobody can rely on reading it.
     #[test]
     fn what_the_viewer_says_survives_a_narrow_row() {
         let mut s = status();
@@ -453,8 +426,7 @@ mod tests {
         assert!(row.contains("VIEW"), "{row}");
     }
 
-    /// And it is page-influenced text on its way to a PTY, so it goes through
-    /// the same sanitizer everything else on this row does.
+    /// And it is page-influenced text on its way to a PTY.
     #[test]
     fn a_notice_carrying_an_escape_sequence_cannot_repaint_the_row() {
         let mut s = status();
@@ -463,9 +435,7 @@ mod tests {
         assert!(!row.contains("\u{1b}[2J"), "{row:?}");
     }
 
-    /// Two questions, not one, and HINT is where they part: it holds the lock so
-    /// the agent cannot move the page out from under the labels, and it sends
-    /// the page nothing at all.
+    /// Two questions, not one. HINT holds the lock and sends nothing.
     #[test]
     fn holding_the_lock_and_typing_into_the_page_are_different_questions() {
         for mode in [Mode::Interact, Mode::Insert] {

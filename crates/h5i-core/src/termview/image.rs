@@ -135,23 +135,13 @@ pub fn fit(src_w: u32, src_h: u32, cols: u16, rows: u16, cell_w: u16, cell_h: u1
     }
 }
 
-/// The part of `now` that differs from `before`, in pixels.
+/// The part of `now` that differs from `before`, in pixels. `None` when they are
+/// identical, the whole image when they differ in size.
 ///
-/// `None` when they are identical, which is a frame worth not sending at all,
-/// and the whole image when they differ in size, because there is nothing to
-/// compare against.
-///
-/// This is the measurement behind the viewer's patching. Typing a character
-/// changes a few hundred pixels of a 1280×720 frame, and the viewer was
-/// retransmitting all nine hundred thousand of them: about 40KB of deflated
-/// JPEG per keystroke, a megabyte to type one word, with the terminal decoding
-/// and blitting a full-screen image each time. The bounding box is what makes
-/// it possible to send only what moved.
-///
-/// A bounding box rather than a set of rectangles, deliberately: the interesting
-/// case is a caret and the characters beside it, which is one small box, and a
-/// change that is genuinely scattered is one the caller should give up on and
-/// send whole. [`Damage::worth_patching`] is where that judgement is made.
+/// Typing changes a few hundred pixels of a 1280×720 frame, and retransmitting
+/// all of them cost about 40KB per keystroke. One bounding box rather than a set
+/// of rectangles: a scattered change should be sent whole
+/// ([`Damage::worth_patching`]).
 pub fn damage(before: &Rgb, now: &Rgb) -> Option<Damage> {
     if before.width != now.width || before.height != now.height {
         return Some(Damage::whole(now.width, now.height));
@@ -176,9 +166,7 @@ pub fn damage(before: &Rgb, now: &Rgb) -> Option<Damage> {
             top = y;
         }
         bottom = y;
-        // Only the columns, now that the row is known to differ. Walked in from
-        // both ends rather than across: the changed run is usually short and
-        // somewhere in the middle, and this stops as soon as it has each edge.
+        // Walked in from both ends: the changed run is usually short.
         let mut x = 0;
         while x < width && a[x * 3..x * 3 + 3] == b[x * 3..x * 3 + 3] {
             x += 1;
@@ -218,9 +206,8 @@ impl Damage {
 
     /// Grow to cell boundaries, because a placement lands on the cell grid.
     ///
-    /// Outwards on every edge. A patch rounded *inwards* would leave the changed
-    /// pixels along its edge still showing the previous frame, which is the one
-    /// artifact this must never produce.
+    /// Outwards on every edge: rounding inwards would leave changed pixels along
+    /// it still showing the previous frame.
     pub fn to_cells(self, cell_w: u32, cell_h: u32, frame_w: u32, frame_h: u32) -> Damage {
         let (cw, ch) = (cell_w.max(1), cell_h.max(1));
         let x = (self.x / cw) * cw;
@@ -235,12 +222,9 @@ impl Damage {
         }
     }
 
-    /// Whether sending this rather than the whole frame is worth the bookkeeping.
-    ///
-    /// A patch is placed *over* the frame beneath it, so patches accumulate in
-    /// the terminal until a full frame replaces them. Below a quarter of the
-    /// image the saving is large and obviously worth it; above it, the saving is
-    /// small and the accumulated placements are not.
+    /// Whether sending this rather than the whole frame is worth it. Patches
+    /// accumulate until a full frame replaces them, so past a quarter of the
+    /// image the saving no longer pays for them.
     pub fn worth_patching(&self, frame_w: u32, frame_h: u32) -> bool {
         let whole = u64::from(frame_w) * u64::from(frame_h);
         let part = u64::from(self.width) * u64::from(self.height);
@@ -470,16 +454,14 @@ mod tests {
 
     // ─── damage ─────────────────────────────────────────────────────────────
 
-    /// The cheapest frame is the one never sent, and a still page sends the same
-    /// pixels over and over.
+    /// A still page sends the same pixels over and over.
     #[test]
     fn an_identical_frame_has_no_damage_at_all() {
         let a = solid(40, 20, [9, 9, 9]);
         assert_eq!(damage(&a, &a.clone()), None);
     }
 
-    /// The case this exists for: a caret and a character, in a frame that is
-    /// otherwise exactly what is already on screen.
+    /// The case this exists for: a caret and a character, in an unchanged frame.
     #[test]
     fn a_small_change_is_reported_as_a_small_box() {
         let before = solid(40, 20, [0, 0, 0]);
@@ -495,8 +477,7 @@ mod tests {
         assert!(hurt.worth_patching(40, 20), "{hurt:?}");
     }
 
-    /// A change that covers most of the frame is not worth patching: the saving
-    /// is small and the placements it would leave behind are not.
+    /// A change covering most of the frame is not worth patching.
     #[test]
     fn a_change_over_most_of_the_frame_is_not_worth_patching() {
         let before = solid(40, 20, [0, 0, 0]);
@@ -513,8 +494,7 @@ mod tests {
         assert_eq!(hurt, Damage { x: 0, y: 0, width: 50, height: 20 });
     }
 
-    /// The artifact this must never produce: a patch rounded *inwards* would
-    /// leave changed pixels along its edge showing the previous frame.
+    /// Rounding inwards would leave changed pixels showing the previous frame.
     #[test]
     fn cell_alignment_only_ever_grows_the_box() {
         let hurt = Damage { x: 9, y: 5, width: 3, height: 2 };
@@ -532,14 +512,10 @@ mod tests {
         assert!(cells.y + cells.height <= 200, "{cells:?}");
     }
 
-    /// The invariant the whole scheme rests on: pasting the cropped patch back
-    /// over the old frame, at the box it came from, reproduces the new frame
-    /// *exactly*. If this can fail, the viewer shows a page that was never
-    /// rendered — which is worse than being slow.
-    ///
-    /// Checked over shapes chosen to hit the awkward cases: a change at the
-    /// origin, one against the far edge where the cell grid does not divide the
-    /// frame, a single pixel, and a full-width band.
+    /// The invariant the scheme rests on: pasting the patch back over the old
+    /// frame reproduces the new one *exactly*, or the viewer shows a page that
+    /// was never rendered. Checked at the origin, against the far edge where the
+    /// cell grid divides neither dimension, and across full-width bands.
     #[test]
     fn a_patch_pasted_back_reproduces_the_frame_it_came_from() {
         let (w, h) = (61u32, 43u32);
@@ -582,8 +558,7 @@ mod tests {
         }
     }
 
-    /// What is cropped out is exactly what was there, or the patch would paint
-    /// the wrong pixels over a correct frame.
+    /// The crop carries exactly the pixels it names.
     #[test]
     fn a_crop_carries_the_pixels_it_names() {
         let mut frame = solid(6, 4, [0, 0, 0]);

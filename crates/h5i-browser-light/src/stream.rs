@@ -54,47 +54,26 @@ const MAX_UNKNOWN_VERBS: usize = 64;
 /// reported in full, so a truncated list is visibly truncated.
 const MAX_FIND_MATCHES: usize = 20;
 
-/// What the viewer lane offers, advertised in every `status`.
+/// What the viewer lane offers, advertised in every `status`. The names are the
+/// message types a viewer may send, so this and [`handle`]'s arms are one set
+/// said twice, checked by a test.
 ///
-/// The names are the message types a viewer may send, so this list and
-/// [`handle`]'s match arms are the same set said twice. They are checked
-/// against each other by a test rather than by a type, because the wire is the
-/// contract here and a type would only prove the two halves of *this* process
-/// agree.
-/// Note what is *not* here: `pointer`.
-///
-/// This engine's viewer lane answers a pointer press and a pointer move with
-/// nothing at all, and the only gesture it acts on is a release over a link. A
-/// viewer told it could hand the page the pointer would offer a mode that does
-/// one twentieth of what it looks like it does — click a button, nothing; click
-/// a field and type, nothing — which is worse than not offering it. The list
-/// above is what this lane can do, and it is keyboard-complete: `hints` reaches
-/// every actionable element the snapshot knows about, which is strictly more
-/// than a click here can.
+/// Note what is *not* here: `pointer`. This lane drops a pointer press and move,
+/// so offering one would be offering a mode that barely works.
 const VIEWER_FEATURES: &[&str] = &[
     "hints", "act", "insert", "history", "reload", "input_keys",
 ];
 
-/// How many keys one batch may carry.
-///
-/// A bound on work a client can ask for in one message. Far above any burst a
-/// human produces between two frames, and far below anything that would make the
-/// page thread stop answering.
-/// The roles a caret can go in.
-///
-/// The same question [`crate::engine::Page::focus`] answers by asking the
-/// document, written here as the roles the outline mints for text-bearing
-/// controls. Kept in step by `only_the_roles_that_take_a_caret_are_offered`,
-/// which checks the two against each other on a real page rather than trusting
-/// the list.
+/// How many keys one batch may carry: far above any human burst, far below
+/// anything that would stall the page thread.
+/// The roles a caret can go in. The same question
+/// [`crate::engine::Page::focus`] answers from the document; kept in step by
+/// `only_the_roles_that_take_a_caret_are_offered`.
 const TEXT_ROLES: &[&str] = &["textbox", "searchbox", "combobox"];
 
 const MAX_KEY_BATCH: usize = 256;
 
-/// How much text one keystroke may insert.
-///
-/// A keystroke inserts a character; an IME commit inserts a few. This is not a
-/// paste, which arrives as its own message.
+/// How much text one keystroke may insert. A character, or an IME commit.
 const MAX_KEY_TEXT: usize = 64;
 
 const PAGE_SCROLL: f64 = 0.9;
@@ -226,18 +205,9 @@ struct Session {
     served_refs: Option<Vec<crate::snapshot::RefEntry>>,
     /// The refs this session last handed to a *viewer*, as a hint overlay.
     ///
-    /// A third handle set rather than a reuse of `served_refs`, and the reason is
-    /// the same one that made `served_refs` separate from `last_snapshot`: they
-    /// answer different questions and share nothing but a shape. An agent holds
-    /// refs from the reading it took; a human at a viewer holds labels from the
-    /// overlay they are looking at. Minting one must not silently expire the
-    /// other, because the human pressing `f` is not asking the agent to
-    /// re-snapshot, and an agent whose next `@e5` failed because somebody looked
-    /// at the page would be an agent broken by an observer.
-    ///
-    /// `resolve_ref` honours either, under the same `same_target` rule. Neither
-    /// set is trusted further than the other: both are evidence that a ref was
-    /// minted in a reading which still describes the same thing.
+    /// Separate from `served_refs` so that minting one does not expire the other:
+    /// a human pressing `f` is not asking the agent to re-snapshot. `resolve_ref`
+    /// honours either, under the same `same_target` rule.
     hint_refs: Option<Vec<crate::snapshot::RefEntry>>,
     /// Where this session has been, so a viewer can go back.
     ///
@@ -267,17 +237,10 @@ struct Session {
 
     /// The page moved and no viewer has been shown it.
     ///
-    /// Set when a frame was worth sending and could not be. Rendering is the
-    /// expensive half of everything this session does — about 13ms against
-    /// under 1ms to apply a keystroke — and it used to be paid whether or not
-    /// the frame could go anywhere: `send_frame` would hold the result for a
-    /// viewer that still owed an ack, and the *next* frame would then replace
-    /// it. A wasted render is not merely wasted here, because the page runs on
-    /// one thread: it is 13ms the next keystroke spends waiting.
-    ///
-    /// So the render is deferred to the moment somebody can take it, and what
-    /// they get is a picture of the page as it is *then*, which is also more
-    /// current than the one that would have been held for them.
+    /// Rendering costs about 13ms against under 1ms to apply a keystroke, and the
+    /// page runs on one thread — so a frame rendered for a viewer that cannot
+    /// take it is 13ms the next keystroke waits for. Deferred until somebody can,
+    /// which also makes what they get more current.
     frame_owed: bool,
 
     /// Whether a human is typing a credential right now.
@@ -294,17 +257,10 @@ struct Session {
 
 /// Where this session has been, and where forward is.
 ///
-/// The back button is the one piece of browser chrome a viewer cannot fake from
-/// outside: `navigate` to the previous URL is a *new* visit, which is why the
-/// engine has to keep this rather than letting the viewer hold a list of its
-/// own. Two viewers watching one page would otherwise disagree about what back
-/// means, and neither would agree with the session.
-///
-/// What counts as an entry is deliberately narrow. A navigation the session
-/// performed is one; a navigation that *failed* is not, because the page never
-/// changed and a back button that steps through pages the human never saw is a
-/// back button that lies. Re-visiting the URL already on top is not one either:
-/// a reload is not a place.
+/// Kept by the engine because `navigate` to the previous URL is a *new* visit,
+/// so a viewer holding its own list could not implement back. Only navigations
+/// that actually landed are entries: a failed one changed no page, and a reload
+/// is not a place.
 #[derive(Debug, Clone, Default)]
 struct History {
     entries: Vec<Url>,
@@ -314,12 +270,8 @@ struct History {
 }
 
 impl History {
-    /// A history that starts on the page a session opened on.
-    ///
-    /// Named rather than left to each caller, because a session built without it
-    /// is a session whose first `back` refuses: the page the human is looking at
-    /// was never recorded as somewhere they had been. The test fixtures use it
-    /// too, so what they exercise is the session `serve` actually builds.
+    /// A history that starts on the page a session opened on. Without the seed
+    /// the first `back` refuses, so the fixtures use it too.
     fn seeded(url: Url) -> History {
         History {
             entries: vec![url],
@@ -327,12 +279,8 @@ impl History {
         }
     }
 
-    /// Record a navigation the session actually performed.
-    ///
-    /// Going somewhere new after stepping back discards the forward entries,
-    /// which is what every browser does and what makes forward safe to offer:
-    /// the alternative is a forward button that jumps to a page unrelated to
-    /// the one being read.
+    /// Record a navigation the session actually performed. Going somewhere new
+    /// after stepping back discards the forward entries, as any browser does.
     fn visit(&mut self, url: Url) {
         if self.entries.get(self.index) == Some(&url) {
             return;
@@ -345,11 +293,8 @@ impl History {
         self.index = self.entries.len() - 1;
     }
 
-    /// Where stepping `delta` would land, without moving.
-    ///
-    /// Returns `None` at either end rather than clamping, so a viewer can say
-    /// "there is nothing back there" instead of silently reloading the page the
-    /// human is already looking at.
+    /// Where stepping `delta` would land, without moving. `None` at either end
+    /// rather than clamping, so a viewer can say there is nothing back there.
     fn peek(&self, delta: isize) -> Option<Url> {
         let target = self.index.checked_add_signed(delta)?;
         self.entries.get(target).cloned()
@@ -412,15 +357,10 @@ impl Session {
             // this string should find out here rather than from a missing
             // feature later.
             "engine": "h5i-browser-light",
-            // What this engine's *viewer* lane offers, so a viewer can decide
-            // what to bind rather than deciding it from the name above.
-            //
-            // A name match would work today and would be wrong in the way that
-            // matters: the terminal viewer watches boxes running a second
-            // engine too, and "which engine is this" is not the question it
-            // needs answered. "Can I ask for a hint overlay" is. Anything that
-            // sends no list gets no keys bound, which is the right default for
-            // an engine that has not said.
+            // What this lane offers, so a viewer binds keys from the list
+            // rather than from the engine name above. It watches boxes running
+            // other engines too, and "can I ask for an overlay" is the question
+            // it needs answered.
             "features": VIEWER_FEATURES,
         })
     }
@@ -439,55 +379,36 @@ impl Session {
         }))
     }
 
-    /// Land on a new page, and record everything that follows from having done
-    /// so.
+    /// Land on a new page, and record everything that follows.
     ///
-    /// Every place that replaces `self.page` goes through here, and that is the
-    /// point rather than tidiness. There are four of them — a viewer following a
-    /// link, `navigate`, a form submission, and a `click` that follows an href —
-    /// and the bookkeeping is identical for all four: the page is somewhere new,
-    /// so history gained an entry and every ref anyone is holding describes a
-    /// document that is gone. Two of the four were doing none of it, which is a
-    /// bug you find by pressing `H` after clicking a link and watching nothing
-    /// happen. A fifth site added later cannot forget, because there is nothing
-    /// left to remember.
+    /// Every place that replaces `self.page` goes through here — a viewer
+    /// following a link, `navigate`, a form submission, and a `click` on an href
+    /// — because the bookkeeping is identical: history gains an entry and every
+    /// ref anyone holds describes a document that is gone. Two of the four used
+    /// to do neither, which showed up as `H` doing nothing after a link.
     ///
-    /// Deliberately not used by `reload` or by a history step. Neither is a new
-    /// place: a reload is the same page fetched again, and a step is a move
-    /// *within* the list this maintains.
+    /// Not used by `reload` or a history step: neither is a new place.
     fn land(&mut self, page: crate::engine::Page) {
         let url = page.url().clone();
         self.page = page;
         self.history.visit(url);
-        // Both handle sets described the document being left. Dropping them is
-        // what stops a ref minted on one page from being honoured against the
-        // next: `resolve_ref` would refuse it on `same_target`, but only if the
-        // new document does not happen to put the same role at the same node id,
-        // and "usually catches it" is not the standard this file is held to.
+        // Both handle sets described the document being left. `same_target`
+        // would usually catch a stale ref, but only if the new document does not
+        // happen to put the same role at the same node id.
         self.hint_refs = None;
         self.served_refs = None;
     }
 
     /// One key, to whatever has focus, or to the page if nothing does.
     ///
-    /// Two behaviours under one message, and which one applies is a property of
-    /// the document rather than of the key. With a field focused the key edits
-    /// it: a caret moves, `Backspace` deletes at the caret, and the page hears
-    /// `keydown`, `keypress` and `input` in the order a script expects. With
-    /// nothing focused there is no field to edit and the scrolling keys keep the
-    /// meaning they have always had here, which is what a reader pressing
-    /// `PageDown` on an article is asking for.
-    ///
-    /// The order matters: the field is asked first. A page that focuses a search
-    /// box on load would otherwise have every space bar press scroll the article
-    /// instead of typing a space.
+    /// With a field focused the key edits it. With nothing focused the scrolling
+    /// keys keep their old meaning. The field is asked first, or a page that
+    /// focuses a search box on load would scroll on every space.
     fn type_key(&mut self, key: &crate::keys::Key) -> bool {
         if self.page.key_to_focused(key) {
             return true;
         }
-        // Nothing focused took it. Only then is it a scroll, and only for a key
-        // that carries no text: a space typed into a field is a space, and it is
-        // a page-down only when there is no field.
+        // Only now is it a scroll: a space in a field is a space.
         let focused = self.page.has_focus();
         if focused {
             return false;
@@ -499,10 +420,8 @@ impl Session {
         }
     }
 
-    /// Add a frame to `out`, or remember that one is owed.
-    ///
-    /// The single place the deferral decision is made, so a site that produces a
-    /// frame cannot forget to make it. See [`Session::frame_owed`].
+    /// Add a frame to `out`, or remember that one is owed. The single place the
+    /// deferral decision is made. See [`Session::frame_owed`].
     fn show(&mut self, may_render: bool, out: &mut Vec<Value>) -> Result<(), H5iError> {
         if may_render {
             out.push(self.frame_message()?);
@@ -637,8 +556,7 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         None => None,
     };
 
-    // Captured before `page` is moved into the session, which is also why the
-    // history seed below cannot simply ask the page where it is.
+    // Captured before `page` is moved into the session.
     let page_url = page.url().clone();
     let session = Session {
         factory,
@@ -785,12 +703,10 @@ fn dispatch(viewers: &mut HashMap<u64, Viewer>, actor: u64, out: Vec<Value>) {
     }
 }
 
-/// Whether a frame rendered now could be delivered to anybody.
+/// Whether a frame rendered now could reach anybody.
 ///
-/// A viewer under ack pacing that still owes one cannot take another: a frame
-/// sent to it would be held, and then dropped when the next replaced it. With
-/// nobody able to take one, rendering is pure cost — and on a single-threaded
-/// page it is cost the next keystroke pays.
+/// A viewer under ack pacing that still owes one cannot take another, so the
+/// frame would be held and then dropped when the next replaced it.
 fn anyone_ready(viewers: &HashMap<u64, Viewer>) -> bool {
     viewers
         .values()
@@ -799,9 +715,8 @@ fn anyone_ready(viewers: &HashMap<u64, Viewer>) -> bool {
 
 /// Render and deliver the frame the page owes, if anyone can take it now.
 ///
-/// The deferred half of [`Session::show`]. Called after every viewer message and
-/// after every ack, which between them cover the two ways the answer to "can
-/// anybody take one" changes.
+/// The deferred half of [`Session::show`], called after every viewer message and
+/// every ack — the two ways the answer can change.
 fn serve_owed(session: &mut Session, viewers: &mut HashMap<u64, Viewer>) {
     if !session.frame_owed || !anyone_ready(viewers) {
         return;
@@ -814,8 +729,7 @@ fn serve_owed(session: &mut Session, viewers: &mut HashMap<u64, Viewer>) {
             }
         }
         Err(error) => {
-            // Left owed rather than dropped: the page still moved, and the next
-            // ack is another chance to show it.
+            // Left owed: the next ack is another chance to show it.
             eprintln!("h5i-browser-light: could not render a frame: {error}");
         }
     }
@@ -2820,10 +2734,9 @@ fn resolve_ref(
     // No snapshot has been served, so the caller cannot have read this ref
     // anywhere. Distinguished from a stale one because the fix differs: this is
     // "take a snapshot", that is "take another".
-    // Either reading counts: the agent's own snapshot, or the overlay a human is
-    // looking at. Chained rather than merged so the "no reading at all" case
-    // stays distinguishable from "a reading that no longer matches", which is
-    // the distinction the two error messages exist to make.
+    // Either reading counts: the agent's snapshot, or the overlay a human is
+    // looking at. Kept apart so "no reading at all" stays distinguishable from
+    // "a reading that no longer matches".
     let readings = [
         session.served_refs.as_ref(),
         session.hint_refs.as_ref(),
@@ -2900,10 +2813,7 @@ fn login_safe_url(url: &Url) -> String {
     }
 }
 
-/// Read one key off the wire.
-///
-/// The same three fields both viewers already send with `input_keyboard`, so a
-/// batch and a single key are the same shape and nothing new had to be invented.
+/// Read one key off the wire, in the shape `input_keyboard` already uses.
 fn key_of(value: &Value) -> crate::keys::Key {
     crate::keys::Key {
         // Collapsed, because it is page-bound text off a socket and it reaches
@@ -3034,8 +2944,7 @@ fn handle_with(
                 Ok(page) => {
                     session.page = page;
                     // Not a `visit`: a reload is not a place. Both handle sets
-                    // go, because both described a document that has been
-                    // replaced even though the URL has not moved.
+                    // go, because the document was replaced.
                     session.hint_refs = None;
                     session.served_refs = None;
                     let mut out = vec![session.url_message()];
@@ -3077,11 +2986,9 @@ fn handle_with(
                 changed |= session.type_key(&key_of(value));
                 applied += 1;
             }
-            // Acknowledged whether or not the page moved, and that is the point.
-            // A viewer holds one batch on the wire and gathers what is typed
-            // behind it; if the release signal were the frame, a batch that
-            // changed nothing — an arrow at the end of a field — would never
-            // release, and typing would stop.
+            // Acknowledged whether or not the page moved: if the release signal
+            // were the frame, a batch that changed nothing would never release
+            // and typing would stop.
             let mut out = vec![json!({
                 "type": "act",
                 "action": "input_keys",
@@ -3105,25 +3012,16 @@ fn handle_with(
 
 /// The overlay: every actionable element on screen, labelled.
 ///
-/// Minting the labels here rather than in each viewer is what keeps two viewers
-/// watching one page from disagreeing about what `sd` means. The refs are
-/// remembered as `hint_refs` so the `act` that follows can be checked against
-/// the reading the human was actually looking at.
-///
-/// The viewport is reported alongside, because a viewer has to scale these
-/// coordinates into whatever it is drawing on and deriving the scale from the
-/// last frame's dimensions would be deriving it from a different message.
+/// Labels are minted here so two viewers cannot disagree about what `sd` means,
+/// and remembered as `hint_refs` so the `act` that follows is checked against
+/// the reading the human was looking at. The viewport rides along because the
+/// viewer has to scale these coordinates into whatever it draws on.
 fn viewer_hints(session: &mut Session, message: &Value) -> Value {
     let mut targets = session.page.hint_targets();
 
-    // Narrowed by what the human is about to do, when they said. `F` and `gi`
-    // are "type into something", and offering them a link is offering a label
-    // that can only answer with a refusal — which costs a keystroke and reads as
-    // the overlay being wrong rather than the choice being.
-    //
-    // Only ever a *narrowing* of the same list, never a second opinion about
-    // what is actionable: the roles below are the ones the engine itself will
-    // accept a caret in.
+    // Narrowed by what the human is about to do. `F` and `gi` mean "type into
+    // something", and offering a link there is offering a refusal. A narrowing
+    // of the same list, never a second opinion about what is actionable.
     if message.get("for").and_then(Value::as_str) == Some("text") {
         targets.retain(|target| TEXT_ROLES.contains(&target.entry.role.as_str()));
     }
@@ -3145,10 +3043,8 @@ fn viewer_hints(session: &mut Session, message: &Value) -> Value {
                 // the engine keeping its own output on one line, not the
                 // boundary check.
                 "name": crate::snapshot::one_line(&target.entry.name),
-                // Resolved against the page, not the raw attribute. A viewer
-                // that copies a link wants one it can paste, and `/docs` is
-                // not that. The engine is the only party here that knows what
-                // to resolve it against.
+                // Resolved against the page: a viewer copying a link wants one
+                // it can paste, and only the engine knows the base.
                 "href": target
                     .entry
                     .href
@@ -3172,12 +3068,10 @@ fn viewer_hints(session: &mut Session, message: &Value) -> Value {
     })
 }
 
-/// Act on a hint, through the same verb the agent would have sent.
+/// Act on a hint, through the same verb an agent would have sent.
 ///
-/// The whole argument for hints over a synthetic pointer is here in one line:
-/// this dispatches `click @e7`, so the receipt says which role and which
-/// accessible name were activated. A pixel click records a coordinate, which
-/// tells a reviewer nothing about what the human pressed.
+/// This dispatches `click @e7`, so the receipt names a role and an accessible
+/// name. A pixel click records a coordinate, which tells a reviewer nothing.
 fn viewer_act(
     session: &mut Session,
     message: &Value,
@@ -3197,10 +3091,8 @@ fn viewer_act(
     // hint overlay has any business asking for.
     let request = match action {
         "click" => json!({"verb": "click", "ref": reference}),
-        // Not a verb: there is no agent-facing `focus`, because an agent that
-        // wants to put text in a field says so with `type`. This is the human's
-        // half — put the caret here, change nothing — and it is answered
-        // directly rather than through the verb table it is not in.
+        // Not a verb: an agent that wants text in a field says `type`. This is
+        // the human's half — put the caret here, change nothing.
         "focus" => {
             let snapshot = session.page.snapshot();
             let entry = match resolve_ref(session, &snapshot, reference) {
@@ -3253,9 +3145,7 @@ fn viewer_act(
         "reply": viewer_wording(reply),
     })];
     if moved {
-        // The overlay described the page before the click. Whatever it named is
-        // at best still true and at worst points into a document that has been
-        // replaced, so it is dropped and the viewer asks again.
+        // The overlay described the page before the click, so it is dropped.
         session.hint_refs = None;
         out.push(session.url_message());
         session.show(may_render, &mut out)?;
@@ -3265,13 +3155,10 @@ fn viewer_act(
 
 /// Put text into a field a hint named.
 ///
-/// Deliberately not `Verb::Type`. That verb substitutes `$H5I_SECRET_…` from the
-/// broker, which is exactly right for an agent that was granted a credential and
-/// exactly wrong here: the viewer socket carries no grant, and a path from it to
-/// the broker would let anything that can reach the stream port resolve a secret
-/// into a DOM it is already watching. `type_into` is the primitive underneath
-/// the verb, with no broker in it, so what the human typed is what the field
-/// gets and a literal `$H5I_SECRET_TOKEN` stays literal.
+/// Deliberately not `Verb::Type`, which substitutes `$H5I_SECRET_…` from the
+/// broker. The viewer socket carries no grant, so a path from it to the broker
+/// would let anything reaching the stream port resolve a secret into a DOM it is
+/// already watching. `type_into` is the primitive underneath, with no broker.
 fn viewer_insert(
     session: &mut Session,
     message: &Value,
@@ -3326,8 +3213,7 @@ fn viewer_history(
         Ok(page) => {
             session.page = page;
             // Stepping, not visiting: a back that pushed an entry would make
-            // the list grow every time somebody changed their mind, and forward
-            // would never be reachable.
+            // forward unreachable.
             session.history.step(delta);
             session.hint_refs = None;
             session.served_refs = None;
@@ -3343,11 +3229,8 @@ fn viewer_history(
 /// read rather than a reply on success and a silence on failure.
 /// A ref refusal, in words that fit whoever is being refused.
 ///
-/// The verb layer's messages are written for an agent: they name `snapshot`,
-/// which is the verb that would fix it. A human at a viewer has no such verb,
-/// and telling them to take one sends them looking for a key that does not
-/// exist. The *code* is left alone, so anything reading the reply
-/// programmatically still sees the same fact; only the sentence changes.
+/// The verb layer names `snapshot`, a verb a person at a viewer does not have.
+/// The *code* is left alone; only the sentence changes.
 fn viewer_wording(mut reply: Value) -> Value {
     let code = reply
         .get("code")
@@ -6211,15 +6094,9 @@ mod tests {
             "this engine claimed a pointer lane it does not implement: {advertised:?}"
         );
 
-        // And everything it does claim is answered rather than ignored. A name
-        // here that `handle` does not know is a key bound in a viewer to
-        // nothing at all.
-        //
-        // Probed with a payload that means something, not a bare `{"type": …}`.
-        // Some of these legitimately do nothing when given nothing — an empty
-        // key batch changes no text and is not a reason to encode a frame — and
-        // a test that could not tell that apart from an unhandled message would
-        // be checking the wrong thing.
+        // And everything it claims is answered: a name `handle` does not know
+        // is a key bound to nothing. Probed with a real payload, since some of
+        // these correctly do nothing when given nothing.
         let probe = |name: &str| -> Value {
             match name {
                 "act" => json!({"type": "act", "ref": "@e1", "action": "click"}),

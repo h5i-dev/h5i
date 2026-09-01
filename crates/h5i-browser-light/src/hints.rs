@@ -1,58 +1,28 @@
 //! Hint labels: the short strings a human types to reach something on screen.
 //!
-//! A pointer is a poor instrument in a terminal. It reports cells rather than
-//! pixels, it has no visible cursor once the viewer hides one, and every
-//! movement's only feedback is a frame that arrives over a socket a few tens of
-//! milliseconds later. Hints replace it with the thing terminals are actually
-//! good at: naming a target and pressing a key.
+//! A hint is a label stuck to a [`crate::snapshot`] ref, so the overlay cannot
+//! offer a target the verb layer would refuse — the snapshot already decided
+//! what is actionable.
 //!
-//! What makes this cheap here is that the hard half is already done elsewhere.
-//! The hard half is deciding *what is actionable*, which every browser-side
-//! implementation of this idea has to answer with a heuristic DOM walk of its
-//! own. [`crate::snapshot`] already answers it, for the agent, with a rule the
-//! verb layer then honours: a ref is minted only for something a caller could
-//! act on. So a hint is a label stuck to a ref, and pressing it dispatches the
-//! same verb an agent would have sent. The overlay cannot offer a target the
-//! engine would refuse, because the overlay is not the one deciding.
-//!
-//! Labels are minted here, in the engine, rather than in each viewer. Two
-//! viewers numbering the same page independently is two answers to a question
-//! with one right answer, and the first time they disagreed it would be a human
-//! pressing `sd` and activating something they were not looking at.
-//!
-//! *Matching* is the other half, and it lives with whoever is drawing: see
-//! `h5i_core::termview::vim::narrow` for the terminal viewer's, and the same
-//! rule in JavaScript in the web viewer. Split that way because narrowing is
-//! per-viewer state, what this human has typed so far, while the labels are a
-//! property of the page. What both halves rest on is [`labels`]'s
-//! prefix-freeness, which is why that is the property carrying the test.
+//! Labels are minted here so two viewers watching one page cannot disagree about
+//! what `sd` means. *Matching* them against what has been typed is per-viewer
+//! state and lives with each viewer (`h5i_core::termview::vim::narrow`, and the
+//! same rule in JavaScript). Both halves rest on [`labels`] being prefix-free.
 
 /// The alphabet labels are drawn from, most-reachable first.
 ///
-/// Home row and its immediate neighbours, in the order Vimium settled on after
-/// a long argument about finger travel. Deliberately not the whole alphabet:
-/// every character added shortens labels by a fraction of a keystroke and costs
-/// a hand movement on every label that uses it, and past about fourteen the
-/// trade stops paying.
-///
-/// No character here may collide with a key that means something *during* hint
-/// mode. `Escape` leaves, `Backspace` un-types, and neither is a letter, which
-/// is what lets the whole alphabet stay available for labels.
+/// Vimium's set: home row and its neighbours. Not the whole alphabet, because
+/// past about fourteen characters the shorter labels stop paying for the extra
+/// finger travel.
 pub const ALPHABET: &[u8] = b"sadfjklewcmpgh";
 
 /// Prefix-free labels for `count` targets, shortest first.
 ///
-/// Prefix-freeness is the property that makes typing a label unambiguous: if
-/// `s` were both a label and the start of `sd`, pressing `s` could not be acted
-/// on without waiting to see whether a `d` followed, and a viewer that waits is
-/// a viewer that feels broken.
-///
-/// It is bought by splitting the labels into two lengths rather than padding
-/// every label to the longest. With `k` characters and `n` targets, `d` digits
-/// are needed; the first `(k^d - n) / k` values are spelled in `d - 1` and the
-/// rest in `d`, which is exactly the count that leaves room for the long labels
-/// to start past every short label's expansion. The short ones come first, so
-/// the targets nearest the top of the document get the fewest keystrokes.
+/// Prefix-freeness is what lets a viewer act the moment a label is complete,
+/// with nothing to wait for. It comes from using two lengths rather than padding
+/// to the longest: with `k` characters and `n` targets needing `d` digits, the
+/// first `(k^d - n) / k` values are spelled in `d - 1` and the rest in `d`,
+/// which leaves the long labels starting past every short one's expansion.
 pub fn labels(count: usize) -> Vec<String> {
     let base = ALPHABET.len();
     if count == 0 {
@@ -62,15 +32,14 @@ pub fn labels(count: usize) -> Vec<String> {
         return (0..count).map(|i| spell(i, 1)).collect();
     }
 
-    // Smallest `digits` with `base^digits >= count`. Computed by multiplying
-    // rather than by logarithms: `count` is a count of DOM nodes, so it is
-    // small, and a float log that lands a hair under an exact power would
-    // produce labels one character too short and a collision to go with them.
+    // Smallest `digits` with `base^digits >= count`, by multiplying rather than
+    // by logarithms: a float log landing a hair under an exact power would give
+    // labels one character too short, and a collision with them.
     let mut digits = 1usize;
     let mut capacity = base;
     while capacity < count {
-        // Saturating, so a page claiming an absurd number of targets runs out
-        // of digits rather than wrapping to a tiny capacity.
+        // Saturating: an absurd target count must run out of digits rather
+        // than wrap to a tiny capacity.
         capacity = capacity.saturating_mul(base);
         digits += 1;
         if capacity == usize::MAX {
@@ -125,9 +94,8 @@ mod tests {
         assert_eq!(out, vec!["s", "a", "d", "f", "j"]);
     }
 
-    /// The property the whole scheme rests on. Checked across the sizes where
-    /// the two-length split actually happens rather than at one convenient
-    /// count, because the split is where a prefix collision would be born.
+    /// The property the scheme rests on, checked across the counts where the
+    /// two-length split happens — which is where a collision would be born.
     #[test]
     fn labels_are_never_prefixes_of_each_other() {
         for count in [1, 13, 14, 15, 27, 100, 196, 197, 500, 3000] {
@@ -148,16 +116,14 @@ mod tests {
         }
     }
 
-    /// Short labels go to the top of the document, which is where the reader
-    /// already is.
+    /// Short labels go to the top of the document.
     #[test]
     fn the_earliest_targets_get_the_shortest_labels() {
         let out = labels(30);
         let first = out[0].len();
         let last = out[out.len() - 1].len();
         assert!(first < last, "{out:?}");
-        // And the lengths never go back down, so "shortest first" is a rule
-        // rather than a coincidence of this count.
+        // And never go back down, so "shortest first" is a rule.
         for pair in out.windows(2) {
             assert!(pair[0].len() <= pair[1].len(), "{out:?}");
         }

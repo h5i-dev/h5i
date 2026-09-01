@@ -184,11 +184,8 @@ pub fn ack(seq: u64) -> Value {
     json!({"type": "ack", "seq": seq})
 }
 
-/// Ask for the hint overlay.
-///
-/// `fields_only` when the human is about to type: `F` and `gi` mean "type into
-/// something", and labelling a link there offers a choice whose only possible
-/// answer is a refusal.
+/// Ask for the hint overlay. `fields_only` when the human is about to type, so
+/// no label offers a target that can only refuse.
 pub fn hints(fields_only: bool) -> Value {
     if fields_only {
         json!({"type": "hints", "for": "text"})
@@ -207,11 +204,8 @@ pub fn act_press(reference: &str, key: &str) -> Value {
     json!({"type": "act", "ref": reference, "action": "press", "key": key})
 }
 
-/// Replace a field's contents outright.
-///
-/// Kept for the case where a viewer knows what a field should say. The viewers
-/// here do not use it to type: see [`keys`], which delivers real key events so
-/// the caret moves and the page hears the typing.
+/// Replace a field's contents outright. Not how the viewers type: see [`keys`],
+/// which delivers real key events.
 pub fn insert(reference: &str, text: &str) -> Value {
     json!({"type": "insert", "ref": reference, "text": text})
 }
@@ -223,10 +217,8 @@ pub fn focus(reference: &str) -> Value {
 
 /// A burst of keys, in the order they were typed.
 ///
-/// Batched rather than sent one at a time, and *not* coalesced. A keystroke is a
-/// delta, so unlike a whole-value `insert` nothing here may be dropped: what
-/// makes a burst affordable is that the expensive half — the relayout and the
-/// render — happens once for the batch instead of once per key.
+/// Batched, never coalesced: a keystroke is a delta, so nothing may be dropped.
+/// The relayout and render are paid once per batch rather than once per key.
 pub fn keys(batch: &[Typed]) -> Value {
     json!({
         "type": "input_keys",
@@ -239,11 +231,8 @@ pub fn keys(batch: &[Typed]) -> Value {
 pub struct Typed {
     /// DOM `key`: `"a"`, `"Enter"`, `"ArrowLeft"`.
     pub key: String,
-    /// What this keystroke inserts, when it inserts anything.
-    ///
-    /// Sent rather than left for the engine to derive, because deriving it means
-    /// re-deciding what a shifted key produces on a keyboard layout the engine
-    /// cannot see. The terminal read the byte; it already knows.
+    /// What this keystroke inserts, when it inserts anything. Sent rather than
+    /// derived: the terminal read the byte and knows the layout.
     pub text: Option<String>,
     pub modifiers: u32,
 }
@@ -314,12 +303,8 @@ pub enum ServerMessage {
         viewport_width: u32,
         viewport_height: u32,
         engine: Option<String>,
-        /// What the engine says its viewer lane offers.
-        ///
-        /// Read rather than inferred from `engine`. The viewer watches boxes
-        /// running an engine that is not ours, and "which engine is this" is
-        /// not the question it needs answered; "may I ask for an overlay" is.
-        /// An engine that says nothing gets nothing bound.
+        /// What the engine says its viewer lane offers, read rather than
+        /// inferred from `engine`. One that says nothing gets nothing bound.
         features: Vec<String>,
     },
     /// The overlay, in reply to [`hints`].
@@ -330,10 +315,8 @@ pub enum ServerMessage {
     },
     /// What came of an `act`, an `insert` or a `history` step.
     Acted {
-        /// Which request this answers, when the engine said. Carried because a
-        /// viewer that coalesces one kind of request has to know which one just
-        /// completed, and "the last thing I sent" is a guess that a refusal
-        /// arriving out of order would get wrong.
+        /// Which request this answers. A viewer holding one message on the wire
+        /// has to know which one just completed.
         action: Option<String>,
         ok: bool,
         /// Why not, when it did not work. Page-derived, so the caller
@@ -352,22 +335,15 @@ pub enum ServerMessage {
     Other,
 }
 
-/// How many hints one overlay may carry.
-///
-/// The labels come from the engine and the rects come from the page, so this is
-/// a bound on something a document decides. Far past a usable overlay: past a
-/// few hundred targets the labels are three characters and nobody is reading
-/// them anyway.
+/// How many hints one overlay may carry. A bound on something the document
+/// decides, far past a usable overlay.
 const MAX_HINTS: usize = 1024;
 
 /// How many feature names a status message may carry.
 const MAX_FEATURES: usize = 32;
 
-/// How long a page-derived string on the overlay may be.
-///
-/// The name is drawn in the status line while a label is being typed, and the
-/// status line has a width. Truncated here rather than at the drawing site so
-/// nothing downstream holds an unbounded string a page chose.
+/// How long a page-derived string on the overlay may be. Truncated here so
+/// nothing downstream holds an unbounded string the page chose.
 const MAX_HINT_TEXT: usize = 200;
 
 fn clip(text: &str) -> String {
@@ -375,9 +351,7 @@ fn clip(text: &str) -> String {
 }
 
 fn hint(v: &Value) -> Option<Hint> {
-    // A hint with no label cannot be typed and a hint with no ref cannot be
-    // acted on. Either way there is nothing to draw, so it is dropped rather
-    // than carried as an empty row.
+    // No label cannot be typed, no ref cannot be acted on: either way, dropped.
     let label = v.get("label").and_then(Value::as_str).filter(|s| !s.is_empty())?;
     let reference = v.get("ref").and_then(Value::as_str).filter(|s| !s.is_empty())?;
     let number = |key: &str| v.get(key).and_then(Value::as_f64).filter(|n| n.is_finite());
@@ -391,8 +365,7 @@ fn hint(v: &Value) -> Option<Hint> {
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
             .map(clip),
-        // Non-finite coordinates would turn into a nonsense chip position and,
-        // through the scale, into a nonsense pixel index. Refused here.
+        // Non-finite coordinates would scale into a nonsense pixel index.
         x: number("x")?,
         y: number("y")?,
         width: number("w")?,
@@ -440,9 +413,7 @@ pub fn parse(text: &str) -> Option<ServerMessage> {
                     names
                         .iter()
                         .filter_map(Value::as_str)
-                        // Bounded: the list comes off the socket, and a viewer
-                        // holding an unbounded set of strings a box chose is a
-                        // viewer a box can grow.
+                        // Bounded: the list comes off the socket.
                         .take(MAX_FEATURES)
                         .map(str::to_string)
                         .collect()
@@ -650,10 +621,9 @@ mod tests {
         );
     }
 
-    /// The overlay arrives as data, and everything in it came from a page. A
-    /// row that cannot be drawn or cannot be acted on is dropped rather than
-    /// carried, and a coordinate that is not a number never reaches the
-    /// arithmetic that turns it into a pixel index.
+    /// The overlay is page-derived data: a row that cannot be drawn or acted on
+    /// is dropped, and a coordinate that is not a number never reaches the
+    /// arithmetic behind a pixel index.
     #[test]
     fn a_hint_row_missing_what_it_needs_is_dropped_rather_than_carried() {
         let m = parse(

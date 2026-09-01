@@ -31,12 +31,8 @@ const CHUNK: usize = 4096;
 /// its replacement exists, which is visible as a flicker on every frame.
 const IDS: [u32; 2] = [7311, 7312];
 
-/// Ids for the patches placed over a frame.
-///
-/// A pool rather than one id, because several patches are on screen at once and
-/// each needs its own placement. Far apart from [`IDS`] so a patch can never be
-/// mistaken for the frame under it, and bounded so the terminal is never asked
-/// to hold an unbounded number of images.
+/// Ids for the patches placed over a frame. A pool, because several are on
+/// screen at once; far from [`IDS`] so a patch cannot be taken for the frame.
 const PATCH_IDS: [u32; 32] = {
     let mut ids = [0u32; 32];
     let mut i = 0;
@@ -47,11 +43,9 @@ const PATCH_IDS: [u32; 32] = {
     ids
 };
 
-/// How many patches to place before sending a whole frame again.
-///
-/// Patches are never deleted individually — what is under one is the older
-/// picture it exists to correct — so a whole frame is what releases them. This
-/// is a bound on the terminal's memory, not a visual limit.
+/// How many patches to place before a whole frame again. Patches are never
+/// deleted individually — what is under one is the older picture it corrects —
+/// so a whole frame is what releases them. A memory bound, not a visual one.
 const MAX_PATCHES: usize = 24;
 
 /// zlib level for frame payloads.
@@ -163,8 +157,7 @@ impl Placer {
         if let Some(old) = self.live.replace(id) {
             out.extend_from_slice(delete(old).as_bytes());
         }
-        // And every patch, which this frame has just made redundant: it was
-        // rendered from the same pixels they were correcting.
+        // And every patch, made redundant by this frame.
         for patch in PATCH_IDS.iter().take(self.patches.min(PATCH_IDS.len())) {
             out.extend_from_slice(delete(*patch).as_bytes());
         }
@@ -175,17 +168,11 @@ impl Placer {
 
     /// Draw a *patch*: the part of a frame that changed, over the one beneath it.
     ///
-    /// The saving this exists for is large. A keystroke changes a caret and a
-    /// character or two, which after cell alignment is a few hundred pixels of a
-    /// frame with nine hundred thousand; sending the whole frame for it cost
-    /// about 40KB of deflated JPEG per key, and made the terminal decode and
-    /// blit a full screen each time.
+    /// A keystroke changes a few hundred pixels of a frame with nine hundred
+    /// thousand, and sending the whole frame for it cost about 40KB per key.
     ///
-    /// A patch is an image of its own, placed at its own cell, and it does *not*
-    /// replace what is under it. So they accumulate, and the caller has to come
-    /// back to a whole frame periodically — see [`Placer::should_refresh`].
-    /// Deleting a patch is never right: what is underneath it is the older
-    /// picture the patch exists to correct.
+    /// A patch does not replace what is under it, so they accumulate and the
+    /// caller must return to a whole frame — see [`Placer::should_refresh`].
     pub fn draw_patch(&mut self, rgb: &[u8], width: u32, height: u32, at: Placement) -> Vec<u8> {
         let id = PATCH_IDS[self.patch % PATCH_IDS.len()];
         self.patch += 1;
@@ -193,9 +180,8 @@ impl Placer {
 
         let mut out = Vec::with_capacity(rgb.len() * 4 / 3 + 512);
         out.extend_from_slice(cursor_to(at.row, at.col).as_bytes());
-        // Freed before it is reused, not after: this id may still be on screen
-        // from an earlier lap of the pool, and transmitting over a live id
-        // without releasing it leaks the terminal's copy of the old pixels.
+        // Freed before reuse: this id may still be on screen from an earlier
+        // lap of the pool, and transmitting over a live one leaks its pixels.
         out.extend_from_slice(delete(id).as_bytes());
         let payload = base64_of(&self.encoding.apply(rgb));
         for chunk in transmit_chunks(id, width, height, at.cols, at.rows, &payload, self.encoding) {
@@ -204,14 +190,8 @@ impl Placer {
         out
     }
 
-    /// Whether enough patches have accumulated to be worth a whole frame again.
-    ///
-    /// Patches are cheap to send and are never cleaned up individually, so
-    /// something has to end the chain. A whole frame replaces the base image and
-    /// releases every patch at once, which is what [`Placer::draw`] does.
-    ///
-    /// The number is a memory bound rather than a visual one: nothing degrades
-    /// as patches pile up, the terminal simply holds more images.
+    /// Whether enough patches have accumulated to be worth a whole frame again,
+    /// which is what releases them ([`Placer::draw`]).
     pub fn should_refresh(&self) -> bool {
         self.patches >= MAX_PATCHES
     }

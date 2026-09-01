@@ -1749,7 +1749,7 @@ Which session, when more than one is open. A name from `\-\-session` at open tim
 \fB\-\-web\fR
 Serve the page to a browser over loopback instead of drawing it here.
 
-The escape hatch for a terminal that cannot draw images, and the way to use a mouse on a page the keyboard cannot reach.
+For a terminal that cannot draw images, and for a page the keyboard cannot reach.
 .TP
 \fB\-\-port\fR \fI<PORT>\fR [default: 0]
 Port for `\-\-web`. 0 picks a free one
@@ -1758,9 +1758,7 @@ Port for `\-\-web`. 0 picks a free one
 Frame\-rate ceiling asked of the session
 .TP
 \fB\-\-assume\-graphics\fR
-Skip the graphics probe and render anyway.
-
-An escape hatch, not a feature: detection is a heuristic about someone else\*(Aqs terminal, and being wrong about it must not be the end of the road for a user who knows better.
+Skip the graphics probe and render anyway, for a terminal the probe gets wrong
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
