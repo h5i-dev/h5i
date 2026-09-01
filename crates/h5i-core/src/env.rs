@@ -4939,6 +4939,22 @@ fn engage_grants_for(
     if policy.profile.auth.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
+    // Said out loud, every run, like the egress line above it. This is the one
+    // place h5i takes a credential the operator holds and attaches it to a
+    // request going somewhere the *profile* named — and the profile is
+    // `.h5i/env.toml`, which is part of the repository. Silence here meant a
+    // branch could add four lines of TOML and have `$GITHUB_TOKEN` sent to a
+    // host of its choosing with nothing on screen. The value never appears;
+    // the variable's name and the destination do, which is what makes the
+    // grant reviewable.
+    for g in &policy.profile.auth {
+        eprintln!(
+            "⦿ auth grant: ${} is attached host-side to requests this box makes to {} \
+             (the token itself stays outside the box)",
+            crate::redact::sanitize_display(&g.credential_env),
+            crate::redact::sanitize_display(&g.host),
+        );
+    }
     match crate::container::grant_host_addr(policy.claim) {
         Some(addr) => crate::container::engage_auth_grants(&policy.profile, true, addr),
         None => Err(H5iError::Metadata(format!(

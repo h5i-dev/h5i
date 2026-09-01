@@ -679,6 +679,20 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     // proxy refuses every request with 403 and the agent sees a broken client
     // with no explanation. Refuse at load instead.
     for g in &p.auth {
+        // The credential the operator holds is sent to this host, over a
+        // connection h5i originates, with the real token attached. The string
+        // is interpolated into `https://{host}` and forced as the outgoing
+        // `Host`, so anything that is not a bare hostname makes the origin the
+        // proxy pins and the origin a reader sees two different things.
+        if !crate::container::is_egress_host(&g.host) {
+            return Err(H5iError::Metadata(format!(
+                "profile '{}': auth grant host '{}' is not a bare hostname. This is the one \
+                 place h5i attaches your real credential to a request it originates, so the \
+                 destination has to be a name and nothing else — no scheme, path, port, \
+                 userinfo or wildcard (fail-closed).",
+                p.name, g.host
+            )));
+        }
         if g.token_var.trim().is_empty() {
             return Err(H5iError::Metadata(format!(
                 "profile '{}': auth grant for '{}' has no `token_var`. The proxy gates each \
@@ -4405,6 +4419,37 @@ fs.deny = ["~/.ssh"]
     /// is the same contradiction seen from the other end, and the ruleset is
     /// what runs: `fs.read = ["~/.ssh/id_ed25519"]` under the default deny of
     /// `~/.ssh` read as narrowed and was a grant of the key.
+    /// The one place h5i attaches a credential the operator holds to a request
+    /// it originates. The destination is interpolated into `https://{host}` and
+    /// forced as the outgoing `Host`, so anything but a bare name makes the
+    /// pinned origin and the readable one two different things.
+    #[test]
+    fn an_auth_grant_host_must_be_a_bare_name() {
+        let grant = |host: &str| crate::sandbox_policy::AuthGrant {
+            host: host.to_string(),
+            credential_env: "GITHUB_TOKEN".into(),
+            base_url_var: "GH_HOST".into(),
+            token_var: "GH_TOKEN".into(),
+        };
+        let with = |host: &str| {
+            let mut p = Profile::builtin("p", IsolationClaim::Container);
+            p.auth = vec![grant(host)];
+            p
+        };
+        for bad in [
+            "https://api.github.com",
+            "api.github.com/v3",
+            "user:pass@api.github.com",
+            "api.github.com:443",
+            "*.github.com",
+            "api github.com",
+            "",
+        ] {
+            assert!(validate_profile(&with(bad)).is_err(), "accepted {bad:?}");
+        }
+        assert!(validate_profile(&with("api.github.com")).is_ok());
+    }
+
     #[test]
     fn fs_deny_lint_rejects_a_grant_inside_a_denied_path() {
         for grant in ["~/.ssh/id_ed25519", "~/.config/h5i/egress-allow"] {
