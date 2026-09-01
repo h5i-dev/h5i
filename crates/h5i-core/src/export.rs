@@ -15,8 +15,9 @@
 //! names a payload by `raw_oid`, a content address into the *box's* store, which
 //! a reviewer holding only this directory cannot resolve.
 //!
-//! The patch comes from the same mediated commit `propose` runs, so the `$WORK`
-//! allowlist invariants hold for anything reaching this directory.
+//! The patch comes from the same mediated commit `propose` runs
+//! ([`env::DiffSource::Proposed`]), so the `$WORK` allowlist invariants hold
+//! for anything reaching this directory.
 //!
 //! `report.md` builds its "What the browser saw" section from per-run browser
 //! evidence rather than the agent's account of its own testing, for the case
@@ -163,9 +164,14 @@ pub fn export_with_remote(
         None => env::propose(repo, h5i_root, m)?,
     };
 
-    let patch = env::diff(repo, h5i_root, m, false)?;
+    // From the commit `propose` just made, not from the live worktree. The
+    // worktree is what `env::diff` reads by default, and reading it here meant
+    // `patch.diff` had passed no part of the output gate and need not match the
+    // commit `receipt.json` attests to — while `report.md` ends by telling a
+    // reviewer to `git apply --3way patch.diff`.
+    let patch = env::diff_from(repo, h5i_root, m, false, env::DiffSource::Proposed)?;
     let (files_changed, insertions, deletions) =
-        env::diffstat_numbers(repo, h5i_root, m).unwrap_or((0, 0, 0));
+        env::diffstat_numbers(repo, h5i_root, m, env::DiffSource::Proposed).unwrap_or((0, 0, 0));
 
     let records = crate::receipt::list(&env::env_dir(h5i_root, &m.agent, &m.slug))?;
     let egress_denied: u64 = records

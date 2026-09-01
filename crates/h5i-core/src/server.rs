@@ -625,7 +625,7 @@ fn build_row(
     let stale_running =
         m.status == "running" && !live.iter().any(|s| env::live_is_writer(&s.kind));
     let (files_changed, insertions, deletions) =
-        env::diffstat_numbers(git, h5i_root, m).unwrap_or((0, 0, 0));
+        env::diffstat_numbers(git, h5i_root, m, env::DiffSource::Worktree).unwrap_or((0, 0, 0));
     BoxRow {
         drift: drift.kind_str().to_string(),
         drift_summary: drift.summary(),

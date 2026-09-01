@@ -6677,11 +6677,40 @@ fn ingest_shell_spool(
 /// When it is absent (a pulled "remote" env, or after gc) it falls back to the
 /// *committed* state on the env's code branch, i.e. what `propose`
 /// snapshotted, so a reviewer on another clone sees exactly the proposed diff.
+/// Which state of a box a diff describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffSource {
+    /// The worktree as it stands, untracked files included. What `h5i box
+    /// diff` shows a human mid-run: the point is to see what is there now.
+    Worktree,
+    /// The tree of the box's branch tip — the mediated commit `propose` made.
+    ///
+    /// The only state the output gate has actually been applied to: the `$WORK`
+    /// allowlist, the nested-`.git` rejection and the symlink check all run
+    /// while that commit is built. Reading the live worktree instead means the
+    /// patch a reviewer is told to `git apply` passed no gate, and does not
+    /// correspond to the commit the receipt attests to — a box process still
+    /// running (a service outlives the run that started it) can change `$WORK`
+    /// between the two.
+    Proposed,
+}
+
 pub fn diff(
     repo: &Repository,
     h5i_root: &Path,
     m: &EnvManifest,
     stat_only: bool,
+) -> Result<String, H5iError> {
+    diff_from(repo, h5i_root, m, stat_only, DiffSource::Worktree)
+}
+
+/// [`diff`], naming the state to describe.
+pub fn diff_from(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+    stat_only: bool,
+    source: DiffSource,
 ) -> Result<String, H5iError> {
     // h5i's own private-path redirects are not the agent's work. On macOS they
     // are symlinks in the worktree (no bind mounts), so without this the patch
@@ -6709,7 +6738,7 @@ pub fn diff(
     };
 
     let work = m.work_dir(h5i_root);
-    if work.is_dir() {
+    if work.is_dir() && source == DiffSource::Worktree {
         let wt_repo = open_env_worktree(h5i_root, m)?;
         let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
         let mut opts = git2::DiffOptions::new();
@@ -6742,8 +6771,19 @@ pub fn diff(
             )));
         }
     }
-    let base_tree = repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
-        let tip_tree = repo
+    // Whose repository holds the branch. A detached box (`h5i dev --new`) has
+        // its own, which is why the worktree path opens one; the host's repo
+        // has no such ref, and asking it produced "run `h5i pull`" for a branch
+        // that was never going to be there.
+        let owned;
+        let owner: &Repository = if work.is_dir() {
+            owned = open_env_worktree(h5i_root, m)?;
+            &owned
+        } else {
+            repo
+        };
+        let base_tree = owner.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
+        let tip_tree = owner
             .find_reference(&m.branch)
             .map_err(|_| {
                 H5iError::Metadata(format!(
@@ -6753,7 +6793,7 @@ pub fn diff(
             })?
             .peel_to_tree()?;
         let mut opts = git2::DiffOptions::new();
-        let diff = repo.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), Some(&mut opts))?;
+        let diff = owner.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), Some(&mut opts))?;
         render(diff)
     }
 }
@@ -6778,6 +6818,16 @@ pub fn diffstat_report(
     repo: &Repository,
     h5i_root: &Path,
     m: &EnvManifest,
+) -> Result<DiffStatReport, H5iError> {
+    diffstat_report_from(repo, h5i_root, m, DiffSource::Worktree)
+}
+
+/// [`diffstat_report`], naming the state to describe. See [`DiffSource`].
+pub fn diffstat_report_from(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+    source: DiffSource,
 ) -> Result<DiffStatReport, H5iError> {
     // As in [`diff`]: h5i's private-path redirects are h5i artifacts, so they
     // are neither listed nor counted. Totals are summed from the surviving
@@ -6819,7 +6869,7 @@ pub fn diffstat_report(
     };
 
     let work = m.work_dir(h5i_root);
-    if work.is_dir() {
+    if work.is_dir() && source == DiffSource::Worktree {
         let wt_repo = open_env_worktree(h5i_root, m)?;
         let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
         let mut opts = git2::DiffOptions::new();
@@ -6851,8 +6901,19 @@ pub fn diffstat_report(
             )));
         }
     }
-    let base_tree = repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
-        let tip_tree = repo
+    // Whose repository holds the branch. A detached box (`h5i dev --new`) has
+        // its own, which is why the worktree path opens one; the host's repo
+        // has no such ref, and asking it produced "run `h5i pull`" for a branch
+        // that was never going to be there.
+        let owned;
+        let owner: &Repository = if work.is_dir() {
+            owned = open_env_worktree(h5i_root, m)?;
+            &owned
+        } else {
+            repo
+        };
+        let base_tree = owner.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
+        let tip_tree = owner
             .find_reference(&m.branch)
             .map_err(|_| {
                 H5iError::Metadata(format!(
@@ -6862,7 +6923,7 @@ pub fn diffstat_report(
             })?
             .peel_to_tree()?;
         let mut opts = git2::DiffOptions::new();
-        let diff = repo.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), Some(&mut opts))?;
+        let diff = owner.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), Some(&mut opts))?;
         render(diff)
     }
 }
@@ -8698,7 +8759,7 @@ pub fn compare(
     for name in names {
         let m = find(h5i_root, name)?;
         let (files_changed, insertions, deletions) =
-            diffstat_numbers(repo, h5i_root, &m).unwrap_or((0, 0, 0));
+            diffstat_numbers(repo, h5i_root, &m, DiffSource::Worktree).unwrap_or((0, 0, 0));
         let latest = m
             .captures
             .last()
@@ -8729,13 +8790,14 @@ pub(crate) fn diffstat_numbers(
     repo: &Repository,
     h5i_root: &Path,
     m: &EnvManifest,
+    source: DiffSource,
 ) -> Option<(usize, usize, usize)> {
     // Delegates rather than re-deriving the numbers from `diff.stats()`. This
     // used to be a third independent copy of the same walk, and it counted the
     // deltas [`diffstat_report`] excludes, so an export summary said "2
     // file(s)" over a one-file patch on macOS, where h5i's private-path symlink
     // is a delta. One implementation, one answer.
-    let r = diffstat_report(repo, h5i_root, m).ok()?;
+    let r = diffstat_report_from(repo, h5i_root, m, source).ok()?;
     Some((r.files_changed, r.insertions, r.deletions))
 }
 
