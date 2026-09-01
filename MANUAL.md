@@ -1420,6 +1420,24 @@ search-as-you-type box, an input a framework is controlling — hears `keydown`,
 whole value fires none of those, which is right for an agent and wrong for a
 person.
 
+Two things keep it feeling immediate, and both are about not doing work.
+
+Only the part of the page that changed is sent to the terminal. A keystroke
+moves a caret and a character or two; the viewer used to redraw the whole
+viewport for it, about 40KB of compressed image per key and a megabyte to type
+one word, with the terminal decoding and blitting a full screen each time. Now it
+compares the new frame with what is already on screen and sends that rectangle,
+which for typing is a few hundred bytes. A frame identical to the one on screen
+is not sent at all.
+
+And the engine does not render a picture nobody can take. Rendering is the
+expensive half of a keystroke, around 13ms against under 1ms to apply it, and it
+used to be paid even when the viewer was still drawing the last frame — the
+result was held, then thrown away when the next replaced it. On a page that runs
+on one thread that is not merely waste, it is time the next keystroke spends
+waiting. The render now happens when somebody can receive it, and what they get
+is the page as it is then rather than as it was.
+
 Keys are sent in batches rather than one at a time, and that is a latency
 decision rather than a tidiness one. A keystroke cannot be answered locally: the
 viewer draws pixels the engine rendered, so a character is not on screen until

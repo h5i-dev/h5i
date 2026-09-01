@@ -265,6 +265,21 @@ struct Session {
     /// the caller decides whether to keep it.
     recording: crate::replay::Recording,
 
+    /// The page moved and no viewer has been shown it.
+    ///
+    /// Set when a frame was worth sending and could not be. Rendering is the
+    /// expensive half of everything this session does — about 13ms against
+    /// under 1ms to apply a keystroke — and it used to be paid whether or not
+    /// the frame could go anywhere: `send_frame` would hold the result for a
+    /// viewer that still owed an ack, and the *next* frame would then replace
+    /// it. A wasted render is not merely wasted here, because the page runs on
+    /// one thread: it is 13ms the next keystroke spends waiting.
+    ///
+    /// So the render is deferred to the moment somebody can take it, and what
+    /// they get is a picture of the page as it is *then*, which is also more
+    /// current than the one that would have been held for them.
+    frame_owed: bool,
+
     /// Whether a human is typing a credential right now.
     ///
     /// While this is set every control verb that reads the page is refused (see
@@ -484,6 +499,19 @@ impl Session {
         }
     }
 
+    /// Add a frame to `out`, or remember that one is owed.
+    ///
+    /// The single place the deferral decision is made, so a site that produces a
+    /// frame cannot forget to make it. See [`Session::frame_owed`].
+    fn show(&mut self, may_render: bool, out: &mut Vec<Value>) -> Result<(), H5iError> {
+        if may_render {
+            out.push(self.frame_message()?);
+        } else {
+            self.frame_owed = true;
+        }
+        Ok(())
+    }
+
     /// Follow a link, replacing the page. A failed navigation leaves the
     /// current page in place and reports itself, because a viewer that goes
     /// blank on a denied link is indistinguishable from one that crashed.
@@ -621,6 +649,7 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         last_snapshot: None,
         served_refs: None,
         hint_refs: None,
+        frame_owed: false,
         history: History::seeded(page_url),
         unknown_verbs: std::collections::BTreeMap::new(),
         recording: crate::replay::Recording::default(),
@@ -698,6 +727,11 @@ fn run_session(mut session: Session, rx: Receiver<Command>, once: bool) {
                             send_frame(viewer, frame);
                         }
                     }
+                    // The ack may have freed the only viewer there was, and the
+                    // page may have moved while it was busy. This is where that
+                    // frame is finally rendered — of the page as it is now,
+                    // rather than as it was when the change happened.
+                    serve_owed(&mut session, &mut viewers);
                     continue;
                 }
                 if message.get("type").and_then(Value::as_str) == Some("config")
@@ -707,12 +741,16 @@ fn run_session(mut session: Session, rx: Receiver<Command>, once: bool) {
                         message.get("pacing").and_then(Value::as_str) == Some("ack");
                 }
 
-                match handle(&mut session, &message) {
+                // Asked before the message is handled, because the answer is
+                // what decides whether a frame is rendered at all.
+                let may_render = anyone_ready(&viewers);
+                match handle_with(&mut session, &message, may_render) {
                     Ok(out) => dispatch(&mut viewers, id, out),
                     Err(error) => {
                         eprintln!("h5i-browser-light: {error}");
                     }
                 }
+                serve_owed(&mut session, &mut viewers);
             }
 
             Command::Control { request, reply } => {
@@ -743,6 +781,42 @@ fn dispatch(viewers: &mut HashMap<u64, Viewer>, actor: u64, out: Vec<Value>) {
             }
         } else if let Some(viewer) = viewers.get(&actor) {
             viewer.send(&message);
+        }
+    }
+}
+
+/// Whether a frame rendered now could be delivered to anybody.
+///
+/// A viewer under ack pacing that still owes one cannot take another: a frame
+/// sent to it would be held, and then dropped when the next replaced it. With
+/// nobody able to take one, rendering is pure cost — and on a single-threaded
+/// page it is cost the next keystroke pays.
+fn anyone_ready(viewers: &HashMap<u64, Viewer>) -> bool {
+    viewers
+        .values()
+        .any(|viewer| !(viewer.ack_pacing && viewer.awaiting_ack))
+}
+
+/// Render and deliver the frame the page owes, if anyone can take it now.
+///
+/// The deferred half of [`Session::show`]. Called after every viewer message and
+/// after every ack, which between them cover the two ways the answer to "can
+/// anybody take one" changes.
+fn serve_owed(session: &mut Session, viewers: &mut HashMap<u64, Viewer>) {
+    if !session.frame_owed || !anyone_ready(viewers) {
+        return;
+    }
+    match session.frame_message() {
+        Ok(frame) => {
+            session.frame_owed = false;
+            for viewer in viewers.values_mut() {
+                send_frame(viewer, frame.clone());
+            }
+        }
+        Err(error) => {
+            // Left owed rather than dropped: the page still moved, and the next
+            // ack is another chance to show it.
+            eprintln!("h5i-browser-light: could not render a frame: {error}");
         }
     }
 }
@@ -2882,8 +2956,25 @@ fn write_port_file(path: &Path, port: u16) -> Result<(), H5iError> {
 
 /// Handle one client message, returning what to send back.
 ///
-/// Split out from the socket so the protocol can be tested without one.
+/// Split out from the socket so the protocol can be tested without one, which is
+/// why this shape is kept: a test says what it sent and reads what came back,
+/// with rendering always allowed.
+#[cfg(test)]
 fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError> {
+    handle_with(session, message, true)
+}
+
+/// The same, told whether a frame it produced could actually be delivered.
+///
+/// `may_render` is not an optimisation hint that can be ignored: a `false` here
+/// means every viewer still owes an ack, so a frame rendered now would be held
+/// and then thrown away when the next one replaced it. The page moves either
+/// way; what defers is the picture of it. See [`Session::frame_owed`].
+fn handle_with(
+    session: &mut Session,
+    message: &Value,
+    may_render: bool,
+) -> Result<Vec<Value>, H5iError> {
     let kind = message.get("type").and_then(Value::as_str).unwrap_or("");
 
     let changed = match kind {
@@ -2909,7 +3000,7 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
                 let y = message.get("y").and_then(Value::as_f64).unwrap_or(0.0) as f32;
                 if let Some(url) = session.page.link_at(x, y) {
                     let mut out = session.navigate(&url)?;
-                    out.push(session.frame_message()?);
+                    session.show(may_render, &mut out)?;
                     return Ok(out);
                 }
                 false
@@ -2928,11 +3019,11 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
         // never be a way to ask for a credential. See `viewer_insert`.
         "hints" => return Ok(vec![viewer_hints(session, message)]),
 
-        "act" => return viewer_act(session, message),
+        "act" => return viewer_act(session, message, may_render),
 
-        "insert" => return viewer_insert(session, message),
+        "insert" => return viewer_insert(session, message, may_render),
 
-        "history" => return viewer_history(session, message),
+        "history" => return viewer_history(session, message, may_render),
 
         // Fetching the current URL again. On the viewer lane because a human
         // watching a page that failed to load has no other way to ask, and the
@@ -2947,7 +3038,9 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
                     // replaced even though the URL has not moved.
                     session.hint_refs = None;
                     session.served_refs = None;
-                    return Ok(vec![session.url_message(), session.frame_message()?]);
+                    let mut out = vec![session.url_message()];
+                    session.show(may_render, &mut out)?;
+                    return Ok(out);
                 }
                 // Answered on the lane the request came in on. A `page_error`
                 // would land in the console pane, count against the page's own
@@ -2995,7 +3088,7 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
                 "reply": {"ok": true, "applied": applied},
             })];
             if changed {
-                out.push(session.frame_message()?);
+                session.show(may_render, &mut out)?;
             }
             return Ok(out);
         }
@@ -3003,11 +3096,11 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
         _ => false,
     };
 
+    let mut out = Vec::new();
     if changed {
-        Ok(vec![session.frame_message()?])
-    } else {
-        Ok(Vec::new())
+        session.show(may_render, &mut out)?;
     }
+    Ok(out)
 }
 
 /// The overlay: every actionable element on screen, labelled.
@@ -3085,7 +3178,11 @@ fn viewer_hints(session: &mut Session, message: &Value) -> Value {
 /// this dispatches `click @e7`, so the receipt says which role and which
 /// accessible name were activated. A pixel click records a coordinate, which
 /// tells a reviewer nothing about what the human pressed.
-fn viewer_act(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError> {
+fn viewer_act(
+    session: &mut Session,
+    message: &Value,
+    may_render: bool,
+) -> Result<Vec<Value>, H5iError> {
     let Some(reference) = message.get("ref").and_then(Value::as_str) else {
         return Ok(vec![viewer_refusal("`act` needs `ref`.")]);
     };
@@ -3126,7 +3223,7 @@ fn viewer_act(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iE
             };
             let mut out = vec![json!({"type": "act", "action": "focus", "reply": reply})];
             // The caret is drawn, so focusing is something to look at.
-            out.push(session.frame_message()?);
+            session.show(may_render, &mut out)?;
             return Ok(out);
         }
         "press" => {
@@ -3161,7 +3258,7 @@ fn viewer_act(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iE
         // replaced, so it is dropped and the viewer asks again.
         session.hint_refs = None;
         out.push(session.url_message());
-        out.push(session.frame_message()?);
+        session.show(may_render, &mut out)?;
     }
     Ok(out)
 }
@@ -3175,7 +3272,11 @@ fn viewer_act(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iE
 /// into a DOM it is already watching. `type_into` is the primitive underneath
 /// the verb, with no broker in it, so what the human typed is what the field
 /// gets and a literal `$H5I_SECRET_TOKEN` stays literal.
-fn viewer_insert(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError> {
+fn viewer_insert(
+    session: &mut Session,
+    message: &Value,
+    may_render: bool,
+) -> Result<Vec<Value>, H5iError> {
     let Some(reference) = message.get("ref").and_then(Value::as_str) else {
         return Ok(vec![viewer_refusal("`insert` needs `ref`.")]);
     };
@@ -3198,14 +3299,19 @@ fn viewer_insert(session: &mut Session, message: &Value) -> Result<Vec<Value>, H
         let refusal = VerbError::wrong_role(reference, &role, "a field to type into").reply();
         return Ok(vec![json!({"type": "act", "action": "insert", "reply": refusal})]);
     }
-    Ok(vec![
+    let mut out = vec![
         json!({"type": "act", "action": "insert", "reply": {"ok": true, "ref": reference}}),
-        session.frame_message()?,
-    ])
+    ];
+    session.show(may_render, &mut out)?;
+    Ok(out)
 }
 
 /// Step back or forward through the pages this session actually visited.
-fn viewer_history(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError> {
+fn viewer_history(
+    session: &mut Session,
+    message: &Value,
+    may_render: bool,
+) -> Result<Vec<Value>, H5iError> {
     let delta = message.get("go").and_then(Value::as_i64).unwrap_or(0) as isize;
     if delta == 0 {
         return Ok(vec![viewer_refusal("`history` needs `go` to be -1 or 1.")]);
@@ -3225,7 +3331,9 @@ fn viewer_history(session: &mut Session, message: &Value) -> Result<Vec<Value>, 
             session.history.step(delta);
             session.hint_refs = None;
             session.served_refs = None;
-            Ok(vec![session.url_message(), session.frame_message()?])
+            let mut out = vec![session.url_message()];
+            session.show(may_render, &mut out)?;
+            Ok(out)
         }
         Err(error) => Ok(vec![viewer_refusal(&format!("going back failed: {error}"))]),
     }
@@ -3387,6 +3495,7 @@ mod tests {
             last_snapshot: None,
             served_refs: None,
             hint_refs: None,
+            frame_owed: false,
             history: History::seeded(page_url),
             unknown_verbs: std::collections::BTreeMap::new(),
             recording: crate::replay::Recording::default(),
@@ -4475,6 +4584,7 @@ mod tests {
             last_snapshot: None,
             served_refs: None,
             hint_refs: None,
+            frame_owed: false,
             history: History::seeded(page_url),
             unknown_verbs: std::collections::BTreeMap::new(),
             recording: crate::replay::Recording::default(),
@@ -6402,6 +6512,77 @@ mod tests {
         );
     }
 
+    /// Rendering is the expensive half of everything this session does, and it
+    /// used to be paid whether or not the frame could go anywhere. On a
+    /// single-threaded page that is not merely waste: it is time the next
+    /// keystroke spends waiting.
+    #[test]
+    fn a_frame_nobody_can_take_is_not_rendered_until_somebody_can() {
+        let mut session = session_with("<body><input type='text'></body>");
+        handle(&mut session, &json!({"type": "hints", "for": "text"})).expect("hints");
+        let node = session.hint_refs.as_ref().expect("refs")[0].node_id;
+        session.page.focus(node);
+        // What an empty field holds before anything is typed is the editor's
+        // business, so the assertions below are about the change rather than the
+        // absolute value.
+        let before = session.page.field_value(node).unwrap_or_default();
+
+        // Nobody ready: the key lands, no frame is produced, and the session
+        // remembers that one is owed.
+        let out = handle_with(
+            &mut session,
+            &json!({"type": "input_keys", "keys": [{"key": "a", "text": "a"}]}),
+            false,
+        )
+        .expect("a key");
+        assert!(
+            out.iter().all(|m| m["type"] != "frame"),
+            "a frame was rendered for nobody: {out:?}"
+        );
+        assert!(session.frame_owed, "the page moved and nothing recorded it");
+        // The page still moved. Deferring the picture is not deferring the edit.
+        assert_eq!(
+            session.page.field_value(node).as_deref(),
+            Some(format!("{before}a").as_str())
+        );
+
+        // And when somebody can take one, it is rendered then.
+        let out = handle_with(
+            &mut session,
+            &json!({"type": "input_keys", "keys": [{"key": "b", "text": "b"}]}),
+            true,
+        )
+        .expect("a key");
+        assert!(out.iter().any(|m| m["type"] == "frame"), "{out:?}");
+        assert_eq!(
+            session.page.field_value(node).as_deref(),
+            Some(format!("{before}ab").as_str())
+        );
+    }
+
+    /// A viewer under ack pacing that owes one cannot take another; anyone else
+    /// can. The question `serve_owed` asks before paying for a render.
+    #[test]
+    fn readiness_is_asked_of_every_viewer_not_just_the_one_that_spoke() {
+        let (busy, _b) = channel();
+        let (free, _f) = channel();
+        let mut viewers = HashMap::new();
+        viewers.insert(1u64, Viewer { tx: busy, ack_pacing: true, awaiting_ack: true, pending: None });
+        assert!(!anyone_ready(&viewers), "an ack-paced viewer mid-frame is not ready");
+
+        // A second viewer that is not waiting makes the render worth paying for.
+        viewers.insert(2u64, Viewer { tx: free, ack_pacing: true, awaiting_ack: false, pending: None });
+        assert!(anyone_ready(&viewers));
+
+        // And a viewer that never asked for ack pacing is always ready.
+        let mut push = HashMap::new();
+        let (tx, _p) = channel();
+        push.insert(1u64, Viewer { tx, ack_pacing: false, awaiting_ack: true, pending: None });
+        assert!(anyone_ready(&push));
+
+        assert!(!anyone_ready(&HashMap::new()), "nobody watching is nobody ready");
+    }
+
     // ─── history ────────────────────────────────────────────────────────────
 
     #[test]
@@ -6510,6 +6691,7 @@ mod delta_and_login_tests {
             last_snapshot: None,
             served_refs: None,
             hint_refs: None,
+            frame_owed: false,
             history: History::seeded(page_url),
             unknown_verbs: std::collections::BTreeMap::new(),
             recording: crate::replay::Recording::default(),

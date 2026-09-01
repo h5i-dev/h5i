@@ -565,6 +565,13 @@ struct App<'a> {
     /// The last frame, kept so a resize can redraw without waiting for the box
     /// to send another. A static page sends nothing at all.
     last_frame: Option<Vec<u8>>,
+    /// The scaled image the terminal is currently showing.
+    ///
+    /// What the next frame is compared against, so only the part that moved has
+    /// to be sent. Dropped on a resize by the placement changing shape, which
+    /// `damage` reports as "all of it" rather than comparing images of different
+    /// sizes.
+    shown: Option<image::Rgb>,
     /// The same frame, already decoded.
     ///
     /// Most redraws are not caused by new pixels: narrowing a hint label,
@@ -685,6 +692,7 @@ impl<'a> App<'a> {
             placer: kitty::Placer::new(encoding),
             mode: Mode::View,
             last_frame: None,
+            shown: None,
             decoded: None,
             developer: false,
             // Enough to see a failure loop's shape without holding a page's
@@ -926,12 +934,56 @@ impl<'a> App<'a> {
             viewport_height: self.viewport.1,
         });
 
-        let bytes = self
-            .placer
-            .draw(&scaled.data, scaled.width, scaled.height, at);
-        let mut out = std::io::stdout();
-        let _ = out.write_all(&bytes);
-        let _ = out.flush();
+        // Only what changed, when only a little did.
+        //
+        // Typing moves a caret and a character or two. Sending the whole frame
+        // for that cost about 40KB of deflated JPEG per keystroke and made the
+        // terminal decode and blit a full screen each time; a megabyte to type
+        // one word, most of it identical to what was already on screen.
+        let patch = self.shown.as_ref().and_then(|shown| {
+            if self.placer.should_refresh() {
+                // Patches have piled up. A whole frame releases them all.
+                return None;
+            }
+            let hurt = image::damage(shown, &scaled)?;
+            // Cell-aligned, because a placement lands on the grid, and grown
+            // outwards so no changed pixel is left showing the older frame.
+            let cell_w = scaled.width / u32::from(fit.cols.max(1));
+            let cell_h = scaled.height / u32::from(fit.rows.max(1));
+            let hurt = hurt.to_cells(cell_w, cell_h, scaled.width, scaled.height);
+            hurt.worth_patching(scaled.width, scaled.height)
+                .then_some((hurt, cell_w, cell_h))
+        });
+
+        let bytes = match patch {
+            // Identical to what is on screen. `damage` says so by answering
+            // `None`, and the cheapest frame is the one never sent.
+            None if self.shown.as_ref().is_some_and(|shown| *shown == *scaled) => Vec::new(),
+            None => self
+                .placer
+                .draw(&scaled.data, scaled.width, scaled.height, at),
+            Some((hurt, cell_w, cell_h)) => {
+                let piece = hurt.crop(&scaled);
+                let where_ = kitty::Placement {
+                    row: at.row + (hurt.y / cell_h.max(1)) as u16,
+                    col: at.col + (hurt.x / cell_w.max(1)) as u16,
+                    cols: (hurt.width / cell_w.max(1)).max(1) as u16,
+                    rows: (hurt.height / cell_h.max(1)).max(1) as u16,
+                };
+                self.placer
+                    .draw_patch(&piece.data, piece.width, piece.height, where_)
+            }
+        };
+
+        if !bytes.is_empty() {
+            let mut out = std::io::stdout();
+            let _ = out.write_all(&bytes);
+            let _ = out.flush();
+        }
+        // What the terminal is showing now, which is what the next frame is
+        // compared against. Kept whatever was sent: after a patch the screen
+        // holds the new frame just as it does after a whole one.
+        self.shown = Some(scaled.into_owned());
         self.decoded = Some(frame);
     }
 
@@ -1662,6 +1714,10 @@ impl<'a> App<'a> {
     fn repaint_with(&mut self, moved: Moved) {
         if moved == Moved::Layout {
             let _ = std::io::stdout().write_all(b"\x1b[2J");
+            // The screen is blank now, so nothing on it can be patched against.
+            // Without this the next frame would send only its difference from a
+            // picture that has been wiped.
+            self.shown = None;
         }
         self.draw_status();
         if let Some(frame) = self.last_frame.take() {
