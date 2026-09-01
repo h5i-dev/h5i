@@ -344,6 +344,24 @@ pub struct ResolvedEgress {
     /// filtering resolver returns for a name it blocks. Unpinnable like the
     /// above and reported like it, but *not* fatal: see [`is_sinkhole`].
     pub sinkholed: Vec<(String, IpAddr)>,
+    /// `(entry, why)` for a rule this tier cannot express: one the shared
+    /// grammar refuses, and one whose meaning needs a name rather than an
+    /// address. Fatal, because a rule that contributes nothing must not read
+    /// like one that was applied.
+    pub unenforceable: Vec<(String, String)>,
+}
+
+/// The list this tier actually enforces.
+///
+/// The profile's own `net.egress` plus the host-side `h5i box allow` extras,
+/// merged by the one rule that never widens a deny-all profile. Reading the
+/// profile list directly is what made `h5i box allow` apply at container and
+/// microvm and do nothing here, while `h5i box run` printed the extra on the
+/// egress line as though it were in force. Fail-closed, so not an escape, but
+/// the announced scope was not the enforced one, which is the one thing that
+/// line exists to get right.
+pub fn enforced_egress(policy: &crate::sandbox::ResolvedPolicy) -> Vec<String> {
+    crate::container::effective_egress(&policy.profile.net_egress, &policy.user_egress_allow)
 }
 
 /// May a `net.egress` entry pin to this address?
@@ -388,17 +406,49 @@ pub fn resolve_egress(egress: &[String]) -> ResolvedEgress {
         if raw.is_empty() {
             continue;
         }
-        // Split a trailing :port only when numeric (IPv6 literals have colons).
-        let (host, port) = match raw.rsplit_once(':') {
-            Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => {
-                (h, p.parse::<u16>().unwrap_or(443))
+        // The shared grammar, not a second reading of it. The local copy
+        // parsed a port with `unwrap_or(443)`, so `example.com:99999` became an
+        // accept rule for a port nobody wrote, and it handed `*.example.com`
+        // straight to the resolver, which answers nothing: a wildcard grant
+        // enforced at container and microvm and silently absent here.
+        let (host, wildcard, port) = match crate::container::parse_egress_rule(raw) {
+            Ok(Some(parsed)) => parsed,
+            Ok(None) => continue,
+            Err(e) => {
+                r.unenforceable.push((raw.to_string(), e.to_string()));
+                continue;
             }
-            _ => (raw, 443u16),
         };
+        // A suffix rule needs something that can see the name. nftables sees
+        // addresses, and there is no set of addresses that is "the subdomains
+        // of example.com". Reported rather than dropped: a rule this tier
+        // cannot hold must not read as one it is holding.
+        if wildcard {
+            r.unenforceable.push((
+                raw.to_string(),
+                "a subdomain wildcard needs enforcement that can see the name, and this tier \
+                 filters by address"
+                    .to_string(),
+            ));
+            continue;
+        }
+        let host = host.as_str();
+        let port = port.unwrap_or(443);
+        // Did the entry itself say "inside"? An address written out is the
+        // operator's decision, and `localhost` means loopback by definition.
+        // Anything else is a name, and what a name answers is chosen by
+        // whoever answers it.
+        let names_local = host.parse::<IpAddr>().is_ok()
+            || host == "localhost"
+            || host.ends_with(".localhost");
         let Ok(addrs) = (host, port).to_socket_addrs() else { continue };
         let mut first_ip: Option<IpAddr> = None;
         for a in addrs {
-            if !is_pinnable(&a.ip()) {
+            // slirp NATs the box's packets through the host's routing table,
+            // so a name answering `192.168.1.1` is a rule that reaches the
+            // operator's LAN with nothing in the policy text saying so. Same
+            // shape the container proxy refuses, same reasoning.
+            if !is_pinnable(&a.ip()) || (!names_local && crate::container::is_internal(&a.ip())) {
                 if is_sinkhole(&a.ip()) {
                     r.sinkholed.push((raw.to_string(), a.ip()));
                 } else {
@@ -743,19 +793,27 @@ fn setup_egress(
         // needed (the base URL is the gateway IP), so no host pins.
         Some(port) => (vec![EgressDest { ip: SLIRP_GATEWAY, port }], Vec::new()),
         None => {
-            let resolved = resolve_egress(&policy.profile.net_egress);
+            let resolved = resolve_egress(&enforced_egress(policy));
             // Loud, not silent. The entry read like an ordinary host and
             // answered with an address this tier will not dial, and the two
             // facts only make sense together. Dropping it quietly would leave
             // a box that fails to reach something its policy plainly allows,
             // with the reason nowhere.
+            if let Some((entry, why)) = resolved.unenforceable.first() {
+                return Err(H5iError::Metadata(format!(
+                    "net.egress entry {entry:?} cannot be enforced at this tier: {why}. \
+                     Refusing rather than running a box whose announced egress scope is \
+                     wider than the one in force (fail-closed)."
+                )));
+            }
             if let Some((entry, ip)) = resolved.refused.first() {
                 return Err(H5iError::Metadata(format!(
                     "net.egress entry {entry:?} resolves to {ip}, which this tier refuses to \
-                     pin: it is a link-local, multicast or broadcast address, not a host on \
-                     the network. 169.254.169.254 is the cloud instance metadata service; a \
-                     name answering there would hand the box the instance's credentials, and \
-                     nothing in the policy text would show it (fail-closed)."
+                     pin: it is not a host on the open network. 169.254.169.254 is the cloud \
+                     instance metadata service, and a private address is the operator's own \
+                     LAN, reached through slirp's NAT; a name answering at either would hand \
+                     the box something no line of the policy names. Write the address out if \
+                     that is what you meant (fail-closed)."
                 )));
             }
             // Reported, not fatal. A sinkholed answer is the operator's resolver
@@ -1148,13 +1206,8 @@ fn run_supervised(
     // narrows the nftables ruleset to the auth proxy alone in that case).
     let mut env = effective_env;
     let (_egress_proxy, egress_port) = if has_egress && auth_port.is_none() {
-        // Through `effective_egress`, like every other tier: parsing the profile
-        // list directly meant `h5i box allow` extras applied on container and
-        // microvm but silently did nothing here.
-        let mut allow = crate::container::AllowList::parse(&crate::container::effective_egress(
-            &policy.profile.net_egress,
-            &policy.user_egress_allow,
-        ))?;
+        // Through [`enforced_egress`], like every other tier.
+        let mut allow = crate::container::AllowList::parse(&enforced_egress(policy))?;
         // Pin now, so a later DNS answer cannot move the allowlist under us.
         allow.pin_dns();
         // On the pinned port when the box has one: a `browser` box's Chrome
@@ -1432,6 +1485,64 @@ mod tests {
         // Neither is pinned, either way, and the good entry is untouched.
         assert_eq!(r.dests, vec![EgressDest { ip: "127.0.0.1".parse().unwrap(), port: 443 }]);
         assert!(r.host_pins.is_empty(), "IP literals need no /etc/hosts pin");
+    }
+
+    /// The grammar has one definition. This copy read a port with
+    /// `unwrap_or(443)`, so `example.com:99999` — which `container` refuses
+    /// outright — became an accept rule for a port nobody wrote; and it handed
+    /// `*.example.com` to the resolver, which answers nothing, so a wildcard
+    /// grant enforced at container and microvm was silently absent here.
+    #[test]
+    fn a_rule_this_tier_cannot_hold_is_named_rather_than_dropped() {
+        let r = resolve_egress(&["example.com:99999".into()]);
+        assert_eq!(r.unenforceable.len(), 1, "{:?}", r.unenforceable);
+        assert!(r.dests.is_empty(), "and it certainly pins nothing");
+
+        let r = resolve_egress(&["*.example.com".into()]);
+        assert_eq!(r.unenforceable.len(), 1, "{:?}", r.unenforceable);
+        assert!(r.unenforceable[0].1.contains("address"), "{:?}", r.unenforceable);
+
+        // Ordinary entries are unaffected.
+        let r = resolve_egress(&["localhost".into(), "localhost:8080".into()]);
+        assert!(r.unenforceable.is_empty(), "{:?}", r.unenforceable);
+        assert!(r.dests.iter().any(|d| d.port == 8080));
+    }
+
+    #[test]
+    fn a_box_allow_extra_reaches_the_nftables_ruleset() {
+        // The macOS half of this tier went through `effective_egress`; the
+        // Linux half read the profile list, so the extra was printed on the
+        // egress line and never pinned.
+        let mut p = crate::sandbox::Profile::builtin("p", crate::sandbox::IsolationClaim::Supervised);
+        p.net_egress = vec!["api.example.com".into()];
+        let mut pol = crate::sandbox::ResolvedPolicy::new(p.isolation, p);
+        pol.user_egress_allow = vec!["pypi.org".into()];
+        assert_eq!(enforced_egress(&pol), vec!["api.example.com", "pypi.org"]);
+
+        // And the widening rule still holds: a deny-all profile stays one.
+        let mut deny = crate::sandbox::Profile::builtin("p", crate::sandbox::IsolationClaim::Supervised);
+        deny.net_egress = Vec::new();
+        let mut pol = crate::sandbox::ResolvedPolicy::new(deny.isolation, deny);
+        pol.user_egress_allow = vec!["pypi.org".into()];
+        assert!(enforced_egress(&pol).is_empty());
+    }
+
+    /// slirp NATs the box's packets through the host's routing table, so a
+    /// pinned private address is a rule that reaches the operator's LAN.
+    /// `is_pinnable` refused link-local and multicast and let RFC 1918
+    /// through, so a name under someone else's DNS could open one.
+    #[test]
+    fn a_name_answering_in_private_space_is_not_pinned() {
+        // Resolved through the loopback name, which every host answers the
+        // same way, and asserted on the *policy*: `localhost` says local, so
+        // it pins; an ordinary name answering there would not.
+        let r = resolve_egress(&["localhost".into()]);
+        assert!(!r.dests.is_empty(), "a name that means loopback still pins");
+        assert!(r.refused.is_empty(), "{:?}", r.refused);
+
+        // And the address the operator wrote out is still their decision.
+        let r = resolve_egress(&["10.1.2.3:8443".into()]);
+        assert_eq!(r.dests, vec![EgressDest { ip: "10.1.2.3".parse().unwrap(), port: 8443 }]);
     }
 
     #[test]

@@ -355,7 +355,12 @@ pub fn broker(
     let mut env = Vec::new();
     let mut redactions = Vec::new();
     let mut records = Vec::new();
-    let mut temp = Vec::new();
+    // The guard, not a bare `Vec` promoted to one at the end. Every `?` below
+    // is a path on which a credential has already been materialized, and a
+    // `Vec<PathBuf>` dropped on the way out unlinks nothing: a run refused by
+    // a *later* grant left the earlier one's plaintext on disk, on the tier
+    // that confines nothing, with the operator told the run never started.
+    let mut temp = TempFiles(Vec::new());
 
     for g in grants {
         let value = resolve_value(g, allow_command)?;
@@ -375,7 +380,7 @@ pub fn broker(
                 }
                 let path = write_secret_file(secret_dir, &g.name, &value)?;
                 env.push((format!("{}_FILE", g.name), path.display().to_string()));
-                temp.push(path);
+                temp.0.push(path);
             }
             other => {
                 return Err(H5iError::Metadata(format!(
@@ -394,7 +399,7 @@ pub fn broker(
         redactions.push(value);
     }
 
-    Ok(Brokered { env, redactions, records, _temp: TempFiles(temp) })
+    Ok(Brokered { env, redactions, records, _temp: temp })
 }
 
 /// Write a secret to `secret_dir/<name>` with mode `0600` (dir `0700`).
@@ -406,6 +411,18 @@ pub fn broker(
 /// credential to its target, and `mode()` is ignored for a file that already
 /// exists, so a pre-created 0644 file would keep those permissions.
 fn write_secret_file(secret_dir: &Path, name: &str, value: &str) -> Result<PathBuf, H5iError> {
+    // `validate_profile` already refuses a grant name that is not
+    // `[A-Za-z0-9_]+`, and this is the one place the name becomes a path, so
+    // it is checked again here rather than trusted across the crate boundary:
+    // the policy this runs on is read back from disk, and a name carrying `..`
+    // or a `/` would make the line below unlink and rewrite a host file of the
+    // policy's choosing.
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        return Err(H5iError::Metadata(format!(
+            "secrets: grant name '{name}' is not a plain identifier — refusing to make a \
+             path out of it (fail-closed)"
+        )));
+    }
     std::fs::create_dir_all(secret_dir).map_err(|e| H5iError::with_path(e, secret_dir))?;
     #[cfg(unix)]
     {
@@ -696,6 +713,44 @@ mod tests {
         unsafe {
             std::env::remove_var("H5I_TEST_PRESENT");
         }
+    }
+
+    #[test]
+    fn a_grant_that_fails_after_a_file_was_written_still_unlinks_it() {
+        // The guard was built from the collected paths on the success return
+        // only, so a run refused by a later grant left the earlier grant's
+        // plaintext behind on the tier that confines nothing, having told the
+        // operator the run never started.
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("H5I_TEST_LEAK_A", "materialize-me");
+        }
+        let grants = vec![
+            grant("A_CERT", Some("env:H5I_TEST_LEAK_A"), Some("file")),
+            grant("B_TOKEN", Some("env:H5I_TEST_ABSENT_ZZZ"), Some("env")),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        let secrets = dir.path().join("secrets");
+        assert!(broker(&grants, &secrets, true, false, b"test-key").is_err());
+        assert!(
+            !secrets.join("A_CERT").exists(),
+            "the refused run left a credential on disk"
+        );
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("H5I_TEST_LEAK_A");
+        }
+    }
+
+    #[test]
+    fn a_grant_name_is_never_made_into_a_path_it_did_not_earn() {
+        // `validate_profile` refuses this at load; the write site refuses it
+        // again, because the policy it runs on is read back from disk.
+        let dir = tempfile::tempdir().unwrap();
+        let err = write_secret_file(&dir.path().join("secrets"), "../escaped", "v")
+            .expect_err("must refuse");
+        assert!(format!("{err}").contains("fail-closed"), "{err}");
+        assert!(!dir.path().join("escaped").exists());
     }
 
     #[test]

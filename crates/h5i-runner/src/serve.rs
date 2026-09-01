@@ -457,7 +457,7 @@ impl Read for IdleTimeout<'_> {
 /// The worker's default and hard bounds on one command.
 /// The client's number is a request and these are the budget (design-runner.md
 /// R5): never trust a peer to bound a run on someone else's machine.
-const EXEC_DEFAULT_SECS: u64 = 300;
+pub const EXEC_DEFAULT_SECS: u64 = 300;
 
 /// Free space a create insists on beyond the source itself: room for the
 /// checkout and the object store.

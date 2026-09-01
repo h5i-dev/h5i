@@ -44,8 +44,17 @@ fn hint(program: &str, source: &std::io::Error) -> String {
     }
 }
 
+/// The peer's stderr, made safe to print.
+///
+/// The forced command on the other end is whatever binary sits at
+/// `worker_path` on a machine we do not trust, and it can write anything it
+/// likes to fd 2. This string is interpolated into an error the CLI prints, so
+/// the in-band `ERROR` message being sanitized and this one not was the same
+/// escape sequence arriving by the door nobody was watching. `sanitize_block`
+/// rather than `sanitize_display`: a stderr tail is meant to have lines.
 fn tail(stderr: &str) -> String {
-    let t = stderr.trim();
+    let t = h5i_error::redact::sanitize_block(stderr);
+    let t = t.trim();
     if t.is_empty() {
         String::new()
     } else {

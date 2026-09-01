@@ -4706,6 +4706,17 @@ pub fn validate_egress_rule(raw: &str) -> Result<String, H5iError> {
     {
         return bad("malformed host");
     }
+    // The enforcing parser has the last word, because this function's contract
+    // is "exactly what the proxy's `AllowList` understands" and it was looser
+    // in several places. `*.com` is the plain one: a single-label suffix rule,
+    // which `parse_egress_rule` refuses. A line this check accepted and the
+    // proxy refused was not skipped with a warning — `AllowList::parse` runs
+    // with a `?` on the run path, so one such line in a hand-edited
+    // `~/.config/h5i/egress-allow` aborted every container, microvm and
+    // macOS-supervised box in the repository.
+    if let Err(e) = crate::container::parse_egress_rule(&rule) {
+        return bad(&format!("the egress rule parser refuses it — {e}"));
+    }
     Ok(rule)
 }
 
@@ -6666,11 +6677,40 @@ fn ingest_shell_spool(
 /// When it is absent (a pulled "remote" env, or after gc) it falls back to the
 /// *committed* state on the env's code branch, i.e. what `propose`
 /// snapshotted, so a reviewer on another clone sees exactly the proposed diff.
+/// Which state of a box a diff describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffSource {
+    /// The worktree as it stands, untracked files included. What `h5i box
+    /// diff` shows a human mid-run: the point is to see what is there now.
+    Worktree,
+    /// The tree of the box's branch tip — the mediated commit `propose` made.
+    ///
+    /// The only state the output gate has actually been applied to: the `$WORK`
+    /// allowlist, the nested-`.git` rejection and the symlink check all run
+    /// while that commit is built. Reading the live worktree instead means the
+    /// patch a reviewer is told to `git apply` passed no gate, and does not
+    /// correspond to the commit the receipt attests to — a box process still
+    /// running (a service outlives the run that started it) can change `$WORK`
+    /// between the two.
+    Proposed,
+}
+
 pub fn diff(
     repo: &Repository,
     h5i_root: &Path,
     m: &EnvManifest,
     stat_only: bool,
+) -> Result<String, H5iError> {
+    diff_from(repo, h5i_root, m, stat_only, DiffSource::Worktree)
+}
+
+/// [`diff`], naming the state to describe.
+pub fn diff_from(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+    stat_only: bool,
+    source: DiffSource,
 ) -> Result<String, H5iError> {
     // h5i's own private-path redirects are not the agent's work. On macOS they
     // are symlinks in the worktree (no bind mounts), so without this the patch
@@ -6698,7 +6738,7 @@ pub fn diff(
     };
 
     let work = m.work_dir(h5i_root);
-    if work.is_dir() {
+    if work.is_dir() && source == DiffSource::Worktree {
         let wt_repo = open_env_worktree(h5i_root, m)?;
         let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
         let mut opts = git2::DiffOptions::new();
@@ -6731,8 +6771,19 @@ pub fn diff(
             )));
         }
     }
-    let base_tree = repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
-        let tip_tree = repo
+    // Whose repository holds the branch. A detached box (`h5i dev --new`) has
+        // its own, which is why the worktree path opens one; the host's repo
+        // has no such ref, and asking it produced "run `h5i pull`" for a branch
+        // that was never going to be there.
+        let owned;
+        let owner: &Repository = if work.is_dir() {
+            owned = open_env_worktree(h5i_root, m)?;
+            &owned
+        } else {
+            repo
+        };
+        let base_tree = owner.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
+        let tip_tree = owner
             .find_reference(&m.branch)
             .map_err(|_| {
                 H5iError::Metadata(format!(
@@ -6742,7 +6793,7 @@ pub fn diff(
             })?
             .peel_to_tree()?;
         let mut opts = git2::DiffOptions::new();
-        let diff = repo.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), Some(&mut opts))?;
+        let diff = owner.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), Some(&mut opts))?;
         render(diff)
     }
 }
@@ -6767,6 +6818,16 @@ pub fn diffstat_report(
     repo: &Repository,
     h5i_root: &Path,
     m: &EnvManifest,
+) -> Result<DiffStatReport, H5iError> {
+    diffstat_report_from(repo, h5i_root, m, DiffSource::Worktree)
+}
+
+/// [`diffstat_report`], naming the state to describe. See [`DiffSource`].
+pub fn diffstat_report_from(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+    source: DiffSource,
 ) -> Result<DiffStatReport, H5iError> {
     // As in [`diff`]: h5i's private-path redirects are h5i artifacts, so they
     // are neither listed nor counted. Totals are summed from the surviving
@@ -6808,7 +6869,7 @@ pub fn diffstat_report(
     };
 
     let work = m.work_dir(h5i_root);
-    if work.is_dir() {
+    if work.is_dir() && source == DiffSource::Worktree {
         let wt_repo = open_env_worktree(h5i_root, m)?;
         let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
         let mut opts = git2::DiffOptions::new();
@@ -6840,8 +6901,19 @@ pub fn diffstat_report(
             )));
         }
     }
-    let base_tree = repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
-        let tip_tree = repo
+    // Whose repository holds the branch. A detached box (`h5i dev --new`) has
+        // its own, which is why the worktree path opens one; the host's repo
+        // has no such ref, and asking it produced "run `h5i pull`" for a branch
+        // that was never going to be there.
+        let owned;
+        let owner: &Repository = if work.is_dir() {
+            owned = open_env_worktree(h5i_root, m)?;
+            &owned
+        } else {
+            repo
+        };
+        let base_tree = owner.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
+        let tip_tree = owner
             .find_reference(&m.branch)
             .map_err(|_| {
                 H5iError::Metadata(format!(
@@ -6851,7 +6923,7 @@ pub fn diffstat_report(
             })?
             .peel_to_tree()?;
         let mut opts = git2::DiffOptions::new();
-        let diff = repo.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), Some(&mut opts))?;
+        let diff = owner.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), Some(&mut opts))?;
         render(diff)
     }
 }
@@ -8687,7 +8759,7 @@ pub fn compare(
     for name in names {
         let m = find(h5i_root, name)?;
         let (files_changed, insertions, deletions) =
-            diffstat_numbers(repo, h5i_root, &m).unwrap_or((0, 0, 0));
+            diffstat_numbers(repo, h5i_root, &m, DiffSource::Worktree).unwrap_or((0, 0, 0));
         let latest = m
             .captures
             .last()
@@ -8718,13 +8790,14 @@ pub(crate) fn diffstat_numbers(
     repo: &Repository,
     h5i_root: &Path,
     m: &EnvManifest,
+    source: DiffSource,
 ) -> Option<(usize, usize, usize)> {
     // Delegates rather than re-deriving the numbers from `diff.stats()`. This
     // used to be a third independent copy of the same walk, and it counted the
     // deltas [`diffstat_report`] excludes, so an export summary said "2
     // file(s)" over a one-file patch on macOS, where h5i's private-path symlink
     // is a delta. One implementation, one answer.
-    let r = diffstat_report(repo, h5i_root, m).ok()?;
+    let r = diffstat_report_from(repo, h5i_root, m, source).ok()?;
     Some((r.files_changed, r.insertions, r.deletions))
 }
 
@@ -8909,7 +8982,7 @@ pub fn mediated_commit(
             if is_under_private_path(path, &private_rels) {
                 return 1; // skip, and not a violation: h5i created it
             }
-            match staged_path_violation(&canon_work, path) {
+            match staged_path_violation(&canon_work, path, Absent::IsAViolation) {
                 None => 0, // stage it
                 Some(v) => {
                     violations.push(v);
@@ -8932,6 +9005,35 @@ pub fn mediated_commit(
         // staging paths is an invariant that depends on the other one never
         // changing.
         index.update_all(["*"].iter(), Some(&mut cb as &mut git2::IndexMatchedPath))?;
+    }
+
+    // The same filter again, over the index libgit2 actually built.
+    //
+    // The callback above answers about a path, and libgit2 then resolves that
+    // path a second time to read it: two resolutions of a name in a directory
+    // the box writes. A box process still alive (a service outlives the run
+    // that started it, and at the workspace tier there is no pid namespace to
+    // end it) can turn a checked directory into a symlink in between, and it
+    // is the *host* process, confined by nothing, that does the read. Asking
+    // again over the finished index catches a swap that is still in place.
+    //
+    // It does not catch one flipped back inside a single `add_all`. Closing
+    // that needs `openat2(RESOLVE_BENEATH)` and fd-relative staging, which
+    // libgit2 does not offer here; this narrows the window rather than shutting
+    // it, and says so.
+    for entry in index.iter() {
+        // A symlink is staged as a link blob and never followed, so the entry
+        // is exactly what it claims whatever the path resolves to now.
+        if entry.mode == 0o120000 {
+            continue;
+        }
+        let path = PathBuf::from(String::from_utf8_lossy(&entry.path).into_owned());
+        if is_under_private_path(&path, &private_rels) {
+            continue;
+        }
+        if let Some(v) = staged_path_violation(&canon_work, &path, Absent::IsFine) {
+            violations.push(v);
+        }
     }
 
     // Post-stage sweep: reject submodule gitlink entries (mode 160000) that
@@ -9168,10 +9270,22 @@ fn scan_nested_git(work: &Path, base_gitlinks: &HashMap<String, git2::Oid>) -> V
     out
 }
 
+/// What a path that is not there means, which depends on when we are asking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Absent {
+    /// Before staging: libgit2 named a path it is about to read, so a path
+    /// that is gone is a worktree changing under the commit.
+    IsAViolation,
+    /// After staging: the entry is already in the index, and a box process
+    /// still running may have removed the file since. Refusing over that would
+    /// make `propose` flaky rather than safe.
+    IsFine,
+}
+
 /// The path filter behind the mediated-commit invariant. `rel` is the
 /// repo-relative path libgit2 wants to stage; returns a human-readable
 /// violation, or `None` when the path is safe.
-fn staged_path_violation(canon_work: &Path, rel: &Path) -> Option<String> {
+fn staged_path_violation(canon_work: &Path, rel: &Path, absent: Absent) -> Option<String> {
     for comp in rel.components() {
         match comp {
             std::path::Component::Normal(c) => {
@@ -9189,6 +9303,7 @@ fn staged_path_violation(canon_work: &Path, rel: &Path) -> Option<String> {
     let abs = canon_work.join(rel);
     let md = match std::fs::symlink_metadata(&abs) {
         Ok(md) => md,
+        Err(_) if absent == Absent::IsFine => return None,
         Err(_) => return Some(format!("{}: vanished while staging", rel.display())),
     };
     if md.file_type().is_symlink() {
@@ -9205,6 +9320,7 @@ fn staged_path_violation(canon_work: &Path, rel: &Path) -> Option<String> {
             rel.display(),
             canon.display()
         )),
+        Err(_) if absent == Absent::IsFine => None,
         Err(e) => Some(format!("{}: cannot canonicalize ({e})", rel.display())),
     }
 }
@@ -10646,8 +10762,19 @@ mod tests {
             "a..b",
             "trailing.example.",
             "::1",
+            // Intake and enforcement are one grammar. A single-label suffix
+            // rule is refused by the proxy's parser, so accepting it here made
+            // a hand-edited allowlist line abort every run instead of being
+            // skipped with a warning.
+            "*.com",
+            "a.-b.example.com",
         ] {
             assert!(validate_egress_rule(bad).is_err(), "accepted {bad:?}");
+        }
+        // ...and every accepted rule is one the enforcing parser takes.
+        for good in ["api.example.com", ".example.com", "*.example.com", "github.com:443"] {
+            let rule = validate_egress_rule(good).expect(good);
+            crate::container::parse_egress_rule(&rule).unwrap_or_else(|e| panic!("{good}: {e}"));
         }
     }
 
@@ -13164,17 +13291,25 @@ mod tests {
         let canon = work.canonicalize().unwrap();
 
         // Ordinary file: fine.
-        assert!(staged_path_violation(&canon, Path::new("src/main.rs")).is_none());
+        assert!(staged_path_violation(&canon, Path::new("src/main.rs"), Absent::IsAViolation).is_none());
 
         // `.git` components: rejected (gitlink/hooks smuggling).
-        assert!(staged_path_violation(&canon, Path::new(".git")).is_some());
-        assert!(staged_path_violation(&canon, Path::new("vendor/.git/config")).is_some());
+        assert!(staged_path_violation(&canon, Path::new(".git"), Absent::IsAViolation).is_some());
+        assert!(staged_path_violation(&canon, Path::new("vendor/.git/config"), Absent::IsAViolation).is_some());
 
         // `..` traversal: rejected.
-        assert!(staged_path_violation(&canon, Path::new("../escape.txt")).is_some());
+        assert!(staged_path_violation(&canon, Path::new("../escape.txt"), Absent::IsAViolation).is_some());
 
         // Vanished file: rejected (TOCTOU).
-        assert!(staged_path_violation(&canon, Path::new("nope.txt")).is_some());
+        assert!(staged_path_violation(&canon, Path::new("nope.txt"), Absent::IsAViolation).is_some());
+        // ...but not on the post-stage pass, where a box process removing a
+        // file it already committed is an ordinary race and not a boundary
+        // crossing. Refusing there would make `propose` flaky, not safe.
+        assert!(staged_path_violation(&canon, Path::new("nope.txt"), Absent::IsFine).is_none());
+        // The escape is still an escape on either pass.
+        assert!(
+            staged_path_violation(&canon, Path::new("../escape.txt"), Absent::IsFine).is_some()
+        );
     }
 
     #[cfg(unix)]
@@ -13191,11 +13326,11 @@ mod tests {
 
         // A symlink itself is stored as a link blob, never followed. Allowed.
         symlink(outside.join("secret.txt"), work.join("link.txt")).unwrap();
-        assert!(staged_path_violation(&canon, Path::new("link.txt")).is_none());
+        assert!(staged_path_violation(&canon, Path::new("link.txt"), Absent::IsAViolation).is_none());
 
         // A file REACHED THROUGH a symlinked directory escapes $WORK. Rejected.
         symlink(&outside, work.join("sneaky")).unwrap();
-        let v = staged_path_violation(&canon, Path::new("sneaky/secret.txt"));
+        let v = staged_path_violation(&canon, Path::new("sneaky/secret.txt"), Absent::IsAViolation);
         assert!(v.is_some(), "dir-symlink traversal must be rejected");
         assert!(v.unwrap().contains("escapes $WORK"));
     }

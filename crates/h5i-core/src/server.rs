@@ -37,6 +37,15 @@ pub struct AppState {
     pub repo_path: PathBuf,
     /// This session's token. Never written to disk.
     pub token: String,
+    /// A second token, minted only when the console is asked to hand itself to
+    /// a browser, and spent by the first request that presents it.
+    ///
+    /// `--open` puts a URL on another program's command line, and on Linux
+    /// `/proc/<pid>/cmdline` is world-readable, so the session token would sit
+    /// there for as long as the browser process lives — readable by every other
+    /// uid on the machine, which is the whole population the token exists to
+    /// keep out. A one-shot is worth nothing the moment the page has loaded.
+    handoff: Arc<std::sync::Mutex<Option<String>>>,
     /// One [`crate::browser_events::BoxStream`] per box the console has looked at, kept for the
     /// life of the process.
     browser: Arc<std::sync::Mutex<std::collections::HashMap<String, crate::browser_events::BoxStream>>>,
@@ -53,8 +62,21 @@ impl AppState {
         Self {
             repo_path,
             token,
+            handoff: Arc::new(std::sync::Mutex::new(None)),
             browser: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             frames: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        }
+    }
+
+    /// The live one-shot token, if one was minted and not yet spent.
+    fn handoff(&self) -> Option<String> {
+        self.handoff.lock().ok().and_then(|h| h.clone())
+    }
+
+    /// Spend it. Idempotent, and safe to call when there is none.
+    fn spend_handoff(&self) {
+        if let Ok(mut h) = self.handoff.lock() {
+            *h = None;
         }
     }
 }
@@ -110,12 +132,15 @@ pub fn authorize(
     }) {
         return Err(Refusal::ForeignOrigin);
     }
-    let presented =
-        from_query.or_else(|| cookie_header.and_then(|c| cookie(c, COOKIE)));
-    match presented {
-        Some(t) if token_matches(expected, &t) => Ok(()),
-        _ => Err(Refusal::Unauthorized),
+    // A token in the query answers for itself, right or wrong: it is what the
+    // operator just pasted, and falling back to the cookie behind a wrong one
+    // would make a bad link look like a good one.
+    if let Some(t) = from_query {
+        return if token_matches(expected, &t) { Ok(()) } else { Err(Refusal::Unauthorized) };
     }
+    let matched = cookie_header
+        .is_some_and(|c| cookies(c, COOKIE).any(|value| token_matches(expected, value)));
+    if matched { Ok(()) } else { Err(Refusal::Unauthorized) }
 }
 
 /// Compare in constant time w.r.t. content. The lengths are public (both are
@@ -139,11 +164,19 @@ fn param(query: &str, key: &str) -> Option<String> {
     })
 }
 
-/// Value of `name` in a `Cookie:` header.
-fn cookie(header: &str, name: &str) -> Option<String> {
-    header.split(';').find_map(|kv| {
+/// Every value of `name` in a `Cookie:` header.
+///
+/// Every, not the first. Cookies are not scoped by port, so a page served from
+/// any other loopback port — a box's dev server, which is the case `h5i join`
+/// exists for — can set a second `h5i_console` on a longer path. RFC 6265 §5.4
+/// orders longer paths first, so reading one value let that page lock the
+/// operator out of their own console until they cleared a cookie they have no
+/// way to see. Reopening the printed URL did not repair it: that sets the
+/// `Path=/` cookie, which is the one being shadowed.
+fn cookies<'a>(header: &'a str, name: &'a str) -> impl Iterator<Item = &'a str> {
+    header.split(';').filter_map(move |kv| {
         let (k, v) = kv.trim().split_once('=')?;
-        (k == name).then(|| v.to_string())
+        (k == name).then_some(v)
     })
 }
 
@@ -184,6 +217,34 @@ async fn gate(State(state): State<Arc<AppState>>, req: Request, next: Next) -> R
         &state.token,
         &self_origin,
     );
+    // The one-shot handoff gets the same head and the same rules, with a
+    // different expected token, and is spent on the way through. Only an
+    // *Unauthorized* falls through to it: a foreign origin is a refusal
+    // whatever token it carries.
+    let verdict = match verdict {
+        Err(Refusal::Unauthorized) => match state.handoff() {
+            Some(handoff) => {
+                let second = authorize(
+                    req.uri().query(),
+                    req.headers()
+                        .get(header::COOKIE)
+                        .and_then(|h| h.to_str().ok()),
+                    req.headers()
+                        .get(header::ORIGIN)
+                        .and_then(|h| h.to_str().ok()),
+                    &sites,
+                    &handoff,
+                    &self_origin,
+                );
+                if second.is_ok() {
+                    state.spend_handoff();
+                }
+                second
+            }
+            None => Err(Refusal::Unauthorized),
+        },
+        other => other,
+    };
     match verdict {
         Ok(()) => next.run(req).await,
         Err(r) => r.status().into_response(),
@@ -564,7 +625,7 @@ fn build_row(
     let stale_running =
         m.status == "running" && !live.iter().any(|s| env::live_is_writer(&s.kind));
     let (files_changed, insertions, deletions) =
-        env::diffstat_numbers(git, h5i_root, m).unwrap_or((0, 0, 0));
+        env::diffstat_numbers(git, h5i_root, m, env::DiffSource::Worktree).unwrap_or((0, 0, 0));
     BoxRow {
         drift: drift.kind_str().to_string(),
         drift_summary: drift.summary(),
@@ -1024,6 +1085,20 @@ impl Console {
         Ok(format!("http://{}/?token={}", addr, self.state.token))
     }
 
+    /// The URL to hand to a *program* rather than to a human.
+    ///
+    /// Carries a single-use token, because `--open` puts this string on another
+    /// process's command line where any other local uid can read it. Mints one
+    /// per call and forgets the previous, so only the newest handoff is live.
+    pub fn handoff_url(&self) -> Result<String, H5iError> {
+        let addr = self.listener.local_addr().map_err(H5iError::Io)?;
+        let once = crate::token::hex(TOKEN_BYTES)?;
+        if let Ok(mut slot) = self.state.handoff.lock() {
+            *slot = Some(once.clone());
+        }
+        Ok(format!("http://{addr}/?token={once}"))
+    }
+
     /// Serve until the process is interrupted. Builds its own runtime, so
     /// nothing above this module needs to know the console is async.
     pub fn serve(self) -> Result<(), H5iError> {
@@ -1386,6 +1461,57 @@ mod tests {
         assert!(
             authorize(None, Some("h5i_console=0123456789abcdef"), Some(me), &["same-origin"], tok, me)
                 .is_ok()
+        );
+    }
+
+    /// `--open` hands the URL to a browser opener, and on Linux
+    /// `/proc/<pid>/cmdline` is world-readable, so the session token would be
+    /// legible to every other uid for the life of that process. The handoff is
+    /// a different token and it is spent by the page load it exists for.
+    #[test]
+    fn the_url_handed_to_a_browser_is_single_use_and_is_not_the_session_token() {
+        let c = Console::bind(std::env::temp_dir(), 0).expect("binds");
+        let once = c.handoff_url().expect("mints");
+        assert!(!once.contains(&c.state.token), "the session token must not travel: {once}");
+        let presented = once.rsplit_once("token=").expect("carries one").1.to_string();
+
+        // It works, once.
+        assert!(c.state.handoff().is_some());
+        assert!(authorize(
+            Some(&format!("token={presented}")),
+            None,
+            None,
+            &[],
+            &c.state.handoff().unwrap(),
+            "http://127.0.0.1:1",
+        )
+        .is_ok());
+        c.state.spend_handoff();
+        assert!(c.state.handoff().is_none(), "and is gone after it is spent");
+
+        // A second mint replaces the first rather than adding to it.
+        let a = c.handoff_url().expect("mints");
+        let b = c.handoff_url().expect("mints");
+        assert_ne!(a, b);
+        assert!(b.contains(&c.state.handoff().unwrap()));
+    }
+
+    /// The other half of the same fact: cookies have no port. A page on any
+    /// other loopback port cannot *ride* the console cookie (above) but could
+    /// set one, and reading only the first value let it lock the operator out.
+    #[test]
+    fn a_shadowing_cookie_from_another_loopback_port_does_not_lock_the_console() {
+        let tok = "0123456789abcdef";
+        let me = "http://127.0.0.1:8765";
+        // RFC 6265 §5.4 puts the longer path first, so this is the order the
+        // browser actually sends after `document.cookie = "h5i_console=junk;
+        // path=/api"` on another port.
+        let shadowed = Some("h5i_console=junk; h5i_console=0123456789abcdef");
+        assert!(authorize(None, shadowed, None, &["same-origin"], tok, me).is_ok());
+        // And a head carrying only wrong values is still refused.
+        assert_eq!(
+            authorize(None, Some("h5i_console=junk; h5i_console=nope"), None, &[], tok, me),
+            Err(Refusal::Unauthorized)
         );
     }
 

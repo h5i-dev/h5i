@@ -879,14 +879,14 @@ impl LocalBroker {
             // Before this the jar was attached to every request unconditionally,
             // which turned the missing same-origin policy from an unauthenticated
             // cross-origin read into an authenticated one.
-            let may_send_cookies = match &cors_plan {
+            let may_use_cookies = match &cors_plan {
                 Some(crate::cors::Plan::Send { send_cookies, .. }) => *send_cookies,
                 // No CORS context: the agent asked, and its own requests carry
                 // its own session.
                 _ => true,
             };
             let mut cookies_sent = 0;
-            if may_send_cookies
+            if may_use_cookies
                 && let Some((header, count)) = self.jar.header_for(&current)
             {
                 request = request.header(reqwest::header::COOKIE, header);
@@ -928,14 +928,25 @@ impl LocalBroker {
             // Before the redirect branch, deliberately: a login flow sets its
             // session cookie on the 302 itself, so a jar that only looked at
             // final responses would never see the thing it exists to hold.
-            let cookies_stored = self.jar.store(
-                &current,
-                response
-                    .headers()
-                    .get_all(reqwest::header::SET_COOKIE)
-                    .iter()
-                    .filter_map(|v| v.to_str().ok()),
-            );
+            //
+            // Gated by the same flag that decided whether to *send* one: the
+            // credentials mode governs both directions. Storing unconditionally
+            // let an attacker page write another allowlisted origin's cookies
+            // into the shared jar with a `no-cors`, `credentials: omit` request
+            // whose answer it was told nothing about — session fixation driven
+            // from a response nobody was allowed to read.
+            let cookies_stored = if may_use_cookies {
+                self.jar.store(
+                    &current,
+                    response
+                        .headers()
+                        .get_all(reqwest::header::SET_COOKIE)
+                        .iter()
+                        .filter_map(|v| v.to_str().ok()),
+                )
+            } else {
+                0
+            };
 
             if status.is_redirection() {
                 let location = response
@@ -2322,6 +2333,9 @@ mod cookie_wire_tests {
                 if allow_credentials {
                     head.push_str("Access-Control-Allow-Credentials: true\r\n");
                 }
+                // So a test can also ask what the *response* was allowed to
+                // leave behind, not only what the request carried.
+                head.push_str("Set-Cookie: planted=1; Path=/\r\n");
                 let mut stream = stream;
                 let _ = write!(stream, "{head}\r\n{body}");
                 let _ = stream.flush();
@@ -2442,6 +2456,33 @@ mod cookie_wire_tests {
         assert!(
             !seen[0].contains("s3cr3t"),
             "a cross-origin fetch must not carry the session by default: {seen:?}"
+        );
+    }
+
+    /// The other direction of the same flag. A response nobody was allowed to
+    /// read must not be allowed to write either: storing its `Set-Cookie`
+    /// unconditionally let an attacker page plant a session on another
+    /// allowlisted origin with a request whose answer it never sees.
+    #[test]
+    fn a_cross_origin_response_does_not_leave_a_cookie_behind_by_default() {
+        let (port, _seen) = cors_server(Some("*"), false, 1);
+        let (broker, _sink) = cors_broker();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/x")).unwrap();
+        let document = Url::parse("http://127.0.0.1:1/page").unwrap();
+        let outcome = broker.send_script(
+            &target,
+            "GET",
+            &[],
+            None,
+            &document,
+            &[],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::default(),
+        );
+        assert!(outcome.error.is_none(), "{outcome:?}");
+        assert!(
+            broker.jar().header_for(&target).is_none(),
+            "the response planted a cookie the request was not credentialed for"
         );
     }
 

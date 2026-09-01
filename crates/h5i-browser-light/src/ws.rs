@@ -44,6 +44,36 @@ pub fn accept_key(client_key: &str) -> String {
 /// always use `/`, and the web forward rewrites the request line to strip its
 /// `?token=`, so a server that insisted on a query string would break it.
 pub fn accept(stream: &mut TcpStream) -> Result<String, H5iError> {
+    accept_head(stream).map(|(path, _)| path)
+}
+
+/// [`accept`] for a server whose clients are h5i's own viewers.
+///
+/// A WebSocket handshake is not subject to the same-origin policy, so without
+/// this any page open in the human's own browser could dial the session's
+/// ephemeral port, receive its frames — screenshots of whatever the agent is
+/// looking at — and send back the verbs that drive it. An ephemeral port is a
+/// scan, not a boundary.
+///
+/// `Origin` is what separates the two callers. A browser always sends one; the
+/// clients this stream is for never do (`h5i box view --term` omits it
+/// deliberately, and the web forward makes the cross-origin decision itself,
+/// against its own page, then strips the header). So a handshake carrying one
+/// is a page, and a page is refused.
+pub fn accept_viewer(stream: &mut TcpStream) -> Result<String, H5iError> {
+    let (path, origin) = accept_head(stream)?;
+    match origin {
+        None => Ok(path),
+        Some(origin) => Err(H5iError::Metadata(format!(
+            "refusing a WebSocket handshake carrying Origin `{origin}`: this stream is for \
+             h5i's own viewers, and a page is not one (fail-closed)"
+        ))),
+    }
+}
+
+/// The handshake proper: answers the upgrade and reports the path and the
+/// `Origin` the client sent, if any.
+fn accept_head(stream: &mut TcpStream) -> Result<(String, Option<String>), H5iError> {
     // `.take`, so the head is bounded as a whole rather than per line: a client
     // dribbling one endless header line grows a `String` on this side without
     // ever reaching a newline, and every `read_line` below would happily follow
@@ -68,6 +98,7 @@ pub fn accept(stream: &mut TcpStream) -> Result<String, H5iError> {
         .to_string();
 
     let mut key = None;
+    let mut origin = None;
     loop {
         let mut line = String::new();
         let read = reader
@@ -76,10 +107,13 @@ pub fn accept(stream: &mut TcpStream) -> Result<String, H5iError> {
         if read == 0 || line == "\r\n" || line == "\n" {
             break;
         }
-        if let Some((name, value)) = line.split_once(':')
-            && name.trim().eq_ignore_ascii_case("sec-websocket-key")
-        {
-            key = Some(value.trim().to_string());
+        if let Some((name, value)) = line.split_once(':') {
+            let name = name.trim();
+            if name.eq_ignore_ascii_case("sec-websocket-key") {
+                key = Some(value.trim().to_string());
+            } else if name.eq_ignore_ascii_case("origin") {
+                origin = Some(value.trim().to_string());
+            }
         }
     }
 
@@ -100,7 +134,7 @@ pub fn accept(stream: &mut TcpStream) -> Result<String, H5iError> {
         .map_err(H5iError::Io)?;
     stream.flush().map_err(H5iError::Io)?;
 
-    Ok(path)
+    Ok((path, origin))
 }
 
 /// Write one unmasked text frame.
@@ -245,6 +279,42 @@ pub fn read_message(reader: &mut impl Read) -> Result<Incoming, H5iError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One handshake against a real loopback socket, so `accept` is exercised
+    /// as the server actually sees it.
+    fn handshake(head: &str) -> Result<String, H5iError> {
+        use std::io::Write as _;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let head = head.to_string();
+        let client = std::thread::spawn(move || {
+            let mut s = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+            let _ = s.write_all(head.as_bytes());
+            let _ = s.flush();
+            // Held open: `accept` writes its answer before the caller reads.
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        });
+        let (mut server, _) = listener.accept().expect("accept");
+        let result = accept_viewer(&mut server);
+        let _ = client.join();
+        result
+    }
+
+    /// A WebSocket handshake is not subject to the same-origin policy, so a
+    /// page in the human's own browser could dial this port and get the
+    /// session's frames plus the verbs that drive it. Every h5i viewer omits
+    /// `Origin`; a page cannot.
+    #[test]
+    fn a_handshake_from_a_page_is_refused() {
+        let with_origin = "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\n\
+             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nOrigin: https://evil.test\r\n\r\n";
+        let err = handshake(with_origin).expect_err("a page must not be joined");
+        assert!(format!("{err}").contains("Origin"), "{err}");
+
+        let cli = "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\n\
+             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+        assert_eq!(handshake(cli).expect("a viewer is joined"), "/");
+    }
 
     #[test]
     fn accept_key_matches_the_rfc_example() {

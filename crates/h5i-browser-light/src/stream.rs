@@ -738,7 +738,7 @@ fn accept_viewers(listener: TcpListener, tx: Sender<Command>, once: bool) {
 /// for output, which is what makes "several actors, one socket" safe without a
 /// lock around the stream.
 fn serve_viewer(id: u64, mut stream: TcpStream, tx: &Sender<Command>) -> Result<(), H5iError> {
-    ws::accept(&mut stream)?;
+    ws::accept_viewer(&mut stream)?;
 
     let (out_tx, out_rx) = channel::<Outgoing>();
     let writer = stream

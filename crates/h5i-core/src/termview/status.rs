@@ -1,6 +1,7 @@
 //! The status line: the one row on the screen the page can never reach.
 
 use crate::control::Holder;
+use super::cells;
 use crate::redact::sanitize_display;
 
 /// What the human is allowed to do with the page right now.
@@ -79,14 +80,11 @@ const BAR_OFF: &str = "\x1b[0m";
 /// the page is in it.
 pub fn render(s: &Status, width: u16) -> String {
     let width = width.max(1) as usize;
-    let mut body = compose(s, width);
-    // Truncation is by character, and the bar is ASCII plus a sanitized URL, so
-    // this cannot split a multi-byte character.
-    if body.chars().count() > width {
-        body = body.chars().take(width).collect();
-    }
-    let pad = width.saturating_sub(body.chars().count());
-    format!("{BAR_ON}{body}{}{BAR_OFF}", " ".repeat(pad))
+    let body = compose(s, width);
+    // Measured in cells, not characters: the URL is page-chosen and a
+    // double-width glyph would otherwise wrap the row onto the page (see
+    // [`super::cells`]).
+    format!("{BAR_ON}{}{BAR_OFF}", cells::fit(&body, width))
 }
 
 /// One field of the bar, and what it is worth when the row runs out of room.
@@ -172,7 +170,7 @@ fn compose(s: &Status, width: usize) -> String {
         // shortens rather than vanishing: an elided origin still answers the
         // question, a missing one does not.
         if let Some(i) = segs.iter().position(|x| x.raw.is_some()) {
-            let now = segs[i].text.chars().count();
+            let now = cells::width(&segs[i].text);
             if now > MIN_URL {
                 let target = now.saturating_sub(over).max(MIN_URL);
                 let raw = segs[i].raw.clone().unwrap_or_default();
@@ -193,7 +191,7 @@ fn compose(s: &Status, width: usize) -> String {
 }
 
 fn joined_len(segs: &[Seg]) -> usize {
-    let text: usize = segs.iter().map(|s| s.text.chars().count()).sum();
+    let text: usize = segs.iter().map(|s| cells::width(&s.text)).sum();
     text + segs.len().saturating_sub(1)
 }
 
@@ -201,32 +199,33 @@ fn joined_len(segs: &[Seg]) -> usize {
 /// are*.
 pub fn elide_url(url: &str, room: usize) -> String {
     let url = sanitize_display(url);
-    if url.chars().count() <= room {
+    // Cells throughout: `room` counts terminal columns, and the string being
+    // spent against it came from the page.
+    if room == 0 {
+        return String::new();
+    }
+    if cells::width(&url) <= room {
         return url;
     }
     let origin_len = origin_end(&url);
     let origin: String = url.chars().take(origin_len).collect();
+    let origin_cells = cells::width(&origin);
 
-    if origin.chars().count() <= room {
+    if origin_cells <= room {
         // The origin fits; spend what is left on the path, elided at the end
         // where losing characters is harmless.
         let rest: String = url.chars().skip(origin_len).collect();
-        let left = room - origin.chars().count();
+        let left = room - origin_cells;
         if left <= 1 {
             return origin;
         }
-        let kept: String = rest.chars().take(left - 1).collect();
-        return format!("{origin}{kept}…");
+        return format!("{origin}{}…", cells::head(&rest, left - 1));
     }
 
     // Even the origin is too long. Truncate from the *left*: the end of a host
     // is the part that identifies it, and a host cut from the right is the
     // spoof this function exists to prevent.
-    let tail: String = origin
-        .chars()
-        .skip(origin.chars().count() - (room - 1))
-        .collect();
-    format!("…{tail}")
+    format!("…{}", cells::tail(&origin, room - 1))
 }
 
 /// Character index just past `scheme://host[:port]`.
@@ -323,6 +322,18 @@ mod tests {
         let out = body(&render(&s2, 80));
         assert!(out.contains("INTERACT"), "{out:?}");
         assert!(out.contains("control:human"), "{out:?}");
+    }
+
+    #[test]
+    fn a_wide_url_cannot_wrap_the_row_onto_the_page() {
+        // Characters and cells are not the same count. Eighty CJK codepoints
+        // fit an eighty-character row and paint a hundred and sixty cells, so
+        // the row wrapped and the page below it was repainted by the page's
+        // own choice of URL.
+        let mut s = status();
+        s.url = Some(format!("http://x/{}", "日".repeat(200)));
+        let row = body(&render(&s, 80));
+        assert_eq!(cells::width(&row), 80, "{row:?}");
     }
 
     #[test]

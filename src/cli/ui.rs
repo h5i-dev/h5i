@@ -31,7 +31,11 @@ pub fn run(port: u16, open: bool) -> anyhow::Result<()> {
     println!("  {}\n", style("Press Ctrl-C to stop").dim());
 
     if open {
-        launch_browser(&url);
+        // Not `url`: `launch_browser` puts its argument on another process's
+        // command line, and `/proc/<pid>/cmdline` is world-readable. The
+        // handoff URL carries a single-use token instead, spent by the page
+        // load it exists for.
+        launch_browser(&console_srv.handoff_url()?);
     }
     console_srv.serve()?;
     Ok(())

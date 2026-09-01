@@ -42,6 +42,9 @@ chrono = { version = "0.4", features = ["serde"] }
 fastrand = "2.3.0"
 getrandom = "0.3"
 console = "0.16.2"
+# Terminal columns, not characters. The viewer's chrome promises to occupy
+# exactly the row it was given, and page text can be double-width.
+unicode-width = "0.2"
 libc = "0.2.186"
 
 # The terminal viewer (`termview`).

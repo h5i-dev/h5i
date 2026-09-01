@@ -55,8 +55,28 @@ pub enum ClientError {
     Source(#[from] crate::source::SourceError),
 }
 
+/// The peer's stderr, made safe to print.
+///
+/// The forced command on the other end is whatever binary sits at
+/// `worker_path` on a machine we do not trust, and it can write anything it
+/// likes to fd 2. This string is interpolated into an error the CLI prints, so
+/// the in-band `ERROR` message being sanitized and this one not was the same
+/// escape sequence arriving by the door nobody was watching. `sanitize_block`
+/// rather than `sanitize_display`: a stderr tail is meant to have lines.
+/// How long to wait on a command the runner says it has started.
+///
+/// Bounded by *our* number as well as the peer's. `ExecStarted::sanitized`
+/// clamps what the runner reports to the protocol maximum, which is a day, so
+/// a runner answering a thirty-second request with 86400 was choosing how long
+/// this call blocks: one forty-byte frame buys a day of it. A budget shorter
+/// than we asked for is honoured, a longer one is not.
+fn exec_wait(asked: Option<u64>, reported: u64) -> u64 {
+    reported.min(asked.unwrap_or(crate::serve::EXEC_DEFAULT_SECS))
+}
+
 fn stderr_tail(stderr: &str) -> String {
-    let t = stderr.trim();
+    let t = h5i_error::redact::sanitize_block(stderr);
+    let t = t.trim();
     if t.is_empty() {
         String::new()
     } else {
@@ -216,7 +236,9 @@ impl Client {
         // enough to cover what the worker said it would allow. A client that
         // gave up before the worker's own timeout would report a hang for a
         // command that was going to finish.
-        session.rearm(std::time::Duration::from_secs(started.timeout_secs.saturating_add(60)));
+        //
+        let wait = exec_wait(request.timeout_secs, started.timeout_secs);
+        session.rearm(std::time::Duration::from_secs(wait.saturating_add(60)));
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
@@ -320,14 +342,22 @@ impl Session {
             return Err(ClientError::Closed { what, stderr });
         }
 
-        let ack: HelloAck = match read_message(
+        let ack = match read_message::<HelloAck, _>(
             &mut reader,
             FrameKind::HelloAck,
             "HELLO_ACK",
             &what,
             &channel,
         ) {
-            Ok(ack) => ack,
+            // Sanitized on receipt, like every other peer-authored message:
+            // this one is printed to a terminal before anything else is.
+            Ok(ack) => match ack.sanitized() {
+                Ok(ack) => ack,
+                Err(e) => {
+                    channel.abandon();
+                    return Err(e.into());
+                }
+            },
             Err(e) => {
                 channel.abandon();
                 return Err(e);
@@ -660,6 +690,20 @@ mod tests {
             Err(ClientError::TimedOut { .. }) => {}
             other => panic!("expected TimedOut, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_exec_watchdog_is_ours_and_the_peer_may_only_shorten_it() {
+        // The protocol maximum is a day, so reading the peer's number alone
+        // let one frame hold this call for that long.
+        assert_eq!(exec_wait(Some(30), crate::proto::EXEC_MAX_SECS), 30);
+        // A worker that says it will allow less is believed.
+        assert_eq!(exec_wait(Some(300), 30), 30);
+        // Asking for nothing means the worker's own default, not its maximum.
+        assert_eq!(
+            exec_wait(None, crate::proto::EXEC_MAX_SECS),
+            crate::serve::EXEC_DEFAULT_SECS
+        );
     }
 
     #[test]

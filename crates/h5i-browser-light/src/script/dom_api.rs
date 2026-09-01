@@ -1349,7 +1349,13 @@ fn reply_value(
     let reply = boa_engine::object::ObjectInitializer::new(context).build();
     reply.set(js_string!("ok"), (200..300).contains(&status), false, context)?;
     reply.set(js_string!("status"), status as f64, false, context)?;
-    reply.set(js_string!("url"), js_string!(outcome.final_url.to_string()), false, context)?;
+    // Empty for an opaque response, as the Fetch spec requires. The body, the
+    // headers and the status are all withheld from a `no-cors` read; handing
+    // back where the redirect chain *ended* gave the same answer in one field
+    // — the login-state oracle (`/login` versus `/dashboard`), and whatever a
+    // victim server puts in a `Location`.
+    let seen_url = if outcome.opaque { String::new() } else { outcome.final_url.to_string() };
+    reply.set(js_string!("url"), js_string!(seen_url), false, context)?;
     reply.set(js_string!("text"), js_string!(text), false, context)?;
 
     let headers = boa_engine::object::builtins::JsArray::new(context)?;

@@ -1251,6 +1251,16 @@ fn rewrite_head_for_upstream(head: &str) -> String {
         out.push_str(&format!("{method} {target} {version}\r\n"));
     }
     for line in lines {
+        // `Origin` does not travel. `gate` has already compared it to this
+        // forward's own page, which is the only comparison that means anything
+        // here; the box's stream server refuses any handshake that carries one
+        // at all, because for it a header no h5i viewer sends is a page.
+        if line
+            .split_once(':')
+            .is_some_and(|(name, _)| name.trim().eq_ignore_ascii_case("origin"))
+        {
+            continue;
+        }
         out.push_str(line);
         out.push_str("\r\n");
     }

@@ -1065,6 +1065,48 @@ pub struct Audit {
 /// where there was a loud one, so the count comes back in [`Audit::dropped`].
 const AUDIT_CAPACITY: usize = 5000;
 
+/// Most of a box-written log this reads.
+///
+/// The live path has been reading these bounded since it was written ("a
+/// four-gigabyte `browser-requests.jsonl` is a four-gigabyte read on the next
+/// poll"); the export path read them whole.
+const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Read one of the box's own logs: bounded, and without following a link.
+///
+/// For a boxed session these paths are the host's view of files inside the
+/// box's `/tmp`, which the box writes by design, so `read_to_string` was an
+/// allocation whose size the box chose — and `ln -sf /dev/zero <log>` made it
+/// one that never returns, from inside the box, during the one command whose
+/// output a reviewer trusts.
+///
+/// Opened `O_NOFOLLOW` first and `fstat`ed after, rather than stat-then-open:
+/// in a directory the box writes, those are two resolutions of a path and only
+/// the second one is read.
+fn read_log_capped(path: &Path) -> Option<String> {
+    use std::io::Read as _;
+    let mut opts = fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = opts.open(path).ok()?;
+    if !file.metadata().ok()?.file_type().is_file() {
+        return None;
+    }
+    let mut buf = Vec::new();
+    file.take(MAX_LOG_BYTES).read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    // These logs are JSONL and the cap can land mid-line. Ending on a whole
+    // line means the parse below drops nothing it could have read.
+    match text.rfind('\n') {
+        Some(at) => Some(text[..=at].to_string()),
+        None => Some(text),
+    }
+}
+
 /// Assemble the whole record of a session: what the agent asked for, what the engine decided,
 /// who was driving, and how it ended.
 pub fn audit(root: &Path, session: &Session) -> Audit {
@@ -1072,7 +1114,7 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
 
     let dir = dir(root, &session.id);
     let read = |path: &Option<PathBuf>| -> Option<String> {
-        path.as_ref().and_then(|p| fs::read_to_string(p).ok())
+        path.as_ref().and_then(|p| read_log_capped(p))
     };
     let actions = read(&session.logs.actions);
     let requests = read(&session.logs.requests);
@@ -1386,6 +1428,34 @@ fn process_alive(_pid: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// The two logs an audit reads live inside the box's own `/tmp`, which the
+    /// box writes. Reading them whole made `h5i box export` allocate whatever
+    /// the box wrote, and following a link made it read whatever the box
+    /// pointed at.
+    #[test]
+    fn a_box_written_log_is_read_bounded_and_without_following_a_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("actions.jsonl");
+
+        // Bounded, and cut on a line boundary so the parse loses nothing it
+        // could have read.
+        let line = format!("{}\n", "x".repeat(4095));
+        let big: String = std::iter::repeat_n(line, 4096).collect();
+        assert!(big.len() as u64 > super::MAX_LOG_BYTES);
+        std::fs::write(&log, &big).unwrap();
+        let read = super::read_log_capped(&log).expect("reads");
+        assert!(read.len() as u64 <= super::MAX_LOG_BYTES);
+        assert!(read.ends_with('\n'), "must end on a whole line");
+
+        // And a link is not a log.
+        #[cfg(unix)]
+        {
+            let linked = dir.path().join("linked.jsonl");
+            std::os::unix::fs::symlink(&log, &linked).unwrap();
+            assert!(super::read_log_capped(&linked).is_none());
+        }
+    }
+
     use super::*;
 
     fn session(id: &str, placement: Placement) -> Session {

@@ -487,6 +487,15 @@ const REDACTION_MARKER: &str = "‹redacted›";
 pub fn redact_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
+    // Lines still owed to an open PEM block, or zero when none is open.
+    //
+    // The rules are line-oriented, and the private-key rule matches the
+    // `-----BEGIN … PRIVATE KEY-----` header and nothing else: no rule reaches
+    // a bare base64 line, because the generic high-entropy rules all want a
+    // credential keyword and an `=` first. So `cat id_rsa` in a box had its
+    // header replaced and every byte of the key stored verbatim, under a
+    // receipt whose `redactions` list said `PRIVATE_KEY_PEM` had been handled.
+    let mut pem_lines_left = 0usize;
     while !rest.is_empty() {
         let (line, sep, tail) = match rest.find('\n') {
             Some(i) => {
@@ -497,11 +506,37 @@ pub fn redact_text(text: &str) -> String {
             }
             None => (rest, "", ""),
         };
-        out.push_str(&redact_line(line));
+        if pem_lines_left > 0 {
+            pem_lines_left -= 1;
+            if is_pem_armour(line, "-----END ") {
+                pem_lines_left = 0;
+                out.push_str(line);
+            } else if !line.trim().is_empty() {
+                out.push_str(REDACTION_MARKER);
+            }
+        } else {
+            out.push_str(&redact_line(line));
+            if is_pem_armour(line, "-----BEGIN ") {
+                pem_lines_left = MAX_PEM_BODY_LINES;
+            }
+        }
         out.push_str(sep);
         rest = tail;
     }
     out
+}
+
+/// Longest key body followed after a `BEGIN` line with no `END`.
+///
+/// Bounded rather than open-ended: a stray armour line in otherwise ordinary
+/// output must not blank the rest of a captured log. A 4096-bit key is under
+/// fifty lines.
+const MAX_PEM_BODY_LINES: usize = 256;
+
+/// Is this a PEM armour line for a private key, opening or closing?
+fn is_pem_armour(line: &str, marker: &str) -> bool {
+    let t = line.trim();
+    t.starts_with(marker) && t.ends_with("PRIVATE KEY-----")
 }
 
 /// Redact one line.
@@ -583,6 +618,38 @@ mod tests {
         let f = scan("token: \"ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789\"");
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].rule_id, "GITHUB_PAT");
+    }
+
+    #[test]
+    fn a_private_key_loses_its_body_and_not_just_its_header() {
+        // The rule matches the armour line. Nothing matched the base64 under
+        // it, so the key was stored in full beneath a `‹redacted›` header and
+        // a receipt that named `PRIVATE_KEY_PEM` among its redactions.
+        let key = "building\n\
+                   -----BEGIN RSA PRIVATE KEY-----\n\
+                   MIIEpAIBAAKCAQEAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n\
+                   yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\n\
+                   -----END RSA PRIVATE KEY-----\n\
+                   done\n";
+        let out = redact_text(key);
+        assert!(!out.contains("MIIEpAIBAAKCAQEA"), "{out}");
+        assert!(!out.contains("yyyyyyyy"), "{out}");
+        // The shape stays legible: a reader can see a key was here.
+        assert!(out.contains("-----END RSA PRIVATE KEY-----"), "{out}");
+        assert!(out.starts_with("building\n"), "{out}");
+        assert!(out.ends_with("done\n"), "{out}");
+        assert_eq!(out.lines().count(), 6, "{out}");
+    }
+
+    #[test]
+    fn a_stray_armour_line_does_not_blank_the_rest_of_a_log() {
+        let mut text = String::from("-----BEGIN RSA PRIVATE KEY-----\n");
+        for i in 0..(MAX_PEM_BODY_LINES + 4) {
+            text.push_str(&format!("line {i}\n"));
+        }
+        let out = redact_text(&text);
+        assert!(out.contains(&format!("line {}", MAX_PEM_BODY_LINES + 3)), "{out}");
+        assert!(!out.contains("line 0\n"), "the body itself still goes");
     }
 
     #[test]
