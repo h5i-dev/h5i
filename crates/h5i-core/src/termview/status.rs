@@ -53,11 +53,35 @@ impl Mode {
 
     /// Whether keystrokes in this mode are the page's rather than the viewer's.
     ///
-    /// The one question the control lock cares about, asked of the mode rather
-    /// than matched at each call site: HINT looks like driving and is not, and
-    /// a viewer that took the lock to put an overlay up would pause the agent
-    /// every time somebody glanced at the page.
-    pub fn drives_the_page(self) -> bool {
+    /// Asked of the mode rather than matched at each call site, so a mode added
+    /// later cannot leave the lock held by forgetting to be listed.
+    ///
+    /// HINT is in the list, which is worth arguing for because it looks like it
+    /// should not be: an overlay is a read, and the human has not touched the
+    /// page yet. Two things settle it. Asking for the overlay is an intent to
+    /// act, and the lock's own rule is that a human takes control rather than
+    /// asking for it, so making them take it as a separate step is a step with
+    /// no decision in it. And the labels describe the page *as it is now*: an
+    /// agent that navigates while the overlay is up leaves every label pointing
+    /// into a document that is gone, which the ref check would catch and refuse,
+    /// having already spent the human's keystroke. Holding the lock for the
+    /// second or two an overlay is up prevents that race rather than reporting
+    /// it afterwards.
+    ///
+    /// It is also what keeps the two viewers the same. The web viewer's messages
+    /// pass through a forward that gates everything except pacing, so an overlay
+    /// there is reachable only by the lock holder; a terminal viewer that did not
+    /// take it would make one key behave differently depending on which viewer
+    /// somebody happened to open.
+    pub fn holds_control(self) -> bool {
+        matches!(self, Mode::Interact | Mode::Insert | Mode::Hint)
+    }
+
+    /// Whether keystrokes in this mode reach the page.
+    ///
+    /// A different question from [`Mode::holds_control`], and HINT is where the
+    /// two part: it holds the lock and sends the page nothing.
+    pub fn types_into_the_page(self) -> bool {
         matches!(self, Mode::Interact | Mode::Insert)
     }
 }
@@ -439,13 +463,18 @@ mod tests {
         assert!(!row.contains("\u{1b}[2J"), "{row:?}");
     }
 
+    /// Two questions, not one, and HINT is where they part: it holds the lock so
+    /// the agent cannot move the page out from under the labels, and it sends
+    /// the page nothing at all.
     #[test]
-    fn only_the_modes_that_drive_the_page_hold_the_lock() {
-        assert!(Mode::Interact.drives_the_page());
-        assert!(Mode::Insert.drives_the_page());
-        // Putting an overlay up is looking, not driving. A viewer that took the
-        // lock to look would pause the agent every time somebody glanced.
-        assert!(!Mode::Hint.drives_the_page());
-        assert!(!Mode::View.drives_the_page());
+    fn holding_the_lock_and_typing_into_the_page_are_different_questions() {
+        for mode in [Mode::Interact, Mode::Insert] {
+            assert!(mode.holds_control(), "{mode:?}");
+            assert!(mode.types_into_the_page(), "{mode:?}");
+        }
+        assert!(Mode::Hint.holds_control());
+        assert!(!Mode::Hint.types_into_the_page());
+        assert!(!Mode::View.holds_control());
+        assert!(!Mode::View.types_into_the_page());
     }
 }

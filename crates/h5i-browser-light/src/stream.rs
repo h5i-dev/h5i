@@ -2883,6 +2883,7 @@ fn viewer_hints(session: &mut Session) -> Value {
     let targets = session.page.hint_targets();
     let labels = crate::hints::labels(targets.len());
     let (viewport_width, viewport_height) = session.viewport();
+    let page_url = session.page.url().clone();
 
     let items: Vec<Value> = targets
         .iter()
@@ -2897,7 +2898,16 @@ fn viewer_hints(session: &mut Session) -> Value {
                 // the engine keeping its own output on one line, not the
                 // boundary check.
                 "name": crate::snapshot::one_line(&target.entry.name),
-                "href": target.entry.href.as_deref().map(crate::snapshot::one_line),
+                // Resolved against the page, not the raw attribute. A viewer
+                // that copies a link wants one it can paste, and `/docs` is
+                // not that. The engine is the only party here that knows what
+                // to resolve it against.
+                "href": target
+                    .entry
+                    .href
+                    .as_deref()
+                    .and_then(|href| page_url.join(href).ok())
+                    .map(|url| crate::snapshot::one_line(url.as_str())),
                 "x": target.x,
                 "y": target.y,
                 "w": target.width,
@@ -5695,6 +5705,21 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A link on the overlay carries somewhere a viewer can paste, not the raw
+    /// attribute. The engine is the only party that knows the base to resolve
+    /// against.
+    #[test]
+    fn a_hinted_links_href_is_resolved_against_the_page() {
+        let mut session = session_with("<body><a href='/docs/here'>Docs</a></body>");
+        let out = handle(&mut session, &json!({"type": "hints"})).expect("hints");
+        assert_eq!(
+            out[0]["items"][0]["href"],
+            "https://example.com/docs/here",
+            "{:?}",
+            out[0]["items"][0]
+        );
     }
 
     /// Offscreen elements are dropped rather than clamped: a label pointing at

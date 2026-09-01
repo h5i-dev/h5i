@@ -718,6 +718,8 @@ pub fn gate(req: &Request, expected_token: &str, self_origin: &str) -> Result<()
 /// What to do with one client→box frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameVerdict {
+    /// The forward answers this itself. Never written upstream.
+    Forward,
     /// Connection management: forwarded regardless of who holds the lock, or
     /// the socket would stall and time out while a human watches.
     Control,
@@ -736,6 +738,20 @@ pub enum FrameVerdict {
 /// harmless" is how gates get bypassed; the answer to a message that genuinely
 /// must pass is not to guess more loosely but to *name* it.
 const PACING_MESSAGES: [&str; 2] = ["config", "ack"];
+
+/// Messages the forward acts on itself and never passes upstream.
+///
+/// Exactly one, and it is the control lock. The web viewer needs a way to take
+/// the controls, and until now the only one was to leave the page, run
+/// `h5i browser take` in a terminal and reload — which is why the viewer's own
+/// footer said so. The terminal viewer has no such problem: it holds the lock
+/// file directly, and reaching for the controls there takes them.
+///
+/// Handling it here rather than upstream is not a shortcut. The lock is a
+/// *host* fact, kept in a file beside the box, and the thing on the other end
+/// of this socket is inside the box and has no business writing it. The forward
+/// is the only party in the conversation that can.
+const FORWARD_MESSAGES: [&str; 1] = ["control"];
 
 /// Largest text frame worth parsing to see whether it is a pacing message.
 /// `{"type":"config","maxFps":30,"pacing":"ack"}` is 44 bytes; anything in this
@@ -776,19 +792,61 @@ pub fn classify(opcode: u8, fin: bool, payload: &[u8]) -> FrameVerdict {
     }
     // Text only, and only a whole message. A fragment cannot be judged from the
     // fragment in hand, so it is input.
-    if opcode == 0x1 && fin && payload.len() <= MAX_PACING_FRAME && is_pacing(payload) {
-        return FrameVerdict::Pacing;
+    if opcode == 0x1 && fin && payload.len() <= MAX_PACING_FRAME {
+        match message_type(payload) {
+            Some(name) if PACING_MESSAGES.contains(&name.as_str()) => {
+                return FrameVerdict::Pacing;
+            }
+            Some(name) if FORWARD_MESSAGES.contains(&name.as_str()) => {
+                return FrameVerdict::Forward;
+            }
+            _ => {}
+        }
     }
     FrameVerdict::Input
 }
 
-fn is_pacing(payload: &[u8]) -> bool {
-    let Ok(v) = serde_json::from_slice::<serde_json::Value>(payload) else {
-        return false;
-    };
+/// The `type` of a JSON message, if it is one.
+fn message_type(payload: &[u8]) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(payload).ok()?;
     v.get("type")
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|t| PACING_MESSAGES.contains(&t))
+        .map(str::to_string)
+}
+
+/// Take or hand back the control lock, on a viewer's say-so.
+///
+/// Whoever is on this socket reached a loopback port with the box's viewer
+/// token, which is the same standing `h5i browser take` runs with on this
+/// machine. So this grants nothing new; it removes a detour that made the
+/// obvious thing hard, and it is what lets one keymap mean the same in both
+/// viewers.
+///
+/// A take always succeeds, following the lock's own rule: someone at the viewer
+/// wants the controls now, and the agent is a program that can wait.
+fn apply_control(payload: &[u8], env_dir: &Path) {
+    let Some(v) = serde_json::from_slice::<serde_json::Value>(payload).ok() else {
+        return;
+    };
+    match v.get("hold").and_then(serde_json::Value::as_bool) {
+        Some(true) => {
+            let _ = crate::control::take(env_dir);
+            crate::browser_session::journal_control(
+                env_dir,
+                crate::control::Holder::Human.as_str(),
+                Some("taken at the live view"),
+            );
+        }
+        Some(false) => {
+            let _ = crate::control::release(env_dir);
+            crate::browser_session::journal_control(
+                env_dir,
+                crate::control::Holder::Agent.as_str(),
+                Some("handed back at the live view"),
+            );
+        }
+        None => {}
+    }
 }
 
 /// One frame from the client, as read.
@@ -903,8 +961,14 @@ pub fn pump_input(mut from_client: impl Read, mut to_box: impl Write, env_dir: &
                 return pump;
             }
             Ok(Some(frame)) => {
-                let is_input =
-                    classify(frame.opcode, frame.fin, &frame.payload) == FrameVerdict::Input;
+                let verdict = classify(frame.opcode, frame.fin, &frame.payload);
+                // Answered here and dropped, never written upstream: the box
+                // does not know this message and the lock is not its to write.
+                if verdict == FrameVerdict::Forward {
+                    apply_control(&frame.payload, env_dir);
+                    continue;
+                }
+                let is_input = verdict == FrameVerdict::Input;
                 // A continuation (opcode 0) inherits the decision made for the
                 // message's first frame; anything else decides afresh. Control
                 // frames may be interleaved mid-message and carry their own
@@ -1533,6 +1597,68 @@ mod tests {
         let rewritten = rewrite_head_for_upstream(&with_body);
         assert!(!rewritten.contains("trailing-garbage"), "{rewritten:?}");
         assert!(rewritten.ends_with("\r\n\r\n"), "{rewritten:?}");
+    }
+
+    /// The web viewer's way of reaching for the controls.
+    ///
+    /// Handled by the forward and never written upstream: the lock is a host
+    /// fact kept in a file beside the box, and the thing on the other end of
+    /// that socket is inside the box.
+    #[test]
+    fn a_viewer_can_take_the_lock_without_leaving_the_page() {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(crate::control::read(dir.path()).holder, crate::control::Holder::Agent);
+
+        let take = client_frame(0x1, br#"{"type":"control","hold":true}"#);
+        let mut upstream = Vec::new();
+        let pumped = pump_input(&take[..], &mut upstream, dir.path());
+
+        assert_eq!(crate::control::read(dir.path()).holder, crate::control::Holder::Human);
+        assert!(
+            upstream.is_empty(),
+            "a control message reached the box: {upstream:?}"
+        );
+        // Not counted as input either: nothing was forwarded to the page.
+        assert_eq!(pumped.input_frames, 0);
+
+        let release = client_frame(0x1, br#"{"type":"control","hold":false}"#);
+        let mut upstream = Vec::new();
+        pump_input(&release[..], &mut upstream, dir.path());
+        assert_eq!(crate::control::read(dir.path()).holder, crate::control::Holder::Agent);
+        assert!(upstream.is_empty());
+    }
+
+    /// The verdicts are three, not two, and the third must not widen the second.
+    /// Anything that is neither pacing nor the forward's own message is input,
+    /// including a message whose name merely looks like one.
+    #[test]
+    fn only_the_named_messages_escape_the_lock() {
+        let text = |body: &[u8]| classify(0x1, true, body);
+        assert_eq!(text(br#"{"type":"config"}"#), FrameVerdict::Pacing);
+        assert_eq!(text(br#"{"type":"ack"}"#), FrameVerdict::Pacing);
+        assert_eq!(text(br#"{"type":"control","hold":true}"#), FrameVerdict::Forward);
+        for body in [
+            &br#"{"type":"hints"}"#[..],
+            &br#"{"type":"act","ref":"e1"}"#[..],
+            &br#"{"type":"insert","ref":"e1","text":"x"}"#[..],
+            &br#"{"type":"history","go":-1}"#[..],
+            &br#"{"type":"reload"}"#[..],
+            &br#"{"type":"input_mouse"}"#[..],
+            &br#"{"type":"controlled"}"#[..],
+            &br#"not json"#[..],
+        ] {
+            assert_eq!(
+                text(body),
+                FrameVerdict::Input,
+                "{}",
+                String::from_utf8_lossy(body)
+            );
+        }
+        // And a fragment is never judged from the fragment in hand.
+        assert_eq!(
+            classify(0x1, false, br#"{"type":"control","hold":true}"#),
+            FrameVerdict::Input
+        );
     }
 
     #[test]

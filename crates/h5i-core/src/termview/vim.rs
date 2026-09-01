@@ -433,6 +433,71 @@ mod tests {
         assert_eq!(narrow(&[], "s"), Match::None);
     }
 
+    // ─── the web viewer's copy ──────────────────────────────────────────────
+
+    /// The two viewers must not drift apart.
+    ///
+    /// The whole point of giving the web viewer the same keys is that there is
+    /// one thing to learn, and a keymap maintained by hand in two languages
+    /// drifts silently: nothing fails, one viewer just quietly does something
+    /// else. So the JavaScript table is parsed out of the page and compared
+    /// against this one, and a change to either without the other fails the
+    /// build.
+    ///
+    /// Deliberately the *documented* table rather than the resolver: what a
+    /// reader is promised is what has to match. `every_documented_binding_actually_resolves`
+    /// is what ties this table back to the code on this side, and the web
+    /// viewer's own `resolve` is tied to it by the same list being rendered as
+    /// its key overlay.
+    #[test]
+    fn the_web_viewer_binds_the_same_keys_to_the_same_things() {
+        let page = include_str!("../viewer.html");
+        let table = page
+            .split_once("const BINDINGS = [")
+            .expect("the web viewer has a BINDINGS table")
+            .1
+            .split_once("\n];")
+            .expect("the table is closed")
+            .0;
+
+        let rows: Vec<(String, String, Option<String>)> = table
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with('['))
+            .map(|line| {
+                let cells: Vec<&str> = line
+                    .trim_start_matches('[')
+                    .trim_end_matches(&[',', ']'][..])
+                    .split("\", ")
+                    .collect();
+                assert_eq!(cells.len(), 3, "unparsable row: {line}");
+                let unquote = |cell: &str| cell.trim().trim_matches('"').to_string();
+                let need = unquote(cells[2]);
+                (
+                    unquote(cells[0]),
+                    unquote(cells[1]),
+                    (need != "null").then_some(need),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            rows.len(),
+            BINDINGS.len(),
+            "the two key lists are different lengths"
+        );
+        for (row, binding) in rows.iter().zip(BINDINGS) {
+            assert_eq!(row.0, binding.keys, "keys differ");
+            assert_eq!(row.1, binding.what, "descriptions differ for `{}`", binding.keys);
+            assert_eq!(
+                row.2.as_deref(),
+                binding.needs,
+                "engine requirement differs for `{}`",
+                binding.keys
+            );
+        }
+    }
+
     /// The key list and the resolver are the same knowledge written twice.
     #[test]
     fn every_documented_binding_actually_resolves() {

@@ -370,7 +370,7 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
         // the page too, and a viewer that exited from it still holding the lock
         // would leave the agent refusing to act with nothing on screen to
         // explain why.
-        if app.mode.drives_the_page() {
+        if app.mode.holds_control() {
             let _ = control::release(&opts.state_dir);
         }
         let _ = writer.write_all(&app.placer.clear());
@@ -1088,6 +1088,11 @@ impl<'a> App<'a> {
     /// session whose engine ignores the message stays exactly where it was
     /// rather than sitting in a mode with no labels in it.
     fn ask_for_hints(&mut self, then: vim::HintThen, auto_first: bool, writer: &mut impl Write) {
+        // Taken before the request goes out, not when a label is chosen. The
+        // labels describe the page as it is at this moment, and an agent that
+        // navigates between the ask and the answer would leave every one of
+        // them pointing into a document that is gone.
+        let _ = control::take(&self.env_dir);
         self.hinting = Some(Hinting {
             then,
             auto_first,
@@ -1111,6 +1116,7 @@ impl<'a> App<'a> {
 
         if hinting.items.is_empty() {
             self.hinting = None;
+            let _ = control::release(&self.env_dir);
             self.say(Some("nothing on screen to act on".into()));
             return;
         }
@@ -1130,6 +1136,7 @@ impl<'a> App<'a> {
                 }
                 None => {
                     self.hinting = None;
+                    let _ = control::release(&self.env_dir);
                     self.say(Some("no field on screen to type into".into()));
                 }
             }
@@ -1142,10 +1149,9 @@ impl<'a> App<'a> {
         self.repaint();
     }
 
-    /// In HINT the keys narrow the labels. Nothing reaches the page, so the
-    /// control lock is not taken: putting an overlay up is looking, not driving,
-    /// and taking the lock to look would pause the agent every time somebody
-    /// glanced at the page.
+    /// In HINT the keys narrow the labels. Nothing reaches the page, but the
+    /// lock is held all the same: see [`Mode::holds_control`] for why an overlay
+    /// takes it.
     fn on_hint_key(&mut self, ev: input::Event, writer: &mut impl Write) {
         use input::{Event, KeyCode};
         let Event::Key(key) = ev else {
@@ -1202,17 +1208,22 @@ impl<'a> App<'a> {
     fn act_on(&mut self, then: vim::HintThen, item: proto::Hint, writer: &mut impl Write) {
         match then {
             vim::HintThen::Click => {
+                // The click goes out under the lock this overlay took, and the
+                // lock is given back after it: a human who followed a link is
+                // not still driving.
                 self.mode = Mode::View;
                 // Through the verb layer, which is the whole argument for hints
                 // over a synthetic pointer: the receipt records which role and
                 // which accessible name were activated, not a coordinate.
                 self.send(writer, &proto::act(&item.reference, "click"));
+                let _ = control::release(&self.env_dir);
                 self.say(Some(format!("{} {}", item.role, one_line(&item.name))));
                 self.repaint();
             }
             vim::HintThen::Insert => self.enter_insert(item.reference.clone(), writer),
             vim::HintThen::Yank => {
                 self.mode = Mode::View;
+                let _ = control::release(&self.env_dir);
                 match &item.href {
                     Some(href) => self.yank(href, "link"),
                     None => self.say(Some(format!(
@@ -1310,6 +1321,7 @@ impl<'a> App<'a> {
 
     fn leave_hint(&mut self) {
         self.hinting = None;
+        let _ = control::release(&self.env_dir);
         self.mode = Mode::View;
         self.say(None);
         self.repaint();
