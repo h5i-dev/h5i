@@ -111,13 +111,38 @@ numbers say, including the half that does not flatter this engine:
 3. **Acting is consistently cheaper here**, roughly half, because a click
    dispatches an event rather than running actionability checks over a
    protocol.
-4. **The read path is not the bottleneck at this level.** Engine work per read
-   is 10.8 ms small and 22.3 ms large, against 0.18 ms for the walk and render
-   the Read IR made faster (`docs/design-h5i-ir.md`). The ~11 ms that separates
-   the two pages is roughly 0.1 ms per ref, which is the shape of the durable
-   CSS selector the snapshot verb computes for every ref, each verified with a
-   full-document query. That is a hypothesis the arithmetic fits, not something
-   this benchmark has isolated, and it is the next thing to measure.
+4. **The read path is not the bottleneck at this level, and neither is the
+   part that looked like it.** Engine work per read is 10.8 ms small and
+   22.3 ms large, against 0.18 ms for the walk and render the Read IR made
+   faster (`docs/design-h5i-ir.md`).
+
+The first guess at where the rest goes was the durable CSS selector the
+snapshot verb computes for every ref, each verified with a full-document
+query. `benches/read.rs` now times that pass on its own, and the guess was
+right about the mechanism and wrong about the size.
+
+It is real and it is per-ref: 4.5 ms for 72 refs, against 0.13 ms to read the
+whole page, and exactly 0.000 ms on the fixture that has no refs at all, which
+is the control that rules out a per-page explanation. It also said which refs
+cost what. A form control carries `name=`, resolves on its first try, and costs
+0.016 ms; a link carried nothing, so it walked its ancestors composing a
+candidate at each step, and cost 0.063 ms. Giving a link the one attribute it
+does have took that page from 4.5 ms to 2.7 ms, and improved the handle while
+it was there: `a[href="/pricing"]` says what the link is, where
+`section:nth-of-type(37) p a` says where it sat this morning.
+
+But 4.5 ms is a fifth of the 22.3 ms, not the whole of it, and the agent-loop
+table above does not move when it is halved. So the arithmetic that pointed
+here was pointing at something real and too small to be the answer. The other
+~17 ms is not yet attributed to anything, and the next step is a profile
+rather than another inference.
+
+What is left of the selector pass is near the floor of its design. Every
+candidate is verified against the real matcher rather than trusted, so a ref
+costs at least one full-document query. Going below that means either not
+verifying, which the module refuses to do on purpose, or not recomputing
+selectors for a document that has not changed, which needs the retained tree
+and revision counter of `docs/design-h5i-ir.md` phase 2.
 
 ## What it is not
 

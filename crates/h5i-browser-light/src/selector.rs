@@ -9,6 +9,25 @@ use blitz_dom::BaseDocument;
 /// field name, which outlives a placeholder, which outlives a class.
 const STABLE_ATTRS: &[&str] = &["data-testid", "data-test-id", "data-test", "name"];
 
+/// The attribute a link carries when it carries nothing else.
+///
+/// Last resort before falling back to position, and the reason it is worth
+/// having: a link is the commonest actionable element on a page and the one
+/// least likely to have any of the attributes above, so without this every
+/// link walked its ancestors, and each step of that walk is a full-document
+/// query. Measured on a 72-ref page, the walk was 4.5 ms against 0.13 ms for
+/// reading the whole page.
+///
+/// It is also the better handle. `a[href="/pricing"]` says what the link is;
+/// `section:nth-of-type(37) p a` says where it happened to sit this morning,
+/// and stops being true when anything is inserted above it.
+const LINK_ATTR: &str = "href";
+
+/// How long an attribute value may be before it is not worth putting in a
+/// selector. A tracking URL with forty query parameters is unique, and it is
+/// also unreadable and no more durable than the position it replaced.
+const MAX_ATTR_VALUE: usize = 120;
+
 /// How far up to walk before giving up on narrowing.
 const MAX_ANCESTORS: usize = 32;
 
@@ -123,6 +142,23 @@ fn local_segment_cached(
             if cache.resolves_to(doc, &candidate, node_id) {
                 return Some(candidate);
             }
+        }
+    }
+
+    // A link's target, when nothing steadier named it.
+    //
+    // Tried after the attributes above and before position, and only when it
+    // is short enough to read. Safe to try at all because every candidate here
+    // is verified: an `href="#"` shared by forty links resolves to the first
+    // of them, fails the check, and costs one query before the walk it would
+    // have done anyway.
+    if let Some(value) = attr(doc, node_id, LINK_ATTR)
+        && !value.is_empty()
+        && value.len() <= MAX_ATTR_VALUE
+    {
+        let candidate = format!("{tag}[{LINK_ATTR}=\"{}\"]", escape_attr(&value));
+        if cache.resolves_to(doc, &candidate, node_id) {
+            return Some(candidate);
         }
     }
 
@@ -359,6 +395,85 @@ mod tests {
                 entry.role
             );
         }
+    }
+
+    #[test]
+    fn a_link_is_named_by_where_it_goes() {
+        // Nothing else names these two: same tag, same text, no id, no name.
+        // Without the href they would each need an ancestor walk, and each
+        // step of that is a full-document query.
+        let html = "<html><body>\
+                    <section><p>see <a href='/pricing'>Read more</a></p></section>\
+                    <section><p>see <a href='/docs'>Read more</a></p></section>\
+                    </body></html>";
+        let p = page(html);
+        let snapshot = p.snapshot();
+        let dom = p.dom();
+        let doc = dom.borrow();
+
+        let links: Vec<_> = snapshot.refs.iter().filter(|r| r.role == "link").collect();
+        assert_eq!(links.len(), 2, "{:?}", snapshot.refs);
+        for entry in links {
+            let selector = for_node(&doc, entry.node_id).expect("a selector");
+            assert!(
+                selector.starts_with("a[href="),
+                "a link should be named by its target, got {selector}"
+            );
+            assert_eq!(
+                matches(&doc, &selector).first().copied(),
+                Some(entry.node_id),
+                "{selector} resolves elsewhere"
+            );
+        }
+    }
+
+    #[test]
+    fn a_target_too_many_links_share_is_not_a_handle() {
+        // The case the verification exists for. Every link points at `#`, so
+        // `a[href="#"]` names the first one; the rest have to fall back, and
+        // whatever they fall back to still has to resolve to them.
+        let html = "<html><body>\
+                    <div id='a'><a href='#'>One</a></div>\
+                    <div id='b'><a href='#'>Two</a></div>\
+                    </body></html>";
+        let p = page(html);
+        let snapshot = p.snapshot();
+        let dom = p.dom();
+        let doc = dom.borrow();
+
+        let links: Vec<_> = snapshot.refs.iter().filter(|r| r.role == "link").collect();
+        assert_eq!(links.len(), 2, "{:?}", snapshot.refs);
+        for entry in &links {
+            let selector = for_node(&doc, entry.node_id).expect("a selector");
+            assert_eq!(
+                matches(&doc, &selector).first().copied(),
+                Some(entry.node_id),
+                "{selector} resolves elsewhere"
+            );
+        }
+        // The second one cannot be the bare shared target.
+        let second = for_node(&doc, links[1].node_id).expect("a selector");
+        assert_ne!(second, "a[href=\"#\"]");
+    }
+
+    #[test]
+    fn an_unreadable_target_is_left_to_position() {
+        let long = "/x?".to_string() + &"p=1&".repeat(60);
+        assert!(long.len() > MAX_ATTR_VALUE);
+        let html = format!(
+            "<html><body><section><a href='{long}'>Go</a></section></body></html>"
+        );
+        let p = page(&html);
+        let snapshot = p.snapshot();
+        let dom = p.dom();
+        let doc = dom.borrow();
+        let entry = snapshot.refs.iter().find(|r| r.role == "link").expect("a link");
+        let selector = for_node(&doc, entry.node_id).expect("a selector");
+        assert!(
+            !selector.contains("p=1&p=1"),
+            "a tracking URL is unique and unreadable: {selector}"
+        );
+        assert_eq!(matches(&doc, &selector).first().copied(), Some(entry.node_id));
     }
 
     #[test]

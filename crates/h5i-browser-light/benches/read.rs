@@ -269,6 +269,40 @@ impl Bench {
             ir_allocs: ir_read_allocs,
         };
 
+        // The durable CSS selector the snapshot verb computes for every ref.
+        //
+        // Measured separately because the agent-loop benchmark
+        // (`scripts/bench_agent_loop.py`) put roughly 0.1 ms per ref somewhere
+        // in the verb, and this is the only part of it that scales with the
+        // ref count. Either this is that cost or the arithmetic was pointing
+        // at the wrong thing.
+        let (_, selector_allocs) = counted(|| {
+            let mut cache = h5i_browser_light::selector::Cache::new();
+            walker
+                .refs
+                .iter()
+                .map(|entry| {
+                    h5i_browser_light::selector::for_node_cached(&doc, entry.node_id, &mut cache)
+                })
+                .collect::<Vec<_>>()
+        });
+        let selectors = median(|| {
+            let mut cache = h5i_browser_light::selector::Cache::new();
+            for entry in &walker.refs {
+                std::hint::black_box(h5i_browser_light::selector::for_node_cached(
+                    &doc,
+                    entry.node_id,
+                    &mut cache,
+                ));
+            }
+        });
+        let selectors = Pair {
+            walker: selectors,
+            walker_allocs: selector_allocs,
+            ir: selectors,
+            ir_allocs: selector_allocs,
+        };
+
         // The integration question, asked as a number: if `Page::snapshot`
         // built the IR and then materialised the walker's own type from it,
         // would that be cheaper than the walker? The IR walk is cheaper and the
@@ -369,6 +403,7 @@ impl Bench {
             capture,
             render,
             read,
+            selectors,
             to_snapshot,
             refs_only,
             delta_unchanged,
@@ -387,6 +422,7 @@ struct Row {
     capture: Pair,
     render: Pair,
     read: Pair,
+    selectors: Pair,
     to_snapshot: Pair,
     refs_only: Pair,
     delta_unchanged: Pair,
@@ -474,6 +510,13 @@ fn main() {
         timing_row("capture", &row.capture);
         timing_row("render", &row.render);
         timing_row("capture+render", &row.read);
+        println!(
+            "  {:<16} {:>10} {:>10} {:>9}",
+            "selectors/refs",
+            ms(row.selectors.walker),
+            format!("{} refs", row.refs),
+            "",
+        );
         timing_row("capture->Snapshot", &row.to_snapshot);
         timing_row("capture->refs", &row.refs_only);
         timing_row("delta unchanged", &row.delta_unchanged);
