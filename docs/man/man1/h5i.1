@@ -1643,6 +1643,40 @@ Only what happened after this sequence number
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I BROWSER RESEND"
+Send one of this session's own requests again, with changes
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBresend\fR [\fB\-\-set\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-set\fR \fI<TARGET=VALUE>\fR
+Change one part of it: `query.id=456`, `header.X\-Real\-IP=127.0.0.1`, `cookie.session=forged`, `json.role=admin`, `form.user=admin`, `path=/admin`, `method=POST`, `body.raw=<bytes>`. Repeatable, and applied in the order given.
+
+The value is everything after the first `=`, so a payload full of `=` needs no escaping.
+.TP
+\fB\-\-unset\fR \fI<TARGET>\fR
+Remove one part of it, by the same names
+.TP
+\fB\-\-create\fR
+Add a target that is not there rather than refusing.
+
+Off by default: a parameter that does not exist is usually a typo, and a typo that silently succeeds costs a whole turn spent reading a response that was never going to differ.
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fISEQ\fR>
+The sequence number to send again, as `requests` lists them
 .SH "H5I BROWSER ENV"
 Which credentials this session can use, by name. Never their values
 .ie \n(.g .ds Aq \(aq

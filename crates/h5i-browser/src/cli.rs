@@ -662,6 +662,29 @@ enum SessionVerb {
         at: SessionArgs,
     },
 
+    /// Send a stored request again, with changes.
+    ///
+    /// Needs a session opened with `--capture`: a request nobody stored cannot
+    /// be sent again. The edits are applied in the broker, which is where the
+    /// stored request's credentials already are, so this process never holds
+    /// them.
+    Resend {
+        /// The sequence number to send again, as `requests` lists them.
+        #[arg(long, value_name = "SEQ")]
+        from: u64,
+        /// `target=value`, repeatable, applied in order.
+        #[arg(long = "set", value_name = "TARGET=VALUE")]
+        set: Vec<String>,
+        /// A target to remove.
+        #[arg(long = "unset", value_name = "TARGET")]
+        unset: Vec<String>,
+        /// Add a target that is not there rather than refusing.
+        #[arg(long)]
+        create: bool,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
     /// Follow a `@ref` from the last snapshot.
     Click {
         /// `e3` or `@e3`, from a `snapshot`.
@@ -1532,6 +1555,22 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         SessionVerb::Requests { since, at } => (
             at,
             serde_json::json!({"verb": Verb::Requests.name(), "since": since}),
+        ),
+        SessionVerb::Resend {
+            from,
+            set,
+            unset,
+            create,
+            at,
+        } => (
+            at,
+            serde_json::json!({
+                "verb": Verb::Resend.name(),
+                "from": from,
+                "set": set,
+                "unset": unset,
+                "create": create,
+            }),
         ),
         SessionVerb::WaitFor {
             selector,

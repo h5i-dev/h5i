@@ -1816,20 +1816,30 @@ impl crate::broker::Broker for LocalBroker {
         from: u64,
         edits: &[crate::edits::Edit],
         create: bool,
-    ) -> Result<crate::broker::Edited, String> {
+    ) -> Result<crate::broker::Edited, crate::broker::SendError> {
+        use crate::broker::SendError;
         let Some(store) = &self.capture else {
-            return Err("this session was not opened with `--capture`, so it kept no request \
-                        to send again"
-                .to_string());
+            return Err(SendError::new(
+                "no-capture",
+                "this session was not opened with `--capture`, so it kept no request to send \
+                 again",
+            ));
         };
         let stored = store.read_request(from).map_err(|_| {
-            format!(
-                "there is no stored request {from} in this session. \
-                 `requests` lists the sequence numbers this session has"
+            SendError::new(
+                "no-such-request",
+                format!(
+                    "there is no stored request {from} in this session. \
+                     `requests` lists the sequence numbers this session has"
+                ),
             )
         })?;
-        let url = Url::parse(&stored.url)
-            .map_err(|e| format!("stored request {from} has an unusable URL: {e}"))?;
+        let url = Url::parse(&stored.url).map_err(|e| {
+            SendError::new(
+                "no-such-request",
+                format!("stored request {from} has an unusable URL: {e}"),
+            )
+        })?;
         // The body as it was sent, out of the store rather than out of the
         // record: a truncated or skipped body cannot be replayed faithfully, and
         // saying so is better than sending a request that is quietly not the one
@@ -1840,19 +1850,28 @@ impl crate::broker::Broker for LocalBroker {
                 sha256, truncated, ..
             } => {
                 if *truncated {
-                    return Err(format!(
-                        "stored request {from} was too large to keep whole, so replaying it \
-                         would send a request that is not the one recorded"
+                    return Err(SendError::new(
+                        "unreplayable-body",
+                        format!(
+                            "stored request {from} was too large to keep whole, so replaying \
+                             it would send a request that is not the one recorded"
+                        ),
                     ));
                 }
-                store
-                    .read_body(sha256)
-                    .map_err(|e| format!("stored request {from}'s body is not readable: {e}"))?
+                store.read_body(sha256).map_err(|e| {
+                    SendError::new(
+                        "unreplayable-body",
+                        format!("stored request {from}'s body is not readable: {e}"),
+                    )
+                })?
             }
             crate::capture::Body::Skipped { reason, .. } => {
-                return Err(format!(
-                    "stored request {from}'s body was not kept ({reason:?}), so there is \
-                     nothing to replay"
+                return Err(SendError::new(
+                    "unreplayable-body",
+                    format!(
+                        "stored request {from}'s body was not kept ({reason:?}), so there is \
+                         nothing to replay"
+                    ),
                 ));
             }
         };
@@ -1864,7 +1883,7 @@ impl crate::broker::Broker for LocalBroker {
             body,
         };
         let applied = crate::edits::apply(&mut editable, edits, create)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| SendError::new("bad-edit", e.to_string()))?;
 
         let content_type = editable.content_type().map(str::to_string);
         let fetch = crate::broker::Fetch {
@@ -2594,7 +2613,8 @@ mod capture_wire_tests {
             false,
         )
         .expect_err("refused");
-        assert!(error.contains("user_id"), "{error}");
+        assert_eq!(error.code, "bad-edit", "the request was there; the edit was not");
+        assert!(error.message.contains("user_id"), "{}", error.message);
         assert_eq!(sink.records().len(), before, "nothing reached the wire");
     }
 
@@ -2606,7 +2626,8 @@ mod capture_wire_tests {
             .expect("broker");
         let error = crate::broker::Broker::send_edited(broker.as_ref(), 0, &[], false)
             .expect_err("refused");
-        assert!(error.contains("--capture"), "{error}");
+        assert_eq!(error.code, "no-capture");
+        assert!(error.message.contains("--capture"), "{}", error.message);
     }
 
     /// A session without a store is the default, and it writes nothing.

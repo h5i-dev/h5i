@@ -671,6 +671,47 @@ pub enum BrowserCommands {
         json: bool,
     },
 
+    /// Send one of this session's own requests again, with changes.
+    ///
+    /// The workbench verb. `requests` names what the session sent; this sends
+    /// one of them again with a parameter, header, cookie or body field bent,
+    /// through the same policy, the same jar and the same receipts. Needs a
+    /// session opened with `--capture`, because a request nobody stored cannot
+    /// be sent again.
+    ///
+    /// A replay is a request like any other: it gets its own sequence number
+    /// and its own stored message, so a replay is itself replayable and the
+    /// whole chain is in the audit.
+    Resend {
+        /// The sequence number to send again, as `requests` lists them.
+        #[arg(value_name = "SEQ")]
+        from: u64,
+        /// Change one part of it: `query.id=456`, `header.X-Real-IP=127.0.0.1`,
+        /// `cookie.session=forged`, `json.role=admin`, `form.user=admin`,
+        /// `path=/admin`, `method=POST`, `body.raw=<bytes>`. Repeatable, and
+        /// applied in the order given.
+        ///
+        /// The value is everything after the first `=`, so a payload full of
+        /// `=` needs no escaping.
+        #[arg(long = "set", value_name = "TARGET=VALUE")]
+        set: Vec<String>,
+        /// Remove one part of it, by the same names.
+        #[arg(long = "unset", value_name = "TARGET")]
+        unset: Vec<String>,
+        /// Add a target that is not there rather than refusing.
+        ///
+        /// Off by default: a parameter that does not exist is usually a typo,
+        /// and a typo that silently succeeds costs a whole turn spent reading a
+        /// response that was never going to differ.
+        #[arg(long)]
+        create: bool,
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Which credentials this session can use, by name. Never their values.
     Env {
         /// Which session, when more than one is open. A name from
@@ -1064,6 +1105,31 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 argv.push(since.to_string());
             }
             verb(&root, session.as_deref(), argv, false, json)
+        }
+        BrowserCommands::Resend {
+            from,
+            set,
+            unset,
+            create,
+            session,
+            json,
+        } => {
+            let mut argv = vec!["resend".to_string(), "--from".to_string(), from.to_string()];
+            for spec in set {
+                argv.push("--set".into());
+                argv.push(spec);
+            }
+            for spec in unset {
+                argv.push("--unset".into());
+                argv.push(spec);
+            }
+            if create {
+                argv.push("--create".into());
+            }
+            // Mutating: it puts bytes on the wire under this session's
+            // identity, which is exactly what the control lock exists to stop a
+            // second driver from doing while a human is at the wheel.
+            verb(&root, session.as_deref(), argv, true, json)
         }
         BrowserCommands::Audit {
             session,

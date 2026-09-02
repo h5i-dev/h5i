@@ -139,6 +139,28 @@ pub struct Edited {
     pub outcome: FetchOutcome,
 }
 
+/// Why a replay did not happen, in a form a script can branch on.
+///
+/// A code as well as a sentence, because these are four different situations
+/// with four different fixes and a caller that can only match on prose will
+/// eventually match on the wrong thing. The sentence is for a person; the code
+/// is the contract.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SendError {
+    /// `no-capture`, `no-such-request`, `unreplayable-body` or `bad-edit`.
+    pub code: String,
+    pub message: String,
+}
+
+impl SendError {
+    pub fn new(code: &str, message: impl Into<String>) -> Self {
+        Self {
+            code: code.to_string(),
+            message: message.into(),
+        }
+    }
+}
+
 /// What went out, in the parts that are safe to hand back.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Sent {
@@ -194,10 +216,12 @@ pub trait Broker: Send + Sync {
         _from: u64,
         _edits: &[crate::edits::Edit],
         _create: bool,
-    ) -> Result<Edited, String> {
-        Err("this session was not opened with `--capture`, so it has no stored request to \
-             send again. Open it with `--capture` and the messages it makes will be replayable"
-            .to_string())
+    ) -> Result<Edited, SendError> {
+        Err(SendError::new(
+            "no-capture",
+            "this session was not opened with `--capture`, so it has no stored request to \
+             send again. Open it with `--capture` and the messages it makes will be replayable",
+        ))
     }
 
     /// What this session's message store has done, when it has one.

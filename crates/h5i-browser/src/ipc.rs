@@ -160,7 +160,7 @@ enum Said {
     /// What the message store has done, or that there is not one.
     Capture(Option<crate::capture::Health>),
     /// A replay's result. The response body travels in the blob, like any other.
-    Edited(Box<Result<crate::broker::Edited, String>>),
+    Edited(Box<Result<crate::broker::Edited, crate::broker::SendError>>),
     Count(usize),
     Text(String),
     Flag(bool),
@@ -547,7 +547,7 @@ impl Broker for BrokerClient {
         from: u64,
         edits: &[crate::edits::Edit],
         create: bool,
-    ) -> Result<crate::broker::Edited, String> {
+    ) -> Result<crate::broker::Edited, crate::broker::SendError> {
         let ask = Ask::SendEdited {
             from,
             edits: edits.to_vec(),
@@ -561,7 +561,10 @@ impl Broker for BrokerClient {
                 }
                 Err(why) => Err(why),
             },
-            _ => Err("the broker did not answer the replay".to_string()),
+            _ => Err(crate::broker::SendError::new(
+                "no-answer",
+                "the broker did not answer the replay",
+            )),
         }
     }
 

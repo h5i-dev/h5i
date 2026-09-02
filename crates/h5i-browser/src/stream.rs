@@ -1514,7 +1514,7 @@ fn control_verb_inner(
 
             match session.factory.broker().send_edited(from, &edits, create) {
                 Err(why) => (
-                    json!({"ok": false, "code": "no-such-request", "message": why}),
+                    json!({"ok": false, "code": why.code, "message": why.message}),
                     false,
                 ),
                 Ok(edited) => {

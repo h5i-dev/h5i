@@ -92,6 +92,14 @@ pub enum Verb {
 
 impl Verb {
     /// Every verb, for the help text and for tests that must cover all of them.
+    /// Every verb, and the only place that knows the whole set.
+    ///
+    /// A variant missing from here still compiles: `name()` is a match and the
+    /// classification functions are matches, so the compiler is satisfied, and
+    /// the verb simply does not exist on the wire. [`Verb::from_name`] never
+    /// resolves it and [`Verb::known`] never lists it, so a session answers
+    /// `unknown-verb` for something the binary plainly implements. Add new
+    /// verbs here first.
     pub const ALL: &'static [Verb] = &[
         Verb::Status,
         Verb::Snapshot,
@@ -102,6 +110,7 @@ impl Verb {
         Verb::Submit,
         Verb::Click,
         Verb::Requests,
+        Verb::Resend,
         Verb::WaitFor,
         Verb::WaitForScript,
         Verb::Extract,
@@ -630,6 +639,36 @@ impl VerbError {
 
 #[cfg(test)]
 mod tests {
+    /// Every verb this engine implements is a verb it will answer to.
+    ///
+    /// The failure this catches is silent and confusing: a verb wired through
+    /// the CLI, the dispatch and the broker, refused at the session with
+    /// "`resend` is not a verb this session has", because the one hand-written
+    /// table it also had to be in was missed. Nothing about that fails to
+    /// compile.
+    #[test]
+    fn every_implemented_verb_resolves_from_its_name() {
+        for verb in super::Verb::ALL {
+            assert_eq!(
+                super::Verb::from_name(verb.name()),
+                Some(*verb),
+                "`{}` is in ALL but does not resolve from its own name",
+                verb.name()
+            );
+            assert!(
+                super::Verb::known().contains(verb.name()),
+                "`{}` is not in the list a refusal offers",
+                verb.name()
+            );
+        }
+        // The one the trap caught, named so a regression is legible.
+        assert_eq!(
+            super::Verb::from_name("resend"),
+            Some(super::Verb::Resend),
+            "the workbench verb has to be reachable from the wire"
+        );
+    }
+
     use super::*;
 
     #[test]
