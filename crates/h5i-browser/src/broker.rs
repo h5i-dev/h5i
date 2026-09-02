@@ -26,6 +26,22 @@ pub struct Fetch {
     #[serde(skip)]
     pub body: Vec<u8>,
     pub content_type: Option<String>,
+    /// Headers the *caller* is setting, beyond the ones the engine adds.
+    ///
+    /// Empty for every fetch a page makes: a page's headers arrive in
+    /// [`CorsAsk`] and are subject to the same-origin rules, which is a
+    /// different question from an agent naming a header on a request of its
+    /// own. This is the agent's, and the agent is the principal.
+    ///
+    /// Not a free hand. Three are the client's to compute and are refused here
+    /// however they are spelled (`content-length`, `transfer-encoding`,
+    /// `connection`), because a message whose framing disagrees with its body is
+    /// not a request this engine can honestly claim to have sent. The refusal is
+    /// named in the receipt rather than performed silently. Everything else,
+    /// `host` and `authorization` and `cookie` included, is carried: overriding
+    /// those is the test, not an accident.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<(String, String)>,
     /// The document that asked, when a document did.
     ///
     /// Load-bearing rather than bookkeeping: without it the policy reads every
@@ -48,9 +64,21 @@ impl Fetch {
             method: "GET".to_string(),
             body: Vec::new(),
             content_type: None,
+            headers: Vec::new(),
             document: None,
             cors: None,
         }
+    }
+
+    /// The headers the caller is setting.
+    ///
+    /// Order is kept, because a server that treats two headers of one name as a
+    /// list is a server whose answer depends on which came first, and a
+    /// workbench that reordered them would be reproducing something other than
+    /// what it was told to send.
+    pub fn with_headers(mut self, headers: Vec<(String, String)>) -> Self {
+        self.headers = headers;
+        self
     }
 
     /// The document that asked for this, for the origin the policy reasons
@@ -124,6 +152,16 @@ pub trait Broker: Send + Sync {
     fn send_while(&self, fetch: &Fetch, while_waiting: &mut dyn FnMut()) -> FetchOutcome {
         let _ = while_waiting;
         self.send(fetch)
+    }
+
+    /// What this session's message store has done, when it has one.
+    ///
+    /// `None` for the ordinary session, which stores no message and so has no
+    /// health to report. A store that exists always answers, including when
+    /// what it has to say is that it dropped something: an evidence gap nobody
+    /// surfaces is an evidence gap nobody knows to distrust.
+    fn capture(&self) -> Option<crate::capture::Health> {
+        None
     }
 
     /// The requests this broker has decided about, in the order it recorded

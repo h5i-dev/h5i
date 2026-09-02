@@ -3090,8 +3090,14 @@ fn audit(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> 
         bs::Availability::Empty => String::new(),
         other => format!(" · helpers {}", availability(other)),
     };
+    // The same rule for the message store: silent on the ordinary session,
+    // which was not opened with `--capture` and has nothing to report.
+    let messages = match src.messages {
+        bs::Availability::Empty => String::new(),
+        other => format!(" · messages {}", availability(other)),
+    };
     println!(
-        "  sources  : actions {} · requests {} · control {}{helpers}",
+        "  sources  : actions {} · requests {} · control {}{helpers}{messages}",
         availability(src.actions),
         availability(src.requests),
         availability(src.control)

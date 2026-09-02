@@ -70,12 +70,19 @@ const MAX_HEADER: usize = 64 * 1024 * 1024;
 #[derive(Debug, Serialize, Deserialize)]
 enum Ask {
     /// The request body travels in the blob, never in this.
-    Send(Fetch),
+    ///
+    /// Boxed because it is much the largest thing this enum carries, and every
+    /// other question would otherwise be allocated at its size: a `CookieCount`
+    /// is two words, and a fetch carries a URL, a method, a header list and a
+    /// CORS context. One allocation on a path that is about to wait on a socket
+    /// is not a cost worth measuring.
+    Send(Box<Fetch>),
     Records,
     RecordsSince {
         mark: Option<u64>,
     },
     LogSummary,
+    Capture,
     HighWater,
     Since {
         mark: Option<u64>,
@@ -143,6 +150,8 @@ enum Said {
     Seqs(Vec<u64>),
     Mark(Option<u64>),
     Budget(Allowance),
+    /// What the message store has done, or that there is not one.
+    Capture(Option<crate::capture::Health>),
     Count(usize),
     Text(String),
     Flag(bool),
@@ -453,7 +462,7 @@ impl Broker for BrokerClient {
                 "the broker is no longer running, so nothing was fetched".to_string(),
             )
         };
-        let Some(pending) = self.begin(Ask::Send(fetch.clone()), &fetch.body) else {
+        let Some(pending) = self.begin(Ask::Send(Box::new(fetch.clone())), &fetch.body) else {
             return gone();
         };
 
@@ -522,6 +531,16 @@ impl Broker for BrokerClient {
 
     fn reset_budget(&self) {
         let _ = self.said(Ask::ResetBudget);
+    }
+
+    fn capture(&self) -> Option<crate::capture::Health> {
+        match self.said(Ask::Capture) {
+            Some(Said::Capture(health)) => health,
+            // A broker that did not answer is not a session without a store, so
+            // this says nothing rather than reporting a clean one. The two read
+            // the same in a status line and mean opposite things.
+            _ => None,
+        }
     }
 
     fn cookie_count(&self) -> usize {
@@ -804,6 +823,7 @@ fn answer(
             broker.reset_budget();
             Said::Done
         }
+        Ask::Capture => Said::Capture(broker.capture()),
         Ask::CookieCount => Said::Count(broker.cookie_count()),
         Ask::DocumentCookie { url } => Said::Text(broker.document_cookie(&url)),
         Ask::StoreCookie { url, header } => Said::Count(broker.store_cookie(&url, &header)),

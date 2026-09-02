@@ -188,6 +188,23 @@ fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
 }
 
+/// What a store has done, in the three numbers that say whether to trust it.
+///
+/// Counts, in the receipt's spirit: how much is here, and whether any of it is
+/// missing. `errors` is the one that matters. A store that failed to write a
+/// message is a store with a hole in it, and a hole nobody reports is worse
+/// than no store at all, because an agent reading the messages it *does* hold
+/// would conclude the missing request never happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Health {
+    /// Message files written, both phases.
+    pub messages: u64,
+    /// Bytes of body held.
+    pub bytes: u64,
+    /// Messages this store could not write.
+    pub errors: u64,
+}
+
 /// A session's stored messages.
 pub struct Capture {
     dir: PathBuf,
@@ -202,6 +219,8 @@ pub struct Capture {
     /// How many messages this store failed to write. Reported rather than
     /// raised; see the module documentation.
     errors: AtomicU64,
+    /// How many it wrote, so a reader can tell an empty store from a broken one.
+    messages: AtomicU64,
 }
 
 impl Capture {
@@ -240,6 +259,7 @@ impl Capture {
             used: AtomicU64::new(used),
             seen: Mutex::new(seen),
             errors: AtomicU64::new(0),
+            messages: AtomicU64::new(0),
         })
     }
 
@@ -256,6 +276,15 @@ impl Capture {
     /// How many bytes of body this store holds.
     pub fn used(&self) -> u64 {
         self.used.load(Ordering::Relaxed)
+    }
+
+    /// What this store has done, for whoever is asking whether to trust it.
+    pub fn health(&self) -> Health {
+        Health {
+            messages: self.messages.load(Ordering::Relaxed),
+            bytes: self.used(),
+            errors: self.errors(),
+        }
     }
 
     /// Store a request, as built, just before it goes to the wire.
@@ -419,9 +448,10 @@ impl Capture {
         let wrote = serde_json::to_vec(message)
             .map_err(H5iError::from)
             .and_then(|bytes| write_owner_only(&path, &bytes));
-        if wrote.is_err() {
-            self.errors.fetch_add(1, Ordering::Relaxed);
-        }
+        match wrote {
+            Ok(()) => self.messages.fetch_add(1, Ordering::Relaxed),
+            Err(_) => self.errors.fetch_add(1, Ordering::Relaxed),
+        };
     }
 
     fn read<T: for<'de> Deserialize<'de>>(&self, seq: u64, phase: &str) -> Result<T, H5iError> {

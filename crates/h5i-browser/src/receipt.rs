@@ -95,6 +95,16 @@ pub struct RequestRecord {
     /// How many the response stored, after the jar refused what it refuses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cookies_stored: Option<usize>,
+    /// Headers the caller asked for and this engine computed instead.
+    ///
+    /// Names, never values, like everything else here. Three headers frame the
+    /// message and are the client's to compute (`content-length`,
+    /// `transfer-encoding`, `connection`); a caller setting one is told so here
+    /// rather than left to believe a request went out shaped the way it asked.
+    /// Empty for every request nobody tried to reshape, which is nearly all of
+    /// them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers_overridden: Vec<String>,
 }
 
 impl RequestRecord {
@@ -117,6 +127,7 @@ impl RequestRecord {
             error: None,
             cookies_sent: None,
             cookies_stored: None,
+            headers_overridden: Vec::new(),
         }
     }
 

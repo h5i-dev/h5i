@@ -1436,6 +1436,13 @@ fn control_verb_inner(
                 // see how close it came rather than inferring it from a
                 // refusal in the request log.
                 "budget": budget_of(session),
+                // The message store, when this session has one. `null` on the
+                // ordinary session, which keeps no message. Present with a
+                // nonzero `errors` when the store dropped something, which is
+                // the only way an agent learns that the evidence it is about to
+                // read has a hole in it: the messages that *are* there look no
+                // different either way.
+                "capture": session.factory.broker().capture(),
             }),
             false,
         ),
