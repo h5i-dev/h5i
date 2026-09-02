@@ -164,6 +164,20 @@ because a page with five hundred lines and no refs produces a reply with no
 `refs` array in it. Two variables that usually move together, and the one that
 mattered was the one the bisect had ruled out.
 
+`H5I_BROWSER_TIMING=1` reports both halves now, the client's on stderr and the
+session's in the reply, because the same question keeps being answered wrongly
+by reading the code. The next candidate it retired was `scrub`, the client's
+pass that walks every string in a reply and allocates one per value. That is
+exactly the shape of the thing that had just been found on the other side, and
+it measures at 0.3 ms.
+
+What is left of a 30.5 ms `h5i browser snapshot` on a page with three hundred
+refs: about 10 ms of selectors, about 5 ms of process launch before `main`
+runs, and the rest spread across the socket exchange and the session lookup.
+The selectors are near the floor of their design, and the launch is the price
+of one process per verb, so the next real move on either is architectural
+rather than a hot spot to find.
+
 What is left of the selector pass is near the floor of its design. Every
 candidate is verified against the real matcher rather than trusted, so a ref
 costs at least one full-document query. Going below that means either not
