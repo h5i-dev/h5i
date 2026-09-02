@@ -178,12 +178,35 @@ The selectors are near the floor of their design, and the launch is the price
 of one process per verb, so the next real move on either is architectural
 rather than a hot spot to find.
 
-What is left of the selector pass is near the floor of its design. Every
-candidate is verified against the real matcher rather than trusted, so a ref
-costs at least one full-document query. Going below that means either not
-verifying, which the module refuses to do on purpose, or not recomputing
-selectors for a document that has not changed, which needs the retained tree
-and revision counter of `docs/design-h5i-ir.md` phase 2.
+"Near the floor of its design" was the next thing measured and found wrong.
+Every candidate is still verified against the real matcher, so a ref still
+costs a query, but it had been the *wrong* query. `resolves_to` asks whether a
+selector's first match is a particular element, and it was answered by
+collecting every match and reading the first one. Stylo will stop at the first
+if asked, and every selector this module produces on a real page resolves to
+exactly one element, so the full walk was finding one match and then
+confirming there were no others nobody had asked about.
+
+Measured before the change rather than after, on the selectors the module
+actually emits: 2.4x to 3.0x. Splitting the cache into a first-match map and an
+all-match map, and leaving the ancestor walk on the full query because it
+genuinely needs the count, delivered more than that, because the intermediate
+candidates got faster too.
+
+| selector pass | at the start | with `href` | with a first-match query |
+| --- | --- | --- | --- |
+| 72 refs (sections) | 4.50 ms | 2.70 ms | **0.82 ms** |
+| 151 refs (forms) | 2.39 ms | 2.40 ms | **1.09 ms** |
+| 300 refs (links) | | 9.81 ms | **4.09 ms** |
+
+End to end on the 300-ref page, the session's own work went from 28.8 ms to
+8.2 ms across the two changes in this section, and `h5i browser snapshot` from
+44.3 ms to 22.8 ms. Most of what is left is now the client: about 5 ms of
+process launch before `main` runs, and the socket exchange around it.
+
+Going below *this* floor does mean not recomputing selectors for a document
+that has not changed, which needs the retained tree and revision counter of
+`docs/design-h5i-ir.md` phase 2.
 
 ## What it is not
 

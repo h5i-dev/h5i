@@ -32,9 +32,18 @@ const MAX_ATTR_VALUE: usize = 120;
 const MAX_ANCESTORS: usize = 32;
 
 /// Selector results already computed against one unchanged document.
+///
+/// Two maps, because the module asks two different questions and only one of
+/// them needs the whole answer. "Is this selector a handle on that element"
+/// needs the first match and nothing else; "does adding this ancestor narrow
+/// it" needs the count. Stylo will stop at the first match if asked to, and on
+/// a page of three hundred refs, whose selectors all resolve to exactly one
+/// element, asking the narrower question is between two and three times
+/// faster.
 #[derive(Default)]
 pub struct Cache {
     seen: std::collections::HashMap<String, Vec<usize>>,
+    firsts: std::collections::HashMap<String, Option<usize>>,
 }
 
 impl Cache {
@@ -57,8 +66,23 @@ impl Cache {
     /// First, not "is among", because that is what an action does with a
     /// selector: `querySelector` semantics. A selector that matches the target
     /// third is not a handle on the target.
+    ///
+    /// Answered with a query that stops there, which is the same question the
+    /// full one was being asked and then read the first element of. The two
+    /// agree by construction, both walking the tree in document order through
+    /// the same matcher, and `both_query_modes_name_the_same_element` is what
+    /// says so rather than this comment.
     fn resolves_to(&mut self, doc: &BaseDocument, selector: &str, node_id: usize) -> bool {
-        self.matches(doc, selector).first() == Some(&node_id)
+        // A selector whose every match is already known does not need a second
+        // query to be asked about its first one.
+        if let Some(found) = self.seen.get(selector) {
+            return found.first() == Some(&node_id);
+        }
+        if !self.firsts.contains_key(selector) {
+            let first = first_match(doc, selector);
+            self.firsts.insert(selector.to_string(), first);
+        }
+        self.firsts[selector] == Some(node_id)
     }
 }
 
@@ -238,6 +262,11 @@ fn attr(doc: &BaseDocument, node_id: usize, name: &str) -> Option<String> {
 /// Every match, through the matcher the action verbs use.
 fn matches(doc: &BaseDocument, selector: &str) -> Vec<usize> {
     crate::script::dom_api::matches_within(doc, 0, selector)
+}
+
+/// The first match, through the same matcher, stopping there.
+fn first_match(doc: &BaseDocument, selector: &str) -> Option<usize> {
+    crate::script::dom_api::first_match_in_document(doc, selector)
 }
 
 
@@ -476,6 +505,77 @@ mod tests {
         assert_eq!(matches(&doc, &selector).first().copied(), Some(entry.node_id));
     }
 
+    /// The two query modes name the same element, or the faster one is
+    /// answering a different question.
+    ///
+    /// This is the whole safety argument for asking Stylo to stop at the first
+    /// match: `resolves_to` used to read the first element of every match and
+    /// now asks for only that one, and the two have to agree on every selector
+    /// this module can produce. Checked over the selectors it actually
+    /// produces, on the shapes that make it produce different kinds.
+    #[test]
+    fn both_query_modes_name_the_same_element() {
+        let pages = [
+            "<html><body><a href='/a'>one</a><a href='/b'>two</a>\
+             <a href='#'>x</a><a href='#'>y</a></body></html>",
+            "<html><body><div id='l'><button>Go</button></div>\
+             <div id='r'><button>Go</button></div></body></html>",
+            "<html><body><form><input name='u'><input name='p'>\
+             <select name='s'><option>a</option></select>\
+             <button type='submit'>Send</button></form></body></html>",
+            "<html><body><section><p>t <a href='/x'>link</a></p></section>\
+             <section><p>t <a href='/y'>link</a></p></section></body></html>",
+            "<html><body><ul><li><a href='/1'>Item</a></li>\
+             <li><a href='/2'>Item</a></li></ul></body></html>",
+        ];
+        let mut checked = 0usize;
+        for html in pages {
+            let p = page(html);
+            let snapshot = p.snapshot();
+            let dom = p.dom();
+            let doc = dom.borrow();
+            assert!(!snapshot.refs.is_empty(), "fixture mints no refs: {html}");
+            for entry in &snapshot.refs {
+                let Some(selector) = for_node(&doc, entry.node_id) else {
+                    continue;
+                };
+                assert_eq!(
+                    first_match(&doc, &selector),
+                    matches(&doc, &selector).first().copied(),
+                    "{selector} is a different element depending on how it is asked"
+                );
+                // ...and it is still the element it was built for.
+                assert_eq!(first_match(&doc, &selector), Some(entry.node_id), "{selector}");
+                checked += 1;
+            }
+        }
+        assert!(checked >= 12, "only {checked} selectors were compared");
+    }
+
+    /// Both caches answer for one document, so they must not disagree either.
+    #[test]
+    fn the_two_caches_agree_within_one_reading() {
+        let html = "<html><body><div id='l'><button>Go</button></div>                    <div id='r'><button>Go</button></div>                    <a href='#'>x</a><a href='#'>y</a></body></html>";
+        let p = page(html);
+        let snapshot = p.snapshot();
+        let dom = p.dom();
+        let doc = dom.borrow();
+
+        for entry in &snapshot.refs {
+            // Warm the all-matches side first, then ask the first-match
+            // question, and then the other way round on a fresh cache.
+            let mut warm = Cache::new();
+            let selector = for_node_cached(&doc, entry.node_id, &mut warm).expect("a selector");
+            let via_warm = warm.resolves_to(&doc, &selector, entry.node_id);
+
+            let mut cold = Cache::new();
+            let via_cold = cold.resolves_to(&doc, &selector, entry.node_id);
+
+            assert!(via_warm, "{selector} stopped resolving once its matches were known");
+            assert_eq!(via_warm, via_cold, "{selector} depends on cache order");
+        }
+    }
+
     #[test]
     fn an_ident_that_needs_escaping_is_not_written_as_an_id() {
         assert!(is_css_ident("save-button"));
@@ -484,5 +584,128 @@ mod tests {
         assert!(!is_css_ident("has space"));
         assert!(!is_css_ident("has.dot"), "a dot would read as a class");
         assert!(!is_css_ident(""));
+    }
+}
+
+#[cfg(test)]
+mod query_mode_measurement {
+    use super::*;
+
+    /// The first match, through the same matcher, stopping there.
+    fn first(doc: &BaseDocument, selector: &str) -> Option<usize> {
+        crate::script::dom_api::first_match_in_document(doc, selector)
+    }
+
+    fn page(html: &str) -> crate::engine::Page {
+        let broker = crate::net::LocalBroker::new(
+            crate::policy::Policy::new(),
+            std::sync::Arc::new(crate::receipt::MemorySink::new()),
+            None,
+        )
+        .expect("broker");
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+        let factory = crate::engine::PageFactory::new(
+            broker,
+            fonts.sources.clone(),
+            crate::engine::PageOptions::default(),
+        );
+        factory.from_html(html, &url::Url::parse("https://app.example/").unwrap())
+    }
+
+    fn median(mut body: impl FnMut()) -> f64 {
+        body();
+        let mut samples: Vec<f64> = (0..9)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                body();
+                start.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        samples[samples.len() / 2]
+    }
+
+    /// How much of the selector pass a first-match query could give back.
+    ///
+    /// Run with `cargo test --release -p h5i-browser-light --lib
+    /// query_mode_measurement -- --ignored --nocapture`. Ignored by default
+    /// because it is a measurement, not an assertion: it prints a ceiling for
+    /// a change, and the change is only worth making if the ceiling is.
+    #[test]
+    #[ignore = "a measurement, run explicitly"]
+    fn how_much_would_stopping_at_the_first_match_save() {
+        let links = (0..300)
+            .map(|n| format!("<a href='/l{n}'>link {n}</a>"))
+            .collect::<String>();
+        let sections = (0..120)
+            .map(|n| {
+                format!(
+                    "<section><h2>S{n}</h2><p>text <a href='/link/{n}'>a link</a></p>\
+                     <ul><li>one</li><li>two</li></ul></section>"
+                )
+            })
+            .collect::<String>();
+        let forms = (0..150)
+            .map(|n| format!("<label for='f{n}'>Field {n}</label><input id='f{n}' name='f{n}'>"))
+            .collect::<String>();
+
+        for (name, body) in [
+            ("links300", links),
+            ("sections120", sections),
+            ("forms150", forms),
+        ] {
+            let p = page(&format!("<html><body>{body}</body></html>"));
+            let snapshot = p.snapshot();
+            let dom = p.dom();
+            let doc = dom.borrow();
+
+            // The selector each ref actually ends up with. That is the query
+            // the pass is dominated by once a link resolves on its href.
+            let mut cache = Cache::new();
+            let selectors: Vec<String> = snapshot
+                .refs
+                .iter()
+                .filter_map(|entry| for_node_cached(&doc, entry.node_id, &mut cache))
+                .collect();
+
+            // Both modes must agree about the first match, or the faster one is
+            // answering a different question.
+            for selector in &selectors {
+                assert_eq!(
+                    first(&doc, selector),
+                    matches(&doc, selector).first().copied(),
+                    "{selector} disagreed between query modes"
+                );
+            }
+
+            let all = median(|| {
+                for selector in &selectors {
+                    std::hint::black_box(matches(&doc, selector));
+                }
+            });
+            let firsts = median(|| {
+                for selector in &selectors {
+                    std::hint::black_box(first(&doc, selector));
+                }
+            });
+            // Where in the document the targets sit, which is what decides the
+            // saving: a first match at the end costs a full walk either way.
+            let depth: Vec<usize> = selectors
+                .iter()
+                .filter_map(|s| {
+                    let hits = matches(&doc, s);
+                    hits.first().map(|_| hits.len())
+                })
+                .collect();
+            let single = depth.iter().filter(|n| **n == 1).count();
+
+            println!(
+                "{name:<12} refs {:>4}  QueryAll {all:>7.3} ms  QueryFirst {firsts:>7.3} ms  \
+                 ratio {:>5.2}x  ({single}/{} selectors match exactly one element)",
+                selectors.len(),
+                all / firsts.max(f64::MIN_POSITIVE),
+                selectors.len(),
+            );
+        }
     }
 }
