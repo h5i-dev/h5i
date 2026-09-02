@@ -93,9 +93,9 @@ than against each other.
 
 | per step | h5i small | chromium small | h5i large | chromium large |
 | --- | --- | --- | --- | --- |
-| snapshot | 16.7 ms | **9.5 ms** | **21.0 ms** | 37.5 ms |
-| snapshot --delta | 17.6 ms | not available | **20.9 ms** | not available |
-| click | **18.3 ms** | 44.4 ms | **26.4 ms** | 41.9 ms |
+| snapshot | 17.6 ms | **10.1 ms** | **18.3 ms** | 33.7 ms |
+| snapshot --delta | 17.8 ms | not available | **19.3 ms** | not available |
+| click | **19.7 ms** | 42.0 ms | **27.5 ms** | 40.4 ms |
 
 Small is a six-line page; large fills the 500-line snapshot budget. What the
 numbers say, including the half that does not flatter this engine:
@@ -104,18 +104,20 @@ numbers say, including the half that does not flatter this engine:
    launch per command by design, and Playwright holds its connection open. On
    a small page that fixed cost is most of the difference, and Chromium reads
    faster. On a large page it stops mattering.
-2. **Reading a large page is where the architecture shows.** 21.0 ms against
-   37.5 ms, and much the same if the agent asks what changed instead of what is
-   there. CDP has no delta, so an agent re-reads the whole accessibility tree
-   every step and pays for the page whether or not it moved.
+2. **Reading a large page is where the architecture shows.** 18.3 ms against
+   33.7 ms, and the large page now costs about what the small one does, which
+   is the more interesting half: a step's cost has stopped tracking the size of
+   the page. CDP has no delta either, so an agent driving it re-reads the whole
+   accessibility tree every step and pays for the page whether or not it
+   moved.
 3. **Acting is consistently cheaper here**, roughly half, because a click
    dispatches an event rather than running actionability checks over a
    protocol.
 4. **The read path is not the bottleneck at this level, and neither is the
-   part that looked like it.** Engine work per read is 8.8 ms small and
-   13.6 ms large, against 0.18 ms for the walk and render the Read IR made
-   faster (`docs/design-h5i-ir.md`). Those two numbers were 10.8 and 22.3
-   before the profile below found what the large one was actually spending on.
+   part that looked like it.** Engine work per read is 9.0 ms small and
+   10.5 ms large, against 0.18 ms for the walk and render the Read IR made
+   faster (`docs/design-h5i-ir.md`). The large one was 22.3 ms before the two
+   findings below, and the gap between the two pages has almost closed.
 
 The first guess at where the rest goes was the durable CSS selector the
 snapshot verb computes for every ref, each verified with a full-document
