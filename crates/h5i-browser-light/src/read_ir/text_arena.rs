@@ -1,14 +1,9 @@
 //! Where the page's words live.
 //!
-//! One buffer and a span table, instead of a `String` per node. A reading of a
-//! large page holds a few thousand short strings; as separate allocations that
-//! is a few thousand trips to the allocator and a header on each one, and it is
-//! the single biggest per-node cost in the current walk.
+//! One buffer and span table replace a `String` allocation per node.
 //!
-//! Deliberately *not* an interner. Page text has low duplication, so hashing
-//! every string would cost more than the sharing saves, and an interner keyed
-//! on attacker-supplied text is unbounded growth with a hostile page holding
-//! the pen. See `docs/design-h5i-ir.md`, "Text storage".
+//! This is not an interner: page text has little duplication, and interning
+//! attacker-controlled text adds hashing and unbounded growth.
 
 use super::model::TextId;
 
@@ -46,13 +41,7 @@ impl TextArena {
 
     /// Store a string verbatim.
     ///
-    /// Verbatim is the whole contract, and it is not the same contract as
-    /// [`Self::collapse_into`]: a preformatted line arrives here already
-    /// normalised *except* for its leading indentation, which is meaning in
-    /// code and which `collapse_keeping_indent` went out of its way to keep.
-    /// Trimming here quietly re-flattened it. The rendered outline hid the
-    /// damage, because rendering collapses every line anyway, but the
-    /// structured lines a delta serialises carried it.
+    /// Unlike [`Self::collapse_into`], preserves code indentation.
     pub fn intern(&mut self, text: &str) -> TextId {
         if text.is_empty() {
             return TextId::EMPTY;
@@ -65,13 +54,8 @@ impl TextArena {
 
     /// Collapse raw page text straight into the arena.
     ///
-    /// The whole point of the type: [`crate::snapshot::collapse`] allocates a
-    /// `String` for a result that is about to be copied somewhere else anyway,
-    /// and on a text-heavy page it is called once per text node. This writes
-    /// the collapsed form once, in place, and hands back a span.
-    ///
-    /// Character for character the same output as `collapse`, which is a
-    /// property under test rather than a claim: see `collapse_into_agrees`.
+    /// Writes [`crate::snapshot::collapse`]'s output in place and returns its
+    /// span. `collapse_into_agrees` checks equivalence.
     pub fn collapse_into(&mut self, raw: &str) -> TextId {
         let start = self.buf.len() as u32;
         let mut in_space = false;
@@ -92,12 +76,7 @@ impl TextArena {
         self.finish(start)
     }
 
-    /// Close a collapsed span, trimming it as `collapse` does.
-    ///
-    /// The construction above cannot leave an edge space (a separator is only
-    /// written immediately before a kept character, and never as the first
-    /// byte), so the trim is a formality. It is done anyway because "cannot" is
-    /// an argument and this is a measurement.
+    /// Finalize a span with the same trimming as `collapse`.
     fn finish(&mut self, start: u32) -> TextId {
         let text = &self.buf[start as usize..];
         let trimmed = text.trim();
@@ -151,10 +130,7 @@ mod tests {
         assert_eq!(arena.resolve(c), "third value");
     }
 
-    /// Indentation is meaning in a code block, and `intern` is the path a
-    /// preformatted line takes. This is the regression the equivalence gate
-    /// caught: the rendered outline collapses every line anyway, so only the
-    /// structured lines a delta serialises showed the loss.
+    /// `intern` preserves indentation used by structured delta lines.
     #[test]
     fn intern_keeps_leading_indentation() {
         let mut arena = TextArena::new();
@@ -174,9 +150,7 @@ mod tests {
         assert_eq!(arena.bytes(), 0);
     }
 
-    /// The property the arena rests on: it is `collapse`, without the
-    /// allocation. Checked over the shapes that make `collapse` interesting
-    /// rather than over prose, because prose is the case that cannot fail.
+    /// `collapse` without an intermediate allocation.
     #[test]
     fn collapse_into_agrees() {
         let cases = [
@@ -208,10 +182,7 @@ mod tests {
         }
     }
 
-    /// The render path re-normalises what the builder already normalised, so
-    /// the two must compose to the same answer. If `collapse` were not
-    /// idempotent, an arena string would change under `one_line` at render and
-    /// the IR outline would drift from the walker's.
+    /// Rendering may safely normalize already-collapsed arena text.
     #[test]
     fn collapse_is_idempotent() {
         for case in [

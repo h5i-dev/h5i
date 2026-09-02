@@ -1,19 +1,11 @@
 //! The nodes, ids and roles the Read IR is made of.
 //!
-//! `docs/design-h5i-ir.md`, "Data model". The shape is Chromium's accessibility
-//! abstraction as distilled by AccessKit: stable integer ids, a frozen node
-//! carrying a role and a flag word, and text held out of line. What is not
-//! taken is AccessKit's 182 roles and 88 property kinds; this engine's reading
-//! vocabulary is two dozen entries wide and closed, so a purpose-built enum is
-//! smaller than the general schema and cannot drift from the strings the
-//! outline actually prints.
+//! Following `docs/design-h5i-ir.md`: integer ids, immutable nodes with roles
+//! and flags, and out-of-line text. The closed role enum matches the outline.
 
 /// A node's place in the arena.
 ///
-/// A plain index for now. The design's generation tag belongs with the
-/// retained arena in phase 2, where a slot can be freed and refilled; while
-/// every tree is built and dropped whole, there is no freed slot to catch a
-/// reference into, and a generation would be a field nothing could read.
+/// A plain index until phase 2 adds retained, reusable slots.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct ReadId(pub u32);
@@ -38,10 +30,7 @@ impl TextId {
 
 /// What a node is, for a reader deciding what to do with it.
 ///
-/// `#[repr(u16)]` and no payload, so a node stays copyable and small. The
-/// heading level rides on [`ReadNode::level`] rather than splitting this into
-/// six variants, which is where the design puts it: one role per *kind* of
-/// thing, refinements beside it.
+/// Payload-free and compact. [`ReadNode::level`] refines headings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum ReadRole {
@@ -67,20 +56,13 @@ pub enum ReadRole {
 impl ReadRole {
     /// The exact word the outline prints for this role.
     ///
-    /// The single source of the role vocabulary: the snapshot walker renders
-    /// through here too, so the outline and the IR cannot drift into printing
-    /// two different names for one kind of thing.
+    /// Shared by the snapshot walker and IR renderer.
     pub fn as_str(self, level: u8) -> &'static str {
         match self {
             ReadRole::Document => "document",
             ReadRole::Text => "text",
             ReadRole::Heading => {
-                // A heading always knows its level: the tag table sets 1 to 6,
-                // and an explicit `role="heading"` is given 2, which is what
-                // the outline printed before the level moved out of the role
-                // name. A zero here would silently print `heading6`, the
-                // quietest possible wrong answer, so it is caught in tests
-                // rather than shipped as a default.
+                // Tags provide levels 1–6; `role="heading"` defaults to 2.
                 debug_assert!(
                     (1..=6).contains(&level),
                     "a heading reached the renderer with level {level}"
@@ -112,8 +94,7 @@ impl ReadRole {
 
     /// Roles that structure a page rather than sit inside a sentence.
     ///
-    /// One question only: whether a semantic leaf is really a leaf, or a
-    /// wrapper that has swallowed a block of structure below it.
+    /// Used to detect wrappers containing block structure.
     pub fn is_block(self) -> bool {
         matches!(
             self,
@@ -129,8 +110,7 @@ impl ReadRole {
 
 /// Boolean facts about a node, packed.
 ///
-/// A bit word rather than a row of `bool` fields, so the set can grow through
-/// the later phases without the node growing with it.
+/// A bit word leaves room for later flags without growing the node.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 #[repr(transparent)]
 pub struct ReadFlags(pub u16);
@@ -143,10 +123,7 @@ impl ReadFlags {
     pub const IN_FRAME: u16 = 1 << 1;
     /// This node's text was stored verbatim rather than collapsed.
     ///
-    /// True for the lines of a code block and nothing else. Their leading
-    /// indentation is meaning, so the builder keeps it, which means the
-    /// renderer has to do the normalising the arena did not: every other line
-    /// arrives collapsed and can go straight out.
+    /// Set on code lines whose leading indentation must survive storage.
     pub const VERBATIM: u16 = 1 << 2;
 
     pub fn contains(self, bit: u16) -> bool {
@@ -160,13 +137,9 @@ impl ReadFlags {
 
 /// One line of the reading.
 ///
-/// Deliberately flat and `Copy`: no `String`, no `Vec`, no per-node
-/// allocation of any kind. Text lives in the arena, the role is an enum, and
-/// the tree is expressed by `depth` over the preorder the builder emits in.
+/// Flat and `Copy`; text is stored in the arena and `depth` encodes the tree.
 ///
-/// The design budgets 48 bytes to leave room for phase 3's `local_revision`
-/// and `subtree_fingerprint`; what phase 1 reads is well inside that, and the
-/// assertion below is what keeps a future field honest.
+/// The 48-byte budget reserves room for phase 3 fields.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct ReadNode {
@@ -176,10 +149,7 @@ pub struct ReadNode {
     pub name: TextId,
     /// Resolved `href` or `src`, collapsed. `EMPTY` when the node has neither.
     ///
-    /// Inline rather than in a side table, unlike the design's sketch: a
-    /// target is printed on the same line as the name, every link has one, and
-    /// a side allocation for the commonest actionable node on the web would
-    /// cost more than the four bytes it saves.
+    /// Inline because links commonly need it and side storage costs more.
     pub href: TextId,
     /// 1-based position in the ref list, or 0 for a node that takes no ref.
     pub ref_ordinal: u32,
@@ -192,18 +162,12 @@ pub struct ReadNode {
     pub level: u8,
 }
 
-/// The node is the thing there are tens of thousands of. If it ever grows past
-/// the design's budget, that is a decision someone makes with a benchmark in
-/// hand, not something that happens by accident in a patch that adds a field.
+/// Prevent accidental growth beyond the design budget.
 const _: () = assert!(std::mem::size_of::<ReadNode>() <= 48);
 
 /// What an agent can name in a later command, before it is spelled out.
 ///
-/// Self-contained rather than a pointer into the node arena, and that is a
-/// faithfulness requirement rather than a convenience: the walker mints a ref
-/// and *then* tries to write its line, so at the budget's edge a ref can
-/// outlive the line it was minted for. Pointing at a node that was never
-/// written would lose the ref; carrying its own answer does not.
+/// Self-contained because a ref minted before truncation can outlive its line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RefRecord {
     /// The Blitz node this ref resolves to.
@@ -220,8 +184,7 @@ mod tests {
 
     #[test]
     fn a_node_stays_small() {
-        // Stated as a number as well as an assertion, so a change shows up as a
-        // number moving rather than as a constant being edited.
+        // Print the actual size on failure.
         assert!(
             std::mem::size_of::<ReadNode>() <= 48,
             "ReadNode is {} bytes",
@@ -238,9 +201,7 @@ mod tests {
                 "heading level {level}"
             );
         }
-        // A level a heading cannot have. Debug builds trip the assertion
-        // instead of quietly printing the deepest heading, so this is only
-        // asserted where the assertion is compiled out.
+        // Release builds retain the historical fallback.
         #[cfg(not(debug_assertions))]
         assert_eq!(ReadRole::Heading.as_str(9), "heading6");
         // Every other role ignores the level entirely.

@@ -1,12 +1,8 @@
 //! The IR reads the same page the walker reads.
 //!
-//! This is the acceptance gate for phase 1 of `docs/design-h5i-ir.md`, and the
-//! reason the rest of the module is allowed to exist: an IR that is faster and
-//! disagrees is not an optimisation, it is a second opinion about what a page
-//! says, and an agent handed two readings has no way to choose.
+//! Phase 1's acceptance gate: the IR and walker must agree exactly.
 //!
-//! The corpus is chosen for the decisions that are easy to get wrong rather
-//! than for coverage of the web: prose is the case that cannot fail.
+//! The corpus targets error-prone decisions rather than representative prose.
 
 use std::sync::Arc;
 
@@ -184,10 +180,7 @@ fn corpus() -> Vec<(&'static str, String)> {
 }
 
 fn factory() -> (PageFactory, url::Url) {
-    // The font paths are discovered once per thread rather than once per
-    // fixture. `fonts::load` walks the system font directories, and the
-    // differential tests below build a page for every fixture at every budget;
-    // rediscovering the same paths for each of them was most of their runtime.
+    // Font discovery is expensive, so do it once per thread.
     thread_local! {
         static FONT_SOURCES: Vec<std::path::PathBuf> =
             crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2)).sources;
@@ -241,10 +234,7 @@ fn the_ir_materialises_the_same_snapshot() {
     }
 }
 
-/// Truncation is a decision taken part way through a walk, and it takes the ref
-/// counter with it: the walker records a ref and *then* tries to print it, so
-/// at the budget's edge one ref outlives its line. An IR that tidied that up
-/// would hand an agent a different ref list than the outline it is reading.
+/// A ref minted before the budget check may outlive its truncated line.
 #[test]
 fn the_ir_truncates_where_the_walker_truncates() {
     let corpus = corpus();
@@ -264,9 +254,7 @@ fn the_ir_truncates_where_the_walker_truncates() {
     }
 }
 
-/// The property the fence rests on, checked against the IR renderer rather than
-/// only against the walker's: content lines are indented and prefixed, so
-/// nothing the page supplies can begin a line of its own.
+/// Page content cannot begin a rendered line and forge the fence.
 #[test]
 fn no_ir_line_but_the_fence_starts_at_the_left_margin() {
     use crate::snapshot::{CONTENT_BEGIN, CONTENT_END};
@@ -294,16 +282,11 @@ fn no_ir_line_but_the_fence_starts_at_the_left_margin() {
     }
 }
 
-/// An unchanged reading is the commonest step in an agent loop and the one the
-/// IR short-circuits, so it is the one most worth pinning to the walker's
-/// answer field by field.
+/// The unchanged fast path matches the walker field by field.
 #[test]
 fn an_unchanged_ir_delta_matches_the_walker() {
     for (name, html) in corpus() {
-        // Two separately captured readings of one document, not one reading
-        // compared with itself. Self-comparison would pass on any
-        // implementation that short-circuits on identity, which is precisely
-        // the bug this is meant to catch.
+        // Separate captures prevent identity-based self-comparison shortcuts.
         let (factory, base) = factory();
         let page = factory.from_html(&html, &base);
         let dom = page.dom();
@@ -361,10 +344,7 @@ fn a_changed_ir_delta_matches_the_walker() {
     }
 }
 
-/// The unchanged fast path added to `Snapshot::delta` has to agree with the
-/// quadratic answer it replaced, including on the shapes where the two could
-/// have parted company: an empty page, a single line, and a page whose lines
-/// all repeat.
+/// The unchanged fast path matches LCS on empty, single, and repeated lines.
 #[test]
 fn the_snapshot_fast_path_matches_the_subsequence_it_replaced() {
     use crate::snapshot::Line;
@@ -410,11 +390,7 @@ fn the_snapshot_fast_path_matches_the_subsequence_it_replaced() {
     }
 }
 
-/// The subsequence answer, reached with the fast path defeated.
-///
-/// A line the two readings cannot share is prepended to each side, so the
-/// equality check fails and the quadratic path runs; the extra line is then
-/// accounted for and removed from the answer.
+/// Force and normalize the LCS answer by prepending distinct sentinels.
 fn long_way(after: &Snapshot, before: &Snapshot) -> crate::snapshot::Delta {
     use crate::snapshot::Line;
 
@@ -485,11 +461,7 @@ fn the_ir_carries_the_in_frame_flag_like_the_walker() {
     );
 }
 
-/// `--text` reads the same words the outline does.
-///
-/// `Page::text` used to build a whole `Snapshot` and keep only the line texts.
-/// It reads through the IR now, so the join has to land on exactly the same
-/// string it did before.
+/// `--text` returns the same words after moving from `Snapshot` to the IR.
 #[test]
 fn plain_text_reads_what_the_outline_reads() {
     for (name, html) in corpus() {
@@ -505,11 +477,7 @@ fn plain_text_reads_what_the_outline_reads() {
     }
 }
 
-/// A ref resolves through the IR exactly when it resolves through the walker.
-///
-/// The walker compares against the literal `e3` it printed. Rust's integer
-/// parser is more forgiving than that, so an IR that parsed would honour
-/// handles no reading ever offered.
+/// Ref resolution accepts only canonical handles printed by the walker.
 #[test]
 fn the_ir_resolves_the_refs_the_walker_resolves_and_no_others() {
     let html = "<html><body><a href='/one'>one</a><a href='/two'>two</a>\
@@ -536,19 +504,7 @@ fn the_ir_resolves_the_refs_the_walker_resolves_and_no_others() {
     }
 }
 
-/// Every shape that could make the transcription diverge, at every budget.
-///
-/// The corpus tests above read a page the way a person would describe one.
-/// This is the opposite: shapes chosen because a transcription is likely to
-/// get them wrong, crossed with both script modes and with the budgets around
-/// the edges where truncation lands part way through a node. Roughly eight
-/// hundred readings, each compared four ways.
-///
-/// The budget sweep is the point of it. Truncation is a decision taken part
-/// way through a walk, and the walker mints a ref *before* it tries to print
-/// the line, so the states worth reaching are the ones where the cut falls
-/// between those two acts, or inside a code block that emits several lines
-/// from a single element.
+/// Error-prone shapes across script modes and truncation boundaries.
 #[test]
 fn the_ir_matches_the_walker_on_shapes_built_to_break_it() {
     let mut cases: Vec<String> = vec![

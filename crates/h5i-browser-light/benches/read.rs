@@ -1,12 +1,8 @@
 //! What a read of a page actually costs, walker against Read IR.
 //!
-//! Phase 0 of `docs/design-h5i-ir.md` is the baseline; phase 1 is the column
-//! beside it. Wall time is the half everyone quotes; the allocation counters
-//! are the half that says *why*, and they are what the IR was designed to move.
+//! Compares phase 0 and phase 1 wall time and allocations.
 //!
-//! No criterion. This runs in CI-shaped environments where a heavy dev
-//! dependency costs more to build than the measurement is worth, and the
-//! numbers wanted here are two dozen lines of std.
+//! Uses only std to stay lightweight in CI-shaped environments.
 //!
 //! `cargo bench -p h5i-browser-light --bench read`
 
@@ -87,9 +83,6 @@ fn counted<T>(body: impl FnOnce() -> T) -> (T, Allocs) {
 // ------------------------------------------------------------------ timing
 
 /// Median wall time over `RUNS`, after a discarded warm-up.
-///
-/// Median rather than mean because one scheduler hiccup on a loaded box moves
-/// a mean and does not move a median, and this box is loaded.
 fn median(mut body: impl FnMut()) -> Duration {
     body();
     let mut samples: Vec<Duration> = (0..RUNS)

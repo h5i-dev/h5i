@@ -4,15 +4,12 @@
 > agent reads, so the cost of a step tracks what the step changed rather than
 > how big the page is.
 
-Status: draft 0.2. Phases 0 and 1 are built and measured; see
-[Measured](#measured). Target: `crates/h5i-browser-light`. Primary surfaces:
-`snapshot`, `snapshot --delta`, `markdown`, and the ref resolution every action
-verb performs. Paths below are relative to `crates/h5i-browser-light/src/`
-unless said otherwise. Cited symbols are the authority; line numbers drift.
+Status: draft 0.2. Phases 0 and 1 are built and measured. Target:
+`crates/h5i-browser-light`. Surfaces: `snapshot`, `snapshot --delta`,
+`markdown`, and action ref resolution. Paths are relative to its `src/`.
 
-Part of the h5i design set. The engine itself is
-[`design-browser.md`](design-browser.md); this document changes how the engine
-is *read*, not what it loads or renders.
+See [`design-browser.md`](design-browser.md) for the engine. This document
+changes how agents read it, not what it loads or renders.
 
 ## In one screen
 
@@ -28,32 +25,14 @@ is *read*, not what it loads or renders.
   never allowed to be stale and silent about it.
 - Prior art is Chromium's accessibility abstraction as distilled by AccessKit.
   We take the design, not the dependency.
-- Built and measured, phases 0 and 1: an agent's `snapshot --delta` step on a
+- Phases 0 and 1 reduced an agent's `snapshot --delta` step on a
   loaded page went from 1.43 ms and 11,844 allocations to 0.12 ms and 2,028,
-  while a cold `open` moved by about 1%. Which half came from where, and what
-  is still on the table, is under [Measured](#measured).
-
-## Contents
-
-[Why this exists](#why-this-exists), [what it is not](#what-it-is-not),
-[prior art](#prior-art-chromium-and-accesskit), [invariants](#invariants),
-[lifecycle](#lifecycle), [data model](#data-model),
-[tree construction](#tree-construction), [names](#names),
-[refs](#refs-and-actions), [invalidation](#mutation-and-invalidation),
-[rendering](#snapshot-rendering), [delta](#delta), [markdown](#markdown-and-extract),
-[budgets](#budgets-and-dos-resistance), [modules](#module-layout),
-[testing](#testing), [acceptance](#acceptance-criteria),
-[measured](#measured), [rollout](#rollout),
-[expected gains](#expected-gains-and-the-adoption-decision).
-
----
+  while cold `open` changed by about 1%. See [Measured](#measured).
 
 ## Why this exists
 
-This is the state the work started from, in September 2026, before any of it
-landed. Every read of a page was a full walk of the Blitz DOM, and so was every
-action. The costs were structural, not incidental. Where one has since been
-paid off, it says so, and [Measured](#measured) has the numbers.
+Originally every read and action walked the full Blitz DOM. Current status is
+noted below; [Measured](#measured) has the results.
 
 1. **Reads and actions both re-walk everything.** `Snapshot::capture`
    (`snapshot.rs`) runs for the `snapshot` verb, but also inside `click`,
@@ -101,10 +80,9 @@ paid off, it says so, and [Measured](#measured) has the numbers.
    `aria-hidden` gap is exactly the injection channel the snapshot walker
    closes (see the comment on `hidden_from_assistive_tech`).
 
-The Read IR removes all six by computing the semantic reading once, keeping it,
-and re-deriving only what a mutation touched. Phase 1 removed the fifth
-outright and the second for the case that dominates; the rest need the retained
-tree.
+The Read IR computes semantics once and updates only changed parts. Phase 1
+removed per-node allocation and optimized unchanged deltas; the rest require a
+retained tree.
 
 ## What it is not
 
@@ -163,14 +141,10 @@ that portable half re-done in Rust, and it is worth copying from precisely:
   DOM-to-semantics half, which is most of the work here, stays ours either
   way.
 
-The judgment: h5i's role vocabulary is two dozen entries, its per-node
-attribute set is small and known, and its output format is already fixed by
-the fence contract. A purpose-built IR is smaller than AccessKit's schema and
-avoids carrying 182 roles and 88 property kinds we would never set. We take
-the patterns (stable ids, frozen sparse nodes, wholesale updates, equality as
-change detection, fatal validation) and skip the dependency. If OS
-accessibility ever matters, an `ir -> TreeUpdate` adapter is straightforward
-because the shapes were kept compatible in spirit.
+h5i has a small, fixed role and attribute vocabulary, so a purpose-built IR is
+smaller than AccessKit's schema. It adopts stable ids, frozen sparse nodes,
+wholesale updates, equality-based change detection, and fatal validation. OS
+accessibility can later use an `ir -> TreeUpdate` adapter.
 
 ## Invariants
 
@@ -222,23 +196,16 @@ because the shapes were kept compatible in spirit.
 
 ## Lifecycle
 
-Two modes, adopted in order.
-
 ### Transient mode
 
-For one-shot reads and for the first implementation phase. Bring the document
-to a clean point, build the IR into a temporary arena, stream the output,
-drop the arena. Resident memory does not grow. This mode exists to measure
-the walker and the compact representation in isolation, before any caching
-complexity is added.
+For one-shot reads: clean the document, build a temporary arena, stream output,
+then drop it. This measures the compact representation without caching.
 
 ### Retained mode
 
-For live sessions driven through `stream.rs`. The first read builds the IR
-lazily; mutations are recorded into a dirty queue; the next read recomputes
-only dirty subtrees; navigation or budget overrun drops the arena wholesale
-and rebuilds. A session that never reads never pays: until the first IR
-exists, mutation hooks record nothing but a bumped `document_revision`.
+For live `stream.rs` sessions. The first read builds lazily; later reads rebuild
+dirty subtrees. Navigation or budget overrun triggers a full rebuild. Before
+the first read, mutations only bump `document_revision`.
 
 The engine has no revision counter today (the only related state is the
 boolean `HostHandle.dirty` and `styles_stale` in `script/host.rs`, and the
@@ -772,13 +739,9 @@ Structural:
   at compile time.
 - *Met.* Transient arenas are freed after output; nothing is retained.
 
-One criterion the design did not think to write down, and should have, because
-it is the one the gate actually caught: **the structured reading and the
-rendered outline are two different outputs and both have to match.** The IR
-first shipped an arena that trimmed on the way in, which was invisible in the
-outline, because rendering collapses every line anyway, and wrong in the
-`Line.text` a delta serialises, where a code block's indentation lives. Testing
-only the rendered bytes would have passed it.
+**Structured readings and rendered outlines must both match.** Early arena
+trimming preserved rendered output but lost code indentation in serialized
+`Line.text`; rendered-byte tests alone missed it.
 
 ## Measured
 
