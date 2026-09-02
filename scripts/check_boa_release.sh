@@ -8,7 +8,7 @@ ua='User-Agent: h5i-boa-release-check'
 # The check exists to force the git pin out the moment a published boa works.
 # Once the pin is gone, its job is done: boa arriving from crates.io is the
 # state this script was pushing toward, not something to fail about.
-if ! grep -q 'boa-dev/boa' "$here/crates/h5i-browser-light/Cargo.toml"; then
+if ! grep -q 'boa-dev/boa' "$here/crates/h5i-browser/Cargo.toml"; then
   echo "the icu clash this check guarded is gone: boa is a plain version requirement."
   # There is a second, unrelated reason boa is not stock, and saying only the
   # sentence above would leave a reader thinking it is. The workspace patches
@@ -95,7 +95,7 @@ done
 if [ -n "$usable" ]; then
   echo
   echo "::error::boa_engine $usable is published and its icu requirements no longer clash with parley."
-  echo "The git dependency in crates/h5i-browser-light/Cargo.toml exists only to work"
+  echo "The git dependency in crates/h5i-browser/Cargo.toml exists only to work"
   echo "around that clash. Replace both boa lines with plain requirements:"
   echo "    boa_engine = { version = \"$usable\", default-features = false, features = [\"annex-b\"] }"
   echo "    boa_gc = \"$usable\""

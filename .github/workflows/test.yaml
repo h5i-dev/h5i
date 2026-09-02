@@ -77,7 +77,7 @@ jobs:
       # `--locked` throughout: Cargo.lock is committed and the release build
       # uses it, so a manifest change that never updated the lockfile has to
       # fail on a PR rather than surface at tag time.
-      # h5i-browser-light depends on boa by git revision because no published
+      # h5i-browser depends on boa by git revision because no published
       # version can coexist with blitz's parley. That is a thing to undo, not to keep,
       # and "it is on the list" is how a temporary patch becomes permanent — so
       # the question is asked here rather than remembered. Fails the day a
@@ -104,7 +104,7 @@ jobs:
           H5I_SKIP_WEB_BUILD: "1"
         run: cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
 
-  # The runtime-detection lane (docs/design-detect.md D1–D14). Its own job because it needs
+  # The runtime-detection lane (docs/design/design-detect.md D1–D14). Its own job because it needs
   # a toolchain the other jobs do not — a clang that can target BPF — and
   # because `bpf` is off by default, so nothing above would notice it rotting.
   #
@@ -397,7 +397,7 @@ jobs:
       # (the build script stubs web/dist so `rust-embed` still resolves) rather
       # than put Node on four more runners.
       # The engine is checked a second time on its own, even though the root
-      # check now compiles it as a dependency. `-p h5i-browser-light` resolves
+      # check now compiles it as a dependency. `-p h5i-browser` resolves
       # features over that crate's graph alone, and the workspace's unified
       # resolution can quietly supply a feature the crate never asked for — so
       # the standalone check is what keeps the crate self-contained, which its
@@ -407,4 +407,4 @@ jobs:
           H5I_SKIP_WEB_BUILD: "1"
         run: |
           cargo check --locked --target ${{ matrix.target }}
-          cargo check --locked --target ${{ matrix.target }} -p h5i-browser-light
+          cargo check --locked --target ${{ matrix.target }} -p h5i-browser

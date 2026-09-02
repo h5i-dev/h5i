@@ -38,17 +38,17 @@ default = ["web", "share", "runner", "browser", "ytdlp", "identity"]
 web = ["h5i-core/web"]
 # `browser` links the rendering engine into this binary, which is what `h5i browser` execs
 # itself to become (`h5i __engine`).
-browser = ["dep:h5i-browser-light"]
+browser = ["dep:h5i-browser"]
 # `identity` adds `--identity` and `h5i browser identity`: one coherent browser
 # identity, read by the header layer and the script realm from the same object.
-# See `crates/h5i-browser-light/src/identity.rs`.
+# See `crates/h5i-browser/src/identity.rs`.
 #
 # On by default and gated anyway, for the reason `ytdlp` is. `--identity native`
 # is the default and costs nothing at run time. Without the feature there is no
 # `--identity` to type, no identity module in the binary, and the engine sends
 # the one agent string it has always sent. It implies `browser`, because the
 # thing being given an identity is the engine.
-identity = ["browser", "h5i-browser-light/identity"]
+identity = ["browser", "h5i-browser/identity"]
 # `ytdlp` adds the helper lane: `h5i browser transcript --via yt-dlp`, which runs yt-dlp to
 # reach the transcripts that are not in a page's markup at all — YouTube's above all, whose
 # captions live behind the player's own API.
@@ -89,7 +89,7 @@ h5i-runner = { path = "crates/h5i-runner", optional = true }
 # identities on, rather than them arriving through the dependency's defaults and
 # making the root switch cosmetic. The engine crate's only default feature is
 # `identity`, so this leaves the engine itself whole.
-h5i-browser-light = { path = "crates/h5i-browser-light", optional = true, default-features = false }
+h5i-browser = { path = "crates/h5i-browser", optional = true, default-features = false }
 # A scratch directory: the source bundle a `runner create` builds and streams,
 # and the workspace `h5i browser transcript --via` gives its helper.
 #
@@ -101,7 +101,7 @@ h5i-browser-light = { path = "crates/h5i-browser-light", optional = true, defaul
 tempfile = "3.8"
 # For one job, in the helper lane: refusing a URL whose scheme is not http(s)
 # before it reaches a program that takes URLs. Already in the tree through
-# h5i-browser-light, so this adds a name to the manifest and no code to the
+# h5i-browser, so this adds a name to the manifest and no code to the
 # build, and hand-rolling the check would mean hand-rolling a URL parser.
 url = { version = "2.5", optional = true }
 git2 = { workspace = true }

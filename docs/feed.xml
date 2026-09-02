@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>
 <title>The h5i Blog</title><link>https://h5i.dev/blog/</link>
 <description>Design essays on giving an AI agent a browser you can audit: boundaries, evidence, and what a request log has to prove.</description>
-<language>en-us</language><lastBuildDate>Mon, 31 Aug 2026 12:00:00 GMT</lastBuildDate>
+<language>en-us</language><lastBuildDate>Wed, 02 Sep 2026 12:00:00 GMT</lastBuildDate>
 <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="https://h5i.dev/feed.xml" rel="self" type="application/rss+xml"/>
     <item><title>Browse, contain, work, export, apply</title><link>https://h5i.dev/blog/the-h5i-loop/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/the-h5i-loop/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>

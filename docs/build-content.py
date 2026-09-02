@@ -38,21 +38,21 @@ PUBLISHED = "2026-08-21"
 PAGE_HISTORY = {
     "": ("2026-08-31", "6ae42ccc5c00594c"),
     "features/": ("2026-08-31", "b5985815d35fb499"),
-    "manual/": ("2026-09-01", "cb555f540f6f5c49"),
+    "manual/": ("2026-09-02", "8e6ea427e2b34547"),
     "pitch/": ("2026-08-30", "72d9632cdd5a19db"),
     "demo/": ("2026-08-30", "44a05038318650f0"),
     "guides/": ("2026-08-31", "f7d4552449f17d81"),
     "blog/": ("2026-08-31", "bda808394d0d5ea4"),
-    "guides/drive-a-browser-session/": ("2026-08-30", "4b863362881d7f0d"),
+    "guides/drive-a-browser-session/": ("2026-09-02", "148a857cf6c0d8e7"),
     "guides/first-box/": ("2026-08-30", "c52289c78be574db"),
     "guides/review-a-pull-request/": ("2026-08-30", "0bbf47c079810ec7"),
-    "guides/write-a-box-policy/": ("2026-08-30", "91494d0a9407cb42"),
-    "guides/watch-the-browser/": ("2026-08-30", "8c42bd57753d46ac"),
+    "guides/write-a-box-policy/": ("2026-09-02", "221c1ba59175513e"),
+    "guides/watch-the-browser/": ("2026-09-02", "e28eb2f9a82441ca"),
     "blog/the-h5i-loop/": ("2026-08-31", "52f52d2673ec45a5"),
     "blog/the-environment-is-the-sandbox/": ("2026-08-30", "c01dc2a3400b213d"),
     "blog/choosing-agent-isolation/": ("2026-08-30", "df7a164c63457c5e"),
     "blog/evidence-for-agent-work/": ("2026-08-30", "9f0011911123d79c"),
-    "blog/prompt-injection-is-a-boundary-problem/": ("2026-08-30", "58437230c5fba9d4"),
+    "blog/prompt-injection-is-a-boundary-problem/": ("2026-09-02", "95e6c28db36b0778"),
 }
 
 # The pages this script does not write. They are fingerprinted off disk.
@@ -271,7 +271,7 @@ SESSION = {
 <p>Every verb above works unchanged. What changes is the requests line: the box enforces its egress allowlist at its own boundary, outside the browser being described, so the lane goes from <code>engine-claimed</code> to <code>host-observed</code>.</p>
 <p>Being inside a box does not earn that on its own. A box whose policy lets the browser reach the whole network corroborates nothing, and h5i keeps calling that session <code>engine-claimed</code>. What earns the upgrade is enforcement outside the engine.</p>
 <h2 id="sources">Reference</h2>
-<ul><li><a href="/manual/#h5i-browser">The session reference: verbs, states, and where sessions live</a>.</li><li><a href="/guides/watch-the-browser/">Watch the page, then take the controls</a>.</li><li><a href="/blog/prompt-injection-is-a-boundary-problem/">Why browser authority changes the injection threat model</a>.</li><li><a href="https://github.com/h5i-dev/h5i/tree/main/crates/h5i-browser-light">The engine implementation</a>.</li></ul>""",
+<ul><li><a href="/manual/#h5i-browser">The session reference: verbs, states, and where sessions live</a>.</li><li><a href="/guides/watch-the-browser/">Watch the page, then take the controls</a>.</li><li><a href="/blog/prompt-injection-is-a-boundary-problem/">Why browser authority changes the injection threat model</a>.</li><li><a href="https://github.com/h5i-dev/h5i/tree/main/crates/h5i-browser">The engine implementation</a>.</li></ul>""",
     "faq": [
         ("Is the session sandboxed?", "Not by default, and h5i does not claim it is. A session started with no flags runs in your ordinary process space like any other headless browser. The placement line says so on every status. Containment is the --in flag, which places the same session inside a box without changing any verb."),
         ("What does engine-claimed mean?", "It is the browser's own account of what it fetched: fail-closed, complete, and still the browser describing itself. host-observed means h5i also saw the traffic at a box's boundary, outside the browser. h5i never merges the two labels."),
@@ -514,7 +514,7 @@ $ h5i box log policy-check''')}
 <h2 id="mistakes">Common policy mistakes</h2>
 <ul><li><strong>Granting all of HOME:</strong> this defeats the credential and configuration boundary. Seed only the runtime state the built-in profile needs.</li><li><strong>Using host networking to fix one registry:</strong> add the registry destination or a warm cache instead.</li><li><strong>Enabling Unix sockets by default:</strong> local sockets can carry file descriptors and ambient host authority.</li><li><strong>Choosing container because it sounds stronger:</strong> use it for image portability; choose supervised for packet-layer egress.</li><li><strong>Changing policy without recreating the box:</strong> existing boxes keep the policy digest they started with.</li></ul>
 <h2 id="sources">Reference</h2>
-<ul><li><a href="/manual/#policy">Complete policy reference and built-in profiles</a>.</li><li><a href="/manual/#credentials">Credential and secret grants</a>.</li><li><a href="/blog/choosing-agent-isolation/">The threat model behind the tier choice</a>.</li><li><a href="https://github.com/h5i-dev/h5i/blob/main/docs/credential-proxy-design.md">Credential proxy design and open limits</a>.</li></ul>""",
+<ul><li><a href="/manual/#policy">Complete policy reference and built-in profiles</a>.</li><li><a href="/manual/#credentials">Credential and secret grants</a>.</li><li><a href="/blog/choosing-agent-isolation/">The threat model behind the tier choice</a>.</li><li><a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-credential-proxy.md">Credential proxy design and open limits</a>.</li></ul>""",
     "faq": [
         ("What happens if my machine cannot provide the requested tier?", "Creation fails before a partial box is left behind. Explicit isolation requests are never silently downgraded."),
         ("Why is container egress weaker than supervised egress?", "The container tier uses an HTTP/HTTPS proxy allowlist, so software that ignores proxy settings can bypass that L7 route. The supervised tier enforces destination access in a private network namespace at L3/L4."),
@@ -579,7 +579,7 @@ $ less ./browser-review/report.md''')}
 <h2 id="troubleshoot">If no frames arrive</h2>
 <p>Keep the box session running, confirm <code>agent-browser stream enable</code> succeeded, and check <code>h5i browser status browser-demo</code>. At isolated tiers the viewer finds the namespace through the live session's process, so an exited shell leaves no namespace to enter. If the dev server is missing, inspect it inside the same shell instead of publishing a replacement on the host.</p>
 <h2 id="sources">Reference</h2>
-<ul><li><a href="/manual/#h5i-box-view">Browser and terminal viewer reference</a>.</li><li><a href="/manual/#h5i-browser">Browser session and control-lock commands</a>.</li><li><a href="/blog/prompt-injection-is-a-boundary-problem/">Why browser authority changes the injection threat model</a>.</li><li><a href="https://github.com/h5i-dev/h5i/tree/main/crates/h5i-browser-light">The local browser implementation</a>.</li></ul>""",
+<ul><li><a href="/manual/#h5i-box-view">Browser and terminal viewer reference</a>.</li><li><a href="/manual/#h5i-browser">Browser session and control-lock commands</a>.</li><li><a href="/blog/prompt-injection-is-a-boundary-problem/">Why browser authority changes the injection threat model</a>.</li><li><a href="https://github.com/h5i-dev/h5i/tree/main/crates/h5i-browser">The local browser implementation</a>.</li></ul>""",
     "faq": [
         ("Does h5i publish the box's browser port?", "No. h5i enters the box's network namespace by process id, connects from inside, and hands the socket back out through a loopback-only authenticated viewer."),
         ("Why do page references become stale after a handoff?", "A human can change navigation, focus, and DOM state. Invalidating old handles forces the agent to observe the new page before acting, preventing a stale reference from targeting the wrong element."),
@@ -898,7 +898,7 @@ INJECTION = {
 <p>Take a real profile and assume the agent has become adversarial. Ask it to enumerate readable host paths, reusable credentials, reachable internet hosts, reachable loopback services, Unix sockets, and direct write paths to accepted code. Do not actually exfiltrate data; inspect the resolved policy and exercise harmless denials.</p>
 <p>If the answer relies on “the agent would not do that,” the authority is still present. If the answer is “the syscall, packet, or export path is refused and the refusal is recorded,” the boundary can survive the model making the wrong semantic decision.</p>
 <h2 id="sources">Sources and further reading</h2>
-<ul><li><a href="/manual/#credentials">Credentials</a> and <a href="/manual/#af_unix-sockets">Unix sockets</a> in the manual.</li><li><a href="/guides/write-a-box-policy/">Write a box policy</a>, for expressing filesystem, network, and socket authority.</li><li><a href="/guides/watch-the-browser/">Watch the isolated browser</a>, for the fresh-profile and control-lock workflow.</li><li><a href="https://github.com/h5i-dev/h5i/blob/main/docs/credential-proxy-design.md">Credential proxy design</a>, including the origin-pinning and SSRF threat model.</li></ul>""",
+<ul><li><a href="/manual/#credentials">Credentials</a> and <a href="/manual/#af_unix-sockets">Unix sockets</a> in the manual.</li><li><a href="/guides/write-a-box-policy/">Write a box policy</a>, for expressing filesystem, network, and socket authority.</li><li><a href="/guides/watch-the-browser/">Watch the isolated browser</a>, for the fresh-profile and control-lock workflow.</li><li><a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-credential-proxy.md">Credential proxy design</a>, including the origin-pinning and SSRF threat model.</li></ul>""",
     "faq": [
         ("Does sandboxing prevent source code from reaching the model?", "No. A coding agent can include source in an allowed model request. Preventing that requires a self-hosted model or a policy with no model egress."),
         ("Are permission prompts still useful inside a box?", "They can improve usability and catch mistakes, but they are not the security boundary. A prompt-injected agent can approve or bypass its own application-level permissions; the box policy remains outside it."),

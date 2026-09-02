@@ -1,4 +1,4 @@
-//! Host-side *credential-injecting* egress proxy (see `docs/credential-proxy-design.md`): what
+//! Host-side *credential-injecting* egress proxy (see `docs/design/design-credential-proxy.md`): what
 //! lets an agent box authenticate to its provider API without the long-lived token ever
 //! entering the box.
 

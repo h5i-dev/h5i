@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-08-21",
-      "dateModified": "2026-08-30",
+      "dateModified": "2026-09-02",
       "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -178,7 +178,7 @@ $ h5i box log policy-check</code></pre></div></div>
 <h2 id="mistakes">Common policy mistakes</h2>
 <ul><li><strong>Granting all of HOME:</strong> this defeats the credential and configuration boundary. Seed only the runtime state the built-in profile needs.</li><li><strong>Using host networking to fix one registry:</strong> add the registry destination or a warm cache instead.</li><li><strong>Enabling Unix sockets by default:</strong> local sockets can carry file descriptors and ambient host authority.</li><li><strong>Choosing container because it sounds stronger:</strong> use it for image portability; choose supervised for packet-layer egress.</li><li><strong>Changing policy without recreating the box:</strong> existing boxes keep the policy digest they started with.</li></ul>
 <h2 id="sources">Reference</h2>
-<ul><li><a href="/manual/#policy">Complete policy reference and built-in profiles</a>.</li><li><a href="/manual/#credentials">Credential and secret grants</a>.</li><li><a href="/blog/choosing-agent-isolation/">The threat model behind the tier choice</a>.</li><li><a href="https://github.com/h5i-dev/h5i/blob/main/docs/credential-proxy-design.md">Credential proxy design and open limits</a>.</li></ul>
+<ul><li><a href="/manual/#policy">Complete policy reference and built-in profiles</a>.</li><li><a href="/manual/#credentials">Credential and secret grants</a>.</li><li><a href="/blog/choosing-agent-isolation/">The threat model behind the tier choice</a>.</li><li><a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-credential-proxy.md">Credential proxy design and open limits</a>.</li></ul>
 <h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>What happens if my machine cannot provide the requested tier?</summary><div class="faq-answer">Creation fails before a partial box is left behind. Explicit isolation requests are never silently downgraded.</div></details><details class="faq-item"><summary>Why is container egress weaker than supervised egress?</summary><div class="faq-answer">The container tier uses an HTTP/HTTPS proxy allowlist, so software that ignores proxy settings can bypass that L7 route. The supervised tier enforces destination access in a private network namespace at L3/L4.</div></details><details class="faq-item"><summary>Are memory and process limits enforced on macOS?</summary><div class="faq-answer">Not at the process and supervised tiers. h5i marks those values instead of claiming enforcement. Use container or microvm when a hard memory or process ceiling is required.</div></details></div>
 <a class="next-up" href="/blog/choosing-agent-isolation/"><span class="label">Design rationale</span><h3>Five tiers, five different promises</h3><p>Read the threat-model argument behind the ladder.</p></a>
 <div class="post-cta"><h3>Make authority reviewable</h3><p>A small policy file is easier to reason about than a trail of permission clicks.</p>

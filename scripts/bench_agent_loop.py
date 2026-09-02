@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure what an agent's *second* step costs, and every step after it.
 
-The engine comparison in `docs/design-browser.md` measures a cold read: launch,
+The engine comparison in `docs/design/design-browser.md` measures a cold read: launch,
 load a page, snapshot once, exit. That is the right shape for "how heavy is
 this browser", and it is the wrong shape for the thing agents actually do,
 which is open a page once and then read it, act on it, and read it again.
@@ -313,7 +313,7 @@ def measure_h5i(binary: str, url: str, steps: int, repeat: int, page: str) -> di
             session.close()
 
     return {
-        "engine": "h5i-browser-light",
+        "engine": "h5i-browser",
         "page": page,
         "open_s": opens,
         "lanes": lanes,
@@ -506,7 +506,7 @@ def report(rows: list[dict], refusals: dict[str, str], steps: int, repeat: int) 
     # The decomposition the whole benchmark exists for: how much of a step is
     # paid before the engine reads anything, and how much tracks the page.
     for row in rows:
-        if row["engine"] != "h5i-browser-light":
+        if row["engine"] != "h5i-browser":
             continue
         floor_samples = row["lanes"].get("floor (status)", [])
         floor = statistics.median(floor_samples) if floor_samples else 0.0
@@ -556,7 +556,7 @@ def main() -> int:
                 try:
                     rows.append(measure_h5i(args.bin, url, args.steps, args.repeat, page))
                 except Refused as refusal:
-                    refusals[f"h5i-browser-light / {page}"] = str(refusal)
+                    refusals[f"h5i-browser / {page}"] = str(refusal)
             if "chromium" in wanted:
                 try:
                     rows.append(

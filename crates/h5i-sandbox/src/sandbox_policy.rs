@@ -749,7 +749,7 @@ impl BrowserEngine {
             ),
             BrowserEngine::H5iLight => (
                 &["the `h5i-browser-light` binary"],
-                "cargo install --path crates/h5i-browser-light",
+                "cargo install --path crates/h5i-browser",
             ),
         }
     }

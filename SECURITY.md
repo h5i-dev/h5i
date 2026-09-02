@@ -161,7 +161,7 @@ The non-goals, which matter just as much:
   deny-list blocks the namespace syscalls it needs. The box is the boundary;
   Chrome's own is one layer you do not have.
 - Runtime detection observes; it never denies. The eBPF collector
-  (`[profile.X.detect]`, docs/design-detect.md D1–D14) reports what a box's
+  (`[profile.X.detect]`, docs/design/design-detect.md D1–D14) reports what a box's
   processes did. It contains nothing, and it is built so that it cannot: no
   `bpf_send_signal`, no `bpf_override_return`, no LSM program anywhere in it.
   Confinement stays with Landlock, seccomp, the network namespace and the
@@ -186,7 +186,7 @@ The non-goals, which matter just as much:
   `sudo`, and prints the command rather than running it, so the decision stays
   yours. A privilege-separated collector, a small setcap'd helper that owns the
   probe and streams events over a socket, is the right long-term shape and is
-  not built (docs/design-detect.md D13.1).
+  not built (docs/design/design-detect.md D13.1).
 - h5i does not guarantee that all secrets are detected, nor complete redaction
   of prompts, transcripts, or command output.
 - h5i does not guarantee a malicious repository cannot exploit your editor,

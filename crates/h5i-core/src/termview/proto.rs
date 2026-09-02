@@ -627,7 +627,7 @@ mod tests {
     fn what_the_engine_advertises_is_read_rather_than_inferred_from_its_name() {
         let m = parse(
             r#"{"type":"status","connected":true,"screencasting":true,
-                "engine":"h5i-browser-light","features":["hints","history"]}"#,
+                "engine":"h5i-browser","features":["hints","history"]}"#,
         )
         .unwrap();
         let ServerMessage::Status { features, .. } = m else {

@@ -27,7 +27,7 @@ A Cargo workspace. The `h5i` binary is at the repository root (so
 - `crates/h5i-core`: everything built on a box. `env.rs` is the lifecycle,
   `receipt.rs` and `redact.rs` the evidence, `export.rs` the output gate,
   `browser*.rs` the mediated browser, `server.rs` and `ui.rs` the console.
-- `crates/h5i-browser-light`: h5i's own browser engine. It exists because the
+- `crates/h5i-browser`: h5i's own browser engine. It exists because the
   engine being the HTTP client is what makes a browser receipt the network
   rather than an observation of it.
 - `web/`: the React sources for the `h5i ui` console.
@@ -199,7 +199,7 @@ Update documentation in the same change as the behavior.
   boundary, it changes there too.
 - `ROADMAP.md`: scope. What is in, what was cut, and why. Short on purpose; it
   is meant to be read in one sitting.
-- `docs/design-*.md`: the design behind each part, one file per part
+- `docs/design/*.md`: the design behind each part, one file per part
   (`design-browser.md`, `design-policy.md`, `design-runner.md`,
   `design-detect.md`). Live code cites their section numbers, so a section that
   moves needs its citations moved with it.

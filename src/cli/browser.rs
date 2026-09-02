@@ -46,7 +46,7 @@ const START_TIMEOUT: Duration = Duration::from_secs(30);
 /// Refuse an identity that lives in a file when the session runs in a box.
 #[cfg(feature = "identity")]
 fn refuse_a_file_identity_in_a_box(in_box: Option<&str>, selector: &str) -> anyhow::Result<()> {
-    let is_builtin = h5i_browser_light::identity::builtin(selector).is_some();
+    let is_builtin = h5i_browser::identity::builtin(selector).is_some();
     if in_box.is_none() || is_builtin || !std::path::Path::new(selector).exists() {
         return Ok(());
     }
@@ -1268,10 +1268,10 @@ fn start(
     let identity = {
         // A path cannot travel into a box, and this is the one place that can say so clearly.
         refuse_a_file_identity_in_a_box(opts.in_box.as_deref(), &opts.identity)?;
-        let identity = h5i_browser_light::identity::Identity::resolve(&opts.identity)
+        let identity = h5i_browser::identity::Identity::resolve(&opts.identity)
             .map_err(anyhow::Error::from)?;
         identity
-            .admit(&h5i_browser_light::Capabilities::with_script(opts.script))
+            .admit(&h5i_browser::Capabilities::with_script(opts.script))
             .map_err(anyhow::Error::from)?;
         if let Some(over) = identity.check_viewport(opts.width, opts.height) {
             anyhow::bail!(
@@ -2473,7 +2473,7 @@ fn via_helper(
         &site,
         &target,
         lang.as_deref(),
-        max_bytes.unwrap_or(h5i_browser_light::transcript::DEFAULT_MAX_BYTES),
+        max_bytes.unwrap_or(h5i_browser::transcript::DEFAULT_MAX_BYTES),
     )?;
 
     if json {
@@ -3436,12 +3436,12 @@ fn secret_variables(named: &[String]) -> anyhow::Result<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for raw in named {
         let name = raw.trim();
-        let full = if name.starts_with(h5i_browser_light::secrets::PREFIX) {
+        let full = if name.starts_with(h5i_browser::secrets::PREFIX) {
             name.to_string()
         } else {
-            format!("{}{name}", h5i_browser_light::secrets::PREFIX)
+            format!("{}{name}", h5i_browser::secrets::PREFIX)
         };
-        let suffix = &full[h5i_browser_light::secrets::PREFIX.len()..];
+        let suffix = &full[h5i_browser::secrets::PREFIX.len()..];
         if suffix.is_empty() || !suffix.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             anyhow::bail!(
                 "`--secret {raw}` is not the name of an environment variable. Name the \
@@ -3479,8 +3479,8 @@ fn secret_dir(root: &Path) -> PathBuf {
 /// clears the environment, and everything that is not deliberately passed stays
 /// out.
 fn single_process_switch() -> Vec<(String, String)> {
-    match std::env::var(h5i_browser_light::ipc::NO_SPLIT_VAR) {
-        Ok(value) => vec![(h5i_browser_light::ipc::NO_SPLIT_VAR.to_string(), value)],
+    match std::env::var(h5i_browser::ipc::NO_SPLIT_VAR) {
+        Ok(value) => vec![(h5i_browser::ipc::NO_SPLIT_VAR.to_string(), value)],
         Err(_) => Vec::new(),
     }
 }
