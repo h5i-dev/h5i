@@ -77,6 +77,48 @@ Both engines produce identical output on the script page. Caveats:
    engine had JavaScript (updated 2026/8/31). Memory roughly doubled since (31
    MB -> 52-66 MB): Boa and a 281 KiB prelude. Date a measurement.
 
+### The step after the first one
+
+The table above is a cold read: launch, load, snapshot once, exit. It is the
+right shape for "how heavy is this browser" and the wrong shape for what an
+agent does, which is open a page once and then read it, act on it, and read it
+again. Cold start dominates that table on both sides and is paid once.
+
+`scripts/bench_agent_loop.py` measures the rest of the session, with the page
+already open and the engine resident on both sides. Same machine, median of 10
+steps across 3 repetitions after a discarded warm-up. Chromium is driven by
+Playwright, which is a different build and a different driver from the
+`headless_shell` row above, so read the two tables against themselves rather
+than against each other.
+
+| per step | h5i small | chromium small | h5i large | chromium large |
+| --- | --- | --- | --- | --- |
+| snapshot | 17.9 ms | **10.7 ms** | **29.4 ms** | 37.3 ms |
+| snapshot --delta | 17.4 ms | not available | **27.0 ms** | not available |
+| click | **18.4 ms** | 38.2 ms | **23.6 ms** | 41.2 ms |
+
+Small is a six-line page; large fills the 500-line snapshot budget. What the
+numbers say, including the half that does not flatter this engine:
+
+1. **A verb costs about 7 ms before it reads anything.** h5i spends a process
+   launch per command by design, and Playwright holds its connection open. On
+   a small page that fixed cost is most of the difference, and Chromium reads
+   faster. On a large page it stops mattering.
+2. **Reading a large page is where the architecture shows.** 29.4 ms against
+   37.3 ms, and 27.0 ms if the agent asks what changed instead of what is
+   there. CDP has no delta, so an agent re-reads the whole accessibility tree
+   every step and pays for the page whether or not it moved.
+3. **Acting is consistently cheaper here**, roughly half, because a click
+   dispatches an event rather than running actionability checks over a
+   protocol.
+4. **The read path is not the bottleneck at this level.** Engine work per read
+   is 10.8 ms small and 22.3 ms large, against 0.18 ms for the walk and render
+   the Read IR made faster (`docs/design-h5i-ir.md`). The ~11 ms that separates
+   the two pages is roughly 0.1 ms per ref, which is the shape of the durable
+   CSS selector the snapshot verb computes for every ref, each verified with a
+   full-document query. That is a hypothesis the arithmetic fits, not something
+   this benchmark has isolated, and it is the next thing to measure.
+
 ## What it is not
 
 The short version is below; B4 further down carries the full list of surfaces
