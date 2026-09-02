@@ -136,6 +136,13 @@ toml = { workspace = true, optional = true }
 [dev-dependencies]
 tempfile = "3.8"
 
+# Phase 0 of `docs/design-h5i-ir.md`: the read baseline. `harness = false`
+# because the numbers wanted are a median and an allocation count, which is
+# std, and a criterion build costs more than the measurement is worth.
+[[bench]]
+name = "read"
+harness = false
+
 # `_exit`, for one call: the renderer's "my broker is gone" stop. See
 # `BrokerClient::over` in `ipc.rs` for why `std::process::exit` is not enough
 # there. Unix only, because the renderer is only ever spawned over a socket

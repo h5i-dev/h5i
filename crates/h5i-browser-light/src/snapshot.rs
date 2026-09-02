@@ -4,9 +4,11 @@ use blitz_dom::node::Node;
 use blitz_dom::{local_name, BaseDocument};
 use serde::{Deserialize, Serialize};
 
+use crate::read_ir::ReadRole;
+
 /// How deep to walk before giving up. Documents nest far deeper than they
 /// read; past this the outline is noise.
-const MAX_DEPTH: usize = 24;
+pub(crate) const MAX_DEPTH: usize = 24;
 
 /// Where page-supplied content starts in a rendered snapshot.
 pub const CONTENT_BEGIN: &str = "--- BEGIN UNTRUSTED PAGE CONTENT ---";
@@ -109,13 +111,45 @@ pub struct Delta {
 /// A judgement, and stated as one: with a quarter of the page still standing
 /// there is something an agent recognises; below that, the difference *is* the
 /// page and the full outline is the smaller answer.
-const REPLACED_SURVIVAL: f64 = 0.25;
+pub(crate) const REPLACED_SURVIVAL: f64 = 0.25;
 
 impl Snapshot {
     /// This reading, expressed as its difference from an earlier one.
     pub fn delta(&self, previous: &Snapshot) -> Delta {
         let url_changed = self.url != previous.url;
         let title_changed = self.title != previous.title;
+
+        // The commonest step in an agent loop, and until this it was the most
+        // expensive thing in a read: an agent that clicked something inert paid
+        // for two identity vectors and a quadratic table to be told the page
+        // had not moved. Nothing below can report anything else when every line
+        // matches, so the answer is assembled directly.
+        //
+        // Not a heuristic and not an approximation. `line_identity` is exactly
+        // these four fields, a longest common subsequence of a sequence with
+        // itself is the whole sequence, and `survival` is computed the same way
+        // on both paths, including the empty-page case that calls a page with
+        // no lines replaced.
+        if self.lines.len() == previous.lines.len()
+            && std::iter::zip(&self.lines, &previous.lines).all(|(a, b)| same_identity(a, b))
+        {
+            let unchanged = self.lines.len();
+            let survival = if previous.lines.is_empty() {
+                0.0
+            } else {
+                1.0
+            };
+            return Delta {
+                url: self.url.clone(),
+                replaced: url_changed || survival < REPLACED_SURVIVAL,
+                url_changed,
+                title_changed,
+                added: Vec::new(),
+                removed: Vec::new(),
+                unchanged,
+                notes: self.notes.clone(),
+            };
+        }
 
         let before: Vec<String> = previous.lines.iter().map(line_identity).collect();
         let after: Vec<String> = self.lines.iter().map(line_identity).collect();
@@ -238,6 +272,15 @@ fn push_line_body(out: &mut String, line: &Line) {
 /// position, so an element that kept its text but shifted down the page would
 /// otherwise read as a removal and an addition. Every insertion near the top
 /// would renumber the rest of the page and report it all as new.
+/// [`line_identity`], asked rather than spelled out.
+///
+/// The same four fields, compared in place. Kept beside its string form so the
+/// two cannot drift: if a field is ever added to the identity, both of these
+/// have to learn about it, and the differential test below fails until they do.
+fn same_identity(a: &Line, b: &Line) -> bool {
+    a.depth == b.depth && a.role == b.role && a.text == b.text && a.href == b.href
+}
+
 fn line_identity(line: &Line) -> String {
     format!(
         "{}\u{1f}{}\u{1f}{}\u{1f}{}",
@@ -524,9 +567,11 @@ impl Walker<'_> {
         match descriptor {
             Some(Descriptor {
                 role,
+                level,
                 takes_ref,
                 is_leaf,
             }) => {
+                let role_word = role.as_str(level);
                 // A wrapper that has swallowed a block of structure is not a leaf,
                 // whatever its tag says. It keeps only the words it holds directly and
                 // lets what is under it speak, which is both a truer reading and a
@@ -535,8 +580,10 @@ impl Walker<'_> {
                 // Not for a ref-taking element: its name is how an agent tells one
                 // control from another. Not for `code`, whose whole point is that its
                 // text is carried verbatim.
-                let hoisting =
-                    is_leaf && !takes_ref && role != "code" && hoists_a_block(self.doc, node);
+                let hoisting = is_leaf
+                    && !takes_ref
+                    && role != ReadRole::Code
+                    && hoists_a_block(self.doc, node);
 
                 let name = if hoisting {
                     direct_text(self.doc, node)
@@ -588,7 +635,7 @@ impl Walker<'_> {
                         self.refs.push(RefEntry {
                             id: id.clone(),
                             node_id,
-                            role: role.to_string(),
+                            role: role_word.to_string(),
                             name: name.clone(),
                             href: href.clone(),
                         });
@@ -598,11 +645,11 @@ impl Walker<'_> {
                     };
 
                     // A `<pre>` keeps its line breaks, as one outline line per source line.
-                    if role == "code" && !preformatted_lines.is_empty() {
+                    if role == ReadRole::Code && !preformatted_lines.is_empty() {
                         for piece in &preformatted_lines {
                             self.push(Line {
                                 depth,
-                                role: role.to_string(),
+                                role: role_word.to_string(),
                                 text: piece.clone(),
                                 reference: reference.clone(),
                                 href: href.clone(),
@@ -611,7 +658,7 @@ impl Walker<'_> {
                     } else {
                         self.push(Line {
                             depth,
-                            role: role.to_string(),
+                            role: role_word.to_string(),
                             text: name,
                             reference,
                             href,
@@ -666,11 +713,13 @@ impl Walker<'_> {
     }
 }
 
-struct Descriptor {
-    role: &'static str,
-    takes_ref: bool,
+pub(crate) struct Descriptor {
+    pub(crate) role: ReadRole,
+    /// Heading level, and nothing else. Meaningless for every other role.
+    pub(crate) level: u8,
+    pub(crate) takes_ref: bool,
     /// Leaves carry their own text and are not recursed into.
-    is_leaf: bool,
+    pub(crate) is_leaf: bool,
 }
 
 /// Describe one node the way a snapshot walk would have described it.
@@ -685,7 +734,7 @@ pub fn entry_for_node(doc: &BaseDocument, node_id: usize, named_as: &str) -> Opt
     Some(RefEntry {
         id: named_as.to_string(),
         node_id,
-        role: descriptor.role.to_string(),
+        role: descriptor.role.as_str(descriptor.level).to_string(),
         name: accessible_name(&tag, node),
         href: attr_of(node, "href")
             .or_else(|| attr_of(node, "src"))
@@ -694,31 +743,9 @@ pub fn entry_for_node(doc: &BaseDocument, node_id: usize, named_as: &str) -> Opt
     })
 }
 
-/// Roles that structure a page rather than sit inside a sentence.
-///
-/// Used for one question only: whether a semantic leaf is really a leaf, or a
-/// wrapper that has swallowed a block of structure below it. See
-/// [`hoists_a_block`].
-fn is_block_role(role: &str) -> bool {
-    matches!(
-        role,
-        "heading1"
-            | "heading2"
-            | "heading3"
-            | "heading4"
-            | "heading5"
-            | "heading6"
-            | "paragraph"
-            | "listitem"
-            | "cell"
-            | "quote"
-            | "code"
-    )
-}
-
 /// Whether this node's text is really its own, or belongs to a block of structure underneath
 /// it.
-fn hoists_a_block(doc: &BaseDocument, node: &Node) -> bool {
+pub(crate) fn hoists_a_block(doc: &BaseDocument, node: &Node) -> bool {
     let mut stack: Vec<usize> = node.children.clone();
     while let Some(id) = stack.pop() {
         let Some(child) = doc.get_node(id) else {
@@ -734,7 +761,7 @@ fn hoists_a_block(doc: &BaseDocument, node: &Node) -> bool {
             continue;
         }
         match describe(tag, child) {
-            Some(descriptor) if is_block_role(descriptor.role) => return true,
+            Some(descriptor) if descriptor.role.is_block() => return true,
             // A described inline element speaks for itself and stops the
             // search there: what is inside a link is the link's name.
             Some(_) => continue,
@@ -751,7 +778,7 @@ fn hoists_a_block(doc: &BaseDocument, node: &Node) -> bool {
 /// The other half of [`hoists_a_block`]: once the children are going to speak
 /// for themselves, the wrapper must say only what is left, or the same words
 /// appear on two lines.
-fn direct_text(doc: &BaseDocument, node: &Node) -> String {
+pub(crate) fn direct_text(doc: &BaseDocument, node: &Node) -> String {
     let mut out = String::new();
     for id in node.children.iter().copied() {
         let Some(child) = doc.get_node(id) else {
@@ -768,7 +795,7 @@ fn direct_text(doc: &BaseDocument, node: &Node) -> String {
 ///
 /// The decision itself lives in [`role_for`], which takes plain values rather
 /// than a `Node`, so every branch is testable without standing up a document.
-fn describe(tag: &str, node: &Node) -> Option<Descriptor> {
+pub(crate) fn describe(tag: &str, node: &Node) -> Option<Descriptor> {
     // `aria-hidden="true"` removes an element from the accessibility tree, and
     // this outline *is* an accessibility tree. Honoured here rather than in the
     // walk so the locator gets it too: an element hidden from a screen reader
@@ -804,7 +831,7 @@ fn describe(tag: &str, node: &Node) -> Option<Descriptor> {
 /// Bounded by the same depth the walk is: a document nested deeper than that is
 /// past the point where this outline reports anything anyway, and an unbounded
 /// walk here would be a per-node cost on a hostile tree.
-fn hidden_from_assistive_tech(node: &Node) -> bool {
+pub(crate) fn hidden_from_assistive_tech(node: &Node) -> bool {
     let is_hidden = |candidate: &Node| {
         attr_of(candidate, "aria-hidden").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"))
     };
@@ -836,22 +863,30 @@ fn descriptor_for_aria_role(role: &str) -> Option<Descriptor> {
     let d = |role, takes_ref, is_leaf| {
         Some(Descriptor {
             role,
+            level: 0,
             takes_ref,
             is_leaf,
         })
     };
     match role {
-        "button" => d("button", true, true),
-        "link" => d("link", true, true),
-        "checkbox" | "switch" => d("checkbox", true, true),
-        "radio" => d("radio", true, true),
-        "textbox" | "searchbox" => d("textbox", true, true),
-        "combobox" | "listbox" => d("combobox", true, false),
-        "img" | "image" => d("image", true, true),
-        "heading" => d("heading2", false, true),
-        "paragraph" => d("paragraph", false, true),
-        "listitem" => d("listitem", false, true),
-        "cell" | "gridcell" => d("cell", false, true),
+        "button" => d(ReadRole::Button, true, true),
+        "link" => d(ReadRole::Link, true, true),
+        "checkbox" | "switch" => d(ReadRole::Checkbox, true, true),
+        "radio" => d(ReadRole::Radio, true, true),
+        "textbox" | "searchbox" => d(ReadRole::Textbox, true, true),
+        "combobox" | "listbox" => d(ReadRole::Combobox, true, false),
+        "img" | "image" => d(ReadRole::Image, true, true),
+        // No level to take it from, so the middle of the range, which is what
+        // this reported before the level moved out of the role name.
+        "heading" => Some(Descriptor {
+            role: ReadRole::Heading,
+            level: 2,
+            takes_ref: false,
+            is_leaf: true,
+        }),
+        "paragraph" => d(ReadRole::Paragraph, false, true),
+        "listitem" => d(ReadRole::ListItem, false, true),
+        "cell" | "gridcell" => d(ReadRole::Cell, false, true),
         _ => None,
     }
 }
@@ -869,52 +904,68 @@ pub fn role_and_name(doc: &BaseDocument, node_id: usize) -> Option<(String, Stri
     let element = node.element_data()?;
     let tag = element.name.local.as_ref().to_string();
     let descriptor = describe(&tag, node)?;
-    Some((descriptor.role.to_string(), accessible_name(&tag, node)))
+    Some((
+        descriptor.role.as_str(descriptor.level).to_string(),
+        accessible_name(&tag, node),
+    ))
 }
 
-fn role_for(tag: &str, input_type: Option<&str>, has_href: bool) -> Option<Descriptor> {
+pub(crate) fn role_for(
+    tag: &str,
+    input_type: Option<&str>,
+    has_href: bool,
+) -> Option<Descriptor> {
     let d = |role, takes_ref, is_leaf| {
         Some(Descriptor {
             role,
+            level: 0,
             takes_ref,
             is_leaf,
         })
     };
+    let heading = |level| {
+        Some(Descriptor {
+            role: ReadRole::Heading,
+            level,
+            takes_ref: false,
+            is_leaf: true,
+        })
+    };
 
     match tag {
-        "h1" => d("heading1", false, true),
-        "h2" => d("heading2", false, true),
-        "h3" => d("heading3", false, true),
-        "h4" => d("heading4", false, true),
-        "h5" => d("heading5", false, true),
-        "h6" => d("heading6", false, true),
-        "p" => d("paragraph", false, true),
-        "li" => d("listitem", false, true),
-        "td" | "th" => d("cell", false, true),
-        "label" => d("label", false, true),
-        "pre" | "code" => d("code", false, true),
-        "blockquote" => d("quote", false, true),
+        "h1" => heading(1),
+        "h2" => heading(2),
+        "h3" => heading(3),
+        "h4" => heading(4),
+        "h5" => heading(5),
+        "h6" => heading(6),
+        "p" => d(ReadRole::Paragraph, false, true),
+        "li" => d(ReadRole::ListItem, false, true),
+        "td" | "th" => d(ReadRole::Cell, false, true),
+        "label" => d(ReadRole::Label, false, true),
+        "pre" | "code" => d(ReadRole::Code, false, true),
+        "blockquote" => d(ReadRole::Quote, false, true),
 
         // Actionable: these are what a ref is for.
         "a" => {
             if has_href {
-                d("link", true, true)
+                d(ReadRole::Link, true, true)
             } else {
                 None
             }
         }
-        "button" => d("button", true, true),
-        "select" => d("combobox", true, false),
-        "textarea" => d("textbox", true, true),
-        "img" => d("image", true, true),
+        "button" => d(ReadRole::Button, true, true),
+        "select" => d(ReadRole::Combobox, true, false),
+        "textarea" => d(ReadRole::Textbox, true, true),
+        "img" => d(ReadRole::Image, true, true),
         "input" => match input_type.unwrap_or("text") {
             // A snapshot full of hidden CSRF fields spends the agent's budget
             // on controls it cannot use.
             "hidden" => None,
-            "button" | "submit" | "reset" => d("button", true, true),
-            "checkbox" => d("checkbox", true, true),
-            "radio" => d("radio", true, true),
-            _ => d("textbox", true, true),
+            "button" | "submit" | "reset" => d(ReadRole::Button, true, true),
+            "checkbox" => d(ReadRole::Checkbox, true, true),
+            "radio" => d(ReadRole::Radio, true, true),
+            _ => d(ReadRole::Textbox, true, true),
         },
 
         _ => None,
@@ -926,7 +977,7 @@ fn role_for(tag: &str, input_type: Option<&str>, has_href: bool) -> Option<Descr
 /// Deliberately string-based rather than `local_name!`: that macro only
 /// resolves atoms markup5ever interned ahead of time, and this needs
 /// `aria-label` and `placeholder` as readily as `href`.
-fn attr_of<'a>(node: &'a Node, name: &str) -> Option<&'a str> {
+pub(crate) fn attr_of<'a>(node: &'a Node, name: &str) -> Option<&'a str> {
     node.attrs()?
         .iter()
         .find(|attr| attr.name.local.as_ref() == name)
@@ -958,7 +1009,7 @@ fn selected_option(node: &Node) -> Option<String> {
 }
 
 /// The accessible name, computed once and used everywhere.
-fn accessible_name(tag: &str, node: &Node) -> String {
+pub(crate) fn accessible_name(tag: &str, node: &Node) -> String {
     // `aria-labelledby` first, which needs the document to resolve the ids it
     // names. It beats everything, including a label the element carries
     // itself: it is the most specific thing an author can say.
@@ -1118,7 +1169,7 @@ fn label_for(node: &Node) -> Option<String> {
 /// nesting, so the leading run is preserved while interior runs and the
 /// trailing edge are tidied. Tabs become spaces so a line's width does not
 /// depend on how the reader's terminal is configured.
-fn collapse_keeping_indent(line: &str) -> String {
+pub(crate) fn collapse_keeping_indent(line: &str) -> String {
     let body = line.trim_start();
     let indent_width = line.len() - body.len();
     let indent = line[..indent_width].replace('\t', "    ");
@@ -1130,7 +1181,7 @@ fn collapse_keeping_indent(line: &str) -> String {
     }
 }
 
-fn find_title(doc: &BaseDocument) -> Option<String> {
+pub(crate) fn find_title(doc: &BaseDocument) -> Option<String> {
     doc.tree().iter().find_map(|(_, node)| {
         if node.data.is_element_with_tag_name(&local_name!("title")) {
             let text = collapse(&node.text_content());
@@ -1166,7 +1217,7 @@ pub(crate) fn one_line(input: &str) -> String {
 /// `char::is_control` is false for every one of them, so the pass above would
 /// let them through. Only the overrides, embeddings and isolates are dropped;
 /// `U+200C`/`U+200D` carry no reordering power and are ordinary text.
-fn is_bidi_control(c: char) -> bool {
+pub(crate) fn is_bidi_control(c: char) -> bool {
     matches!(c,
         '\u{200E}' | '\u{200F}'
         | '\u{202A}'..='\u{202E}'
@@ -1268,7 +1319,7 @@ mod tests {
         // `<a name="x">` is a bookmark target, not something to click, and
         // giving it a ref invites an agent to try.
         assert!(role_for("a", None, false).is_none());
-        assert_eq!(role_for("a", None, true).unwrap().role, "link");
+        assert_eq!(role_for("a", None, true).unwrap().role, ReadRole::Link);
     }
 
     #[test]
@@ -1283,7 +1334,8 @@ mod tests {
         let heading = role_for("h1", None, false).expect("h1 has a role");
         assert!(heading.is_leaf);
         assert!(!heading.takes_ref, "a heading is not actionable");
-        assert_eq!(heading.role, "heading1");
+        assert_eq!(heading.role, ReadRole::Heading);
+        assert_eq!(heading.role.as_str(heading.level), "heading1");
     }
 
     #[test]

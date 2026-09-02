@@ -91,8 +91,20 @@ pub fn run(workdir: &Path, name: &str, args: &Value) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    /// A workspace of this test's own.
+    ///
+    /// Per test, not per process. `cargo test` runs a binary's tests as threads
+    /// in one process, so keying this on the process id alone handed every test
+    /// the same directory, and the first thing each of them does is delete it.
+    /// Whichever test lost that race failed on its next write with a bare "No
+    /// such file or directory", naming neither the race nor the other test.
+    /// The counter keeps the tests apart and the process id keeps two
+    /// concurrent `cargo test` runs apart.
     fn tmpdir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("h5i-agent-tools-test-{}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir()
+            .join(format!("h5i-agent-tools-test-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

@@ -253,6 +253,28 @@ pub(crate) fn matches_within(
     out
 }
 
+/// The first match in document order, stopping there.
+///
+/// The same matcher and the same selector list as [`matches_within`], asked a
+/// narrower question. Stylo's `QueryFirst` sets
+/// `should_stop_after_first_match`, so a selector whose target is early in the
+/// document costs a fraction of the full walk; one whose target is last costs
+/// the same. Document-scoped only, which is the shape every caller needs.
+pub(crate) fn first_match_in_document(
+    doc: &blitz_dom::BaseDocument,
+    selector: &str,
+) -> Option<usize> {
+    let list = doc.try_parse_selector_list(selector).ok()?;
+    let mut found: Option<&blitz_dom::Node> = None;
+    style::dom_apis::query_selector::<&blitz_dom::Node, style::dom_apis::QueryFirst>(
+        doc.root_node(),
+        &list,
+        &mut found,
+        style::dom_apis::MayUseInvalidation::Yes,
+    );
+    found.map(|node| node.id)
+}
+
 /// Depth-first over the descendants of `id`, in document order.
 ///
 /// The scope itself is deliberately not tested: `element.querySelector` is

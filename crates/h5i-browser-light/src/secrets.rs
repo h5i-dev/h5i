@@ -147,13 +147,56 @@ impl Secrets {
     /// `$H5I_SECRET_A2` and leaves the `2` in the clear. A partial disclosure
     /// that looks like a successful redaction.
     pub fn redact(&self, text: &str) -> String {
+        match self.redactable() {
+            // Nothing to look for. Said here rather than left to the loop
+            // because the caller is a snapshot reply, which is thousands of
+            // strings, and the old shape copied every one of them to hand back
+            // a string it had not changed.
+            pairs if pairs.is_empty() => text.to_string(),
+            pairs => Self::apply(&pairs, text),
+        }
+    }
+
+    /// The same, over many strings, sorting the secrets once instead of once
+    /// per string.
+    ///
+    /// This is the shape the callers actually use: `redact_reply` hands over
+    /// every string in a reply at once. Building and sorting the candidate list
+    /// per string made a reply's cost quadratic in the wrong thing, the number
+    /// of fields rather than the number of secrets.
+    pub fn redact_all(&self, texts: &[String]) -> Vec<String> {
+        let pairs = self.redactable();
+        if pairs.is_empty() {
+            return texts.to_vec();
+        }
+        texts.iter().map(|text| Self::apply(&pairs, text)).collect()
+    }
+
+    /// Whether any stored value is long enough to be worth looking for.
+    ///
+    /// Exactly the condition under which [`Self::redact`] would replace
+    /// anything, so a caller that skips the work when this is false skips
+    /// nothing that would have changed. Short values are excluded for the
+    /// reason `MIN_REDACTABLE` exists: a two-character secret matches
+    /// everywhere and redacting it destroys the reply instead of protecting it.
+    pub fn has_redactable(&self) -> bool {
+        self.by_name
+            .values()
+            .any(|value| value.len() >= MIN_REDACTABLE)
+    }
+
+    /// Candidate values, longest first.
+    fn redactable(&self) -> Vec<(&String, &String)> {
         let mut pairs: Vec<(&String, &String)> = self
             .by_name
             .iter()
             .filter(|(_, value)| value.len() >= MIN_REDACTABLE)
             .collect();
         pairs.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then_with(|| a.0.cmp(b.0)));
+        pairs
+    }
 
+    fn apply(pairs: &[(&String, &String)], text: &str) -> String {
         let mut out = text.to_string();
         for (name, value) in pairs {
             if out.contains(value.as_str()) {
@@ -185,6 +228,76 @@ impl Resolved {
 
 #[cfg(test)]
 mod tests {
+    /// The skip has to be exactly as conservative as the work it skips.
+    ///
+    /// `has_redactable` is what lets a reply avoid being taken apart and put
+    /// back together. If it ever answered `false` while `redact` would have
+    /// replaced something, that is a credential in a reply, so the two are
+    /// checked against each other rather than trusted to agree.
+    #[test]
+    fn the_skip_agrees_with_the_work_it_skips() {
+        let cases: Vec<Vec<(&str, &str)>> = vec![
+            vec![],
+            vec![("H5I_SECRET_A", "")],
+            vec![("H5I_SECRET_A", "abc")],
+            vec![("H5I_SECRET_A", "abcd")],
+            vec![("H5I_SECRET_A", "ab"), ("H5I_SECRET_B", "cd")],
+            vec![("H5I_SECRET_A", "ab"), ("H5I_SECRET_B", "hunter2")],
+        ];
+        let corpus = "abc abcd ab cd hunter2 nothing to see";
+        for case in cases {
+            let store = Secrets::from_pairs(&case);
+            let changed = store.redact(corpus) != corpus;
+            assert!(
+                !changed || store.has_redactable(),
+                "{case:?} changed the text while claiming nothing to redact"
+            );
+            if !store.has_redactable() {
+                assert_eq!(
+                    store.redact(corpus),
+                    corpus,
+                    "{case:?} claims nothing to redact but changed the text"
+                );
+            }
+        }
+    }
+
+    /// The batch and the single have to answer the same thing, since the batch
+    /// is what a reply goes through and the single is what the tests read.
+    #[test]
+    fn redacting_many_matches_redacting_each() {
+        let store = Secrets::from_pairs(&[
+            ("H5I_SECRET_TOKEN", "hunter2"),
+            ("H5I_SECRET_LONG", "hunter2-extended"),
+        ]);
+
+        let texts: Vec<String> = [
+            "nothing here",
+            "a hunter2 in the middle",
+            "hunter2-extended wins over hunter2",
+            "",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        let batch = store.redact_all(&texts);
+        let one_by_one: Vec<String> = texts.iter().map(|t| store.redact(t)).collect();
+        assert_eq!(batch, one_by_one);
+        // ...and it really did redact, so this is not passing on two no-ops.
+        assert!(batch[1].contains("$H5I_SECRET_TOKEN"), "{batch:?}");
+        assert!(batch[2].contains("$H5I_SECRET_LONG"), "{batch:?}");
+    }
+
+    /// With nothing stored, the batch hands back what it was given.
+    #[test]
+    fn an_empty_store_changes_nothing() {
+        let store = Secrets::default();
+        assert!(!store.has_redactable());
+        let texts = vec!["hunter2".to_string(), "anything".to_string()];
+        assert_eq!(store.redact_all(&texts), texts);
+    }
+
     use super::*;
 
     fn secrets() -> Secrets {

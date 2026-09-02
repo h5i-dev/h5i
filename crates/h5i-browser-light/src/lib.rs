@@ -18,6 +18,7 @@ pub mod markdown;
 pub mod ipc;
 pub mod net;
 pub mod policy;
+pub mod read_ir;
 pub mod receipt;
 pub mod replay;
 pub mod script;

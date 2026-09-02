@@ -77,6 +77,139 @@ Both engines produce identical output on the script page. Caveats:
    engine had JavaScript (updated 2026/8/31). Memory roughly doubled since (31
    MB -> 52-66 MB): Boa and a 281 KiB prelude. Date a measurement.
 
+### The step after the first one
+
+The table above is a cold read: launch, load, snapshot once, exit. It is the
+right shape for "how heavy is this browser" and the wrong shape for what an
+agent does, which is open a page once and then read it, act on it, and read it
+again. Cold start dominates that table on both sides and is paid once.
+
+`scripts/bench_agent_loop.py` measures the rest of the session, with the page
+already open and the engine resident on both sides. Same machine, median of 10
+steps across 3 repetitions after a discarded warm-up. Chromium is driven by
+Playwright, which is a different build and a different driver from the
+`headless_shell` row above, so read the two tables against themselves rather
+than against each other.
+
+| per step | h5i small | chromium small | h5i large | chromium large |
+| --- | --- | --- | --- | --- |
+| snapshot | 17.6 ms | **10.1 ms** | **18.3 ms** | 33.7 ms |
+| snapshot --delta | 17.8 ms | not available | **19.3 ms** | not available |
+| click | **19.7 ms** | 42.0 ms | **27.5 ms** | 40.4 ms |
+
+Small is a six-line page; large fills the 500-line snapshot budget. What the
+numbers say, including the half that does not flatter this engine:
+
+1. **A verb costs about 7 ms before it reads anything.** h5i spends a process
+   launch per command by design, and Playwright holds its connection open. On
+   a small page that fixed cost is most of the difference, and Chromium reads
+   faster. On a large page it stops mattering.
+2. **Reading a large page is where the architecture shows.** 18.3 ms against
+   33.7 ms, and the large page now costs about what the small one does, which
+   is the more interesting half: a step's cost has stopped tracking the size of
+   the page. CDP has no delta either, so an agent driving it re-reads the whole
+   accessibility tree every step and pays for the page whether or not it
+   moved.
+3. **Acting is consistently cheaper here**, roughly half, because a click
+   dispatches an event rather than running actionability checks over a
+   protocol.
+4. **The read path is not the bottleneck at this level, and neither is the
+   part that looked like it.** Engine work per read is 9.0 ms small and
+   10.5 ms large, against 0.18 ms for the walk and render the Read IR made
+   faster (`docs/design-h5i-ir.md`). The large one was 22.3 ms before the two
+   findings below, and the gap between the two pages has almost closed.
+
+The first guess at where the rest goes was the durable CSS selector the
+snapshot verb computes for every ref, each verified with a full-document
+query. `benches/read.rs` now times that pass on its own, and the guess was
+right about the mechanism and wrong about the size.
+
+It is real and it is per-ref: 4.5 ms for 72 refs, against 0.13 ms to read the
+whole page, and exactly 0.000 ms on the fixture that has no refs at all, which
+is the control that rules out a per-page explanation. It also said which refs
+cost what. A form control carries `name=`, resolves on its first try, and costs
+0.016 ms; a link carried nothing, so it walked its ancestors composing a
+candidate at each step, and cost 0.063 ms. Giving a link the one attribute it
+does have took that page from 4.5 ms to 2.7 ms, and improved the handle while
+it was there: `a[href="/pricing"]` says what the link is, where
+`section:nth-of-type(37) p a` says where it sat this morning.
+
+But 4.5 ms is a fifth of the 22.3 ms, not the whole of it, and the agent-loop
+table above does not move when it is halved. So the arithmetic that pointed
+here was pointing at something real and too small to be the answer.
+
+The rest took a profile, after three wrong guesses had been spent on
+arithmetic. `H5I_BROWSER_TIMING=1` makes a reply carry a breakdown of where
+its own time went, and on a page with three hundred refs it said this, of a
+31 ms round trip on the control socket:
+
+| phase | |
+| --- | --- |
+| reading the page | 0.2 ms |
+| every selector on it | 10.2 ms |
+| action log, replay step, redaction | 0.8 ms |
+| **writing the reply to the socket** | **19.9 ms** |
+
+The reply was written with `writeln!(socket, "{value}")`, which looks like one
+write and is not. A `serde_json::Value` renders through `Display`, emitting
+each brace, key, comma and string fragment as its own call, and the socket
+underneath is unbuffered, so each of those is a syscall. Thirty-five kilobytes
+of reply is thousands of them. Rendering to a `String` first and writing once
+took the session's own work from 28.8 ms to 15.8 ms, and the whole
+`h5i browser snapshot` from 44.3 ms to 30.5 ms.
+
+Two things are worth taking from that. The first is that the cost was not in
+reading the page at all, which is where three guesses in a row had put it. The
+second is why it stayed hidden: it scales with the size of the *reply*, and the
+fixture that separated lines from refs showed output size costing nothing,
+because a page with five hundred lines and no refs produces a reply with no
+`refs` array in it. Two variables that usually move together, and the one that
+mattered was the one the bisect had ruled out.
+
+`H5I_BROWSER_TIMING=1` reports both halves now, the client's on stderr and the
+session's in the reply, because the same question keeps being answered wrongly
+by reading the code. The next candidate it retired was `scrub`, the client's
+pass that walks every string in a reply and allocates one per value. That is
+exactly the shape of the thing that had just been found on the other side, and
+it measures at 0.3 ms.
+
+What is left of a 30.5 ms `h5i browser snapshot` on a page with three hundred
+refs: about 10 ms of selectors, about 5 ms of process launch before `main`
+runs, and the rest spread across the socket exchange and the session lookup.
+The selectors are near the floor of their design, and the launch is the price
+of one process per verb, so the next real move on either is architectural
+rather than a hot spot to find.
+
+"Near the floor of its design" was the next thing measured and found wrong.
+Every candidate is still verified against the real matcher, so a ref still
+costs a query, but it had been the *wrong* query. `resolves_to` asks whether a
+selector's first match is a particular element, and it was answered by
+collecting every match and reading the first one. Stylo will stop at the first
+if asked, and every selector this module produces on a real page resolves to
+exactly one element, so the full walk was finding one match and then
+confirming there were no others nobody had asked about.
+
+Measured before the change rather than after, on the selectors the module
+actually emits: 2.4x to 3.0x. Splitting the cache into a first-match map and an
+all-match map, and leaving the ancestor walk on the full query because it
+genuinely needs the count, delivered more than that, because the intermediate
+candidates got faster too.
+
+| selector pass | at the start | with `href` | with a first-match query |
+| --- | --- | --- | --- |
+| 72 refs (sections) | 4.50 ms | 2.70 ms | **0.82 ms** |
+| 151 refs (forms) | 2.39 ms | 2.40 ms | **1.09 ms** |
+| 300 refs (links) | | 9.81 ms | **4.09 ms** |
+
+End to end on the 300-ref page, the session's own work went from 28.8 ms to
+8.2 ms across the two changes in this section, and `h5i browser snapshot` from
+44.3 ms to 22.8 ms. Most of what is left is now the client: about 5 ms of
+process launch before `main` runs, and the socket exchange around it.
+
+Going below *this* floor does mean not recomputing selectors for a document
+that has not changed, which needs the retained tree and revision counter of
+`docs/design-h5i-ir.md` phase 2.
+
 ## What it is not
 
 The short version is below; B4 further down carries the full list of surfaces

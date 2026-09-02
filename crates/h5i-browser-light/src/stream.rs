@@ -915,8 +915,7 @@ fn serve_control<S: ControlStream>(stream: S, tx: &Sender<Command>) -> Result<()
             ))
             .reply(),
         };
-        writeln!(writer, "{answer}").map_err(H5iError::Io)?;
-        writer.flush().map_err(H5iError::Io)?;
+        write_line(&mut writer, &answer)?;
     }
     Ok(())
 }
@@ -982,6 +981,27 @@ pub fn ask(port: u16, request: &Value) -> Result<Value, H5iError> {
     exchange(stream, request)
 }
 
+/// Write one JSON value and its newline, in as few writes as possible.
+///
+/// `writeln!(socket, "{value}")` looks equivalent and is not. A
+/// `serde_json::Value` renders through `Display`, which writes each brace, key,
+/// comma and string fragment as its own call, and the socket underneath is
+/// unbuffered, so every one of those is a syscall. A snapshot reply for a page
+/// with three hundred refs is thirty-five kilobytes of that, and it measured at
+/// 20 ms of the 31 ms the whole verb took, more than reading the page and
+/// computing every selector on it put together.
+///
+/// Rendering to a `String` first costs one allocation and turns the write into
+/// one call.
+fn write_line<W: Write>(writer: &mut W, value: &Value) -> Result<(), H5iError> {
+    let mut body = serde_json::to_string(value).map_err(|e| {
+        H5iError::Metadata(format!("could not render a control message: {e}"))
+    })?;
+    body.push('\n');
+    writer.write_all(body.as_bytes()).map_err(H5iError::Io)?;
+    writer.flush().map_err(H5iError::Io)
+}
+
 /// One request, one answer, on a connection that is already open.
 ///
 /// Shared by [`ask`] and [`ask_unix`] so the client half of the protocol has one
@@ -990,8 +1010,7 @@ fn exchange<S: ControlStream>(stream: S, request: &Value) -> Result<Value, H5iEr
     let mut writer = stream
         .dup()
         .map_err(|e| H5iError::Metadata(format!("could not clone the socket: {e}")))?;
-    writeln!(writer, "{request}").map_err(H5iError::Io)?;
-    writer.flush().map_err(H5iError::Io)?;
+    write_line(&mut writer, request)?;
 
     let mut line = String::new();
     BufReader::new(stream)
@@ -1148,13 +1167,17 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
     // the thing the old implementation got exactly backwards (see
     // `ActionRecord::requests`).
     let mark = session.factory.broker().high_water();
+    let outer = std::time::Instant::now();
+    let t_begin = outer.elapsed();
 
     let (answer, changed) = control_verb(session, request);
+    let t_verb = outer.elapsed();
 
     let ok = answer.get("ok").and_then(Value::as_bool).unwrap_or(false);
     if ok {
         record_step(session, request, &answer);
     }
+    let t_step = outer.elapsed();
     let url = answer.get("url").and_then(Value::as_str);
     let error = answer.get("error").and_then(Value::as_str);
     let caused = session.factory.broker().since(mark);
@@ -1171,9 +1194,22 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             },
         );
     }
+    let t_finish = outer.elapsed();
     // Redacted after the action log is written, so the log keeps the engine's
     // own account and only what leaves for the agent is scrubbed.
-    (redact_reply(session.factory.broker().as_ref(), answer), changed)
+    let mut out = redact_reply(session.factory.broker().as_ref(), answer);
+    if timing_wanted()
+        && let Some(map) = out.get_mut("timing_ms").and_then(Value::as_object_mut)
+    {
+        let ms = |d: std::time::Duration| json!(d.as_secs_f64() * 1000.0);
+        map.insert("log_begin".into(), ms(t_begin));
+        map.insert("verb".into(), ms(t_verb - t_begin));
+        map.insert("record_step".into(), ms(t_step - t_verb));
+        map.insert("log_finish".into(), ms(t_finish - t_step));
+        map.insert("redact".into(), ms(outer.elapsed() - t_finish));
+        map.insert("recorded_total".into(), ms(outer.elapsed()));
+    }
+    (out, changed)
 }
 
 /// Put credential placeholders back into anything on its way out.
@@ -1182,6 +1218,19 @@ fn redact_reply(broker: &dyn crate::broker::Broker, value: Value) -> Value {
     // the reason for the shape: redaction happens where the values are, which
     // after the split is another process, and a round trip per string in a
     // snapshot reply would cost more than the snapshot did.
+    // Nothing to put back, so nothing to take apart. Without this a reply is
+    // walked, every string in it is cloned into a vector, and the tree is
+    // rebuilt from that vector unchanged. On a snapshot of a page with three
+    // hundred refs that is three copies of thirty-five kilobytes to arrive at
+    // the value we already had.
+    //
+    // Safe to skip only because the question is asked of the broker, which
+    // answers `true` unless it can enumerate what it holds and finds nothing
+    // long enough to redact.
+    if !broker.has_redactions() {
+        return value;
+    }
+
     let mut texts: Vec<String> = Vec::new();
     collect_strings(&value, &mut texts);
     if texts.is_empty() {
@@ -1243,6 +1292,17 @@ fn budget_of(session: &Session) -> Value {
 ///
 /// Returns the reply and whether the page moved, because the caller is the only
 /// thing that knows who else is watching.
+/// Whether a reply should carry a breakdown of where its time went.
+///
+/// Off unless `H5I_BROWSER_TIMING` is set, and read once. This exists because
+/// the cost of a verb turned out to be somewhere nobody guessed three times
+/// running, and an engine that cannot say where its own time went invites a
+/// fourth guess.
+fn timing_wanted() -> bool {
+    static WANTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *WANTED.get_or_init(|| std::env::var_os("H5I_BROWSER_TIMING").is_some())
+}
+
 fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
     let name = request.get("verb").and_then(Value::as_str).unwrap_or("");
     let Some(verb) = crate::verbs::Verb::from_name(name) else {
@@ -1418,7 +1478,9 @@ fn control_verb_inner(
         }
 
         Verb::Snapshot => {
+            let clock = std::time::Instant::now();
             let snapshot = session.page.snapshot();
+            let t_capture = clock.elapsed();
             let wants_delta = request.get("delta").and_then(Value::as_bool).unwrap_or(false);
 
             // The difference, when one was asked for and there is a baseline to
@@ -1432,7 +1494,9 @@ fn control_verb_inner(
             // page disagree without the agent having acted. Reported, because
             // the determinism this engine claims elsewhere genuinely does not
             // hold for a page holding one.
+            let t_delta = clock.elapsed();
             let sockets = session.page.open_sockets();
+            let t_sockets = clock.elapsed();
             let mut reply = json!({
                 "ok": true,
                 "url": session.page.url().to_string(),
@@ -1504,6 +1568,7 @@ fn control_verb_inner(
                     })
                     .collect::<Vec<_>>()
             };
+            let t_selectors = clock.elapsed();
             reply["refs"] = json!(selectors);
             if sockets > 0 {
                 reply["open_sockets"] = json!(sockets);
@@ -1519,6 +1584,16 @@ fn control_verb_inner(
             // a ref is only honoured against the reading it was minted in.
             session.served_refs = Some(snapshot.refs.clone());
             session.last_snapshot = Some(snapshot);
+            if timing_wanted() {
+                reply["timing_ms"] = json!({
+                    "capture": t_capture.as_secs_f64() * 1000.0,
+                    "delta": (t_delta - t_capture).as_secs_f64() * 1000.0,
+                    "sockets": (t_sockets - t_delta).as_secs_f64() * 1000.0,
+                    "selectors": (t_selectors - t_sockets).as_secs_f64() * 1000.0,
+                    "rest": (clock.elapsed() - t_selectors).as_secs_f64() * 1000.0,
+                    "total": clock.elapsed().as_secs_f64() * 1000.0,
+                });
+            }
             (reply, false)
         }
 

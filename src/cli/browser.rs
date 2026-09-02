@@ -2325,7 +2325,9 @@ fn verb_then(
     }
 
     let is_snapshot = argv.first().map(String::as_str) == Some("snapshot");
+    let clock = std::time::Instant::now();
     let mut answer = deliver(&session, &dir, argv)?;
+    let t_deliver = clock.elapsed();
 
     // A completed snapshot is what clears the stale-ref flag a human takeover
     // set. It has to happen here, after the answer came back, because the flag
@@ -2336,6 +2338,21 @@ fn verb_then(
         let _ = h5i_core::control::snapshotted(&dir);
     }
     bs::scrub(&mut answer);
+    let t_scrub = clock.elapsed();
+    // The client half of `H5I_BROWSER_TIMING`, whose server half puts a
+    // `timing_ms` object in the reply. Together they say which side of the
+    // socket a verb spent its time on, which is a question that has been
+    // answered wrongly by inspection several times: `scrub` walks every string
+    // in the reply and allocates one per value, which reads like the expensive
+    // thing and measures at a third of a millisecond.
+    if std::env::var_os("H5I_BROWSER_TIMING").is_some() {
+        eprintln!(
+            "client timing: deliver {:.2} ms (includes the session's own work), \
+             scrub {:.2} ms",
+            t_deliver.as_secs_f64() * 1000.0,
+            (t_scrub - t_deliver).as_secs_f64() * 1000.0,
+        );
+    }
 
     // A refusal is an answer, and `--json` promised the answer, so it is
     // printed either way. What must not happen is printing it and exiting 0: a

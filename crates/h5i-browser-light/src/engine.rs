@@ -2250,13 +2250,18 @@ impl Page {
     /// The document's visible text, for the case where the caller wants prose
     /// rather than structure.
     pub fn text(&self) -> String {
-        self.snapshot()
-            .lines
-            .iter()
-            .filter(|line| !line.text.is_empty())
-            .map(|line| line.text.clone())
-            .collect::<Vec<_>>()
-            .join("\n")
+        // Read through the IR rather than through a snapshot. This path wants
+        // the page's words and nothing else, and a `Snapshot` is a vector of
+        // owned strings plus a ref list plus the engine notes, every one of
+        // which was built here and thrown away. The words come out the same;
+        // `plain_text_reads_what_the_outline_reads` is what says so.
+        crate::read_ir::ReadTree::capture(
+            &self.doc.borrow(),
+            self.url.as_str(),
+            self.options.max_snapshot_lines,
+            self.ran_scripts,
+        )
+        .plain_text()
     }
 }
 
