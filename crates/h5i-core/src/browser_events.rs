@@ -51,7 +51,7 @@ impl Grade {
     }
 }
 
-/// Why the engine asked for a URL. Mirrors `h5i-browser-light`'s `Initiator`
+/// Why the engine asked for a URL. Mirrors `h5i-browser`'s `Initiator`
 /// by value, not by import: the log is a box-written artifact, so it is
 /// parsed as untrusted input rather than deserialized into the producer's own
 /// type. An initiator this build does not know becomes [`Initiator::Other`]
@@ -424,7 +424,7 @@ fn clean(s: &str) -> String {
     out
 }
 
-/// Parse `h5i-browser-light`'s request log (`H5I_BROWSER_RECEIPTS`, one JSON object per line)
+/// Parse `h5i-browser`'s request log (`H5I_BROWSER_RECEIPTS`, one JSON object per line)
 /// into request and response events.
 pub fn ingest_request_log(text: &str) -> Vec<Draft> {
     ingest_request_log_with(text, &std::collections::BTreeMap::new())

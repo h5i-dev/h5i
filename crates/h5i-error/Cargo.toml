@@ -15,7 +15,7 @@ toml = { workspace = true }
 # no runner has; vendoring builds it from source instead. h5i-core and
 # h5i-sandbox each carry the same line, and in a whole-workspace build feature
 # unification means any one of them covers the others — but `cargo build -p
-# h5i-browser-light` resolves features over that crate's graph alone, which
+# h5i-browser` resolves features over that crate's graph alone, which
 # holds git2 (via this crate) and neither of those two. That is exactly how the
 # v0.3.5 release built h5i and then failed to build the browser. Declared at the
 # root of the git2 dependency, it holds for every consumer and every invocation.

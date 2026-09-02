@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-08-21",
-      "dateModified": "2026-08-30",
+      "dateModified": "2026-09-02",
       "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -159,7 +159,7 @@
 <p>Take a real profile and assume the agent has become adversarial. Ask it to enumerate readable host paths, reusable credentials, reachable internet hosts, reachable loopback services, Unix sockets, and direct write paths to accepted code. Do not actually exfiltrate data; inspect the resolved policy and exercise harmless denials.</p>
 <p>If the answer relies on “the agent would not do that,” the authority is still present. If the answer is “the syscall, packet, or export path is refused and the refusal is recorded,” the boundary can survive the model making the wrong semantic decision.</p>
 <h2 id="sources">Sources and further reading</h2>
-<ul><li><a href="/manual/#credentials">Credentials</a> and <a href="/manual/#af_unix-sockets">Unix sockets</a> in the manual.</li><li><a href="/guides/write-a-box-policy/">Write a box policy</a>, for expressing filesystem, network, and socket authority.</li><li><a href="/guides/watch-the-browser/">Watch the isolated browser</a>, for the fresh-profile and control-lock workflow.</li><li><a href="https://github.com/h5i-dev/h5i/blob/main/docs/credential-proxy-design.md">Credential proxy design</a>, including the origin-pinning and SSRF threat model.</li></ul>
+<ul><li><a href="/manual/#credentials">Credentials</a> and <a href="/manual/#af_unix-sockets">Unix sockets</a> in the manual.</li><li><a href="/guides/write-a-box-policy/">Write a box policy</a>, for expressing filesystem, network, and socket authority.</li><li><a href="/guides/watch-the-browser/">Watch the isolated browser</a>, for the fresh-profile and control-lock workflow.</li><li><a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-credential-proxy.md">Credential proxy design</a>, including the origin-pinning and SSRF threat model.</li></ul>
 <h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Does sandboxing prevent source code from reaching the model?</summary><div class="faq-answer">No. A coding agent can include source in an allowed model request. Preventing that requires a self-hosted model or a policy with no model egress.</div></details><details class="faq-item"><summary>Are permission prompts still useful inside a box?</summary><div class="faq-answer">They can improve usability and catch mistakes, but they are not the security boundary. A prompt-injected agent can approve or bypass its own application-level permissions; the box policy remains outside it.</div></details></div>
 <a class="next-up" href="/guides/write-a-box-policy/"><span class="label">Build the boundary</span><h3>Write down what the agent may reach</h3><p>Create a fail-closed profile for filesystem, network, and resources.</p></a>
 <div class="post-cta"><h3>Design for the compromised session</h3><p>A narrow box makes prompt-injection success less consequential.</p>

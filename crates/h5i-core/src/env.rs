@@ -3913,7 +3913,7 @@ fn browser_env_inner(policy: &ResolvedPolicy, shimmed: bool) -> Vec<(String, Str
 /// The two variables here are the same two policy decisions the agent-browser
 /// path makes, expressed to a tool that reads them: what the page may reach,
 /// and where the request log goes. The receipts path is the interesting one:
-/// `h5i-browser-light` refuses to fetch when it cannot write its log, so
+/// `h5i-browser` refuses to fetch when it cannot write its log, so
 /// pointing it at the box's own spool is what makes that guarantee h5i's
 /// rather than the engine's alone.
 fn browser_light_env(policy: &ResolvedPolicy, allowed: &[String]) -> Vec<(String, String)> {

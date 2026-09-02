@@ -1932,7 +1932,7 @@ dependencies = [
  "clap_mangen",
  "console",
  "git2",
- "h5i-browser-light",
+ "h5i-browser",
  "h5i-core",
  "h5i-runner",
  "h5i-share",
@@ -1958,7 +1958,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "h5i-browser-light"
+name = "h5i-browser"
 version = "0.1.0"
 dependencies = [
  "anyrender",

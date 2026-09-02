@@ -22,11 +22,11 @@ essential to this one.
 
 | part | status | design |
 | --- | --- | --- |
-| browser engine | shipped. WPT core tier 75.7%; a production React build is not cleared | [`docs/design-browser.md`](docs/design-browser.md) |
-| in-terminal viewer | shipped, V1 to V8. Keyboard-driven, in the terminal or a browser | [`docs/design-interminal-browser.md`](docs/design-interminal-browser.md) |
-| policy resolution | P1 shipped; P2 shipped, opt-in; P3 and P4 designed, not built | [`docs/design-policy.md`](docs/design-policy.md) |
-| remote runner | R13.1 built. R13.2 to R13.4 are not | [`docs/design-runner.md`](docs/design-runner.md) |
-| runtime detection | built 2026-08-19, off by default at three layers | [`docs/design-detect.md`](docs/design-detect.md) |
+| browser engine | shipped. WPT core tier 75.7%; a production React build is not cleared | [`docs/design/design-browser.md`](docs/design/design-browser.md) |
+| in-terminal viewer | shipped, V1 to V8. Keyboard-driven, in the terminal or a browser | [`docs/design/design-interminal-browser.md`](docs/design/design-interminal-browser.md) |
+| policy resolution | P1 shipped; P2 shipped, opt-in; P3 and P4 designed, not built | [`docs/design/design-policy.md`](docs/design/design-policy.md) |
+| remote runner | R13.1 built. R13.2 to R13.4 are not | [`docs/design/design-runner.md`](docs/design/design-runner.md) |
+| runtime detection | built 2026-08-19, off by default at three layers | [`docs/design/design-detect.md`](docs/design/design-detect.md) |
 
 ## The three decisions the pivot rests on
 
@@ -49,9 +49,9 @@ essential to this one.
    that enforce an egress allowlist on Linux, so today only `microvm` does both.
    This is what makes the central claim reachable on an ordinary Linux box.
 2. WPT core tier to 80%. The next ~5,000 subtests are measured and ranked in
-   [`docs/design-browser.md`](docs/design-browser.md) B1.
+   [`docs/design/design-browser.md`](docs/design/design-browser.md) B1.
 3. R13.2 to R13.4: remote create, exec and export against a paired runner.
-   The design is settled; see [`docs/design-runner.md`](docs/design-runner.md).
+   The design is settled; see [`docs/design/design-runner.md`](docs/design/design-runner.md).
 4. More than one session per box. Needs per-session service names and stream
    files.
 
@@ -63,14 +63,14 @@ than re-argued.
 - The browser will never grow tabs, extensions, Service Workers, WebRTC, iframes
   or two dozen other surfaces. The full list, and what is simplified rather than
   absent, is B4 in
-  [`docs/design-browser.md`](docs/design-browser.md).
+  [`docs/design/design-browser.md`](docs/design/design-browser.md).
 - No vendored engine crates, by owner decision on 2026-08-28 (B4).
 - The runtime detector never denies anything: no `bpf_send_signal`, no LSM
   programs, no daemon, no privilege escalation of its own (D12 in
-  [`docs/design-detect.md`](docs/design-detect.md)).
+  [`docs/design/design-detect.md`](docs/design/design-detect.md)).
 - The runner MVP refuses profiles that need the secrets broker or the auth
   proxy, and any request past a runner's advertised capabilities (R12 in
-  [`docs/design-runner.md`](docs/design-runner.md)).
+  [`docs/design/design-runner.md`](docs/design/design-runner.md)).
 
 ## How to read the design set
 
@@ -79,11 +79,11 @@ of it whether you need the rest.
 
 | prefix | file | what it covers |
 | --- | --- | --- |
-| B1 to B5 | `docs/design-browser.md` | the engine, the session surface, and what it is not |
-| V1 to V8 | `docs/design-interminal-browser.md` | the viewers: the keymap, hints, latency, the lock |
-| P1 to P4 | `docs/design-policy.md` | resolution, the authority validator, mount realization |
-| R1 to R13 | `docs/design-runner.md` | placement, transport, the frame protocol, export |
-| D1 to D14 | `docs/design-detect.md` | the kernel-observed lane |
+| B1 to B5 | `docs/design/design-browser.md` | the engine, the session surface, and what it is not |
+| V1 to V8 | `docs/design/design-interminal-browser.md` | the viewers: the keymap, hints, latency, the lock |
+| P1 to P4 | `docs/design/design-policy.md` | resolution, the authority validator, mount realization |
+| R1 to R13 | `docs/design/design-runner.md` | placement, transport, the frame protocol, export |
+| D1 to D14 | `docs/design/design-detect.md` | the kernel-observed lane |
 
 Live code cites these section numbers. The prefixes do not collide with
 [`docs/roadmap-history.md`](docs/roadmap-history.md), which holds the superseded

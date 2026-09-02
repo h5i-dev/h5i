@@ -645,7 +645,7 @@ struct Read {
     /// automatic transcript mishears names, and a reader quoting one should
     /// know that before it quotes.
     automatic: bool,
-    cues: Vec<h5i_browser_light::transcript::Cue>,
+    cues: Vec<h5i_browser::transcript::Cue>,
     truncated: Option<String>,
     /// The language tags this video *has*, from the info file rather than from what happened to
     /// be downloaded.
@@ -715,7 +715,7 @@ fn collect(dir: &Path, want: Option<&str>, max_bytes: usize) -> Read {
             .clone()
             .is_some_and(|tag| is_automatic(&read, &tag));
         if let Ok(text) = std::fs::read_to_string(first) {
-            let (cues, truncated) = h5i_browser_light::transcript::parse(&text, max_bytes);
+            let (cues, truncated) = h5i_browser::transcript::parse(&text, max_bytes);
             read.cues = cues;
             read.truncated = truncated;
         }
@@ -927,7 +927,7 @@ fn evidence(site: &Site) -> String {
 /// out of a `<track>` is, and it reaches the same reader making the same
 /// decision. The fence is not about which program did the fetching.
 fn text(url: &str, site: &Site, read: &Read, note: &str) -> String {
-    use h5i_browser_light::snapshot::{CONTENT_BEGIN, CONTENT_END};
+    use h5i_browser::snapshot::{CONTENT_BEGIN, CONTENT_END};
 
     let mut out = format!("url: {url}\nsource: {NAME}\nevidence: {}\n", evidence(site));
     if let Some(title) = &read.title {
@@ -977,7 +977,7 @@ fn text(url: &str, site: &Site, read: &Read, note: &str) -> String {
         .map(|cue| {
             format!(
                 "[{}] {}",
-                h5i_browser_light::transcript::stamp(cue.start),
+                h5i_browser::transcript::stamp(cue.start),
                 cue.text
             )
         })
@@ -990,7 +990,7 @@ fn text(url: &str, site: &Site, read: &Read, note: &str) -> String {
     // by a helper is a stranger's words exactly as one parsed out of a
     // `<track>` is, and it reaches the same reader making the same decision;
     // fencing it with a weaker framing than the other lane would say otherwise.
-    out.push_str(h5i_browser_light::snapshot::UNTRUSTED_NOTE);
+    out.push_str(h5i_browser::snapshot::UNTRUSTED_NOTE);
     out.push_str("\n\n");
     out.push_str(&body.replace(CONTENT_BEGIN, "[fence marker removed]")
         .replace(CONTENT_END, "[fence marker removed]"));
@@ -1114,7 +1114,7 @@ mod tests {
     fn a_transcript_that_arrived_before_a_later_error_is_still_an_answer() {
         let read = Read {
             language: Some("en".into()),
-            cues: vec![h5i_browser_light::transcript::Cue {
+            cues: vec![h5i_browser::transcript::Cue {
                 start: 1.0,
                 end: 2.0,
                 text: "Hello.".into(),
@@ -1669,7 +1669,7 @@ mod tests {
     fn a_run_stopped_at_the_budget_keeps_what_it_had() {
         let read = Read {
             language: Some("en".into()),
-            cues: vec![h5i_browser_light::transcript::Cue {
+            cues: vec![h5i_browser::transcript::Cue {
                 start: 1.0,
                 end: 4.0,
                 text: "The first ten minutes.".into(),
@@ -1733,7 +1733,7 @@ mod tests {
         let read = Read {
             language: Some("en-orig".into()),
             automatic: true,
-            cues: vec![h5i_browser_light::transcript::Cue {
+            cues: vec![h5i_browser::transcript::Cue {
                 start: 1.0,
                 end: 2.0,
                 text: "Hello.".into(),

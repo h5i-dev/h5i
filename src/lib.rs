@@ -293,7 +293,7 @@ pub fn run() -> anyhow::Result<()> {
             // that failed to load has to be able to say so with a status the
             // caller can read.
             let argv = std::iter::once(std::ffi::OsString::from("h5i __engine")).chain(args);
-            h5i_browser_light::cli::main(argv);
+            h5i_browser::cli::main(argv);
         }
         #[cfg(feature = "browser")]
         Commands::Browser { action } => cli::browser::run(action)?,
