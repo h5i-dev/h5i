@@ -92,9 +92,10 @@ The workbench is mostly a matter of exposing machinery that is shipped.
 
 ## W4. What is missing, precisely
 
-1. **Bodies and headers are not stored.** `FetchOutcome` carries them in memory
-   and they are dropped; the receipt keeps sizes. Feature 1 is the whole of
-   phase A and W5 is its design.
+1. ~~**Bodies and headers are not stored.**~~ Built 2026-09-02; see W5. The
+   engine now records both directions of every hop when a session is opened
+   with `--capture`, including the hops a redirect chain passes through and the
+   header set as the client built it rather than as the caller asked for it.
 2. **No stable message id.** `seq` is per session and per process. Feature 2
    needs an id that survives a session restart and names a request in a
    filename, a diff and a finding.
@@ -124,10 +125,21 @@ These do not merge. The design keeps two artifacts.
 
 Bounds are part of the format, not a policy layered on top: a per-message body
 cap (default 8 MiB, truncation recorded as a field rather than silently), a
-per-session store cap (default 512 MiB, oldest non-pinned bodies evicted, and
-`h5i websec pin <id>` marks the ones a finding depends on), and a MIME skip list
-for fonts and media that a workbench never reads. A truncated or evicted body is
-an explicit state, never an empty string.
+per-session store cap (default 512 MiB), and a MIME skip list for fonts and
+media that a workbench never reads. A truncated or refused body is an explicit
+state, never an empty string.
+
+Built, 2026-09-02: `crates/h5i-browser/src/capture.rs`, reached by
+`h5i browser open --capture`. Messages land in `<session>/messages/` as one JSON
+file per phase per receipt sequence number, with bodies content-addressed under
+`bodies/<sha256>` so a loop that gets the same answer a hundred times stores it
+once. Two deviations from the paragraph above, both deliberate. The store
+*refuses* rather than evicts when it fills, recording `store-full` against the
+body, because eviction wants the pin that `websec pin` has not built yet and
+dropping the oldest evidence silently is worse than refusing the newest loudly.
+And writing is best-effort where the receipt is fail-closed: a fetch is never
+refused because the store could not be written, since the receipt still records
+that the request happened. Failures are counted and reported.
 
 The store is the taint boundary for everything downstream. Anything an agent
 reads out of it is untrusted content authored by the target, which is the same

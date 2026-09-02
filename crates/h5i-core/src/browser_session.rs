@@ -67,6 +67,16 @@ pub const COOKIES_FILE: &str = "cookies.json";
 /// and that is the question an audit is for.
 pub const CONTROL_JOURNAL: &str = "control.jsonl";
 
+/// The session's stored messages: headers and bodies, both directions.
+///
+/// Written only when a session was opened with `--capture`, and the one
+/// directory here that is *evidence* rather than account. It holds session
+/// cookies and `Authorization` headers in full, which is exactly what the
+/// request log refuses to hold, so it is `0700`, it is never copied by
+/// `--restore`, and no export includes it unless someone names it. See
+/// `h5i-browser`'s `capture` module and `docs/design/design-websec.md`.
+pub const MESSAGES_DIR: &str = "messages";
+
 /// Where files this session produced are collected. Host-named, always: see
 /// [`crate::browser_session::artifact_path`].
 pub const ARTIFACTS_DIR: &str = "artifacts";

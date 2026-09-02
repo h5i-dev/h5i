@@ -157,6 +157,18 @@ pub enum BrowserCommands {
         #[arg(long, value_name = "SESSION_ID")]
         restore: Option<String>,
 
+        /// Keep every request and response this session makes: headers and
+        /// bodies, both directions.
+        ///
+        /// Off by default, and a different thing from the request log, which is
+        /// always on. The log records decisions in a form that is safe to paste
+        /// into a bug report; this records the messages, `Authorization` header
+        /// and session cookie included, which is what an HTTP workbench needs
+        /// and what an audit trail must not carry. Stored `0700` inside the
+        /// session directory, bounded, and never copied by `--restore`.
+        #[arg(long)]
+        capture: bool,
+
         /// Print the session record as JSON instead of a summary line.
         #[arg(long)]
         json: bool,
@@ -766,6 +778,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             height,
             expires_in,
             restore,
+            capture,
             json,
         } => open(
             &root,
@@ -785,6 +798,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 height,
                 expires_in,
                 restore,
+                capture,
             },
             json,
         ),
@@ -1101,6 +1115,8 @@ struct StartOptions {
     height: u32,
     expires_in: Option<u64>,
     restore: Option<String>,
+    /// Keep the messages themselves, not only the record of them.
+    capture: bool,
 }
 
 /// Open a URL: navigate the session that is already there, or make one.
@@ -1179,6 +1195,14 @@ fn creation_flags(opts: &StartOptions) -> Vec<&'static str> {
     }
     if !opts.secrets.is_empty() {
         set.push("`--secret`");
+    }
+    // The store is opened when the broker is built, and a session that began
+    // recording halfway through would hold evidence with a hole in it that
+    // nothing in the store could describe. Refused rather than ignored, like
+    // every other flag here: silently dropping it would leave an agent
+    // believing it had a record of the login it just performed.
+    if opts.capture {
+        set.push("`--capture`");
     }
     // Creation-only for a stronger reason than most of these. The agent string
     // is handed to the HTTP client when the client is built, and a session that
@@ -1475,6 +1499,12 @@ fn spawn_on_host(
         opts.height.to_string(),
     ];
     argv.extend(net_args(opts));
+    // h5i names the directory, as it does for every other session artifact, so
+    // where a session's evidence lands is not the engine caller's to choose.
+    if opts.capture {
+        argv.push("--capture".into());
+        argv.push(dir.join(bs::MESSAGES_DIR).display().to_string());
+    }
     if opts.script {
         argv.push("--script".into());
     }
@@ -1830,6 +1860,12 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
         opts.height.to_string(),
     ];
     argv.extend(net_args(opts));
+    // Inside the box, beside the receipts, for the same reason the jar is: this
+    // is the filesystem the engine has.
+    if opts.capture {
+        argv.push("--capture".into());
+        argv.push(in_box_base.with_extension("messages").display().to_string());
+    }
     if opts.script {
         argv.push("--script".into());
     }

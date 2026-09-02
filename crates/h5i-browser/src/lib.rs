@@ -4,6 +4,7 @@ pub mod broker;
 pub mod cli;
 pub mod encoding;
 pub mod canvas;
+pub mod capture;
 pub mod cors;
 pub mod budget;
 pub mod cookies;

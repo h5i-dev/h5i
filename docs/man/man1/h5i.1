@@ -954,7 +954,7 @@ Open a URL, making a session if there is not one already
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-secret\fR] [\fB\-\-identity\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-expires\-in\fR] [\fB\-\-restore\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-secret\fR] [\fB\-\-identity\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-expires\-in\fR] [\fB\-\-restore\fR] [\fB\-\-capture\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1007,6 +1007,11 @@ Recorded as an ending on the session\*(Aqs record when it passes, not as a disap
 Seed this session\*(Aqs storage from one that has ended.
 
 A restore is a new session with a new id, and the inheritance is written into its record. Nothing resurrects an id: an agent holding a stale one always gets a refusal, never a different session wearing the same name. Takes an id, not a name, because a name can be reused and storage has to come from one definite session.
+.TP
+\fB\-\-capture\fR
+Keep every request and response this session makes: headers and bodies, both directions.
+
+Off by default, and a different thing from the request log, which is always on. The log records decisions in a form that is safe to paste into a bug report; this records the messages, `Authorization` header and session cookie included, which is what an HTTP workbench needs and what an audit trail must not carry. Stored `0700` inside the session directory, bounded, and never copied by `\-\-restore`.
 .TP
 \fB\-\-json\fR
 Print the session record as JSON instead of a summary line

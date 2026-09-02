@@ -42,6 +42,10 @@ const CONTROL_SOCKET_VAR: &str = "H5I_BROWSER_CONTROL_SOCKET";
 /// pane has a source on an engine that has no mediated socket in front of it.
 const ACTIONS_VAR: &str = "H5I_BROWSER_ACTIONS";
 
+/// Where h5i wants the messages themselves kept. Unset in an ordinary session,
+/// which stores no header and no body anywhere. See [`crate::capture`].
+const CAPTURE_VAR: &str = "H5I_BROWSER_CAPTURE";
+
 #[derive(Parser)]
 #[command(
     name = "h5i __engine",
@@ -735,6 +739,15 @@ struct NetArgs {
     #[arg(long, value_name = "PATH")]
     cookie_jar: Option<PathBuf>,
 
+    /// Keep the messages themselves here: headers and bodies, both directions.
+    ///
+    /// Off unless asked for, and separate from `--receipts` on purpose. The
+    /// receipt is the account and is safe to paste anywhere; this is the
+    /// evidence, and it holds session cookies and `Authorization` headers in
+    /// full. Defaults to $H5I_BROWSER_CAPTURE.
+    #[arg(long, value_name = "DIR")]
+    capture: Option<PathBuf>,
+
     /// The egress proxy to route through. Defaults to $H5I_EGRESS_PROXY.
     #[arg(long, value_name = "URL")]
     proxy: Option<String>,
@@ -1093,7 +1106,14 @@ fn broker_for(
     limits: crate::budget::Limits,
     net: &NetArgs,
 ) -> Result<Arc<crate::net::LocalBroker>, H5iError> {
-    crate::net::LocalBroker::with_identity(policy, sink, proxy, limits, Arc::new(identity_of(net)?))
+    crate::net::LocalBroker::with_identity(
+        policy,
+        sink,
+        proxy,
+        limits,
+        Arc::new(identity_of(net)?),
+        capture_store(net)?,
+    )
 }
 
 #[cfg(not(feature = "identity"))]
@@ -1102,9 +1122,9 @@ fn broker_for(
     sink: Arc<dyn Sink>,
     proxy: Option<&str>,
     limits: crate::budget::Limits,
-    _net: &NetArgs,
+    net: &NetArgs,
 ) -> Result<Arc<crate::net::LocalBroker>, H5iError> {
-    crate::net::LocalBroker::with_limits(policy, sink, proxy, limits)
+    crate::net::LocalBroker::with_limits(policy, sink, proxy, limits, capture_store(net)?)
 }
 
 #[cfg(feature = "identity")]
@@ -1975,6 +1995,25 @@ fn receipts_sink(net: &NetArgs) -> Result<Arc<dyn Sink>, H5iError> {
     match &receipts {
         None => Ok(Arc::new(crate::receipt::NullSink)),
         Some(path) => Ok(Arc::new(JsonlSink::create(path)?)),
+    }
+}
+
+/// The message store, when a session was opened with one.
+///
+/// Opening fails loudly and writing does not, and the two are different
+/// questions. A directory that cannot be created means h5i asked for capture and
+/// the session cannot provide it, which the caller should hear about before the
+/// first page rather than discover as an empty store afterwards. A single
+/// message that cannot be written later is a gap in the evidence, counted and
+/// reported, and not a reason to fail the fetch that produced it.
+fn capture_store(net: &NetArgs) -> Result<Option<Arc<crate::capture::Capture>>, H5iError> {
+    let dir = net
+        .capture
+        .clone()
+        .or_else(|| std::env::var(CAPTURE_VAR).ok().filter(|v| !v.trim().is_empty()).map(PathBuf::from));
+    match dir {
+        None => Ok(None),
+        Some(dir) => Ok(Some(Arc::new(crate::capture::Capture::open(&dir)?))),
     }
 }
 

@@ -334,6 +334,15 @@ pub struct LocalBroker {
     /// object the renderer's script realm answers `navigator` from. One
     /// identity, two layers, no second copy to drift: see [`Presented`].
     presented: Presented,
+    /// Where the messages themselves are kept, when a session was opened with
+    /// somewhere to keep them.
+    ///
+    /// `None` is the ordinary session and the default: the receipt still
+    /// records every decision, and no header or body is written anywhere. The
+    /// store lives here rather than in the renderer because this is the half
+    /// that holds the request as built and the response as received, and
+    /// because the renderer is the untrusted parser. See [`crate::capture`].
+    capture: Option<Arc<crate::capture::Capture>>,
 }
 
 impl LocalBroker {
@@ -355,6 +364,7 @@ impl LocalBroker {
             crate::budget::Limits::default(),
             crate::secrets::Secrets::from_env(),
             Presented::native()?,
+            None,
         )
     }
 
@@ -374,10 +384,12 @@ impl LocalBroker {
             crate::budget::Limits::default(),
             secrets,
             Presented::native()?,
+            None,
         )
     }
 
-    /// The same, with the page ceiling the caller wants.
+    /// The same, with the page ceiling the caller wants, and with the message
+    /// store the session was opened with, if it was opened with one.
     ///
     /// Separate from [`Self::new`] because the limits have to be in place
     /// before the broker is shared: it is handed out as an `Arc`, a socket's
@@ -388,6 +400,7 @@ impl LocalBroker {
         sink: Arc<dyn Sink>,
         proxy: Option<&str>,
         limits: crate::budget::Limits,
+        capture: Option<Arc<crate::capture::Capture>>,
     ) -> Result<Arc<Self>, H5iError> {
         Self::build(
             policy,
@@ -396,6 +409,7 @@ impl LocalBroker {
             limits,
             crate::secrets::Secrets::from_env(),
             Presented::native()?,
+            capture,
         )
     }
 
@@ -413,6 +427,7 @@ impl LocalBroker {
         proxy: Option<&str>,
         limits: crate::budget::Limits,
         identity: Arc<crate::identity::Identity>,
+        capture: Option<Arc<crate::capture::Capture>>,
     ) -> Result<Arc<Self>, H5iError> {
         Self::build(
             policy,
@@ -421,6 +436,7 @@ impl LocalBroker {
             limits,
             crate::secrets::Secrets::from_env(),
             Presented::declared(identity)?,
+            capture,
         )
     }
 
@@ -441,6 +457,7 @@ impl LocalBroker {
         limits: crate::budget::Limits,
         secrets: crate::secrets::Secrets,
         presented: Presented,
+        capture: Option<Arc<crate::capture::Capture>>,
     ) -> Result<Arc<Self>, H5iError> {
         let mut builder = reqwest::blocking::Client::builder()
             // Redirects are followed by hand so each hop is a policy decision
@@ -491,6 +508,7 @@ impl LocalBroker {
             seq: AtomicU64::new(0),
             jar: crate::cookies::Jar::new(),
             proxied,
+            capture,
         }))
     }
 
@@ -968,7 +986,33 @@ impl LocalBroker {
             {
                 request = request.header("origin", origin.clone());
             }
-            let response = request.send();
+            // Built rather than sent, which is the same two steps `send`
+            // takes. The difference is that the finished request can be read:
+            // the header set here is the one that went, engine defaults, jar
+            // cookie, identity and all, and a store that recorded what the
+            // caller asked for instead would be recording an intention.
+            let response = request.build().and_then(|built| {
+                if let Some(capture) = &self.capture {
+                    capture.request(
+                        seq,
+                        built.method().as_str(),
+                        built.url().as_str(),
+                        built
+                            .headers()
+                            .iter()
+                            .filter_map(|(name, value)| {
+                                value
+                                    .to_str()
+                                    .ok()
+                                    .map(|v| (name.as_str().to_string(), v.to_string()))
+                            })
+                            .collect(),
+                        &body,
+                        content_type,
+                    );
+                }
+                self.client.execute(built)
+            });
             let elapsed = started.elapsed().as_millis() as u64;
 
             let response = match response {
@@ -1031,6 +1075,20 @@ impl LocalBroker {
                     outcome_record.error = Some("redirect without a usable Location".to_string());
                 }
                 let _ = self.append(&outcome_record);
+                // A hop is a message like any other, and the one whose headers
+                // matter most: `Location` is the whole content of a redirect
+                // and `Set-Cookie` on a 302 is how a login lands.
+                if let Some(capture) = &self.capture {
+                    capture.response(crate::capture::Response {
+                        seq,
+                        url: current.as_str(),
+                        status: Some(status.as_u16()),
+                        headers: headers.clone(),
+                        content_encoding: None,
+                        wire_bytes: None,
+                        body: crate::capture::Received::NotRead,
+                    });
+                }
 
                 match location {
                     Some(next) if hop < self.policy.max_redirects() => {
@@ -1107,6 +1165,17 @@ impl LocalBroker {
                     refused.cookies_stored = Some(cookies_stored);
                     refused.error = Some(format!("blocked by the same-origin policy: {why}"));
                     let _ = self.append(&refused);
+                    if let Some(capture) = &self.capture {
+                        capture.response(crate::capture::Response {
+                            seq,
+                            url: current.as_str(),
+                            status: Some(status.as_u16()),
+                            headers: headers.clone(),
+                            content_encoding: None,
+                            wire_bytes: None,
+                            body: crate::capture::Received::NotRead,
+                        });
+                    }
                     return FetchOutcome::failed_at(
                         current,
                         format!("blocked by the same-origin policy: {why}"),
@@ -1190,6 +1259,23 @@ impl LocalBroker {
                 Ok(body) => {
                     outcome_record.bytes = Some(body.len() as u64);
                     let _ = self.append(&outcome_record);
+                    // Stored as received, before the CORS filter below. The
+                    // filter answers what a *page's script* may read, and the
+                    // reader of this store is the agent, which could have asked
+                    // for this URL itself under the same policy. Storing the
+                    // filtered view would mean an agent's own evidence was
+                    // narrowed by a rule written about somebody else.
+                    if let Some(capture) = &self.capture {
+                        capture.response(crate::capture::Response {
+                            seq,
+                            url: current.as_str(),
+                            status: Some(status.as_u16()),
+                            headers: headers.clone(),
+                            content_encoding: outcome_record.content_encoding.clone(),
+                            wire_bytes: outcome_record.wire_bytes,
+                            body: crate::capture::Received::Bytes(&body),
+                        });
+                    }
                     // What the caller may see of this. Same-origin sees
                     // everything; a cross-origin CORS response is filtered to
                     // the safelist plus whatever the server exposed; a no-cors
@@ -1210,6 +1296,20 @@ impl LocalBroker {
                 Err(e) => {
                     outcome_record.error = Some(e.to_string());
                     let _ = self.append(&outcome_record);
+                    // The response arrived and the body did not survive being
+                    // read: too large for the cap, or a decoder that refused it.
+                    // The headers are still evidence, and often the answer.
+                    if let Some(capture) = &self.capture {
+                        capture.response(crate::capture::Response {
+                            seq,
+                            url: current.as_str(),
+                            status: Some(status.as_u16()),
+                            headers: headers.clone(),
+                            content_encoding: outcome_record.content_encoding.clone(),
+                            wire_bytes: outcome_record.wire_bytes,
+                            body: crate::capture::Received::NotRead,
+                        });
+                    }
                     FetchOutcome::failed_at(current, e.to_string(), Some(seq))
                 }
             };
@@ -1926,6 +2026,148 @@ mod tests {
 }
 
 #[cfg(test)]
+mod capture_wire_tests {
+    use super::*;
+    use crate::broker::Broker;
+    use crate::capture::{Body, Capture, Skip};
+    use crate::receipt::MemorySink;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    /// A server that redirects to its own second path, setting a cookie on the
+    /// hop, which is the shape a login has.
+    fn redirect_then_answer() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for hop in 0..2 {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+                        break;
+                    }
+                }
+                let mut stream = stream;
+                let _ = if hop == 0 {
+                    write!(
+                        stream,
+                        "HTTP/1.1 302 Found\r\nLocation: /home\r\n\
+                         Set-Cookie: session=s3cr3t; Path=/\r\n\
+                         Content-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                } else {
+                    let body = "{\"user\":\"alice\"}";
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                };
+                let _ = stream.flush();
+            }
+        });
+        port
+    }
+
+    /// The whole point of the store, end to end: a redirect chain leaves one
+    /// message per hop, the hop's headers are kept even though its body is never
+    /// read, and the final body is on disk and readable.
+    #[test]
+    fn a_redirect_chain_is_stored_hop_by_hop() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            sink.clone(),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture.clone()),
+        )
+        .expect("broker");
+
+        let port = redirect_then_answer();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
+        let outcome = broker.fetch(&url, Initiator::Navigation);
+        assert!(outcome.is_ok(), "{:?}", outcome.error);
+
+        // Hop 0: the redirect. Its `Location` and `Set-Cookie` are the content
+        // of the message, and its body was never read.
+        let hop = capture.read_response(0).expect("the hop is stored");
+        assert_eq!(hop.status, Some(302));
+        assert!(
+            hop.headers.iter().any(|(n, v)| n == "set-cookie" && v.contains("s3cr3t")),
+            "the store holds the credential the receipt refuses to: {:?}",
+            hop.headers
+        );
+        assert_eq!(
+            hop.body,
+            Body::Skipped {
+                reason: Skip::NotRead,
+                bytes: None
+            }
+        );
+
+        // Hop 1: the answer, with its body on disk.
+        let answer = capture.read_response(1).expect("the answer is stored");
+        assert_eq!(answer.status, Some(200));
+        let Body::Stored { sha256, .. } = &answer.body else {
+            panic!("the body was stored: {:?}", answer.body);
+        };
+        assert_eq!(
+            capture.read_body(sha256).expect("the body reads back"),
+            b"{\"user\":\"alice\"}"
+        );
+
+        // And the second request carried the cookie the first hop set, which is
+        // the header set as built rather than as asked for.
+        let second = capture.read_request(1).expect("the second request is stored");
+        assert_eq!(second.url, format!("http://127.0.0.1:{port}/home"));
+        assert!(
+            second.headers.iter().any(|(n, v)| n == "cookie" && v.contains("s3cr3t")),
+            "{:?}",
+            second.headers
+        );
+
+        // The receipt is unchanged by any of this: counts, never values.
+        let receipted = serde_json::to_string(&sink.records()).expect("records serialise");
+        assert!(!receipted.contains("s3cr3t"), "a credential reached the receipt log");
+        assert_eq!(capture.errors(), 0);
+    }
+
+    /// A session without a store is the default, and it writes nothing.
+    #[test]
+    fn a_session_with_no_store_keeps_no_message() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            sink.clone(),
+            None,
+            crate::budget::Limits::default(),
+            None,
+        )
+        .expect("broker");
+
+        let port = redirect_then_answer();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
+        let _ = broker.fetch(&url, Initiator::Navigation);
+
+        assert!(!sink.records().is_empty(), "the receipt is never optional");
+        assert_eq!(
+            std::fs::read_dir(dir.path()).expect("readable").count(),
+            0,
+            "nothing is written where nothing was asked for"
+        );
+    }
+}
+
+#[cfg(test)]
 mod cookie_wire_tests {
     use super::*;
     use crate::broker::Broker;
@@ -2065,6 +2307,7 @@ mod cookie_wire_tests {
                 max_requests: 2,
                 ..Default::default()
             },
+            None,
         )
         .expect("broker");
 
@@ -2102,6 +2345,7 @@ mod cookie_wire_tests {
                 max_wire_bytes: 4_096,
                 ..Default::default()
             },
+            None,
         )
         .expect("broker");
 
@@ -2144,6 +2388,7 @@ mod cookie_wire_tests {
                 max_requests: 3,
                 ..Default::default()
             },
+            None,
         )
         .expect("broker");
         let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
@@ -2185,6 +2430,7 @@ mod cookie_wire_tests {
                 max_requests: 2,
                 ..Default::default()
             },
+            None,
         )
         .expect("broker");
         let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();

@@ -11,7 +11,7 @@ default = ["identity"]
 
 # Browser identities: `--identity`, the coherence validator, and the one object the header layer
 # and the script realm both answer from.
-identity = ["dep:sha2", "dep:toml"]
+identity = ["dep:toml"]
 
 [dependencies]
 h5i-error = { path = "../h5i-error" }
@@ -124,10 +124,12 @@ webpki-roots = "1.0"
 flate2 = "1.1.9"
 brotli = { version = "8.0.4", default-features = false, features = ["std"] }
 
-# The identity digest, which goes in the session record beside the policy's.
-# The same crate h5i-core digests a policy with, so two digests written by two
-# halves of one product are the same kind of thing.
-sha2 = { workspace = true, optional = true }
+# The identity digest, which goes in the session record beside the policy's,
+# and the message store's content addressing. The same crate h5i-core digests a
+# policy with, so two digests written by two halves of one product are the same
+# kind of thing. Not optional: `capture` is in every build, because a capability
+# gated at build time is one an agent cannot ask for at run time.
+sha2 = { workspace = true }
 
 # Browser identities are written as TOML, because that is what every other
 # thing a person hand-writes for h5i is written as.

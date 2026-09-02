@@ -206,7 +206,7 @@ next verb quietly landing somewhere it never asked for.
 Opening a URL in a browser that is already up means *go there*. So `open`
 navigates the session it finds, and `--new` is how you say you meant a second
 one. The flags that only make sense at creation (`--allow`, `--in`, `--script`,
-`--no-loopback`, `--expires-in`, `--restore`) are *refused* rather than ignored
+`--no-loopback`, `--expires-in`, `--restore`, `--capture`) are *refused* rather than ignored
 when a session is reused: a session's policy is fixed when its engine starts, so
 accepting a grant and doing nothing with it would be a grant the caller believes
 it made.
