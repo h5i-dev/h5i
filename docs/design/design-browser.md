@@ -226,23 +226,36 @@ that will never be built and what is simplified rather than absent.
 
 ## Usage
 
+This is the engine's own CLI, and it is what the rest of this document speaks.
+The engine stopped being a separate binary at the pivot, so `h5i __engine` is
+how it is invoked now: `h5i` execs itself and hands everything after the
+subcommand through unchanged.
+
+People and agents do not type that. The user-facing surface is `h5i browser`,
+which spells most of these verbs without the `session` word (`h5i browser open`
+makes the resident session, then `h5i browser snapshot`, `click`, `type` act on
+it) and adds the placement, session and audit verbs the engine knows nothing
+about. Four stay here with no `h5i browser` spelling: `serve`, which `open`
+starts on your behalf, plus `replay`, `capabilities` and `doctor`.
+`h5i browser --help` is that surface's reference.
+
 ```
-h5i-browser open  <url|path>... [--allow ORIGIN]... [--screenshot PATH]
-                                      [--receipts PATH] [--text] [--json]
-h5i-browser serve <url|path> [--addr 127.0.0.1:0] [--stream-file PATH]
-                                   [--control-file PATH]
-h5i-browser session status | snapshot | navigate <url> | scroll <px>
-                           | type <@ref|--selector CSS> <text>
-                           | submit <@ref|--selector CSS>
-                           | click <@ref|--selector CSS>
-                           | wait-for --selector <css> | wait-for-script <expr>
-                           | requests [--since <seq>] | markdown | extract <schema>
-                           | structured | script [--save PATH] | env
-h5i-browser session snapshot|markdown|extract|structured [--url URL]
-h5i-browser replay <script.json>        # a recording, run without a model
-h5i-browser open|serve ... [--script]   # limited JavaScript preview
-h5i-browser capabilities     # what this engine can do, as JSON
-h5i-browser doctor           # fonts, proxy, allowlist, client
+h5i __engine open  <url|path>... [--allow ORIGIN]... [--screenshot PATH]
+                                 [--receipts PATH] [--text] [--json]
+h5i __engine serve <url|path> [--addr 127.0.0.1:0] [--stream-file PATH]
+                              [--control-file PATH]
+h5i __engine session status | snapshot | navigate <url> | scroll <px>
+                    | type <@ref|--selector CSS> <text>
+                    | submit <@ref|--selector CSS>
+                    | click <@ref|--selector CSS>
+                    | wait-for --selector <css> | wait-for-script <expr>
+                    | requests [--since <seq>] | markdown | extract <schema>
+                    | structured | script [--save PATH] | env
+h5i __engine session snapshot|markdown|extract|structured [--url URL]
+h5i __engine replay <script.json>        # a recording, run without a model
+h5i __engine open|serve ... [--script]   # limited JavaScript preview
+h5i __engine capabilities     # what this engine can do, as JSON
+h5i __engine doctor           # fonts, proxy, allowlist, client
 ```
 
 ### Refs, and the reading they came from
@@ -253,7 +266,7 @@ check, a page that moved between snapshot and click resolved `@e5` to a
 different element and replied `ok`.
 
 ```
-$ h5i-browser session click @e2
+$ h5i __engine session click @e2
 {"ok":false,"code":"stale-ref","retryable":true,
  "error":"`@e2` came from a snapshot this page has moved on from: it now names
           a button \"Add\". … Take a fresh `snapshot` and use its refs."}
@@ -308,9 +321,9 @@ including which verbs LOGIN mode admits.
 drive:
 
 ```
-$ h5i-browser serve http://localhost:3000 &
-$ h5i-browser session snapshot
-$ h5i-browser session click @e1
+$ h5i __engine serve http://localhost:3000 &
+$ h5i __engine session snapshot
+$ h5i __engine session click @e1
 ```
 
 Those verbs act on the page the viewers are watching. Several viewers and
@@ -336,13 +349,13 @@ per verb against the 42ms a single frame encode takes.
 ### Logging in
 
 ```
-$ h5i-browser session snapshot
+$ h5i __engine session snapshot
 - textbox "username" [ref=e1]
 - textbox "password" [ref=e2]
 - button "Sign in" [ref=e3]
-$ h5i-browser session type @e1 alice
-$ h5i-browser session type @e2 hunter2
-$ h5i-browser session submit @e3
+$ h5i __engine session type @e1 alice
+$ h5i __engine session type @e2 hunter2
+$ h5i __engine session submit @e3
 url: http://localhost:8123/members
 ```
 
@@ -359,9 +372,9 @@ like it had silently failed.
 ### Waiting, and the third answer
 
 ```
-$ h5i-browser session wait-for --selector '#results'
-$ h5i-browser session wait-for --text 'Signed in'
-$ h5i-browser session wait-for-script 'document.querySelectorAll("li").length > 3'
+$ h5i __engine session wait-for --selector '#results'
+$ h5i __engine session wait-for --text 'Signed in'
+$ h5i __engine session wait-for-script 'document.querySelectorAll("li").length > 3'
 ```
 
 The settle runs on a *virtual* clock, so a page's own `setTimeout(1000)` has
@@ -386,8 +399,8 @@ failed condition. A condition that throws counts as *not yet*.
 ### Reading a page cheaply
 
 ```
-$ h5i-browser session markdown
-$ h5i-browser session extract '{"rows": [{"selector": "tr.item", "limit": 5,
+$ h5i __engine session markdown
+$ h5i __engine session extract '{"rows": [{"selector": "tr.item", "limit": 5,
     "fields": {"name": ".title", "url": {"selector": "a", "attr": "href"}}}]}'
 ```
 
@@ -406,10 +419,10 @@ matched is an error. Both verbs are fenced.
 ### The request log, from inside the session
 
 ```
-$ h5i-browser session requests
+$ h5i __engine session requests
    200 GET https://docs.rs/blitz/ (12043 bytes, 84ms)
 DENIED GET https://telemetry.example.com/collect
-$ h5i-browser session requests --since 41   # only what is new
+$ h5i __engine session requests --since 41   # only what is new
 ```
 
 If a request is not in the list, it did not happen. `denied` counts over the
@@ -435,10 +448,10 @@ a claim about the session.
 ### Credentials the agent can use and cannot read
 
 ```
-$ H5I_SECRET_ACME_PASS=hunter2 h5i-browser serve https://acme.test/ &
-$ h5i-browser session env
+$ H5I_SECRET_ACME_PASS=hunter2 h5i __engine serve https://acme.test/ &
+$ h5i __engine session env
 H5I_SECRET_ACME_PASS          # the name. never the value
-$ h5i-browser session type @e2 '$H5I_SECRET_ACME_PASS'
+$ h5i __engine session type @e2 '$H5I_SECRET_ACME_PASS'
 {"ok":true,"ref":"@e2","used":["H5I_SECRET_ACME_PASS"]}
 ```
 
@@ -470,8 +483,8 @@ Off by default. `--script` turns it on, and `capabilities --script` reports what
 that configuration can do: h5i routes on the invocation, not the binary.
 
 ```
-$ h5i-browser serve http://localhost:3000 --script
-$ h5i-browser session click @e1
+$ h5i __engine serve http://localhost:3000 --script
+$ h5i __engine session click @e1
 {"ok":true,"ref":"@e1","requests":["http://localhost:3000/api/item"],
  "settled":"settled after 0ms"}
 ```

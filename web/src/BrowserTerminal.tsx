@@ -436,7 +436,7 @@ function PagePane({
         ) : (
           <p className="bterm-page-state">
             No live view is running in this box, so there are no frames to show.
-            Start one with <code>h5i-browser serve &lt;page&gt;</code>{" "}
+            Start one with <code>h5i browser open &lt;page&gt;</code>{" "}
             inside the box.
           </p>
         )}
