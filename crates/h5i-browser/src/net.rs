@@ -202,7 +202,7 @@ fn header_is_the_engines(name: &str) -> bool {
 /// different answer from being quietly obeyed by a client that then computes the
 /// real value anyway. Request smuggling is a real thing to test for, and an
 /// engine that pretended to support it here would be lying about what it sent.
-fn header_is_the_clients(name: &str) -> bool {
+pub fn header_is_the_clients(name: &str) -> bool {
     matches!(
         name.trim().to_ascii_lowercase().as_str(),
         "content-length" | "transfer-encoding" | "connection"
@@ -1811,6 +1811,91 @@ impl crate::broker::Broker for LocalBroker {
         self.capture.as_ref().map(|capture| capture.health())
     }
 
+    fn send_edited(
+        &self,
+        from: u64,
+        edits: &[crate::edits::Edit],
+        create: bool,
+    ) -> Result<crate::broker::Edited, String> {
+        let Some(store) = &self.capture else {
+            return Err("this session was not opened with `--capture`, so it kept no request \
+                        to send again"
+                .to_string());
+        };
+        let stored = store.read_request(from).map_err(|_| {
+            format!(
+                "there is no stored request {from} in this session. \
+                 `requests` lists the sequence numbers this session has"
+            )
+        })?;
+        let url = Url::parse(&stored.url)
+            .map_err(|e| format!("stored request {from} has an unusable URL: {e}"))?;
+        // The body as it was sent, out of the store rather than out of the
+        // record: a truncated or skipped body cannot be replayed faithfully, and
+        // saying so is better than sending a request that is quietly not the one
+        // being replayed.
+        let body = match &stored.body {
+            crate::capture::Body::Empty => Vec::new(),
+            crate::capture::Body::Stored {
+                sha256, truncated, ..
+            } => {
+                if *truncated {
+                    return Err(format!(
+                        "stored request {from} was too large to keep whole, so replaying it \
+                         would send a request that is not the one recorded"
+                    ));
+                }
+                store
+                    .read_body(sha256)
+                    .map_err(|e| format!("stored request {from}'s body is not readable: {e}"))?
+            }
+            crate::capture::Body::Skipped { reason, .. } => {
+                return Err(format!(
+                    "stored request {from}'s body was not kept ({reason:?}), so there is \
+                     nothing to replay"
+                ));
+            }
+        };
+
+        let mut editable = crate::edits::Editable {
+            method: stored.method.clone(),
+            url,
+            headers: stored.headers.clone(),
+            body,
+        };
+        let applied = crate::edits::apply(&mut editable, edits, create)
+            .map_err(|e| e.to_string())?;
+
+        let content_type = editable.content_type().map(str::to_string);
+        let fetch = crate::broker::Fetch {
+            url: editable.url.clone(),
+            // A replay is the agent exercising its own authority over a URL it
+            // named, exactly like a navigation, and not a page reaching for a
+            // subresource. That is what decides the policy question and what
+            // keeps the same-origin rules out of it: there is no document here.
+            initiator: Initiator::Navigation,
+            method: editable.method.clone(),
+            body: editable.body.clone(),
+            content_type,
+            headers: editable.headers.clone(),
+            document: None,
+            cors: None,
+        };
+        let sent = crate::broker::Sent {
+            method: fetch.method.clone(),
+            url: fetch.url.to_string(),
+            header_names: fetch.headers.iter().map(|(name, _)| name.clone()).collect(),
+            body_bytes: fetch.body.len() as u64,
+        };
+        let outcome = crate::broker::Broker::send(self, &fetch);
+        Ok(crate::broker::Edited {
+            seq: outcome.seq,
+            applied,
+            sent,
+            outcome,
+        })
+    }
+
     fn records(&self) -> Vec<RequestRecord> {
         self.log.records()
     }
@@ -2113,7 +2198,10 @@ mod caller_header_tests {
     /// The only way to test a header layer honestly: asserting on what the
     /// engine *meant* to send proves nothing about what went out, and this
     /// engine's whole claim is about the difference.
-    fn head_recorder(hops: usize, redirect_to: Option<String>) -> (u16, Arc<Mutex<Vec<String>>>) {
+    pub(super) fn head_recorder(
+        hops: usize,
+        redirect_to: Option<String>,
+    ) -> (u16, Arc<Mutex<Vec<String>>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let seen = Arc::new(Mutex::new(Vec::new()));
@@ -2434,6 +2522,91 @@ mod capture_wire_tests {
         assert_eq!(health.messages, 4, "two hops, both phases");
         assert_eq!(health.errors, 0);
         assert!(health.bytes > 0);
+    }
+
+    /// The workbench loop, end to end: a request the session made, sent again
+    /// with one parameter bent, through the same policy and into a new receipt.
+    #[test]
+    fn a_stored_request_is_sent_again_with_an_edit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            sink.clone(),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture.clone()),
+        )
+        .expect("broker");
+
+        // Two answers: the original, and the replay.
+        let (port, seen) = super::caller_header_tests::head_recorder(2, None);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/api/users?user_id=123")).unwrap();
+        assert!(broker.fetch(&url, Initiator::Navigation).is_ok());
+
+        let edited = crate::broker::Broker::send_edited(
+            broker.as_ref(),
+            0,
+            &[crate::edits::parse_set("query.user_id=456").expect("parses")],
+            false,
+        )
+        .expect("the stored request is there");
+
+        assert_eq!(edited.applied[0].was.as_deref(), Some("123"));
+        assert_eq!(edited.sent.url, format!("http://127.0.0.1:{port}/api/users?user_id=456"));
+        assert_eq!(edited.outcome.status, Some(200));
+        // A replay is a request like any other: its own receipt, its own
+        // sequence, and its own stored message.
+        assert_eq!(edited.seq, Some(1));
+        assert!(capture.read_request(1).is_ok(), "the replay is itself replayable");
+
+        let seen = seen.lock().unwrap();
+        assert!(seen[1].starts_with("get /api/users?user_id=456"), "{}", seen[1]);
+    }
+
+    /// An edit that would change nothing is a mistake, and saying so is the
+    /// difference between a five-minute test and an hour reading identical
+    /// responses.
+    #[test]
+    fn an_edit_that_names_nothing_is_refused_before_the_wire() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            sink.clone(),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture),
+        )
+        .expect("broker");
+
+        let (port, _seen) = super::caller_header_tests::head_recorder(1, None);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/api?user_id=1")).unwrap();
+        assert!(broker.fetch(&url, Initiator::Navigation).is_ok());
+        let before = sink.records().len();
+
+        let error = crate::broker::Broker::send_edited(
+            broker.as_ref(),
+            0,
+            &[crate::edits::parse_set("query.userid=2").expect("parses")],
+            false,
+        )
+        .expect_err("refused");
+        assert!(error.contains("user_id"), "{error}");
+        assert_eq!(sink.records().len(), before, "nothing reached the wire");
+    }
+
+    /// A session that never captured has nothing to replay, and the message
+    /// says what to do about it.
+    #[test]
+    fn a_session_without_a_store_says_why_it_cannot_replay() {
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker");
+        let error = crate::broker::Broker::send_edited(broker.as_ref(), 0, &[], false)
+            .expect_err("refused");
+        assert!(error.contains("--capture"), "{error}");
     }
 
     /// A session without a store is the default, and it writes nothing.

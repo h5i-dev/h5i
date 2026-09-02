@@ -49,6 +49,8 @@ pub enum Verb {
     Click,
     /// The request log, as the engine wrote it.
     Requests,
+    /// Send a stored request again, with changes.
+    Resend,
     /// Wait until something is on the page, or until nothing can put it there.
     WaitFor,
     /// Wait until a page expression is true.
@@ -128,6 +130,7 @@ impl Verb {
             Verb::Submit => "submit",
             Verb::Click => "click",
             Verb::Requests => "requests",
+            Verb::Resend => "resend",
             Verb::WaitFor => "wait_for",
             Verb::WaitForScript => "wait_for_script",
             Verb::Extract => "extract",
@@ -171,6 +174,7 @@ impl Verb {
             // but still a reading of where the page went, and a human typing a
             // password should not have that read out from under them.
             | Verb::Requests
+            | Verb::Resend
             | Verb::WaitFor
             | Verb::WaitForScript
             | Verb::Extract
@@ -227,6 +231,7 @@ impl Verb {
             | Verb::Navigate
             | Verb::Scroll
             | Verb::Requests
+            | Verb::Resend
             | Verb::WaitFor
             | Verb::WaitForScript
             | Verb::Extract
@@ -264,6 +269,7 @@ impl Verb {
             | Verb::WaitFor
             | Verb::WaitForScript
             | Verb::Requests
+            | Verb::Resend
             | Verb::Extract
             | Verb::Markdown
             | Verb::Env
@@ -298,6 +304,7 @@ impl Verb {
             | Verb::Submit
             | Verb::Click
             | Verb::Requests
+            | Verb::Resend
             // `wait_for` reads the DOM, which exists either way. On a page with
             // no script it answers immediately rather than waiting, because
             // nothing can change the answer.
@@ -356,6 +363,7 @@ impl Verb {
             // reader skimmed should not have.
             | Verb::Screenshot
             | Verb::Requests
+            | Verb::Resend
             | Verb::WaitFor
             | Verb::WaitForScript
             | Verb::Extract
@@ -403,6 +411,7 @@ impl Verb {
             | Verb::Status
             | Verb::Login
             | Verb::Requests
+            | Verb::Resend
             | Verb::Env
             | Verb::Script
             | Verb::Scroll

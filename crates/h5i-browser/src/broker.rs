@@ -118,6 +118,36 @@ pub struct LogSummary {
     pub highest: Option<u64>,
 }
 
+/// A stored request, sent again with changes.
+///
+/// The whole operation is one call, and that is the design rather than an
+/// accident of convenience. The stored request holds the credential it was sent
+/// with, so reading it, editing it and sending it all happen in the broker, and
+/// the renderer never holds an `Authorization` header it could not otherwise
+/// read. Splitting this into "fetch the stored request" and "send this request"
+/// would hand the untrusted half exactly what the jar is kept from it to protect.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Edited {
+    /// The receipt sequence the replay was recorded under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+    /// Each edit, as it was applied.
+    pub applied: Vec<crate::edits::Applied>,
+    /// The request as sent, for the record. Header *names* only: the values are
+    /// in the store, which is the artifact that is allowed to hold them.
+    pub sent: Sent,
+    pub outcome: FetchOutcome,
+}
+
+/// What went out, in the parts that are safe to hand back.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Sent {
+    pub method: String,
+    pub url: String,
+    pub header_names: Vec<String>,
+    pub body_bytes: u64,
+}
+
 /// What a page has spent, and what it was allowed.
 ///
 /// A reading rather than a live handle. `budget()` used to hand back a
@@ -152,6 +182,22 @@ pub trait Broker: Send + Sync {
     fn send_while(&self, fetch: &Fetch, while_waiting: &mut dyn FnMut()) -> FetchOutcome {
         let _ = while_waiting;
         self.send(fetch)
+    }
+
+    /// Send a stored request again, with the caller's changes.
+    ///
+    /// `Err` for a request that is not in the store, or an edit that cannot
+    /// apply. A refusal by policy is not an error here: it is an outcome, with
+    /// a receipt, like every other refused fetch.
+    fn send_edited(
+        &self,
+        _from: u64,
+        _edits: &[crate::edits::Edit],
+        _create: bool,
+    ) -> Result<Edited, String> {
+        Err("this session was not opened with `--capture`, so it has no stored request to \
+             send again. Open it with `--capture` and the messages it makes will be replayable"
+            .to_string())
     }
 
     /// What this session's message store has done, when it has one.

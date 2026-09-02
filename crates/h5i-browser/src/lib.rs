@@ -2,6 +2,7 @@
 
 pub mod broker;
 pub mod cli;
+pub mod edits;
 pub mod encoding;
 pub mod canvas;
 pub mod capture;

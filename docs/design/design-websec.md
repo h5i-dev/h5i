@@ -99,9 +99,14 @@ The workbench is mostly a matter of exposing machinery that is shipped.
 2. **No stable message id.** `seq` is per session and per process. Feature 2
    needs an id that survives a session restart and names a request in a
    filename, a diff and a finding.
-3. **No way to send an arbitrary request.** `Fetch` has url, method, body and
-   content type, and no header map at all. Every replay verb waits on that
-   field, and on the policy question it opens (W16).
+3. ~~**No way to send an arbitrary request.**~~ Built 2026-09-02. `Fetch`
+   carries the caller's headers (W16's rules enforced: the three framing
+   headers are refused and named in the receipt, credentials stop at an origin
+   boundary), `crates/h5i-browser/src/edits.rs` is the edit language, and the
+   `resend` session verb applies edits to a stored request and sends it through
+   the same broker, policy, budget and receipt path as everything else. The
+   edits are applied *in the broker process*, so the renderer never holds the
+   credential a stored request carries.
 4. **No response comparison, match, timing detail, parallelism, site map,
    sequence engine, DOM taint or OAST.** Features 11 to 20.
 

@@ -83,6 +83,13 @@ enum Ask {
     },
     LogSummary,
     Capture,
+    /// Send a stored request again. The edits travel here; the credential the
+    /// stored request carries never leaves the broker.
+    SendEdited {
+        from: u64,
+        edits: Vec<crate::edits::Edit>,
+        create: bool,
+    },
     HighWater,
     Since {
         mark: Option<u64>,
@@ -152,6 +159,8 @@ enum Said {
     Budget(Allowance),
     /// What the message store has done, or that there is not one.
     Capture(Option<crate::capture::Health>),
+    /// A replay's result. The response body travels in the blob, like any other.
+    Edited(Box<Result<crate::broker::Edited, String>>),
     Count(usize),
     Text(String),
     Flag(bool),
@@ -533,6 +542,29 @@ impl Broker for BrokerClient {
         let _ = self.said(Ask::ResetBudget);
     }
 
+    fn send_edited(
+        &self,
+        from: u64,
+        edits: &[crate::edits::Edit],
+        create: bool,
+    ) -> Result<crate::broker::Edited, String> {
+        let ask = Ask::SendEdited {
+            from,
+            edits: edits.to_vec(),
+            create,
+        };
+        match self.ask(ask, &[]) {
+            Some((Said::Edited(edited), blob)) => match *edited {
+                Ok(mut edited) => {
+                    edited.outcome.body = blob;
+                    Ok(edited)
+                }
+                Err(why) => Err(why),
+            },
+            _ => Err("the broker did not answer the replay".to_string()),
+        }
+    }
+
     fn capture(&self) -> Option<crate::capture::Health> {
         match self.said(Ask::Capture) {
             Some(Said::Capture(health)) => health,
@@ -782,6 +814,7 @@ fn slow(ask: &Ask) -> bool {
     matches!(
         ask,
         Ask::Send(_)
+            | Ask::SendEdited { .. }
             | Ask::OpenSocket { .. }
             | Ask::OpenEventStream { .. }
             | Ask::ChannelSend { .. }
@@ -822,6 +855,17 @@ fn answer(
         Ask::ResetBudget => {
             broker.reset_budget();
             Said::Done
+        }
+        Ask::SendEdited {
+            from,
+            edits,
+            create,
+        } => {
+            let mut edited = broker.send_edited(from, &edits, create);
+            if let Ok(edited) = &mut edited {
+                body = std::mem::take(&mut edited.outcome.body);
+            }
+            Said::Edited(Box::new(edited))
         }
         Ask::Capture => Said::Capture(broker.capture()),
         Ask::CookieCount => Said::Count(broker.cookie_count()),

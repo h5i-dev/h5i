@@ -1447,6 +1447,101 @@ fn control_verb_inner(
             false,
         ),
 
+        // Send a stored request again, with the caller's changes.
+        //
+        // The verb takes edits and a sequence number, never a whole request.
+        // That is not a limitation: a request the caller composed from nothing
+        // has no receipt behind it and nothing to diff against, and every test
+        // this exists for starts from something the session actually sent.
+        Verb::Resend => {
+            let from = request.get("from").and_then(Value::as_u64);
+            let Some(from) = from else {
+                return (
+                    json!({
+                        "ok": false,
+                        "code": "bad-request",
+                        "message": "resend needs `from`: the sequence number of a stored                                     request, as `requests` lists them",
+                    }),
+                    false,
+                );
+            };
+            let create = request.get("create").and_then(Value::as_bool).unwrap_or(false);
+            let strings = |key: &str| -> Vec<String> {
+                request
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| item.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            let mut edits = Vec::new();
+            for spec in strings("set") {
+                match crate::edits::parse_set(&spec) {
+                    Ok(edit) => edits.push(edit),
+                    Err(e) => {
+                        return (
+                            json!({
+                                "ok": false,
+                                "code": "bad-edit",
+                                "target": e.target,
+                                "message": e.message,
+                            }),
+                            false,
+                        );
+                    }
+                }
+            }
+            for spec in strings("unset") {
+                match crate::edits::parse_unset(&spec) {
+                    Ok(edit) => edits.push(edit),
+                    Err(e) => {
+                        return (
+                            json!({
+                                "ok": false,
+                                "code": "bad-edit",
+                                "target": e.target,
+                                "message": e.message,
+                            }),
+                            false,
+                        );
+                    }
+                }
+            }
+
+            match session.factory.broker().send_edited(from, &edits, create) {
+                Err(why) => (
+                    json!({"ok": false, "code": "no-such-request", "message": why}),
+                    false,
+                ),
+                Ok(edited) => {
+                    let outcome = &edited.outcome;
+                    (
+                        json!({
+                            "ok": outcome.error.is_none(),
+                            // The new receipt, which is also where the replay's
+                            // own request and response are stored. A replay is
+                            // replayable.
+                            "seq": edited.seq,
+                            "applied": edited.applied,
+                            "sent": edited.sent,
+                            "response": {
+                                "status": outcome.status,
+                                "url": outcome.final_url.to_string(),
+                                "headers": outcome.headers,
+                                "bytes": outcome.body.len(),
+                                "error": outcome.error,
+                            },
+                        }),
+                        false,
+                    )
+                }
+            }
+        }
+
         // Hand the page to the human for as long as it takes to log in.
         //
         // §B10 of roadmap-history.md listed this as overdue rather than pending: it
