@@ -1697,6 +1697,14 @@ impl crate::broker::Broker for LocalBroker {
     fn redact(&self, text: &str) -> String {
         self.secrets.redact(text)
     }
+
+    fn redact_all(&self, texts: &[String]) -> Vec<String> {
+        self.secrets.redact_all(texts)
+    }
+
+    fn has_redactions(&self) -> bool {
+        self.secrets.has_redactable()
+    }
 }
 
 /// Adapts the broker to Blitz's [`NetProvider`].

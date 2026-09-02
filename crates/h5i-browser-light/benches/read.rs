@@ -172,6 +172,19 @@ fn forms(fields: usize) -> String {
     html
 }
 
+/// Three hundred links, side by side.
+///
+/// The shape the agent-loop bisect found: output size costs nothing, refs cost
+/// everything. This is here so the same page can be measured from inside the
+/// process, which says whether the whole per-ref cost is the selector pass or
+/// only part of it.
+fn many_links(count: usize) -> String {
+    let body: String = (0..count)
+        .map(|n| format!("<a href='/l{n}'>link {n}</a>"))
+        .collect();
+    format!("<html><head><title>T</title></head><body>{body}</body></html>")
+}
+
 /// The same page with one list item inserted near the top.
 fn large_static_mutated(sections: usize) -> String {
     large_static(sections).replacen(
@@ -474,11 +487,13 @@ fn main() {
     let large_after = large_static_mutated(120);
     let deep_html = deep(200, 40);
     let forms_html = forms(150);
+    let links_html = many_links(300);
 
     let rows = vec![
         bench.measure("large-static", &large, Some(&large_after)),
         bench.measure("deep-nesting", &deep_html, None),
         bench.measure("form-heavy", &forms_html, None),
+        bench.measure("links300", &links_html, None),
     ];
 
     println!("\nh5i read: walker vs Read IR (design-h5i-ir.md phases 0 and 1)");

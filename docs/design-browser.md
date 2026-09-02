@@ -93,9 +93,9 @@ than against each other.
 
 | per step | h5i small | chromium small | h5i large | chromium large |
 | --- | --- | --- | --- | --- |
-| snapshot | 17.9 ms | **10.7 ms** | **29.4 ms** | 37.3 ms |
-| snapshot --delta | 17.4 ms | not available | **27.0 ms** | not available |
-| click | **18.4 ms** | 38.2 ms | **23.6 ms** | 41.2 ms |
+| snapshot | 16.7 ms | **9.5 ms** | **21.0 ms** | 37.5 ms |
+| snapshot --delta | 17.6 ms | not available | **20.9 ms** | not available |
+| click | **18.3 ms** | 44.4 ms | **26.4 ms** | 41.9 ms |
 
 Small is a six-line page; large fills the 500-line snapshot budget. What the
 numbers say, including the half that does not flatter this engine:
@@ -104,17 +104,18 @@ numbers say, including the half that does not flatter this engine:
    launch per command by design, and Playwright holds its connection open. On
    a small page that fixed cost is most of the difference, and Chromium reads
    faster. On a large page it stops mattering.
-2. **Reading a large page is where the architecture shows.** 29.4 ms against
-   37.3 ms, and 27.0 ms if the agent asks what changed instead of what is
+2. **Reading a large page is where the architecture shows.** 21.0 ms against
+   37.5 ms, and much the same if the agent asks what changed instead of what is
    there. CDP has no delta, so an agent re-reads the whole accessibility tree
    every step and pays for the page whether or not it moved.
 3. **Acting is consistently cheaper here**, roughly half, because a click
    dispatches an event rather than running actionability checks over a
    protocol.
 4. **The read path is not the bottleneck at this level, and neither is the
-   part that looked like it.** Engine work per read is 10.8 ms small and
-   22.3 ms large, against 0.18 ms for the walk and render the Read IR made
-   faster (`docs/design-h5i-ir.md`).
+   part that looked like it.** Engine work per read is 8.8 ms small and
+   13.6 ms large, against 0.18 ms for the walk and render the Read IR made
+   faster (`docs/design-h5i-ir.md`). Those two numbers were 10.8 and 22.3
+   before the profile below found what the large one was actually spending on.
 
 The first guess at where the rest goes was the durable CSS selector the
 snapshot verb computes for every ref, each verified with a full-document
@@ -133,9 +134,35 @@ it was there: `a[href="/pricing"]` says what the link is, where
 
 But 4.5 ms is a fifth of the 22.3 ms, not the whole of it, and the agent-loop
 table above does not move when it is halved. So the arithmetic that pointed
-here was pointing at something real and too small to be the answer. The other
-~17 ms is not yet attributed to anything, and the next step is a profile
-rather than another inference.
+here was pointing at something real and too small to be the answer.
+
+The rest took a profile, after three wrong guesses had been spent on
+arithmetic. `H5I_BROWSER_TIMING=1` makes a reply carry a breakdown of where
+its own time went, and on a page with three hundred refs it said this, of a
+31 ms round trip on the control socket:
+
+| phase | |
+| --- | --- |
+| reading the page | 0.2 ms |
+| every selector on it | 10.2 ms |
+| action log, replay step, redaction | 0.8 ms |
+| **writing the reply to the socket** | **19.9 ms** |
+
+The reply was written with `writeln!(socket, "{value}")`, which looks like one
+write and is not. A `serde_json::Value` renders through `Display`, emitting
+each brace, key, comma and string fragment as its own call, and the socket
+underneath is unbuffered, so each of those is a syscall. Thirty-five kilobytes
+of reply is thousands of them. Rendering to a `String` first and writing once
+took the session's own work from 28.8 ms to 15.8 ms, and the whole
+`h5i browser snapshot` from 44.3 ms to 30.5 ms.
+
+Two things are worth taking from that. The first is that the cost was not in
+reading the page at all, which is where three guesses in a row had put it. The
+second is why it stayed hidden: it scales with the size of the *reply*, and the
+fixture that separated lines from refs showed output size costing nothing,
+because a page with five hundred lines and no refs produces a reply with no
+`refs` array in it. Two variables that usually move together, and the one that
+mattered was the one the bisect had ruled out.
 
 What is left of the selector pass is near the floor of its design. Every
 candidate is verified against the real matcher rather than trusted, so a ref

@@ -253,6 +253,21 @@ pub trait Broker: Send + Sync {
         texts.iter().map(|text| self.redact(text)).collect()
     }
 
+    /// Whether this broker holds anything redaction would replace.
+    ///
+    /// So a caller can skip the traversal rather than walk a reply, copy every
+    /// string out of it, and rebuild it unchanged. A snapshot reply is tens of
+    /// kilobytes across thousands of fields, and a session with no credentials
+    /// in it is the common case.
+    ///
+    /// Defaults to `true`, which is the safe answer: an implementation that has
+    /// not thought about this gets the full pass rather than a silent skip. A
+    /// wrong `false` here is a leaked credential, so it is only ever returned
+    /// by a broker that can enumerate what it holds.
+    fn has_redactions(&self) -> bool {
+        true
+    }
+
     // ── convenience over `send` ─────────────────────────────────────────────
     //
     // Kept as default methods rather than as free functions so the call sites
