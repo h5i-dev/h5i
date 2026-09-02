@@ -23,6 +23,9 @@ Suite next to a browser, expressed as verbs an agent can call.
   out is what makes the rest reusable.
 - Bash first. The CLI is designed from day one to be wrapped, so a thin Python
   client can arrive later without h5i learning any Python (W10).
+- **Not in the default binary.** `h5i websec` arrives with
+  `h5i plugin install websec` and is a separate executable that holds no
+  privilege of its own. W21 is the packaging design.
 - The one hard new decision is the message store (W5): receipts hold counts,
   never values, and a workbench needs bodies. Those are two different artifacts
   with two different retention stances, and merging them would put credentials
@@ -437,9 +440,9 @@ The twenty features, ranked, with the phase that carries them.
 | 19 | DOM instrumentation | DOM Invader | C |
 | 20 | OAST callbacks | Collaborator | C |
 
-**Phase A, the workbench.** Features 1 to 7, 9, 13, 14, plus W9's JSON contract.
-The engine work is the message store, the header field on `Fetch`, the replay
-path and the diff. This alone covers IDOR, authentication bypass, basic
+**Phase A, the workbench.** Features 1 to 7, 9, 13, 14, plus W9's JSON contract
+and the plugin packaging of W21. The engine work is the message store, the
+header field on `Fetch`, the replay path and the diff. This alone covers IDOR, authentication bypass, basic
 injection, reflected XSS, SSRF against a named target, path traversal, header
 and cookie manipulation, and a useful slice of business logic. The acceptance
 test is a person driving an agent through easy and medium CTF web problems with
@@ -459,6 +462,76 @@ problems, run by an agent with only these verbs, scored on solved and on how
 many turns and requests it took. A feature that does not move that number is not
 finished, whatever its tests say. The corpus belongs in `docs/benchmarks/`
 beside the environment ones, with the same rule that the harness is committed.
+
+## W21. Packaging: a plugin, not a part of the binary
+
+`h5i websec` is not in the default build and is not a cargo feature someone
+turns on at compile time. It is installed, after the fact, into an h5i that is
+already on the machine:
+
+```
+h5i plugin install websec
+h5i plugin list
+h5i plugin remove websec
+```
+
+Nothing like this exists today. `h5i` has cargo features (`web`, `browser`,
+`share`, `runner`, `ytdlp`, `identity`) and no runtime install path at all, so
+W21 is the section that has to be built before phase A can ship the way this
+file describes.
+
+### What a plugin is
+
+A separate executable, discovered by name the way `git` finds its subcommands.
+`h5i plugin install websec` fetches `h5i-websec` for this platform into a
+per-user plugin directory, and `h5i websec <verb>` execs it with the arguments
+forwarded and the environment that names the session. A build without the
+plugin still knows the name: `h5i websec` prints what it is and how to install
+it, rather than an unknown-subcommand error, so the feature is discoverable
+without being present.
+
+Not a dynamically loaded library, and the reason is the product's whole claim.
+The h5i process is the one that resolves policy, writes the receipt before the
+bytes move and refuses the fetch when the record cannot be written. Code
+`dlopen`ed into that process sits *inside* the boundary it is supposed to be
+subject to, and every guarantee in `ROADMAP.md` would then rest on the good
+behaviour of whatever was installed last.
+
+A plugin as a separate process is subject to the boundary instead. The websec
+plugin reaches a session over the same control channel `h5i browser snapshot`
+uses, and it has no other route to the network. Its replays are the engine's
+fetches, checked by the engine's policy, spent from the engine's budget and
+written into the engine's receipts. An audit of a session driven by a plugin
+reads exactly like an audit of a session driven by hand, which is the property
+worth protecting.
+
+### What still has to live in the binary
+
+A plugin cannot add a field to `Fetch` or write the message store, so phase A's
+engine work (W5, and the header map of W4) ships in the engine regardless.
+Correctly, it is *capability without behaviour*: capture is off unless a session
+is opened with `--capture`, and a build that has never had the plugin installed
+behaves exactly as it does today.
+
+The two halves negotiate through the verb that already exists for this.
+`h5i browser capabilities` reports what an engine can do, as JSON, so h5i can
+route by capability rather than by version number. The plugin reads it, and an
+engine too old to capture gets a named refusal naming the build, not a confusing
+empty result.
+
+### Why opt in
+
+Dependency weight is the small reason. The real one is posture. A browser for
+agents that ships an HTTP attack workbench in every install is a different
+product to defend, to a security review and to a user who wanted a page reader.
+Making the workbench a deliberate act by the operator keeps the default install
+honest about what it is, and costs an authorised user one command.
+
+It is worth being precise about what this does not do: it is not a security
+control. Anyone who can install a plugin can install any tool. What it buys is
+that the capability is *named* at install time and visible in `h5i plugin list`,
+which is the same stance the rest of h5i takes toward capability, and none of
+the enforcement in W16 depends on it.
 
 ## What is deliberately not built
 
@@ -488,3 +561,7 @@ either: both are executors for conditions and payloads that arrive from outside.
    script and keeps the browser's own verb list from doubling.
 4. **How much of the diff belongs in the read IR.** The DOM-shape body mode
    wants the IR, and the IR was built for a different consumer.
+5. **Whether plugins are signed, and how they are pinned.** A plugin speaks the
+   `websec/1` schema against an engine that has to be new enough for it, so
+   install needs a compatibility check, and a downloaded executable needs a
+   provenance story that `install.sh` does not currently have.
