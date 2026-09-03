@@ -1579,6 +1579,46 @@ fn control_verb_inner(
                     }
                 }
             }
+            // Then the byte-valued ones, in the order they were given. After
+            // the text edits rather than interleaved with them: two flags
+            // cannot express one order, and saying which wins beats guessing.
+            for pair in request
+                .get("set_file")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+            {
+                let target = pair.get(0).and_then(Value::as_str).unwrap_or_default();
+                let encoded = pair.get(1).and_then(Value::as_str).unwrap_or_default();
+                let bytes = match base64::engine::general_purpose::STANDARD.decode(encoded) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        return (
+                            json!({
+                                "ok": false,
+                                "code": "bad-edit",
+                                "target": target,
+                                "message": format!("its bytes did not survive the hop: {e}"),
+                            }),
+                            false,
+                        );
+                    }
+                };
+                match crate::edits::parse_set_bytes(target, bytes) {
+                    Ok(edit) => edits.push(edit),
+                    Err(e) => {
+                        return (
+                            json!({
+                                "ok": false,
+                                "code": "bad-edit",
+                                "target": e.target,
+                                "message": e.message,
+                            }),
+                            false,
+                        );
+                    }
+                }
+            }
             for spec in strings("unset") {
                 match crate::edits::parse_unset(&spec) {
                     Ok(edit) => edits.push(edit),

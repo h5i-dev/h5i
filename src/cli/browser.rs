@@ -895,6 +895,16 @@ pub enum BrowserCommands {
         /// `=` needs no escaping.
         #[arg(long = "set", value_name = "TARGET=VALUE")]
         set: Vec<String>,
+        /// Set one part of it from a file: `multipart.userfile=./payload.jpg`.
+        ///
+        /// The value is the file's bytes, unaltered. `--set` cannot carry them:
+        /// a command line is text and a JPEG begins `ff d8`, which is not text
+        /// in any encoding. A magic-number check is a filter worth testing, so
+        /// there has to be a way to send a real one.
+        ///
+        /// Applied after every `--set`, in the order given.
+        #[arg(long = "set-file", value_name = "TARGET=PATH")]
+        set_file: Vec<String>,
         /// Remove one part of it, by the same names.
         #[arg(long = "unset", value_name = "TARGET")]
         unset: Vec<String>,
@@ -1500,6 +1510,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         BrowserCommands::Resend {
             from,
             set,
+            set_file,
             unset,
             create,
             repeat,
@@ -1541,6 +1552,10 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             }
             for spec in set {
                 argv.push("--set".into());
+                argv.push(spec);
+            }
+            for spec in set_file {
+                argv.push("--set-file".into());
                 argv.push(spec);
             }
             for spec in unset {

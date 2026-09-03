@@ -696,6 +696,13 @@ enum SessionVerb {
         /// `target=value`, repeatable, applied in order.
         #[arg(long = "set", value_name = "TARGET=VALUE")]
         set: Vec<String>,
+        /// `target=path`: the value is the file's bytes, whatever they are.
+        ///
+        /// Applied after every `--set`. These are the edits that cannot be
+        /// written on a command line: a real image, a polyglot, anything a
+        /// magic-number check will look at.
+        #[arg(long = "set-file", value_name = "TARGET=PATH")]
+        set_file: Vec<String>,
         /// A target to remove.
         #[arg(long = "unset", value_name = "TARGET")]
         unset: Vec<String>,
@@ -1617,6 +1624,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         SessionVerb::Resend {
             from,
             set,
+            set_file,
             unset,
             create,
             repeat,
@@ -1637,12 +1645,31 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     }
                 },
             };
+            // Read here and carried as base64: this hop is a JSON control
+            // message, and the point of the flag is bytes JSON cannot hold.
+            let mut from_files: Vec<(String, String)> = Vec::new();
+            for spec in set_file {
+                let (target, path) = spec.split_once('=').ok_or_else(|| {
+                    H5iError::Metadata(format!(
+                        "`--set-file {spec}` is `target=path`, and this has no `=`"
+                    ))
+                })?;
+                let bytes = std::fs::read(path).map_err(|e| {
+                    H5iError::Metadata(format!("`--set-file {target}`: {path} could not be read: {e}"))
+                })?;
+                use base64::Engine as _;
+                from_files.push((
+                    target.to_string(),
+                    base64::engine::general_purpose::STANDARD.encode(&bytes),
+                ));
+            }
             (
                 at,
                 serde_json::json!({
                     "verb": Verb::Resend.name(),
                     "from": from,
                     "set": set,
+                    "set_file": from_files,
                     "unset": unset,
                     "create": create,
                     "repeat": repeat,

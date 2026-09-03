@@ -1264,7 +1264,9 @@ Put text into a field, replacing what was there
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
 .TP
 \fB\-\-selector\fR \fI<CSS>\fR
-A CSS selector instead
+A CSS selector instead.
+
+No conflict with the positional, unlike `click`\*(Aqs: with a locator given, the one positional left is the *text*, and the engine shifts it (`two_positionals`). Declaring a conflict here made `type \-\-selector \*(Aq#password\*(Aq hunter2` a usage error, which is the obvious way to type it.
 .TP
 \fB\-\-role\fR \fI<ROLE>\fR
 Find the field by what it is called: `\-\-role textbox \-\-name Email`
@@ -1276,7 +1278,7 @@ Find the field by what it is called: `\-\-role textbox \-\-name Email`
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 [\fIREF|TEXT\fR]
 `e3` or `@e3`, from a `snapshot`. Omit when using `\-\-selector` or `\-\-role`, and give the text alone
@@ -1846,7 +1848,7 @@ Send one of this session's own requests again, with changes
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBresend\fR [\fB\-\-set\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-\-repeat\fR] [\fB\-\-race\fR] [\fB\-\-no\-follow\fR] [\fB\-\-as\fR] [\fB\-\-keep\-credentials\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
+\fBresend\fR [\fB\-\-set\fR] [\fB\-\-set\-file\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-\-repeat\fR] [\fB\-\-race\fR] [\fB\-\-no\-follow\fR] [\fB\-\-reset\-budget\fR] [\fB\-\-as\fR] [\fB\-\-keep\-credentials\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1855,6 +1857,13 @@ Send one of this session's own requests again, with changes
 Change one part of it: `query.id=456`, `header.X\-Real\-IP=127.0.0.1`, `cookie.session=forged`, `json.role=admin`, `form.user=admin`, `path=/admin`, `method=POST`, `body.raw=<bytes>`. Repeatable, and applied in the order given.
 
 The value is everything after the first `=`, so a payload full of `=` needs no escaping.
+.TP
+\fB\-\-set\-file\fR \fI<TARGET=PATH>\fR
+Set one part of it from a file: `multipart.userfile=./payload.jpg`.
+
+The value is the file\*(Aqs bytes, unaltered. `\-\-set` cannot carry them: a command line is text and a JPEG begins `ff d8`, which is not text in any encoding. A magic\-number check is a filter worth testing, so there has to be a way to send a real one.
+
+Applied after every `\-\-set`, in the order given.
 .TP
 \fB\-\-unset\fR \fI<TARGET>\fR
 Remove one part of it, by the same names
@@ -1882,6 +1891,13 @@ Every send is a receipt and a stored message like any other, so a race that repr
 Stop at the first redirect and report it, rather than following it.
 
 A browser follows a `Location`; a test usually wants the 302 itself. It is where an authentication flow says who you are, where an open redirect proves it accepts anything, and where the `Set\-Cookie` that logs you in actually rides. The reply carries the status and the headers with nothing followed.
+.TP
+\fB\-\-reset\-budget\fR
+Start this page\*(Aqs network allowance again before sending.
+
+The budget exists to bound *page* code: a script in a loop is the untrusted thing it stops. A blind extraction is the opposite, an agent deliberately sending hundreds of requests it composed, and without this it stops partway through with "this page has spent its allowance" and every later answer reads as a negative result.
+
+Grants nothing new: navigating resets the same allowance, so this is the same act without throwing away the page.
 .TP
 \fB\-\-as\fR \fI<SESSION>\fR
 Send it from another session instead of this one.

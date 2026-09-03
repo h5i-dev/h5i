@@ -103,6 +103,13 @@ enum Verb {
         /// `multipart.file.filename=shell.php`. Repeatable, applied in order.
         #[arg(long = "set", value_name = "TARGET=VALUE")]
         set: Vec<String>,
+        /// `multipart.userfile=./payload.jpg`: the value is the file's bytes.
+        ///
+        /// For the edits a command line cannot carry — a real image, a
+        /// polyglot, anything a magic-number check will read. Applied after
+        /// every `--set`.
+        #[arg(long = "set-file", value_name = "TARGET=PATH")]
+        set_file: Vec<String>,
         /// Remove a target.
         #[arg(long = "unset", value_name = "TARGET")]
         unset: Vec<String>,
@@ -244,6 +251,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Verb::Replay {
             id,
             set,
+            set_file,
             unset,
             create,
             as_session,
@@ -257,6 +265,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             argv.push(seq);
             for spec in set {
                 argv.push("--set".into());
+                argv.push(spec);
+            }
+            for spec in set_file {
+                argv.push("--set-file".into());
                 argv.push(spec);
             }
             for spec in unset {

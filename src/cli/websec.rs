@@ -91,8 +91,19 @@ fn read_json<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> anyhow::Result
 pub enum Text {
     /// Decoded, and safe to compare line by line.
     Utf8(String),
-    /// There, and not text.
-    Binary { bytes: u64, sha256: String },
+    /// There, and not text — carried with a lossy reading of it anyway.
+    ///
+    /// A response is evidence, and refusing to show one because two of its
+    /// bytes were not UTF-8 hides the answer in exactly the case that matters:
+    /// a secret echoed after a file's magic number, a page served with a
+    /// mislabelled encoding, a body with one stray byte in the middle. The
+    /// length and the digest stay authoritative for what actually came back;
+    /// `text` is what it looks like, with the undecodable bytes replaced.
+    Binary {
+        bytes: u64,
+        sha256: String,
+        text: String,
+    },
     /// Not in the store, and why.
     Missing(String),
 }
@@ -101,20 +112,32 @@ impl Text {
     fn as_str(&self) -> &str {
         match self {
             Text::Utf8(text) => text,
-            _ => "",
+            // The lossy reading, so `match` and `diff` can see a body that is
+            // almost text. A search that silently could not look is a false
+            // negative, and this surface reports "did not match" and "could not
+            // look" as different answers on purpose.
+            Text::Binary { text, .. } => text,
+            Text::Missing(_) => "",
         }
     }
 
     fn to_json(&self) -> Value {
         match self {
             Text::Utf8(text) => json!({"kind": "text", "text": text}),
-            Text::Binary { bytes, sha256 } => {
-                json!({"kind": "binary", "bytes": bytes, "sha256": sha256})
+            Text::Binary {
+                bytes,
+                sha256,
+                text,
+            } => {
+                json!({"kind": "binary", "bytes": bytes, "sha256": sha256, "text": text})
             }
             Text::Missing(why) => json!({"kind": "absent", "why": why}),
         }
     }
 }
+
+/// How much of a body that is not text to read back anyway.
+const LOSSY_BODY_BYTES: usize = 64 * 1024;
 
 /// Pull a body out of the store.
 fn body_text(dir: &Path, body: &Body) -> Text {
@@ -130,9 +153,17 @@ fn body_text(dir: &Path, body: &Body) -> Text {
                 Err(e) => Text::Missing(format!("the stored body could not be read: {e}")),
                 Ok(raw) => match String::from_utf8(raw) {
                     Ok(text) => Text::Utf8(text),
-                    Err(_) => Text::Binary {
+                    Err(e) => Text::Binary {
                         bytes: *bytes,
                         sha256: sha256.clone(),
+                        text: {
+                            let raw = e.into_bytes();
+                            // Capped, because a real image would otherwise fill
+                            // the reply with replacement characters. The digest
+                            // above is what says how much there was.
+                            let head = &raw[..raw.len().min(LOSSY_BODY_BYTES)];
+                            String::from_utf8_lossy(head).into_owned()
+                        },
                     },
                 },
             }
@@ -191,8 +222,13 @@ fn raw_response(stored: &StoredResponse, body: &Text) -> String {
 fn push_body(out: &mut String, body: &Text) {
     match body {
         Text::Utf8(text) => out.push_str(text),
-        Text::Binary { bytes, sha256 } => {
-            out.push_str(&format!("[{bytes} bytes, not text — sha256 {sha256}]"));
+        Text::Binary {
+            bytes,
+            sha256,
+            text,
+        } => {
+            out.push_str(&format!("[{bytes} bytes, not text — sha256 {sha256}]\n"));
+            out.push_str(text);
         }
         Text::Missing(why) => out.push_str(&format!("[no body: {why}]")),
     }
@@ -310,8 +346,15 @@ fn summarise_body(body: &Text) {
                 println!("    … {} more lines", text.lines().count() - 20);
             }
         }
-        Text::Binary { bytes, sha256 } => {
-            println!("  body     : {bytes} bytes, not text (sha256 {sha256})")
+        Text::Binary {
+            bytes,
+            sha256,
+            text,
+        } => {
+            println!("  body     : {bytes} bytes, not text (sha256 {sha256})");
+            for line in text.lines().take(20) {
+                println!("    {line}");
+            }
         }
         Text::Missing(why) => println!("  body     : not stored ({why})"),
     }
@@ -1660,6 +1703,7 @@ mod tests {
         let body = Text::Binary {
             bytes: 12,
             sha256: "beef".to_string(),
+            text: "\u{fffd}\u{fffd}png".to_string(),
         };
         let difference = compare((&a, &body), (&a, &body));
         assert!(difference.same, "identical binary bodies are identical");
@@ -1866,5 +1910,28 @@ mod tests {
         assert!(rendered.contains("host: app.test\n"), "{rendered}");
         assert!(rendered.contains("cookie: session=abc\n"), "{rendered}");
         assert!(rendered.ends_with("\n\nuser=alice"), "{rendered}");
+    }
+
+    /// A body with two undecodable bytes is still evidence. Hiding it behind a
+    /// digest loses the answer in exactly the case the store exists for.
+    #[test]
+    fn a_body_that_is_not_utf8_is_still_readable() {
+        let mut raw = vec![0xff, 0xd8];
+        raw.extend_from_slice(b"FLAG{deadbeef}");
+        let sha = "d0";
+        let body = Text::Binary {
+            bytes: raw.len() as u64,
+            sha256: sha.to_string(),
+            text: String::from_utf8_lossy(&raw).into_owned(),
+        };
+        assert!(
+            body.as_str().contains("FLAG{deadbeef}"),
+            "match and diff have to be able to see it: {:?}",
+            body.as_str()
+        );
+        let json = body.to_json();
+        assert_eq!(json["kind"], "binary", "and it still says it was not text");
+        assert_eq!(json["bytes"], 16);
+        assert_eq!(json["sha256"], sha);
     }
 }

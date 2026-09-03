@@ -246,6 +246,20 @@ pub fn parse_set(spec: &str) -> Result<Edit, EditError> {
     })
 }
 
+/// The same edit, with a value that is bytes rather than text.
+///
+/// A file upload is the reason this exists. `Edit` has always carried a
+/// `Vec<u8>`, but `--set` reaches it through the process arguments and then
+/// through a JSON control message, and neither of those carries a JPEG's first
+/// two bytes — `ff d8` is not text in any encoding. A magic-number check is a
+/// filter worth testing, so the bytes have to arrive intact.
+pub fn parse_set_bytes(target: &str, value: Vec<u8>) -> Result<Edit, EditError> {
+    Ok(Edit {
+        target: parse_target(target)?,
+        value: Some(value),
+    })
+}
+
 /// Parse a bare target, for a removal.
 pub fn parse_unset(spec: &str) -> Result<Edit, EditError> {
     Ok(Edit {
@@ -1238,5 +1252,16 @@ mod tests {
         let mut request = request();
         apply(&mut request, &[set("path=/static/app.min.js")], false).expect("applies");
         assert_eq!(request.url.path(), "/static/app.min.js");
+    }
+
+    /// The bytes a command line cannot carry, which is the whole reason
+    /// `--set-file` exists.
+    #[test]
+    fn a_byte_valued_edit_carries_bytes_that_are_not_text() {
+        let mut request = request();
+        let jpeg = vec![0xff, 0xd8, 0xff, 0xe0, b'x'];
+        let edit = parse_set_bytes("body.raw", jpeg.clone()).expect("parses");
+        apply(&mut request, &[edit], false).expect("applies");
+        assert_eq!(request.body, jpeg);
     }
 }
