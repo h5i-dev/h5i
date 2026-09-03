@@ -4,7 +4,7 @@
 # with "failed to create directory ... File exists" before it compiles anything.
 #
 # A full dev-profile build of this workspace is very large, so the repo is
-# release-only. Unlike the CLAUDE.md rule and the Claude Code hook, this
+# release-only. Unlike the Claude Code hook, which only one tool obeys, this
 # works against every tool: Codex, an editor, a stray shell, anything.
 #
 #   scripts/no-debug-guard.sh          # or `on`: install the guard
@@ -24,7 +24,7 @@ case "${1:-on}" in
     fi
     mkdir -p target
     printf '%s\n' \
-      "Not a directory, on purpose: dev-profile builds are prohibited here." \
+      "Not a directory, on purpose: this checkout is release-only." \
       "Everything here is built with --release. See CLAUDE.md." \
       "Maintainer escape hatch: scripts/no-debug-guard.sh off" > "$guard"
     echo "guard on: dev-profile cargo builds now fail immediately"

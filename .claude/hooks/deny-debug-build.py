@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """PreToolUse(Bash) guard: refuse anything that would compile into target/debug.
 
-A dev-profile build of this workspace is very large, so the repo is
-release-only. This hook is the polite layer: it stops the command before
-it runs and says what to type instead. The hard layer is the placeholder file at
-target/debug (scripts/no-debug-guard.sh), which stops every other tool too.
+A dev-profile build of this workspace is very large. On a machine that cannot
+spare the space, this hook pins the checkout to release-only: it stops the
+command before it runs and says what to type instead. The hard layer is the
+placeholder file at target/debug (scripts/no-debug-guard.sh), which stops every
+other tool too.
+
+Opt-in, and deliberately not wired up by the repository. Nothing here fires
+until someone adds it to their own .claude/settings.local.json, because whether
+a dev build is affordable is a fact about the machine, not about the project.
+See CLAUDE.md.
 """
 import json
 import re
@@ -55,9 +61,9 @@ def main():
         # tampering, and blocking it would make the guard unmaintainable.
         if re.match(r"\s*(?:sudo\s+)?(?:rm|mv|rmdir|unlink|truncate|chattr)\b[^|;&]*target/debug",
                     segment) or re.match(r"\s*\S*no-debug-guard\.sh\s+off", segment):
-            deny("target/debug is guarded on purpose: dev-profile builds are "
-                 "prohibited in this repo. Removing the guard is a maintainer "
-                 "decision, not yours. Build with --release instead.")
+            deny("target/debug is guarded on purpose: this checkout is "
+                 "release-only. Removing the guard is the owner's decision, not "
+                 "yours. Build with --release instead.")
 
         args = cargo_args(segment)
         if args is None:
@@ -76,10 +82,10 @@ def main():
             profile = args[i + 1] if i + 1 < len(args) else ""
             if profile == "release":
                 continue
-            deny(f"Profile '{profile}' is not the release profile. This repo is "
-                 "release-only. Use --release.")
+            deny(f"Profile '{profile}' is not the release profile. This "
+                 "checkout is release-only. Use --release.")
         deny(f"`cargo {verb}` without --release compiles into target/debug, "
-             "which is prohibited in this repo. Run "
+             "which this checkout does not allow. Run "
              f"`cargo {verb} --release ...` instead (target/release is already "
              "warm, so it is also the faster path).")
 
