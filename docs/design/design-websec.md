@@ -694,11 +694,10 @@ either: both are executors for conditions and payloads that arrive from outside.
 
 ## What benchmarking changed
 
-**2026-09-03.** Phases A and B were exercised against the 104-benchmark XBOW
-validation corpus; 98 are solved. The worked solutions and the corpus runner
-live in their own repository, `h5i-benchmark`, which also records the six that
-are not solved and why: they are somebody else's benchmarks and a hundred
-exploit scripts, and neither belongs in the tree that ships the engine.
+**2026-09-03.** Phases A and B were tested against the 104-benchmark XBOW
+validation corpus. The first pass solved 98. Raw request targets then enabled
+XBEN-026 and XBEN-031, bringing the total to 100. The separate `h5i-benchmark`
+repository contains the runner, solutions, and notes about the remaining cases.
 
 The point of the exercise was not the score. It was to find the places where the
 workbench could not say what a person needed to say, and each of those turned
@@ -714,31 +713,45 @@ into a change:
   signature. Bodies now carry a lossy reading too, and `match` and `diff` can
   see it. `show --body-to PATH` writes the exact bytes out, for the responses
   that are files rather than text.
-- **A request that was quietly not the one asked for.** See the known gap
-  below.
+- **Normalized requests.** `resend --raw-target` and `--raw-request` preserve
+  request targets and bytes that URL parsing would change.
 
 Two smaller things the corpus caught: `submit` refused a `<form>` selector with
 "is a an element", and a replay's own sequence number was reported but not
 obviously enough for a caller to read its answer back by name. The rest of what
 the run needed was the corpus's own problem and stayed with it.
 
-## Known gap: request-targets the URL parser rewrites
+## Raw requests
 
-**Found while benchmarking, 2026-09-03.** h5i builds requests from parsed
-`Url`s, which resolve dot segments and encoded equivalents before request
-construction. For example, `--set path=/cgi-bin/.%2e/.%2e/etc/passwd` reaches
-the wire as `/etc/passwd`, yielding evidence about the wrong request.
+**Added 2026-09-03 after benchmarking.** Normal requests use parsed `Url`s, which
+normalize dot segments and percent encoding. For example,
+`--set path=/cgi-bin/.%2e/.%2e/etc/passwd` sends `/etc/passwd`. `apply` rejects
+such edits (`crates/h5i-browser/src/edits.rs`).
 
-`apply` now refuses such an edit and names what the parser would have done
-(`crates/h5i-browser/src/edits.rs`). Refusing is the honest half; it is not the
-whole fix.
+The raw send path bypasses `reqwest` so it can preserve those bytes. It shares
+the socket transport in `crates/h5i-browser/src/rawsock.rs` with the WebSocket
+client. `LocalBroker::send_raw` sends raw HTTP/1.1 requests.
 
-A complete fix requires a verbatim request target, which neither `Url` nor
-`reqwest` supports. This also affects normalization differentials and request
-smuggling. XBOW benchmarks XBEN-026 and XBEN-031 are therefore unreachable.
+`RawRequest` in `broker.rs` supports two forms:
 
-The eventual raw-target path must still use the normal policy, budget, and
-receipt checks.
+- **Raw target.** `h5i browser resend <seq> --raw-target
+  /cgi-bin/.%2e/.%2e/bin/sh` preserves the target but computes `Host` and
+  `Content-Length`.
+- **Raw request.** `h5i browser resend --raw-request <path>` preserves the full
+  request, including framing headers. The receipt records broken framing
+  invariants.
+
+Both forms check policy, pin the address, claim the budget, and write a receipt
+before dialing. Because raw sockets cannot use the egress proxy, proxied sessions
+allow raw requests only to loopback, as the WebSocket client does.
+
+**Now reachable:** `--raw-target` solves XBEN-026 (CVE-2021-42013) and XBEN-031
+(CVE-2021-41773) end to end. Worked scripts are in `h5i-benchmark`.
+
+**Still open:** XBEN-066 can now express arbitrary request framing, but its
+mitmproxy 6.0.2, HAProxy 2.0.5, and Apache stack still needs a working desync
+payload. The front proxy reparses requests and rewrites `Host`; this is now a
+payload problem, not a missing h5i capability.
 
 ## Open questions
 

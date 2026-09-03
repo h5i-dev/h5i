@@ -95,11 +95,11 @@ impl FetchOutcome {
         Self::failed(url, error)
     }
 
-    fn failed(url: Url, error: String) -> Self {
+    pub(crate) fn failed(url: Url, error: String) -> Self {
         Self::failed_at(url, error, None)
     }
 
-    fn failed_at(url: Url, error: String, seq: Option<u64>) -> Self {
+    pub(crate) fn failed_at(url: Url, error: String, seq: Option<u64>) -> Self {
         Self {
             seq,
             headers: Vec::new(),
@@ -1965,6 +1965,161 @@ impl crate::broker::Broker for LocalBroker {
         )
     }
 
+    fn send_raw(&self, req: &crate::broker::RawRequest) -> FetchOutcome {
+        let url = &req.url;
+        // Show the authority and the target that was actually sent.
+        let display = format!("{}{}", scheme_authority(url), req.target);
+
+        let denied = |broker: &Self, seq: u64, reason: &str| -> FetchOutcome {
+            let record =
+                RequestRecord::request(seq, Initiator::Navigation, &req.method, &display)
+                    .denied(reason);
+            if let Err(e) = broker.record_pair(&record) {
+                return FetchOutcome::failed(url.clone(), format!("receipt sink refused: {e}"));
+            }
+            FetchOutcome::failed_at(url.clone(), reason.to_string(), Some(seq))
+        };
+
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+
+        // 1. Check policy and record any refusal.
+        if let Some(reason) = self.policy.check_from(url, None).reason() {
+            return denied(self, seq, reason);
+        }
+
+        // 2. Raw sockets cannot bypass the proxy except for loopback.
+        if self.proxied && !crate::rawsock::is_loopback(url) {
+            return denied(
+                self,
+                seq,
+                "a raw request is a socket this session's egress proxy does not carry, so it is \
+                 refused off loopback rather than sent around the allowlist the proxy enforces",
+            );
+        }
+
+        // 3. Pin and check addresses before dialing.
+        if let Err(reason) = self.pin_addresses(url) {
+            return denied(self, seq, &reason);
+        }
+
+        // 4. Claim the request budget.
+        if let Err(over) = self.budget.claim_request() {
+            return denied(self, seq, &over.0);
+        }
+
+        // 5. Record the decision before sending. Fail closed if this fails.
+        let mut record =
+            RequestRecord::request(seq, Initiator::Navigation, &req.method, &display);
+        record.headers_overridden = req.broke.clone();
+        if let Err(e) = self.append(&record) {
+            return FetchOutcome::failed(
+                url.clone(),
+                format!("refusing to fetch: the receipt could not be written: {e}"),
+            );
+        }
+
+        // Capture the outgoing request when a store is enabled.
+        if let Some(capture) = &self.capture {
+            let body = req.wire.get(req.body_at..).unwrap_or(&[]);
+            let content_type = req
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+                .map(|(_, value)| value.as_str());
+            capture.request(seq, &req.method, &display, req.headers.clone(), body, content_type);
+        }
+
+        // 6. Send the request.
+        let started = Instant::now();
+        let approved = url.host_str().and_then(|host| self.approved_addresses(host));
+        let mut wire = match crate::rawsock::dial(url, approved) {
+            Ok(wire) => wire,
+            Err(e) => {
+                let mut outcome = record.response();
+                outcome.duration_ms = Some(started.elapsed().as_millis() as u64);
+                outcome.error = Some(e.clone());
+                let _ = self.append(&outcome);
+                return FetchOutcome::failed_at(url.clone(), e, Some(seq));
+            }
+        };
+        // Do not wait forever for a silent server.
+        wire.set_read_timeout(Some(Duration::from_secs(30)));
+
+        if let Err(e) = wire.write_all(&req.wire) {
+            wire.shutdown();
+            let mut outcome = record.response();
+            outcome.duration_ms = Some(started.elapsed().as_millis() as u64);
+            outcome.error = Some(format!("writing the request failed: {e}"));
+            let _ = self.append(&outcome);
+            return FetchOutcome::failed_at(
+                url.clone(),
+                format!("writing the request failed: {e}"),
+                Some(seq),
+            );
+        }
+
+        let cap = self.policy.max_response_bytes() as usize;
+        let response = crate::rawsock::read_http_response(&mut wire, cap);
+        let ttfb = started.elapsed().as_millis() as u64;
+        wire.shutdown();
+
+        match response {
+            Err(e) => {
+                let mut outcome = record.response();
+                outcome.duration_ms = Some(ttfb);
+                outcome.ttfb_ms = Some(ttfb);
+                outcome.error = Some(e.clone());
+                let _ = self.append(&outcome);
+                FetchOutcome::failed_at(url.clone(), e, Some(seq))
+            }
+            Ok(resp) => {
+                // Store cookies from raw responses in the session jar.
+                let cookies_stored = self.jar.store(
+                    url,
+                    resp.headers
+                        .iter()
+                        .filter(|(name, _)| name.eq_ignore_ascii_case("set-cookie"))
+                        .map(|(_, value)| value.as_str()),
+                );
+
+                let mut outcome = record.response();
+                outcome.status = resp.status;
+                outcome.duration_ms = Some(ttfb);
+                outcome.ttfb_ms = Some(ttfb);
+                outcome.bytes = Some(resp.body.len() as u64);
+                outcome.cookies_stored = Some(cookies_stored);
+                let _ = self.append(&outcome);
+                self.budget.record(
+                    resp.body.len() as u64,
+                    resp.body.len() as u64,
+                    Duration::from_millis(ttfb),
+                );
+
+                if let Some(capture) = &self.capture {
+                    capture.response(crate::capture::Response {
+                        seq,
+                        url: &display,
+                        status: resp.status,
+                        headers: resp.headers.clone(),
+                        content_encoding: None,
+                        wire_bytes: None,
+                        body: crate::capture::Received::Bytes(&resp.body),
+                    });
+                }
+
+                FetchOutcome {
+                    seq: Some(seq),
+                    headers: resp.headers,
+                    final_url: url.clone(),
+                    body: resp.body,
+                    status: resp.status,
+                    error: None,
+                    opaque: false,
+                }
+            }
+        }
+    }
+
 
     fn records(&self) -> Vec<RequestRecord> {
         self.log.records()
@@ -2139,6 +2294,26 @@ impl LocalBroker {
         let applied = crate::edits::apply(&mut editable, edits, create)
             .map_err(|e| SendError::new("bad-edit", e.to_string()))?;
 
+        // Build raw requests after edits so `--set` still applies.
+        if plan.raw_request.is_some() || plan.raw_target.is_some() {
+            let raw = build_raw_request(&editable, &plan)
+                .map_err(|e| SendError::new("bad-raw", e))?;
+            let sent = crate::broker::Sent {
+                method: raw.method.clone(),
+                url: format!("{}{}", scheme_authority(&raw.url), raw.target),
+                header_names: raw.headers.iter().map(|(name, _)| name.clone()).collect(),
+                body_bytes: (raw.wire.len().saturating_sub(raw.body_at)) as u64,
+            };
+            let outcome = crate::broker::Broker::send_raw(self, &raw);
+            return Ok(crate::broker::Edited {
+                seq: outcome.seq,
+                applied,
+                sent,
+                samples: Vec::new(),
+                outcome,
+            });
+        }
+
         let content_type = editable.content_type().map(str::to_string);
         let follow = plan.no_follow.then_some(0);
         let fetch = crate::broker::Fetch {
@@ -2189,6 +2364,143 @@ impl LocalBroker {
             outcome,
         })
     }
+}
+
+/// Return `scheme://host[:port]` for display and `Host` construction.
+fn scheme_authority(url: &Url) -> String {
+    format!("{}://{}", url.scheme(), authority_host(url))
+}
+
+/// Return `host[:port]`, omitting the default port.
+fn authority_host(url: &Url) -> String {
+    match (url.host_str(), url.port()) {
+        (Some(host), Some(port)) => format!("{host}:{port}"),
+        (Some(host), None) => host.to_string(),
+        _ => String::new(),
+    }
+}
+
+/// Build either a complete raw request or a managed request with a raw target.
+fn build_raw_request(
+    editable: &crate::edits::Editable,
+    plan: &crate::broker::Sends,
+) -> Result<crate::broker::RawRequest, String> {
+    if let Some(bytes) = &plan.raw_request {
+        return parse_raw_request(editable.url.clone(), bytes.clone());
+    }
+    let target = plan
+        .raw_target
+        .as_deref()
+        .ok_or("a raw send needs a request-target or a whole request")?;
+    if target.is_empty() || target.as_bytes()[0] != b'/' && !target.contains("://") {
+        return Err(format!(
+            "{target:?} is not a request-target: it should begin with `/` (an origin-form target \
+             like `/cgi-bin/.%2e/etc/passwd`) or be an absolute URL"
+        ));
+    }
+    Ok(build_managed_raw(editable, target))
+}
+
+/// Build a request with a verbatim target and computed framing headers.
+fn build_managed_raw(
+    editable: &crate::edits::Editable,
+    target: &str,
+) -> crate::broker::RawRequest {
+    let method = editable.method.trim().to_ascii_uppercase();
+    let mut headers: Vec<(String, String)> = Vec::new();
+
+    // Use the authority unless the caller supplied `Host`.
+    let host = editable
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("host"))
+        .map(|(_, value)| value.clone())
+        .unwrap_or_else(|| authority_host(&editable.url));
+    headers.push(("Host".to_string(), host));
+
+    // Keep caller headers, but recompute framing headers below.
+    for (name, value) in &editable.headers {
+        let lower = name.to_ascii_lowercase();
+        if matches!(lower.as_str(), "host" | "content-length" | "transfer-encoding" | "connection") {
+            continue;
+        }
+        headers.push((name.clone(), value.clone()));
+    }
+    if !editable.body.is_empty() {
+        headers.push(("Content-Length".to_string(), editable.body.len().to_string()));
+    }
+    // Closing the connection also delimits responses without a length.
+    headers.push(("Connection".to_string(), "close".to_string()));
+
+    let mut head = format!("{method} {target} HTTP/1.1\r\n");
+    for (name, value) in &headers {
+        head.push_str(name);
+        head.push_str(": ");
+        head.push_str(value);
+        head.push_str("\r\n");
+    }
+    head.push_str("\r\n");
+
+    let mut wire = head.into_bytes();
+    let body_at = wire.len();
+    wire.extend_from_slice(&editable.body);
+
+    crate::broker::RawRequest {
+        url: editable.url.clone(),
+        method,
+        target: target.to_string(),
+        wire,
+        body_at,
+        headers,
+        broke: Vec::new(),
+    }
+}
+
+/// Parse audit fields from a complete request without changing its bytes.
+fn parse_raw_request(url: Url, bytes: Vec<u8>) -> Result<crate::broker::RawRequest, String> {
+    let head_end = find_crlf_crlf(&bytes).map(|at| at + 4).unwrap_or(bytes.len());
+    let head = &bytes[..head_end];
+    let text = String::from_utf8_lossy(head);
+    let mut lines = text.split("\r\n");
+    let first = lines.next().unwrap_or("");
+    let mut parts = first.split_whitespace();
+    let method = parts.next().unwrap_or("").to_string();
+    let target = parts.next().unwrap_or("").to_string();
+    if method.is_empty() || target.is_empty() {
+        return Err(format!(
+            "the raw request's first line is {first:?}, not a `METHOD target HTTP/1.1` line"
+        ));
+    }
+    let headers: Vec<(String, String)> = lines
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| {
+            line.split_once(':')
+                .map(|(name, value)| (name.trim().to_string(), value.trim().to_string()))
+        })
+        .collect();
+    let broke: Vec<String> = headers
+        .iter()
+        .filter(|(name, _)| {
+            matches!(
+                name.to_ascii_lowercase().as_str(),
+                "content-length" | "transfer-encoding" | "connection"
+            )
+        })
+        .map(|(name, _)| name.to_ascii_lowercase())
+        .collect();
+    Ok(crate::broker::RawRequest {
+        url,
+        method,
+        target,
+        wire: bytes,
+        body_at: head_end,
+        headers,
+        broke,
+    })
+}
+
+fn find_crlf_crlf(bytes: &[u8]) -> Option<usize> {
+    bytes.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
 /// Adapts the broker to Blitz's [`NetProvider`].
@@ -2988,6 +3300,7 @@ mod capture_wire_tests {
                 count: 1,
                 together: false,
                 no_follow: true,
+                ..Default::default()
             },
         )
         .expect("sent");
@@ -3007,6 +3320,110 @@ mod capture_wire_tests {
             "the `Location` is the whole content of a redirect: {:?}",
             stopped.outcome.headers
         );
+    }
+
+    /// Start a server that echoes each request line.
+    fn echo_request_line() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let Ok((stream, _)) = listener.accept() else { return };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line);
+            loop {
+                let mut header = String::new();
+                if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+                    break;
+                }
+            }
+            let body = line.trim_end().to_string();
+            let mut stream = stream;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.flush();
+        });
+        port
+    }
+
+    /// A raw target reaches the wire without URL normalization.
+    #[test]
+    fn a_raw_target_reaches_the_wire_unresolved() {
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker");
+        let port = echo_request_line();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+        let sent = crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "GET".to_string(),
+                url,
+                headers: Vec::new(),
+                body: Vec::new(),
+            },
+            &[],
+            false,
+            crate::broker::Sends {
+                count: 1,
+                together: false,
+                no_follow: false,
+                raw_target: Some("/cgi-bin/.%2e/.%2e/etc/passwd".to_string()),
+                raw_request: None,
+            },
+        )
+        .expect("sent");
+        let echoed = String::from_utf8_lossy(&sent.outcome.body);
+        assert_eq!(
+            echoed, "GET /cgi-bin/.%2e/.%2e/etc/passwd HTTP/1.1",
+            "the server saw the verbatim target, not one a parser straightened"
+        );
+        assert_eq!(sent.outcome.status, Some(200));
+    }
+
+    /// A raw request preserves its bytes and records its framing headers.
+    #[test]
+    fn a_raw_request_is_written_verbatim_and_its_framing_is_noted() {
+        let editable = crate::edits::Editable {
+            method: "GET".to_string(),
+            url: Url::parse("http://app.test/").unwrap(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+        let wire = b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\
+                     Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+            .to_vec();
+        let plan = crate::broker::Sends {
+            raw_request: Some(wire.clone()),
+            ..Default::default()
+        };
+        let raw = build_raw_request(&editable, &plan).expect("built");
+        assert_eq!(raw.method, "POST");
+        assert_eq!(raw.target, "/");
+        assert_eq!(raw.wire, wire, "not one byte is changed");
+        assert!(raw.broke.contains(&"content-length".to_string()));
+        assert!(raw.broke.contains(&"transfer-encoding".to_string()));
+    }
+
+    /// A managed raw request computes framing but preserves its target.
+    #[test]
+    fn a_managed_raw_request_frames_itself() {
+        let editable = crate::edits::Editable {
+            method: "post".to_string(),
+            url: Url::parse("http://127.0.0.1:8080/ignored").unwrap(),
+            headers: vec![("Accept".to_string(), "*/*".to_string())],
+            body: b"hello".to_vec(),
+        };
+        let raw = build_managed_raw(&editable, "/cgi-bin/.%2e/bin/sh");
+        let text = String::from_utf8_lossy(&raw.wire);
+        assert!(text.starts_with("POST /cgi-bin/.%2e/bin/sh HTTP/1.1\r\n"));
+        assert!(text.contains("Host: 127.0.0.1:8080\r\n"), "{text}");
+        assert!(text.contains("Content-Length: 5\r\n"), "{text}");
+        assert!(text.ends_with("\r\n\r\nhello"), "{text}");
+        assert!(raw.broke.is_empty(), "the managed shape breaks nothing");
     }
 
     /// A session that never captured has nothing to replay, and the message

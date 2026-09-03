@@ -178,6 +178,23 @@ pub struct Given {
     pub body: Vec<u8>,
 }
 
+/// A request written directly to the socket, without URL parsing.
+pub struct RawRequest {
+    /// The authority used for policy checks and dialing. Its path is ignored.
+    pub url: Url,
+    /// The method and target recorded in receipts. `wire` contains the sent values.
+    pub method: String,
+    pub target: String,
+    /// The complete request bytes, written unchanged.
+    pub wire: Vec<u8>,
+    /// The body offset within `wire`.
+    pub body_at: usize,
+    /// Parsed headers for capture and receipts.
+    pub headers: Vec<(String, String)>,
+    /// Deliberately broken framing invariants recorded in the receipt.
+    pub broke: Vec<String>,
+}
+
 /// Why a replay did not happen, in a form a script can branch on.
 ///
 /// A code as well as a sentence, because these are four different situations
@@ -206,7 +223,7 @@ impl SendError {
 /// "is this reliably slower", which is a timing test. `count` sends at the same
 /// instant answers "does this application check and then act", which is a race.
 /// The same request, the same receipts, and nothing else in common.
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Sends {
     /// How many. Always at least one.
     pub count: u32,
@@ -225,6 +242,12 @@ pub struct Sends {
     /// reach is the ordinary check-then-act window, which is where nearly every
     /// real one lives.
     pub together: bool,
+    /// A request-target to write unchanged. `None` uses the normal sender.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_target: Option<String>,
+    /// A complete request to write unchanged. `None` uses the normal sender.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_request: Option<Vec<u8>>,
 }
 
 impl Default for Sends {
@@ -233,6 +256,8 @@ impl Default for Sends {
             count: 1,
             together: false,
             no_follow: false,
+            raw_target: None,
+            raw_request: None,
         }
     }
 }
@@ -336,6 +361,14 @@ pub trait Broker: Send + Sync {
             "not-supported",
             "this broker cannot send a composed request",
         ))
+    }
+
+    /// Send exact request bytes after the usual policy, budget, and receipt checks.
+    fn send_raw(&self, _request: &RawRequest) -> FetchOutcome {
+        FetchOutcome::failed(
+            _request.url.clone(),
+            "this broker cannot send a raw request".to_string(),
+        )
     }
 
     /// What this session's message store has done, when it has one.

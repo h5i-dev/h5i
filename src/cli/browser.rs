@@ -988,6 +988,17 @@ pub enum BrowserCommands {
         /// the other session. Only meaningful with `--as`.
         #[arg(long, requires = "as_session")]
         keep_credentials: bool,
+        /// Send this request-target unchanged, without URL normalization.
+        ///
+        /// Policy, budget, and receipt checks still apply. The sender computes
+        /// `Host` and `Content-Length`; use `--raw-request` to control framing.
+        #[arg(long = "raw-target", value_name = "TARGET")]
+        raw_target: Option<String>,
+        /// Send a complete request unchanged from this file; `-` reads stdin.
+        ///
+        /// The stored URL supplies the authority for policy checks and dialing.
+        #[arg(long = "raw-request", value_name = "PATH")]
+        raw_request: Option<String>,
         /// Which session, when more than one is open.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
@@ -1539,6 +1550,8 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             reset_budget,
             as_session,
             keep_credentials,
+            raw_target,
+            raw_request,
             session,
             json,
         } => {
@@ -1597,6 +1610,28 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             }
             if reset_budget {
                 argv.push("--reset-budget".into());
+            }
+            if let Some(target) = raw_target {
+                argv.push("--raw-target".into());
+                argv.push(target);
+            }
+            // Encode arbitrary request bytes for the JSON control channel.
+            if let Some(path) = raw_request {
+                let bytes = if path == "-" {
+                    use std::io::Read as _;
+                    let mut buf = Vec::new();
+                    std::io::stdin().read_to_end(&mut buf).map_err(|e| {
+                        anyhow::anyhow!("--raw-request -: stdin could not be read: {e}")
+                    })?;
+                    buf
+                } else {
+                    std::fs::read(&path).map_err(|e| {
+                        anyhow::anyhow!("--raw-request: {path} could not be read: {e}")
+                    })?
+                };
+                use base64::Engine as _;
+                argv.push("--raw-request".into());
+                argv.push(base64::engine::general_purpose::STANDARD.encode(&bytes));
             }
             // Mutating: it puts bytes on the wire under this session's
             // identity, which is exactly what the control lock exists to stop a

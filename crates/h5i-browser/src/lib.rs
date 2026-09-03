@@ -21,6 +21,7 @@ pub mod multipart;
 pub mod ipc;
 pub mod net;
 pub mod policy;
+pub mod rawsock;
 pub mod read_ir;
 pub mod receipt;
 pub mod replay;

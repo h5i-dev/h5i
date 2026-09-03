@@ -1855,7 +1855,7 @@ Send one of this session's own requests again, with changes
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBresend\fR [\fB\-\-set\fR] [\fB\-\-set\-file\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-\-repeat\fR] [\fB\-\-race\fR] [\fB\-\-no\-follow\fR] [\fB\-\-reset\-budget\fR] [\fB\-\-as\fR] [\fB\-\-keep\-credentials\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
+\fBresend\fR [\fB\-\-set\fR] [\fB\-\-set\-file\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-\-repeat\fR] [\fB\-\-race\fR] [\fB\-\-no\-follow\fR] [\fB\-\-reset\-budget\fR] [\fB\-\-as\fR] [\fB\-\-keep\-credentials\fR] [\fB\-\-raw\-target\fR] [\fB\-\-raw\-request\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1915,6 +1915,16 @@ The source session\*(Aqs own credentials are dropped, because carrying them woul
 .TP
 \fB\-\-keep\-credentials\fR
 Carry the source session\*(Aqs `Cookie` and `Authorization` headers into the other session. Only meaningful with `\-\-as`
+.TP
+\fB\-\-raw\-target\fR \fI<TARGET>\fR
+Send this request\-target unchanged, without URL normalization.
+
+Policy, budget, and receipt checks still apply. The sender computes `Host` and `Content\-Length`; use `\-\-raw\-request` to control framing.
+.TP
+\fB\-\-raw\-request\fR \fI<PATH>\fR
+Send a complete request unchanged from this file; `\-` reads stdin.
+
+The stored URL supplies the authority for policy checks and dialing.
 .TP
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open

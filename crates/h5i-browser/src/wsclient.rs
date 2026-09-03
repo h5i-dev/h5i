@@ -1,6 +1,6 @@
 //! A WebSocket client, for the one case this engine is uniquely good at.
 
-use std::io::{BufReader, Read, Write};
+use std::io::{BufReader, Read};
 use std::net::TcpStream;
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -11,129 +11,8 @@ use url::Url;
 use crate::net::LocalBroker;
 use crate::ws::{self, Incoming};
 
-/// The bytes underneath a socket, plain or encrypted.
-struct Wire {
-    sock: TcpStream,
-    /// `None` for `ws://`. Shared with the reader thread for `wss://`.
-    tls: Option<Arc<Mutex<rustls::ClientConnection>>>,
-}
-
-/// How long a TLS read waits before releasing the connection lock.
-///
-/// Short enough that a `send` never feels it, long enough not to spin. Only
-/// TLS sockets set a read timeout at all: a plain socket has two independent
-/// handles and needs none.
-const TLS_READ_SLICE: std::time::Duration = std::time::Duration::from_millis(100);
-
-impl Wire {
-    fn plain(sock: TcpStream) -> Self {
-        Self { sock, tls: None }
-    }
-
-    fn tls(sock: TcpStream, conn: rustls::ClientConnection) -> Self {
-        Self {
-            sock,
-            tls: Some(Arc::new(Mutex::new(conn))),
-        }
-    }
-
-    fn is_tls(&self) -> bool {
-        self.tls.is_some()
-    }
-
-    /// A second handle on the same connection, for the reader thread.
-    fn try_clone(&self) -> std::io::Result<Wire> {
-        Ok(Wire {
-            sock: self.sock.try_clone()?,
-            tls: self.tls.clone(),
-        })
-    }
-
-    /// Write, and make sure it has actually left.
-    ///
-    /// `&self` rather than `&mut self` because both halves of the socket hold
-    /// one of these, and a frame written from the page's thread must not need
-    /// exclusive ownership of the connection.
-    fn write_all(&self, data: &[u8]) -> std::io::Result<()> {
-        match &self.tls {
-            None => {
-                let mut sock = &self.sock;
-                sock.write_all(data)?;
-                sock.flush()
-            }
-            Some(conn) => {
-                let mut conn = conn
-                    .lock()
-                    .map_err(|_| std::io::Error::other("the tls connection lock is poisoned"))?;
-                let mut sock = &self.sock;
-                let mut stream = rustls::Stream::new(&mut *conn, &mut sock);
-                stream.write_all(data)?;
-                stream.flush()
-            }
-        }
-    }
-
-    fn shutdown(&self) {
-        let _ = self.sock.shutdown(std::net::Shutdown::Both);
-    }
-
-    fn set_read_timeout(&self, timeout: Option<std::time::Duration>) {
-        let _ = self.sock.set_read_timeout(timeout);
-    }
-}
-
-impl std::io::Read for Wire {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let Some(conn) = self.tls.clone() else {
-            return (&self.sock).read(buf);
-        };
-        loop {
-            {
-                let mut conn = conn
-                    .lock()
-                    .map_err(|_| std::io::Error::other("the tls connection lock is poisoned"))?;
-                let mut sock = &self.sock;
-                let mut stream = rustls::Stream::new(&mut *conn, &mut sock);
-                match stream.read(buf) {
-                    Ok(read) => return Ok(read),
-                    // The slice expired with nothing to show for it. The lock
-                    // is dropped here, which is the whole point of the timeout,
-                    // and then we ask again.
-                    Err(error)
-                        if matches!(
-                            error.kind(),
-                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                        ) => {}
-                    Err(error) => return Err(error),
-                }
-            }
-            std::thread::yield_now();
-        }
-    }
-}
-
-/// The trust store, built once.
-///
-/// Mozilla's roots, compiled in, for the same reason the public suffix list is
-/// compiled in: a decision about who to trust should not depend on the network
-/// being reachable or on a file the box may not have. A host with no system
-/// certificate store still opens a `wss://` correctly.
-fn tls_config() -> Arc<rustls::ClientConfig> {
-    use std::sync::OnceLock;
-    static CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            let roots = rustls::RootCertStore {
-                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-            };
-            Arc::new(
-                rustls::ClientConfig::builder()
-                    .with_root_certificates(roots)
-                    .with_no_client_auth(),
-            )
-        })
-        .clone()
-}
+/// Shared plain and TLS socket transport.
+use crate::rawsock::{connect_to_any, is_loopback, tls_config, Wire, TLS_READ_SLICE};
 
 /// The most one line of the server's handshake response may be, and the most
 /// lines there may be.
@@ -466,28 +345,6 @@ fn read_line_capped(reader: &mut BufReader<Wire>, out: &mut String) -> std::io::
     Ok(taken)
 }
 
-/// Connect to the first of the approved addresses that answers.
-///
-/// A name can resolve to several addresses and only some of them be reachable,
-/// an IPv6 record on a host with no IPv6 route is the ordinary case, so
-/// trying one and giving up would make a working site look down. Every address
-/// here has already been through [`crate::policy::Policy::check_address`];
-/// which of them answers is a reachability question, not a policy one.
-fn connect_to_any(addrs: &[std::net::SocketAddr]) -> std::io::Result<TcpStream> {
-    let mut last = None;
-    for addr in addrs {
-        match TcpStream::connect_timeout(addr, HANDSHAKE_TIMEOUT) {
-            Ok(sock) => return Ok(sock),
-            Err(e) => last = Some(e),
-        }
-    }
-    Err(last.unwrap_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::AddrNotAvailable,
-            "the host resolved to no addresses",
-        )
-    }))
-}
 
 /// The opening handshake.
 ///
@@ -629,18 +486,6 @@ fn send_masked(stream: &Wire, opcode: u8, payload: &[u8]) -> Result<(), H5iError
 fn base64_encode(bytes: &[u8]) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
-/// Whether this address is the machine we are already on.
-fn is_loopback(url: &Url) -> bool {
-    match url.host() {
-        Some(url::Host::Domain(name)) => {
-            name.eq_ignore_ascii_case("localhost") || name.eq_ignore_ascii_case("localhost.")
-        }
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
-    }
 }
 
 #[cfg(test)]
