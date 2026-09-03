@@ -481,8 +481,8 @@ The twenty features, ranked, with the phase that carries them.
 | 14 | match and extract primitives | Intruder grep | A, built |
 | 8 | multipart and upload editing | Repeater | B |
 | 10 | replay as another session | Repeater plus session rules | B, built |
-| 11 | extract and bind | macros, session rules | B |
-| 12 | multi-request sequences | Repeater sequences | B |
+| 11 | extract and bind | macros, session rules | B, built |
+| 12 | multi-request sequences | Repeater sequences | B, built |
 | 15 | precise timing | Repeater, Intruder | B |
 | 16 | controlled parallel replay | Intruder, race testing | B |
 | 17 | redirect chain observation and control | Proxy, Repeater | B |
@@ -512,6 +512,16 @@ problems, run by an agent with only these verbs, scored on solved and on how
 many turns and requests it took. A feature that does not move that number is not
 finished, whatever its tests say. The corpus belongs in `docs/benchmarks/`
 beside the environment ones, with the same rule that the harness is committed.
+
+The first piece of it exists: `scripts/websec/smoke.sh` drives every verb end to
+end against `scripts/websec/server.py`, and it is committed because it keeps
+earning its place. Four bugs so far were invisible to the unit suite and obvious
+on the first real run: a verb missing from `Verb::ALL` (wired everywhere, refused
+at the session), a duplicated `accept-encoding` on every replay, two exit codes
+collapsed into one, and a `null` read as a composed request, which broke plain
+`resend` between two commits. Unit tests cover the pieces. This covers the seams
+between the CLI, the control channel, the engine and the store, which is where
+every one of those lived.
 
 ## W21. Packaging: a plugin, not a part of the binary
 

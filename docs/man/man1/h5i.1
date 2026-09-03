@@ -1661,6 +1661,33 @@ At most this many rows, newest last
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I BROWSER SEQUENCE"
+Run a multi-step flow: send, extract, send again with what was found
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsequence\fR [\fB\-\-var\fR] [\fB\-\-keep\-going\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIFILE\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-var\fR \fI<NAME=VALUE>\fR
+Bind a name before the first step, as `name=value`. Repeatable
+.TP
+\fB\-\-keep\-going\fR
+Run every step even after one fails, to read a whole file\*(Aqs failures at once
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIFILE\fR>
+The sequence file
 .SH "H5I BROWSER MESSAGE"
 One stored message, as it went out or as it came back
 .ie \n(.g .ds Aq \(aq

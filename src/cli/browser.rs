@@ -689,6 +689,41 @@ pub enum BrowserCommands {
         json: bool,
     },
 
+    /// Run a multi-step flow: send, extract, send again with what was found.
+    ///
+    /// What a CSRF-protected application needs. A single `resend` cannot test
+    /// an endpoint whose token is minted by the request before it, and hand-
+    /// carrying the token between two shell commands is where the mistakes
+    /// happen. Steps run in order and stop at the first failure, because a step
+    /// acting on a token the step before it failed to produce is acting on a
+    /// state the file never described.
+    ///
+    /// The file is JSON:
+    ///
+    /// ```json
+    /// {"steps": [
+    ///   {"resend": 3, "extract": {"csrf": "regex:value=\"([^\"]+)\""}},
+    ///   {"resend": 5, "set": ["header.X-CSRF-Token=${csrf}", "json.role=admin"]}
+    /// ]}
+    /// ```
+    Sequence {
+        /// The sequence file.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Bind a name before the first step, as `name=value`. Repeatable.
+        #[arg(long = "var", value_name = "NAME=VALUE")]
+        vars: Vec<String>,
+        /// Run every step even after one fails, to read a whole file's failures
+        /// at once.
+        #[arg(long)]
+        keep_going: bool,
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// One stored message, as it went out or as it came back.
     ///
     /// Needs a session opened with `--capture`. This is the verb that shows the
@@ -1245,6 +1280,29 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 argv.push("--denied-only".into());
             }
             verb(&root, session.as_deref(), argv, false, json)
+        }
+        BrowserCommands::Sequence {
+            file,
+            vars,
+            keep_going,
+            session,
+            json,
+        } => {
+            let bindings: Vec<(String, String)> = vars
+                .into_iter()
+                .map(|spec| match spec.split_once('=') {
+                    Some((name, value)) => (name.to_string(), value.to_string()),
+                    None => (spec, String::new()),
+                })
+                .collect();
+            super::websec::sequence(
+                &root,
+                session.as_deref(),
+                &file,
+                &bindings,
+                keep_going,
+                json,
+            )
         }
         BrowserCommands::Message {
             seq,
@@ -2645,6 +2703,76 @@ fn verb(
 /// wrote and then say where it ended up. It runs only on an answer that was not
 /// a refusal, and it runs *before* the printing, because an answer naming a
 /// path the file is no longer at would be worse than no answer.
+/// Run one step of a sequence, and hand back the answer.
+///
+/// Typed rather than argv, because a sequence step and a typed verb have to end
+/// at the same place: this assembles the same command line `BrowserCommands::
+/// Resend` does, so the control lock, the receipts and the policy see a
+/// sequence exactly as they see somebody typing the steps one at a time.
+pub(crate) fn resend_step(
+    root: &Path,
+    selector: Option<&str>,
+    step: &super::websec::Sending<'_>,
+) -> anyhow::Result<Value> {
+    let mut argv = vec!["resend".to_string()];
+    match step.as_session {
+        None => {
+            argv.push("--from".into());
+            argv.push(step.from.to_string());
+        }
+        Some(_) => {
+            let (request, _) =
+                super::websec::carry(root, selector, step.from, step.keep_credentials)?;
+            argv.push("--request".into());
+            argv.push(serde_json::to_string(&request)?);
+        }
+    }
+    for spec in step.set {
+        argv.push("--set".into());
+        argv.push(spec.clone());
+    }
+    for spec in step.unset {
+        argv.push("--unset".into());
+        argv.push(spec.clone());
+    }
+    if step.create {
+        argv.push("--create".into());
+    }
+    // The session the request becomes part of, which is the other one when
+    // there is one.
+    let target = step.as_session.or(selector);
+    ask_session(root, target, argv, true)
+}
+
+/// Send a verb and hand back the answer, without printing it.
+///
+/// The half of [`verb_then`] a caller that is *composing* verbs needs: a
+/// sequence runs several and reads each answer to decide the next, so a
+/// function that prints and returns nothing is the wrong shape for it. Same
+/// resolution, same control-lock check, same scrub, because a composed run must
+/// not be able to reach a session by a path a typed verb could not.
+pub(crate) fn ask_session(
+    root: &Path,
+    selector: Option<&str>,
+    argv: Vec<String>,
+    mutating: bool,
+) -> anyhow::Result<Value> {
+    let session = match bs::resolve(root, selector) {
+        Ok(session) => session,
+        Err(gone) => {
+            eprintln!("{}", gone);
+            std::process::exit(bs::EXIT_SESSION_GONE);
+        }
+    };
+    let dir = bs::dir(root, &session.id);
+    if let Some(explanation) = h5i_core::control::check(&dir, mutating).explain() {
+        anyhow::bail!("{explanation}");
+    }
+    let mut answer = deliver(&session, &dir, argv)?;
+    bs::scrub(&mut answer);
+    Ok(answer)
+}
+
 fn verb_then(
     root: &Path,
     selector: Option<&str>,

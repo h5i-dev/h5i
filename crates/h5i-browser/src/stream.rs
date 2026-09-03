@@ -1460,7 +1460,15 @@ fn control_verb_inner(
             // this as the other user" possible: the message comes from there,
             // and everything that makes it a request of this session's (its
             // cookies, its identity, its policy, its budget) comes from here.
-            let given = request.get("request").cloned();
+            // `null` is absent, not a composed request with empty fields. The
+            // verb's JSON always carries the key, because the CLI builds one
+            // object for both forms, so `get` alone answers `Some(Null)` and
+            // every plain resend would take the composed path and try to parse
+            // "" as a URL.
+            let given = request
+                .get("request")
+                .filter(|value| !value.is_null())
+                .cloned();
             let Some(from) = from.or(given.is_some().then_some(0)) else {
                 return (
                     json!({

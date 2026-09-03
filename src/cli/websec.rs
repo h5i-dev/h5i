@@ -1001,6 +1001,332 @@ fn look(
     Ok(matched)
 }
 
+
+// ── sequences ────────────────────────────────────────────────────────────────
+
+/// One request to send, as the caller wants it sent.
+///
+/// A struct rather than eight arguments, for the reason
+/// `h5i_browser::capture::Response` is one: what goes out is exactly this,
+/// named in one place, and nobody can pass a create flag where a
+/// keep-credentials flag was meant.
+#[derive(Debug, Clone, Copy)]
+pub struct Sending<'a> {
+    /// The stored request to send again.
+    pub from: u64,
+    pub set: &'a [String],
+    pub unset: &'a [String],
+    pub create: bool,
+    /// Send it from this session instead, carrying only what is not a
+    /// credential. See `header_is_the_users`.
+    pub as_session: Option<&'a str>,
+    /// Carry the source session's credentials across anyway.
+    pub keep_credentials: bool,
+}
+
+/// One step of a sequence, as written in the file.
+///
+/// A step is a `resend` plus what to pull out of its answer. The page verbs are
+/// deliberately not here: a sequence is an HTTP-level thing, and a flow that
+/// needs a click to happen first should drive the browser to that point and then
+/// start the sequence from the request it produced. Mixing the two would make
+/// the file a second scripting language beside `browser script`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct Step {
+    /// The stored request to send again.
+    pub resend: u64,
+    /// Edits, as `target=value` with `${name}` for anything bound earlier.
+    #[serde(default)]
+    pub set: Vec<String>,
+    /// Targets to remove.
+    #[serde(default)]
+    pub unset: Vec<String>,
+    /// Send it from another session, as `resend --as` does.
+    #[serde(default, rename = "as")]
+    pub as_session: Option<String>,
+    /// Add targets that are not there.
+    #[serde(default)]
+    pub create: bool,
+    /// What to pull out of the answer, by name.
+    ///
+    /// `"csrf": "regex:name=\"csrf\" value=\"([^\"]+)\""`, or `json:`, or
+    /// `header:`, or `status`. A binding that does not resolve stops the
+    /// sequence, because a step acting on a token the step before it failed to
+    /// produce is acting somewhere the sequence never described.
+    #[serde(default)]
+    pub extract: std::collections::BTreeMap<String, String>,
+    /// A human-readable name for the step, for the report.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// A sequence file.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct Sequence {
+    pub steps: Vec<Step>,
+}
+
+/// What one step did.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Ran {
+    pub step: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub resend: u64,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<u64>,
+    /// What this step bound, for the steps after it.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub bound: std::collections::BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Replace `${name}` with what an earlier step bound.
+///
+/// An unbound name is an error rather than an empty string. A request that goes
+/// out with `X-CSRF-Token: ` instead of a token gets a 403 that looks exactly
+/// like the finding somebody is hunting for, which is the worst way for this to
+/// fail.
+fn substitute(
+    text: &str,
+    bound: &std::collections::BTreeMap<String, String>,
+) -> anyhow::Result<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let Some(end) = after.find('}') else {
+            anyhow::bail!("`{text}` opens `${{` and never closes it");
+        };
+        let name = &after[..end];
+        match bound.get(name) {
+            Some(value) => out.push_str(value),
+            None => anyhow::bail!(
+                "`{text}` uses ${{{name}}}, which no earlier step bound. \
+                 Bound so far: {}",
+                if bound.is_empty() {
+                    "nothing".to_string()
+                } else {
+                    bound.keys().cloned().collect::<Vec<_>>().join(", ")
+                }
+            ),
+        }
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// Pull one value out of a step's answer.
+fn extract_one(spec: &str, response: &StoredResponse, body: &Text) -> anyhow::Result<String> {
+    let (kind, rest) = spec.split_once(':').unwrap_or((spec, ""));
+    let found = match kind.trim() {
+        "regex" => {
+            let re = regex::Regex::new(rest)
+                .map_err(|e| anyhow::anyhow!("`{rest}` is not a regular expression: {e}"))?;
+            re.captures(body.as_str()).and_then(|caps| {
+                // The first group, or the whole match when the pattern has no
+                // group. A pattern with a group nearly always means "this bit".
+                caps.get(1).or_else(|| caps.get(0)).map(|m| m.as_str().to_string())
+            })
+        }
+        "json" => serde_json::from_str::<Value>(body.as_str())
+            .ok()
+            .and_then(|document| json_at(&document, rest).cloned())
+            .map(|value| match value {
+                Value::String(s) => s,
+                other => other.to_string(),
+            }),
+        "header" => response
+            .headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(rest.trim()))
+            .map(|(_, value)| value.clone()),
+        "status" => response.status.map(|s| s.to_string()),
+        other => anyhow::bail!(
+            "`{other}` is not an extractor. Use regex:, json:, header: or status"
+        ),
+    };
+    found.ok_or_else(|| {
+        anyhow::anyhow!("`{spec}` found nothing in this response")
+    })
+}
+
+/// `h5i browser sequence <file>`.
+///
+/// Stops at the first failure. A sequence is a chain, and a step that runs after
+/// the one before it failed is acting on a state the file never described: the
+/// login that did not happen, the token that was never issued. `--keep-going`
+/// exists for reading a whole file's worth of failures at once and is not the
+/// default for the same reason `browser replay` does not continue by default.
+pub fn sequence(
+    root: &Path,
+    selector: Option<&str>,
+    file: &Path,
+    vars: &[(String, String)],
+    keep_going: bool,
+    json_out: bool,
+) -> anyhow::Result<()> {
+    let text = std::fs::read_to_string(file)
+        .map_err(|e| anyhow::anyhow!("{} could not be read: {e}", file.display()))?;
+    let plan: Sequence = serde_json::from_str(&text)
+        .map_err(|e| anyhow::anyhow!("{} is not a sequence file: {e}", file.display()))?;
+    if plan.steps.is_empty() {
+        anyhow::bail!("{} has no steps", file.display());
+    }
+
+    let mut bound: std::collections::BTreeMap<String, String> =
+        vars.iter().cloned().collect();
+    let mut ran: Vec<Ran> = Vec::new();
+    let mut failed = false;
+
+    for (index, step) in plan.steps.iter().enumerate() {
+        let mut record = Ran {
+            step: index,
+            name: step.name.clone(),
+            resend: step.resend,
+            ok: false,
+            seq: None,
+            status: None,
+            bound: Default::default(),
+            error: None,
+        };
+
+        let mut sets: Vec<String> = Vec::with_capacity(step.set.len());
+        let mut bad: Option<String> = None;
+        for spec in &step.set {
+            match substitute(spec, &bound) {
+                Ok(spec) => sets.push(spec),
+                Err(e) => {
+                    bad = Some(e.to_string());
+                    break;
+                }
+            }
+        }
+
+        if let Some(why) = bad {
+            record.error = Some(why);
+            ran.push(record);
+            failed = true;
+            if !keep_going {
+                break;
+            }
+            continue;
+        }
+
+        // Through the same command a person would type, so a sequence cannot
+        // reach a session by a path a typed verb could not.
+        let answer = super::browser::resend_step(
+            root,
+            selector,
+            &Sending {
+                from: step.resend,
+                set: &sets,
+                unset: &step.unset,
+                create: step.create,
+                as_session: step.as_session.as_deref(),
+                keep_credentials: false,
+            },
+        )?;
+        let ok = answer.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        record.ok = ok;
+        record.seq = answer.get("seq").and_then(Value::as_u64);
+        record.status = answer
+            .get("response")
+            .and_then(|r| r.get("status"))
+            .and_then(Value::as_u64);
+        if !ok {
+            record.error = answer
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| Some("the step failed".to_string()));
+            ran.push(record);
+            failed = true;
+            if !keep_going {
+                break;
+            }
+            continue;
+        }
+
+        // The bindings, read from what this step stored rather than from the
+        // reply: the reply carries the status and the headers, and an extractor
+        // usually wants the body.
+        if !step.extract.is_empty() {
+            let target = step.as_session.as_deref().or(selector);
+            let (_, dir) = store_dir(root, target)?;
+            let seq = record.seq.unwrap_or_default();
+            let stored: StoredResponse =
+                read_json(&dir.join(format!("{seq}.response.json"))).map_err(|_| {
+                    anyhow::anyhow!("step {index} left no stored response {seq} to extract from")
+                })?;
+            let body = body_text(&dir, &stored.body);
+            for (name, spec) in &step.extract {
+                match extract_one(spec, &stored, &body) {
+                    Ok(value) => {
+                        record.bound.insert(name.clone(), value.clone());
+                        bound.insert(name.clone(), value);
+                    }
+                    Err(e) => {
+                        record.error = Some(e.to_string());
+                        record.ok = false;
+                        failed = true;
+                        break;
+                    }
+                }
+            }
+        }
+        let stop = !record.ok && !keep_going;
+        ran.push(record);
+        if stop {
+            break;
+        }
+    }
+
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "ok": !failed,
+                "ran": ran.len(),
+                "of": plan.steps.len(),
+                "steps": ran,
+            }))?
+        );
+    } else {
+        for step in &ran {
+            let label = step.name.clone().unwrap_or_else(|| format!("resend {}", step.resend));
+            match (&step.error, step.status) {
+                (Some(why), _) => println!("  ✘ {label}: {why}"),
+                (None, Some(status)) => {
+                    let bound = if step.bound.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            " · bound {}",
+                            step.bound.keys().cloned().collect::<Vec<_>>().join(", ")
+                        )
+                    };
+                    println!("  ✔ {label}: {status}{bound}");
+                }
+                (None, None) => println!("  ✔ {label}"),
+            }
+        }
+        if failed {
+            println!("  stopped after {} of {} steps", ran.len(), plan.steps.len());
+        }
+    }
+    if failed {
+        std::process::exit(EXIT_CANNOT_LOOK);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1172,6 +1498,45 @@ mod tests {
         assert!(evaluate(&Condition::LongerThan(3), &stored, &body).matched);
         assert!(!evaluate(&Condition::LongerThan(100), &stored, &body).matched);
         assert!(evaluate(&Condition::ShorterThan(100), &stored, &body).matched);
+    }
+
+    #[test]
+    fn a_binding_is_substituted_and_an_unbound_name_is_refused() {
+        let mut bound = std::collections::BTreeMap::new();
+        bound.insert("csrf".to_string(), "tok_123".to_string());
+        assert_eq!(
+            substitute("header.X-CSRF-Token=${csrf}", &bound).unwrap(),
+            "header.X-CSRF-Token=tok_123"
+        );
+        // The failure that matters: an empty token produces a 403 that looks
+        // exactly like the finding somebody is hunting for.
+        let error = substitute("header.X-CSRF-Token=${nonce}", &bound).unwrap_err();
+        assert!(error.to_string().contains("nonce"), "{error}");
+        assert!(error.to_string().contains("csrf"), "it says what is bound: {error}");
+    }
+
+    #[test]
+    fn extractors_read_the_four_places_a_token_hides() {
+        let (stored, body) = json_response(r#"{"session":{"token":"abc123"}}"#);
+        assert_eq!(
+            extract_one("json:session.token", &stored, &body).unwrap(),
+            "abc123"
+        );
+        assert_eq!(extract_one("status", &stored, &body).unwrap(), "200");
+        assert_eq!(
+            extract_one("header:content-type", &stored, &body).unwrap(),
+            "application/json"
+        );
+
+        let html = Text::Utf8(
+            r#"<input name="csrf" value="tok_9f8e">"#.to_string(),
+        );
+        assert_eq!(
+            extract_one(r#"regex:name="csrf" value="([^"]+)""#, &stored, &html).unwrap(),
+            "tok_9f8e"
+        );
+        // A pattern that finds nothing is an error, not an empty binding.
+        assert!(extract_one("regex:nothing-here", &stored, &html).is_err());
     }
 
     #[test]
