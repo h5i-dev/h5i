@@ -156,6 +156,16 @@ And writing is best-effort where the receipt is fail-closed: a fetch is never
 refused because the store could not be written, since the receipt still records
 that the request happened. Failures are counted and reported.
 
+Two more things the benchmark run made necessary, 2026-09-03. A body that is
+not valid UTF-8 used to come back as a length and a digest, which hides the
+answer in the case the store exists for — a secret echoed after a file's magic
+number, a page served under a mislabelled encoding. It now carries a lossy
+reading beside the length and digest, and `match` and `diff` can see it, so a
+search that could not look no longer reads as a search that found nothing. And
+`h5i browser message --body-to PATH` writes a body out byte for byte: some
+responses are files rather than text, and a workbench that held the bytes and
+would not hand them over is a workbench that stops one step early.
+
 The store is the taint boundary for everything downstream. Anything an agent
 reads out of it is untrusted content authored by the target, which is the same
 stance the snapshot already takes and the reason `snapshot::collapse` exists.
@@ -225,8 +235,13 @@ Rules that have to be settled once:
 - **Raw is available and honest.** `--edits-file` accepts a `raw` key holding a
   whole request, in which case h5i sends the bytes given and reports which of
   its own invariants it had to break to do so.
-- **Binary is a path or base64, never a shell argument.** `@file` for a path,
-  `base64:` for inline.
+- **Binary is a path or base64, never a shell argument.** Built 2026-09-03 as
+  a separate flag rather than an `@` prefix: `--set-file TARGET=PATH`. The
+  prefix form makes a value that *begins* with `@` ambiguous, and a payload
+  that begins with `@` is not unusual. The file's bytes go through unaltered —
+  a magic-number check wants a real `ff d8`, which is not text in any encoding
+  and so cannot survive argv or the JSON control message. `--set-file` edits
+  apply after every `--set`, in the order given.
 - **Multipart is parsed, edited and rebuilt, never patched as text.** Built
   2026-09-03 (`crates/h5i-browser/src/multipart.rs`). `multipart.<field>`,
   `.filename` and `.content_type` are three separate targets because a server
