@@ -1,10 +1,4 @@
-//! What a caller changes about a request before it goes out again.
-//!
-//! The point of owning the HTTP client is that nobody has to hand-maintain
-//! `Content-Length`. An edit names a *part* of a request (a query parameter, a
-//! header, a field inside a JSON body) and the engine rebuilds a well-formed
-//! message around the change. String surgery on a raw request is the thing this
-//! exists to replace.
+//! Structured request edits. The engine rebuilds the message and framing.
 //!
 //! ```text
 //! method=POST                     the verb
@@ -18,23 +12,9 @@
 //! body.raw=<bytes>                the whole body
 //! ```
 //!
-//! Three rules are worth stating because they are what make an edit trustworthy.
-//!
-//! **Nothing is silently corrected.** A JSON edit against a body that is not
-//! JSON is an error naming the content type that body actually has. An edit
-//! whose path does not exist is an error unless the caller asked for it to be
-//! created. A typo that quietly does nothing is a wrong answer wearing a right
-//! answer's clothes, and it is the failure mode that wastes the most time in an
-//! HTTP workbench, because the response looks plausible either way.
-//!
-//! **What was applied is reported.** [`Applied`] carries one line per edit, so
-//! the record of an attempt is a record of what was sent rather than of what was
-//! requested.
-//!
-//! **Values are text unless they are obviously not.** For `json.` targets the
-//! value is parsed as JSON when it parses (`456` is a number, `true` a boolean,
-//! `{"a":1}` an object) and is a string otherwise, which is what a caller means
-//! nearly every time. `json.id="456"` is how to insist on the string.
+//! Invalid edits fail instead of silently coercing or doing nothing. [`Applied`]
+//! records effective changes. JSON values are parsed when valid and otherwise
+//! treated as strings; quote a value to force a JSON string.
 
 use std::fmt;
 
@@ -69,12 +49,7 @@ pub enum Target {
     BodyRaw,
 }
 
-/// Which part of a multipart part an edit names.
-///
-/// Three, because a file upload has three separately-checked things in it and a
-/// filter usually reads a different one from the one that decides where the
-/// bytes land: the name the server stores it under, the type it claims to be,
-/// and the content itself.
+/// Editable component of a multipart part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Piece {
@@ -111,10 +86,7 @@ impl fmt::Display for Target {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edit {
     pub target: Target,
-    /// `None` removes it. Only some targets can be removed, and the ones that
-    /// cannot say so rather than treating a removal as setting an empty value:
-    /// a request with no method is not a request, and a URL-less one has nowhere
-    /// to go.
+    /// `None` removes targets that support removal.
     pub value: Option<Vec<u8>>,
 }
 
@@ -140,11 +112,7 @@ impl EditError {
     }
 }
 
-/// One edit, as it was applied.
-///
-/// `was` is what the request held before. It is what makes a replay's record
-/// readable a week later, and what tells a caller that the parameter they
-/// "changed" already had that value.
+/// One applied edit, including its previous value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Applied {
     pub target: String,
@@ -159,12 +127,7 @@ pub struct Applied {
     pub created: bool,
 }
 
-/// A request, in the parts an edit acts on.
-///
-/// Deliberately not [`crate::broker::Fetch`]: this is the editable shape, and a
-/// `Fetch` is what the broker is handed once editing is done. Keeping them
-/// apart means an edit cannot accidentally set a field the broker treats as its
-/// own.
+/// Editable request fields, kept separate from broker-owned [`crate::broker::Fetch`] fields.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Editable {
     pub method: String,
@@ -185,11 +148,7 @@ impl Editable {
     fn set_header(&mut self, name: &str, value: &str) -> Option<String> {
         let mut previous = None;
         let mut placed = false;
-        // Rewritten where it sits, rather than removed and appended: header
-        // order is observable on the wire, and a workbench that quietly moved a
-        // header to the end would be reproducing something other than the
-        // request it was given. Later copies of the same name are dropped, since
-        // the caller asked for one value.
+        // Preserve the first header's position and remove duplicate names.
         self.headers.retain_mut(|(existing, current)| {
             if !existing.eq_ignore_ascii_case(name) {
                 return true;

@@ -1,21 +1,7 @@
-//! Reading a session's stored messages, and comparing two of them.
+//! Read and compare captured HTTP messages without touching the network.
 //!
-//! The half of the workbench that does not touch the wire. `resend` sends;
-//! these two verbs read what was sent and say how two answers differ, which is
-//! what an agent spends most of its turns on.
-//!
-//! Read here, on h5i's side, rather than through a session verb, and that is a
-//! security decision rather than a convenience. The store holds `Authorization`
-//! headers and session cookies in full. A verb's reply travels out through the
-//! renderer, which is the process that parses untrusted pages and is the one
-//! half of the engine deliberately kept away from credentials. Asking it to
-//! relay a stored credential would undo, on request, exactly what the broker
-//! split is for. The files are h5i's to read, so h5i reads them.
-//!
-//! The cost is honest and already precedented: a boxed session whose filesystem
-//! this machine cannot see answers "this machine cannot read that store" rather
-//! than pretending the session captured nothing. `browser_session::Sources`
-//! makes the same distinction about the same directory.
+//! h5i reads the store directly so credentials never pass through the renderer.
+//! Stores on inaccessible boxed filesystems produce an explicit error.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -82,23 +68,12 @@ fn read_json<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> anyhow::Result
     Ok(serde_json::from_slice(&bytes)?)
 }
 
-/// A body, as text where it is text.
-///
-/// Never a lossy string: a body that is not UTF-8 is reported as its size and
-/// its hash rather than as mojibake, because a workbench that silently mangled
-/// a binary body would produce a diff nobody could trust.
+/// A body represented for inspection.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Text {
     /// Decoded, and safe to compare line by line.
     Utf8(String),
-    /// There, and not text — carried with a lossy reading of it anyway.
-    ///
-    /// A response is evidence, and refusing to show one because two of its
-    /// bytes were not UTF-8 hides the answer in exactly the case that matters:
-    /// a secret echoed after a file's magic number, a page served with a
-    /// mislabelled encoding, a body with one stray byte in the middle. The
-    /// length and the digest stay authoritative for what actually came back;
-    /// `text` is what it looks like, with the undecodable bytes replaced.
+    /// Binary data with an inspection-only lossy preview.
     Binary {
         bytes: u64,
         sha256: String,
@@ -112,10 +87,7 @@ impl Text {
     fn as_str(&self) -> &str {
         match self {
             Text::Utf8(text) => text,
-            // The lossy reading, so `match` and `diff` can see a body that is
-            // almost text. A search that silently could not look is a false
-            // negative, and this surface reports "did not match" and "could not
-            // look" as different answers on purpose.
+            // Let match and diff inspect the lossy preview.
             Text::Binary { text, .. } => text,
             Text::Missing(_) => "",
         }
@@ -136,11 +108,7 @@ impl Text {
     }
 }
 
-/// The stored bytes of a body, exactly as they came back.
-///
-/// `None` when there are none to give: a body the store skipped, or one whose
-/// file has gone. Not an empty vector — "nothing was kept" and "the body was
-/// empty" are different facts, and a caller writing a file should be told which.
+/// Exact stored body bytes, or `None` when unavailable.
 fn body_bytes(dir: &Path, body: &Body) -> Option<Vec<u8>> {
     match body {
         Body::Empty => Some(Vec::new()),

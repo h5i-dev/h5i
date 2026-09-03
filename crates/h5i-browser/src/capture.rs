@@ -1,32 +1,9 @@
-//! The message store: the bytes a receipt deliberately does not keep.
+//! Opt-in storage for message data omitted from receipts.
 //!
-//! The request log in [`crate::receipt`] records decisions, and it records them
-//! in a form that is safe to paste into a bug report: it counts cookies rather
-//! than naming them, and it holds no body at all. That is the right shape for an
-//! audit trail and the wrong shape for a workbench, where the question is what
-//! exactly was sent and what exactly came back, `Authorization` header included.
-//!
-//! So there are two artifacts rather than one, and the difference is deliberate.
-//! The receipt is the account: always on, append-only, fail-closed, exportable.
-//! This is the evidence: off unless a session was opened with a place to put it,
-//! owner-only, bounded, and never included in an export unless someone names it.
-//! Nothing here is ever written into a receipt, and no field of a receipt is
-//! ever widened to hold a value that lives here.
-//!
-//! Two rules follow from being evidence rather than account.
-//!
-//! First, this store is best-effort and a failure here never fails a fetch. The
-//! receipt's fail-closed rule exists because a request nobody recorded is a
-//! request nobody can audit; a body nobody stored is a lesser loss than a page
-//! that will not load because a disk filled, and the receipt still says the
-//! request happened. Errors are counted and reported ([`Capture::errors`])
-//! rather than raised.
-//!
-//! Second, an absent body is always a *named* state. A body that was too large,
-//! that was a font nobody will read, or that arrived after the store filled up
-//! is recorded as [`Body::Skipped`] with the reason, and a body kept in part is
-//! [`Body::Stored`] with `truncated`. An empty string would say "the server sent
-//! nothing", which is a different fact and one an agent would act on.
+//! Receipts remain safe to export; this bounded, owner-only store may contain
+//! bodies and credentials. Writes are best-effort and failures are counted, so
+//! capture never blocks a fetch. Missing and truncated bodies retain an explicit
+//! state instead of appearing empty.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -37,28 +14,14 @@ use h5i_error::H5iError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// The largest body kept whole, per message.
-///
-/// Eight mebibytes admits any HTML document, any JSON API answer and most
-/// bundles, and refuses the video someone left on an endpoint. Past it the head
-/// is kept and the record says so, because the first bytes of an oversized
-/// response are usually the whole answer to "what is this".
+/// Maximum body stored without truncation.
 pub const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 
-/// What one session's bodies may occupy, across every message.
-///
-/// A per-message cap alone does not bound a session: a loop over ten thousand
-/// pages is ten thousand small bodies. This is the number that stops a workbench
-/// from filling the disk a box lives on.
+/// Maximum total body storage per session.
 pub const MAX_STORE_BYTES: u64 = 512 * 1024 * 1024;
 
-/// Media types a workbench never reads.
-///
-/// Fonts and audio and video are bytes an agent cannot ask a question about, and
-/// they are the largest things a page loads. Images are deliberately *not* here:
-/// an uploaded PNG that is really a shell is the whole point of a file-upload
-/// problem, and a store that threw it away would be useless exactly when it
-/// mattered.
+/// Skip large media unlikely to aid inspection. Images remain capturable for
+/// upload analysis.
 fn is_skipped_type(content_type: Option<&str>) -> bool {
     let Some(kind) = content_type else {
         return false;
@@ -76,16 +39,11 @@ fn is_skipped_type(content_type: Option<&str>) -> bool {
 pub enum Skip {
     /// A media type from the skip list.
     Media,
-    /// The session's store is full. Not "the body was too big": that one is
-    /// truncated and kept.
+    /// The session store is full. Oversized individual bodies are truncated.
     StoreFull,
-    /// The engine never read it. A redirect hop's body is not read, and neither
-    /// is the body of a response the same-origin policy refused, so there is
-    /// nothing to store and that is a fact about the fetch rather than about
-    /// this store.
+    /// The engine did not read the body.
     NotRead,
-    /// The store itself failed on this one. Kept as a state rather than dropped
-    /// so a gap in the evidence is visible in the evidence.
+    /// Storage failed; the evidence gap remains visible.
     Failed,
 }
 
@@ -116,12 +74,7 @@ pub enum Body {
     },
 }
 
-/// One request, as it went to the wire.
-///
-/// The headers are the ones the client actually built, after the engine added
-/// its own and the jar added the cookie, which is the only set worth storing: a
-/// record of what a caller asked for is a record of an intention, and a replay
-/// that reproduces an intention rather than a request reproduces nothing.
+/// One request as sent, including client- and cookie-added headers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoredRequest {
     pub seq: u64,
@@ -137,15 +90,12 @@ pub struct StoredRequest {
 pub struct StoredResponse {
     pub seq: u64,
     pub at: String,
-    /// The URL this hop was sent to, so a stored redirect chain reads without
-    /// having to be joined against the request file.
+    /// URL for this redirect hop.
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<u16>,
     pub headers: Vec<(String, String)>,
-    /// How the body was encoded on the wire, when it was. The stored body is
-    /// always the decoded one, which is what the page received and what a diff
-    /// or a match should read; this says what it arrived as.
+    /// Wire encoding; stored bodies are decoded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_encoding: Option<String>,
     /// What crossed the wire, when that is a different number from the body's.
@@ -154,12 +104,7 @@ pub struct StoredResponse {
     pub body: Body,
 }
 
-/// One response, as the engine has it in hand.
-///
-/// A struct rather than seven arguments, for the reason [`crate::broker::Fetch`]
-/// is one: what gets written down is exactly this, named in one place, and a
-/// caller cannot pass the status of one hop with the headers of another by
-/// getting the order wrong.
+/// Response data offered to the store.
 #[derive(Debug, Clone)]
 pub struct Response<'a> {
     pub seq: u64,
@@ -188,13 +133,7 @@ fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
 }
 
-/// What a store has done, in the three numbers that say whether to trust it.
-///
-/// Counts, in the receipt's spirit: how much is here, and whether any of it is
-/// missing. `errors` is the one that matters. A store that failed to write a
-/// message is a store with a hole in it, and a hole nobody reports is worse
-/// than no store at all, because an agent reading the messages it *does* hold
-/// would conclude the missing request never happened.
+/// Store counters, including evidence gaps in `errors`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Health {
     /// Message files written, both phases.
@@ -212,9 +151,7 @@ pub struct Capture {
     /// Bytes this session has put in `bodies`, which is what
     /// [`MAX_STORE_BYTES`] bounds.
     used: AtomicU64,
-    /// Hashes already on disk, so the fiftieth identical response costs a hash
-    /// and no bytes. Also what keeps `used` honest: a body stored twice is
-    /// counted once, because it occupies one file.
+    /// Hashes already stored, used for deduplication and byte accounting.
     seen: Mutex<HashSet<String>>,
     /// How many messages this store failed to write. Reported rather than
     /// raised; see the module documentation.
@@ -224,21 +161,13 @@ pub struct Capture {
 }
 
 impl Capture {
-    /// Open a store at `dir`, creating it.
-    ///
-    /// h5i chooses the path and the engine writes the bytes, the same division
-    /// the cookie jar and the request log already follow: it is what keeps the
-    /// location of a session's evidence a decision h5i makes rather than one the
-    /// engine's caller can point anywhere.
+    /// Open or create a store at `dir`.
     pub fn open(dir: &Path) -> Result<Self, H5iError> {
         let bodies = dir.join("bodies");
         std::fs::create_dir_all(&bodies).map_err(|e| H5iError::with_path(e, &bodies))?;
         owner_only_dir(dir);
         owner_only_dir(&bodies);
-        // Reopening a store, which a `--restore` does, inherits what is there
-        // rather than starting the session's allowance again. The alternative is
-        // a store that grows without bound across restarts while reporting that
-        // it is within its cap.
+        // Include existing bodies in the restored session's quota.
         let mut used = 0u64;
         let mut seen = HashSet::new();
         if let Ok(entries) = std::fs::read_dir(&bodies) {

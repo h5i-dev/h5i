@@ -1,35 +1,28 @@
 # Design: the HTTP workbench, sections W1 to W20
 
-Status: proposed, 2026-09-02. Nothing in this file is built. It is the design
-for turning what h5i already records into the loop a person runs today in Burp
-Suite next to a browser, expressed as verbs an agent can call.
+Status: proposed, 2026-09-02. This design turns h5i's HTTP records into an
+agent-callable workbench. Sections marked "built" describe later progress.
 
 ## In one screen
 
 > Burp Suite is an HTTP workbench for humans. h5i is an HTTP workbench for
 > agents.
 
-- The engine *is* the HTTP client, so there is no MITM proxy, no CA
-  certificate, no browser proxy setting and no manual handoff from history to
-  Repeater. The three-tool dance collapses into one process that already writes
-  every request down before the bytes move.
-- The split is deliberate. h5i owns the deterministic half: exact capture,
+- The engine is the HTTP client, so it needs no MITM proxy, CA certificate,
+  proxy setting, or manual history-to-replay handoff.
+- h5i owns the deterministic half: exact capture,
   stable ids, session and cookie state, structured edit, resend, structural
   diff, timing, scope, rate limit, audit. The agent owns the judgement half:
   which request matters, which parameter to bend, what a difference means, what
   to try next.
-- No scanner. No payload generator. No wordlists. No vulnerability verdicts.
-  Those live in the agent's own throwaway script, and W20 says why keeping them
-  out is what makes the rest reusable.
-- Bash first. The CLI is designed from day one to be wrapped, so a thin Python
-  client can arrive later without h5i learning any Python (W10).
+- Scanning, payload generation, wordlists, and vulnerability verdicts remain
+  the agent's responsibility.
+- The CLI is Bash-first and designed for a later thin Python wrapper (W10).
 - **Not in the default binary.** `h5i websec` arrives with
   `h5i plugin install websec` and is a separate executable that holds no
   privilege of its own. W21 is the packaging design.
-- The one hard new decision is the message store (W5): receipts hold counts,
-  never values, and a workbench needs bodies. Those are two different artifacts
-  with two different retention stances, and merging them would put credentials
-  into every bug report.
+- The message store (W5) remains separate because receipts are export-safe but
+  workbench data may contain bodies and credentials.
 
 Part of the h5i design set. The roadmap, and what is next, is
 [`ROADMAP.md`](../../ROADMAP.md); the engine it builds on is
@@ -45,23 +38,17 @@ Part of the h5i design set. The roadmap, and what is next, is
 > through the same policy, the same cookie jar and the same identity that
 > produced it.
 
-Not claimed: that h5i finds anything. It sends what it is told to send and
-reports what came back, in a shape a program can branch on. Not claimed: that a
-replayed request is byte-identical to the original at the TLS layer, since
-connection reuse, header ordering imposed by the client and the jar's current
-contents all move. What is claimed is that every difference is named in the
-reply, so a replay that does not reproduce is a fact the agent can read rather
-than a mystery.
+h5i does not find vulnerabilities or promise TLS-level byte identity. Connection
+reuse, client header ordering, and current cookies may differ. It reports replay
+changes explicitly so callers can explain divergent results.
 
 ## W2. Why this belongs in h5i and not in a proxy
 
-Burp's architecture is a consequence of not owning the browser. It intercepts
-from beside the network, which costs a CA certificate, a proxy setting, TLS
-interception that modern clients increasingly refuse, and a permanent inability
-to say *why* a request happened.
+Because Burp does not own the browser, it requires interception, proxy setup,
+and often a CA certificate. It also cannot directly know why a request occurred.
 
-h5i sits on the other side of that line. `crates/h5i-browser/src/broker.rs`
-already funnels every byte through one `Fetch`, and
+h5i already funnels requests through one `Fetch` in
+`crates/h5i-browser/src/broker.rs`, while
 `crates/h5i-browser/src/receipt.rs` already records the decision before the wire
 and the outcome after it. Three things follow that a proxy cannot have:
 
@@ -72,9 +59,8 @@ and the outcome after it. Three things follow that a proxy cannot have:
 2. **No interception gap.** There is nothing to bypass. A request that is not in
    the log did not happen, which is the guarantee the whole product already
    leads with.
-3. **State without re-plumbing.** The jar, the identity, the policy and the
-   budget are the session's, so "resend this as user B" is a lookup rather than
-   a cookie string pasted by hand.
+3. **Existing state.** Replay reuses the session's jar, identity, policy, and
+   budget.
 
 ## W3. What already exists
 
@@ -122,11 +108,8 @@ The workbench is mostly a matter of exposing machinery that is shipped.
 
 ## W5. The message store, and the credential problem
 
-The receipt log says, in a comment that is load-bearing: a credential in a
-receipt is a credential in a bug report. It stores cookie *counts*. A workbench
-needs the opposite: the exact bytes, headers included, `Authorization` included.
-
-These do not merge. The design keeps two artifacts.
+Receipts store cookie counts so they remain safe to share. A workbench needs
+exact bytes and headers, including credentials, so the artifacts stay separate.
 
 - **Receipts** stay exactly as they are. Append-only JSONL, safe to paste,
   shipped in exports, fail-closed (no writable log, no fetch). Nothing in this
@@ -138,11 +121,8 @@ These do not merge. The design keeps two artifacts.
   It is never included in an export, a share or a bug report unless the caller
   names it, and `h5i browser close` can drop it with `--capture-drop`.
 
-Bounds are part of the format, not a policy layered on top: a per-message body
-cap (default 8 MiB, truncation recorded as a field rather than silently), a
-per-session store cap (default 512 MiB), and a MIME skip list for fonts and
-media that a workbench never reads. A truncated or refused body is an explicit
-state, never an empty string.
+The format enforces an 8 MiB per-message cap, a 512 MiB session cap, and a MIME
+skip list for fonts and media. Truncated or skipped bodies have explicit states.
 
 Built, 2026-09-02: `crates/h5i-browser/src/capture.rs`, reached by
 `h5i browser open --capture`. Messages land in `<session>/messages/` as one JSON
@@ -156,19 +136,11 @@ And writing is best-effort where the receipt is fail-closed: a fetch is never
 refused because the store could not be written, since the receipt still records
 that the request happened. Failures are counted and reported.
 
-Two more things the benchmark run made necessary, 2026-09-03. A body that is
-not valid UTF-8 used to come back as a length and a digest, which hides the
-answer in the case the store exists for — a secret echoed after a file's magic
-number, a page served under a mislabelled encoding. It now carries a lossy
-reading beside the length and digest, and `match` and `diff` can see it, so a
-search that could not look no longer reads as a search that found nothing. And
-`h5i browser message --body-to PATH` writes a body out byte for byte: some
-responses are files rather than text, and a workbench that held the bytes and
-would not hand them over is a workbench that stops one step early.
+Benchmarking added a lossy preview beside non-UTF-8 bodies' authoritative length
+and digest, allowing `match` and `diff` to inspect mixed content. `h5i browser
+message --body-to PATH` writes the exact bytes.
 
-The store is the taint boundary for everything downstream. Anything an agent
-reads out of it is untrusted content authored by the target, which is the same
-stance the snapshot already takes and the reason `snapshot::collapse` exists.
+All store content is untrusted target input, like snapshots.
 
 ## W6. Ids
 
@@ -286,9 +258,8 @@ a polish item.
 
 ## W10. Bash now, RPC later, Python last
 
-The order is deliberate and comes from the discussion this file records: finish
-the CLI and JSON, solve real problems with Bash, and only add a client where a
-loop actually hurts.
+Finish the CLI and JSON, validate them with Bash, then add a client only where
+loops prove costly.
 
 Bash covers more than expected:
 
@@ -513,14 +484,12 @@ Candidates are labelled as candidates. A URL scraped from a bundle was not
 visited, and the map must not blur the two, because "what did this session
 reach" is the question the receipts exist to answer.
 
-Built 2026-09-03, and narrower than the paragraph above on purpose:
+Built 2026-09-03, with deliberately narrower scope:
 `h5i browser sitemap` folds the *receipts* into origins and endpoints, with
 methods, statuses, parameter names, hit counts, a mark for what was navigated to
 rather than pulled in, and the refused URLs listed apart. The disclosed-but-
-unvisited half is not built. Rather than label candidates inside the same tree
-and hope a reader keeps the distinction, the verb answers only the question it
-can answer exactly; scraping bundles for endpoint strings belongs in a verb that
-says that is what it did.
+unvisited half is not built. The verb reports only observed endpoints; bundle
+scraping belongs in a separately named command.
 
 ## W18. DOM instrumentation
 
@@ -755,30 +724,21 @@ the run needed was the corpus's own problem and stayed with it.
 
 ## Known gap: request-targets the URL parser rewrites
 
-**Found while benchmarking, 2026-09-03.** h5i builds every request from a parsed
-`Url`, and the URL standard resolves dot segments — `.`, `..`, and their
-percent-encoded spellings `.%2e`, `%2e%2e` — before a request object exists. So
-`--set path=/cgi-bin/.%2e/.%2e/etc/passwd` reaches the wire as
-`/etc/passwd`, and a workbench that let that through would send a request nobody
-asked for and then report its 404 as evidence about the request that *was* asked
-for. That is a false negative wearing the shape of a finding.
+**Found while benchmarking, 2026-09-03.** h5i builds requests from parsed
+`Url`s, which resolve dot segments and encoded equivalents before request
+construction. For example, `--set path=/cgi-bin/.%2e/.%2e/etc/passwd` reaches
+the wire as `/etc/passwd`, yielding evidence about the wrong request.
 
 `apply` now refuses such an edit and names what the parser would have done
 (`crates/h5i-browser/src/edits.rs`). Refusing is the honest half; it is not the
 whole fix.
 
-The whole fix is a request-target that survives verbatim, which the parser
-cannot express and `reqwest` offers no hook for. It matters for more than
-traversal: normalisation differentials between a proxy and an origin, request
-smuggling, and any test whose subject is *how the bytes are read* rather than
-what they say. Two benchmarks in the XBOW corpus (XBEN-026, the Apache 2.4.50
-CVE, and XBEN-031, the 2.4.49 one) are unreachable from h5i for exactly this
-reason, and `smuggling_desync` benchmarks would be too.
+A complete fix requires a verbatim request target, which neither `Url` nor
+`reqwest` supports. This also affects normalization differentials and request
+smuggling. XBOW benchmarks XBEN-026 and XBEN-031 are therefore unreachable.
 
-Doing it properly means a send path that takes a method, a literal target and a
-host, and goes out through the same policy gate, budget and receipt as every
-other fetch — the point of h5i is that no request escapes that, and a raw-target
-escape hatch that also escaped the receipt would be worse than the gap.
+The eventual raw-target path must still use the normal policy, budget, and
+receipt checks.
 
 ## Open questions
 
