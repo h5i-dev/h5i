@@ -185,6 +185,39 @@ pub(crate) struct RawResponse {
     pub headers: Vec<(String, String)>,
     /// The body, decoded from chunked framing when needed.
     pub body: Vec<u8>,
+    /// Bytes that had already arrived past the end of this response.
+    ///
+    /// A response's framing says where it stops, and a socket does not: the
+    /// next message can be in the same read. Kept rather than truncated away,
+    /// because for a raw send those bytes are the interesting half.
+    pub leftover: Vec<u8>,
+}
+
+/// Anything the connection still had to say once one response was complete.
+///
+/// A well-behaved server has nothing: one request, one response. Two responses
+/// to one request is the signature of a desync, and it is the *second* one that
+/// carries the answer — the smuggled request's. Reading only the first would
+/// make `--raw-request` a way to perform a request-smuggling attack and not see
+/// its result, which is most of the point of performing one.
+///
+/// Bounded and short: this is a server that has already answered, so the wait
+/// is for bytes that are either there or are not.
+pub(crate) fn read_whatever_follows(wire: &mut Wire, already: Vec<u8>, cap: usize) -> Vec<u8> {
+    let restore = std::time::Duration::from_secs(30);
+    wire.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+    let mut rest = already;
+    let mut chunk = [0u8; 8192];
+    while rest.len() < cap {
+        match wire.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => rest.extend_from_slice(&chunk[..n]),
+            Err(_) => break,
+        }
+    }
+    wire.set_read_timeout(Some(restore));
+    rest.truncate(cap);
+    rest
 }
 
 /// Read one bounded HTTP/1.1 response using its length, chunks, or connection close.
@@ -223,28 +256,31 @@ pub(crate) fn read_http_response(wire: &mut Wire, cap: usize) -> Result<RawRespo
         .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
         .and_then(|(_, value)| value.trim().parse::<usize>().ok());
 
-    let body = if te_chunked {
+    let (body, leftover) = if te_chunked {
         read_chunked(wire, &mut rest, &mut chunk, cap)?
     } else if let Some(len) = content_length {
         read_exact_len(wire, rest, &mut chunk, len.min(cap))?
     } else {
-        // Without framing, read until the connection closes or the cap is reached.
-        read_to_close(wire, rest, &mut chunk, cap)?
+        // Without framing, read until the connection closes or the cap is
+        // reached. Nothing can follow a response that ends at the close.
+        (read_to_close(wire, rest, &mut chunk, cap)?, Vec::new())
     };
 
     Ok(RawResponse {
         status,
         headers,
         body,
+        leftover,
     })
 }
 
+/// The body, and whatever had already arrived behind it.
 fn read_exact_len(
     wire: &mut Wire,
     mut have: Vec<u8>,
     chunk: &mut [u8],
     want: usize,
-) -> Result<Vec<u8>, String> {
+) -> Result<(Vec<u8>, Vec<u8>), String> {
     while have.len() < want {
         match wire.read(chunk) {
             Ok(0) => break,
@@ -253,8 +289,8 @@ fn read_exact_len(
             Err(e) => return Err(format!("reading the response body failed: {e}")),
         }
     }
-    have.truncate(want);
-    Ok(have)
+    let leftover = have.split_off(want.min(have.len()));
+    Ok((have, leftover))
 }
 
 fn read_to_close(
@@ -281,7 +317,7 @@ fn read_chunked(
     have: &mut Vec<u8>,
     chunk: &mut [u8],
     cap: usize,
-) -> Result<Vec<u8>, String> {
+) -> Result<(Vec<u8>, Vec<u8>), String> {
     let mut out: Vec<u8> = Vec::new();
     let mut cursor = 0usize;
     loop {
@@ -322,7 +358,13 @@ fn read_chunked(
             return Err(format!("chunked response exceeded the {cap} byte cap"));
         }
     }
-    Ok(out)
+    // The last chunk is followed by the trailer section's blank line. Step over
+    // it when it is already here; what remains belongs to the next message.
+    if have.get(cursor..cursor + 2) == Some(b"\r\n") {
+        cursor += 2;
+    }
+    let leftover = have.get(cursor..).unwrap_or(&[]).to_vec();
+    Ok((out, leftover))
 }
 
 /// Read one more read's worth into `have`. `false` on a clean close.
@@ -390,5 +432,65 @@ mod tests {
     fn find_subslice_locates_the_header_terminator() {
         assert_eq!(find_subslice(b"ab\r\n\r\ncd", b"\r\n\r\n"), Some(2));
         assert_eq!(find_subslice(b"abcd", b"\r\n\r\n"), None);
+    }
+
+    /// Two responses to one request is the whole signal a desync produces, and
+    /// the second one is the smuggled request's. A reader that stops at the end
+    /// of the first response's framing and drops the rest of what it had
+    /// already read would make a successful attack indistinguishable from a
+    /// failed one.
+    #[test]
+    fn a_second_response_in_the_same_read_is_kept_rather_than_truncated() {
+        let two = concat!(
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi",
+            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nflag!",
+        );
+        let response = read_from_a_server_that_says(two);
+        assert_eq!(response.body, b"hi");
+        assert!(
+            String::from_utf8_lossy(&response.leftover).contains("flag!"),
+            "{:?}",
+            String::from_utf8_lossy(&response.leftover)
+        );
+    }
+
+    /// The same, for the framing the benchmark's backend actually uses.
+    #[test]
+    fn a_chunked_response_hands_back_what_followed_its_terminator() {
+        let two = concat!(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nflag!",
+        );
+        let response = read_from_a_server_that_says(two);
+        assert_eq!(response.body, b"hi");
+        assert!(
+            String::from_utf8_lossy(&response.leftover).starts_with("HTTP/1.1 200"),
+            "{:?}",
+            String::from_utf8_lossy(&response.leftover)
+        );
+    }
+
+    /// One connection, one write, whatever bytes the test names.
+    fn read_from_a_server_that_says(bytes: &str) -> RawResponse {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let said = bytes.to_string();
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.write_all(said.as_bytes());
+                let _ = stream.flush();
+                // Held open, so the reader has to stop on the framing rather
+                // than on the close.
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        });
+        let sock =
+            std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        sock.set_read_timeout(Some(std::time::Duration::from_secs(5))).expect("timeout");
+        let mut wire = Wire::plain(sock);
+        let response = read_http_response(&mut wire, 1 << 20).expect("a response");
+        let _ = server.join();
+        response
     }
 }

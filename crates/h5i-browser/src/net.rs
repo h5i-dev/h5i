@@ -1182,6 +1182,7 @@ impl LocalBroker {
                         content_encoding: None,
                         wire_bytes: None,
                         body: crate::capture::Received::NotRead,
+                        trailing: &[],
                     });
                 }
 
@@ -1287,6 +1288,7 @@ impl LocalBroker {
                             content_encoding: None,
                             wire_bytes: None,
                             body: crate::capture::Received::NotRead,
+                            trailing: &[],
                         });
                     }
                     return FetchOutcome::failed_at(
@@ -1397,6 +1399,7 @@ impl LocalBroker {
                             content_encoding: outcome_record.content_encoding.clone(),
                             wire_bytes: outcome_record.wire_bytes,
                             body: crate::capture::Received::Bytes(&body),
+                            trailing: &[],
                         });
                     }
                     // What the caller may see of this. Same-origin sees
@@ -1431,6 +1434,7 @@ impl LocalBroker {
                             content_encoding: outcome_record.content_encoding.clone(),
                             wire_bytes: outcome_record.wire_bytes,
                             body: crate::capture::Received::NotRead,
+                            trailing: &[],
                         });
                     }
                     FetchOutcome::failed_at(current, e.to_string(), Some(seq))
@@ -2061,6 +2065,18 @@ impl crate::broker::Broker for LocalBroker {
         let cap = self.policy.max_response_bytes() as usize;
         let response = crate::rawsock::read_http_response(&mut wire, cap);
         let ttfb = started.elapsed().as_millis() as u64;
+        // Only the raw path asks this, and only the raw path has a reason to:
+        // an ordinary fetch is one request and one response, while a request
+        // written byte for byte may have been two requests as far as the server
+        // was concerned. What comes back after the first response is the
+        // smuggled request's answer, and dropping it would leave the caller
+        // holding a successful desync with no way to see that it worked.
+        let followed = match &response {
+            Ok(resp) => {
+                crate::rawsock::read_whatever_follows(&mut wire, resp.leftover.clone(), cap)
+            }
+            Err(_) => Vec::new(),
+        };
         wire.shutdown();
 
         match response {
@@ -2088,6 +2104,9 @@ impl crate::broker::Broker for LocalBroker {
                 outcome.ttfb_ms = Some(ttfb);
                 outcome.bytes = Some(resp.body.len() as u64);
                 outcome.cookies_stored = Some(cookies_stored);
+                if !followed.is_empty() {
+                    outcome.trailing_bytes = Some(followed.len() as u64);
+                }
                 let _ = self.append(&outcome);
                 self.budget.record(
                     resp.body.len() as u64,
@@ -2104,6 +2123,7 @@ impl crate::broker::Broker for LocalBroker {
                         content_encoding: None,
                         wire_bytes: None,
                         body: crate::capture::Received::Bytes(&resp.body),
+                        trailing: &followed,
                     });
                 }
 

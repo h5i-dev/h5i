@@ -106,6 +106,15 @@ pub struct RequestRecord {
     /// How many the response stored, after the jar refused what it refuses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cookies_stored: Option<usize>,
+    /// How many bytes the connection carried *after* this response ended.
+    ///
+    /// A count, like everything else here. Absent for every ordinary fetch,
+    /// because one request gets one response; present when a raw send
+    /// desynchronised a proxy from its backend and the socket answered twice.
+    /// The bytes themselves are in the message store, which is where content
+    /// lives; this is the line in the log that says to go and look.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trailing_bytes: Option<u64>,
     /// Headers the caller asked for and this engine computed instead.
     ///
     /// Names, never values, like everything else here. Three headers frame the
@@ -139,6 +148,7 @@ impl RequestRecord {
             error: None,
             cookies_sent: None,
             cookies_stored: None,
+            trailing_bytes: None,
             headers_overridden: Vec::new(),
         }
     }

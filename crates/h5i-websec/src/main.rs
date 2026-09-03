@@ -90,6 +90,9 @@ enum Verb {
         #[arg(value_name = "ID")]
         id: String,
         /// Print it as an HTTP message.
+        ///
+        /// The one verb here whose output is not JSON, because a wire message
+        /// is bytes and bytes inside a JSON string are no longer the message.
         #[arg(long)]
         raw: bool,
         /// Write the body to this file, exactly as it came back.
@@ -122,6 +125,10 @@ enum Verb {
         /// Send it from another session, with that session's credentials.
         #[arg(long = "as", value_name = "SESSION")]
         as_session: Option<String>,
+        /// Carry the source session's `Cookie` and `Authorization` into the
+        /// other session. Only meaningful with `--as`.
+        #[arg(long)]
+        keep_credentials: bool,
         /// Send it this many times and report the clock.
         #[arg(long, value_name = "N")]
         repeat: Option<u32>,
@@ -135,6 +142,21 @@ enum Verb {
         /// that is deliberately long.
         #[arg(long)]
         reset_budget: bool,
+        /// Send this exact request-target, around the URL parser.
+        ///
+        /// A parsed URL resolves `.` and `..` and percent-decodes before the
+        /// request exists, so `/files/%252e%252e%252f` reaches the wire as
+        /// something the server was never asked for. With this the target is
+        /// written byte for byte, through the same policy and receipts.
+        #[arg(long = "raw-target", value_name = "TARGET")]
+        raw_target: Option<String>,
+        /// Send a whole request, written byte for byte from this file.
+        ///
+        /// The general form of `--raw-target`, framing headers included and
+        /// recomputed by nothing, for request smuggling. `-` reads standard
+        /// input.
+        #[arg(long = "raw-request", value_name = "PATH")]
+        raw_request: Option<String>,
     },
 
     /// How two of this session's responses differ.
@@ -259,10 +281,13 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             unset,
             create,
             as_session,
+            keep_credentials,
             repeat,
             race,
             no_follow,
             reset_budget,
+            raw_target,
+            raw_request,
         } => {
             let seq = sequence_of(&id)?;
             push(&mut argv, &["resend"]);
@@ -283,6 +308,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 argv.push("--create".into());
             }
             flag(&mut argv, "as", as_session);
+            if keep_credentials {
+                argv.push("--keep-credentials".into());
+            }
             flag(&mut argv, "repeat", repeat.map(|n| n.to_string()));
             if race {
                 argv.push("--race".into());
@@ -293,6 +321,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             if reset_budget {
                 argv.push("--reset-budget".into());
             }
+            flag(&mut argv, "raw-target", raw_target);
+            flag(&mut argv, "raw-request", raw_request);
         }
         Verb::Diff { left, right } => {
             push(&mut argv, &["diff"]);

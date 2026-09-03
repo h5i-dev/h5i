@@ -797,6 +797,9 @@ pub enum BrowserCommands {
         #[arg(long, value_name = "HALF", value_parser = ["request", "response", "both"])]
         part: Option<String>,
         /// Print it as an HTTP message rather than a summary.
+        ///
+        /// Wins over `--json`: a wire message is bytes, and bytes wrapped in a
+        /// JSON string are no longer the message.
         #[arg(long)]
         raw: bool,
         /// Write the body to this file, exactly as it came back.
