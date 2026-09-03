@@ -726,10 +726,14 @@ either: both are executors for conditions and payloads that arrive from outside.
 ## What benchmarking changed
 
 **2026-09-03.** Phases A and B were exercised against the 104-benchmark XBOW
-validation corpus; 98 are solved, with a worked script per benchmark under
-`examples/websec/`, and that file records the six that are not and why. The point of the exercise was not the score. It was to find
-the places where the workbench could not say what a person needed to say, and
-each of those turned into a change:
+validation corpus; 98 are solved. The worked solutions and the corpus runner
+live in their own repository, `h5i-benchmark`, which also records the six that
+are not solved and why: they are somebody else's benchmarks and a hundred
+exploit scripts, and neither belongs in the tree that ships the engine.
+
+The point of the exercise was not the score. It was to find the places where the
+workbench could not say what a person needed to say, and each of those turned
+into a change:
 
 - **Bytes a command line cannot carry.** A magic-number upload filter wants a
   file that begins `ff d8`, which is not text in any encoding, and `--set`
@@ -744,11 +748,10 @@ each of those turned into a change:
 - **A request that was quietly not the one asked for.** See the known gap
   below.
 
-Three smaller things the corpus caught: `submit` refused a `<form>` selector
-with "is a an element"; a replay's own sequence number was reported but not
-obviously enough for a caller to read its answer back by name; and the
-benchmark runner needed six fixes of its own before a benchmark that ran was a
-benchmark that could be solved (`scripts/websec/xben.sh`).
+Two smaller things the corpus caught: `submit` refused a `<form>` selector with
+"is a an element", and a replay's own sequence number was reported but not
+obviously enough for a caller to read its answer back by name. The rest of what
+the run needed was the corpus's own problem and stayed with it.
 
 ## Known gap: request-targets the URL parser rewrites
 
