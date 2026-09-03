@@ -708,6 +708,33 @@ Each of these is a decision to be defended in review, not a gap to be filled.
 Parallel replay and match are not exceptions to this. Intruder is not a scanner
 either: both are executors for conditions and payloads that arrive from outside.
 
+## What benchmarking changed
+
+**2026-09-03.** Phases A and B were exercised against the 104-benchmark XBOW
+validation corpus; 97 are solved, with a worked script per benchmark under
+`examples/websec/`. The point of the exercise was not the score. It was to find
+the places where the workbench could not say what a person needed to say, and
+each of those turned into a change:
+
+- **Bytes a command line cannot carry.** A magic-number upload filter wants a
+  file that begins `ff d8`, which is not text in any encoding, and `--set`
+  reaches the broker through argv and then through JSON. `--set-file
+  TARGET=PATH` sends the file's bytes unaltered.
+- **Bytes that came back and could not be read.** A response whose body was not
+  valid UTF-8 was reported as a length and a digest, which hides the answer in
+  exactly the case the store exists for: a secret echoed after a file
+  signature. Bodies now carry a lossy reading too, and `match` and `diff` can
+  see it. `show --body-to PATH` writes the exact bytes out, for the responses
+  that are files rather than text.
+- **A request that was quietly not the one asked for.** See the known gap
+  below.
+
+Three smaller things the corpus caught: `submit` refused a `<form>` selector
+with "is a an element"; a replay's own sequence number was reported but not
+obviously enough for a caller to read its answer back by name; and the
+benchmark runner needed six fixes of its own before a benchmark that ran was a
+benchmark that could be solved (`scripts/websec/xben.sh`).
+
 ## Known gap: request-targets the URL parser rewrites
 
 **Found while benchmarking, 2026-09-03.** h5i builds every request from a parsed
