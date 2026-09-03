@@ -139,6 +139,26 @@ pub struct Edited {
     pub outcome: FetchOutcome,
 }
 
+/// A request handed to a session that never made it.
+///
+/// The shape cross-session replay needs: the message another session recorded,
+/// carried here to be sent under *this* session's identity. The body travels
+/// base64 in the JSON rather than beside it, because this one crosses a control
+/// channel rather than the broker's own socket; a request body large enough for
+/// that to matter is one the caller should be sending with `body.raw` from a
+/// file anyway.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Given {
+    pub method: String,
+    pub url: Url,
+    /// Headers to carry. What a caller composes, and never a credential unless
+    /// the caller put one here on purpose: see `h5i browser resend --as`.
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    #[serde(default)]
+    pub body: Vec<u8>,
+}
+
 /// Why a replay did not happen, in a form a script can branch on.
 ///
 /// A code as well as a sentence, because these are four different situations
@@ -221,6 +241,24 @@ pub trait Broker: Send + Sync {
             "no-capture",
             "this session was not opened with `--capture`, so it has no stored request to \
              send again. Open it with `--capture` and the messages it makes will be replayable",
+        ))
+    }
+
+    /// Send a request this session did not make.
+    ///
+    /// The cross-session half of replay: one session's stored request, sent
+    /// under another's cookies, identity and policy. Everything that makes a
+    /// request *this session's* comes from here rather than from the message,
+    /// which is the whole point of the verb.
+    fn send_given(
+        &self,
+        _request: Given,
+        _edits: &[crate::edits::Edit],
+        _create: bool,
+    ) -> Result<Edited, SendError> {
+        Err(SendError::new(
+            "not-supported",
+            "this broker cannot send a composed request",
         ))
     }
 

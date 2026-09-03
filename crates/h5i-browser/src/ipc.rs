@@ -90,6 +90,12 @@ enum Ask {
         edits: Vec<crate::edits::Edit>,
         create: bool,
     },
+    /// Send a request this session never made, under this session's identity.
+    SendGiven {
+        request: Box<crate::broker::Given>,
+        edits: Vec<crate::edits::Edit>,
+        create: bool,
+    },
     HighWater,
     Since {
         mark: Option<u64>,
@@ -568,6 +574,32 @@ impl Broker for BrokerClient {
         }
     }
 
+    fn send_given(
+        &self,
+        request: crate::broker::Given,
+        edits: &[crate::edits::Edit],
+        create: bool,
+    ) -> Result<crate::broker::Edited, crate::broker::SendError> {
+        let ask = Ask::SendGiven {
+            request: Box::new(request),
+            edits: edits.to_vec(),
+            create,
+        };
+        match self.ask(ask, &[]) {
+            Some((Said::Edited(edited), blob)) => match *edited {
+                Ok(mut edited) => {
+                    edited.outcome.body = blob;
+                    Ok(edited)
+                }
+                Err(why) => Err(why),
+            },
+            _ => Err(crate::broker::SendError::new(
+                "no-answer",
+                "the broker did not answer the replay",
+            )),
+        }
+    }
+
     fn capture(&self) -> Option<crate::capture::Health> {
         match self.said(Ask::Capture) {
             Some(Said::Capture(health)) => health,
@@ -818,6 +850,7 @@ fn slow(ask: &Ask) -> bool {
         ask,
         Ask::Send(_)
             | Ask::SendEdited { .. }
+            | Ask::SendGiven { .. }
             | Ask::OpenSocket { .. }
             | Ask::OpenEventStream { .. }
             | Ask::ChannelSend { .. }
@@ -865,6 +898,17 @@ fn answer(
             create,
         } => {
             let mut edited = broker.send_edited(from, &edits, create);
+            if let Ok(edited) = &mut edited {
+                body = std::mem::take(&mut edited.outcome.body);
+            }
+            Said::Edited(Box::new(edited))
+        }
+        Ask::SendGiven {
+            request,
+            edits,
+            create,
+        } => {
+            let mut edited = broker.send_given(*request, &edits, create);
             if let Ok(edited) = &mut edited {
                 body = std::mem::take(&mut edited.outcome.body);
             }

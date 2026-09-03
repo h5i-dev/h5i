@@ -1455,7 +1455,13 @@ fn control_verb_inner(
         // this exists for starts from something the session actually sent.
         Verb::Resend => {
             let from = request.get("from").and_then(Value::as_u64);
-            let Some(from) = from else {
+            // Either a sequence number in *this* session's store, or a whole
+            // request another session recorded. The second is what makes "send
+            // this as the other user" possible: the message comes from there,
+            // and everything that makes it a request of this session's (its
+            // cookies, its identity, its policy, its budget) comes from here.
+            let given = request.get("request").cloned();
+            let Some(from) = from.or(given.is_some().then_some(0)) else {
                 return (
                     json!({
                         "ok": false,
@@ -1512,7 +1518,59 @@ fn control_verb_inner(
                 }
             }
 
-            match session.factory.broker().send_edited(from, &edits, create) {
+            // The composed form carries its body base64 in the JSON: this hop
+            // is a control channel, not the broker's own socket.
+            let composed = given.map(|value| {
+                let text = |key: &str| {
+                    value.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
+                };
+                let body = value
+                    .get("body_base64")
+                    .and_then(Value::as_str)
+                    .and_then(|b| {
+                        use base64::Engine as _;
+                        base64::engine::general_purpose::STANDARD.decode(b).ok()
+                    })
+                    .unwrap_or_default();
+                let headers = value
+                    .get("headers")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|pair| {
+                                let pair = pair.as_array()?;
+                                Some((
+                                    pair.first()?.as_str()?.to_string(),
+                                    pair.get(1)?.as_str()?.to_string(),
+                                ))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (text("method"), text("url"), headers, body)
+            });
+
+            let outcome = match composed {
+                Some((method, target, headers, body)) => match url::Url::parse(&target) {
+                    Err(e) => Err(crate::broker::SendError::new(
+                        "bad-request",
+                        format!("{target:?} is not a URL: {e}"),
+                    )),
+                    Ok(url) => session.factory.broker().send_given(
+                        crate::broker::Given {
+                            method,
+                            url,
+                            headers,
+                            body,
+                        },
+                        &edits,
+                        create,
+                    ),
+                },
+                None => session.factory.broker().send_edited(from, &edits, create),
+            };
+            match outcome {
                 Err(why) => (
                     json!({"ok": false, "code": why.code, "message": why.message}),
                     false,

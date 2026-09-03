@@ -811,6 +811,23 @@ pub enum BrowserCommands {
         /// response that was never going to differ.
         #[arg(long)]
         create: bool,
+        /// Send it from another session instead of this one.
+        ///
+        /// The authorization test, in one flag: take the request one logged-in
+        /// session made and send it from a different logged-in session. The
+        /// message comes from `--session`; the cookies, identity, policy and
+        /// receipts are the named session's.
+        ///
+        /// The source session's own credentials are dropped, because carrying
+        /// them would send a request that is neither user's and whose answer
+        /// means nothing. `--keep-credentials` sends them anyway, for the test
+        /// where that is the question.
+        #[arg(long = "as", value_name = "SESSION")]
+        as_session: Option<String>,
+        /// Carry the source session's `Cookie` and `Authorization` headers into
+        /// the other session. Only meaningful with `--as`.
+        #[arg(long, requires = "as_session")]
+        keep_credentials: bool,
         /// Which session, when more than one is open.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
@@ -1301,10 +1318,39 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             set,
             unset,
             create,
+            as_session,
+            keep_credentials,
             session,
             json,
         } => {
-            let mut argv = vec!["resend".to_string(), "--from".to_string(), from.to_string()];
+            // With `--as`, the message is read here and handed to the other
+            // session whole. h5i reads the store rather than asking the source
+            // session for it, for the reason `websec` exists: the stored
+            // request holds credentials, and a verb's reply would carry them
+            // out through a renderer.
+            let mut argv = vec!["resend".to_string()];
+            match &as_session {
+                None => {
+                    argv.push("--from".into());
+                    argv.push(from.to_string());
+                }
+                Some(_) => {
+                    let (request, dropped) = super::websec::carry(
+                        &root,
+                        session.as_deref(),
+                        from,
+                        keep_credentials,
+                    )?;
+                    if !dropped.is_empty() && !json {
+                        println!(
+                            "  note     : {} left behind, so this is the other session's                              own request",
+                            dropped.join(", ")
+                        );
+                    }
+                    argv.push("--request".into());
+                    argv.push(serde_json::to_string(&request)?);
+                }
+            }
             for spec in set {
                 argv.push("--set".into());
                 argv.push(spec);
@@ -1319,7 +1365,11 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             // Mutating: it puts bytes on the wire under this session's
             // identity, which is exactly what the control lock exists to stop a
             // second driver from doing while a human is at the wheel.
-            verb(&root, session.as_deref(), argv, true, json)
+            //
+            // Delivered to `--as` when there is one: that is the session whose
+            // cookies and receipts this request becomes part of.
+            let target = as_session.as_deref().or(session.as_deref());
+            verb(&root, target, argv, true, json)
         }
         BrowserCommands::Audit {
             session,

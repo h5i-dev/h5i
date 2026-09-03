@@ -1883,44 +1883,36 @@ impl crate::broker::Broker for LocalBroker {
             }
         };
 
-        let mut editable = crate::edits::Editable {
-            method: stored.method.clone(),
-            url,
-            headers: stored.headers.clone(),
-            body,
-        };
-        let applied = crate::edits::apply(&mut editable, edits, create)
-            .map_err(|e| SendError::new("bad-edit", e.to_string()))?;
-
-        let content_type = editable.content_type().map(str::to_string);
-        let fetch = crate::broker::Fetch {
-            url: editable.url.clone(),
-            // A replay is the agent exercising its own authority over a URL it
-            // named, exactly like a navigation, and not a page reaching for a
-            // subresource. That is what decides the policy question and what
-            // keeps the same-origin rules out of it: there is no document here.
-            initiator: Initiator::Navigation,
-            method: editable.method.clone(),
-            body: editable.body.clone(),
-            content_type,
-            headers: editable.headers.clone(),
-            document: None,
-            cors: None,
-        };
-        let sent = crate::broker::Sent {
-            method: fetch.method.clone(),
-            url: fetch.url.to_string(),
-            header_names: fetch.headers.iter().map(|(name, _)| name.clone()).collect(),
-            body_bytes: fetch.body.len() as u64,
-        };
-        let outcome = crate::broker::Broker::send(self, &fetch);
-        Ok(crate::broker::Edited {
-            seq: outcome.seq,
-            applied,
-            sent,
-            outcome,
-        })
+        self.edit_then_send(
+            crate::edits::Editable {
+                method: stored.method.clone(),
+                url,
+                headers: stored.headers.clone(),
+                body,
+            },
+            edits,
+            create,
+        )
     }
+
+    fn send_given(
+        &self,
+        request: crate::broker::Given,
+        edits: &[crate::edits::Edit],
+        create: bool,
+    ) -> Result<crate::broker::Edited, crate::broker::SendError> {
+        self.edit_then_send(
+            crate::edits::Editable {
+                method: request.method,
+                url: request.url,
+                headers: request.headers,
+                body: request.body,
+            },
+            edits,
+            create,
+        )
+    }
+
 
     fn records(&self) -> Vec<RequestRecord> {
         self.log.records()
@@ -1989,6 +1981,53 @@ impl crate::broker::Broker for LocalBroker {
 
     fn has_redactions(&self) -> bool {
         self.secrets.has_redactable()
+    }
+}
+
+
+impl LocalBroker {
+    /// Apply the edits and put it on the wire.
+    ///
+    /// The one path both replay verbs end at, so a stored request and a
+    /// composed one cannot be sent under two slightly different sets of rules.
+    fn edit_then_send(
+        &self,
+        mut editable: crate::edits::Editable,
+        edits: &[crate::edits::Edit],
+        create: bool,
+    ) -> Result<crate::broker::Edited, crate::broker::SendError> {
+        use crate::broker::SendError;
+        let applied = crate::edits::apply(&mut editable, edits, create)
+            .map_err(|e| SendError::new("bad-edit", e.to_string()))?;
+
+        let content_type = editable.content_type().map(str::to_string);
+        let fetch = crate::broker::Fetch {
+            url: editable.url.clone(),
+            // A replay is the agent exercising its own authority over a URL it
+            // named, exactly like a navigation, and not a page reaching for a
+            // subresource. That is what decides the policy question and what
+            // keeps the same-origin rules out of it: there is no document here.
+            initiator: Initiator::Navigation,
+            method: editable.method.clone(),
+            body: editable.body.clone(),
+            content_type,
+            headers: editable.headers.clone(),
+            document: None,
+            cors: None,
+        };
+        let sent = crate::broker::Sent {
+            method: fetch.method.clone(),
+            url: fetch.url.to_string(),
+            header_names: fetch.headers.iter().map(|(name, _)| name.clone()).collect(),
+            body_bytes: fetch.body.len() as u64,
+        };
+        let outcome = crate::broker::Broker::send(self, &fetch);
+        Ok(crate::broker::Edited {
+            seq: outcome.seq,
+            applied,
+            sent,
+            outcome,
+        })
     }
 }
 
@@ -2661,6 +2700,49 @@ mod capture_wire_tests {
         assert_eq!(error.code, "bad-edit", "the request was there; the edit was not");
         assert!(error.message.contains("user_id"), "{}", error.message);
         assert_eq!(sink.records().len(), before, "nothing reached the wire");
+    }
+
+    /// A request another session recorded, sent under this session's identity.
+    ///
+    /// The point of the verb is what the *receiving* session contributes: its
+    /// jar, its policy, its receipts. The composed message brings only the
+    /// method, URL, body and the headers the caller chose to carry.
+    #[test]
+    fn a_composed_request_is_sent_under_this_sessions_own_cookies() {
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::new(Policy::new(), sink.clone(), None).expect("broker");
+
+        let (port, seen) = super::caller_header_tests::head_recorder(1, None);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/doc?id=1")).unwrap();
+        // This session is logged in as somebody.
+        broker.jar().store(&url, ["session=this-sessions-own; Path=/"]);
+
+        let edited = crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "GET".to_string(),
+                url: url.clone(),
+                // What `--as` hands over: no credential of the other session's.
+                headers: vec![("X-Trace".to_string(), "carried".to_string())],
+                body: Vec::new(),
+            },
+            &[],
+            false,
+        )
+        .expect("sent");
+        assert_eq!(edited.outcome.status, Some(200));
+
+        let head = seen.lock().unwrap()[0].clone();
+        assert!(head.contains("x-trace: carried"), "{head}");
+        assert!(
+            head.contains("cookie: session=this-sessions-own"),
+            "the receiving session's jar supplies the credential: {head}"
+        );
+        // And it is in this session's receipts, because this session made it.
+        assert!(
+            sink.records().iter().any(|r| r.url.contains("/doc?id=1")),
+            "a composed request is recorded like any other"
+        );
     }
 
     /// A session that never captured has nothing to replay, and the message

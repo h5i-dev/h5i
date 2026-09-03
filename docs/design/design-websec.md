@@ -325,6 +325,25 @@ default, because a step acting on a token the previous step failed to produce is
 acting somewhere the sequence never described. That is the same rule
 `browser replay` already applies to its steps.
 
+### Cross-session replay, and what `--as` means
+
+Built 2026-09-03. `h5i browser resend <seq> --as <session>` reads the message
+out of one session's store and sends it from another, and the meaning of that
+had to be settled before it could be built.
+
+"Send Alice's request as Bob" means *Bob's session makes it*: Bob's cookies,
+Bob's identity, Bob's policy, Bob's receipts. So the source session's `Cookie`,
+`Authorization` and `Proxy-Authorization` are dropped on the way across, and the
+receiving session's jar supplies its own. Carrying Alice's cookie along would
+send a request that is neither Alice's (it went through Bob's session) nor
+Bob's (it carried Alice's credential), and the answer would settle nothing.
+`--keep-credentials` sends them anyway, for the test where that *is* the
+question, and a caller who wants one exact header can read it with `message` and
+set it with `--set`, which is a deliberate act rather than a default.
+
+The dropped names are printed, because a silent strip is a different request
+than the caller thinks they sent.
+
 ## W12. Structural diff
 
 `h5i websec diff res_42 res_43` is Comparer for programs. The reply has three
@@ -461,7 +480,7 @@ The twenty features, ranked, with the phase that carries them.
 | 13 | machine-readable response diff | Comparer | A, built |
 | 14 | match and extract primitives | Intruder grep | A, built |
 | 8 | multipart and upload editing | Repeater | B |
-| 10 | replay as another session | Repeater plus session rules | B |
+| 10 | replay as another session | Repeater plus session rules | B, built |
 | 11 | extract and bind | macros, session rules | B |
 | 12 | multi-request sequences | Repeater sequences | B |
 | 15 | precise timing | Repeater, Intruder | B |

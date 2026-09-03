@@ -688,8 +688,11 @@ enum SessionVerb {
     /// them.
     Resend {
         /// The sequence number to send again, as `requests` lists them.
-        #[arg(long, value_name = "SEQ")]
-        from: u64,
+        ///
+        /// Not needed with `--request`, which carries the whole message from
+        /// somewhere else. One or the other, never both.
+        #[arg(long, value_name = "SEQ", required_unless_present = "request")]
+        from: Option<u64>,
         /// `target=value`, repeatable, applied in order.
         #[arg(long = "set", value_name = "TARGET=VALUE")]
         set: Vec<String>,
@@ -699,6 +702,13 @@ enum SessionVerb {
         /// Add a target that is not there rather than refusing.
         #[arg(long)]
         create: bool,
+        /// A whole request, as JSON, instead of one from this session's store.
+        ///
+        /// `{"method":…,"url":…,"headers":[[name,value],…],"body_base64":…}`.
+        /// What `h5i browser resend --as` sends when the message came from
+        /// another session.
+        #[arg(long, value_name = "JSON", conflicts_with = "from")]
+        request: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -1597,17 +1607,32 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             set,
             unset,
             create,
+            request,
             at,
-        } => (
-            at,
-            serde_json::json!({
-                "verb": Verb::Resend.name(),
-                "from": from,
-                "set": set,
-                "unset": unset,
-                "create": create,
-            }),
-        ),
+        } => {
+            let composed: Option<serde_json::Value> = match request {
+                None => None,
+                Some(text) => match serde_json::from_str(text) {
+                    Ok(value) => Some(value),
+                    Err(e) => {
+                        return Err(H5iError::Metadata(format!(
+                            "`--request` is not JSON: {e}"
+                        )));
+                    }
+                },
+            };
+            (
+                at,
+                serde_json::json!({
+                    "verb": Verb::Resend.name(),
+                    "from": from,
+                    "set": set,
+                    "unset": unset,
+                    "create": create,
+                    "request": composed,
+                }),
+            )
+        }
         SessionVerb::WaitFor {
             selector,
             text,

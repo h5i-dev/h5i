@@ -317,6 +317,83 @@ fn summarise_body(body: &Text) {
     }
 }
 
+/// Headers that make a request *that user's* request.
+///
+/// Stripped when a stored message is carried into another session, and this is
+/// the whole meaning of `--as`. "Send Alice's request as Bob" means Bob's
+/// session makes it: Bob's cookies, Bob's identity, Bob's policy. Carrying
+/// Alice's `Cookie` header along would send a request that is neither Alice's
+/// (it went through Bob's session) nor Bob's (it carried Alice's credential),
+/// and the 200 it came back with would answer no question at all.
+///
+/// A caller who does want to send Alice's exact credential can read it with
+/// `message` and set it with `--set header.Authorization=…`, which is a
+/// deliberate act rather than a default.
+fn header_is_the_users(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "cookie" | "authorization" | "proxy-authorization"
+    )
+}
+
+/// One session's stored request, ready to hand to another session.
+///
+/// Returns the JSON the `resend` verb takes, and the names of the headers that
+/// were dropped, so the caller can say what it did rather than doing it
+/// quietly.
+pub fn carry(
+    root: &Path,
+    from_session: Option<&str>,
+    seq: u64,
+    keep_credentials: bool,
+) -> anyhow::Result<(Value, Vec<String>)> {
+    let (session, dir) = store_dir(root, from_session)?;
+    let stored: StoredRequest =
+        read_json(&dir.join(format!("{seq}.request.json"))).map_err(|_| {
+            anyhow::anyhow!(
+                "session {} has no stored request {seq}. It holds: {}",
+                session.id,
+                sequences(&dir)
+                    .iter()
+                    .map(u64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
+
+    let mut dropped = Vec::new();
+    let headers: Vec<(String, String)> = stored
+        .headers
+        .into_iter()
+        .filter(|(name, _)| {
+            if !keep_credentials && header_is_the_users(name) {
+                dropped.push(name.to_ascii_lowercase());
+                return false;
+            }
+            true
+        })
+        .collect();
+
+    let body = match body_text(&dir, &stored.body) {
+        Text::Utf8(text) => text.into_bytes(),
+        Text::Binary { sha256, .. } => std::fs::read(dir.join("bodies").join(&sha256))
+            .map_err(|e| anyhow::anyhow!("the stored body could not be read: {e}"))?,
+        Text::Missing(why) => {
+            anyhow::bail!("request {seq}'s body is not in the store ({why}), so it cannot be carried")
+        }
+    };
+    use base64::Engine as _;
+    Ok((
+        json!({
+            "method": stored.method,
+            "url": stored.url,
+            "headers": headers,
+            "body_base64": base64::engine::general_purpose::STANDARD.encode(&body),
+        }),
+        dropped,
+    ))
+}
+
 /// How two responses differ, in the layers an agent branches on.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Difference {

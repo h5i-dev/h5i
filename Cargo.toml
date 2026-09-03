@@ -109,6 +109,9 @@ serde_json = { workspace = true }
 # `h5i browser match --regex`: the matcher's patterns. Already in the tree
 # through h5i-sandbox, so this adds no package to the build.
 regex = "1"
+# Carrying a stored request body across the control channel, which is JSON and
+# so cannot hold arbitrary bytes. Already in the tree through h5i-browser.
+base64 = "0.22"
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5.60", features = ["derive"] }
