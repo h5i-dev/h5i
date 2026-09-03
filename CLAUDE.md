@@ -19,7 +19,7 @@ guards that make a release-only checkout stick:
    cargo stops with "failed to create directory ... File exists" before it
    compiles anything. `off` and `status` do what they say. The file lives under
    `target/`, which is ignored, so it never leaves your checkout.
-2. `.claude/hooks/deny-debug-build.py` is a PreToolUse hook that refuses
+2. `scripts/deny-debug-build.py` is a Claude Code PreToolUse hook that refuses
    dev-profile cargo commands, target-directory redirection, and attempts to
    remove the guard. It is a script, not a setting: nothing wires it up until
    you add it to your own `.claude/settings.local.json`, which is gitignored.
@@ -27,7 +27,7 @@ guards that make a release-only checkout stick:
    ```json
    { "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [
      { "type": "command",
-       "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/deny-debug-build.py\"" } ] } ] } }
+       "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/deny-debug-build.py\"" } ] } ] } }
    ```
 
 With both on, every cargo invocation takes `--release`, the binary is

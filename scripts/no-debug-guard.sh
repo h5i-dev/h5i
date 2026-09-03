@@ -3,9 +3,10 @@
 # file where cargo wants to create the target/debug directory. cargo then stops
 # with "failed to create directory ... File exists" before it compiles anything.
 #
-# A full dev-profile build of this workspace is very large, so the repo is
-# release-only. Unlike the Claude Code hook, which only one tool obeys, this
-# works against every tool: Codex, an editor, a stray shell, anything.
+# A full dev-profile build of this workspace is very large, so a machine that
+# cannot spare the space wants the checkout pinned to release-only. Unlike
+# scripts/deny-debug-build.py, which only Claude Code obeys, this works against
+# every tool: Codex, an editor, a stray shell, anything.
 #
 #   scripts/no-debug-guard.sh          # or `on`: install the guard
 #   scripts/no-debug-guard.sh off      # maintainer escape hatch
