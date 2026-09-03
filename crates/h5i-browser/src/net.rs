@@ -1967,9 +1967,7 @@ impl crate::broker::Broker for LocalBroker {
 
     fn send_raw(&self, req: &crate::broker::RawRequest) -> FetchOutcome {
         let url = &req.url;
-        // The URL the receipt shows: the authority, with the verbatim target
-        // written on it. That is the request that went out, dot segments and all,
-        // rather than the one a parser would have straightened it into.
+        // Show the authority and the target that was actually sent.
         let display = format!("{}{}", scheme_authority(url), req.target);
 
         let denied = |broker: &Self, seq: u64, reason: &str| -> FetchOutcome {
@@ -1984,15 +1982,12 @@ impl crate::broker::Broker for LocalBroker {
 
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
 
-        // 1. Policy, before anything moves, recorded as a pair like any refusal.
+        // 1. Check policy and record any refusal.
         if let Some(reason) = self.policy.check_from(url, None).reason() {
             return denied(self, seq, reason);
         }
 
-        // 2. A raw socket does not go through the egress proxy, so a proxied
-        //    session reaches loopback only — the same rule and the same reason as
-        //    the WebSocket client. Sending off-loopback would step around the
-        //    allowlist the proxy is there to enforce.
+        // 2. Raw sockets cannot bypass the proxy except for loopback.
         if self.proxied && !crate::rawsock::is_loopback(url) {
             return denied(
                 self,
@@ -2002,21 +1997,17 @@ impl crate::broker::Broker for LocalBroker {
             );
         }
 
-        // 3. Pin the address, so `check_address` runs on this client too: it does
-        //    its own dialling, and a name that answers a private address must be
-        //    refused here rather than connected to.
+        // 3. Pin and check addresses before dialing.
         if let Err(reason) = self.pin_addresses(url) {
             return denied(self, seq, &reason);
         }
 
-        // 4. The page's allowance.
+        // 4. Claim the request budget.
         if let Err(over) = self.budget.claim_request() {
             return denied(self, seq, &over.0);
         }
 
-        // 5. The decision record, before the bytes. Fail-closed: no writable
-        //    receipt, no request. The framing invariants this request breaks on
-        //    purpose ride along, the way an overridden client header does.
+        // 5. Record the decision before sending. Fail closed if this fails.
         let mut record =
             RequestRecord::request(seq, Initiator::Navigation, &req.method, &display);
         record.headers_overridden = req.broke.clone();
@@ -2027,7 +2018,7 @@ impl crate::broker::Broker for LocalBroker {
             );
         }
 
-        // The request as it will go out, into the store when there is one.
+        // Capture the outgoing request when a store is enabled.
         if let Some(capture) = &self.capture {
             let body = req.wire.get(req.body_at..).unwrap_or(&[]);
             let content_type = req
@@ -2038,7 +2029,7 @@ impl crate::broker::Broker for LocalBroker {
             capture.request(seq, &req.method, &display, req.headers.clone(), body, content_type);
         }
 
-        // 6. The wire.
+        // 6. Send the request.
         let started = Instant::now();
         let approved = url.host_str().and_then(|host| self.approved_addresses(host));
         let mut wire = match crate::rawsock::dial(url, approved) {
@@ -2051,8 +2042,7 @@ impl crate::broker::Broker for LocalBroker {
                 return FetchOutcome::failed_at(url.clone(), e, Some(seq));
             }
         };
-        // A deadline, so a server that accepts the bytes and then says nothing
-        // ends the read rather than holding the session forever.
+        // Do not wait forever for a silent server.
         wire.set_read_timeout(Some(Duration::from_secs(30)));
 
         if let Err(e) = wire.write_all(&req.wire) {
@@ -2083,9 +2073,7 @@ impl crate::broker::Broker for LocalBroker {
                 FetchOutcome::failed_at(url.clone(), e, Some(seq))
             }
             Ok(resp) => {
-                // A `Set-Cookie` on a raw response lands in the jar like any
-                // other: a raw send is still this session acting, and a login
-                // that rides on one should leave the session logged in.
+                // Store cookies from raw responses in the session jar.
                 let cookies_stored = self.jar.store(
                     url,
                     resp.headers
@@ -2306,11 +2294,7 @@ impl LocalBroker {
         let applied = crate::edits::apply(&mut editable, edits, create)
             .map_err(|e| SendError::new("bad-edit", e.to_string()))?;
 
-        // The raw escape hatch: a verbatim request-target, or a whole request
-        // written byte for byte. Both leave through the raw socket rather than
-        // reqwest, so the bytes the URL parser would rewrite reach the wire as
-        // written. Taken here, after the edits, so `--set` still composes the
-        // request the raw target is then written onto.
+        // Build raw requests after edits so `--set` still applies.
         if plan.raw_request.is_some() || plan.raw_target.is_some() {
             let raw = build_raw_request(&editable, &plan)
                 .map_err(|e| SendError::new("bad-raw", e))?;
@@ -2382,16 +2366,12 @@ impl LocalBroker {
     }
 }
 
-/// `http://host:port`, the part of a URL that names where a request goes rather
-/// than what it asks for. The port is shown only when it is explicit and not the
-/// scheme's default, which is how it reaches a `Host` header too.
+/// Return `scheme://host[:port]` for display and `Host` construction.
 fn scheme_authority(url: &Url) -> String {
     format!("{}://{}", url.scheme(), authority_host(url))
 }
 
-/// `host` or `host:port`, for a `Host` header and for display. The default port
-/// is left off, because a `Host` that names it is a different request than the
-/// one a browser sends.
+/// Return `host[:port]`, omitting the default port.
 fn authority_host(url: &Url) -> String {
     match (url.host_str(), url.port()) {
         (Some(host), Some(port)) => format!("{host}:{port}"),
@@ -2400,14 +2380,7 @@ fn authority_host(url: &Url) -> String {
     }
 }
 
-/// Turn an edited request and the raw plan into the bytes to write.
-///
-/// Two shapes, one exit. `raw_request` is a whole message the caller wrote and
-/// this sends unaltered, framing headers and all: request smuggling, where the
-/// framing *is* the test. `raw_target` is the ordinary managed request with one
-/// thing changed, the request-target, which is written verbatim while the engine
-/// still computes `Host` and `Content-Length` so the message is otherwise well
-/// formed: an Apache `.%2e/` traversal.
+/// Build either a complete raw request or a managed request with a raw target.
 fn build_raw_request(
     editable: &crate::edits::Editable,
     plan: &crate::broker::Sends,
@@ -2428,8 +2401,7 @@ fn build_raw_request(
     Ok(build_managed_raw(editable, target))
 }
 
-/// The managed shape: the caller's method, headers and body, with `Host` and
-/// `Content-Length` computed, and the request-target written exactly as given.
+/// Build a request with a verbatim target and computed framing headers.
 fn build_managed_raw(
     editable: &crate::edits::Editable,
     target: &str,
@@ -2437,9 +2409,7 @@ fn build_managed_raw(
     let method = editable.method.trim().to_ascii_uppercase();
     let mut headers: Vec<(String, String)> = Vec::new();
 
-    // `Host` follows the authority unless the caller set one, which is the same
-    // rule the edit language states: overriding it is a real test, so a `Host`
-    // among the stored headers wins.
+    // Use the authority unless the caller supplied `Host`.
     let host = editable
         .headers
         .iter()
@@ -2448,9 +2418,7 @@ fn build_managed_raw(
         .unwrap_or_else(|| authority_host(&editable.url));
     headers.push(("Host".to_string(), host));
 
-    // Everything else the caller carried, minus the framing the client owns:
-    // those are recomputed below so the message the server reads is consistent
-    // with its body. This is the managed shape; the smuggling shape keeps them.
+    // Keep caller headers, but recompute framing headers below.
     for (name, value) in &editable.headers {
         let lower = name.to_ascii_lowercase();
         if matches!(lower.as_str(), "host" | "content-length" | "transfer-encoding" | "connection") {
@@ -2461,9 +2429,7 @@ fn build_managed_raw(
     if !editable.body.is_empty() {
         headers.push(("Content-Length".to_string(), editable.body.len().to_string()));
     }
-    // Closed rather than kept alive: one raw request wants the server to hang up
-    // when it is done, so the reader knows the message ended even when there is
-    // no length to count to.
+    // Closing the connection also delimits responses without a length.
     headers.push(("Connection".to_string(), "close".to_string()));
 
     let mut head = format!("{method} {target} HTTP/1.1\r\n");
@@ -2490,9 +2456,7 @@ fn build_managed_raw(
     }
 }
 
-/// The verbatim shape: read the method and target off the first line for the
-/// audit, note which framing headers the caller set on purpose, and otherwise
-/// change nothing.
+/// Parse audit fields from a complete request without changing its bytes.
 fn parse_raw_request(url: Url, bytes: Vec<u8>) -> Result<crate::broker::RawRequest, String> {
     let head_end = find_crlf_crlf(&bytes).map(|at| at + 4).unwrap_or(bytes.len());
     let head = &bytes[..head_end];
@@ -3358,8 +3322,7 @@ mod capture_wire_tests {
         );
     }
 
-    /// A server that answers every request with its own request-line as the
-    /// body, so a test can see the exact request-target that reached the wire.
+    /// Start a server that echoes each request line.
     fn echo_request_line() -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -3387,8 +3350,7 @@ mod capture_wire_tests {
         port
     }
 
-    /// The whole point of `--raw-target`: a request-target the URL standard
-    /// would resolve reaches the wire exactly as written, dot segments and all.
+    /// A raw target reaches the wire without URL normalization.
     #[test]
     fn a_raw_target_reaches_the_wire_unresolved() {
         let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
@@ -3422,8 +3384,7 @@ mod capture_wire_tests {
         assert_eq!(sent.outcome.status, Some(200));
     }
 
-    /// A whole raw request is written byte for byte, and the framing headers it
-    /// breaks on purpose are named in the receipt rather than recomputed.
+    /// A raw request preserves its bytes and records its framing headers.
     #[test]
     fn a_raw_request_is_written_verbatim_and_its_framing_is_noted() {
         let editable = crate::edits::Editable {
@@ -3447,8 +3408,7 @@ mod capture_wire_tests {
         assert!(raw.broke.contains(&"transfer-encoding".to_string()));
     }
 
-    /// The managed shape computes `Host` and `Content-Length` so the message is
-    /// well formed, while still writing the target verbatim.
+    /// A managed raw request computes framing but preserves its target.
     #[test]
     fn a_managed_raw_request_frames_itself() {
         let editable = crate::edits::Editable {

@@ -988,26 +988,15 @@ pub enum BrowserCommands {
         /// the other session. Only meaningful with `--as`.
         #[arg(long, requires = "as_session")]
         keep_credentials: bool,
-        /// Send this exact request-target, around the URL parser.
+        /// Send this request-target unchanged, without URL normalization.
         ///
-        /// The ordinary send builds its request-target from a parsed URL, which
-        /// resolves `.` and `..` and percent-decodes before the request exists:
-        /// `/cgi-bin/.%2e/etc/passwd` reaches the wire as `/etc/passwd`, a
-        /// different request whose 404 says nothing about the one asked for. With
-        /// this the target is written byte for byte to a raw socket, through the
-        /// same policy, budget and receipts, so the server sees what you wrote.
-        /// `Host` and `Content-Length` are still computed, so the rest of the
-        /// message is well formed; for smuggling, where the framing itself is the
-        /// test, use `--raw-request`.
+        /// Policy, budget, and receipt checks still apply. The sender computes
+        /// `Host` and `Content-Length`; use `--raw-request` to control framing.
         #[arg(long = "raw-target", value_name = "TARGET")]
         raw_target: Option<String>,
-        /// Send a whole request, written byte for byte from this file.
+        /// Send a complete request unchanged from this file; `-` reads stdin.
         ///
-        /// The request line, the headers and the body exactly as the file holds
-        /// them, framing headers included and recomputed by nothing: the general
-        /// form of `--raw-target`, for request smuggling. `-` reads standard
-        /// input. The URL of the stored request still supplies the authority the
-        /// policy checks and the socket dials.
+        /// The stored URL supplies the authority for policy checks and dialing.
         #[arg(long = "raw-request", value_name = "PATH")]
         raw_request: Option<String>,
         /// Which session, when more than one is open.
@@ -1626,9 +1615,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 argv.push("--raw-target".into());
                 argv.push(target);
             }
-            // Read here and carried as base64: the inner hop is a JSON control
-            // message, and a smuggling payload is exactly the bytes JSON cannot
-            // hold — a bare `\r\n`, a header with no value, two `Content-Length`s.
+            // Encode arbitrary request bytes for the JSON control channel.
             if let Some(path) = raw_request {
                 let bytes = if path == "-" {
                     use std::io::Read as _;

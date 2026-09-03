@@ -11,7 +11,7 @@ use url::Url;
 use crate::net::LocalBroker;
 use crate::ws::{self, Incoming};
 
-/// The socket transport, plain or TLS, shared with the raw HTTP sender.
+/// Shared plain and TLS socket transport.
 use crate::rawsock::{connect_to_any, is_loopback, tls_config, Wire, TLS_READ_SLICE};
 
 /// The most one line of the server's handshake response may be, and the most

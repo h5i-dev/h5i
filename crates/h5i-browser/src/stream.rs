@@ -1535,11 +1535,7 @@ fn control_verb_inner(
             // sends is asking this session to spend its whole budget on one
             // verb, and the budget refusing halfway is a worse answer than a
             // ceiling stated up front.
-            // The verbatim request-target, and the whole-request form of the
-            // same escape hatch. When either is set the send leaves through the
-            // raw socket rather than reqwest, so the bytes the URL parser would
-            // rewrite reach the wire as written. `raw_request` arrives base64,
-            // like the composed body, because this hop is a JSON control channel.
+            // Raw request bytes are base64-encoded for the JSON control channel.
             let raw_target = request
                 .get("raw_target")
                 .and_then(Value::as_str)

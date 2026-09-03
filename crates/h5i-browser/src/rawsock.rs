@@ -1,17 +1,4 @@
-//! The raw socket transport, shared by the WebSocket client and the raw HTTP
-//! sender.
-//!
-//! Both of them go around `reqwest` for the same reason: they need to put bytes
-//! on the wire that a parsed `Url` and a built request cannot express. A
-//! WebSocket needs the connection kept open after the handshake; a raw HTTP send
-//! needs a request-target the URL standard would rewrite before it existed (a
-//! `.%2e/` traversal, a smuggled framing header). Neither has a home inside the
-//! client, and both need exactly the same thing underneath: a plain or TLS
-//! socket, dialled at an address the policy already approved.
-//!
-//! [`Wire`] is that socket. It was `wsclient.rs`'s alone; the raw HTTP path is
-//! the second caller that made it worth its own module rather than a second
-//! copy of the TLS bookkeeping.
+//! Plain and TLS sockets shared by WebSocket and raw HTTP clients.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -23,14 +10,10 @@ use url::Url;
 /// How long a connect attempt waits before moving to the next address.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// How long a TLS read waits before releasing the connection lock.
-///
-/// Short enough that a writer never feels it, long enough not to spin. Only TLS
-/// sockets set a read timeout at all: a plain socket has two independent handles
-/// and needs none.
+/// How long a TLS reader holds the shared connection lock while idle.
 pub(crate) const TLS_READ_SLICE: Duration = Duration::from_millis(100);
 
-/// The bytes underneath a socket, plain or encrypted.
+/// A plain or TLS socket.
 pub(crate) struct Wire {
     sock: TcpStream,
     /// `None` for a plain socket. Shared with a reader thread when one exists.
@@ -53,7 +36,7 @@ impl Wire {
         self.tls.is_some()
     }
 
-    /// A second handle on the same connection, for a reader thread.
+    /// Clone the socket for a reader thread.
     pub(crate) fn try_clone(&self) -> std::io::Result<Wire> {
         Ok(Wire {
             sock: self.sock.try_clone()?,
@@ -61,11 +44,7 @@ impl Wire {
         })
     }
 
-    /// Write, and make sure it has actually left.
-    ///
-    /// `&self` rather than `&mut self` because both halves of a WebSocket hold
-    /// one of these, and a frame written from the page's thread must not need
-    /// exclusive ownership of the connection.
+    /// Write and flush all bytes.
     pub(crate) fn write_all(&self, data: &[u8]) -> std::io::Result<()> {
         match &self.tls {
             None => {
@@ -108,9 +87,7 @@ impl Read for Wire {
                 let mut stream = rustls::Stream::new(&mut *conn, &mut sock);
                 match stream.read(buf) {
                     Ok(read) => return Ok(read),
-                    // The slice expired with nothing to show for it. The lock is
-                    // dropped here, which is the whole point of the timeout, and
-                    // then we ask again.
+                    // Release the lock after an idle slice so writers can use it.
                     Err(error)
                         if matches!(
                             error.kind(),
@@ -124,11 +101,7 @@ impl Read for Wire {
     }
 }
 
-/// The trust store, built once.
-///
-/// Mozilla's roots, compiled in, for the same reason the public suffix list is:
-/// a decision about who to trust should not depend on the network being
-/// reachable or on a file the box may not have.
+/// Return the cached TLS configuration with bundled Mozilla roots.
 pub(crate) fn tls_config() -> Arc<rustls::ClientConfig> {
     use std::sync::OnceLock;
     static CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
@@ -163,7 +136,7 @@ pub(crate) fn connect_to_any(addrs: &[SocketAddr]) -> std::io::Result<TcpStream>
     }))
 }
 
-/// Whether a URL names a loopback host, spelled as a name or an address.
+/// Return whether the URL names a loopback host.
 pub(crate) fn is_loopback(url: &Url) -> bool {
     match url.host() {
         Some(url::Host::Domain(name)) => {
@@ -175,16 +148,9 @@ pub(crate) fn is_loopback(url: &Url) -> bool {
     }
 }
 
-/// Dial a socket for a URL, at addresses the policy already approved.
+/// Dial a URL using pinned, policy-approved addresses when provided.
 ///
-/// `approved` is the pinned address set: the ones `Policy::check_address` said
-/// yes to, handed down rather than resolved again here, so this client does not
-/// reopen the rebinding window the pinning resolver closes for `reqwest`. `None`
-/// means nothing is pinned (a bare host with no egress proxy), and the name is
-/// resolved by `TcpStream::connect` as a last resort.
-///
-/// The TLS name is checked against the certificate, so an address literal in a
-/// `https` URL is refused here rather than connected to without validation.
+/// Reusing pinned addresses prevents DNS rebinding. TLS validates the URL's host.
 pub(crate) fn dial(url: &Url, approved: Option<Vec<SocketAddr>>) -> Result<Wire, String> {
     let secure = match url.scheme() {
         "http" => false,
@@ -217,24 +183,16 @@ pub(crate) fn dial(url: &Url, approved: Option<Vec<SocketAddr>>) -> Result<Wire,
 pub(crate) struct RawResponse {
     pub status: Option<u16>,
     pub headers: Vec<(String, String)>,
-    /// The decoded body: de-chunked when the response was chunked, and the exact
-    /// bytes otherwise.
+    /// The body, decoded from chunked framing when needed.
     pub body: Vec<u8>,
 }
 
-/// Read one HTTP/1.1 response, honouring the framing the server chose.
-///
-/// A raw send cannot lean on `reqwest` to know where the message ends, so this
-/// reads the framing itself: `Content-Length`, then `Transfer-Encoding:
-/// chunked`, then a close as the length of last resort. `cap` bounds the whole
-/// read, so a server that never stops talking cannot become this process's
-/// memory ceiling. The caller sets the socket's read timeout, which is what ends
-/// a read that is waiting on bytes that are not coming.
+/// Read one bounded HTTP/1.1 response using its length, chunks, or connection close.
 pub(crate) fn read_http_response(wire: &mut Wire, cap: usize) -> Result<RawResponse, String> {
     let mut buf: Vec<u8> = Vec::with_capacity(8192);
     let mut chunk = [0u8; 8192];
 
-    // 1. The head: read until the blank line that ends it.
+    // Read the head through its terminating blank line.
     let head_end = loop {
         if let Some(at) = find_subslice(&buf, b"\r\n\r\n") {
             break at + 4;
@@ -255,7 +213,7 @@ pub(crate) fn read_http_response(wire: &mut Wire, cap: usize) -> Result<RawRespo
     let (status, headers) = parse_head(&buf[..head_end]);
     let mut rest = buf.split_off(head_end); // whatever body bytes already arrived
 
-    // 2. The body, framed the way the headers say it is.
+    // Read the body using the declared framing.
     let te_chunked = headers.iter().any(|(name, value)| {
         name.eq_ignore_ascii_case("transfer-encoding")
             && value.to_ascii_lowercase().split(',').any(|v| v.trim() == "chunked")
@@ -270,8 +228,7 @@ pub(crate) fn read_http_response(wire: &mut Wire, cap: usize) -> Result<RawRespo
     } else if let Some(len) = content_length {
         read_exact_len(wire, rest, &mut chunk, len.min(cap))?
     } else {
-        // No framing at all: the message ends when the connection does. Read to
-        // the cap or the close, whichever comes first.
+        // Without framing, read until the connection closes or the cap is reached.
         read_to_close(wire, rest, &mut chunk, cap)?
     };
 
@@ -328,7 +285,7 @@ fn read_chunked(
     let mut out: Vec<u8> = Vec::new();
     let mut cursor = 0usize;
     loop {
-        // The size line: hex digits up to a CRLF, ignoring any chunk extension.
+        // Parse the hexadecimal size and ignore chunk extensions.
         let line_end = loop {
             if let Some(rel) = find_subslice(&have[cursor..], b"\r\n") {
                 break cursor + rel;
@@ -350,7 +307,7 @@ fn read_chunked(
         if size == 0 {
             break; // the last chunk; trailers, if any, are ignored
         }
-        // The chunk data plus its trailing CRLF.
+        // Read the chunk and its trailing CRLF.
         while have.len() < cursor + size + 2 {
             if out.len() + size > cap {
                 return Err(format!("chunked response exceeded the {cap} byte cap"));

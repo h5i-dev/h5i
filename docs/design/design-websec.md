@@ -694,14 +694,10 @@ either: both are executors for conditions and payloads that arrive from outside.
 
 ## What benchmarking changed
 
-**2026-09-03.** Phases A and B were exercised against the 104-benchmark XBOW
-validation corpus; 98 were solved on the first pass, and the two Apache
-path-traversal CVEs (XBEN-026 and XBEN-031) followed once the raw send path
-below could write their request-targets verbatim, for 100. The worked solutions
-and the corpus runner live in their own repository, `h5i-benchmark`, which also
-records the ones that are not solved and why: they are somebody else's benchmarks
-and a hundred exploit scripts, and neither belongs in the tree that ships the
-engine.
+**2026-09-03.** Phases A and B were tested against the 104-benchmark XBOW
+validation corpus. The first pass solved 98. Raw request targets then enabled
+XBEN-026 and XBEN-031, bringing the total to 100. The separate `h5i-benchmark`
+repository contains the runner, solutions, and notes about the remaining cases.
 
 The point of the exercise was not the score. It was to find the places where the
 workbench could not say what a person needed to say, and each of those turned
@@ -717,64 +713,45 @@ into a change:
   signature. Bodies now carry a lossy reading too, and `match` and `diff` can
   see it. `show --body-to PATH` writes the exact bytes out, for the responses
   that are files rather than text.
-- **A request that was quietly not the one asked for.** A request-target the URL
-  parser resolves away is a different request; `resend --raw-target` and
-  `--raw-request` now write one on the wire byte for byte. See the raw send path
-  below.
+- **Normalized requests.** `resend --raw-target` and `--raw-request` preserve
+  request targets and bytes that URL parsing would change.
 
 Two smaller things the corpus caught: `submit` refused a `<form>` selector with
 "is a an element", and a replay's own sequence number was reported but not
 obviously enough for a caller to read its answer back by name. The rest of what
 the run needed was the corpus's own problem and stayed with it.
 
-## Request-targets the URL parser rewrites: the raw send path
+## Raw requests
 
-**Found while benchmarking, 2026-09-03; built the same day.** h5i builds ordinary
-requests from parsed `Url`s, which resolve dot segments and percent-decode before
-the request exists. For example, `--set path=/cgi-bin/.%2e/.%2e/etc/passwd`
-reaches the wire as `/etc/passwd`, yielding evidence about the wrong request.
-`apply` refuses such an edit and names what the parser would have done
-(`crates/h5i-browser/src/edits.rs`), which is the honest half but not the fix.
+**Added 2026-09-03 after benchmarking.** Normal requests use parsed `Url`s, which
+normalize dot segments and percent encoding. For example,
+`--set path=/cgi-bin/.%2e/.%2e/etc/passwd` sends `/etc/passwd`. `apply` rejects
+such edits (`crates/h5i-browser/src/edits.rs`).
 
-The fix is a second send path that goes around `reqwest`, because `reqwest`
-builds its request-target from a parsed `Url` and exposes no hook to override it.
-It is modelled on the WebSocket client, which already dials a raw socket through
-the broker's own policy, pinning and receipts; the socket transport those two
-share now lives in `crates/h5i-browser/src/rawsock.rs`, and the raw HTTP/1.1
-sender is `LocalBroker::send_raw`.
+The raw send path bypasses `reqwest` so it can preserve those bytes. It shares
+the socket transport in `crates/h5i-browser/src/rawsock.rs` with the WebSocket
+client. `LocalBroker::send_raw` sends raw HTTP/1.1 requests.
 
-Two shapes, one path (`RawRequest`, `broker.rs`):
+`RawRequest` in `broker.rs` supports two forms:
 
-- **A verbatim request-target.** `h5i browser resend <seq> --raw-target
-  /cgi-bin/.%2e/.%2e/bin/sh` writes the target byte for byte while the engine
-  still computes `Host` and `Content-Length`, so the rest of the message is well
-  formed. This is the Apache path-traversal CVEs: with mod_cgi the traversal
-  reaches `/bin/sh` and the POST body is its stdin.
-- **A whole request.** `h5i browser resend --raw-request <path>` writes the
-  request line, headers and body exactly as given, with the framing headers left
-  as written rather than recomputed. This is request smuggling, where the framing
-  itself is the test; the invariants it breaks are named in the receipt rather
-  than performed silently.
+- **Raw target.** `h5i browser resend <seq> --raw-target
+  /cgi-bin/.%2e/.%2e/bin/sh` preserves the target but computes `Host` and
+  `Content-Length`.
+- **Raw request.** `h5i browser resend --raw-request <path>` preserves the full
+  request, including framing headers. The receipt records broken framing
+  invariants.
 
-Both go through `Broker::fetch`'s guarantees the long way round: the policy
-checks the authority, the address is pinned through `check_address` like any
-other, the budget is spent and the receipt is written before the socket is
-dialled. A raw socket cannot traverse an egress proxy, so a proxied session
-refuses a raw send off loopback, the same rule the WebSocket client follows.
+Both forms check policy, pin the address, claim the budget, and write a receipt
+before dialing. Because raw sockets cannot use the egress proxy, proxied sessions
+allow raw requests only to loopback, as the WebSocket client does.
 
-**Reachable now:** XBEN-026 (Apache 2.4.50, CVE-2021-42013) and XBEN-031 (Apache
-2.4.49, CVE-2021-41773) are solved end to end through `--raw-target`, with the
-worked scripts in the `h5i-benchmark` repository. The verbatim target
-(`.%%32%65`, `.%2e/`) reaches Apache unresolved, the RCE fires, and `websec
-match` reads the flag off the stored response.
+**Now reachable:** `--raw-target` solves XBEN-026 (CVE-2021-42013) and XBEN-031
+(CVE-2021-41773) end to end. Worked scripts are in `h5i-benchmark`.
 
-**Still open:** XBEN-066 (HTTP request smuggling) is now *expressible* ---
-`--raw-request` sends any framing the desync needs, verified against the live
-target --- but the specific desync for its mitmproxy 6.0.2 + HAProxy 2.0.5
-(`no option http-use-htx`) + Apache stack was not found. The obstacle is the
-front proxy, which re-parses and rewrites `Host` on every request it recognises,
-so the smuggled inner request must be hidden from it; that is payload research
-against this exact stack, not a capability h5i is missing.
+**Still open:** XBEN-066 can now express arbitrary request framing, but its
+mitmproxy 6.0.2, HAProxy 2.0.5, and Apache stack still needs a working desync
+payload. The front proxy reparses requests and rewrites `Host`; this is now a
+payload problem, not a missing h5i capability.
 
 ## Open questions
 

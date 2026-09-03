@@ -728,10 +728,10 @@ enum SessionVerb {
         /// another session.
         #[arg(long, value_name = "JSON", conflicts_with = "from")]
         request: Option<String>,
-        /// Write this exact request-target, around the URL parser.
+        /// Write this request-target without URL normalization.
         #[arg(long = "raw-target", value_name = "TARGET")]
         raw_target: Option<String>,
-        /// A whole request to write byte for byte, base64-encoded.
+        /// Write a complete base64-encoded request unchanged.
         #[arg(long = "raw-request", value_name = "BASE64")]
         raw_request: Option<String>,
         #[command(flatten)]
