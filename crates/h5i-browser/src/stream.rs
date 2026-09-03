@@ -1535,6 +1535,22 @@ fn control_verb_inner(
             // sends is asking this session to spend its whole budget on one
             // verb, and the budget refusing halfway is a worse answer than a
             // ceiling stated up front.
+            // The verbatim request-target, and the whole-request form of the
+            // same escape hatch. When either is set the send leaves through the
+            // raw socket rather than reqwest, so the bytes the URL parser would
+            // rewrite reach the wire as written. `raw_request` arrives base64,
+            // like the composed body, because this hop is a JSON control channel.
+            let raw_target = request
+                .get("raw_target")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let raw_request = request
+                .get("raw_request")
+                .and_then(Value::as_str)
+                .and_then(|b| {
+                    use base64::Engine as _;
+                    base64::engine::general_purpose::STANDARD.decode(b).ok()
+                });
             let plan = crate::broker::Sends {
                 count: request
                     .get("repeat")
@@ -1549,6 +1565,8 @@ fn control_verb_inner(
                     .get("no_follow")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                raw_target,
+                raw_request,
             };
             let strings = |key: &str| -> Vec<String> {
                 request

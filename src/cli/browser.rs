@@ -988,6 +988,28 @@ pub enum BrowserCommands {
         /// the other session. Only meaningful with `--as`.
         #[arg(long, requires = "as_session")]
         keep_credentials: bool,
+        /// Send this exact request-target, around the URL parser.
+        ///
+        /// The ordinary send builds its request-target from a parsed URL, which
+        /// resolves `.` and `..` and percent-decodes before the request exists:
+        /// `/cgi-bin/.%2e/etc/passwd` reaches the wire as `/etc/passwd`, a
+        /// different request whose 404 says nothing about the one asked for. With
+        /// this the target is written byte for byte to a raw socket, through the
+        /// same policy, budget and receipts, so the server sees what you wrote.
+        /// `Host` and `Content-Length` are still computed, so the rest of the
+        /// message is well formed; for smuggling, where the framing itself is the
+        /// test, use `--raw-request`.
+        #[arg(long = "raw-target", value_name = "TARGET")]
+        raw_target: Option<String>,
+        /// Send a whole request, written byte for byte from this file.
+        ///
+        /// The request line, the headers and the body exactly as the file holds
+        /// them, framing headers included and recomputed by nothing: the general
+        /// form of `--raw-target`, for request smuggling. `-` reads standard
+        /// input. The URL of the stored request still supplies the authority the
+        /// policy checks and the socket dials.
+        #[arg(long = "raw-request", value_name = "PATH")]
+        raw_request: Option<String>,
         /// Which session, when more than one is open.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
@@ -1539,6 +1561,8 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             reset_budget,
             as_session,
             keep_credentials,
+            raw_target,
+            raw_request,
             session,
             json,
         } => {
@@ -1597,6 +1621,30 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             }
             if reset_budget {
                 argv.push("--reset-budget".into());
+            }
+            if let Some(target) = raw_target {
+                argv.push("--raw-target".into());
+                argv.push(target);
+            }
+            // Read here and carried as base64: the inner hop is a JSON control
+            // message, and a smuggling payload is exactly the bytes JSON cannot
+            // hold — a bare `\r\n`, a header with no value, two `Content-Length`s.
+            if let Some(path) = raw_request {
+                let bytes = if path == "-" {
+                    use std::io::Read as _;
+                    let mut buf = Vec::new();
+                    std::io::stdin().read_to_end(&mut buf).map_err(|e| {
+                        anyhow::anyhow!("--raw-request -: stdin could not be read: {e}")
+                    })?;
+                    buf
+                } else {
+                    std::fs::read(&path).map_err(|e| {
+                        anyhow::anyhow!("--raw-request: {path} could not be read: {e}")
+                    })?
+                };
+                use base64::Engine as _;
+                argv.push("--raw-request".into());
+                argv.push(base64::engine::general_purpose::STANDARD.encode(&bytes));
             }
             // Mutating: it puts bytes on the wire under this session's
             // identity, which is exactly what the control lock exists to stop a

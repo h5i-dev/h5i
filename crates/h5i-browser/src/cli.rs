@@ -728,6 +728,12 @@ enum SessionVerb {
         /// another session.
         #[arg(long, value_name = "JSON", conflicts_with = "from")]
         request: Option<String>,
+        /// Write this exact request-target, around the URL parser.
+        #[arg(long = "raw-target", value_name = "TARGET")]
+        raw_target: Option<String>,
+        /// A whole request to write byte for byte, base64-encoded.
+        #[arg(long = "raw-request", value_name = "BASE64")]
+        raw_request: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -1632,6 +1638,8 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             no_follow,
             reset_budget,
             request,
+            raw_target,
+            raw_request,
             at,
         } => {
             let composed: Option<serde_json::Value> = match request {
@@ -1677,6 +1685,8 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     "no_follow": no_follow,
                     "reset_budget": reset_budget,
                     "request": composed,
+                    "raw_target": raw_target,
+                    "raw_request": raw_request,
                 }),
             )
         }

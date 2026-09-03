@@ -1855,7 +1855,7 @@ Send one of this session's own requests again, with changes
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBresend\fR [\fB\-\-set\fR] [\fB\-\-set\-file\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-\-repeat\fR] [\fB\-\-race\fR] [\fB\-\-no\-follow\fR] [\fB\-\-reset\-budget\fR] [\fB\-\-as\fR] [\fB\-\-keep\-credentials\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
+\fBresend\fR [\fB\-\-set\fR] [\fB\-\-set\-file\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-\-repeat\fR] [\fB\-\-race\fR] [\fB\-\-no\-follow\fR] [\fB\-\-reset\-budget\fR] [\fB\-\-as\fR] [\fB\-\-keep\-credentials\fR] [\fB\-\-raw\-target\fR] [\fB\-\-raw\-request\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1915,6 +1915,16 @@ The source session\*(Aqs own credentials are dropped, because carrying them woul
 .TP
 \fB\-\-keep\-credentials\fR
 Carry the source session\*(Aqs `Cookie` and `Authorization` headers into the other session. Only meaningful with `\-\-as`
+.TP
+\fB\-\-raw\-target\fR \fI<TARGET>\fR
+Send this exact request\-target, around the URL parser.
+
+The ordinary send builds its request\-target from a parsed URL, which resolves `.` and `..` and percent\-decodes before the request exists: `/cgi\-bin/.%2e/etc/passwd` reaches the wire as `/etc/passwd`, a different request whose 404 says nothing about the one asked for. With this the target is written byte for byte to a raw socket, through the same policy, budget and receipts, so the server sees what you wrote. `Host` and `Content\-Length` are still computed, so the rest of the message is well formed; for smuggling, where the framing itself is the test, use `\-\-raw\-request`.
+.TP
+\fB\-\-raw\-request\fR \fI<PATH>\fR
+Send a whole request, written byte for byte from this file.
+
+The request line, the headers and the body exactly as the file holds them, framing headers included and recomputed by nothing: the general form of `\-\-raw\-target`, for request smuggling. `\-` reads standard input. The URL of the stored request still supplies the authority the policy checks and the socket dials.
 .TP
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open

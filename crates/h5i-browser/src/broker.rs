@@ -178,6 +178,41 @@ pub struct Given {
     pub body: Vec<u8>,
 }
 
+/// A request to write on the wire byte for byte, around the URL parser.
+///
+/// The ordinary path builds every request from a parsed `Url`, and the URL
+/// standard resolves dot segments and percent-decodes before the request exists.
+/// That is right for a browser and wrong for the tests whose whole subject is a
+/// request-target a parser would rewrite: an Apache `.%2e/` traversal, a smuggled
+/// framing header. This carries the finished bytes past that layer to a raw
+/// socket, while `url` still supplies the authority the policy checks, the
+/// address the pinning approved and the socket dials. See [`crate::rawsock`].
+pub struct RawRequest {
+    /// The authority: scheme, host and port. Everything the policy and the dial
+    /// read comes from here; the path and query on it are ignored, because the
+    /// request-target is [`Self::wire`]'s to state.
+    pub url: Url,
+    /// The method and request-target, for the receipt and the audit only. What
+    /// goes on the wire is [`Self::wire`]; these are how the log names it.
+    pub method: String,
+    pub target: String,
+    /// The exact bytes of the request: the request line, the headers, the blank
+    /// line, and the body. Written unaltered.
+    pub wire: Vec<u8>,
+    /// The body's offset within `wire`, so the store keeps the request body
+    /// apart from its head the way it does for every other request.
+    pub body_at: usize,
+    /// The headers as parsed, for the store and the receipt. Names only reach
+    /// the receipt; the store holds the values, like every captured request.
+    pub headers: Vec<(String, String)>,
+    /// Framing invariants this request breaks on purpose, named for the receipt.
+    ///
+    /// A raw request may carry two `Content-Length` headers, or a
+    /// `Transfer-Encoding` that disagrees with the body: that is the test, and
+    /// the audit says so rather than pretending the message was well formed.
+    pub broke: Vec<String>,
+}
+
 /// Why a replay did not happen, in a form a script can branch on.
 ///
 /// A code as well as a sentence, because these are four different situations
@@ -206,7 +241,7 @@ impl SendError {
 /// "is this reliably slower", which is a timing test. `count` sends at the same
 /// instant answers "does this application check and then act", which is a race.
 /// The same request, the same receipts, and nothing else in common.
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Sends {
     /// How many. Always at least one.
     pub count: u32,
@@ -225,6 +260,26 @@ pub struct Sends {
     /// reach is the ordinary check-then-act window, which is where nearly every
     /// real one lives.
     pub together: bool,
+    /// A verbatim request-target to write on the request line.
+    ///
+    /// The ordinary send builds its target from a parsed `Url`, which resolves
+    /// `.` and `..` and percent-decodes before the request exists, so a
+    /// `/cgi-bin/.%2e/etc/passwd` reaches the wire as `/etc/passwd`. When this is
+    /// set the request goes out through the raw socket instead, with these bytes
+    /// on the request line untouched, so the target the caller wrote is the
+    /// target the server sees. `None` is the ordinary send. See
+    /// [`crate::rawsock`] and W's "Known gap".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_target: Option<String>,
+    /// A whole request, written to the wire byte for byte.
+    ///
+    /// The general form of the same escape hatch, for request smuggling: the
+    /// request line, the headers and the body exactly as given, with the framing
+    /// headers (`Content-Length`, `Transfer-Encoding`) left as the caller wrote
+    /// them rather than recomputed. The URL still supplies the authority the
+    /// policy checks and the socket dials. `None` is the ordinary send.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_request: Option<Vec<u8>>,
 }
 
 impl Default for Sends {
@@ -233,6 +288,8 @@ impl Default for Sends {
             count: 1,
             together: false,
             no_follow: false,
+            raw_target: None,
+            raw_request: None,
         }
     }
 }
@@ -336,6 +393,20 @@ pub trait Broker: Send + Sync {
             "not-supported",
             "this broker cannot send a composed request",
         ))
+    }
+
+    /// Write a request on the wire byte for byte, around the URL parser.
+    ///
+    /// The escape hatch for a request-target the parser would rewrite: it goes
+    /// through the same policy, budget and receipt as [`Self::send`], and then
+    /// to a raw socket rather than reqwest, so the bytes the caller wrote are the
+    /// bytes the server reads. A refusal by policy is an outcome with a receipt,
+    /// not an `Err`, like every other refused fetch. See [`RawRequest`].
+    fn send_raw(&self, _request: &RawRequest) -> FetchOutcome {
+        FetchOutcome::failed(
+            _request.url.clone(),
+            "this broker cannot send a raw request".to_string(),
+        )
     }
 
     /// What this session's message store has done, when it has one.
