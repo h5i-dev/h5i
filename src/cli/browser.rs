@@ -855,6 +855,21 @@ pub enum BrowserCommands {
         /// the pair that survives one scheduling hiccup where a mean does not.
         #[arg(long, default_value_t = 1, value_name = "N")]
         repeat: u32,
+        /// Release the repeated sends together, for a race.
+        ///
+        /// The test for check-then-act: an application that reads a balance,
+        /// decides, and writes it back has a window between the read and the
+        /// write, and `--repeat 20 --race` is what finds out how wide it is.
+        ///
+        /// A burst, and named as one: the sends leave from twenty threads that
+        /// meet at a barrier first. It is not a single-packet attack, which
+        /// needs each request split across two writes with the last byte held
+        /// back. Ordinary check-then-act windows do not need that.
+        ///
+        /// Every send is a receipt and a stored message like any other, so a
+        /// race that reproduces is a race somebody else can read afterwards.
+        #[arg(long, requires = "repeat")]
+        race: bool,
         /// Send it from another session instead of this one.
         ///
         /// The authorization test, in one flag: take the request one logged-in
@@ -1386,6 +1401,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             unset,
             create,
             repeat,
+            race,
             as_session,
             keep_credentials,
             session,
@@ -1433,6 +1449,9 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             if repeat > 1 {
                 argv.push("--repeat".into());
                 argv.push(repeat.to_string());
+            }
+            if race {
+                argv.push("--together".into());
             }
             // Mutating: it puts bytes on the wire under this session's
             // identity, which is exactly what the control lock exists to stop a

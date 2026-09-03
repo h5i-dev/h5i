@@ -705,6 +705,9 @@ enum SessionVerb {
         /// Send it this many times, and report each send's clock.
         #[arg(long, default_value_t = 1, value_name = "N")]
         repeat: u32,
+        /// Release the sends together rather than one after another.
+        #[arg(long)]
+        together: bool,
         /// A whole request, as JSON, instead of one from this session's store.
         ///
         /// `{"method":…,"url":…,"headers":[[name,value],…],"body_base64":…}`.
@@ -1611,6 +1614,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             unset,
             create,
             repeat,
+            together,
             request,
             at,
         } => {
@@ -1634,6 +1638,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     "unset": unset,
                     "create": create,
                     "repeat": repeat,
+                    "together": together,
                     "request": composed,
                 }),
             )

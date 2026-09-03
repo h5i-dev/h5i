@@ -1484,11 +1484,17 @@ fn control_verb_inner(
             // sends is asking this session to spend its whole budget on one
             // verb, and the budget refusing halfway is a worse answer than a
             // ceiling stated up front.
-            let repeat = request
-                .get("repeat")
-                .and_then(Value::as_u64)
-                .unwrap_or(1)
-                .clamp(1, 1000) as u32;
+            let plan = crate::broker::Sends {
+                count: request
+                    .get("repeat")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1)
+                    .clamp(1, 1000) as u32,
+                together: request
+                    .get("together")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            };
             let strings = |key: &str| -> Vec<String> {
                 request
                     .get(key)
@@ -1583,13 +1589,13 @@ fn control_verb_inner(
                         },
                         &edits,
                         create,
-                        repeat,
+                        plan,
                     ),
                 },
                 None => session
                     .factory
                     .broker()
-                    .send_edited(from, &edits, create, repeat),
+                    .send_edited(from, &edits, create, plan),
             };
             match outcome {
                 Err(why) => (

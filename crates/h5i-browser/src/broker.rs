@@ -189,6 +189,42 @@ impl SendError {
     }
 }
 
+/// How many times to send it, and whether at once.
+///
+/// Two different questions wearing one shape. `count` sends in a row answers
+/// "is this reliably slower", which is a timing test. `count` sends at the same
+/// instant answers "does this application check and then act", which is a race.
+/// The same request, the same receipts, and nothing else in common.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct Sends {
+    /// How many. Always at least one.
+    pub count: u32,
+    /// Released together rather than one after another.
+    ///
+    /// A burst, and named as one. Every request is written and flushed at
+    /// roughly the same moment from `count` threads that meet at a barrier
+    /// first; it is not a single-packet attack, which needs the request split
+    /// across two writes and the last byte of each held back. What it does
+    /// reach is the ordinary check-then-act window, which is where nearly every
+    /// real one lives.
+    pub together: bool,
+}
+
+impl Default for Sends {
+    fn default() -> Self {
+        Self {
+            count: 1,
+            together: false,
+        }
+    }
+}
+
+impl Sends {
+    pub fn once() -> Self {
+        Self::default()
+    }
+}
+
 /// One send's clock, in the two numbers that mean different things.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Timing {
@@ -256,7 +292,7 @@ pub trait Broker: Send + Sync {
         _from: u64,
         _edits: &[crate::edits::Edit],
         _create: bool,
-        _repeat: u32,
+        _plan: Sends,
     ) -> Result<Edited, SendError> {
         Err(SendError::new(
             "no-capture",
@@ -276,7 +312,7 @@ pub trait Broker: Send + Sync {
         _request: Given,
         _edits: &[crate::edits::Edit],
         _create: bool,
-        _repeat: u32,
+        _plan: Sends,
     ) -> Result<Edited, SendError> {
         Err(SendError::new(
             "not-supported",

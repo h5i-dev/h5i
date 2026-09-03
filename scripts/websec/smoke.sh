@@ -17,7 +17,7 @@ H5I="${1:-target/debug/h5i}"
 [ -x "$H5I" ] || { echo "no h5i at $H5I — cargo build --features browser"; exit 2; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PORT=$((20000 + RANDOM % 10000))
-SESSIONS=(ws-smoke-a ws-smoke-b ws-smoke-csrf ws-smoke-log ws-smoke-time)
+SESSIONS=(ws-smoke-a ws-smoke-b ws-smoke-csrf ws-smoke-log ws-smoke-time ws-smoke-race)
 FAILED=0
 
 python3 "$HERE/server.py" "$PORT" &
@@ -112,6 +112,23 @@ else
 fi
 is "every send is sampled" \
    "$("$H5I" browser resend 0 --repeat 3 --session ws-smoke-time --json 2>/dev/null | jqp 'len(d["samples"])')" "3"
+
+echo
+echo "── races ────────────────────────────────────────────────────────────"
+# The warm-up spends its own coupon, so the burst is aimed at an unused one.
+"$H5I" browser open "http://127.0.0.1:$PORT/redeem?coupon=warmup" \
+    --session ws-smoke-race --new --capture >/dev/null 2>&1
+BURST="$("$H5I" browser resend 0 --set 'query.coupon=race' --repeat 20 --race \
+    --session ws-smoke-race --json 2>/dev/null)"
+WON="$(echo "$BURST" | jqp 'sum(1 for s in d["samples"] if s["status"] == 200)')"
+is "the whole burst was sent" "$(echo "$BURST" | jqp 'len(d["samples"])')" "20"
+if [ -n "$WON" ] && [ "$WON" -gt 1 ]; then
+    ok "a one-use coupon was redeemed $WON times (the check-then-act window)"
+else
+    bad "the window was not reached (won '$WON' of 20)"
+fi
+is "and every send is in the receipts" \
+   "$("$H5I" browser requests --session ws-smoke-race --url-contains coupon=race --json 2>/dev/null | jqp 'd["shown"] == 40')" "True"
 
 echo
 echo "── the request log, narrowed ────────────────────────────────────────"

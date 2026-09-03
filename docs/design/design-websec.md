@@ -406,9 +406,23 @@ spend its whole budget on one verb.
 
 ## W15. Parallel replay
 
-`--parallel N` with bounded concurrency, and `--sync` which holds N prepared
-requests and releases them together for race windows (feature 16). Two things
-have to be right:
+Built 2026-09-03 as `--repeat N --race`: N threads that meet at a barrier and
+then send. The barrier is the point. Without it the first thread is already
+waiting on the network before the last has been spawned, and a check-then-act
+window measured in milliseconds closes in between.
+
+Named a burst rather than a single-packet attack, because that is what it is:
+the requests leave within the cost of waking a thread, not with their last bytes
+held back and released together. Ordinary check-then-act windows do not need
+that, and claiming the stronger thing would be claiming a capability the code
+does not have. `scripts/websec/smoke.sh` redeems a one-use coupon twelve times
+out of twenty against a server that sleeps between its check and its act.
+
+A panicked sender fails the whole call rather than being skipped: a burst that
+quietly sent fewer requests than it was asked for would make a race that did not
+reproduce look like a race that does not exist.
+
+Two things have to be right:
 
 - It composes with `budget.rs`. A parallel replay spends from the same
   `Limits`, so a runaway loop hits `max_requests` exactly as a runaway page
@@ -500,7 +514,7 @@ The twenty features, ranked, with the phase that carries them.
 | 11 | extract and bind | macros, session rules | B, built |
 | 12 | multi-request sequences | Repeater sequences | B, built |
 | 15 | precise timing | Repeater, Intruder | B, built |
-| 16 | controlled parallel replay | Intruder, race testing | B |
+| 16 | controlled parallel replay | Intruder, race testing | B, built |
 | 17 | redirect chain observation and control | Proxy, Repeater | B |
 | 18 | site map and inventory | Target site map | B |
 | 19 | DOM instrumentation | DOM Invader | C |

@@ -1839,7 +1839,7 @@ impl crate::broker::Broker for LocalBroker {
         from: u64,
         edits: &[crate::edits::Edit],
         create: bool,
-        repeat: u32,
+        plan: crate::broker::Sends,
     ) -> Result<crate::broker::Edited, crate::broker::SendError> {
         use crate::broker::SendError;
         let Some(store) = &self.capture else {
@@ -1909,7 +1909,7 @@ impl crate::broker::Broker for LocalBroker {
             },
             edits,
             create,
-            repeat,
+            plan,
         )
     }
 
@@ -1918,7 +1918,7 @@ impl crate::broker::Broker for LocalBroker {
         request: crate::broker::Given,
         edits: &[crate::edits::Edit],
         create: bool,
-        repeat: u32,
+        plan: crate::broker::Sends,
     ) -> Result<crate::broker::Edited, crate::broker::SendError> {
         self.edit_then_send(
             crate::edits::Editable {
@@ -1929,7 +1929,7 @@ impl crate::broker::Broker for LocalBroker {
             },
             edits,
             create,
-            repeat,
+            plan,
         )
     }
 
@@ -2006,6 +2006,92 @@ impl crate::broker::Broker for LocalBroker {
 
 
 impl LocalBroker {
+    /// One send, and what it cost.
+    fn send_once(
+        &self,
+        fetch: &crate::broker::Fetch,
+    ) -> (crate::broker::Timing, FetchOutcome) {
+        let started = std::time::Instant::now();
+        let outcome = crate::broker::Broker::send(self, fetch);
+        let total_ms = started.elapsed().as_millis() as u64;
+        // The engine's own reading of the hop, which knows where the headers
+        // stopped and the body began. Falls back to the wall clock around the
+        // call for a fetch that never got that far.
+        let ttfb_ms = outcome
+            .seq
+            .and_then(|seq| {
+                self.log
+                    .records()
+                    .into_iter()
+                    .find(|r| r.seq == seq && r.phase == crate::receipt::Phase::Response)
+                    .and_then(|r| r.ttfb_ms)
+            })
+            .unwrap_or(total_ms);
+        (
+            crate::broker::Timing {
+                seq: outcome.seq,
+                status: outcome.status,
+                ttfb_ms,
+                total_ms,
+                bytes: outcome.body.len() as u64,
+            },
+            outcome,
+        )
+    }
+
+    /// The same request from several threads, released together.
+    ///
+    /// The barrier is the whole point: without it the first thread is already
+    /// waiting on the network before the last one has been spawned, and a
+    /// check-then-act window measured in milliseconds closes in between. With
+    /// it, every thread has its request built and is blocked on the same
+    /// rendezvous, so they leave within the cost of waking a thread.
+    ///
+    /// Every send is a receipt and a stored message like any other. A race is
+    /// not a special mode; it is `count` ordinary requests that happen to
+    /// overlap, and the audit should read that way afterwards.
+    fn send_together(
+        &self,
+        fetch: &crate::broker::Fetch,
+        count: u32,
+    ) -> Result<(Vec<crate::broker::Timing>, FetchOutcome), crate::broker::SendError> {
+        let me = self.me.upgrade().ok_or_else(|| {
+            crate::broker::SendError::new("no-broker", "the broker is no longer running")
+        })?;
+        let barrier = Arc::new(std::sync::Barrier::new(count as usize));
+        let mut threads = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let broker = me.clone();
+            let barrier = barrier.clone();
+            let fetch = fetch.clone();
+            threads.push(std::thread::spawn(move || {
+                barrier.wait();
+                broker.send_once(&fetch)
+            }));
+        }
+        let mut samples = Vec::with_capacity(count as usize);
+        let mut last = None;
+        for thread in threads {
+            match thread.join() {
+                Ok((sample, outcome)) => {
+                    samples.push(sample);
+                    last = Some(outcome);
+                }
+                // A panicked sender is a gap in the burst, and a burst that
+                // silently sent fewer requests than asked for would make a race
+                // that did not reproduce look like a race that does not exist.
+                Err(_) => {
+                    return Err(crate::broker::SendError::new(
+                        "send-failed",
+                        "one of the parallel sends panicked, so the burst was not the size \
+                         it was asked for",
+                    ));
+                }
+            }
+        }
+        Ok((samples, last.expect("at least one send")))
+    }
+
     /// Apply the edits and put it on the wire.
     ///
     /// The one path both replay verbs end at, so a stored request and a
@@ -2015,7 +2101,7 @@ impl LocalBroker {
         mut editable: crate::edits::Editable,
         edits: &[crate::edits::Edit],
         create: bool,
-        repeat: u32,
+        plan: crate::broker::Sends,
     ) -> Result<crate::broker::Edited, crate::broker::SendError> {
         use crate::broker::SendError;
         let applied = crate::edits::apply(&mut editable, edits, create)
@@ -2042,38 +2128,25 @@ impl LocalBroker {
             header_names: fetch.headers.iter().map(|(name, _)| name.clone()).collect(),
             body_bytes: fetch.body.len() as u64,
         };
-        // At least once. `repeat` counts sends, not extra ones, so `--repeat 1`
-        // and no flag at all are the same request and the same receipts.
-        let sends = repeat.max(1);
-        let mut samples = Vec::with_capacity(sends as usize);
-        let mut last = None;
-        for _ in 0..sends {
-            let started = std::time::Instant::now();
-            let outcome = crate::broker::Broker::send(self, &fetch);
-            let total_ms = started.elapsed().as_millis() as u64;
-            // The engine's own reading of the hop, which knows where the
-            // headers stopped and the body began. Falls back to the wall clock
-            // around the call for a fetch that never got that far.
-            let ttfb_ms = outcome
-                .seq
-                .and_then(|seq| {
-                    self.log
-                        .records()
-                        .into_iter()
-                        .find(|r| r.seq == seq && r.phase == crate::receipt::Phase::Response)
-                        .and_then(|r| r.ttfb_ms)
-                })
-                .unwrap_or(total_ms);
-            samples.push(crate::broker::Timing {
-                seq: outcome.seq,
-                status: outcome.status,
-                ttfb_ms,
-                total_ms,
-                bytes: outcome.body.len() as u64,
-            });
-            last = Some(outcome);
-        }
-        let outcome = last.expect("at least one send");
+        // At least once. The count is sends, not extra ones, so a plan of one
+        // and no plan at all are the same request and the same receipts.
+        let sends = plan.count.max(1);
+        let (mut samples, outcome) = if plan.together && sends > 1 {
+            self.send_together(&fetch, sends)?
+        } else {
+            let mut samples = Vec::with_capacity(sends as usize);
+            let mut last = None;
+            for _ in 0..sends {
+                let (sample, outcome) = self.send_once(&fetch);
+                samples.push(sample);
+                last = Some(outcome);
+            }
+            (samples, last.expect("at least one send"))
+        };
+        // Oldest first, so a reader of the samples reads them in the order they
+        // were sent. Threads finish out of order, and a race's whole story is
+        // which one landed first.
+        samples.sort_by_key(|sample| sample.seq);
         Ok(crate::broker::Edited {
             seq: outcome.seq,
             applied,
@@ -2668,7 +2741,7 @@ mod capture_wire_tests {
             0,
             &[crate::edits::parse_set("query.user_id=456").expect("parses")],
             false,
-            1,
+            crate::broker::Sends::once(),
         )
         .expect("the stored request is there");
 
@@ -2708,7 +2781,7 @@ mod capture_wire_tests {
             0,
             &[crate::edits::parse_set("query.id=2").expect("parses")],
             false,
-            1,
+            crate::broker::Sends::once(),
         )
         .expect("replayed");
 
@@ -2750,7 +2823,7 @@ mod capture_wire_tests {
             0,
             &[crate::edits::parse_set("query.userid=2").expect("parses")],
             false,
-            1,
+            crate::broker::Sends::once(),
         )
         .expect_err("refused");
         assert_eq!(error.code, "bad-edit", "the request was there; the edit was not");
@@ -2784,7 +2857,7 @@ mod capture_wire_tests {
             },
             &[],
             false,
-            1,
+            crate::broker::Sends::once(),
         )
         .expect("sent");
         assert_eq!(edited.outcome.status, Some(200));
@@ -2808,8 +2881,14 @@ mod capture_wire_tests {
     fn a_session_without_a_store_says_why_it_cannot_replay() {
         let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
             .expect("broker");
-        let error = crate::broker::Broker::send_edited(broker.as_ref(), 0, &[], false, 1)
-            .expect_err("refused");
+        let error = crate::broker::Broker::send_edited(
+            broker.as_ref(),
+            0,
+            &[],
+            false,
+            crate::broker::Sends::once(),
+        )
+        .expect_err("refused");
         assert_eq!(error.code, "no-capture");
         assert!(error.message.contains("--capture"), "{}", error.message);
     }

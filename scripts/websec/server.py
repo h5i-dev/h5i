@@ -28,6 +28,11 @@ USERS = {
 DOCS = {"1": {"owner": "alice", "secret": "alice's diary"},
         "2": {"owner": "bob", "secret": "bob's diary"}}
 ISSUED = set()
+# Coupons, each redeemable once. `/redeem?coupon=x` checks and then acts with a
+# gap in between, which is the window a race test is looking for. Per-coupon so
+# a warm-up request does not spend the one the burst is aimed at.
+COUPONS = {}
+CREDIT = 0
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -98,6 +103,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
             time.sleep(0.4 if query.get("wait", ["0"])[0] == "1" else 0)
             self.reply(200, b'{"ok":true}')
 
+        elif path == "/redeem":
+            # Check, pause, then act. The pause stands in for the round trip a
+            # real one makes to its database. A coupon that may be redeemed once
+            # is redeemed as many times as fit in the gap.
+            global CREDIT
+            import time
+            name = query.get("coupon", ["default"])[0]
+            if COUPONS.get(name):
+                self.reply(409, json.dumps({"error": "already redeemed"}).encode())
+            else:
+                time.sleep(0.15)
+                COUPONS[name] = True
+                CREDIT += 10
+                self.reply(200, json.dumps({"ok": True, "credit": CREDIT}).encode())
+
+        elif path == "/credit":
+            self.reply(200, json.dumps({"credit": CREDIT}).encode())
+
         elif path == "/page":
             self.reply(200, b'<html><head><link rel="stylesheet" href="/a.css">'
                             b'<script src="/b.js"></script></head><body>hi</body></html>',
@@ -113,4 +136,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-http.server.HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+# Threaded on purpose. A single-threaded server serialises every request, which
+# would close the check-then-act window above by construction and make a race
+# test look like a race that does not exist.
+http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
