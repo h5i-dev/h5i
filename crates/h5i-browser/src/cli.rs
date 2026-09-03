@@ -42,6 +42,10 @@ const CONTROL_SOCKET_VAR: &str = "H5I_BROWSER_CONTROL_SOCKET";
 /// pane has a source on an engine that has no mediated socket in front of it.
 const ACTIONS_VAR: &str = "H5I_BROWSER_ACTIONS";
 
+/// Where h5i wants the messages themselves kept. Unset in an ordinary session,
+/// which stores no header and no body anywhere. See [`crate::capture`].
+const CAPTURE_VAR: &str = "H5I_BROWSER_CAPTURE";
+
 #[derive(Parser)]
 #[command(
     name = "h5i __engine",
@@ -654,6 +658,76 @@ enum SessionVerb {
         /// new, the way `snapshot --delta` works and for the same reason.
         #[arg(long, value_name = "SEQ")]
         since: Option<u64>,
+        /// Only this method.
+        #[arg(long, value_name = "METHOD")]
+        method: Option<String>,
+        /// Only rows whose URL contains this.
+        #[arg(long, value_name = "TEXT")]
+        url_contains: Option<String>,
+        /// Only responses with this status.
+        #[arg(long, value_name = "CODE")]
+        status: Option<u16>,
+        /// Only `navigation`, `subresource`, `frame` or `redirect`.
+        #[arg(long, value_name = "KIND")]
+        initiator: Option<String>,
+        /// Only what policy refused.
+        #[arg(long)]
+        denied_only: bool,
+        /// At most this many rows, newest last.
+        #[arg(long, value_name = "N")]
+        limit: Option<u64>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// Send a stored request again, with changes.
+    ///
+    /// Needs a session opened with `--capture`: a request nobody stored cannot
+    /// be sent again. The edits are applied in the broker, which is where the
+    /// stored request's credentials already are, so this process never holds
+    /// them.
+    Resend {
+        /// The sequence number to send again, as `requests` lists them.
+        ///
+        /// Not needed with `--request`, which carries the whole message from
+        /// somewhere else. One or the other, never both.
+        #[arg(long, value_name = "SEQ", required_unless_present = "request")]
+        from: Option<u64>,
+        /// `target=value`, repeatable, applied in order.
+        #[arg(long = "set", value_name = "TARGET=VALUE")]
+        set: Vec<String>,
+        /// `target=path`: the value is the file's bytes, whatever they are.
+        ///
+        /// Applied after every `--set`. These are the edits that cannot be
+        /// written on a command line: a real image, a polyglot, anything a
+        /// magic-number check will look at.
+        #[arg(long = "set-file", value_name = "TARGET=PATH")]
+        set_file: Vec<String>,
+        /// A target to remove.
+        #[arg(long = "unset", value_name = "TARGET")]
+        unset: Vec<String>,
+        /// Add a target that is not there rather than refusing.
+        #[arg(long)]
+        create: bool,
+        /// Send it this many times, and report each send's clock.
+        #[arg(long, default_value_t = 1, value_name = "N")]
+        repeat: u32,
+        /// Release the sends together rather than one after another.
+        #[arg(long)]
+        together: bool,
+        /// Stop at the first redirect and report it, rather than following it.
+        #[arg(long)]
+        no_follow: bool,
+        /// Start the page's network allowance again before sending.
+        #[arg(long)]
+        reset_budget: bool,
+        /// A whole request, as JSON, instead of one from this session's store.
+        ///
+        /// `{"method":…,"url":…,"headers":[[name,value],…],"body_base64":…}`.
+        /// What `h5i browser resend --as` sends when the message came from
+        /// another session.
+        #[arg(long, value_name = "JSON", conflicts_with = "from")]
+        request: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -734,6 +808,15 @@ struct NetArgs {
     /// Mirror the cookie jar to a file, and read it at start.
     #[arg(long, value_name = "PATH")]
     cookie_jar: Option<PathBuf>,
+
+    /// Keep the messages themselves here: headers and bodies, both directions.
+    ///
+    /// Off unless asked for, and separate from `--receipts` on purpose. The
+    /// receipt is the account and is safe to paste anywhere; this is the
+    /// evidence, and it holds session cookies and `Authorization` headers in
+    /// full. Defaults to $H5I_BROWSER_CAPTURE.
+    #[arg(long, value_name = "DIR")]
+    capture: Option<PathBuf>,
 
     /// The egress proxy to route through. Defaults to $H5I_EGRESS_PROXY.
     #[arg(long, value_name = "URL")]
@@ -1093,7 +1176,14 @@ fn broker_for(
     limits: crate::budget::Limits,
     net: &NetArgs,
 ) -> Result<Arc<crate::net::LocalBroker>, H5iError> {
-    crate::net::LocalBroker::with_identity(policy, sink, proxy, limits, Arc::new(identity_of(net)?))
+    crate::net::LocalBroker::with_identity(
+        policy,
+        sink,
+        proxy,
+        limits,
+        Arc::new(identity_of(net)?),
+        capture_store(net)?,
+    )
 }
 
 #[cfg(not(feature = "identity"))]
@@ -1102,9 +1192,9 @@ fn broker_for(
     sink: Arc<dyn Sink>,
     proxy: Option<&str>,
     limits: crate::budget::Limits,
-    _net: &NetArgs,
+    net: &NetArgs,
 ) -> Result<Arc<crate::net::LocalBroker>, H5iError> {
-    crate::net::LocalBroker::with_limits(policy, sink, proxy, limits)
+    crate::net::LocalBroker::with_limits(policy, sink, proxy, limits, capture_store(net)?)
 }
 
 #[cfg(feature = "identity")]
@@ -1509,10 +1599,87 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                 "role": role, "name": name,
             }),
         ),
-        SessionVerb::Requests { since, at } => (
+        SessionVerb::Requests {
+            since,
+            method,
+            url_contains,
+            status,
+            initiator,
+            denied_only,
+            limit,
             at,
-            serde_json::json!({"verb": Verb::Requests.name(), "since": since}),
+        } => (
+            at,
+            serde_json::json!({
+                "verb": Verb::Requests.name(),
+                "since": since,
+                "method": method,
+                "url_contains": url_contains,
+                "status": status,
+                "initiator": initiator,
+                "denied_only": denied_only,
+                "limit": limit,
+            }),
         ),
+        SessionVerb::Resend {
+            from,
+            set,
+            set_file,
+            unset,
+            create,
+            repeat,
+            together,
+            no_follow,
+            reset_budget,
+            request,
+            at,
+        } => {
+            let composed: Option<serde_json::Value> = match request {
+                None => None,
+                Some(text) => match serde_json::from_str(text) {
+                    Ok(value) => Some(value),
+                    Err(e) => {
+                        return Err(H5iError::Metadata(format!(
+                            "`--request` is not JSON: {e}"
+                        )));
+                    }
+                },
+            };
+            // Read here and carried as base64: this hop is a JSON control
+            // message, and the point of the flag is bytes JSON cannot hold.
+            let mut from_files: Vec<(String, String)> = Vec::new();
+            for spec in set_file {
+                let (target, path) = spec.split_once('=').ok_or_else(|| {
+                    H5iError::Metadata(format!(
+                        "`--set-file {spec}` is `target=path`, and this has no `=`"
+                    ))
+                })?;
+                let bytes = std::fs::read(path).map_err(|e| {
+                    H5iError::Metadata(format!("`--set-file {target}`: {path} could not be read: {e}"))
+                })?;
+                use base64::Engine as _;
+                from_files.push((
+                    target.to_string(),
+                    base64::engine::general_purpose::STANDARD.encode(&bytes),
+                ));
+            }
+            (
+                at,
+                serde_json::json!({
+                    "verb": Verb::Resend.name(),
+                    "from": from,
+                    "set": set,
+                    "set_file": from_files,
+                    "unset": unset,
+                    "create": create,
+                    "repeat": repeat,
+                    "together": together,
+                    "no_follow": no_follow,
+                    "reset_budget": reset_budget,
+                    "request": composed,
+                }),
+            )
+        }
         SessionVerb::WaitFor {
             selector,
             text,
@@ -1975,6 +2142,25 @@ fn receipts_sink(net: &NetArgs) -> Result<Arc<dyn Sink>, H5iError> {
     match &receipts {
         None => Ok(Arc::new(crate::receipt::NullSink)),
         Some(path) => Ok(Arc::new(JsonlSink::create(path)?)),
+    }
+}
+
+/// The message store, when a session was opened with one.
+///
+/// Opening fails loudly and writing does not, and the two are different
+/// questions. A directory that cannot be created means h5i asked for capture and
+/// the session cannot provide it, which the caller should hear about before the
+/// first page rather than discover as an empty store afterwards. A single
+/// message that cannot be written later is a gap in the evidence, counted and
+/// reported, and not a reason to fail the fetch that produced it.
+fn capture_store(net: &NetArgs) -> Result<Option<Arc<crate::capture::Capture>>, H5iError> {
+    let dir = net
+        .capture
+        .clone()
+        .or_else(|| std::env::var(CAPTURE_VAR).ok().filter(|v| !v.trim().is_empty()).map(PathBuf::from));
+    match dir {
+        None => Ok(None),
+        Some(dir) => Ok(Some(Arc::new(crate::capture::Capture::open(&dir)?))),
     }
 }
 

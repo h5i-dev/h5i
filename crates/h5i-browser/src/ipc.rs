@@ -70,12 +70,34 @@ const MAX_HEADER: usize = 64 * 1024 * 1024;
 #[derive(Debug, Serialize, Deserialize)]
 enum Ask {
     /// The request body travels in the blob, never in this.
-    Send(Fetch),
+    ///
+    /// Boxed because it is much the largest thing this enum carries, and every
+    /// other question would otherwise be allocated at its size: a `CookieCount`
+    /// is two words, and a fetch carries a URL, a method, a header list and a
+    /// CORS context. One allocation on a path that is about to wait on a socket
+    /// is not a cost worth measuring.
+    Send(Box<Fetch>),
     Records,
     RecordsSince {
         mark: Option<u64>,
     },
     LogSummary,
+    Capture,
+    /// Send a stored request again. The edits travel here; the credential the
+    /// stored request carries never leaves the broker.
+    SendEdited {
+        from: u64,
+        edits: Vec<crate::edits::Edit>,
+        create: bool,
+        plan: crate::broker::Sends,
+    },
+    /// Send a request this session never made, under this session's identity.
+    SendGiven {
+        request: Box<crate::broker::Given>,
+        edits: Vec<crate::edits::Edit>,
+        create: bool,
+        plan: crate::broker::Sends,
+    },
     HighWater,
     Since {
         mark: Option<u64>,
@@ -143,6 +165,10 @@ enum Said {
     Seqs(Vec<u64>),
     Mark(Option<u64>),
     Budget(Allowance),
+    /// What the message store has done, or that there is not one.
+    Capture(Option<crate::capture::Health>),
+    /// A replay's result. The response body travels in the blob, like any other.
+    Edited(Box<Result<crate::broker::Edited, crate::broker::SendError>>),
     Count(usize),
     Text(String),
     Flag(bool),
@@ -453,7 +479,7 @@ impl Broker for BrokerClient {
                 "the broker is no longer running, so nothing was fetched".to_string(),
             )
         };
-        let Some(pending) = self.begin(Ask::Send(fetch.clone()), &fetch.body) else {
+        let Some(pending) = self.begin(Ask::Send(Box::new(fetch.clone())), &fetch.body) else {
             return gone();
         };
 
@@ -522,6 +548,72 @@ impl Broker for BrokerClient {
 
     fn reset_budget(&self) {
         let _ = self.said(Ask::ResetBudget);
+    }
+
+    fn send_edited(
+        &self,
+        from: u64,
+        edits: &[crate::edits::Edit],
+        create: bool,
+        plan: crate::broker::Sends,
+    ) -> Result<crate::broker::Edited, crate::broker::SendError> {
+        let ask = Ask::SendEdited {
+            from,
+            edits: edits.to_vec(),
+            create,
+            plan,
+        };
+        match self.ask(ask, &[]) {
+            Some((Said::Edited(edited), blob)) => match *edited {
+                Ok(mut edited) => {
+                    edited.outcome.body = blob;
+                    Ok(edited)
+                }
+                Err(why) => Err(why),
+            },
+            _ => Err(crate::broker::SendError::new(
+                "no-answer",
+                "the broker did not answer the replay",
+            )),
+        }
+    }
+
+    fn send_given(
+        &self,
+        request: crate::broker::Given,
+        edits: &[crate::edits::Edit],
+        create: bool,
+        plan: crate::broker::Sends,
+    ) -> Result<crate::broker::Edited, crate::broker::SendError> {
+        let ask = Ask::SendGiven {
+            request: Box::new(request),
+            edits: edits.to_vec(),
+            create,
+            plan,
+        };
+        match self.ask(ask, &[]) {
+            Some((Said::Edited(edited), blob)) => match *edited {
+                Ok(mut edited) => {
+                    edited.outcome.body = blob;
+                    Ok(edited)
+                }
+                Err(why) => Err(why),
+            },
+            _ => Err(crate::broker::SendError::new(
+                "no-answer",
+                "the broker did not answer the replay",
+            )),
+        }
+    }
+
+    fn capture(&self) -> Option<crate::capture::Health> {
+        match self.said(Ask::Capture) {
+            Some(Said::Capture(health)) => health,
+            // A broker that did not answer is not a session without a store, so
+            // this says nothing rather than reporting a clean one. The two read
+            // the same in a status line and mean opposite things.
+            _ => None,
+        }
     }
 
     fn cookie_count(&self) -> usize {
@@ -763,6 +855,8 @@ fn slow(ask: &Ask) -> bool {
     matches!(
         ask,
         Ask::Send(_)
+            | Ask::SendEdited { .. }
+            | Ask::SendGiven { .. }
             | Ask::OpenSocket { .. }
             | Ask::OpenEventStream { .. }
             | Ask::ChannelSend { .. }
@@ -804,6 +898,31 @@ fn answer(
             broker.reset_budget();
             Said::Done
         }
+        Ask::SendEdited {
+            from,
+            edits,
+            create,
+            plan,
+        } => {
+            let mut edited = broker.send_edited(from, &edits, create, plan);
+            if let Ok(edited) = &mut edited {
+                body = std::mem::take(&mut edited.outcome.body);
+            }
+            Said::Edited(Box::new(edited))
+        }
+        Ask::SendGiven {
+            request,
+            edits,
+            create,
+            plan,
+        } => {
+            let mut edited = broker.send_given(*request, &edits, create, plan);
+            if let Ok(edited) = &mut edited {
+                body = std::mem::take(&mut edited.outcome.body);
+            }
+            Said::Edited(Box::new(edited))
+        }
+        Ask::Capture => Said::Capture(broker.capture()),
         Ask::CookieCount => Said::Count(broker.cookie_count()),
         Ask::DocumentCookie { url } => Said::Text(broker.document_cookie(&url)),
         Ask::StoreCookie { url, header } => Said::Count(broker.store_cookie(&url, &header)),

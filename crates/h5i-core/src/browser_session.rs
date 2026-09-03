@@ -67,6 +67,16 @@ pub const COOKIES_FILE: &str = "cookies.json";
 /// and that is the question an audit is for.
 pub const CONTROL_JOURNAL: &str = "control.jsonl";
 
+/// The session's stored messages: headers and bodies, both directions.
+///
+/// Written only when a session was opened with `--capture`, and the one
+/// directory here that is *evidence* rather than account. It holds session
+/// cookies and `Authorization` headers in full, which is exactly what the
+/// request log refuses to hold, so it is `0700`, it is never copied by
+/// `--restore`, and no export includes it unless someone names it. See
+/// `h5i-browser`'s `capture` module and `docs/design/design-websec.md`.
+pub const MESSAGES_DIR: &str = "messages";
+
 /// Where files this session produced are collected. Host-named, always: see
 /// [`crate::browser_session::artifact_path`].
 pub const ARTIFACTS_DIR: &str = "artifacts";
@@ -1014,6 +1024,16 @@ pub struct Sources {
     /// The helper log, which exists only for sessions that ran one.
     #[serde(default)]
     pub helpers: Availability,
+    /// The message store, for a session opened with `--capture`.
+    ///
+    /// Counted from the directory rather than asked of the engine, which is the
+    /// whole point of it being here: the engine's own account of its store is a
+    /// claim, and this is what h5i can see of it from outside. A store that
+    /// holds fewer messages than the request log has requests is an evidence gap
+    /// whoever is reading the messages needs to know about, and neither log
+    /// alone shows it.
+    #[serde(default)]
+    pub messages: Availability,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1056,6 +1076,35 @@ pub struct Audit {
     pub events: Vec<crate::browser_events::ViewerEvent>,
     /// How many rows the cap discarded. Rendered, never hidden.
     pub dropped: u64,
+}
+
+/// What h5i can see of a session's message store, from outside it.
+///
+/// `Empty` is the ordinary session: no `--capture`, no directory, nothing
+/// stored, and nothing to say. `Read` means the store is there and holds
+/// messages. `Unavailable` means the directory exists and this machine cannot
+/// read it, which is the answer that matters: a boxed session's store can be
+/// inside a box whose filesystem this machine never sees, and reporting that as
+/// "no messages" would describe a session that captured nothing.
+fn messages_availability(dir: &Path) -> Availability {
+    let messages = dir.join(MESSAGES_DIR);
+    match fs::read_dir(&messages) {
+        Ok(entries) => {
+            let any = entries.flatten().any(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.ends_with(".json"))
+            });
+            if any {
+                Availability::Read
+            } else {
+                Availability::Empty
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Availability::Empty,
+        Err(_) => Availability::Unavailable,
+    }
 }
 
 /// Most rows an audit holds before it starts dropping the oldest.
@@ -1232,6 +1281,7 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
             } else {
                 Availability::Read
             },
+            messages: messages_availability(&dir),
             helpers: match (&helpers, helpers_absent) {
                 (Some(text), _) if text.trim().is_empty() => Availability::Empty,
                 (Some(_), _) => Availability::Read,

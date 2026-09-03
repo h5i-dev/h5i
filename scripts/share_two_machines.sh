@@ -45,8 +45,7 @@ sha256() {
 }
 
 find_h5i() {
-  if [ -x ./target/debug/h5i ]; then printf '%s' ./target/debug/h5i
-  elif [ -x ./target/release/h5i ]; then printf '%s' ./target/release/h5i
+  if [ -x ./target/release/h5i ]; then printf '%s' ./target/release/h5i
   elif command -v h5i >/dev/null 2>&1; then command -v h5i
   else return 1; fi
 }
@@ -172,7 +171,7 @@ do_share() {
     shift
   done
 
-  H5I=$(find_h5i) || { say "no h5i binary: build one (cargo build) or put it on PATH"; exit 2; }
+  H5I=$(find_h5i) || { say "no h5i binary: build one (cargo build --release) or put it on PATH"; exit 2; }
   need python3
   WORKLOG=$(mktemp -t h5i-share-XXXXXX)
   SERVELOG=$(mktemp -t h5i-serve-XXXXXX)
@@ -373,7 +372,7 @@ do_join() {
     ok "followed the invite link"
     FETCH="curl -s -b $JAR -c $JAR --max-time 120"
   else
-    H5I=$(find_h5i) || { say "no h5i binary: build one (cargo build) or put it on PATH"; exit 2; }
+    H5I=$(find_h5i) || { say "no h5i binary: build one (cargo build --release) or put it on PATH"; exit 2; }
     head1 "== joining peer to peer =="
     TICKET=$(cat)
     if [ -z "$TICKET" ]; then

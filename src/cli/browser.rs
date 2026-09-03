@@ -157,6 +157,18 @@ pub enum BrowserCommands {
         #[arg(long, value_name = "SESSION_ID")]
         restore: Option<String>,
 
+        /// Keep every request and response this session makes: headers and
+        /// bodies, both directions.
+        ///
+        /// Off by default, and a different thing from the request log, which is
+        /// always on. The log records decisions in a form that is safe to paste
+        /// into a bug report; this records the messages, `Authorization` header
+        /// and session cookie included, which is what an HTTP workbench needs
+        /// and what an audit trail must not carry. Stored `0700` inside the
+        /// session directory, bounded, and never copied by `--restore`.
+        #[arg(long)]
+        capture: bool,
+
         /// Print the session record as JSON instead of a summary line.
         #[arg(long)]
         json: bool,
@@ -324,8 +336,19 @@ pub enum BrowserCommands {
         /// $H5I_BROWSER_SESSION, then to the session `open` last made.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
-        /// `e3` or `@e3`, from a `snapshot`.
-        reference: String,
+        /// `e3` or `@e3`, from a `snapshot`. Omit when using `--selector` or
+        /// `--role`.
+        reference: Option<String>,
+        /// A CSS selector instead, which survives a navigation where a `@ref`
+        /// does not.
+        #[arg(long, value_name = "CSS", conflicts_with = "reference")]
+        selector: Option<String>,
+        /// Find it by what it is called, the way a person would say it:
+        /// `--role button --name "Sign in"`.
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
+        role: Option<String>,
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -337,20 +360,52 @@ pub enum BrowserCommands {
         /// $H5I_BROWSER_SESSION, then to the session `open` last made.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
-        reference: String,
-        text: String,
+        /// `e3` or `@e3`, from a `snapshot`. Omit when using `--selector` or
+        /// `--role`, and give the text alone.
+        #[arg(value_name = "REF|TEXT")]
+        reference: Option<String>,
+        /// What to type.
+        #[arg(value_name = "TEXT")]
+        text: Option<String>,
+        /// A CSS selector instead.
+        ///
+        /// No conflict with the positional, unlike `click`'s: with a locator
+        /// given, the one positional left is the *text*, and the engine shifts
+        /// it (`two_positionals`). Declaring a conflict here made
+        /// `type --selector '#password' hunter2` a usage error, which is the
+        /// obvious way to type it.
+        #[arg(long, value_name = "CSS")]
+        selector: Option<String>,
+        /// Find the field by what it is called: `--role textbox --name Email`.
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
+        role: Option<String>,
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
         #[arg(long)]
         json: bool,
     },
 
     /// Submit the form containing a `@ref`.
+    ///
+    /// Not always needed: clicking a submit button submits its form, the way a
+    /// browser does with script switched off.
     Submit {
         /// Which session, when more than one is open. A name from
         /// `--session` at open time, or an opaque id. Defaults to
         /// $H5I_BROWSER_SESSION, then to the session `open` last made.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
-        reference: String,
+        /// `e3` or `@e3`, from a `snapshot`. Omit when using `--selector` or
+        /// `--role`.
+        reference: Option<String>,
+        /// A CSS selector instead.
+        #[arg(long, value_name = "CSS", conflicts_with = "reference")]
+        selector: Option<String>,
+        /// Find a control in the form by what it is called.
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
+        role: Option<String>,
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -655,6 +710,287 @@ pub enum BrowserCommands {
         /// Only what happened after this sequence number.
         #[arg(long, value_name = "SEQ")]
         since: Option<u64>,
+        /// Only this method.
+        #[arg(long, value_name = "METHOD")]
+        method: Option<String>,
+        /// Only rows whose URL contains this.
+        #[arg(long, value_name = "TEXT")]
+        url_contains: Option<String>,
+        /// Only responses with this status.
+        #[arg(long, value_name = "CODE")]
+        status: Option<u16>,
+        /// Only `navigation`, `subresource`, `frame` or `redirect`.
+        #[arg(long, value_name = "KIND")]
+        initiator: Option<String>,
+        /// Only what policy refused.
+        #[arg(long)]
+        denied_only: bool,
+        /// At most this many rows, newest last.
+        #[arg(long, value_name = "N")]
+        limit: Option<u64>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Run a multi-step flow: send, extract, send again with what was found.
+    ///
+    /// What a CSRF-protected application needs. A single `resend` cannot test
+    /// an endpoint whose token is minted by the request before it, and hand-
+    /// carrying the token between two shell commands is where the mistakes
+    /// happen. Steps run in order and stop at the first failure, because a step
+    /// acting on a token the step before it failed to produce is acting on a
+    /// state the file never described.
+    ///
+    /// The file is JSON:
+    ///
+    /// ```json
+    /// {"steps": [
+    ///   {"resend": 3, "extract": {"csrf": "regex:value=\"([^\"]+)\""}},
+    ///   {"resend": 5, "set": ["header.X-CSRF-Token=${csrf}", "json.role=admin"]}
+    /// ]}
+    /// ```
+    Sequence {
+        /// The sequence file.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Bind a name before the first step, as `name=value`. Repeatable.
+        #[arg(long = "var", value_name = "NAME=VALUE")]
+        vars: Vec<String>,
+        /// Run every step even after one fails, to read a whole file's failures
+        /// at once.
+        #[arg(long)]
+        keep_going: bool,
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// What this session reached, as a tree of origins and endpoints.
+    ///
+    /// The request log folded into the shape a person asks it questions in:
+    /// which paths, by which methods, answering which statuses, taking which
+    /// parameters. Built from the receipts, so it holds what the session
+    /// actually reached and nothing it merely read about. A URL scraped out of
+    /// a JavaScript bundle was not visited, and blurring the two would answer
+    /// "what did this session reach" with a guess.
+    Sitemap {
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// One stored message, as it went out or as it came back.
+    ///
+    /// Needs a session opened with `--capture`. This is the verb that shows the
+    /// bytes: headers in full, `Authorization` and `Cookie` included, which the
+    /// request log deliberately never holds. `--raw` prints it as an HTTP
+    /// message; the default summarises it.
+    Message {
+        /// The sequence number, as `requests` lists them.
+        #[arg(value_name = "SEQ")]
+        seq: u64,
+        /// Which half. Both by default.
+        #[arg(long, value_name = "HALF", value_parser = ["request", "response", "both"])]
+        part: Option<String>,
+        /// Print it as an HTTP message rather than a summary.
+        #[arg(long)]
+        raw: bool,
+        /// Write the body to this file, exactly as it came back.
+        ///
+        /// The store already holds the bytes; this is the way to get them out.
+        /// A response is not always something to read — a database backup left
+        /// in an open bucket, an image, an archive — and the next step is
+        /// usually a tool that wants a file.
+        ///
+        /// With `--part both`, the response body if there is one, otherwise
+        /// the request's.
+        #[arg(long = "body-to", value_name = "PATH")]
+        body_to: Option<PathBuf>,
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// How two of this session's responses differ.
+    ///
+    /// Status, headers and body, with the clock headers left out so that two
+    /// identical answers read as identical. A JSON body is compared field by
+    /// field, so a re-ordered object is not a difference; anything else is
+    /// compared by line. The reply carries a similarity number for the loop
+    /// that has to decide "same page or not" a few hundred times.
+    Diff {
+        /// The response to compare from.
+        #[arg(value_name = "SEQ")]
+        left: u64,
+        /// The response to compare to.
+        #[arg(value_name = "SEQ")]
+        right: u64,
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Ask a stored response a question, for a script to branch on.
+    ///
+    /// Every condition has to hold. Exits 0 when they all do and 1 when they do
+    /// not, the way `grep` does, so a loop reads `if h5i browser match ...`
+    /// without reaching for `jq`. A condition that could not be *evaluated* (a
+    /// pattern that does not compile, a body that was never stored) is an
+    /// error, not a "no": those two answers must never look the same.
+    ///
+    /// What it captures is the other half. A regex hands back its groups and
+    /// `--json` hands back a JSON path's value, which is how a CSRF token or a
+    /// session id gets from one response into the next request.
+    Match {
+        /// The response to ask about.
+        #[arg(value_name = "SEQ")]
+        seq: u64,
+        /// A regular expression over the body. Capture groups come back.
+        #[arg(long, value_name = "PATTERN")]
+        regex: Option<String>,
+        /// A literal substring of the body. Needs no escaping, which matters
+        /// when the thing being looked for is a payload.
+        #[arg(long, value_name = "TEXT")]
+        contains: Option<String>,
+        /// A dotted path into a JSON body (`session.token`), or `path=value`.
+        #[arg(long = "json-path", value_name = "PATH[=VALUE]")]
+        json_path: Option<String>,
+        /// A header by name, or `name=value`.
+        #[arg(long, value_name = "NAME[=VALUE]")]
+        header: Option<String>,
+        /// The status code.
+        #[arg(long, value_name = "CODE")]
+        status: Option<u16>,
+        /// The body is longer than this many bytes.
+        #[arg(long, value_name = "BYTES")]
+        longer_than: Option<u64>,
+        /// The body is shorter than this many bytes.
+        #[arg(long, value_name = "BYTES")]
+        shorter_than: Option<u64>,
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Send one of this session's own requests again, with changes.
+    ///
+    /// The workbench verb. `requests` names what the session sent; this sends
+    /// one of them again with a parameter, header, cookie or body field bent,
+    /// through the same policy, the same jar and the same receipts. Needs a
+    /// session opened with `--capture`, because a request nobody stored cannot
+    /// be sent again.
+    ///
+    /// A replay is a request like any other: it gets its own sequence number
+    /// and its own stored message, so a replay is itself replayable and the
+    /// whole chain is in the audit.
+    Resend {
+        /// The sequence number to send again, as `requests` lists them.
+        #[arg(value_name = "SEQ")]
+        from: u64,
+        /// Change one part of it: `query.id=456`, `header.X-Real-IP=127.0.0.1`,
+        /// `cookie.session=forged`, `json.role=admin`, `form.user=admin`,
+        /// `path=/admin`, `method=POST`, `body.raw=<bytes>`. Repeatable, and
+        /// applied in the order given.
+        ///
+        /// The value is everything after the first `=`, so a payload full of
+        /// `=` needs no escaping.
+        #[arg(long = "set", value_name = "TARGET=VALUE")]
+        set: Vec<String>,
+        /// Set one part of it from a file: `multipart.userfile=./payload.jpg`.
+        ///
+        /// The value is the file's bytes, unaltered. `--set` cannot carry them:
+        /// a command line is text and a JPEG begins `ff d8`, which is not text
+        /// in any encoding. A magic-number check is a filter worth testing, so
+        /// there has to be a way to send a real one.
+        ///
+        /// Applied after every `--set`, in the order given.
+        #[arg(long = "set-file", value_name = "TARGET=PATH")]
+        set_file: Vec<String>,
+        /// Remove one part of it, by the same names.
+        #[arg(long = "unset", value_name = "TARGET")]
+        unset: Vec<String>,
+        /// Add a target that is not there rather than refusing.
+        ///
+        /// Off by default: a parameter that does not exist is usually a typo,
+        /// and a typo that silently succeeds costs a whole turn spent reading a
+        /// response that was never going to differ.
+        #[arg(long)]
+        create: bool,
+        /// Send it this many times and report the clock, for a timing test.
+        ///
+        /// Repeated inside the engine rather than by a shell loop: the thing
+        /// being measured is milliseconds and starting a process costs tens of
+        /// them, so a loop out here would measure the loop. The reply carries
+        /// every sample plus a median and a median absolute deviation, which is
+        /// the pair that survives one scheduling hiccup where a mean does not.
+        #[arg(long, default_value_t = 1, value_name = "N")]
+        repeat: u32,
+        /// Release the repeated sends together, for a race.
+        ///
+        /// The test for check-then-act: an application that reads a balance,
+        /// decides, and writes it back has a window between the read and the
+        /// write, and `--repeat 20 --race` is what finds out how wide it is.
+        ///
+        /// A burst, and named as one: the sends leave from twenty threads that
+        /// meet at a barrier first. It is not a single-packet attack, which
+        /// needs each request split across two writes with the last byte held
+        /// back. Ordinary check-then-act windows do not need that.
+        ///
+        /// Every send is a receipt and a stored message like any other, so a
+        /// race that reproduces is a race somebody else can read afterwards.
+        #[arg(long, requires = "repeat")]
+        race: bool,
+        /// Stop at the first redirect and report it, rather than following it.
+        ///
+        /// A browser follows a `Location`; a test usually wants the 302 itself.
+        /// It is where an authentication flow says who you are, where an open
+        /// redirect proves it accepts anything, and where the `Set-Cookie` that
+        /// logs you in actually rides. The reply carries the status and the
+        /// headers with nothing followed.
+        #[arg(long)]
+        no_follow: bool,
+        /// Start this page's network allowance again before sending.
+        ///
+        /// The budget exists to bound *page* code: a script in a loop is the
+        /// untrusted thing it stops. A blind extraction is the opposite, an
+        /// agent deliberately sending hundreds of requests it composed, and
+        /// without this it stops partway through with "this page has spent its
+        /// allowance" and every later answer reads as a negative result.
+        ///
+        /// Grants nothing new: navigating resets the same allowance, so this is
+        /// the same act without throwing away the page.
+        #[arg(long)]
+        reset_budget: bool,
+        /// Send it from another session instead of this one.
+        ///
+        /// The authorization test, in one flag: take the request one logged-in
+        /// session made and send it from a different logged-in session. The
+        /// message comes from `--session`; the cookies, identity, policy and
+        /// receipts are the named session's.
+        ///
+        /// The source session's own credentials are dropped, because carrying
+        /// them would send a request that is neither user's and whose answer
+        /// means nothing. `--keep-credentials` sends them anyway, for the test
+        /// where that is the question.
+        #[arg(long = "as", value_name = "SESSION")]
+        as_session: Option<String>,
+        /// Carry the source session's `Cookie` and `Authorization` headers into
+        /// the other session. Only meaningful with `--as`.
+        #[arg(long, requires = "as_session")]
+        keep_credentials: bool,
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -766,6 +1102,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             height,
             expires_in,
             restore,
+            capture,
             json,
         } => open(
             &root,
@@ -785,6 +1122,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 height,
                 expires_in,
                 restore,
+                capture,
             },
             json,
         ),
@@ -844,25 +1182,44 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         BrowserCommands::Click {
             session,
             reference,
+            selector,
+            role,
+            name,
             json,
-        } => verb(&root, session.as_deref(), vec!["click".into(), reference], true, json),
+        } => {
+            let mut argv = vec!["click".to_string()];
+            argv.extend(reference);
+            argv.extend(locator(selector, role, name));
+            verb(&root, session.as_deref(), argv, true, json)
+        }
         BrowserCommands::Type {
             session,
             reference,
             text,
+            selector,
+            role,
+            name,
             json,
-        } => verb(
-            &root,
-            session.as_deref(),
-            vec!["type".into(), reference, text],
-            true,
-            json,
-        ),
+        } => {
+            let mut argv = vec!["type".to_string()];
+            argv.extend(reference);
+            argv.extend(text);
+            argv.extend(locator(selector, role, name));
+            verb(&root, session.as_deref(), argv, true, json)
+        }
         BrowserCommands::Submit {
             session,
             reference,
+            selector,
+            role,
+            name,
             json,
-        } => verb(&root, session.as_deref(), vec!["submit".into(), reference], true, json),
+        } => {
+            let mut argv = vec!["submit".to_string()];
+            argv.extend(reference);
+            argv.extend(locator(selector, role, name));
+            verb(&root, session.as_deref(), argv, true, json)
+        }
         BrowserCommands::Scroll { session, by, json } => verb(
             &root,
             session.as_deref(),
@@ -1042,14 +1399,222 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         BrowserCommands::Requests {
             session,
             since,
+            method,
+            url_contains,
+            status,
+            initiator,
+            denied_only,
+            limit,
             json,
         } => {
             let mut argv = vec!["requests".to_string()];
-            if let Some(since) = since {
-                argv.push("--since".into());
-                argv.push(since.to_string());
+            let mut flag = |name: &str, value: Option<String>| {
+                if let Some(value) = value {
+                    argv.push(format!("--{name}"));
+                    argv.push(value);
+                }
+            };
+            flag("since", since.map(|s| s.to_string()));
+            flag("method", method);
+            flag("url-contains", url_contains);
+            flag("status", status.map(|s| s.to_string()));
+            flag("initiator", initiator);
+            flag("limit", limit.map(|s| s.to_string()));
+            if denied_only {
+                argv.push("--denied-only".into());
             }
             verb(&root, session.as_deref(), argv, false, json)
+        }
+        BrowserCommands::Sequence {
+            file,
+            vars,
+            keep_going,
+            session,
+            json,
+        } => {
+            let bindings: Vec<(String, String)> = vars
+                .into_iter()
+                .map(|spec| match spec.split_once('=') {
+                    Some((name, value)) => (name.to_string(), value.to_string()),
+                    None => (spec, String::new()),
+                })
+                .collect();
+            super::websec::sequence(
+                &root,
+                session.as_deref(),
+                &file,
+                &bindings,
+                keep_going,
+                json,
+            )
+        }
+        BrowserCommands::Sitemap { session, json } => {
+            super::websec::sitemap(&root, session.as_deref(), json)
+        }
+        BrowserCommands::Message {
+            seq,
+            part,
+            raw,
+            body_to,
+            session,
+            json,
+        } => {
+            let part = match part.as_deref() {
+                Some("request") => super::websec::Part::Request,
+                Some("response") => super::websec::Part::Response,
+                _ => super::websec::Part::Both,
+            };
+            super::websec::show(
+                &root,
+                session.as_deref(),
+                seq,
+                part,
+                raw,
+                body_to.as_deref(),
+                json,
+            )
+        }
+        BrowserCommands::Diff {
+            left,
+            right,
+            session,
+            json,
+        } => super::websec::diff(&root, session.as_deref(), left, right, json),
+        BrowserCommands::Match {
+            seq,
+            regex,
+            contains,
+            json_path,
+            header,
+            status,
+            longer_than,
+            shorter_than,
+            session,
+            json,
+        } => {
+            use super::websec::Condition;
+            // `name=value` splits on the first `=`, like an edit does, so a
+            // value containing one needs no escaping.
+            let split = |spec: String| -> (String, Option<String>) {
+                match spec.split_once('=') {
+                    Some((name, value)) => (name.to_string(), Some(value.to_string())),
+                    None => (spec, None),
+                }
+            };
+            let mut conditions = Vec::new();
+            if let Some(pattern) = regex {
+                conditions.push(Condition::Regex(pattern));
+            }
+            if let Some(text) = contains {
+                conditions.push(Condition::Contains(text));
+            }
+            if let Some(spec) = json_path {
+                let (path, value) = split(spec);
+                conditions.push(Condition::Json { path, value });
+            }
+            if let Some(spec) = header {
+                let (name, value) = split(spec);
+                conditions.push(Condition::Header { name, value });
+            }
+            if let Some(code) = status {
+                conditions.push(Condition::Status(code));
+            }
+            if let Some(bytes) = longer_than {
+                conditions.push(Condition::LongerThan(bytes));
+            }
+            if let Some(bytes) = shorter_than {
+                conditions.push(Condition::ShorterThan(bytes));
+            }
+            super::websec::matches(&root, session.as_deref(), seq, &conditions, json)
+        }
+        BrowserCommands::Resend {
+            from,
+            set,
+            set_file,
+            unset,
+            create,
+            repeat,
+            race,
+            no_follow,
+            reset_budget,
+            as_session,
+            keep_credentials,
+            session,
+            json,
+        } => {
+            // With `--as`, the message is read here and handed to the other
+            // session whole. h5i reads the store rather than asking the source
+            // session for it, for the reason `websec` exists: the stored
+            // request holds credentials, and a verb's reply would carry them
+            // out through a renderer.
+            let mut argv = vec!["resend".to_string()];
+            match &as_session {
+                None => {
+                    argv.push("--from".into());
+                    argv.push(from.to_string());
+                }
+                Some(_) => {
+                    let (request, dropped) = super::websec::carry(
+                        &root,
+                        session.as_deref(),
+                        from,
+                        keep_credentials,
+                    )?;
+                    if !dropped.is_empty() && !json {
+                        println!(
+                            "  note     : {} left behind, so this is the other session's                              own request",
+                            dropped.join(", ")
+                        );
+                    }
+                    argv.push("--request".into());
+                    argv.push(serde_json::to_string(&request)?);
+                }
+            }
+            for spec in set {
+                argv.push("--set".into());
+                argv.push(spec);
+            }
+            for spec in set_file {
+                argv.push("--set-file".into());
+                argv.push(spec);
+            }
+            for spec in unset {
+                argv.push("--unset".into());
+                argv.push(spec);
+            }
+            if create {
+                argv.push("--create".into());
+            }
+            if repeat > 1 {
+                argv.push("--repeat".into());
+                argv.push(repeat.to_string());
+            }
+            if race {
+                argv.push("--together".into());
+            }
+            if no_follow {
+                argv.push("--no-follow".into());
+            }
+            if reset_budget {
+                argv.push("--reset-budget".into());
+            }
+            // Mutating: it puts bytes on the wire under this session's
+            // identity, which is exactly what the control lock exists to stop a
+            // second driver from doing while a human is at the wheel.
+            //
+            // Delivered to `--as` when there is one: that is the session whose
+            // cookies and receipts this request becomes part of.
+            let target = as_session.as_deref().or(session.as_deref());
+            // With one send there is nothing to summarise and the reply is the
+            // answer. With several, the medians go in beside the samples.
+            verb_then(&root, target, argv, true, json, |answer| {
+                if let Some(samples) = answer.get("samples").and_then(Value::as_array)
+                    && let Some(summary) = super::websec::timing_summary(samples)
+                {
+                    answer["timing"] = summary;
+                }
+                Ok(())
+            })
         }
         BrowserCommands::Audit {
             session,
@@ -1101,6 +1666,8 @@ struct StartOptions {
     height: u32,
     expires_in: Option<u64>,
     restore: Option<String>,
+    /// Keep the messages themselves, not only the record of them.
+    capture: bool,
 }
 
 /// Open a URL: navigate the session that is already there, or make one.
@@ -1179,6 +1746,14 @@ fn creation_flags(opts: &StartOptions) -> Vec<&'static str> {
     }
     if !opts.secrets.is_empty() {
         set.push("`--secret`");
+    }
+    // The store is opened when the broker is built, and a session that began
+    // recording halfway through would hold evidence with a hole in it that
+    // nothing in the store could describe. Refused rather than ignored, like
+    // every other flag here: silently dropping it would leave an agent
+    // believing it had a record of the login it just performed.
+    if opts.capture {
+        set.push("`--capture`");
     }
     // Creation-only for a stronger reason than most of these. The agent string
     // is handed to the HTTP client when the client is built, and a session that
@@ -1475,6 +2050,12 @@ fn spawn_on_host(
         opts.height.to_string(),
     ];
     argv.extend(net_args(opts));
+    // h5i names the directory, as it does for every other session artifact, so
+    // where a session's evidence lands is not the engine caller's to choose.
+    if opts.capture {
+        argv.push("--capture".into());
+        argv.push(dir.join(bs::MESSAGES_DIR).display().to_string());
+    }
     if opts.script {
         argv.push("--script".into());
     }
@@ -1830,6 +2411,12 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
         opts.height.to_string(),
     ];
     argv.extend(net_args(opts));
+    // Inside the box, beside the receipts, for the same reason the jar is: this
+    // is the filesystem the engine has.
+    if opts.capture {
+        argv.push("--capture".into());
+        argv.push(in_box_base.with_extension("messages").display().to_string());
+    }
     if opts.script {
         argv.push("--script".into());
     }
@@ -2303,6 +2890,76 @@ fn verb(
 /// wrote and then say where it ended up. It runs only on an answer that was not
 /// a refusal, and it runs *before* the printing, because an answer naming a
 /// path the file is no longer at would be worse than no answer.
+/// Run one step of a sequence, and hand back the answer.
+///
+/// Typed rather than argv, because a sequence step and a typed verb have to end
+/// at the same place: this assembles the same command line `BrowserCommands::
+/// Resend` does, so the control lock, the receipts and the policy see a
+/// sequence exactly as they see somebody typing the steps one at a time.
+pub(crate) fn resend_step(
+    root: &Path,
+    selector: Option<&str>,
+    step: &super::websec::Sending<'_>,
+) -> anyhow::Result<Value> {
+    let mut argv = vec!["resend".to_string()];
+    match step.as_session {
+        None => {
+            argv.push("--from".into());
+            argv.push(step.from.to_string());
+        }
+        Some(_) => {
+            let (request, _) =
+                super::websec::carry(root, selector, step.from, step.keep_credentials)?;
+            argv.push("--request".into());
+            argv.push(serde_json::to_string(&request)?);
+        }
+    }
+    for spec in step.set {
+        argv.push("--set".into());
+        argv.push(spec.clone());
+    }
+    for spec in step.unset {
+        argv.push("--unset".into());
+        argv.push(spec.clone());
+    }
+    if step.create {
+        argv.push("--create".into());
+    }
+    // The session the request becomes part of, which is the other one when
+    // there is one.
+    let target = step.as_session.or(selector);
+    ask_session(root, target, argv, true)
+}
+
+/// Send a verb and hand back the answer, without printing it.
+///
+/// The half of [`verb_then`] a caller that is *composing* verbs needs: a
+/// sequence runs several and reads each answer to decide the next, so a
+/// function that prints and returns nothing is the wrong shape for it. Same
+/// resolution, same control-lock check, same scrub, because a composed run must
+/// not be able to reach a session by a path a typed verb could not.
+pub(crate) fn ask_session(
+    root: &Path,
+    selector: Option<&str>,
+    argv: Vec<String>,
+    mutating: bool,
+) -> anyhow::Result<Value> {
+    let session = match bs::resolve(root, selector) {
+        Ok(session) => session,
+        Err(gone) => {
+            eprintln!("{}", gone);
+            std::process::exit(bs::EXIT_SESSION_GONE);
+        }
+    };
+    let dir = bs::dir(root, &session.id);
+    if let Some(explanation) = h5i_core::control::check(&dir, mutating).explain() {
+        anyhow::bail!("{explanation}");
+    }
+    let mut answer = deliver(&session, &dir, argv)?;
+    bs::scrub(&mut answer);
+    Ok(answer)
+}
+
 fn verb_then(
     root: &Path,
     selector: Option<&str>,
@@ -3054,8 +3711,14 @@ fn audit(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> 
         bs::Availability::Empty => String::new(),
         other => format!(" · helpers {}", availability(other)),
     };
+    // The same rule for the message store: silent on the ordinary session,
+    // which was not opened with `--capture` and has nothing to report.
+    let messages = match src.messages {
+        bs::Availability::Empty => String::new(),
+        other => format!(" · messages {}", availability(other)),
+    };
     println!(
-        "  sources  : actions {} · requests {} · control {}{helpers}",
+        "  sources  : actions {} · requests {} · control {}{helpers}{messages}",
         availability(src.actions),
         availability(src.requests),
         availability(src.control)

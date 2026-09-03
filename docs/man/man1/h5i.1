@@ -31,6 +31,9 @@ Open a box someone else is sharing, from a ticket they sent you
 h5i\-runner(1)
 Run boxes on another Linux machine you own
 .TP
+h5i\-plugin(1)
+Install, list or remove a plugin
+.TP
 h5i\-skill(1)
 Write or print the agent skill this binary carries
 .TP
@@ -954,7 +957,7 @@ Open a URL, making a session if there is not one already
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-secret\fR] [\fB\-\-identity\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-expires\-in\fR] [\fB\-\-restore\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-secret\fR] [\fB\-\-identity\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-expires\-in\fR] [\fB\-\-restore\fR] [\fB\-\-capture\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1007,6 +1010,11 @@ Recorded as an ending on the session\*(Aqs record when it passes, not as a disap
 Seed this session\*(Aqs storage from one that has ended.
 
 A restore is a new session with a new id, and the inheritance is written into its record. Nothing resurrects an id: an agent holding a stale one always gets a refusal, never a different session wearing the same name. Takes an id, not a name, because a name can be reused and storage has to come from one definite session.
+.TP
+\fB\-\-capture\fR
+Keep every request and response this session makes: headers and bodies, both directions.
+
+Off by default, and a different thing from the request log, which is always on. The log records decisions in a form that is safe to paste into a bug report; this records the messages, `Authorization` header and session cookie included, which is what an HTTP workbench needs and what an audit trail must not carry. Stored `0700` inside the session directory, bounded, and never copied by `\-\-restore`.
 .TP
 \fB\-\-json\fR
 Print the session record as JSON instead of a summary line
@@ -1217,7 +1225,7 @@ Follow a `@ref` from the last snapshot
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBclick\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIREFERENCE\fR> 
+\fBclick\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREFERENCE\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1225,20 +1233,29 @@ Follow a `@ref` from the last snapshot
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
 .TP
+\fB\-\-selector\fR \fI<CSS>\fR
+A CSS selector instead, which survives a navigation where a `@ref` does not
+.TP
+\fB\-\-role\fR \fI<ROLE>\fR
+Find it by what it is called, the way a person would say it: `\-\-role button \-\-name "Sign in"`
+.TP
+\fB\-\-name\fR \fI<TEXT>\fR
+
+.TP
 \fB\-\-json\fR
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .TP
-<\fIREFERENCE\fR>
-`e3` or `@e3`, from a `snapshot`
+[\fIREFERENCE\fR]
+`e3` or `@e3`, from a `snapshot`. Omit when using `\-\-selector` or `\-\-role`
 .SH "H5I BROWSER TYPE"
 Put text into a field, replacing what was there
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBtype\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIREFERENCE\fR> <\fITEXT\fR> 
+\fBtype\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREF|TEXT\fR] [\fITEXT\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1246,23 +1263,34 @@ Put text into a field, replacing what was there
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
 .TP
+\fB\-\-selector\fR \fI<CSS>\fR
+A CSS selector instead.
+
+No conflict with the positional, unlike `click`\*(Aqs: with a locator given, the one positional left is the *text*, and the engine shifts it (`two_positionals`). Declaring a conflict here made `type \-\-selector \*(Aq#password\*(Aq hunter2` a usage error, which is the obvious way to type it.
+.TP
+\fB\-\-role\fR \fI<ROLE>\fR
+Find the field by what it is called: `\-\-role textbox \-\-name Email`
+.TP
+\fB\-\-name\fR \fI<TEXT>\fR
+
+.TP
 \fB\-\-json\fR
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
-<\fIREFERENCE\fR>
-
+[\fIREF|TEXT\fR]
+`e3` or `@e3`, from a `snapshot`. Omit when using `\-\-selector` or `\-\-role`, and give the text alone
 .TP
-<\fITEXT\fR>
-
+[\fITEXT\fR]
+What to type
 .SH "H5I BROWSER SUBMIT"
 Submit the form containing a `@ref`
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBsubmit\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIREFERENCE\fR> 
+\fBsubmit\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREFERENCE\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1270,14 +1298,23 @@ Submit the form containing a `@ref`
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
 .TP
+\fB\-\-selector\fR \fI<CSS>\fR
+A CSS selector instead
+.TP
+\fB\-\-role\fR \fI<ROLE>\fR
+Find a control in the form by what it is called
+.TP
+\fB\-\-name\fR \fI<TEXT>\fR
+
+.TP
 \fB\-\-json\fR
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
-<\fIREFERENCE\fR>
-
+[\fIREFERENCE\fR]
+`e3` or `@e3`, from a `snapshot`. Omit when using `\-\-selector` or `\-\-role`
 .SH "H5I BROWSER SCROLL"
 Scroll the page. Negative scrolls up
 .ie \n(.g .ds Aq \(aq
@@ -1622,7 +1659,7 @@ The request log: what this session asked for, and what was refused
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBrequests\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-since\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBrequests\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-since\fR] [\fB\-\-method\fR] [\fB\-\-url\-contains\fR] [\fB\-\-status\fR] [\fB\-\-initiator\fR] [\fB\-\-denied\-only\fR] [\fB\-\-limit\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1633,11 +1670,263 @@ Which session, when more than one is open. A name from `\-\-session` at open tim
 \fB\-\-since\fR \fI<SEQ>\fR
 Only what happened after this sequence number
 .TP
+\fB\-\-method\fR \fI<METHOD>\fR
+Only this method
+.TP
+\fB\-\-url\-contains\fR \fI<TEXT>\fR
+Only rows whose URL contains this
+.TP
+\fB\-\-status\fR \fI<CODE>\fR
+Only responses with this status
+.TP
+\fB\-\-initiator\fR \fI<KIND>\fR
+Only `navigation`, `subresource`, `frame` or `redirect`
+.TP
+\fB\-\-denied\-only\fR
+Only what policy refused
+.TP
+\fB\-\-limit\fR \fI<N>\fR
+At most this many rows, newest last
+.TP
 \fB\-\-json\fR
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I BROWSER SEQUENCE"
+Run a multi-step flow: send, extract, send again with what was found
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsequence\fR [\fB\-\-var\fR] [\fB\-\-keep\-going\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIFILE\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-var\fR \fI<NAME=VALUE>\fR
+Bind a name before the first step, as `name=value`. Repeatable
+.TP
+\fB\-\-keep\-going\fR
+Run every step even after one fails, to read a whole file\*(Aqs failures at once
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIFILE\fR>
+The sequence file
+.SH "H5I BROWSER SITEMAP"
+What this session reached, as a tree of origins and endpoints
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsitemap\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I BROWSER MESSAGE"
+One stored message, as it went out or as it came back
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBmessage\fR [\fB\-\-part\fR] [\fB\-\-raw\fR] [\fB\-\-body\-to\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-part\fR \fI<HALF>\fR
+Which half. Both by default
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+request
+.IP \(bu 2
+response
+.IP \(bu 2
+both
+.RE
+.TP
+\fB\-\-raw\fR
+Print it as an HTTP message rather than a summary
+.TP
+\fB\-\-body\-to\fR \fI<PATH>\fR
+Write the body to this file, exactly as it came back.
+
+The store already holds the bytes; this is the way to get them out. A response is not always something to read \(em a database backup left in an open bucket, an image, an archive \(em and the next step is usually a tool that wants a file.
+
+With `\-\-part both`, the response body if there is one, otherwise the request\*(Aqs.
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fISEQ\fR>
+The sequence number, as `requests` lists them
+.SH "H5I BROWSER DIFF"
+How two of this session's responses differ
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBdiff\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> <\fISEQ\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fISEQ\fR>
+The response to compare from
+.TP
+<\fISEQ\fR>
+The response to compare to
+.SH "H5I BROWSER MATCH"
+Ask a stored response a question, for a script to branch on
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBmatch\fR [\fB\-\-regex\fR] [\fB\-\-contains\fR] [\fB\-\-json\-path\fR] [\fB\-\-header\fR] [\fB\-\-status\fR] [\fB\-\-longer\-than\fR] [\fB\-\-shorter\-than\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-regex\fR \fI<PATTERN>\fR
+A regular expression over the body. Capture groups come back
+.TP
+\fB\-\-contains\fR \fI<TEXT>\fR
+A literal substring of the body. Needs no escaping, which matters when the thing being looked for is a payload
+.TP
+\fB\-\-json\-path\fR \fI<PATH[=VALUE]>\fR
+A dotted path into a JSON body (`session.token`), or `path=value`
+.TP
+\fB\-\-header\fR \fI<NAME[=VALUE]>\fR
+A header by name, or `name=value`
+.TP
+\fB\-\-status\fR \fI<CODE>\fR
+The status code
+.TP
+\fB\-\-longer\-than\fR \fI<BYTES>\fR
+The body is longer than this many bytes
+.TP
+\fB\-\-shorter\-than\fR \fI<BYTES>\fR
+The body is shorter than this many bytes
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fISEQ\fR>
+The response to ask about
+.SH "H5I BROWSER RESEND"
+Send one of this session's own requests again, with changes
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBresend\fR [\fB\-\-set\fR] [\fB\-\-set\-file\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-\-repeat\fR] [\fB\-\-race\fR] [\fB\-\-no\-follow\fR] [\fB\-\-reset\-budget\fR] [\fB\-\-as\fR] [\fB\-\-keep\-credentials\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-set\fR \fI<TARGET=VALUE>\fR
+Change one part of it: `query.id=456`, `header.X\-Real\-IP=127.0.0.1`, `cookie.session=forged`, `json.role=admin`, `form.user=admin`, `path=/admin`, `method=POST`, `body.raw=<bytes>`. Repeatable, and applied in the order given.
+
+The value is everything after the first `=`, so a payload full of `=` needs no escaping.
+.TP
+\fB\-\-set\-file\fR \fI<TARGET=PATH>\fR
+Set one part of it from a file: `multipart.userfile=./payload.jpg`.
+
+The value is the file\*(Aqs bytes, unaltered. `\-\-set` cannot carry them: a command line is text and a JPEG begins `ff d8`, which is not text in any encoding. A magic\-number check is a filter worth testing, so there has to be a way to send a real one.
+
+Applied after every `\-\-set`, in the order given.
+.TP
+\fB\-\-unset\fR \fI<TARGET>\fR
+Remove one part of it, by the same names
+.TP
+\fB\-\-create\fR
+Add a target that is not there rather than refusing.
+
+Off by default: a parameter that does not exist is usually a typo, and a typo that silently succeeds costs a whole turn spent reading a response that was never going to differ.
+.TP
+\fB\-\-repeat\fR \fI<N>\fR [default: 1]
+Send it this many times and report the clock, for a timing test.
+
+Repeated inside the engine rather than by a shell loop: the thing being measured is milliseconds and starting a process costs tens of them, so a loop out here would measure the loop. The reply carries every sample plus a median and a median absolute deviation, which is the pair that survives one scheduling hiccup where a mean does not.
+.TP
+\fB\-\-race\fR
+Release the repeated sends together, for a race.
+
+The test for check\-then\-act: an application that reads a balance, decides, and writes it back has a window between the read and the write, and `\-\-repeat 20 \-\-race` is what finds out how wide it is.
+
+A burst, and named as one: the sends leave from twenty threads that meet at a barrier first. It is not a single\-packet attack, which needs each request split across two writes with the last byte held back. Ordinary check\-then\-act windows do not need that.
+
+Every send is a receipt and a stored message like any other, so a race that reproduces is a race somebody else can read afterwards.
+.TP
+\fB\-\-no\-follow\fR
+Stop at the first redirect and report it, rather than following it.
+
+A browser follows a `Location`; a test usually wants the 302 itself. It is where an authentication flow says who you are, where an open redirect proves it accepts anything, and where the `Set\-Cookie` that logs you in actually rides. The reply carries the status and the headers with nothing followed.
+.TP
+\fB\-\-reset\-budget\fR
+Start this page\*(Aqs network allowance again before sending.
+
+The budget exists to bound *page* code: a script in a loop is the untrusted thing it stops. A blind extraction is the opposite, an agent deliberately sending hundreds of requests it composed, and without this it stops partway through with "this page has spent its allowance" and every later answer reads as a negative result.
+
+Grants nothing new: navigating resets the same allowance, so this is the same act without throwing away the page.
+.TP
+\fB\-\-as\fR \fI<SESSION>\fR
+Send it from another session instead of this one.
+
+The authorization test, in one flag: take the request one logged\-in session made and send it from a different logged\-in session. The message comes from `\-\-session`; the cookies, identity, policy and receipts are the named session\*(Aqs.
+
+The source session\*(Aqs own credentials are dropped, because carrying them would send a request that is neither user\*(Aqs and whose answer means nothing. `\-\-keep\-credentials` sends them anyway, for the test where that is the question.
+.TP
+\fB\-\-keep\-credentials\fR
+Carry the source session\*(Aqs `Cookie` and `Authorization` headers into the other session. Only meaningful with `\-\-as`
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fISEQ\fR>
+The sequence number to send again, as `requests` lists them
 .SH "H5I BROWSER ENV"
 Which credentials this session can use, by name. Never their values
 .ie \n(.g .ds Aq \(aq
@@ -1927,6 +2216,69 @@ Forget a runner: its record, its key, and its pinned host key
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
+.SH "H5I PLUGIN"
+Install, list or remove a plugin
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBplugin\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I PLUGIN INSTALL"
+Install a plugin from a file
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBinstall\fR <\fB\-\-from\fR> [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-from\fR \fI<PATH>\fR
+The executable to install
+.TP
+\fB\-\-force\fR
+Replace one that is already installed
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+The plugin\*(Aqs name, as it will be typed: `websec` for `h5i websec`
+.SH "H5I PLUGIN LIST"
+What is installed, and what could be
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PLUGIN REMOVE"
+Remove an installed plugin
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBremove\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
 .TP
 <\fINAME\fR>
 

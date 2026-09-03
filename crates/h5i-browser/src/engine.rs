@@ -2112,6 +2112,70 @@ impl Page {
     }
 
     /// Walk up for a `<form>`, for controls Blitz's owner map does not cover.
+    /// Activate a control the way a browser does, and say what is left to do.
+    ///
+    /// A click on a submit button is three steps, not one: fire `click`, and if
+    /// nothing prevented it fire `submit` at the form, and if nothing prevented
+    /// *that* send the request. Pages rely on every join in that chain. This one
+    /// listens for `submit` on the form and calls `preventDefault` so it can
+    /// `fetch` instead, which is the commonest shape a modern form has; firing
+    /// only `click` left its handler unreached and the page did nothing at all.
+    ///
+    /// Returns the requests the handlers caused, and whether the form should
+    /// still be submitted the ordinary way.
+    pub fn activate(&mut self, node_id: usize) -> Option<(Vec<crate::script::host::RequestLink>, bool)> {
+        let script = self.script.as_mut()?;
+        let mut proceed = script.dispatch_reporting(node_id, "click").unwrap_or(true);
+        if proceed
+            && self.is_submit_control(node_id)
+            && let Some(form) = self.enclosing_form(node_id)
+            && let Some(script) = self.script.as_mut()
+        {
+            proceed = script.dispatch_reporting(form, "submit").unwrap_or(true);
+        }
+        let script = self.script.as_mut()?;
+        let settled = script.settle();
+        let dirty = script.take_dirty();
+        let requests = script.take_requests();
+        self.settled = Some(settled);
+        let painted = self.composite_canvases();
+        if dirty || painted {
+            self.note_layout_failure(lay_out(&self.doc));
+        }
+        Some((requests, proceed))
+    }
+
+    /// Is this control one that submits the form it sits in?
+    ///
+    /// `<button>` with no type, `<button type=submit>`, `<input type=submit>`
+    /// and `<input type=image>`. Not `type=button` and not `type=reset`, which
+    /// are exactly the two that do nothing without script.
+    ///
+    /// This is what a browser does with a click on such a control whether or not
+    /// script is running, and it is why a form works with JavaScript switched
+    /// off. An engine that refused it would be refusing the ordinary way to log
+    /// in to an ordinary application.
+    pub fn is_submit_control(&self, node_id: usize) -> bool {
+        let doc = self.doc.borrow();
+        let Some(node) = doc.get_node(node_id) else {
+            return false;
+        };
+        let Some(element) = node.element_data() else {
+            return false;
+        };
+        let kind = element.attr(local_name!("type")).map(str::to_ascii_lowercase);
+        match element.name.local.as_ref() {
+            "button" => matches!(kind.as_deref(), None | Some("submit")),
+            "input" => matches!(kind.as_deref(), Some("submit") | Some("image")),
+            _ => false,
+        }
+    }
+
+    /// The form this control belongs to, when it belongs to one.
+    pub fn form_of(&self, node_id: usize) -> Option<usize> {
+        self.enclosing_form(node_id)
+    }
+
     fn enclosing_form(&self, node_id: usize) -> Option<usize> {
         let doc = self.doc.borrow();
         let mut current = doc.get_node(node_id)?;

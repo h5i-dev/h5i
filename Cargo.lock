@@ -1926,6 +1926,7 @@ name = "h5i"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "base64",
  "chrono",
  "clap",
  "clap_complete",
@@ -1937,6 +1938,7 @@ dependencies = [
  "h5i-runner",
  "h5i-share",
  "libc",
+ "regex",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2103,6 +2105,15 @@ dependencies = [
 [[package]]
 name = "h5i-wasm-harness"
 version = "0.1.0"
+
+[[package]]
+name = "h5i-websec"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde_json",
+]
 
 [[package]]
 name = "harfrust"

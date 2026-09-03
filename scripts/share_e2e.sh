@@ -3,7 +3,7 @@
 
 set -uo pipefail
 
-H5I="${H5I:-./target/debug/h5i}"
+H5I="${H5I:-./target/release/h5i}"
 # Unique per run, box and ports alike. Fixed names collided with anything else
 # on the machine doing the same thing — another session running this script, or
 # a review agent that happened to pick the same box name — and the collision
@@ -40,7 +40,7 @@ trap cleanup EXIT
 # ── a box with a dev server in it ───────────────────────────────────────────
 
 say "setting up"
-[ -x "$H5I" ] || { echo "no h5i binary at $H5I — cargo build first"; exit 2; }
+[ -x "$H5I" ] || { echo "no h5i binary at $H5I — cargo build --release first"; exit 2; }
 
 # A previous failed run leaves the box behind on purpose, and its dev server
 # with it — which holds the box busy, so `rm` refuses until that is gone.

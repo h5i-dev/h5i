@@ -426,7 +426,7 @@ next verb quietly landing somewhere it never asked for.</p>
 <p>Opening a URL in a browser that is already up means <em>go there</em>. So <code>open</code>
 navigates the session it finds, and <code>--new</code> is how you say you meant a second
 one. The flags that only make sense at creation (<code>--allow</code>, <code>--in</code>, <code>--script</code>,
-<code>--no-loopback</code>, <code>--expires-in</code>, <code>--restore</code>) are <em>refused</em> rather than ignored
+<code>--no-loopback</code>, <code>--expires-in</code>, <code>--restore</code>, <code>--capture</code>) are <em>refused</em> rather than ignored
 when a session is reused: a session's policy is fixed when its engine starts, so
 accepting a grant and doing nothing with it would be a grant the caller believes
 it made.</p>

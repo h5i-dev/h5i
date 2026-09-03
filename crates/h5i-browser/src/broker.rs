@@ -26,12 +26,38 @@ pub struct Fetch {
     #[serde(skip)]
     pub body: Vec<u8>,
     pub content_type: Option<String>,
+    /// Headers the *caller* is setting, beyond the ones the engine adds.
+    ///
+    /// Empty for every fetch a page makes: a page's headers arrive in
+    /// [`CorsAsk`] and are subject to the same-origin rules, which is a
+    /// different question from an agent naming a header on a request of its
+    /// own. This is the agent's, and the agent is the principal.
+    ///
+    /// Not a free hand. Three are the client's to compute and are refused here
+    /// however they are spelled (`content-length`, `transfer-encoding`,
+    /// `connection`), because a message whose framing disagrees with its body is
+    /// not a request this engine can honestly claim to have sent. The refusal is
+    /// named in the receipt rather than performed silently. Everything else,
+    /// `host` and `authorization` and `cookie` included, is carried: overriding
+    /// those is the test, not an accident.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<(String, String)>,
     /// The document that asked, when a document did.
     ///
     /// Load-bearing rather than bookkeeping: without it the policy reads every
     /// subresource as the agent naming a URL, and a page from the open web
     /// reaches the box's dev server. See [`crate::policy::Policy::check_from`].
     pub document: Option<Url>,
+    /// How many redirect hops this request may follow, when the caller wants a
+    /// different answer from the session's.
+    ///
+    /// `None` is the policy's limit, which is what every page load uses. `Some(0)`
+    /// stops at the first `Location` and hands it back unfollowed, which is the
+    /// only way to see a redirect *as a message*: where an authentication flow
+    /// sends you, what an open redirect accepts, which `Set-Cookie` rides on the
+    /// 302. Following it silently is right for a browser and wrong for a test.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_redirects: Option<usize>,
     /// Set when a *page* asked, which is what subjects the answer to the
     /// same-origin policy. `None` is the agent exercising its own authority
     /// over a URL it named, which is a different question. See [`crate::cors`].
@@ -48,9 +74,22 @@ impl Fetch {
             method: "GET".to_string(),
             body: Vec::new(),
             content_type: None,
+            headers: Vec::new(),
+            max_redirects: None,
             document: None,
             cors: None,
         }
+    }
+
+    /// The headers the caller is setting.
+    ///
+    /// Order is kept, because a server that treats two headers of one name as a
+    /// list is a server whose answer depends on which came first, and a
+    /// workbench that reordered them would be reproducing something other than
+    /// what it was told to send.
+    pub fn with_headers(mut self, headers: Vec<(String, String)>) -> Self {
+        self.headers = headers;
+        self
     }
 
     /// The document that asked for this, for the origin the policy reasons
@@ -90,6 +129,141 @@ pub struct LogSummary {
     pub highest: Option<u64>,
 }
 
+/// A stored request, sent again with changes.
+///
+/// The whole operation is one call, and that is the design rather than an
+/// accident of convenience. The stored request holds the credential it was sent
+/// with, so reading it, editing it and sending it all happen in the broker, and
+/// the renderer never holds an `Authorization` header it could not otherwise
+/// read. Splitting this into "fetch the stored request" and "send this request"
+/// would hand the untrusted half exactly what the jar is kept from it to protect.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Edited {
+    /// The receipt sequence the replay was recorded under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+    /// Each edit, as it was applied.
+    pub applied: Vec<crate::edits::Applied>,
+    /// One entry per send. A single replay has one; `--repeat` has that many,
+    /// oldest first, and the caller reads a median off them.
+    ///
+    /// Repetition belongs here rather than in a shell loop because the thing
+    /// being measured is milliseconds and starting a process costs tens of
+    /// them: a loop outside the engine measures the loop.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub samples: Vec<Timing>,
+    /// The request as sent, for the record. Header *names* only: the values are
+    /// in the store, which is the artifact that is allowed to hold them.
+    pub sent: Sent,
+    pub outcome: FetchOutcome,
+}
+
+/// A request handed to a session that never made it.
+///
+/// The shape cross-session replay needs: the message another session recorded,
+/// carried here to be sent under *this* session's identity. The body travels
+/// base64 in the JSON rather than beside it, because this one crosses a control
+/// channel rather than the broker's own socket; a request body large enough for
+/// that to matter is one the caller should be sending with `body.raw` from a
+/// file anyway.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Given {
+    pub method: String,
+    pub url: Url,
+    /// Headers to carry. What a caller composes, and never a credential unless
+    /// the caller put one here on purpose: see `h5i browser resend --as`.
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    #[serde(default)]
+    pub body: Vec<u8>,
+}
+
+/// Why a replay did not happen, in a form a script can branch on.
+///
+/// A code as well as a sentence, because these are four different situations
+/// with four different fixes and a caller that can only match on prose will
+/// eventually match on the wrong thing. The sentence is for a person; the code
+/// is the contract.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SendError {
+    /// `no-capture`, `no-such-request`, `unreplayable-body` or `bad-edit`.
+    pub code: String,
+    pub message: String,
+}
+
+impl SendError {
+    pub fn new(code: &str, message: impl Into<String>) -> Self {
+        Self {
+            code: code.to_string(),
+            message: message.into(),
+        }
+    }
+}
+
+/// How many times to send it, and whether at once.
+///
+/// Two different questions wearing one shape. `count` sends in a row answers
+/// "is this reliably slower", which is a timing test. `count` sends at the same
+/// instant answers "does this application check and then act", which is a race.
+/// The same request, the same receipts, and nothing else in common.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct Sends {
+    /// How many. Always at least one.
+    pub count: u32,
+    /// Stop at the first redirect instead of following it.
+    ///
+    /// A browser follows; a test often wants the 302 itself. See
+    /// [`Fetch::max_redirects`].
+    #[serde(default)]
+    pub no_follow: bool,
+    /// Released together rather than one after another.
+    ///
+    /// A burst, and named as one. Every request is written and flushed at
+    /// roughly the same moment from `count` threads that meet at a barrier
+    /// first; it is not a single-packet attack, which needs the request split
+    /// across two writes and the last byte of each held back. What it does
+    /// reach is the ordinary check-then-act window, which is where nearly every
+    /// real one lives.
+    pub together: bool,
+}
+
+impl Default for Sends {
+    fn default() -> Self {
+        Self {
+            count: 1,
+            together: false,
+            no_follow: false,
+        }
+    }
+}
+
+impl Sends {
+    pub fn once() -> Self {
+        Self::default()
+    }
+}
+
+/// One send's clock, in the two numbers that mean different things.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct Timing {
+    pub seq: Option<u64>,
+    pub status: Option<u16>,
+    /// To the response's headers: the server's decision.
+    pub ttfb_ms: u64,
+    /// To the body in hand: the decision plus the transfer.
+    pub total_ms: u64,
+    pub bytes: u64,
+}
+
+/// What went out, in the parts that are safe to hand back.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Sent {
+    pub method: String,
+    pub url: String,
+    pub header_names: Vec<String>,
+    pub body_bytes: u64,
+}
+
 /// What a page has spent, and what it was allowed.
 ///
 /// A reading rather than a live handle. `budget()` used to hand back a
@@ -124,6 +298,54 @@ pub trait Broker: Send + Sync {
     fn send_while(&self, fetch: &Fetch, while_waiting: &mut dyn FnMut()) -> FetchOutcome {
         let _ = while_waiting;
         self.send(fetch)
+    }
+
+    /// Send a stored request again, with the caller's changes.
+    ///
+    /// `Err` for a request that is not in the store, or an edit that cannot
+    /// apply. A refusal by policy is not an error here: it is an outcome, with
+    /// a receipt, like every other refused fetch.
+    fn send_edited(
+        &self,
+        _from: u64,
+        _edits: &[crate::edits::Edit],
+        _create: bool,
+        _plan: Sends,
+    ) -> Result<Edited, SendError> {
+        Err(SendError::new(
+            "no-capture",
+            "this session was not opened with `--capture`, so it has no stored request to \
+             send again. Open it with `--capture` and the messages it makes will be replayable",
+        ))
+    }
+
+    /// Send a request this session did not make.
+    ///
+    /// The cross-session half of replay: one session's stored request, sent
+    /// under another's cookies, identity and policy. Everything that makes a
+    /// request *this session's* comes from here rather than from the message,
+    /// which is the whole point of the verb.
+    fn send_given(
+        &self,
+        _request: Given,
+        _edits: &[crate::edits::Edit],
+        _create: bool,
+        _plan: Sends,
+    ) -> Result<Edited, SendError> {
+        Err(SendError::new(
+            "not-supported",
+            "this broker cannot send a composed request",
+        ))
+    }
+
+    /// What this session's message store has done, when it has one.
+    ///
+    /// `None` for the ordinary session, which stores no message and so has no
+    /// health to report. A store that exists always answers, including when
+    /// what it has to say is that it dropped something: an evidence gap nobody
+    /// surfaces is an evidence gap nobody knows to distrust.
+    fn capture(&self) -> Option<crate::capture::Health> {
+        None
     }
 
     /// The requests this broker has decided about, in the order it recorded

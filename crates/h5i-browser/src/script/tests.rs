@@ -32,6 +32,7 @@ fn page_and_script_as(
         None,
         crate::budget::Limits::default(),
         Arc::new(identity),
+        None,
     )
     .expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));

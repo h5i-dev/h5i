@@ -194,6 +194,35 @@ fn header_is_the_engines(name: &str) -> bool {
         || n.starts_with("sec-")
 }
 
+/// The three headers a client must compute for itself.
+///
+/// They frame the message: a `Content-Length` that disagrees with the body, or a
+/// `Transfer-Encoding` this client is not using, describes a request other than
+/// the one that goes out. A caller setting one is refused and told, which is a
+/// different answer from being quietly obeyed by a client that then computes the
+/// real value anyway. Request smuggling is a real thing to test for, and an
+/// engine that pretended to support it here would be lying about what it sent.
+pub fn header_is_the_clients(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "content-length" | "transfer-encoding" | "connection"
+    )
+}
+
+/// Headers that carry a credential, and so do not cross an origin boundary.
+///
+/// A caller's headers ride along a redirect chain, because a chain is one
+/// request as far as the caller is concerned. These stop at the first hop that
+/// changes origin, which is the rule browsers apply to `Authorization` and the
+/// reason they apply it: otherwise any server in a chain can harvest the
+/// credential by bouncing the request to itself.
+fn header_is_a_credential(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "authorization" | "cookie" | "proxy-authorization"
+    )
+}
+
 /// What a script request needs the broker to know about its origin.
 ///
 /// Only script requests carry one. A navigation has no document behind it, and
@@ -334,6 +363,15 @@ pub struct LocalBroker {
     /// object the renderer's script realm answers `navigator` from. One
     /// identity, two layers, no second copy to drift: see [`Presented`].
     presented: Presented,
+    /// Where the messages themselves are kept, when a session was opened with
+    /// somewhere to keep them.
+    ///
+    /// `None` is the ordinary session and the default: the receipt still
+    /// records every decision, and no header or body is written anywhere. The
+    /// store lives here rather than in the renderer because this is the half
+    /// that holds the request as built and the response as received, and
+    /// because the renderer is the untrusted parser. See [`crate::capture`].
+    capture: Option<Arc<crate::capture::Capture>>,
 }
 
 impl LocalBroker {
@@ -355,6 +393,7 @@ impl LocalBroker {
             crate::budget::Limits::default(),
             crate::secrets::Secrets::from_env(),
             Presented::native()?,
+            None,
         )
     }
 
@@ -374,10 +413,12 @@ impl LocalBroker {
             crate::budget::Limits::default(),
             secrets,
             Presented::native()?,
+            None,
         )
     }
 
-    /// The same, with the page ceiling the caller wants.
+    /// The same, with the page ceiling the caller wants, and with the message
+    /// store the session was opened with, if it was opened with one.
     ///
     /// Separate from [`Self::new`] because the limits have to be in place
     /// before the broker is shared: it is handed out as an `Arc`, a socket's
@@ -388,6 +429,7 @@ impl LocalBroker {
         sink: Arc<dyn Sink>,
         proxy: Option<&str>,
         limits: crate::budget::Limits,
+        capture: Option<Arc<crate::capture::Capture>>,
     ) -> Result<Arc<Self>, H5iError> {
         Self::build(
             policy,
@@ -396,6 +438,7 @@ impl LocalBroker {
             limits,
             crate::secrets::Secrets::from_env(),
             Presented::native()?,
+            capture,
         )
     }
 
@@ -413,6 +456,7 @@ impl LocalBroker {
         proxy: Option<&str>,
         limits: crate::budget::Limits,
         identity: Arc<crate::identity::Identity>,
+        capture: Option<Arc<crate::capture::Capture>>,
     ) -> Result<Arc<Self>, H5iError> {
         Self::build(
             policy,
@@ -421,6 +465,7 @@ impl LocalBroker {
             limits,
             crate::secrets::Secrets::from_env(),
             Presented::declared(identity)?,
+            capture,
         )
     }
 
@@ -441,6 +486,7 @@ impl LocalBroker {
         limits: crate::budget::Limits,
         secrets: crate::secrets::Secrets,
         presented: Presented,
+        capture: Option<Arc<crate::capture::Capture>>,
     ) -> Result<Arc<Self>, H5iError> {
         let mut builder = reqwest::blocking::Client::builder()
             // Redirects are followed by hand so each hop is a policy decision
@@ -491,6 +537,7 @@ impl LocalBroker {
             seq: AtomicU64::new(0),
             jar: crate::cookies::Jar::new(),
             proxied,
+            capture,
         }))
     }
 
@@ -718,10 +765,35 @@ impl LocalBroker {
         method: &str,
         body: &[u8],
         content_type: Option<&str>,
+        caller_headers: &[(String, String)],
+        max_redirects: Option<usize>,
         document: Option<&Url>,
         cors: Option<&CorsContext>,
     ) -> FetchOutcome {
         let mut current = url.clone();
+        // Split once rather than per hop: what the client owns does not depend
+        // on where a redirect went.
+        let mut overridden: Vec<String> = Vec::new();
+        let caller_headers: Vec<(String, String)> = caller_headers
+            .iter()
+            .filter(|(name, _)| {
+                if header_is_the_clients(name) {
+                    overridden.push(name.trim().to_ascii_lowercase());
+                    return false;
+                }
+                true
+            })
+            .cloned()
+            .collect();
+        // Where the chain began, for the credential rule below.
+        let started_at = crate::cors::Origin::of(url);
+        // The caller may ask for fewer hops than the policy allows, never more:
+        // the policy's number is a ceiling on what this session may do, and a
+        // request that could raise it would be a request that sets its own
+        // limits.
+        let hop_limit = max_redirects
+            .unwrap_or_else(|| self.policy.max_redirects())
+            .min(self.policy.max_redirects());
         // What a caller may see of the answer. Recomputed per hop, because a
         // redirect can change the origin the answer comes from.
         let mut cors_exposure = crate::cors::Exposure::Full;
@@ -737,7 +809,7 @@ impl LocalBroker {
         let mut method = method.to_ascii_uppercase();
         let mut body = body.to_vec();
 
-        for hop in 0..=self.policy.max_redirects() {
+        for hop in 0..=hop_limit {
             let seq = self.seq.fetch_add(1, Ordering::Relaxed);
 
             // 1. Policy. A denial is recorded as a pair like any other request,
@@ -879,7 +951,8 @@ impl LocalBroker {
             // 2. The decision record, before any bytes move. If this cannot be
             //    written, the fetch does not happen. This is the fail-closed
             //    guarantee, and it is why `Sink::append` returns a Result.
-            let record = RequestRecord::request(seq, initiator, &method, current.as_str());
+            let mut record = RequestRecord::request(seq, initiator, &method, current.as_str());
+            record.headers_overridden = overridden.clone();
             if let Err(e) = self.append(&record) {
                 return FetchOutcome::failed(
                     current,
@@ -912,16 +985,36 @@ impl LocalBroker {
                 .collect();
             let page_sets = |n: &str| page_headers.iter().any(|(k, _)| k.eq_ignore_ascii_case(n));
 
-            let mut request = self
-                .client
-                .request(verb, current.clone())
-                .header(reqwest::header::ACCEPT_ENCODING, ACCEPT_ENCODING);
-            // Ours only where the page did not say: `reqwest::header` appends
-            // rather than replaces, so setting both would send both.
-            if !page_sets("accept") {
+            // The caller's own headers, for this hop. A chain that has changed
+            // origin no longer carries the credential the caller set for the
+            // origin it named: see `header_is_a_credential`.
+            let crossed = crate::cors::Origin::of(&current) != started_at;
+            let caller_now: Vec<&(String, String)> = caller_headers
+                .iter()
+                .filter(|(name, _)| !(crossed && header_is_a_credential(name)))
+                .collect();
+            let caller_sets =
+                |n: &str| caller_now.iter().any(|(k, _)| k.eq_ignore_ascii_case(n));
+
+            let mut request = self.client.request(verb, current.clone());
+            // Every header the engine sets by default has to stand aside for a
+            // caller that set it, and this one is the reason the rule is
+            // written as a loop rather than as three ifs: a replay hands back
+            // the *stored* header set, which already contains the engine's own
+            // defaults, so any default added unconditionally arrives twice. It
+            // did, and `message --raw` showed two `accept-encoding` lines on
+            // every replayed request.
+            if !caller_sets("accept-encoding") {
+                request = request.header(reqwest::header::ACCEPT_ENCODING, ACCEPT_ENCODING);
+            }
+            // Ours only where neither the page nor the caller said: `reqwest`'s
+            // builder appends rather than replaces, so setting both would send
+            // both, and a request carrying two `Accept` headers is not the
+            // request either of them asked for.
+            if !page_sets("accept") && !caller_sets("accept") {
                 request = request.header(reqwest::header::ACCEPT, accept_for(asked_as));
             }
-            if !page_sets("accept-language") {
+            if !page_sets("accept-language") && !caller_sets("accept-language") {
                 request = request.header(
                     reqwest::header::ACCEPT_LANGUAGE,
                     self.presented.accept_language.as_str(),
@@ -930,9 +1023,18 @@ impl LocalBroker {
             for (name, value) in &page_headers {
                 request = request.header(*name, *value);
             }
+            for (name, value) in &caller_now {
+                request = request.header(name.as_str(), value.as_str());
+            }
             if !body.is_empty() {
+                // The caller's own `Content-Type` wins, and the engine's is not
+                // sent beside it. A replayed request carries the stored header
+                // set *and* names its content type, so without this check the
+                // message went out with the header twice and servers answered
+                // 400 to a request that looked perfectly good in the log.
                 if let Some(kind) = content_type
                     && !page_sets("content-type")
+                    && !caller_sets("content-type")
                 {
                     request = request.header(reqwest::header::CONTENT_TYPE, kind);
                 }
@@ -954,6 +1056,12 @@ impl LocalBroker {
             };
             let mut cookies_sent = 0;
             if may_use_cookies
+                // A caller that named `Cookie` itself is testing what that
+                // exact value does, and the jar's copy beside it would make the
+                // request neither what was asked for nor what the session
+                // holds. The receipt's count then honestly reads zero: the jar
+                // sent nothing.
+                && !caller_sets("cookie")
                 && let Some((header, count)) = self.jar.header_for(&current)
             {
                 request = request.header(reqwest::header::COOKIE, header);
@@ -968,14 +1076,44 @@ impl LocalBroker {
             {
                 request = request.header("origin", origin.clone());
             }
-            let response = request.send();
-            let elapsed = started.elapsed().as_millis() as u64;
+            // Built rather than sent, which is the same two steps `send`
+            // takes. The difference is that the finished request can be read:
+            // the header set here is the one that went, engine defaults, jar
+            // cookie, identity and all, and a store that recorded what the
+            // caller asked for instead would be recording an intention.
+            let response = request.build().and_then(|built| {
+                if let Some(capture) = &self.capture {
+                    capture.request(
+                        seq,
+                        built.method().as_str(),
+                        built.url().as_str(),
+                        built
+                            .headers()
+                            .iter()
+                            .filter_map(|(name, value)| {
+                                value
+                                    .to_str()
+                                    .ok()
+                                    .map(|v| (name.as_str().to_string(), v.to_string()))
+                            })
+                            .collect(),
+                        &body,
+                        content_type,
+                    );
+                }
+                self.client.execute(built)
+            });
+            // The headers, not the body: `reqwest` returns as soon as the
+            // status line and headers have arrived. That is time to first byte,
+            // and it is the number a timing test wants.
+            let ttfb = started.elapsed().as_millis() as u64;
 
             let response = match response {
                 Ok(response) => response,
                 Err(e) => {
                     let mut outcome_record = record.response();
-                    outcome_record.duration_ms = Some(elapsed);
+                    outcome_record.duration_ms = Some(ttfb);
+                    outcome_record.ttfb_ms = Some(ttfb);
                     outcome_record.cookies_sent = Some(cookies_sent);
                     outcome_record.error = Some(e.to_string());
                     let _ = self.append(&outcome_record);
@@ -1024,16 +1162,31 @@ impl LocalBroker {
 
                 let mut outcome_record = record.response();
                 outcome_record.status = Some(status.as_u16());
-                outcome_record.duration_ms = Some(elapsed);
+                outcome_record.duration_ms = Some(started.elapsed().as_millis() as u64);
+                outcome_record.ttfb_ms = Some(ttfb);
                 outcome_record.cookies_sent = Some(cookies_sent);
                 outcome_record.cookies_stored = Some(cookies_stored);
                 if location.is_none() {
                     outcome_record.error = Some("redirect without a usable Location".to_string());
                 }
                 let _ = self.append(&outcome_record);
+                // A hop is a message like any other, and the one whose headers
+                // matter most: `Location` is the whole content of a redirect
+                // and `Set-Cookie` on a 302 is how a login lands.
+                if let Some(capture) = &self.capture {
+                    capture.response(crate::capture::Response {
+                        seq,
+                        url: current.as_str(),
+                        status: Some(status.as_u16()),
+                        headers: headers.clone(),
+                        content_encoding: None,
+                        wire_bytes: None,
+                        body: crate::capture::Received::NotRead,
+                    });
+                }
 
                 match location {
-                    Some(next) if hop < self.policy.max_redirects() => {
+                    Some(next) if hop < hop_limit => {
                         // A redirect that crosses an origin makes the request's
                         // own origin opaque from here on, so a server cannot
                         // launder a cross-origin read by bouncing it somewhere
@@ -1056,10 +1209,27 @@ impl LocalBroker {
                         }
                         continue;
                     }
-                    Some(_) => {
+                    Some(next) => {
+                        // Out of hops. With a limit of zero that is not a
+                        // failure, it is the answer: the caller asked to see the
+                        // redirect rather than follow it, and the outcome
+                        // carries the status, the headers and the `Location`.
+                        if hop_limit == 0 {
+                            let exposure = cors_exposure.clone();
+                            return FetchOutcome {
+                                seq: Some(seq),
+                                headers: crate::cors::filter_headers(&headers, &exposure),
+                                final_url: current,
+                                body: Vec::new(),
+                                status: Some(status.as_u16()),
+                                error: None,
+                                opaque: false,
+                            };
+                        }
+                        let _ = next;
                         return FetchOutcome::failed(
                             current,
-                            format!("too many redirects (limit {})", self.policy.max_redirects()),
+                            format!("too many redirects (limit {hop_limit})"),
                         );
                     }
                     None => {
@@ -1102,11 +1272,23 @@ impl LocalBroker {
                 ) {
                     let mut refused = record.response();
                     refused.status = Some(status.as_u16());
-                    refused.duration_ms = Some(elapsed);
+                    refused.duration_ms = Some(started.elapsed().as_millis() as u64);
+                    refused.ttfb_ms = Some(ttfb);
                     refused.cookies_sent = Some(cookies_sent);
                     refused.cookies_stored = Some(cookies_stored);
                     refused.error = Some(format!("blocked by the same-origin policy: {why}"));
                     let _ = self.append(&refused);
+                    if let Some(capture) = &self.capture {
+                        capture.response(crate::capture::Response {
+                            seq,
+                            url: current.as_str(),
+                            status: Some(status.as_u16()),
+                            headers: headers.clone(),
+                            content_encoding: None,
+                            wire_bytes: None,
+                            body: crate::capture::Received::NotRead,
+                        });
+                    }
                     return FetchOutcome::failed_at(
                         current,
                         format!("blocked by the same-origin policy: {why}"),
@@ -1159,7 +1341,10 @@ impl LocalBroker {
 
             let mut outcome_record = record.response();
             outcome_record.status = Some(status.as_u16());
-            outcome_record.duration_ms = Some(elapsed);
+            // Now that the body is in hand: the whole fetch, where `ttfb` was
+            // the decision.
+            outcome_record.duration_ms = Some(started.elapsed().as_millis() as u64);
+            outcome_record.ttfb_ms = Some(ttfb);
             outcome_record.cookies_sent = Some(cookies_sent);
             outcome_record.cookies_stored = Some(cookies_stored);
             let body = match body {
@@ -1174,14 +1359,21 @@ impl LocalBroker {
                     self.budget.record(
                         wire,
                         decoded.len() as u64,
-                        std::time::Duration::from_millis(elapsed),
+                        std::time::Duration::from_millis(
+                            outcome_record.duration_ms.unwrap_or(ttfb),
+                        ),
                     );
                     Ok(decoded)
                 }
                 Err(e) => {
                     // A failed read still cost the time it took.
-                    self.budget
-                        .record(0, 0, std::time::Duration::from_millis(elapsed));
+                    self.budget.record(
+                        0,
+                        0,
+                        std::time::Duration::from_millis(
+                            outcome_record.duration_ms.unwrap_or(ttfb),
+                        ),
+                    );
                     Err(e)
                 }
             };
@@ -1190,6 +1382,23 @@ impl LocalBroker {
                 Ok(body) => {
                     outcome_record.bytes = Some(body.len() as u64);
                     let _ = self.append(&outcome_record);
+                    // Stored as received, before the CORS filter below. The
+                    // filter answers what a *page's script* may read, and the
+                    // reader of this store is the agent, which could have asked
+                    // for this URL itself under the same policy. Storing the
+                    // filtered view would mean an agent's own evidence was
+                    // narrowed by a rule written about somebody else.
+                    if let Some(capture) = &self.capture {
+                        capture.response(crate::capture::Response {
+                            seq,
+                            url: current.as_str(),
+                            status: Some(status.as_u16()),
+                            headers: headers.clone(),
+                            content_encoding: outcome_record.content_encoding.clone(),
+                            wire_bytes: outcome_record.wire_bytes,
+                            body: crate::capture::Received::Bytes(&body),
+                        });
+                    }
                     // What the caller may see of this. Same-origin sees
                     // everything; a cross-origin CORS response is filtered to
                     // the safelist plus whatever the server exposed; a no-cors
@@ -1210,6 +1419,20 @@ impl LocalBroker {
                 Err(e) => {
                     outcome_record.error = Some(e.to_string());
                     let _ = self.append(&outcome_record);
+                    // The response arrived and the body did not survive being
+                    // read: too large for the cap, or a decoder that refused it.
+                    // The headers are still evidence, and often the answer.
+                    if let Some(capture) = &self.capture {
+                        capture.response(crate::capture::Response {
+                            seq,
+                            url: current.as_str(),
+                            status: Some(status.as_u16()),
+                            headers: headers.clone(),
+                            content_encoding: outcome_record.content_encoding.clone(),
+                            wire_bytes: outcome_record.wire_bytes,
+                            body: crate::capture::Received::NotRead,
+                        });
+                    }
                     FetchOutcome::failed_at(current, e.to_string(), Some(seq))
                 }
             };
@@ -1632,10 +1855,116 @@ impl crate::broker::Broker for LocalBroker {
             &fetch.method,
             &fetch.body,
             fetch.content_type.as_deref(),
+            &fetch.headers,
+            fetch.max_redirects,
             fetch.document.as_ref(),
             context.as_ref(),
         )
     }
+
+    fn capture(&self) -> Option<crate::capture::Health> {
+        self.capture.as_ref().map(|capture| capture.health())
+    }
+
+    fn send_edited(
+        &self,
+        from: u64,
+        edits: &[crate::edits::Edit],
+        create: bool,
+        plan: crate::broker::Sends,
+    ) -> Result<crate::broker::Edited, crate::broker::SendError> {
+        use crate::broker::SendError;
+        let Some(store) = &self.capture else {
+            return Err(SendError::new(
+                "no-capture",
+                "this session was not opened with `--capture`, so it kept no request to send \
+                 again",
+            ));
+        };
+        let stored = store.read_request(from).map_err(|_| {
+            SendError::new(
+                "no-such-request",
+                format!(
+                    "there is no stored request {from} in this session. \
+                     `requests` lists the sequence numbers this session has"
+                ),
+            )
+        })?;
+        let url = Url::parse(&stored.url).map_err(|e| {
+            SendError::new(
+                "no-such-request",
+                format!("stored request {from} has an unusable URL: {e}"),
+            )
+        })?;
+        // The body as it was sent, out of the store rather than out of the
+        // record: a truncated or skipped body cannot be replayed faithfully, and
+        // saying so is better than sending a request that is quietly not the one
+        // being replayed.
+        let body = match &stored.body {
+            crate::capture::Body::Empty => Vec::new(),
+            crate::capture::Body::Stored {
+                sha256, truncated, ..
+            } => {
+                if *truncated {
+                    return Err(SendError::new(
+                        "unreplayable-body",
+                        format!(
+                            "stored request {from} was too large to keep whole, so replaying \
+                             it would send a request that is not the one recorded"
+                        ),
+                    ));
+                }
+                store.read_body(sha256).map_err(|e| {
+                    SendError::new(
+                        "unreplayable-body",
+                        format!("stored request {from}'s body is not readable: {e}"),
+                    )
+                })?
+            }
+            crate::capture::Body::Skipped { reason, .. } => {
+                return Err(SendError::new(
+                    "unreplayable-body",
+                    format!(
+                        "stored request {from}'s body was not kept ({reason:?}), so there is \
+                         nothing to replay"
+                    ),
+                ));
+            }
+        };
+
+        self.edit_then_send(
+            crate::edits::Editable {
+                method: stored.method.clone(),
+                url,
+                headers: stored.headers.clone(),
+                body,
+            },
+            edits,
+            create,
+            plan,
+        )
+    }
+
+    fn send_given(
+        &self,
+        request: crate::broker::Given,
+        edits: &[crate::edits::Edit],
+        create: bool,
+        plan: crate::broker::Sends,
+    ) -> Result<crate::broker::Edited, crate::broker::SendError> {
+        self.edit_then_send(
+            crate::edits::Editable {
+                method: request.method,
+                url: request.url,
+                headers: request.headers,
+                body: request.body,
+            },
+            edits,
+            create,
+            plan,
+        )
+    }
+
 
     fn records(&self) -> Vec<RequestRecord> {
         self.log.records()
@@ -1704,6 +2033,161 @@ impl crate::broker::Broker for LocalBroker {
 
     fn has_redactions(&self) -> bool {
         self.secrets.has_redactable()
+    }
+}
+
+
+impl LocalBroker {
+    /// One send, and what it cost.
+    fn send_once(
+        &self,
+        fetch: &crate::broker::Fetch,
+    ) -> (crate::broker::Timing, FetchOutcome) {
+        let started = std::time::Instant::now();
+        let outcome = crate::broker::Broker::send(self, fetch);
+        let total_ms = started.elapsed().as_millis() as u64;
+        // The engine's own reading of the hop, which knows where the headers
+        // stopped and the body began. Falls back to the wall clock around the
+        // call for a fetch that never got that far.
+        let ttfb_ms = outcome
+            .seq
+            .and_then(|seq| {
+                self.log
+                    .records()
+                    .into_iter()
+                    .find(|r| r.seq == seq && r.phase == crate::receipt::Phase::Response)
+                    .and_then(|r| r.ttfb_ms)
+            })
+            .unwrap_or(total_ms);
+        (
+            crate::broker::Timing {
+                seq: outcome.seq,
+                status: outcome.status,
+                ttfb_ms,
+                total_ms,
+                bytes: outcome.body.len() as u64,
+            },
+            outcome,
+        )
+    }
+
+    /// The same request from several threads, released together.
+    ///
+    /// The barrier is the whole point: without it the first thread is already
+    /// waiting on the network before the last one has been spawned, and a
+    /// check-then-act window measured in milliseconds closes in between. With
+    /// it, every thread has its request built and is blocked on the same
+    /// rendezvous, so they leave within the cost of waking a thread.
+    ///
+    /// Every send is a receipt and a stored message like any other. A race is
+    /// not a special mode; it is `count` ordinary requests that happen to
+    /// overlap, and the audit should read that way afterwards.
+    fn send_together(
+        &self,
+        fetch: &crate::broker::Fetch,
+        count: u32,
+    ) -> Result<(Vec<crate::broker::Timing>, FetchOutcome), crate::broker::SendError> {
+        let me = self.me.upgrade().ok_or_else(|| {
+            crate::broker::SendError::new("no-broker", "the broker is no longer running")
+        })?;
+        let barrier = Arc::new(std::sync::Barrier::new(count as usize));
+        let mut threads = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let broker = me.clone();
+            let barrier = barrier.clone();
+            let fetch = fetch.clone();
+            threads.push(std::thread::spawn(move || {
+                barrier.wait();
+                broker.send_once(&fetch)
+            }));
+        }
+        let mut samples = Vec::with_capacity(count as usize);
+        let mut last = None;
+        for thread in threads {
+            match thread.join() {
+                Ok((sample, outcome)) => {
+                    samples.push(sample);
+                    last = Some(outcome);
+                }
+                // A panicked sender is a gap in the burst, and a burst that
+                // silently sent fewer requests than asked for would make a race
+                // that did not reproduce look like a race that does not exist.
+                Err(_) => {
+                    return Err(crate::broker::SendError::new(
+                        "send-failed",
+                        "one of the parallel sends panicked, so the burst was not the size \
+                         it was asked for",
+                    ));
+                }
+            }
+        }
+        Ok((samples, last.expect("at least one send")))
+    }
+
+    /// Apply the edits and put it on the wire.
+    ///
+    /// The one path both replay verbs end at, so a stored request and a
+    /// composed one cannot be sent under two slightly different sets of rules.
+    fn edit_then_send(
+        &self,
+        mut editable: crate::edits::Editable,
+        edits: &[crate::edits::Edit],
+        create: bool,
+        plan: crate::broker::Sends,
+    ) -> Result<crate::broker::Edited, crate::broker::SendError> {
+        use crate::broker::SendError;
+        let applied = crate::edits::apply(&mut editable, edits, create)
+            .map_err(|e| SendError::new("bad-edit", e.to_string()))?;
+
+        let content_type = editable.content_type().map(str::to_string);
+        let follow = plan.no_follow.then_some(0);
+        let fetch = crate::broker::Fetch {
+            url: editable.url.clone(),
+            // A replay is the agent exercising its own authority over a URL it
+            // named, exactly like a navigation, and not a page reaching for a
+            // subresource. That is what decides the policy question and what
+            // keeps the same-origin rules out of it: there is no document here.
+            initiator: Initiator::Navigation,
+            method: editable.method.clone(),
+            body: editable.body.clone(),
+            content_type,
+            headers: editable.headers.clone(),
+            max_redirects: follow,
+            document: None,
+            cors: None,
+        };
+        let sent = crate::broker::Sent {
+            method: fetch.method.clone(),
+            url: fetch.url.to_string(),
+            header_names: fetch.headers.iter().map(|(name, _)| name.clone()).collect(),
+            body_bytes: fetch.body.len() as u64,
+        };
+        // At least once. The count is sends, not extra ones, so a plan of one
+        // and no plan at all are the same request and the same receipts.
+        let sends = plan.count.max(1);
+        let (mut samples, outcome) = if plan.together && sends > 1 {
+            self.send_together(&fetch, sends)?
+        } else {
+            let mut samples = Vec::with_capacity(sends as usize);
+            let mut last = None;
+            for _ in 0..sends {
+                let (sample, outcome) = self.send_once(&fetch);
+                samples.push(sample);
+                last = Some(outcome);
+            }
+            (samples, last.expect("at least one send"))
+        };
+        // Oldest first, so a reader of the samples reads them in the order they
+        // were sent. Threads finish out of order, and a race's whole story is
+        // which one landed first.
+        samples.sort_by_key(|sample| sample.seq);
+        Ok(crate::broker::Edited {
+            seq: outcome.seq,
+            applied,
+            sent,
+            samples,
+            outcome,
+        })
     }
 }
 
@@ -1926,6 +2410,655 @@ mod tests {
 }
 
 #[cfg(test)]
+mod caller_header_tests {
+    use super::*;
+    use crate::broker::{Broker, Fetch};
+    use crate::receipt::MemorySink;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::sync::Mutex;
+
+    /// A server that writes down every request head it is handed.
+    ///
+    /// The only way to test a header layer honestly: asserting on what the
+    /// engine *meant* to send proves nothing about what went out, and this
+    /// engine's whole claim is about the difference.
+    pub(super) fn head_recorder(
+        hops: usize,
+        redirect_to: Option<String>,
+    ) -> (u16, Arc<Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorded = seen.clone();
+        std::thread::spawn(move || {
+            for hop in 0..hops {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut head = String::new();
+                let _ = reader.read_line(&mut head);
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line.trim().is_empty() {
+                        break;
+                    }
+                    head.push_str(&line);
+                }
+                if let Ok(mut seen) = recorded.lock() {
+                    seen.push(head.to_ascii_lowercase());
+                }
+                let mut stream = stream;
+                let _ = match (hop, &redirect_to) {
+                    (0, Some(target)) => write!(
+                        stream,
+                        "HTTP/1.1 302 Found\r\nLocation: {target}\r\n\
+                         Content-Length: 0\r\nConnection: close\r\n\r\n"
+                    ),
+                    _ => write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                    ),
+                };
+                let _ = stream.flush();
+            }
+        });
+        (port, seen)
+    }
+
+    fn broker() -> (Arc<MemorySink>, Arc<LocalBroker>) {
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::new(Policy::new(), sink.clone(), None).expect("broker");
+        (sink, broker)
+    }
+
+    /// How many times a header name appears in a recorded head.
+    pub(super) fn count(head: &str, name: &str) -> usize {
+        head.lines()
+            .filter(|line| line.starts_with(&format!("{name}:")))
+            .count()
+    }
+
+    #[test]
+    fn a_caller_header_goes_out_and_the_engines_default_stands_aside() {
+        let (port, seen) = head_recorder(1, None);
+        let (_sink, broker) = broker();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+        let outcome = broker.send(&Fetch::get(&url, Initiator::Navigation).with_headers(vec![
+            ("X-Forwarded-For".to_string(), "127.0.0.1".to_string()),
+            ("Accept".to_string(), "application/json".to_string()),
+        ]));
+        assert!(outcome.is_ok(), "{:?}", outcome.error);
+
+        let seen = seen.lock().unwrap();
+        let head = &seen[0];
+        assert!(head.contains("x-forwarded-for: 127.0.0.1"), "{head}");
+        // The engine's own `Accept` would otherwise ride along beside it, and a
+        // request with two is neither what the caller asked for nor what the
+        // engine sends by default.
+        assert_eq!(count(head, "accept"), 1, "{head}");
+        assert!(head.contains("accept: application/json"), "{head}");
+    }
+
+    /// The framing headers are the client's, and saying so is the point.
+    #[test]
+    fn a_header_the_client_owns_is_refused_and_named_in_the_receipt() {
+        let (port, seen) = head_recorder(1, None);
+        let (sink, broker) = broker();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+        let outcome = broker.send(
+            &Fetch::get(&url, Initiator::Navigation).with_headers(vec![
+                ("Content-Length".to_string(), "999".to_string()),
+                ("Connection".to_string(), "upgrade".to_string()),
+            ]),
+        );
+        assert!(outcome.is_ok(), "{:?}", outcome.error);
+
+        let head = seen.lock().unwrap()[0].clone();
+        assert!(!head.contains("content-length: 999"), "{head}");
+        assert!(!head.contains("connection: upgrade"), "{head}");
+
+        let record = sink
+            .records()
+            .into_iter()
+            .find(|r| r.phase == crate::receipt::Phase::Request && r.allowed)
+            .expect("the decision record");
+        assert_eq!(
+            record.headers_overridden,
+            vec!["content-length".to_string(), "connection".to_string()],
+            "the refusal is reported, not performed silently"
+        );
+    }
+
+    /// A caller naming `Cookie` is testing that value, not adding to the jar's.
+    #[test]
+    fn a_caller_cookie_stands_alone() {
+        let (port, seen) = head_recorder(1, None);
+        let (sink, broker) = broker();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+        broker.jar().store(&url, ["session=from-the-jar; Path=/"]);
+
+        let outcome = broker.send(
+            &Fetch::get(&url, Initiator::Navigation)
+                .with_headers(vec![("Cookie".to_string(), "session=forged".to_string())]),
+        );
+        assert!(outcome.is_ok(), "{:?}", outcome.error);
+
+        let head = seen.lock().unwrap()[0].clone();
+        assert_eq!(count(&head, "cookie"), 1, "{head}");
+        assert!(head.contains("cookie: session=forged"), "{head}");
+        assert!(!head.contains("from-the-jar"), "{head}");
+
+        let response = sink
+            .records()
+            .into_iter()
+            .find(|r| r.phase == crate::receipt::Phase::Response)
+            .expect("the outcome record");
+        assert_eq!(
+            response.cookies_sent,
+            Some(0),
+            "the jar sent nothing, and the count says so rather than counting the caller's"
+        );
+    }
+
+    /// A chain is one request to the caller, so its headers ride along it.
+    #[test]
+    fn caller_headers_follow_a_same_origin_redirect() {
+        let (port, seen) = head_recorder(2, Some("/next".to_string()));
+        let (_sink, broker) = broker();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap();
+        let outcome = broker.send(&Fetch::get(&url, Initiator::Navigation).with_headers(vec![(
+            "Authorization".to_string(),
+            "Bearer t0ken".to_string(),
+        )]));
+        assert!(outcome.is_ok(), "{:?}", outcome.error);
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "both hops were made");
+        assert!(seen[1].contains("authorization: bearer t0ken"), "{}", seen[1]);
+    }
+
+    /// ...and stop at the origin boundary, which is where a chain stops being
+    /// the request the caller authorised.
+    #[test]
+    fn a_credential_does_not_follow_a_redirect_to_another_origin() {
+        let (elsewhere, over_there) = head_recorder(1, None);
+        let (port, seen) = head_recorder(
+            1,
+            Some(format!("http://127.0.0.1:{elsewhere}/collect")),
+        );
+        let (_sink, broker) = broker();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap();
+        let outcome = broker.send(&Fetch::get(&url, Initiator::Navigation).with_headers(vec![
+            ("Authorization".to_string(), "Bearer t0ken".to_string()),
+            ("X-Trace".to_string(), "keep-me".to_string()),
+        ]));
+        assert!(outcome.is_ok(), "{:?}", outcome.error);
+
+        assert!(
+            seen.lock().unwrap()[0].contains("authorization: bearer t0ken"),
+            "the origin the caller named still gets it"
+        );
+        let landed = over_there.lock().unwrap()[0].clone();
+        assert!(
+            !landed.contains("t0ken"),
+            "a redirect must not harvest the credential: {landed}"
+        );
+        // Only the credential stops. A header that is not one is still the
+        // caller's instruction about this chain.
+        assert!(landed.contains("x-trace: keep-me"), "{landed}");
+    }
+}
+
+#[cfg(test)]
+mod capture_wire_tests {
+    use super::*;
+    use crate::broker::Broker;
+    use crate::capture::{Body, Capture, Skip};
+    use crate::receipt::MemorySink;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    /// A server that redirects to its own second path, setting a cookie on the
+    /// hop, which is the shape a login has.
+    fn redirect_then_answer() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for hop in 0..2 {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+                        break;
+                    }
+                }
+                let mut stream = stream;
+                let _ = if hop == 0 {
+                    write!(
+                        stream,
+                        "HTTP/1.1 302 Found\r\nLocation: /home\r\n\
+                         Set-Cookie: session=s3cr3t; Path=/\r\n\
+                         Content-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                } else {
+                    let body = "{\"user\":\"alice\"}";
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                };
+                let _ = stream.flush();
+            }
+        });
+        port
+    }
+
+    /// The whole point of the store, end to end: a redirect chain leaves one
+    /// message per hop, the hop's headers are kept even though its body is never
+    /// read, and the final body is on disk and readable.
+    #[test]
+    fn a_redirect_chain_is_stored_hop_by_hop() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            sink.clone(),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture.clone()),
+        )
+        .expect("broker");
+
+        let port = redirect_then_answer();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
+        let outcome = broker.fetch(&url, Initiator::Navigation);
+        assert!(outcome.is_ok(), "{:?}", outcome.error);
+
+        // Hop 0: the redirect. Its `Location` and `Set-Cookie` are the content
+        // of the message, and its body was never read.
+        let hop = capture.read_response(0).expect("the hop is stored");
+        assert_eq!(hop.status, Some(302));
+        assert!(
+            hop.headers.iter().any(|(n, v)| n == "set-cookie" && v.contains("s3cr3t")),
+            "the store holds the credential the receipt refuses to: {:?}",
+            hop.headers
+        );
+        assert_eq!(
+            hop.body,
+            Body::Skipped {
+                reason: Skip::NotRead,
+                bytes: None
+            }
+        );
+
+        // Hop 1: the answer, with its body on disk.
+        let answer = capture.read_response(1).expect("the answer is stored");
+        assert_eq!(answer.status, Some(200));
+        let Body::Stored { sha256, .. } = &answer.body else {
+            panic!("the body was stored: {:?}", answer.body);
+        };
+        assert_eq!(
+            capture.read_body(sha256).expect("the body reads back"),
+            b"{\"user\":\"alice\"}"
+        );
+
+        // And the second request carried the cookie the first hop set, which is
+        // the header set as built rather than as asked for.
+        let second = capture.read_request(1).expect("the second request is stored");
+        assert_eq!(second.url, format!("http://127.0.0.1:{port}/home"));
+        assert!(
+            second.headers.iter().any(|(n, v)| n == "cookie" && v.contains("s3cr3t")),
+            "{:?}",
+            second.headers
+        );
+
+        // The receipt is unchanged by any of this: counts, never values.
+        let receipted = serde_json::to_string(&sink.records()).expect("records serialise");
+        assert!(!receipted.contains("s3cr3t"), "a credential reached the receipt log");
+        assert_eq!(capture.errors(), 0);
+    }
+
+    /// A store that dropped something has to be able to say so, or an agent
+    /// reads the messages that survived and concludes the rest never happened.
+    #[test]
+    fn a_session_reports_the_health_of_its_store() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture.clone()),
+        )
+        .expect("broker");
+
+        let port = redirect_then_answer();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
+        assert!(broker.fetch(&url, Initiator::Navigation).is_ok());
+
+        let health = broker.capture().expect("a session with a store reports one");
+        assert_eq!(health.messages, 4, "two hops, both phases");
+        assert_eq!(health.errors, 0);
+        assert!(health.bytes > 0);
+    }
+
+    /// The workbench loop, end to end: a request the session made, sent again
+    /// with one parameter bent, through the same policy and into a new receipt.
+    #[test]
+    fn a_stored_request_is_sent_again_with_an_edit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            sink.clone(),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture.clone()),
+        )
+        .expect("broker");
+
+        // Two answers: the original, and the replay.
+        let (port, seen) = super::caller_header_tests::head_recorder(2, None);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/api/users?user_id=123")).unwrap();
+        assert!(broker.fetch(&url, Initiator::Navigation).is_ok());
+
+        let edited = crate::broker::Broker::send_edited(
+            broker.as_ref(),
+            0,
+            &[crate::edits::parse_set("query.user_id=456").expect("parses")],
+            false,
+            crate::broker::Sends::once(),
+        )
+        .expect("the stored request is there");
+
+        assert_eq!(edited.applied[0].was.as_deref(), Some("123"));
+        assert_eq!(edited.sent.url, format!("http://127.0.0.1:{port}/api/users?user_id=456"));
+        assert_eq!(edited.outcome.status, Some(200));
+        // A replay is a request like any other: its own receipt, its own
+        // sequence, and its own stored message.
+        assert_eq!(edited.seq, Some(1));
+        assert!(capture.read_request(1).is_ok(), "the replay is itself replayable");
+
+        let seen = seen.lock().unwrap();
+        assert!(seen[1].starts_with("get /api/users?user_id=456"), "{}", seen[1]);
+    }
+
+    /// A body's content type must go out once, whoever named it.
+    ///
+    /// A replay carries the stored headers *and* tells the broker the content
+    /// type, which are two routes to the same header. Sending both produced a
+    /// request with `Content-Type` twice; Flask answers 400 to that, and the
+    /// receipt looked entirely normal.
+    #[test]
+    fn a_replayed_body_names_its_content_type_once() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture),
+        )
+        .expect("broker");
+
+        let (port, seen) = super::caller_header_tests::head_recorder(2, None);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
+        assert!(broker.fetch(&url, Initiator::Navigation).is_ok());
+
+        crate::broker::Broker::send_edited(
+            broker.as_ref(),
+            0,
+            &[
+                crate::edits::parse_set("method=POST").expect("parses"),
+                crate::edits::parse_set("form.username=test").expect("parses"),
+            ],
+            true,
+            crate::broker::Sends::once(),
+        )
+        .expect("replayed");
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(
+            super::caller_header_tests::count(&seen[1], "content-type"),
+            1,
+            "the composed request sent it twice:\n{}",
+            seen[1]
+        );
+    }
+
+    /// A replay hands back the stored header set, which already holds the
+    /// engine's own defaults. Every one of them has to stand aside, or the
+    /// request that goes out is not the request that was recorded.
+    #[test]
+    fn a_replay_does_not_duplicate_the_engines_own_headers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture),
+        )
+        .expect("broker");
+
+        let (port, seen) = super::caller_header_tests::head_recorder(2, None);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/api?id=1")).unwrap();
+        assert!(broker.fetch(&url, Initiator::Navigation).is_ok());
+        crate::broker::Broker::send_edited(
+            broker.as_ref(),
+            0,
+            &[crate::edits::parse_set("query.id=2").expect("parses")],
+            false,
+            crate::broker::Sends::once(),
+        )
+        .expect("replayed");
+
+        let seen = seen.lock().unwrap();
+        let replay = &seen[1];
+        for header in ["accept-encoding", "accept", "accept-language"] {
+            assert_eq!(
+                super::caller_header_tests::count(replay, header),
+                1,
+                "`{header}` went out more than once on the replay:\n{replay}"
+            );
+        }
+    }
+
+    /// An edit that would change nothing is a mistake, and saying so is the
+    /// difference between a five-minute test and an hour reading identical
+    /// responses.
+    #[test]
+    fn an_edit_that_names_nothing_is_refused_before_the_wire() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            sink.clone(),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture),
+        )
+        .expect("broker");
+
+        let (port, _seen) = super::caller_header_tests::head_recorder(1, None);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/api?user_id=1")).unwrap();
+        assert!(broker.fetch(&url, Initiator::Navigation).is_ok());
+        let before = sink.records().len();
+
+        let error = crate::broker::Broker::send_edited(
+            broker.as_ref(),
+            0,
+            &[crate::edits::parse_set("query.userid=2").expect("parses")],
+            false,
+            crate::broker::Sends::once(),
+        )
+        .expect_err("refused");
+        assert_eq!(error.code, "bad-edit", "the request was there; the edit was not");
+        assert!(error.message.contains("user_id"), "{}", error.message);
+        assert_eq!(sink.records().len(), before, "nothing reached the wire");
+    }
+
+    /// A request another session recorded, sent under this session's identity.
+    ///
+    /// The point of the verb is what the *receiving* session contributes: its
+    /// jar, its policy, its receipts. The composed message brings only the
+    /// method, URL, body and the headers the caller chose to carry.
+    #[test]
+    fn a_composed_request_is_sent_under_this_sessions_own_cookies() {
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::new(Policy::new(), sink.clone(), None).expect("broker");
+
+        let (port, seen) = super::caller_header_tests::head_recorder(1, None);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/doc?id=1")).unwrap();
+        // This session is logged in as somebody.
+        broker.jar().store(&url, ["session=this-sessions-own; Path=/"]);
+
+        let edited = crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "GET".to_string(),
+                url: url.clone(),
+                // What `--as` hands over: no credential of the other session's.
+                headers: vec![("X-Trace".to_string(), "carried".to_string())],
+                body: Vec::new(),
+            },
+            &[],
+            false,
+            crate::broker::Sends::once(),
+        )
+        .expect("sent");
+        assert_eq!(edited.outcome.status, Some(200));
+
+        let head = seen.lock().unwrap()[0].clone();
+        assert!(head.contains("x-trace: carried"), "{head}");
+        assert!(
+            head.contains("cookie: session=this-sessions-own"),
+            "the receiving session's jar supplies the credential: {head}"
+        );
+        // And it is in this session's receipts, because this session made it.
+        assert!(
+            sink.records().iter().any(|r| r.url.contains("/doc?id=1")),
+            "a composed request is recorded like any other"
+        );
+    }
+
+    /// A browser follows a `Location`; a test wants the 302 itself.
+    #[test]
+    fn a_replay_can_stop_at_the_redirect_and_report_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture),
+        )
+        .expect("broker");
+
+        let port = redirect_then_answer();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
+        // The session itself follows, as a browser does: two hops.
+        assert!(broker.fetch(&url, Initiator::Navigation).is_ok());
+
+        let port = redirect_then_answer();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
+        let stopped = crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "GET".to_string(),
+                url,
+                headers: Vec::new(),
+                body: Vec::new(),
+            },
+            &[],
+            false,
+            crate::broker::Sends {
+                count: 1,
+                together: false,
+                no_follow: true,
+            },
+        )
+        .expect("sent");
+
+        assert_eq!(stopped.outcome.status, Some(302), "the hop itself, not the page");
+        assert!(
+            stopped.outcome.error.is_none(),
+            "stopping where you asked to stop is not a failure: {:?}",
+            stopped.outcome.error
+        );
+        assert!(
+            stopped
+                .outcome
+                .headers
+                .iter()
+                .any(|(name, value)| name == "location" && value == "/home"),
+            "the `Location` is the whole content of a redirect: {:?}",
+            stopped.outcome.headers
+        );
+    }
+
+    /// A session that never captured has nothing to replay, and the message
+    /// says what to do about it.
+    #[test]
+    fn a_session_without_a_store_says_why_it_cannot_replay() {
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker");
+        let error = crate::broker::Broker::send_edited(
+            broker.as_ref(),
+            0,
+            &[],
+            false,
+            crate::broker::Sends::once(),
+        )
+        .expect_err("refused");
+        assert_eq!(error.code, "no-capture");
+        assert!(error.message.contains("--capture"), "{}", error.message);
+    }
+
+    /// A session without a store is the default, and it writes nothing.
+    #[test]
+    fn a_session_with_no_store_keeps_no_message() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            sink.clone(),
+            None,
+            crate::budget::Limits::default(),
+            None,
+        )
+        .expect("broker");
+
+        let port = redirect_then_answer();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
+        let _ = broker.fetch(&url, Initiator::Navigation);
+
+        assert!(!sink.records().is_empty(), "the receipt is never optional");
+        assert!(
+            broker.capture().is_none(),
+            "no store is a different answer from a healthy one"
+        );
+        assert_eq!(
+            std::fs::read_dir(dir.path()).expect("readable").count(),
+            0,
+            "nothing is written where nothing was asked for"
+        );
+    }
+}
+
+#[cfg(test)]
 mod cookie_wire_tests {
     use super::*;
     use crate::broker::Broker;
@@ -2065,6 +3198,7 @@ mod cookie_wire_tests {
                 max_requests: 2,
                 ..Default::default()
             },
+            None,
         )
         .expect("broker");
 
@@ -2102,6 +3236,7 @@ mod cookie_wire_tests {
                 max_wire_bytes: 4_096,
                 ..Default::default()
             },
+            None,
         )
         .expect("broker");
 
@@ -2144,6 +3279,7 @@ mod cookie_wire_tests {
                 max_requests: 3,
                 ..Default::default()
             },
+            None,
         )
         .expect("broker");
         let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
@@ -2185,6 +3321,7 @@ mod cookie_wire_tests {
                 max_requests: 2,
                 ..Default::default()
             },
+            None,
         )
         .expect("broker");
         let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();

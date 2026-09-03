@@ -2,8 +2,10 @@
 
 pub mod broker;
 pub mod cli;
+pub mod edits;
 pub mod encoding;
 pub mod canvas;
+pub mod capture;
 pub mod cors;
 pub mod budget;
 pub mod cookies;
@@ -15,6 +17,7 @@ pub mod hints;
 pub mod keys;
 pub mod fonts;
 pub mod markdown;
+pub mod multipart;
 pub mod ipc;
 pub mod net;
 pub mod policy;

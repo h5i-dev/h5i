@@ -1395,6 +1395,40 @@ fn navigate_to(session: &mut Session, target: &str) -> Result<(), Value> {
     }
 }
 
+/// Submit the form a control sits in, and land on the answer.
+///
+/// Shared by `submit` and by a `click` on a submit control, so the two cannot
+/// drift into submitting forms differently.
+fn submit_the_form(
+    session: &mut Session,
+    node_id: usize,
+    reference: &str,
+) -> (Value, bool) {
+    let submission = match session.page.submit_form(node_id) {
+        Ok(submission) => submission,
+        Err(error) => return (VerbError::refused(format!("{error}")).reply(), false),
+    };
+    match session.factory.open_submission(&submission) {
+        Ok(page) => {
+            session.land(page);
+            (
+                json!({
+                    "ok": true,
+                    "ref": reference,
+                    "url": session.page.url().to_string(),
+                    "method": submission.method,
+                    // Named, because a click that submitted a form did something
+                    // bigger than a click usually does and the caller should not
+                    // have to infer it from the URL having changed.
+                    "submitted": true,
+                }),
+                true,
+            )
+        }
+        Err(error) => (VerbError::refused(format!("{error}")).reply(), false),
+    }
+}
+
 fn control_verb_inner(
     session: &mut Session,
     request: &Value,
@@ -1436,9 +1470,258 @@ fn control_verb_inner(
                 // see how close it came rather than inferring it from a
                 // refusal in the request log.
                 "budget": budget_of(session),
+                // The message store, when this session has one. `null` on the
+                // ordinary session, which keeps no message. Present with a
+                // nonzero `errors` when the store dropped something, which is
+                // the only way an agent learns that the evidence it is about to
+                // read has a hole in it: the messages that *are* there look no
+                // different either way.
+                "capture": session.factory.broker().capture(),
             }),
             false,
         ),
+
+        // Send a stored request again, with the caller's changes.
+        //
+        // The verb takes edits and a sequence number, never a whole request.
+        // That is not a limitation: a request the caller composed from nothing
+        // has no receipt behind it and nothing to diff against, and every test
+        // this exists for starts from something the session actually sent.
+        Verb::Resend => {
+            let from = request.get("from").and_then(Value::as_u64);
+            // Either a sequence number in *this* session's store, or a whole
+            // request another session recorded. The second is what makes "send
+            // this as the other user" possible: the message comes from there,
+            // and everything that makes it a request of this session's (its
+            // cookies, its identity, its policy, its budget) comes from here.
+            // `null` is absent, not a composed request with empty fields. The
+            // verb's JSON always carries the key, because the CLI builds one
+            // object for both forms, so `get` alone answers `Some(Null)` and
+            // every plain resend would take the composed path and try to parse
+            // "" as a URL.
+            let given = request
+                .get("request")
+                .filter(|value| !value.is_null())
+                .cloned();
+            let Some(from) = from.or(given.is_some().then_some(0)) else {
+                return (
+                    json!({
+                        "ok": false,
+                        "code": "bad-request",
+                        "message": "resend needs `from`: the sequence number of a stored                                     request, as `requests` lists them",
+                    }),
+                    false,
+                );
+            };
+            let create = request.get("create").and_then(Value::as_bool).unwrap_or(false);
+            // The page's allowance, started again because the agent said so.
+            //
+            // The budget bounds *page* code: a script in a loop is the untrusted
+            // thing it exists to stop. A replay is the opposite case, the agent
+            // exercising its own authority over a request it named, and a blind
+            // extraction is hundreds of them on purpose. Without this an agent
+            // has to navigate away and back to keep going, which works, spends
+            // two more requests, and throws away the page state it was using.
+            // No new authority: navigating already resets this, and only the
+            // agent's verbs reach here.
+            if request
+                .get("reset_budget")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                session.factory.broker().reset_budget();
+            }
+            // Bounded here rather than trusted: a caller asking for a million
+            // sends is asking this session to spend its whole budget on one
+            // verb, and the budget refusing halfway is a worse answer than a
+            // ceiling stated up front.
+            let plan = crate::broker::Sends {
+                count: request
+                    .get("repeat")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1)
+                    .clamp(1, 1000) as u32,
+                together: request
+                    .get("together")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                no_follow: request
+                    .get("no_follow")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            };
+            let strings = |key: &str| -> Vec<String> {
+                request
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| item.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            let mut edits = Vec::new();
+            for spec in strings("set") {
+                match crate::edits::parse_set(&spec) {
+                    Ok(edit) => edits.push(edit),
+                    Err(e) => {
+                        return (
+                            json!({
+                                "ok": false,
+                                "code": "bad-edit",
+                                "target": e.target,
+                                "message": e.message,
+                            }),
+                            false,
+                        );
+                    }
+                }
+            }
+            // Then the byte-valued ones, in the order they were given. After
+            // the text edits rather than interleaved with them: two flags
+            // cannot express one order, and saying which wins beats guessing.
+            for pair in request
+                .get("set_file")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+            {
+                let target = pair.get(0).and_then(Value::as_str).unwrap_or_default();
+                let encoded = pair.get(1).and_then(Value::as_str).unwrap_or_default();
+                let bytes = match base64::engine::general_purpose::STANDARD.decode(encoded) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        return (
+                            json!({
+                                "ok": false,
+                                "code": "bad-edit",
+                                "target": target,
+                                "message": format!("its bytes did not survive the hop: {e}"),
+                            }),
+                            false,
+                        );
+                    }
+                };
+                match crate::edits::parse_set_bytes(target, bytes) {
+                    Ok(edit) => edits.push(edit),
+                    Err(e) => {
+                        return (
+                            json!({
+                                "ok": false,
+                                "code": "bad-edit",
+                                "target": e.target,
+                                "message": e.message,
+                            }),
+                            false,
+                        );
+                    }
+                }
+            }
+            for spec in strings("unset") {
+                match crate::edits::parse_unset(&spec) {
+                    Ok(edit) => edits.push(edit),
+                    Err(e) => {
+                        return (
+                            json!({
+                                "ok": false,
+                                "code": "bad-edit",
+                                "target": e.target,
+                                "message": e.message,
+                            }),
+                            false,
+                        );
+                    }
+                }
+            }
+
+            // The composed form carries its body base64 in the JSON: this hop
+            // is a control channel, not the broker's own socket.
+            let composed = given.map(|value| {
+                let text = |key: &str| {
+                    value.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
+                };
+                let body = value
+                    .get("body_base64")
+                    .and_then(Value::as_str)
+                    .and_then(|b| {
+                        use base64::Engine as _;
+                        base64::engine::general_purpose::STANDARD.decode(b).ok()
+                    })
+                    .unwrap_or_default();
+                let headers = value
+                    .get("headers")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|pair| {
+                                let pair = pair.as_array()?;
+                                Some((
+                                    pair.first()?.as_str()?.to_string(),
+                                    pair.get(1)?.as_str()?.to_string(),
+                                ))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (text("method"), text("url"), headers, body)
+            });
+
+            let outcome = match composed {
+                Some((method, target, headers, body)) => match url::Url::parse(&target) {
+                    Err(e) => Err(crate::broker::SendError::new(
+                        "bad-request",
+                        format!("{target:?} is not a URL: {e}"),
+                    )),
+                    Ok(url) => session.factory.broker().send_given(
+                        crate::broker::Given {
+                            method,
+                            url,
+                            headers,
+                            body,
+                        },
+                        &edits,
+                        create,
+                        plan,
+                    ),
+                },
+                None => session
+                    .factory
+                    .broker()
+                    .send_edited(from, &edits, create, plan),
+            };
+            match outcome {
+                Err(why) => (
+                    json!({"ok": false, "code": why.code, "message": why.message}),
+                    false,
+                ),
+                Ok(edited) => {
+                    let outcome = &edited.outcome;
+                    (
+                        json!({
+                            "ok": outcome.error.is_none(),
+                            // The new receipt, which is also where the replay's
+                            // own request and response are stored. A replay is
+                            // replayable.
+                            "seq": edited.seq,
+                            "applied": edited.applied,
+                            "sent": edited.sent,
+                            "samples": edited.samples,
+                            "response": {
+                                "status": outcome.status,
+                                "url": outcome.final_url.to_string(),
+                                "headers": outcome.headers,
+                                "bytes": outcome.body.len(),
+                                "error": outcome.error,
+                            },
+                        }),
+                        false,
+                    )
+                }
+            }
+        }
 
         // Hand the page to the human for as long as it takes to log in.
         //
@@ -1941,13 +2224,24 @@ fn control_verb_inner(
             // `preventDefault` never wanted the href followed, and a button
             // with no href is only clickable at all because of its handler.
             if session.page.has_script()
-                && let Some(caused) = session.page.dispatch_event(node_id, "click")
+                && let Some((caused, proceed)) = session.page.activate(node_id)
             {
                 let settled = session
                     .page
                     .settled()
                     .map(|s| s.render())
                     .unwrap_or_default();
+                // The page took the click and did not prevent the default, and
+                // this is a submit control: the form still has to be sent. That
+                // is the browser's third step, and skipping it made a scripted
+                // page that merely *watches* its form never submit at all.
+                if proceed
+                    && href.is_none()
+                    && session.page.is_submit_control(node_id)
+                    && session.page.form_of(node_id).is_some()
+                {
+                    return submit_the_form(session, node_id, reference);
+                }
                 if href.is_none() {
                     return (
                         json!({
@@ -1968,6 +2262,18 @@ fn control_verb_inner(
             }
 
             let Some(href) = href else {
+                // No href, and either no script or a handler that did not take
+                // it. A submit control still means something here: a browser
+                // submits the form whether or not script is running, which is
+                // why an ordinary login form works with JavaScript switched off.
+                // Refusing this was refusing the ordinary way into most
+                // applications, and the refusal named the element's role rather
+                // than the verb that would have worked.
+                if session.page.is_submit_control(node_id)
+                    && session.page.form_of(node_id).is_some()
+                {
+                    return submit_the_form(session, node_id, reference);
+                }
                 return (
                     VerbError::wrong_role(reference, &role, "something to follow").reply(),
                     false,
@@ -2002,7 +2308,84 @@ fn control_verb_inner(
             // lives in another process now, and reading it whole to hand back a tail
             // would put the thing the cursor exists to avoid back on the wire.
             let since = request.get("since").and_then(Value::as_u64);
-            let rows = session.factory.broker().records_since(since);
+            let mut rows = session.factory.broker().records_since(since);
+
+            // Narrowed here, beside the window and for the same reason: a
+            // session that loaded four hundred subresources has a log an agent
+            // should be able to ask a question of rather than read. The filters
+            // are fields of the record, never a query language: `method=POST`
+            // typed as a flag cannot be mis-quoted in a shell, and a language
+            // would have to grow an escape rule for the one thing a caller most
+            // wants to match on, which is a URL.
+            let want_text = |key: &str| {
+                request
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .map(str::to_ascii_lowercase)
+            };
+            let method = want_text("method");
+            let initiator = want_text("initiator");
+            let url_contains = want_text("url_contains");
+            let status = request.get("status").and_then(Value::as_u64);
+            let denied_only = request
+                .get("denied_only")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let limit = request.get("limit").and_then(Value::as_u64);
+            // A limit narrows as surely as a filter does. Reporting it as the
+            // whole window would let "two rows" be read as "this session made
+            // two requests", which is the one thing this flag exists to
+            // prevent.
+            let mut narrowed = method.is_some()
+                || initiator.is_some()
+                || url_contains.is_some()
+                || status.is_some()
+                || denied_only;
+            if narrowed {
+                rows.retain(|row| {
+                    if let Some(method) = &method
+                        && !row.method.eq_ignore_ascii_case(method)
+                    {
+                        return false;
+                    }
+                    if let Some(url) = &url_contains
+                        && !row.url.to_ascii_lowercase().contains(url)
+                    {
+                        return false;
+                    }
+                    if let Some(initiator) = &initiator {
+                        let name = serde_json::to_value(row.initiator)
+                            .ok()
+                            .and_then(|v| v.as_str().map(str::to_string))
+                            .unwrap_or_default();
+                        if !name.eq_ignore_ascii_case(initiator) {
+                            return false;
+                        }
+                    }
+                    // A status belongs to the response half of a pair, so a
+                    // status filter selects response rows and says nothing
+                    // about the request rows beside them. That is what the
+                    // caller means by "which of these came back 500".
+                    if let Some(status) = status
+                        && row.status != Some(status as u16)
+                    {
+                        return false;
+                    }
+                    if denied_only && row.allowed {
+                        return false;
+                    }
+                    true
+                });
+            }
+            // Last, so a limit means "the newest N of what I asked for" rather
+            // than "the newest N, then filtered", which would silently answer
+            // from a window the caller did not choose.
+            if let Some(limit) = limit
+                && rows.len() as u64 > limit
+            {
+                rows.drain(..rows.len() - limit as usize);
+                narrowed = true;
+            }
             // The counts are over the *whole* log rather than the window,
             // because "nothing was refused" is a claim about the session and an
             // agent that only ever asks for windows should still be able to
@@ -2028,6 +2411,10 @@ fn control_verb_inner(
                     // row or skip one permanently.
                     "cursor": summary.highest,
                     "shown": rows.len(),
+                    // Whether what came back is the window or a slice of it, so
+                    // "two rows" is never read as "this session made two
+                    // requests".
+                    "narrowed": narrowed,
                     "total": summary.total,
                     "denied": summary.denied,
                     "text": text,
@@ -2635,8 +3022,10 @@ fn resolve_aim(
             };
             crate::snapshot::entry_for_node(&doc, node_id, selector).ok_or_else(|| {
                 VerbError::wrong_role(
+                    // A bare noun: `wrong_role` writes the article itself, and
+                    // "an element" here read as "is a an element".
                     &format!("`{selector}`"),
-                    "an element",
+                    "plain element",
                     "something this engine offers as actionable — a link, a control or an image",
                 )
             })
@@ -3187,6 +3576,46 @@ mod tests {
 
     fn session_with(html: &str) -> Session {
         session_and_broker(html, crate::secrets::Secrets::default()).0
+    }
+
+    /// A session whose policy admits the page's own origin.
+    ///
+    /// For the verbs that *navigate*: the default policy allows nothing remote,
+    /// so a form submission from `session_with` is refused before it can be
+    /// checked, and the refusal hides whatever the test was about.
+    fn session_reaching(html: &str) -> Session {
+        let requests = Arc::new(MemorySink::new());
+        let broker = crate::net::LocalBroker::with_secrets(
+            Policy::new().allow("example.com"),
+            requests,
+            None,
+            crate::secrets::Secrets::default(),
+        )
+        .expect("broker");
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let options = crate::engine::PageOptions {
+            width: 400,
+            height: 200,
+            ..Default::default()
+        };
+        let factory = PageFactory::new(broker, fonts.sources.clone(), options);
+        let page = factory.from_html(html, &Url::parse("https://example.com/").unwrap());
+        let page_url = page.url().clone();
+        Session {
+            factory,
+            page,
+            quality: 70,
+            seq: 0,
+            actions: None,
+            last_snapshot: None,
+            served_refs: None,
+            hint_refs: None,
+            frame_owed: false,
+            history: History::seeded(page_url),
+            unknown_verbs: std::collections::BTreeMap::new(),
+            recording: crate::replay::Recording::default(),
+            login: false,
+        }
     }
 
     /// Whoever can connect to the control socket *is* the agent: they can
@@ -4962,6 +5391,100 @@ mod tests {
             session.page.snapshot().render()
         );
         assert!(reply["settled"].is_string(), "the reply says whether it finished");
+    }
+
+    /// A session that loaded four hundred subresources has a log an agent should
+    /// be able to ask a question of rather than read whole.
+    #[test]
+    fn the_request_log_can_be_narrowed_and_says_when_it_was() {
+        let (mut session, broker) =
+            session_and_broker("<p>hi</p>", crate::secrets::Secrets::default());
+        // Rows without a wire: what is being tested is the narrowing, and a
+        // real fetch would make the test depend on a server.
+        use crate::receipt::Sink as _;
+        for (seq, initiator, method, url, status) in [
+            (0u64, crate::receipt::Initiator::Navigation, "GET", "https://app.test/", Some(200u16)),
+            (1, crate::receipt::Initiator::Subresource, "GET", "https://app.test/a.css", Some(200)),
+            (2, crate::receipt::Initiator::Subresource, "GET", "https://app.test/b.js", Some(404)),
+            (3, crate::receipt::Initiator::Navigation, "POST", "https://app.test/login", Some(302)),
+        ] {
+            let mut record = crate::receipt::RequestRecord::request(seq, initiator, method, url);
+            record.status = status;
+            broker.log().append(&record).expect("recorded");
+        }
+
+        let mut shown = |request: &Value| -> (usize, bool) {
+            let (reply, _) = control_verb(&mut session, request);
+            (
+                reply["requests"].as_array().map(Vec::len).unwrap_or(0),
+                reply["narrowed"].as_bool().unwrap_or(false),
+            )
+        };
+
+        assert_eq!(shown(&json!({"verb": "requests"})), (4, false));
+        assert_eq!(shown(&json!({"verb": "requests", "method": "post"})), (1, true));
+        assert_eq!(
+            shown(&json!({"verb": "requests", "initiator": "subresource"})),
+            (2, true)
+        );
+        assert_eq!(shown(&json!({"verb": "requests", "status": 404})), (1, true));
+        assert_eq!(
+            shown(&json!({"verb": "requests", "url_contains": ".css"})),
+            (1, true)
+        );
+        // A limit narrows too, and saying otherwise would let two rows read as
+        // the whole session.
+        assert_eq!(shown(&json!({"verb": "requests", "limit": 2})), (2, true));
+    }
+
+    /// A form works with JavaScript switched off, and so must a click on its
+    /// submit button.
+    ///
+    /// Found by driving a benchmark application: the page was an ordinary form
+    /// with a submit button, the session had no script realm, and `click`
+    /// answered "that is a button, not something to follow" — naming what the
+    /// element was not, rather than doing what a browser does with it. An agent
+    /// reading that has no way to know `submit` was the verb.
+    #[test]
+    fn clicking_a_submit_button_submits_its_form_without_script() {
+        let mut session = session_reaching(
+            "<html><body><form action='/search' method='get'>\
+             <input name='q' value='shoes'>\
+             <button type='submit'>Go</button>\
+             </form></body></html>",
+        );
+        let button = serve_refs(&mut session)
+            .into_iter()
+            .find(|entry| entry.role == "button")
+            .expect("the button is in the reading");
+        let (reply, moved) =
+            control_verb(&mut session, &json!({"verb": "click", "ref": button.id}));
+
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(reply["submitted"], true, "the click says what it did: {reply:?}");
+        assert!(moved, "submitting a form moves the page");
+        assert!(
+            session.page.url().as_str().contains("/search?q=shoes"),
+            "the form's own action and method, with its fields: {}",
+            session.page.url()
+        );
+    }
+
+    /// ...and the two controls that really do nothing without script still say
+    /// so, rather than submitting something nobody asked to submit.
+    #[test]
+    fn a_plain_button_is_still_not_something_to_follow() {
+        let mut session = session_with(
+            "<html><body><form action='/search'>\
+             <button type='button'>Nothing</button>\
+             </form></body></html>",
+        );
+        let button = serve_refs(&mut session)
+            .into_iter()
+            .find(|entry| entry.role == "button")
+            .expect("the button is in the reading");
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "click", "ref": button.id}));
+        assert_eq!(reply["ok"], false, "{reply:?}");
     }
 
     #[test]

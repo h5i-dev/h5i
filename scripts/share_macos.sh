@@ -8,7 +8,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
   exit 0
 fi
 
-H5I="${H5I:-./target/debug/h5i}"
+H5I="${H5I:-./target/release/h5i}"
 # Unique per run, like the other share harnesses: a fixed name collides with
 # anything else on the machine doing the same thing, and the collision reads as
 # a product failure rather than as two scripts meeting.
@@ -28,7 +28,7 @@ cleanup() {
 trap cleanup EXIT
 
 command -v python3 >/dev/null || { echo "needs python3"; exit 1; }
-[ -x "$H5I" ] || { echo "no h5i binary at $H5I (cargo build)"; exit 1; }
+[ -x "$H5I" ] || { echo "no h5i binary at $H5I (cargo build --release)"; exit 1; }
 H5I="$(cd "$(dirname "$H5I")" && pwd)/$(basename "$H5I")"
 
 free_port() {
