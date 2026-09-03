@@ -2982,8 +2982,10 @@ fn resolve_aim(
             };
             crate::snapshot::entry_for_node(&doc, node_id, selector).ok_or_else(|| {
                 VerbError::wrong_role(
+                    // A bare noun: `wrong_role` writes the article itself, and
+                    // "an element" here read as "is a an element".
                     &format!("`{selector}`"),
-                    "an element",
+                    "plain element",
                     "something this engine offers as actionable — a link, a control or an image",
                 )
             })
