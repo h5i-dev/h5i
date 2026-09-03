@@ -726,8 +726,8 @@ either: both are executors for conditions and payloads that arrive from outside.
 ## What benchmarking changed
 
 **2026-09-03.** Phases A and B were exercised against the 104-benchmark XBOW
-validation corpus; 97 are solved, with a worked script per benchmark under
-`examples/websec/`. The point of the exercise was not the score. It was to find
+validation corpus; 98 are solved, with a worked script per benchmark under
+`examples/websec/`, and that file records the six that are not and why. The point of the exercise was not the score. It was to find
 the places where the workbench could not say what a person needed to say, and
 each of those turned into a change:
 
