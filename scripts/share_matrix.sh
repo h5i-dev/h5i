@@ -3,7 +3,7 @@
 
 set -uo pipefail
 
-H5I="${H5I:-./target/debug/h5i}"
+H5I="${H5I:-./target/release/h5i}"
 WORK="$(mktemp -d)"
 BROKEN=0
 ONLY="${1:-}"

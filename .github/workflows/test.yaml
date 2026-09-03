@@ -306,9 +306,13 @@ jobs:
       # committed one. The man page derives from the clap command tree alone,
       # so the bundle's contents cannot affect it — skip the npm build and let
       # the build script leave its stub.
+      # `H5I_MAN_DEV_PROFILE`: the script defaults to `--release` because local
+      # checkouts guard target/debug off, but this runner is throwaway and has
+      # no warm release cache, so the dev profile is the cheap one here.
       - name: Regenerate the man page (from the clap CLI)
         env:
           H5I_SKIP_WEB_BUILD: "1"
+          H5I_MAN_DEV_PROFILE: "1"
         run: ./scripts/gen_man.sh
 
       - name: Regenerate the /manual/ HTML (from MANUAL.md)

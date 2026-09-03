@@ -13,8 +13,8 @@
 # Exits non-zero on the first failed expectation, so it is usable as a gate.
 set -uo pipefail
 
-H5I="${1:-target/debug/h5i}"
-[ -x "$H5I" ] || { echo "no h5i at $H5I — cargo build --features browser"; exit 2; }
+H5I="${1:-target/release/h5i}"
+[ -x "$H5I" ] || { echo "no h5i at $H5I — cargo build --release --features browser"; exit 2; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PORT=$((20000 + RANDOM % 10000))
 SESSIONS=(ws-smoke-a ws-smoke-b ws-smoke-csrf ws-smoke-log ws-smoke-time ws-smoke-race ws-smoke-up)
@@ -184,7 +184,7 @@ if [ -x "$PLUGIN" ]; then
     "$H5I" websec show req_42x --session ws-smoke-a >/dev/null 2>&1
     is "and a bad id exits 2" "$?" "2"
 else
-    echo "  (skipped: no h5i-websec beside $H5I — cargo build -p h5i-websec)"
+    echo "  (skipped: no h5i-websec beside $H5I — cargo build --release -p h5i-websec)"
 fi
 
 echo
