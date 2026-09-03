@@ -8,6 +8,8 @@
 //! `examples/gen_man.rs` renders `docs/man/man1/h5i.1` from it, which is why the
 //! man page cannot drift from the commands.
 
+use std::ffi::OsString;
+
 use clap::{CommandFactory, Parser, Subcommand};
 
 pub mod cli;
@@ -125,6 +127,24 @@ pub enum Commands {
         #[command(subcommand)]
         action: cli::runner::RunnerCommands,
     },
+
+    /// Install, list or remove a plugin.
+    ///
+    /// A plugin is a capability that is not in the default build: a separate
+    /// executable, run in its own process, reaching a session through the same
+    /// verbs a person types. `h5i plugin list` names the ones this binary knows.
+    Plugin {
+        #[command(subcommand)]
+        action: cli::plugin::PluginCommands,
+    },
+
+    /// Run an installed plugin.
+    ///
+    /// `h5i websec …` and anything else `h5i plugin list` names. Hidden from the
+    /// help listing because the plugins themselves are what should appear there,
+    /// and they are not all present in every install.
+    #[command(external_subcommand)]
+    Plugged(Vec<OsString>),
 
     /// Write or print the agent skill this binary carries.
     Skill {
@@ -306,6 +326,25 @@ pub fn run() -> anyhow::Result<()> {
         } => cli::share::join(&ticket, port, bind, shared_jar)?,
         #[cfg(feature = "runner")]
         Commands::Runner { action } => cli::runner::run(action)?,
+        Commands::Plugin { action } => cli::plugin::run(action)?,
+        Commands::Plugged(args) => {
+            let (name, rest) = args.split_first().ok_or_else(|| {
+                anyhow::anyhow!("no command given. `h5i --help` lists what there is")
+            })?;
+            let name = name.to_string_lossy().to_string();
+            match cli::plugin::known(&name) {
+                // A name h5i knows: say what it is and how to have it, rather
+                // than reporting it as a typo.
+                Some(_) if !cli::plugin::installed(&name) => {
+                    anyhow::bail!("{}", cli::plugin::not_installed(&name))
+                }
+                Some(_) => cli::plugin::exec(&name, rest)?,
+                None => anyhow::bail!(
+                    "`{name}` is not an h5i command. `h5i --help` lists the verbs, \
+                     and `h5i plugin list` the plugins."
+                ),
+            }
+        }
         Commands::Skill { action } => cli::skill::run(action)?,
         Commands::Completion { shell } => cli::completion::run(shell)?,
     }

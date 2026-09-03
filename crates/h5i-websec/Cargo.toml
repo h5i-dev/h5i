@@ -1,0 +1,18 @@
+[package]
+name = "h5i-websec"
+version = "0.1.0"
+edition = "2024"
+description = "h5i websec: an HTTP workbench for agents, as an h5i plugin."
+
+# A binary only, and a small one on purpose. It links no engine: everything it
+# does, it does by running the same `h5i browser` verbs a person would type, so
+# a plugin cannot reach a session by a path the CLI does not already offer, and
+# installing it does not drag a browser engine into a second binary.
+[[bin]]
+name = "h5i-websec"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5.60", features = ["derive"] }
+serde_json = { workspace = true }
+anyhow = "1"

@@ -602,6 +602,35 @@ Nothing like this exists today. `h5i` has cargo features (`web`, `browser`,
 W21 is the section that has to be built before phase A can ship the way this
 file describes.
 
+### What is built, 2026-09-03
+
+`h5i plugin install|list|remove`, and `h5i websec` dispatching to an installed
+`h5i-websec` (`src/cli/plugin.rs`, `crates/h5i-websec`). A name h5i knows but
+does not have answers with what the capability is and how to install it, rather
+than "unknown command". Installs are refused for names not on the known list,
+because a plugin directory anything can add a name to is a directory where
+`h5i <anything>` becomes an execution. Exit codes pass through both hops
+unchanged, so `websec match` still exits 1 for a miss and 2 for "could not
+look".
+
+Two honest limits.
+
+The plugin composes `h5i browser` verbs in a subprocess rather than reading the
+message store itself. That is the right shape for the privilege argument, and it
+also sidesteps a real constraint: the store's types live in `h5i-browser`, and a
+plugin depending on that crate would link Blitz, Stylo and Boa into a second
+binary. Reading the store from the plugin needs those types extracted into a
+small crate of their own, which is worth doing and is not done.
+
+So the workbench verbs are still in the default binary (`h5i browser message`,
+`diff`, `match`, `resend`, `sequence`, `sitemap`), and the posture argument
+above is not yet delivered: an install *does* currently include them. What the
+plugin delivers today is the mechanism, the agent-facing naming (`req_42` rather
+than a bare sequence number, one noun instead of six verbs) and the proof that
+a plugin can drive a session with no privilege of its own. Moving the verbs
+behind the plugin is the next step, and it should follow the benchmark rather
+than precede it: the benchmark is what will say which of them are load-bearing.
+
 ### What a plugin is
 
 A separate executable, discovered by name the way `git` finds its subcommands.

@@ -168,5 +168,25 @@ is "so can a URL"                   "$(narrowed --url-contains .css)" "2"
 is "a limit is a narrowing"         "$("$H5I" browser requests --session ws-smoke-log --limit 2 --json 2>/dev/null | jqp 'd["narrowed"]')" "True"
 
 echo
+echo "── the plugin ───────────────────────────────────────────────────────"
+PLUGIN="$(dirname "$H5I")/h5i-websec"
+if [ -x "$PLUGIN" ]; then
+    "$H5I" plugin install websec --from "$PLUGIN" --force >/dev/null 2>&1
+    is "the plugin reports itself installed" \
+       "$("$H5I" plugin list --json 2>/dev/null | jqp 'd[0]["installed"]')" "True"
+    is "and drives a session" \
+       "$("$H5I" websec replay req_0 --set 'query.user_id=2' --session ws-smoke-a 2>/dev/null | jqp 'd["response"]["status"]')" "200"
+    # The codes have to survive two hops: h5i -> plugin -> h5i browser.
+    "$H5I" websec match res_1 --json-path role=admin --session ws-smoke-a >/dev/null 2>&1
+    is "a hit still exits 0 through the plugin" "$?" "0"
+    "$H5I" websec match res_1 --contains 'not-in-this-body' --session ws-smoke-a >/dev/null 2>&1
+    is "a miss still exits 1" "$?" "1"
+    "$H5I" websec show req_42x --session ws-smoke-a >/dev/null 2>&1
+    is "and a bad id exits 2" "$?" "2"
+else
+    echo "  (skipped: no h5i-websec beside $H5I — cargo build -p h5i-websec)"
+fi
+
+echo
 if [ "$FAILED" -eq 0 ]; then echo "all websec smoke checks passed"; else echo "SMOKE FAILURES"; fi
 exit "$FAILED"

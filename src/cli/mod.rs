@@ -22,6 +22,9 @@ pub mod websec;
 #[cfg(feature = "ytdlp")]
 pub mod helper;
 pub mod completion;
+// `h5i plugin`: capabilities installed rather than shipped. Not feature-gated,
+// because the verbs are how a user finds out a capability exists at all.
+pub mod plugin;
 // `h5i box detect`. Not feature-gated, deliberately: the verbs are how a user
 // finds out *why* a build cannot watch a box, and gating them behind the
 // feature that provides the collector would hide that answer from exactly the

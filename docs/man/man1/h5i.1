@@ -31,6 +31,9 @@ Open a box someone else is sharing, from a ticket they sent you
 h5i\-runner(1)
 Run boxes on another Linux machine you own
 .TP
+h5i\-plugin(1)
+Install, list or remove a plugin
+.TP
 h5i\-skill(1)
 Write or print the agent skill this binary carries
 .TP
@@ -2163,6 +2166,69 @@ Forget a runner: its record, its key, and its pinned host key
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
+.SH "H5I PLUGIN"
+Install, list or remove a plugin
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBplugin\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I PLUGIN INSTALL"
+Install a plugin from a file
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBinstall\fR <\fB\-\-from\fR> [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-from\fR \fI<PATH>\fR
+The executable to install
+.TP
+\fB\-\-force\fR
+Replace one that is already installed
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+The plugin\*(Aqs name, as it will be typed: `websec` for `h5i websec`
+.SH "H5I PLUGIN LIST"
+What is installed, and what could be
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PLUGIN REMOVE"
+Remove an installed plugin
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBremove\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
 .TP
 <\fINAME\fR>
 
