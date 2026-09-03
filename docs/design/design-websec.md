@@ -708,6 +708,33 @@ Each of these is a decision to be defended in review, not a gap to be filled.
 Parallel replay and match are not exceptions to this. Intruder is not a scanner
 either: both are executors for conditions and payloads that arrive from outside.
 
+## Known gap: request-targets the URL parser rewrites
+
+**Found while benchmarking, 2026-09-03.** h5i builds every request from a parsed
+`Url`, and the URL standard resolves dot segments — `.`, `..`, and their
+percent-encoded spellings `.%2e`, `%2e%2e` — before a request object exists. So
+`--set path=/cgi-bin/.%2e/.%2e/etc/passwd` reaches the wire as
+`/etc/passwd`, and a workbench that let that through would send a request nobody
+asked for and then report its 404 as evidence about the request that *was* asked
+for. That is a false negative wearing the shape of a finding.
+
+`apply` now refuses such an edit and names what the parser would have done
+(`crates/h5i-browser/src/edits.rs`). Refusing is the honest half; it is not the
+whole fix.
+
+The whole fix is a request-target that survives verbatim, which the parser
+cannot express and `reqwest` offers no hook for. It matters for more than
+traversal: normalisation differentials between a proxy and an origin, request
+smuggling, and any test whose subject is *how the bytes are read* rather than
+what they say. Two benchmarks in the XBOW corpus (XBEN-026, the Apache 2.4.50
+CVE, and XBEN-031, the 2.4.49 one) are unreachable from h5i for exactly this
+reason, and `smuggling_desync` benchmarks would be too.
+
+Doing it properly means a send path that takes a method, a literal target and a
+host, and goes out through the same policy gate, budget and receipt as every
+other fetch — the point of h5i is that no request escapes that, and a raw-target
+escape hatch that also escaped the receipt would be worse than the gap.
+
 ## Open questions
 
 1. **Capture default.** Off is the safe default and also the one that makes a

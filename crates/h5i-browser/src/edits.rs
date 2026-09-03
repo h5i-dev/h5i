@@ -314,6 +314,62 @@ fn parse_target(spec: &str) -> Result<Target, EditError> {
     }
 }
 
+/// Is this path segment a dot segment, in any of the spellings a URL parser
+/// treats as one?
+///
+/// The URL standard resolves `.` and `..` away, and percent-decodes before
+/// deciding — so `.%2e`, `%2e.` and `%2e%2e` are all "..", which is exactly what
+/// the Apache traversal CVEs of 2021 are written with.
+fn is_a_dot_segment(segment: &str) -> bool {
+    let decoded = segment
+        .replace("%2e", ".")
+        .replace("%2E", ".")
+        .replace("%2f", "/")
+        .replace("%2F", "/");
+    decoded == "." || decoded == ".."
+}
+
+/// Refuse a path the URL parser would resolve rather than send.
+///
+/// A workbench that quietly straightened `/cgi-bin/.%2e/.%2e/etc/passwd` into
+/// `/etc/passwd` would send a request nobody asked for and report its 404 as
+/// evidence about the request that was asked for. That is worse than not being
+/// able to send it: a false negative that looks like a finding.
+///
+/// So this says what happened and stops. h5i builds every request from a parsed
+/// `Url`, and the URL standard resolves dot segments before the bytes exist —
+/// there is no layer here where the original spelling survives. Sending a
+/// request-target the parser would rewrite is a capability this engine does not
+/// have yet; see `docs/design/design-websec.md`.
+fn refuse_a_resolved_traversal(
+    target: &impl fmt::Display,
+    asked: &str,
+    resolved: &str,
+) -> Result<(), EditError> {
+    // Whatever was named — a path or a whole URL — only its path can hold a
+    // dot segment.
+    let asked = match asked.split_once("://") {
+        Some((_, rest)) => match rest.find('/') {
+            Some(at) => &rest[at..],
+            None => "/",
+        },
+        None => asked,
+    };
+    let asked_path = asked.split(['?', '#']).next().unwrap_or(asked);
+    if !asked_path.split('/').any(is_a_dot_segment) {
+        return Ok(());
+    }
+    Err(EditError::new(
+        target,
+        format!(
+            "{asked_path:?} contains a dot segment, and the URL standard resolves those \
+             before a request exists: this would have gone out as {resolved:?}. h5i has no \
+             way to send a request-target its URL parser would rewrite, so it refuses rather \
+             than testing a different request and reporting the answer as yours."
+        ),
+    ))
+}
+
 /// Apply every edit, in order, and say what each one did.
 ///
 /// Order is the caller's, and it is applied rather than optimised: setting a
@@ -366,6 +422,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             let raw = text(&value);
             let parsed = Url::parse(raw.trim())
                 .map_err(|e| EditError::new(&target, format!("{raw:?} is not a URL: {e}")))?;
+            refuse_a_resolved_traversal(&target, raw.trim(), parsed.path())?;
             let was = std::mem::replace(&mut request.url, parsed);
             Ok(Applied {
                 target,
@@ -379,8 +436,13 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             if removing {
                 return Err(EditError::new(&target, "every URL has a path; set it to `/` instead"));
             }
+            let asked = text(&value);
+            let asked = asked.trim();
             let was = request.url.path().to_string();
-            request.url.set_path(text(&value).trim());
+            let mut candidate = request.url.clone();
+            candidate.set_path(asked);
+            refuse_a_resolved_traversal(&target, asked, candidate.path())?;
+            request.url = candidate;
             Ok(Applied {
                 target,
                 value: Some(request.url.path().to_string()),
@@ -1141,5 +1203,40 @@ mod tests {
         )
         .expect("applies");
         assert_eq!(request.body, br#"{"role":"admin"}"#.to_vec());
+    }
+
+    /// A traversal payload that the URL parser resolves is a request nobody
+    /// asked for. Sending it and reporting its answer would be a false
+    /// negative wearing the shape of evidence.
+    #[test]
+    fn a_path_the_url_parser_would_resolve_is_refused_rather_than_straightened() {
+        for spelling in [
+            "path=/cgi-bin/.%2e/.%2e/etc/passwd",
+            "path=/cgi-bin/%2e%2e/%2e%2e/etc/passwd",
+            "path=/a/../etc/passwd",
+            "path=/a/./b",
+            "url=https://app.test/cgi-bin/.%2E/.%2E/etc/passwd",
+        ] {
+            let mut request = request();
+            let error = apply(&mut request, &[set(spelling)], false)
+                .expect_err("`{spelling}` should be refused");
+            assert!(
+                error.to_string().contains("dot segment"),
+                "{spelling}: {error}"
+            );
+            assert_eq!(
+                request.url.as_str(),
+                "https://app.test/api/users?user_id=123&page=2",
+                "a refused edit leaves the request alone"
+            );
+        }
+    }
+
+    /// And an ordinary path still goes through, dots in a filename included.
+    #[test]
+    fn a_path_with_no_dot_segment_is_set_as_asked() {
+        let mut request = request();
+        apply(&mut request, &[set("path=/static/app.min.js")], false).expect("applies");
+        assert_eq!(request.url.path(), "/static/app.min.js");
     }
 }
