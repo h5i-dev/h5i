@@ -1027,8 +1027,14 @@ impl LocalBroker {
                 request = request.header(name.as_str(), value.as_str());
             }
             if !body.is_empty() {
+                // The caller's own `Content-Type` wins, and the engine's is not
+                // sent beside it. A replayed request carries the stored header
+                // set *and* names its content type, so without this check the
+                // message went out with the header twice and servers answered
+                // 400 to a request that looked perfectly good in the log.
                 if let Some(kind) = content_type
                     && !page_sets("content-type")
+                    && !caller_sets("content-type")
                 {
                     request = request.header(reqwest::header::CONTENT_TYPE, kind);
                 }
@@ -2783,6 +2789,50 @@ mod capture_wire_tests {
 
         let seen = seen.lock().unwrap();
         assert!(seen[1].starts_with("get /api/users?user_id=456"), "{}", seen[1]);
+    }
+
+    /// A body's content type must go out once, whoever named it.
+    ///
+    /// A replay carries the stored headers *and* tells the broker the content
+    /// type, which are two routes to the same header. Sending both produced a
+    /// request with `Content-Type` twice; Flask answers 400 to that, and the
+    /// receipt looked entirely normal.
+    #[test]
+    fn a_replayed_body_names_its_content_type_once() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture),
+        )
+        .expect("broker");
+
+        let (port, seen) = super::caller_header_tests::head_recorder(2, None);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
+        assert!(broker.fetch(&url, Initiator::Navigation).is_ok());
+
+        crate::broker::Broker::send_edited(
+            broker.as_ref(),
+            0,
+            &[
+                crate::edits::parse_set("method=POST").expect("parses"),
+                crate::edits::parse_set("form.username=test").expect("parses"),
+            ],
+            true,
+            crate::broker::Sends::once(),
+        )
+        .expect("replayed");
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(
+            super::caller_header_tests::count(&seen[1], "content-type"),
+            1,
+            "the composed request sent it twice:\n{}",
+            seen[1]
+        );
     }
 
     /// A replay hands back the stored header set, which already holds the
