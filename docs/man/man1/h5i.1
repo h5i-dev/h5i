@@ -1743,7 +1743,7 @@ One stored message, as it went out or as it came back
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBmessage\fR [\fB\-\-part\fR] [\fB\-\-raw\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
+\fBmessage\fR [\fB\-\-part\fR] [\fB\-\-raw\fR] [\fB\-\-body\-to\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1765,6 +1765,13 @@ both
 .TP
 \fB\-\-raw\fR
 Print it as an HTTP message rather than a summary
+.TP
+\fB\-\-body\-to\fR \fI<PATH>\fR
+Write the body to this file, exactly as it came back.
+
+The store already holds the bytes; this is the way to get them out. A response is not always something to read \(em a database backup left in an open bucket, an image, an archive \(em and the next step is usually a tool that wants a file.
+
+With `\-\-part both`, the response body if there is one, otherwise the request\*(Aqs.
 .TP
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open

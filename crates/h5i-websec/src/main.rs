@@ -92,6 +92,9 @@ enum Verb {
         /// Print it as an HTTP message.
         #[arg(long)]
         raw: bool,
+        /// Write the body to this file, exactly as it came back.
+        #[arg(long = "body-to", value_name = "PATH")]
+        body_to: Option<String>,
     },
 
     /// Send one of this session's requests again, with changes.
@@ -232,7 +235,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 argv.push("--denied-only".into());
             }
         }
-        Verb::Show { id, raw } => {
+        Verb::Show { id, raw, body_to } => {
             let seq = sequence_of(&id)?;
             push(&mut argv, &["message"]);
             argv.push(seq);
@@ -247,6 +250,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             if raw {
                 argv.push("--raw".into());
             }
+            flag(&mut argv, "body-to", body_to);
         }
         Verb::Replay {
             id,

@@ -136,6 +136,19 @@ impl Text {
     }
 }
 
+/// The stored bytes of a body, exactly as they came back.
+///
+/// `None` when there are none to give: a body the store skipped, or one whose
+/// file has gone. Not an empty vector — "nothing was kept" and "the body was
+/// empty" are different facts, and a caller writing a file should be told which.
+fn body_bytes(dir: &Path, body: &Body) -> Option<Vec<u8>> {
+    match body {
+        Body::Empty => Some(Vec::new()),
+        Body::Skipped { .. } => None,
+        Body::Stored { sha256, .. } => std::fs::read(dir.join("bodies").join(sha256)).ok(),
+    }
+}
+
 /// How much of a body that is not text to read back anyway.
 const LOSSY_BODY_BYTES: usize = 64 * 1024;
 
@@ -241,6 +254,7 @@ pub fn show(
     seq: u64,
     part: Part,
     raw: bool,
+    body_to: Option<&Path>,
     json_out: bool,
 ) -> anyhow::Result<()> {
     let (session, dir) = store_dir(root, selector)?;
@@ -274,8 +288,39 @@ pub fn show(
     let request_body = request.as_ref().map(|r| body_text(&dir, &r.body));
     let response_body = response.as_ref().map(|r| body_text(&dir, &r.body));
 
+    let mut wrote: Option<Value> = None;
+    // The bytes, before anything renders them. `--part both` means the
+    // response's, because that is the half a caller asks to keep.
+    if let Some(path) = body_to {
+        let source = match part {
+            Part::Request => request.as_ref().map(|r| &r.body),
+            Part::Response => response.as_ref().map(|r| &r.body),
+            Part::Both => response
+                .as_ref()
+                .map(|r| &r.body)
+                .or(request.as_ref().map(|r| &r.body)),
+        };
+        let Some(body) = source else {
+            anyhow::bail!("message {seq} has no such half to write out");
+        };
+        let bytes = body_bytes(&dir, body).ok_or_else(|| {
+            anyhow::anyhow!(
+                "message {seq}'s body is not in the store, so there is nothing to write"
+            )
+        })?;
+        std::fs::write(path, &bytes)
+            .map_err(|e| anyhow::anyhow!("{} could not be written: {e}", path.display()))?;
+        wrote = Some(json!({"path": path.display().to_string(), "bytes": bytes.len()}));
+        if !json_out {
+            println!("  wrote    : {} bytes to {}", bytes.len(), path.display());
+        }
+    }
+
     if json_out {
         let mut value = json!({"seq": seq, "session": session.id});
+        if let Some(wrote) = wrote {
+            value["wrote"] = wrote;
+        }
         if let (Some(request), Some(body)) = (&request, &request_body) {
             value["request"] = json!({
                 "at": request.at,

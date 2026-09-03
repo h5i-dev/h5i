@@ -799,6 +799,17 @@ pub enum BrowserCommands {
         /// Print it as an HTTP message rather than a summary.
         #[arg(long)]
         raw: bool,
+        /// Write the body to this file, exactly as it came back.
+        ///
+        /// The store already holds the bytes; this is the way to get them out.
+        /// A response is not always something to read — a database backup left
+        /// in an open bucket, an image, an archive — and the next step is
+        /// usually a tool that wants a file.
+        ///
+        /// With `--part both`, the response body if there is one, otherwise
+        /// the request's.
+        #[arg(long = "body-to", value_name = "PATH")]
+        body_to: Option<PathBuf>,
         /// Which session, when more than one is open.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
@@ -1444,6 +1455,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             seq,
             part,
             raw,
+            body_to,
             session,
             json,
         } => {
@@ -1452,7 +1464,15 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 Some("response") => super::websec::Part::Response,
                 _ => super::websec::Part::Both,
             };
-            super::websec::show(&root, session.as_deref(), seq, part, raw, json)
+            super::websec::show(
+                &root,
+                session.as_deref(),
+                seq,
+                part,
+                raw,
+                body_to.as_deref(),
+                json,
+            )
         }
         BrowserCommands::Diff {
             left,
