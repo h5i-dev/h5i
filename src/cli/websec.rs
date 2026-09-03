@@ -1002,6 +1002,57 @@ fn look(
 }
 
 
+
+/// The middle sample, and how far the samples sit from it.
+///
+/// Median and median absolute deviation rather than mean and standard
+/// deviation, because one scheduling hiccup on a loaded machine moves a mean by
+/// more than a blind injection's signal and moves a median not at all. The pair
+/// answers the only question a timing test asks: is this run *reliably* slower
+/// than that one, or did it just get unlucky once.
+pub fn median_and_deviation(samples: &[u64]) -> Option<(u64, u64)> {
+    if samples.is_empty() {
+        return None;
+    }
+    let mut sorted: Vec<u64> = samples.to_vec();
+    sorted.sort_unstable();
+    let median = sorted[sorted.len() / 2];
+    let mut spread: Vec<u64> = sorted
+        .iter()
+        .map(|value| value.abs_diff(median))
+        .collect();
+    spread.sort_unstable();
+    Some((median, spread[spread.len() / 2]))
+}
+
+/// Summarise a replay's samples for a person, and for a script.
+///
+/// The caveat is part of the answer rather than a footnote: a session inside a
+/// box pays a proxy hop and a network namespace, so its absolute latency is not
+/// the host's. Comparisons within one session are sound; comparisons across
+/// placements are not.
+pub fn timing_summary(samples: &[Value]) -> Option<Value> {
+    if samples.len() < 2 {
+        return None;
+    }
+    let field = |name: &str| -> Vec<u64> {
+        samples
+            .iter()
+            .filter_map(|s| s.get(name).and_then(Value::as_u64))
+            .collect()
+    };
+    let (ttfb, ttfb_spread) = median_and_deviation(&field("ttfb_ms"))?;
+    let (total, total_spread) = median_and_deviation(&field("total_ms"))?;
+    Some(json!({
+        "sends": samples.len(),
+        "ttfb_ms": {"median": ttfb, "deviation": ttfb_spread},
+        "total_ms": {"median": total, "deviation": total_spread},
+        "note": "medians over this session's own sends. A session in a box pays a proxy \
+                 hop and a namespace, so compare within one session rather than across \
+                 placements",
+    }))
+}
+
 // ── sequences ────────────────────────────────────────────────────────────────
 
 /// One request to send, as the caller wants it sent.
@@ -1537,6 +1588,32 @@ mod tests {
         );
         // A pattern that finds nothing is an error, not an empty binding.
         assert!(extract_one("regex:nothing-here", &stored, &html).is_err());
+    }
+
+    /// One hiccup must not move the answer, which is why this is a median.
+    #[test]
+    fn a_single_outlier_does_not_move_the_median() {
+        let steady = [100u64, 102, 99, 101, 100];
+        let (median, spread) = median_and_deviation(&steady).unwrap();
+        assert_eq!(median, 100);
+        assert!(spread <= 1, "a steady run has a tight spread: {spread}");
+
+        // The same run with one scheduling stall in it.
+        let hiccup = [100u64, 102, 99, 101, 100, 4000];
+        let (median, _) = median_and_deviation(&hiccup).unwrap();
+        assert!(
+            (99..=102).contains(&median),
+            "one 4-second sample must not become the answer: {median}"
+        );
+        // A mean would have said ~750.
+    }
+
+    /// A blind test's whole signal: one payload is reliably slower.
+    #[test]
+    fn a_real_delay_moves_the_median() {
+        let fast = median_and_deviation(&[100, 101, 99, 100]).unwrap().0;
+        let slow = median_and_deviation(&[2100, 2098, 2101, 2099]).unwrap().0;
+        assert!(slow > fast * 10);
     }
 
     #[test]

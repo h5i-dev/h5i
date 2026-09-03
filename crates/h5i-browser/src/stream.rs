@@ -1480,6 +1480,15 @@ fn control_verb_inner(
                 );
             };
             let create = request.get("create").and_then(Value::as_bool).unwrap_or(false);
+            // Bounded here rather than trusted: a caller asking for a million
+            // sends is asking this session to spend its whole budget on one
+            // verb, and the budget refusing halfway is a worse answer than a
+            // ceiling stated up front.
+            let repeat = request
+                .get("repeat")
+                .and_then(Value::as_u64)
+                .unwrap_or(1)
+                .clamp(1, 1000) as u32;
             let strings = |key: &str| -> Vec<String> {
                 request
                     .get(key)
@@ -1574,9 +1583,13 @@ fn control_verb_inner(
                         },
                         &edits,
                         create,
+                        repeat,
                     ),
                 },
-                None => session.factory.broker().send_edited(from, &edits, create),
+                None => session
+                    .factory
+                    .broker()
+                    .send_edited(from, &edits, create, repeat),
             };
             match outcome {
                 Err(why) => (
@@ -1594,6 +1607,7 @@ fn control_verb_inner(
                             "seq": edited.seq,
                             "applied": edited.applied,
                             "sent": edited.sent,
+                            "samples": edited.samples,
                             "response": {
                                 "status": outcome.status,
                                 "url": outcome.final_url.to_string(),

@@ -702,6 +702,9 @@ enum SessionVerb {
         /// Add a target that is not there rather than refusing.
         #[arg(long)]
         create: bool,
+        /// Send it this many times, and report each send's clock.
+        #[arg(long, default_value_t = 1, value_name = "N")]
+        repeat: u32,
         /// A whole request, as JSON, instead of one from this session's store.
         ///
         /// `{"method":…,"url":…,"headers":[[name,value],…],"body_base64":…}`.
@@ -1607,6 +1610,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             set,
             unset,
             create,
+            repeat,
             request,
             at,
         } => {
@@ -1629,6 +1633,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     "set": set,
                     "unset": unset,
                     "create": create,
+                    "repeat": repeat,
                     "request": composed,
                 }),
             )

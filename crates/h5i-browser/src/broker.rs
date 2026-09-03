@@ -133,6 +133,14 @@ pub struct Edited {
     pub seq: Option<u64>,
     /// Each edit, as it was applied.
     pub applied: Vec<crate::edits::Applied>,
+    /// One entry per send. A single replay has one; `--repeat` has that many,
+    /// oldest first, and the caller reads a median off them.
+    ///
+    /// Repetition belongs here rather than in a shell loop because the thing
+    /// being measured is milliseconds and starting a process costs tens of
+    /// them: a loop outside the engine measures the loop.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub samples: Vec<Timing>,
     /// The request as sent, for the record. Header *names* only: the values are
     /// in the store, which is the artifact that is allowed to hold them.
     pub sent: Sent,
@@ -179,6 +187,18 @@ impl SendError {
             message: message.into(),
         }
     }
+}
+
+/// One send's clock, in the two numbers that mean different things.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct Timing {
+    pub seq: Option<u64>,
+    pub status: Option<u16>,
+    /// To the response's headers: the server's decision.
+    pub ttfb_ms: u64,
+    /// To the body in hand: the decision plus the transfer.
+    pub total_ms: u64,
+    pub bytes: u64,
 }
 
 /// What went out, in the parts that are safe to hand back.
@@ -236,6 +256,7 @@ pub trait Broker: Send + Sync {
         _from: u64,
         _edits: &[crate::edits::Edit],
         _create: bool,
+        _repeat: u32,
     ) -> Result<Edited, SendError> {
         Err(SendError::new(
             "no-capture",
@@ -255,6 +276,7 @@ pub trait Broker: Send + Sync {
         _request: Given,
         _edits: &[crate::edits::Edit],
         _create: bool,
+        _repeat: u32,
     ) -> Result<Edited, SendError> {
         Err(SendError::new(
             "not-supported",

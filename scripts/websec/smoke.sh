@@ -17,7 +17,7 @@ H5I="${1:-target/debug/h5i}"
 [ -x "$H5I" ] || { echo "no h5i at $H5I — cargo build --features browser"; exit 2; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PORT=$((20000 + RANDOM % 10000))
-SESSIONS=(ws-smoke-a ws-smoke-b ws-smoke-csrf ws-smoke-log)
+SESSIONS=(ws-smoke-a ws-smoke-b ws-smoke-csrf ws-smoke-log ws-smoke-time)
 FAILED=0
 
 python3 "$HERE/server.py" "$PORT" &
@@ -99,6 +99,19 @@ FLOW="$("$H5I" browser sequence "/tmp/ws-smoke-flow.$$.json" --session ws-smoke-
 is "the two-step flow succeeds"  "$(echo "$FLOW" | jqp 'd["ok"]')" "True"
 is "and the second step is 200"  "$(echo "$FLOW" | jqp 'd["steps"][1]["status"]')" "200"
 has "the token was bound"        "$(echo "$FLOW" | jqp 'list(d["steps"][0]["bound"])')" "csrf"
+
+echo
+echo "── timing ───────────────────────────────────────────────────────────"
+"$H5I" browser open "http://127.0.0.1:$PORT/slow?wait=0" --session ws-smoke-time --new --capture >/dev/null 2>&1
+FAST="$("$H5I" browser resend 0 --repeat 5 --session ws-smoke-time --json 2>/dev/null | jqp 'd["timing"]["ttfb_ms"]["median"]')"
+SLOW="$("$H5I" browser resend 0 --set 'query.wait=1' --repeat 5 --session ws-smoke-time --json 2>/dev/null | jqp 'd["timing"]["ttfb_ms"]["median"]')"
+if [ -n "$FAST" ] && [ -n "$SLOW" ] && [ "$SLOW" -gt $((FAST + 200)) ]; then
+    ok "a 400ms server delay is visible in the median (${FAST}ms vs ${SLOW}ms)"
+else
+    bad "the delay did not show up (fast '${FAST}', slow '${SLOW}')"
+fi
+is "every send is sampled" \
+   "$("$H5I" browser resend 0 --repeat 3 --session ws-smoke-time --json 2>/dev/null | jqp 'len(d["samples"])')" "3"
 
 echo
 echo "── the request log, narrowed ────────────────────────────────────────"

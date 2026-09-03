@@ -1798,7 +1798,7 @@ Send one of this session's own requests again, with changes
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBresend\fR [\fB\-\-set\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-\-as\fR] [\fB\-\-keep\-credentials\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
+\fBresend\fR [\fB\-\-set\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-\-repeat\fR] [\fB\-\-as\fR] [\fB\-\-keep\-credentials\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1815,6 +1815,11 @@ Remove one part of it, by the same names
 Add a target that is not there rather than refusing.
 
 Off by default: a parameter that does not exist is usually a typo, and a typo that silently succeeds costs a whole turn spent reading a response that was never going to differ.
+.TP
+\fB\-\-repeat\fR \fI<N>\fR [default: 1]
+Send it this many times and report the clock, for a timing test.
+
+Repeated inside the engine rather than by a shell loop: the thing being measured is milliseconds and starting a process costs tens of them, so a loop out here would measure the loop. The reply carries every sample plus a median and a median absolute deviation, which is the pair that survives one scheduling hiccup where a mean does not.
 .TP
 \fB\-\-as\fR \fI<SESSION>\fR
 Send it from another session instead of this one.

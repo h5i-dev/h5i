@@ -846,6 +846,15 @@ pub enum BrowserCommands {
         /// response that was never going to differ.
         #[arg(long)]
         create: bool,
+        /// Send it this many times and report the clock, for a timing test.
+        ///
+        /// Repeated inside the engine rather than by a shell loop: the thing
+        /// being measured is milliseconds and starting a process costs tens of
+        /// them, so a loop out here would measure the loop. The reply carries
+        /// every sample plus a median and a median absolute deviation, which is
+        /// the pair that survives one scheduling hiccup where a mean does not.
+        #[arg(long, default_value_t = 1, value_name = "N")]
+        repeat: u32,
         /// Send it from another session instead of this one.
         ///
         /// The authorization test, in one flag: take the request one logged-in
@@ -1376,6 +1385,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             set,
             unset,
             create,
+            repeat,
             as_session,
             keep_credentials,
             session,
@@ -1420,6 +1430,10 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             if create {
                 argv.push("--create".into());
             }
+            if repeat > 1 {
+                argv.push("--repeat".into());
+                argv.push(repeat.to_string());
+            }
             // Mutating: it puts bytes on the wire under this session's
             // identity, which is exactly what the control lock exists to stop a
             // second driver from doing while a human is at the wheel.
@@ -1427,7 +1441,16 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             // Delivered to `--as` when there is one: that is the session whose
             // cookies and receipts this request becomes part of.
             let target = as_session.as_deref().or(session.as_deref());
-            verb(&root, target, argv, true, json)
+            // With one send there is nothing to summarise and the reply is the
+            // answer. With several, the medians go in beside the samples.
+            verb_then(&root, target, argv, true, json, |answer| {
+                if let Some(samples) = answer.get("samples").and_then(Value::as_array)
+                    && let Some(summary) = super::websec::timing_summary(samples)
+                {
+                    answer["timing"] = summary;
+                }
+                Ok(())
+            })
         }
         BrowserCommands::Audit {
             session,

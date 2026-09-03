@@ -1089,13 +1089,17 @@ impl LocalBroker {
                 }
                 self.client.execute(built)
             });
-            let elapsed = started.elapsed().as_millis() as u64;
+            // The headers, not the body: `reqwest` returns as soon as the
+            // status line and headers have arrived. That is time to first byte,
+            // and it is the number a timing test wants.
+            let ttfb = started.elapsed().as_millis() as u64;
 
             let response = match response {
                 Ok(response) => response,
                 Err(e) => {
                     let mut outcome_record = record.response();
-                    outcome_record.duration_ms = Some(elapsed);
+                    outcome_record.duration_ms = Some(ttfb);
+                    outcome_record.ttfb_ms = Some(ttfb);
                     outcome_record.cookies_sent = Some(cookies_sent);
                     outcome_record.error = Some(e.to_string());
                     let _ = self.append(&outcome_record);
@@ -1144,7 +1148,8 @@ impl LocalBroker {
 
                 let mut outcome_record = record.response();
                 outcome_record.status = Some(status.as_u16());
-                outcome_record.duration_ms = Some(elapsed);
+                outcome_record.duration_ms = Some(started.elapsed().as_millis() as u64);
+                outcome_record.ttfb_ms = Some(ttfb);
                 outcome_record.cookies_sent = Some(cookies_sent);
                 outcome_record.cookies_stored = Some(cookies_stored);
                 if location.is_none() {
@@ -1236,7 +1241,8 @@ impl LocalBroker {
                 ) {
                     let mut refused = record.response();
                     refused.status = Some(status.as_u16());
-                    refused.duration_ms = Some(elapsed);
+                    refused.duration_ms = Some(started.elapsed().as_millis() as u64);
+                    refused.ttfb_ms = Some(ttfb);
                     refused.cookies_sent = Some(cookies_sent);
                     refused.cookies_stored = Some(cookies_stored);
                     refused.error = Some(format!("blocked by the same-origin policy: {why}"));
@@ -1304,7 +1310,10 @@ impl LocalBroker {
 
             let mut outcome_record = record.response();
             outcome_record.status = Some(status.as_u16());
-            outcome_record.duration_ms = Some(elapsed);
+            // Now that the body is in hand: the whole fetch, where `ttfb` was
+            // the decision.
+            outcome_record.duration_ms = Some(started.elapsed().as_millis() as u64);
+            outcome_record.ttfb_ms = Some(ttfb);
             outcome_record.cookies_sent = Some(cookies_sent);
             outcome_record.cookies_stored = Some(cookies_stored);
             let body = match body {
@@ -1319,14 +1328,21 @@ impl LocalBroker {
                     self.budget.record(
                         wire,
                         decoded.len() as u64,
-                        std::time::Duration::from_millis(elapsed),
+                        std::time::Duration::from_millis(
+                            outcome_record.duration_ms.unwrap_or(ttfb),
+                        ),
                     );
                     Ok(decoded)
                 }
                 Err(e) => {
                     // A failed read still cost the time it took.
-                    self.budget
-                        .record(0, 0, std::time::Duration::from_millis(elapsed));
+                    self.budget.record(
+                        0,
+                        0,
+                        std::time::Duration::from_millis(
+                            outcome_record.duration_ms.unwrap_or(ttfb),
+                        ),
+                    );
                     Err(e)
                 }
             };
@@ -1823,6 +1839,7 @@ impl crate::broker::Broker for LocalBroker {
         from: u64,
         edits: &[crate::edits::Edit],
         create: bool,
+        repeat: u32,
     ) -> Result<crate::broker::Edited, crate::broker::SendError> {
         use crate::broker::SendError;
         let Some(store) = &self.capture else {
@@ -1892,6 +1909,7 @@ impl crate::broker::Broker for LocalBroker {
             },
             edits,
             create,
+            repeat,
         )
     }
 
@@ -1900,6 +1918,7 @@ impl crate::broker::Broker for LocalBroker {
         request: crate::broker::Given,
         edits: &[crate::edits::Edit],
         create: bool,
+        repeat: u32,
     ) -> Result<crate::broker::Edited, crate::broker::SendError> {
         self.edit_then_send(
             crate::edits::Editable {
@@ -1910,6 +1929,7 @@ impl crate::broker::Broker for LocalBroker {
             },
             edits,
             create,
+            repeat,
         )
     }
 
@@ -1995,6 +2015,7 @@ impl LocalBroker {
         mut editable: crate::edits::Editable,
         edits: &[crate::edits::Edit],
         create: bool,
+        repeat: u32,
     ) -> Result<crate::broker::Edited, crate::broker::SendError> {
         use crate::broker::SendError;
         let applied = crate::edits::apply(&mut editable, edits, create)
@@ -2021,11 +2042,43 @@ impl LocalBroker {
             header_names: fetch.headers.iter().map(|(name, _)| name.clone()).collect(),
             body_bytes: fetch.body.len() as u64,
         };
-        let outcome = crate::broker::Broker::send(self, &fetch);
+        // At least once. `repeat` counts sends, not extra ones, so `--repeat 1`
+        // and no flag at all are the same request and the same receipts.
+        let sends = repeat.max(1);
+        let mut samples = Vec::with_capacity(sends as usize);
+        let mut last = None;
+        for _ in 0..sends {
+            let started = std::time::Instant::now();
+            let outcome = crate::broker::Broker::send(self, &fetch);
+            let total_ms = started.elapsed().as_millis() as u64;
+            // The engine's own reading of the hop, which knows where the
+            // headers stopped and the body began. Falls back to the wall clock
+            // around the call for a fetch that never got that far.
+            let ttfb_ms = outcome
+                .seq
+                .and_then(|seq| {
+                    self.log
+                        .records()
+                        .into_iter()
+                        .find(|r| r.seq == seq && r.phase == crate::receipt::Phase::Response)
+                        .and_then(|r| r.ttfb_ms)
+                })
+                .unwrap_or(total_ms);
+            samples.push(crate::broker::Timing {
+                seq: outcome.seq,
+                status: outcome.status,
+                ttfb_ms,
+                total_ms,
+                bytes: outcome.body.len() as u64,
+            });
+            last = Some(outcome);
+        }
+        let outcome = last.expect("at least one send");
         Ok(crate::broker::Edited {
             seq: outcome.seq,
             applied,
             sent,
+            samples,
             outcome,
         })
     }
@@ -2615,6 +2668,7 @@ mod capture_wire_tests {
             0,
             &[crate::edits::parse_set("query.user_id=456").expect("parses")],
             false,
+            1,
         )
         .expect("the stored request is there");
 
@@ -2654,6 +2708,7 @@ mod capture_wire_tests {
             0,
             &[crate::edits::parse_set("query.id=2").expect("parses")],
             false,
+            1,
         )
         .expect("replayed");
 
@@ -2695,6 +2750,7 @@ mod capture_wire_tests {
             0,
             &[crate::edits::parse_set("query.userid=2").expect("parses")],
             false,
+            1,
         )
         .expect_err("refused");
         assert_eq!(error.code, "bad-edit", "the request was there; the edit was not");
@@ -2728,6 +2784,7 @@ mod capture_wire_tests {
             },
             &[],
             false,
+            1,
         )
         .expect("sent");
         assert_eq!(edited.outcome.status, Some(200));
@@ -2751,7 +2808,7 @@ mod capture_wire_tests {
     fn a_session_without_a_store_says_why_it_cannot_replay() {
         let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
             .expect("broker");
-        let error = crate::broker::Broker::send_edited(broker.as_ref(), 0, &[], false)
+        let error = crate::broker::Broker::send_edited(broker.as_ref(), 0, &[], false, 1)
             .expect_err("refused");
         assert_eq!(error.code, "no-capture");
         assert!(error.message.contains("--capture"), "{}", error.message);

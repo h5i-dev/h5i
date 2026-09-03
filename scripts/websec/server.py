@@ -91,6 +91,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.reply(200, json.dumps(
                     {"ok": True, "role": self.headers.get("X-Role", "user")}).encode())
 
+        elif path == "/slow":
+            # A server that decides slowly: the shape a blind, time-based
+            # injection produces, and the only thing a timing test can see.
+            import time
+            time.sleep(0.4 if query.get("wait", ["0"])[0] == "1" else 0)
+            self.reply(200, b'{"ok":true}')
+
         elif path == "/page":
             self.reply(200, b'<html><head><link rel="stylesheet" href="/a.css">'
                             b'<script src="/b.js"></script></head><body>hi</body></html>',

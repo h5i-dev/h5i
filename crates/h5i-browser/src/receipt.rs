@@ -83,8 +83,19 @@ pub struct RequestRecord {
     /// How the body was encoded on the wire, when it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_encoding: Option<String>,
+    /// The whole fetch: asked to body in hand.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Time to the response's *headers*, which is a different question and the
+    /// one a timing test asks.
+    ///
+    /// A server that decides slowly and then streams a large body answers late
+    /// with a fast total; a fast decision followed by a slow transfer answers
+    /// early with a slow one. Blind injection is timing the decision, so
+    /// collapsing the two into a single duration would hide the signal under
+    /// the size of the page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttfb_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// How many cookies this request carried. A count, never a value. The
@@ -124,6 +135,7 @@ impl RequestRecord {
             wire_bytes: None,
             content_encoding: None,
             duration_ms: None,
+            ttfb_ms: None,
             error: None,
             cookies_sent: None,
             cookies_stored: None,

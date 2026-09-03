@@ -379,14 +379,30 @@ its own.
 ## W14. Timing
 
 `duration_ms` on the receipt is a page-load number. Blind injection needs a
-better one, so replay reports `connect_ms`, `tls_ms`, `ttfb_ms` and `total_ms`
-measured at the socket, plus `--repeat N` returning median and median absolute
-deviation rather than a mean that one scheduling hiccup ruins.
+better one, so replay reports the clock per send, plus `--repeat N` returning
+median and median absolute deviation rather than a mean that one scheduling
+hiccup ruins.
 
 The honest caveat belongs in the reply, not in a footnote: a session inside a
 box pays a proxy hop and a namespace, so absolute latency is not the host's.
 Comparisons within one session are sound, comparisons across placements are not,
-and the reply names the placement so the agent can tell.
+and the reply says so.
+
+Built 2026-09-03, with one honest narrowing. Two numbers are reported, not four:
+`ttfb_ms` (to the response's headers, which is the server's *decision*) and
+`total_ms` (to the body in hand). `connect_ms` and `tls_ms` would need a custom
+connector under `reqwest`, and inventing them from a wall clock around the call
+would be a guess wearing a measurement's name. The split that was actually
+needed is the one that shipped: a server that decides slowly and streams a large
+body answers late with a fast total, so collapsing the two would hide a
+time-based injection under the size of the page.
+
+`--repeat` runs inside the broker rather than in a shell loop, because the thing
+being measured is milliseconds and starting a process costs tens of them: a loop
+outside the engine measures the loop. Each send is a receipt of its own, so a
+repeated replay is as auditable as a single one. The count is clamped rather
+than trusted, since a caller asking for a million sends is asking the session to
+spend its whole budget on one verb.
 
 ## W15. Parallel replay
 
@@ -483,7 +499,7 @@ The twenty features, ranked, with the phase that carries them.
 | 10 | replay as another session | Repeater plus session rules | B, built |
 | 11 | extract and bind | macros, session rules | B, built |
 | 12 | multi-request sequences | Repeater sequences | B, built |
-| 15 | precise timing | Repeater, Intruder | B |
+| 15 | precise timing | Repeater, Intruder | B, built |
 | 16 | controlled parallel replay | Intruder, race testing | B |
 | 17 | redirect chain observation and control | Proxy, Repeater | B |
 | 18 | site map and inventory | Target site map | B |

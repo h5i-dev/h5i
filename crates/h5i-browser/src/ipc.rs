@@ -89,12 +89,14 @@ enum Ask {
         from: u64,
         edits: Vec<crate::edits::Edit>,
         create: bool,
+        repeat: u32,
     },
     /// Send a request this session never made, under this session's identity.
     SendGiven {
         request: Box<crate::broker::Given>,
         edits: Vec<crate::edits::Edit>,
         create: bool,
+        repeat: u32,
     },
     HighWater,
     Since {
@@ -553,11 +555,13 @@ impl Broker for BrokerClient {
         from: u64,
         edits: &[crate::edits::Edit],
         create: bool,
+        repeat: u32,
     ) -> Result<crate::broker::Edited, crate::broker::SendError> {
         let ask = Ask::SendEdited {
             from,
             edits: edits.to_vec(),
             create,
+            repeat,
         };
         match self.ask(ask, &[]) {
             Some((Said::Edited(edited), blob)) => match *edited {
@@ -579,11 +583,13 @@ impl Broker for BrokerClient {
         request: crate::broker::Given,
         edits: &[crate::edits::Edit],
         create: bool,
+        repeat: u32,
     ) -> Result<crate::broker::Edited, crate::broker::SendError> {
         let ask = Ask::SendGiven {
             request: Box::new(request),
             edits: edits.to_vec(),
             create,
+            repeat,
         };
         match self.ask(ask, &[]) {
             Some((Said::Edited(edited), blob)) => match *edited {
@@ -896,8 +902,9 @@ fn answer(
             from,
             edits,
             create,
+            repeat,
         } => {
-            let mut edited = broker.send_edited(from, &edits, create);
+            let mut edited = broker.send_edited(from, &edits, create, repeat);
             if let Ok(edited) = &mut edited {
                 body = std::mem::take(&mut edited.outcome.body);
             }
@@ -907,8 +914,9 @@ fn answer(
             request,
             edits,
             create,
+            repeat,
         } => {
-            let mut edited = broker.send_given(*request, &edits, create);
+            let mut edited = broker.send_given(*request, &edits, create, repeat);
             if let Ok(edited) = &mut edited {
                 body = std::mem::take(&mut edited.outcome.body);
             }
