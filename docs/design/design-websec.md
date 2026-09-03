@@ -450,16 +450,16 @@ The twenty features, ranked, with the phase that carries them.
 
 | # | feature | Burp analogue | phase |
 |---|---|---|---|
-| 1 | full request and response capture | Proxy history, Logger | A |
-| 2 | stable message id | Proxy history | A |
-| 3 | action to request provenance | Logger, site map | A |
-| 4 | history search and filter | Proxy history | A |
-| 5 | raw and typed views | Message editor, Inspector | A |
-| 6 | same-session replay | Repeater | A |
-| 7 | structured request edit | Repeater, Inspector | A |
-| 9 | multiple sessions and jars | browser sessions | A (mostly shipped) |
-| 13 | machine-readable response diff | Comparer | A |
-| 14 | match and extract primitives | Intruder grep | A |
+| 1 | full request and response capture | Proxy history, Logger | A, built |
+| 2 | stable message id | Proxy history | A, partly built |
+| 3 | action to request provenance | Logger, site map | A, partly built |
+| 4 | history search and filter | Proxy history | A, built |
+| 5 | raw and typed views | Message editor, Inspector | A, built |
+| 6 | same-session replay | Repeater | A, built |
+| 7 | structured request edit | Repeater, Inspector | A, built |
+| 9 | multiple sessions and jars | browser sessions | A, built |
+| 13 | machine-readable response diff | Comparer | A, built |
+| 14 | match and extract primitives | Intruder grep | A, built |
 | 8 | multipart and upload editing | Repeater | B |
 | 10 | replay as another session | Repeater plus session rules | B |
 | 11 | extract and bind | macros, session rules | B |

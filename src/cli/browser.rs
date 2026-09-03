@@ -667,6 +667,24 @@ pub enum BrowserCommands {
         /// Only what happened after this sequence number.
         #[arg(long, value_name = "SEQ")]
         since: Option<u64>,
+        /// Only this method.
+        #[arg(long, value_name = "METHOD")]
+        method: Option<String>,
+        /// Only rows whose URL contains this.
+        #[arg(long, value_name = "TEXT")]
+        url_contains: Option<String>,
+        /// Only responses with this status.
+        #[arg(long, value_name = "CODE")]
+        status: Option<u16>,
+        /// Only `navigation`, `subresource`, `frame` or `redirect`.
+        #[arg(long, value_name = "KIND")]
+        initiator: Option<String>,
+        /// Only what policy refused.
+        #[arg(long)]
+        denied_only: bool,
+        /// At most this many rows, newest last.
+        #[arg(long, value_name = "N")]
+        limit: Option<u64>,
         #[arg(long)]
         json: bool,
     },
@@ -1185,12 +1203,29 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         BrowserCommands::Requests {
             session,
             since,
+            method,
+            url_contains,
+            status,
+            initiator,
+            denied_only,
+            limit,
             json,
         } => {
             let mut argv = vec!["requests".to_string()];
-            if let Some(since) = since {
-                argv.push("--since".into());
-                argv.push(since.to_string());
+            let mut flag = |name: &str, value: Option<String>| {
+                if let Some(value) = value {
+                    argv.push(format!("--{name}"));
+                    argv.push(value);
+                }
+            };
+            flag("since", since.map(|s| s.to_string()));
+            flag("method", method);
+            flag("url-contains", url_contains);
+            flag("status", status.map(|s| s.to_string()));
+            flag("initiator", initiator);
+            flag("limit", limit.map(|s| s.to_string()));
+            if denied_only {
+                argv.push("--denied-only".into());
             }
             verb(&root, session.as_deref(), argv, false, json)
         }

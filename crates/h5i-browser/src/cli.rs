@@ -658,6 +658,24 @@ enum SessionVerb {
         /// new, the way `snapshot --delta` works and for the same reason.
         #[arg(long, value_name = "SEQ")]
         since: Option<u64>,
+        /// Only this method.
+        #[arg(long, value_name = "METHOD")]
+        method: Option<String>,
+        /// Only rows whose URL contains this.
+        #[arg(long, value_name = "TEXT")]
+        url_contains: Option<String>,
+        /// Only responses with this status.
+        #[arg(long, value_name = "CODE")]
+        status: Option<u16>,
+        /// Only `navigation`, `subresource`, `frame` or `redirect`.
+        #[arg(long, value_name = "KIND")]
+        initiator: Option<String>,
+        /// Only what policy refused.
+        #[arg(long)]
+        denied_only: bool,
+        /// At most this many rows, newest last.
+        #[arg(long, value_name = "N")]
+        limit: Option<u64>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -1552,9 +1570,27 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                 "role": role, "name": name,
             }),
         ),
-        SessionVerb::Requests { since, at } => (
+        SessionVerb::Requests {
+            since,
+            method,
+            url_contains,
+            status,
+            initiator,
+            denied_only,
+            limit,
             at,
-            serde_json::json!({"verb": Verb::Requests.name(), "since": since}),
+        } => (
+            at,
+            serde_json::json!({
+                "verb": Verb::Requests.name(),
+                "since": since,
+                "method": method,
+                "url_contains": url_contains,
+                "status": status,
+                "initiator": initiator,
+                "denied_only": denied_only,
+                "limit": limit,
+            }),
         ),
         SessionVerb::Resend {
             from,

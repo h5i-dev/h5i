@@ -2104,7 +2104,84 @@ fn control_verb_inner(
             // lives in another process now, and reading it whole to hand back a tail
             // would put the thing the cursor exists to avoid back on the wire.
             let since = request.get("since").and_then(Value::as_u64);
-            let rows = session.factory.broker().records_since(since);
+            let mut rows = session.factory.broker().records_since(since);
+
+            // Narrowed here, beside the window and for the same reason: a
+            // session that loaded four hundred subresources has a log an agent
+            // should be able to ask a question of rather than read. The filters
+            // are fields of the record, never a query language: `method=POST`
+            // typed as a flag cannot be mis-quoted in a shell, and a language
+            // would have to grow an escape rule for the one thing a caller most
+            // wants to match on, which is a URL.
+            let want_text = |key: &str| {
+                request
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .map(str::to_ascii_lowercase)
+            };
+            let method = want_text("method");
+            let initiator = want_text("initiator");
+            let url_contains = want_text("url_contains");
+            let status = request.get("status").and_then(Value::as_u64);
+            let denied_only = request
+                .get("denied_only")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let limit = request.get("limit").and_then(Value::as_u64);
+            // A limit narrows as surely as a filter does. Reporting it as the
+            // whole window would let "two rows" be read as "this session made
+            // two requests", which is the one thing this flag exists to
+            // prevent.
+            let mut narrowed = method.is_some()
+                || initiator.is_some()
+                || url_contains.is_some()
+                || status.is_some()
+                || denied_only;
+            if narrowed {
+                rows.retain(|row| {
+                    if let Some(method) = &method
+                        && !row.method.eq_ignore_ascii_case(method)
+                    {
+                        return false;
+                    }
+                    if let Some(url) = &url_contains
+                        && !row.url.to_ascii_lowercase().contains(url)
+                    {
+                        return false;
+                    }
+                    if let Some(initiator) = &initiator {
+                        let name = serde_json::to_value(row.initiator)
+                            .ok()
+                            .and_then(|v| v.as_str().map(str::to_string))
+                            .unwrap_or_default();
+                        if !name.eq_ignore_ascii_case(initiator) {
+                            return false;
+                        }
+                    }
+                    // A status belongs to the response half of a pair, so a
+                    // status filter selects response rows and says nothing
+                    // about the request rows beside them. That is what the
+                    // caller means by "which of these came back 500".
+                    if let Some(status) = status
+                        && row.status != Some(status as u16)
+                    {
+                        return false;
+                    }
+                    if denied_only && row.allowed {
+                        return false;
+                    }
+                    true
+                });
+            }
+            // Last, so a limit means "the newest N of what I asked for" rather
+            // than "the newest N, then filtered", which would silently answer
+            // from a window the caller did not choose.
+            if let Some(limit) = limit
+                && rows.len() as u64 > limit
+            {
+                rows.drain(..rows.len() - limit as usize);
+                narrowed = true;
+            }
             // The counts are over the *whole* log rather than the window,
             // because "nothing was refused" is a claim about the session and an
             // agent that only ever asks for windows should still be able to
@@ -2130,6 +2207,10 @@ fn control_verb_inner(
                     // row or skip one permanently.
                     "cursor": summary.highest,
                     "shown": rows.len(),
+                    // Whether what came back is the window or a slice of it, so
+                    // "two rows" is never read as "this session made two
+                    // requests".
+                    "narrowed": narrowed,
                     "total": summary.total,
                     "denied": summary.denied,
                     "text": text,
@@ -5064,6 +5145,50 @@ mod tests {
             session.page.snapshot().render()
         );
         assert!(reply["settled"].is_string(), "the reply says whether it finished");
+    }
+
+    /// A session that loaded four hundred subresources has a log an agent should
+    /// be able to ask a question of rather than read whole.
+    #[test]
+    fn the_request_log_can_be_narrowed_and_says_when_it_was() {
+        let (mut session, broker) =
+            session_and_broker("<p>hi</p>", crate::secrets::Secrets::default());
+        // Rows without a wire: what is being tested is the narrowing, and a
+        // real fetch would make the test depend on a server.
+        use crate::receipt::Sink as _;
+        for (seq, initiator, method, url, status) in [
+            (0u64, crate::receipt::Initiator::Navigation, "GET", "https://app.test/", Some(200u16)),
+            (1, crate::receipt::Initiator::Subresource, "GET", "https://app.test/a.css", Some(200)),
+            (2, crate::receipt::Initiator::Subresource, "GET", "https://app.test/b.js", Some(404)),
+            (3, crate::receipt::Initiator::Navigation, "POST", "https://app.test/login", Some(302)),
+        ] {
+            let mut record = crate::receipt::RequestRecord::request(seq, initiator, method, url);
+            record.status = status;
+            broker.log().append(&record).expect("recorded");
+        }
+
+        let mut shown = |request: &Value| -> (usize, bool) {
+            let (reply, _) = control_verb(&mut session, request);
+            (
+                reply["requests"].as_array().map(Vec::len).unwrap_or(0),
+                reply["narrowed"].as_bool().unwrap_or(false),
+            )
+        };
+
+        assert_eq!(shown(&json!({"verb": "requests"})), (4, false));
+        assert_eq!(shown(&json!({"verb": "requests", "method": "post"})), (1, true));
+        assert_eq!(
+            shown(&json!({"verb": "requests", "initiator": "subresource"})),
+            (2, true)
+        );
+        assert_eq!(shown(&json!({"verb": "requests", "status": 404})), (1, true));
+        assert_eq!(
+            shown(&json!({"verb": "requests", "url_contains": ".css"})),
+            (1, true)
+        );
+        // A limit narrows too, and saying otherwise would let two rows read as
+        // the whole session.
+        assert_eq!(shown(&json!({"verb": "requests", "limit": 2})), (2, true));
     }
 
     #[test]

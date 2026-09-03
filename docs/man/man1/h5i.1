@@ -1627,7 +1627,7 @@ The request log: what this session asked for, and what was refused
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBrequests\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-since\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBrequests\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-since\fR] [\fB\-\-method\fR] [\fB\-\-url\-contains\fR] [\fB\-\-status\fR] [\fB\-\-initiator\fR] [\fB\-\-denied\-only\fR] [\fB\-\-limit\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1637,6 +1637,24 @@ Which session, when more than one is open. A name from `\-\-session` at open tim
 .TP
 \fB\-\-since\fR \fI<SEQ>\fR
 Only what happened after this sequence number
+.TP
+\fB\-\-method\fR \fI<METHOD>\fR
+Only this method
+.TP
+\fB\-\-url\-contains\fR \fI<TEXT>\fR
+Only rows whose URL contains this
+.TP
+\fB\-\-status\fR \fI<CODE>\fR
+Only responses with this status
+.TP
+\fB\-\-initiator\fR \fI<KIND>\fR
+Only `navigation`, `subresource`, `frame` or `redirect`
+.TP
+\fB\-\-denied\-only\fR
+Only what policy refused
+.TP
+\fB\-\-limit\fR \fI<N>\fR
+At most this many rows, newest last
 .TP
 \fB\-\-json\fR
 
