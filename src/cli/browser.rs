@@ -724,6 +724,22 @@ pub enum BrowserCommands {
         json: bool,
     },
 
+    /// What this session reached, as a tree of origins and endpoints.
+    ///
+    /// The request log folded into the shape a person asks it questions in:
+    /// which paths, by which methods, answering which statuses, taking which
+    /// parameters. Built from the receipts, so it holds what the session
+    /// actually reached and nothing it merely read about. A URL scraped out of
+    /// a JavaScript bundle was not visited, and blurring the two would answer
+    /// "what did this session reach" with a guess.
+    Sitemap {
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// One stored message, as it went out or as it came back.
     ///
     /// Needs a session opened with `--capture`. This is the verb that shows the
@@ -870,6 +886,15 @@ pub enum BrowserCommands {
         /// race that reproduces is a race somebody else can read afterwards.
         #[arg(long, requires = "repeat")]
         race: bool,
+        /// Stop at the first redirect and report it, rather than following it.
+        ///
+        /// A browser follows a `Location`; a test usually wants the 302 itself.
+        /// It is where an authentication flow says who you are, where an open
+        /// redirect proves it accepts anything, and where the `Set-Cookie` that
+        /// logs you in actually rides. The reply carries the status and the
+        /// headers with nothing followed.
+        #[arg(long)]
+        no_follow: bool,
         /// Send it from another session instead of this one.
         ///
         /// The authorization test, in one flag: take the request one logged-in
@@ -1328,6 +1353,9 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 json,
             )
         }
+        BrowserCommands::Sitemap { session, json } => {
+            super::websec::sitemap(&root, session.as_deref(), json)
+        }
         BrowserCommands::Message {
             seq,
             part,
@@ -1402,6 +1430,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             create,
             repeat,
             race,
+            no_follow,
             as_session,
             keep_credentials,
             session,
@@ -1452,6 +1481,9 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             }
             if race {
                 argv.push("--together".into());
+            }
+            if no_follow {
+                argv.push("--no-follow".into());
             }
             // Mutating: it puts bytes on the wire under this session's
             // identity, which is exactly what the control lock exists to stop a

@@ -48,6 +48,16 @@ pub struct Fetch {
     /// subresource as the agent naming a URL, and a page from the open web
     /// reaches the box's dev server. See [`crate::policy::Policy::check_from`].
     pub document: Option<Url>,
+    /// How many redirect hops this request may follow, when the caller wants a
+    /// different answer from the session's.
+    ///
+    /// `None` is the policy's limit, which is what every page load uses. `Some(0)`
+    /// stops at the first `Location` and hands it back unfollowed, which is the
+    /// only way to see a redirect *as a message*: where an authentication flow
+    /// sends you, what an open redirect accepts, which `Set-Cookie` rides on the
+    /// 302. Following it silently is right for a browser and wrong for a test.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_redirects: Option<usize>,
     /// Set when a *page* asked, which is what subjects the answer to the
     /// same-origin policy. `None` is the agent exercising its own authority
     /// over a URL it named, which is a different question. See [`crate::cors`].
@@ -65,6 +75,7 @@ impl Fetch {
             body: Vec::new(),
             content_type: None,
             headers: Vec::new(),
+            max_redirects: None,
             document: None,
             cors: None,
         }
@@ -199,6 +210,12 @@ impl SendError {
 pub struct Sends {
     /// How many. Always at least one.
     pub count: u32,
+    /// Stop at the first redirect instead of following it.
+    ///
+    /// A browser follows; a test often wants the 302 itself. See
+    /// [`Fetch::max_redirects`].
+    #[serde(default)]
+    pub no_follow: bool,
     /// Released together rather than one after another.
     ///
     /// A burst, and named as one. Every request is written and flushed at
@@ -215,6 +232,7 @@ impl Default for Sends {
         Self {
             count: 1,
             together: false,
+            no_follow: false,
         }
     }
 }

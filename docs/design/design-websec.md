@@ -354,6 +354,19 @@ set it with `--set`, which is a deliberate act rather than a default.
 The dropped names are printed, because a silent strip is a different request
 than the caller thinks they sent.
 
+### Stopping at a redirect
+
+Built 2026-09-03. `resend --no-follow` sets this request's hop limit to zero:
+the engine reports the 302 with its headers instead of following it. That is
+where an authentication flow names you, where an open redirect proves it accepts
+anything, and where the `Set-Cookie` that logs you in rides.
+
+Two rules. Stopping where the caller asked to stop is not an error, so the
+outcome carries a status and no error; only running out of hops somebody wanted
+is a failure. And the per-request limit can lower the session's policy limit,
+never raise it: a request able to raise its own ceiling would be a request
+setting its own policy.
+
 ## W12. Structural diff
 
 `h5i websec diff res_42 res_43` is Comparer for programs. The reply has three
@@ -476,6 +489,15 @@ Candidates are labelled as candidates. A URL scraped from a bundle was not
 visited, and the map must not blur the two, because "what did this session
 reach" is the question the receipts exist to answer.
 
+Built 2026-09-03, and narrower than the paragraph above on purpose:
+`h5i browser sitemap` folds the *receipts* into origins and endpoints, with
+methods, statuses, parameter names, hit counts, a mark for what was navigated to
+rather than pulled in, and the refused URLs listed apart. The disclosed-but-
+unvisited half is not built. Rather than label candidates inside the same tree
+and hope a reader keeps the distinction, the verb answers only the question it
+can answer exactly; scraping bundles for endpoint strings belongs in a verb that
+says that is what it did.
+
 ## W18. DOM instrumentation
 
 The DOM Invader analogue, and the first feature that is a plugin rather than
@@ -525,8 +547,8 @@ The twenty features, ranked, with the phase that carries them.
 | 12 | multi-request sequences | Repeater sequences | B, built |
 | 15 | precise timing | Repeater, Intruder | B, built |
 | 16 | controlled parallel replay | Intruder, race testing | B, built |
-| 17 | redirect chain observation and control | Proxy, Repeater | B |
-| 18 | site map and inventory | Target site map | B |
+| 17 | redirect chain observation and control | Proxy, Repeater | B, built |
+| 18 | site map and inventory | Target site map | B, built |
 | 19 | DOM instrumentation | DOM Invader | C |
 | 20 | OAST callbacks | Collaborator | C |
 

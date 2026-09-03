@@ -1053,6 +1053,177 @@ pub fn timing_summary(samples: &[Value]) -> Option<Value> {
     }))
 }
 
+
+// ── the site map ─────────────────────────────────────────────────────────────
+
+/// One endpoint, as the session saw it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Endpoint {
+    pub path: String,
+    /// Methods seen, in the order first seen.
+    pub methods: Vec<String>,
+    /// Status codes seen.
+    pub statuses: Vec<u16>,
+    /// Query parameter *names* observed. Never values: a session id in a query
+    /// string is still a session id, and a map is the kind of thing that gets
+    /// pasted into a report.
+    pub params: Vec<String>,
+    /// How many requests this endpoint accounted for, both phases counted once.
+    pub hits: usize,
+    /// Whether anything reached it by navigation rather than as a subresource.
+    pub navigated: bool,
+}
+
+/// One origin's endpoints.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Origin {
+    pub origin: String,
+    pub endpoints: Vec<Endpoint>,
+}
+
+/// What a session reached, and what it was refused.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Map {
+    pub origins: Vec<Origin>,
+    /// URLs the policy refused. Part of the map because "this session tried to
+    /// reach that and was not allowed" is a fact about the application, not
+    /// just about the session.
+    pub denied: Vec<String>,
+}
+
+/// Fold a request log into a map.
+///
+/// Only what was *reached*. A URL scraped out of a JavaScript bundle was not
+/// visited, and a map that blurred the two would answer "what did this session
+/// reach" with a guess, which is the one question the receipts exist to answer
+/// exactly. Disclosed-but-unvisited candidates belong in a separate verb that
+/// says so, and that verb is not built.
+pub fn map_of(records: &[Value]) -> Map {
+    use std::collections::BTreeMap;
+    let mut origins: BTreeMap<String, BTreeMap<String, Endpoint>> = BTreeMap::new();
+    let mut denied: Vec<String> = Vec::new();
+
+    for record in records {
+        let url = record.get("url").and_then(Value::as_str).unwrap_or_default();
+        let Ok(parsed) = url::Url::parse(url) else {
+            continue;
+        };
+        let phase = record.get("phase").and_then(Value::as_str).unwrap_or("");
+        if record.get("allowed").and_then(Value::as_bool) == Some(false) {
+            if phase == "request" && !denied.contains(&url.to_string()) {
+                denied.push(url.to_string());
+            }
+            continue;
+        }
+
+        let origin = match parsed.host_str() {
+            Some(host) => match parsed.port() {
+                Some(port) => format!("{}://{host}:{port}", parsed.scheme()),
+                None => format!("{}://{host}", parsed.scheme()),
+            },
+            None => parsed.scheme().to_string(),
+        };
+        let slot = origins.entry(origin).or_default();
+        let endpoint = slot.entry(parsed.path().to_string()).or_insert(Endpoint {
+            path: parsed.path().to_string(),
+            methods: Vec::new(),
+            statuses: Vec::new(),
+            params: Vec::new(),
+            hits: 0,
+            navigated: false,
+        });
+
+        if phase == "request" {
+            endpoint.hits += 1;
+            if let Some(method) = record.get("method").and_then(Value::as_str)
+                && !endpoint.methods.iter().any(|m| m == method)
+            {
+                endpoint.methods.push(method.to_string());
+            }
+            if record.get("initiator").and_then(Value::as_str) == Some("navigation") {
+                endpoint.navigated = true;
+            }
+            for (name, _) in parsed.query_pairs() {
+                let name = name.into_owned();
+                if !endpoint.params.contains(&name) {
+                    endpoint.params.push(name);
+                }
+            }
+        } else if let Some(status) = record.get("status").and_then(Value::as_u64) {
+            let status = status as u16;
+            if !endpoint.statuses.contains(&status) {
+                endpoint.statuses.push(status);
+            }
+        }
+    }
+
+    Map {
+        origins: origins
+            .into_iter()
+            .map(|(origin, endpoints)| Origin {
+                origin,
+                endpoints: endpoints.into_values().collect(),
+            })
+            .collect(),
+        denied,
+    }
+}
+
+/// `h5i browser sitemap`.
+pub fn sitemap(root: &Path, selector: Option<&str>, json_out: bool) -> anyhow::Result<()> {
+    let answer = super::browser::ask_session(
+        root,
+        selector,
+        vec!["requests".to_string()],
+        false,
+    )?;
+    let empty = Vec::new();
+    let records = answer
+        .get("requests")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
+    let map = map_of(records);
+
+    if json_out {
+        println!("{}", serde_json::to_string_pretty(&map)?);
+        return Ok(());
+    }
+    if map.origins.is_empty() && map.denied.is_empty() {
+        println!("  this session has reached nothing yet");
+        return Ok(());
+    }
+    for origin in &map.origins {
+        println!("  {}", origin.origin);
+        for endpoint in &origin.endpoints {
+            let methods = endpoint.methods.join(",");
+            let statuses = endpoint
+                .statuses
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            let params = if endpoint.params.is_empty() {
+                String::new()
+            } else {
+                format!("  ?{}", endpoint.params.join("&"))
+            };
+            let mark = if endpoint.navigated { "*" } else { " " };
+            println!(
+                "  {mark} {:<32} {:<8} {:<12} x{}{params}",
+                endpoint.path, methods, statuses, endpoint.hits
+            );
+        }
+    }
+    if !map.denied.is_empty() {
+        println!();
+        println!("  refused by policy:");
+        for url in &map.denied {
+            println!("    {url}");
+        }
+    }
+    Ok(())
+}
+
 // ── sequences ────────────────────────────────────────────────────────────────
 
 /// One request to send, as the caller wants it sent.
@@ -1614,6 +1785,44 @@ mod tests {
         let fast = median_and_deviation(&[100, 101, 99, 100]).unwrap().0;
         let slow = median_and_deviation(&[2100, 2098, 2101, 2099]).unwrap().0;
         assert!(slow > fast * 10);
+    }
+
+    #[test]
+    fn a_map_folds_a_log_into_endpoints_and_keeps_the_refusals() {
+        let records = vec![
+            json!({"seq":0,"phase":"request","initiator":"navigation","method":"GET",
+                   "url":"https://app.test/users?id=1&page=2","allowed":true}),
+            json!({"seq":0,"phase":"response","url":"https://app.test/users?id=1&page=2",
+                   "allowed":true,"status":200}),
+            json!({"seq":1,"phase":"request","initiator":"subresource","method":"GET",
+                   "url":"https://app.test/style.css","allowed":true}),
+            json!({"seq":1,"phase":"response","url":"https://app.test/style.css",
+                   "allowed":true,"status":200}),
+            json!({"seq":2,"phase":"request","initiator":"navigation","method":"POST",
+                   "url":"https://app.test/users?id=9","allowed":true}),
+            json!({"seq":2,"phase":"response","url":"https://app.test/users?id=9",
+                   "allowed":true,"status":403}),
+            json!({"seq":3,"phase":"request","initiator":"subresource","method":"GET",
+                   "url":"https://tracker.example/beacon","allowed":false}),
+        ];
+        let map = map_of(&records);
+
+        assert_eq!(map.origins.len(), 1, "the refused origin is not an endpoint");
+        let app = &map.origins[0];
+        assert_eq!(app.origin, "https://app.test");
+        assert_eq!(app.endpoints.len(), 2);
+
+        let users = app.endpoints.iter().find(|e| e.path == "/users").unwrap();
+        assert_eq!(users.methods, vec!["GET", "POST"], "both methods, once each");
+        assert_eq!(users.statuses, vec![200, 403]);
+        assert_eq!(users.params, vec!["id", "page"], "names, never values");
+        assert_eq!(users.hits, 2);
+        assert!(users.navigated);
+
+        let css = app.endpoints.iter().find(|e| e.path == "/style.css").unwrap();
+        assert!(!css.navigated, "a subresource is not a page somebody went to");
+
+        assert_eq!(map.denied, vec!["https://tracker.example/beacon".to_string()]);
     }
 
     #[test]

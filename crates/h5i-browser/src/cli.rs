@@ -708,6 +708,9 @@ enum SessionVerb {
         /// Release the sends together rather than one after another.
         #[arg(long)]
         together: bool,
+        /// Stop at the first redirect and report it, rather than following it.
+        #[arg(long)]
+        no_follow: bool,
         /// A whole request, as JSON, instead of one from this session's store.
         ///
         /// `{"method":…,"url":…,"headers":[[name,value],…],"body_base64":…}`.
@@ -1615,6 +1618,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             create,
             repeat,
             together,
+            no_follow,
             request,
             at,
         } => {
@@ -1639,6 +1643,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     "create": create,
                     "repeat": repeat,
                     "together": together,
+                    "no_follow": no_follow,
                     "request": composed,
                 }),
             )

@@ -766,6 +766,7 @@ impl LocalBroker {
         body: &[u8],
         content_type: Option<&str>,
         caller_headers: &[(String, String)],
+        max_redirects: Option<usize>,
         document: Option<&Url>,
         cors: Option<&CorsContext>,
     ) -> FetchOutcome {
@@ -786,6 +787,13 @@ impl LocalBroker {
             .collect();
         // Where the chain began, for the credential rule below.
         let started_at = crate::cors::Origin::of(url);
+        // The caller may ask for fewer hops than the policy allows, never more:
+        // the policy's number is a ceiling on what this session may do, and a
+        // request that could raise it would be a request that sets its own
+        // limits.
+        let hop_limit = max_redirects
+            .unwrap_or_else(|| self.policy.max_redirects())
+            .min(self.policy.max_redirects());
         // What a caller may see of the answer. Recomputed per hop, because a
         // redirect can change the origin the answer comes from.
         let mut cors_exposure = crate::cors::Exposure::Full;
@@ -801,7 +809,7 @@ impl LocalBroker {
         let mut method = method.to_ascii_uppercase();
         let mut body = body.to_vec();
 
-        for hop in 0..=self.policy.max_redirects() {
+        for hop in 0..=hop_limit {
             let seq = self.seq.fetch_add(1, Ordering::Relaxed);
 
             // 1. Policy. A denial is recorded as a pair like any other request,
@@ -1172,7 +1180,7 @@ impl LocalBroker {
                 }
 
                 match location {
-                    Some(next) if hop < self.policy.max_redirects() => {
+                    Some(next) if hop < hop_limit => {
                         // A redirect that crosses an origin makes the request's
                         // own origin opaque from here on, so a server cannot
                         // launder a cross-origin read by bouncing it somewhere
@@ -1195,10 +1203,27 @@ impl LocalBroker {
                         }
                         continue;
                     }
-                    Some(_) => {
+                    Some(next) => {
+                        // Out of hops. With a limit of zero that is not a
+                        // failure, it is the answer: the caller asked to see the
+                        // redirect rather than follow it, and the outcome
+                        // carries the status, the headers and the `Location`.
+                        if hop_limit == 0 {
+                            let exposure = cors_exposure.clone();
+                            return FetchOutcome {
+                                seq: Some(seq),
+                                headers: crate::cors::filter_headers(&headers, &exposure),
+                                final_url: current,
+                                body: Vec::new(),
+                                status: Some(status.as_u16()),
+                                error: None,
+                                opaque: false,
+                            };
+                        }
+                        let _ = next;
                         return FetchOutcome::failed(
                             current,
-                            format!("too many redirects (limit {})", self.policy.max_redirects()),
+                            format!("too many redirects (limit {hop_limit})"),
                         );
                     }
                     None => {
@@ -1825,6 +1850,7 @@ impl crate::broker::Broker for LocalBroker {
             &fetch.body,
             fetch.content_type.as_deref(),
             &fetch.headers,
+            fetch.max_redirects,
             fetch.document.as_ref(),
             context.as_ref(),
         )
@@ -2108,6 +2134,7 @@ impl LocalBroker {
             .map_err(|e| SendError::new("bad-edit", e.to_string()))?;
 
         let content_type = editable.content_type().map(str::to_string);
+        let follow = plan.no_follow.then_some(0);
         let fetch = crate::broker::Fetch {
             url: editable.url.clone(),
             // A replay is the agent exercising its own authority over a URL it
@@ -2119,6 +2146,7 @@ impl LocalBroker {
             body: editable.body.clone(),
             content_type,
             headers: editable.headers.clone(),
+            max_redirects: follow,
             document: None,
             cors: None,
         };
@@ -2872,6 +2900,62 @@ mod capture_wire_tests {
         assert!(
             sink.records().iter().any(|r| r.url.contains("/doc?id=1")),
             "a composed request is recorded like any other"
+        );
+    }
+
+    /// A browser follows a `Location`; a test wants the 302 itself.
+    #[test]
+    fn a_replay_can_stop_at_the_redirect_and_report_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture),
+        )
+        .expect("broker");
+
+        let port = redirect_then_answer();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
+        // The session itself follows, as a browser does: two hops.
+        assert!(broker.fetch(&url, Initiator::Navigation).is_ok());
+
+        let port = redirect_then_answer();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
+        let stopped = crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "GET".to_string(),
+                url,
+                headers: Vec::new(),
+                body: Vec::new(),
+            },
+            &[],
+            false,
+            crate::broker::Sends {
+                count: 1,
+                together: false,
+                no_follow: true,
+            },
+        )
+        .expect("sent");
+
+        assert_eq!(stopped.outcome.status, Some(302), "the hop itself, not the page");
+        assert!(
+            stopped.outcome.error.is_none(),
+            "stopping where you asked to stop is not a failure: {:?}",
+            stopped.outcome.error
+        );
+        assert!(
+            stopped
+                .outcome
+                .headers
+                .iter()
+                .any(|(name, value)| name == "location" && value == "/home"),
+            "the `Location` is the whole content of a redirect: {:?}",
+            stopped.outcome.headers
         );
     }
 
