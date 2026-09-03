@@ -49,6 +49,15 @@ struct Cli {
     /// usually a script; pass `--human` for the reading version.
     #[arg(long, global = true)]
     human: bool,
+
+    /// Accepted and redundant: JSON is already the default.
+    ///
+    /// Here because `h5i browser` takes `--json` and anybody moving between the
+    /// two surfaces types it out of habit. Refusing it would be technically
+    /// correct and would cost a person a round trip to find out the flag they
+    /// typed was the one thing they did not need.
+    #[arg(long, global = true, conflicts_with = "human")]
+    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -310,7 +319,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     }
     // JSON unless asked otherwise. The caller here is usually a loop, and a
     // workbench whose default output has to be re-parsed out of prose is a
-    // workbench nobody scripts.
+    // workbench nobody scripts. `--json` says the same thing out loud.
+    let _ = cli.json;
     if !cli.human {
         argv.push("--json".into());
     }

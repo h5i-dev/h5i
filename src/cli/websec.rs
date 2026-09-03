@@ -794,13 +794,26 @@ fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Fo
                     kind: "regex",
                     expr: pattern.clone(),
                     matched: found.is_some(),
+                    // Groups when the pattern has them, the whole match when it
+                    // does not. A pattern without a group is the ordinary way to
+                    // ask "is this in there, and what was it", and handing back
+                    // an empty list made the caller re-run the search itself.
+                    // `extract_one` has always done this; the two must agree.
                     captures: found
                         .map(|caps| {
-                            caps.iter()
+                            let groups: Vec<String> = caps
+                                .iter()
                                 .skip(1)
                                 .flatten()
                                 .map(|m| m.as_str().to_string())
-                                .collect()
+                                .collect();
+                            if groups.is_empty() {
+                                caps.get(0)
+                                    .map(|m| vec![m.as_str().to_string()])
+                                    .unwrap_or_default()
+                            } else {
+                                groups
+                            }
                         })
                         .unwrap_or_default(),
                 }
@@ -1700,6 +1713,19 @@ mod tests {
     }
 
     /// A pattern that does not compile is not a response that does not match.
+    /// A pattern with no group still says what it found.
+    #[test]
+    fn a_pattern_without_a_group_captures_the_whole_match() {
+        let (stored, body) = json_response(r#"{"note":"FLAG{abc123} is here"}"#);
+        let found = evaluate(
+            &Condition::Regex(r"FLAG\{[a-z0-9]+\}".to_string()),
+            &stored,
+            &body,
+        );
+        assert!(found.matched);
+        assert_eq!(found.captures, vec!["FLAG{abc123}".to_string()]);
+    }
+
     #[test]
     fn a_broken_pattern_is_not_a_negative_answer() {
         let (stored, body) = json_response("{}");

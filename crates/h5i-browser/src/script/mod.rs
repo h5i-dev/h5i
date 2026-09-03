@@ -1170,23 +1170,51 @@ impl Script {
         }
     }
 
+    /// Fire an event at a node and say whether its default action survived.
+    ///
+    /// The return is what makes a form work. `dispatchEvent` answers false when
+    /// a handler called `preventDefault`, which is exactly how a page says "I
+    /// have taken this click, do not navigate". A caller that threw the answer
+    /// away could only ever guess, and guessing wrong in either direction is
+    /// visible: navigate anyway and the page loses the state its handler just
+    /// built; never navigate and an ordinary form stops working.
+    pub fn dispatch_reporting(
+        &mut self,
+        node_id: usize,
+        event_type: &str,
+    ) -> Result<bool, String> {
+        let source = Self::dispatch_source(node_id, event_type);
+        // `true` when there was no such node either: nothing prevented anything.
+        let value = self.eval_value(&format!("({source} !== false)"))?;
+        Ok(value != "false")
+    }
+
     /// Fire an event at a node, the way a real click would.
     pub fn dispatch(&mut self, node_id: usize, event_type: &str) -> Result<(), String> {
         // Constructed by kind rather than always as a bare `Event`, because a
         // handler reading `event.key` or `event.clientX` off a click gets
-        // `undefined` otherwise and takes a branch it should not.
+        // `undefined` otherwise and takes a branch it should not. See
+        // `dispatch_source`.
+        self.eval(&Self::dispatch_source(node_id, event_type))
+    }
+
+    /// The expression both dispatch paths evaluate.
+    ///
+    /// One source, so the reporting form cannot drift from the plain one into
+    /// firing a differently-shaped event.
+    fn dispatch_source(node_id: usize, event_type: &str) -> String {
         let constructor = match event_type {
             "click" | "mousedown" | "mouseup" => "MouseEvent",
             "keydown" | "keyup" | "keypress" => "KeyboardEvent",
             "input" => "InputEvent",
             _ => "Event",
         };
-        let source = format!(
+        format!(
             "(() => {{ const target = __h5iWrapById({node_id}); \
-             if (target) target.dispatchEvent(new {constructor}({event_type:?}, \
+             if (!target) return true; \
+             return target.dispatchEvent(new {constructor}({event_type:?}, \
                {{ bubbles: true, cancelable: true }})); }})()"
-        );
-        self.eval(&source)
+        )
     }
 
     /// Dispatch a key event carrying the key that was pressed.

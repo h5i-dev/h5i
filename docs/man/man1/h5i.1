@@ -1225,7 +1225,7 @@ Follow a `@ref` from the last snapshot
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBclick\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIREFERENCE\fR> 
+\fBclick\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREFERENCE\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1233,20 +1233,29 @@ Follow a `@ref` from the last snapshot
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
 .TP
+\fB\-\-selector\fR \fI<CSS>\fR
+A CSS selector instead, which survives a navigation where a `@ref` does not
+.TP
+\fB\-\-role\fR \fI<ROLE>\fR
+Find it by what it is called, the way a person would say it: `\-\-role button \-\-name "Sign in"`
+.TP
+\fB\-\-name\fR \fI<TEXT>\fR
+
+.TP
 \fB\-\-json\fR
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .TP
-<\fIREFERENCE\fR>
-`e3` or `@e3`, from a `snapshot`
+[\fIREFERENCE\fR]
+`e3` or `@e3`, from a `snapshot`. Omit when using `\-\-selector` or `\-\-role`
 .SH "H5I BROWSER TYPE"
 Put text into a field, replacing what was there
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBtype\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIREFERENCE\fR> <\fITEXT\fR> 
+\fBtype\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREF|TEXT\fR] [\fITEXT\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1254,23 +1263,32 @@ Put text into a field, replacing what was there
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
 .TP
+\fB\-\-selector\fR \fI<CSS>\fR
+A CSS selector instead
+.TP
+\fB\-\-role\fR \fI<ROLE>\fR
+Find the field by what it is called: `\-\-role textbox \-\-name Email`
+.TP
+\fB\-\-name\fR \fI<TEXT>\fR
+
+.TP
 \fB\-\-json\fR
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .TP
-<\fIREFERENCE\fR>
-
+[\fIREF|TEXT\fR]
+`e3` or `@e3`, from a `snapshot`. Omit when using `\-\-selector` or `\-\-role`, and give the text alone
 .TP
-<\fITEXT\fR>
-
+[\fITEXT\fR]
+What to type
 .SH "H5I BROWSER SUBMIT"
 Submit the form containing a `@ref`
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBsubmit\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIREFERENCE\fR> 
+\fBsubmit\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREFERENCE\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1278,14 +1296,23 @@ Submit the form containing a `@ref`
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
 .TP
+\fB\-\-selector\fR \fI<CSS>\fR
+A CSS selector instead
+.TP
+\fB\-\-role\fR \fI<ROLE>\fR
+Find a control in the form by what it is called
+.TP
+\fB\-\-name\fR \fI<TEXT>\fR
+
+.TP
 \fB\-\-json\fR
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
-<\fIREFERENCE\fR>
-
+[\fIREFERENCE\fR]
+`e3` or `@e3`, from a `snapshot`. Omit when using `\-\-selector` or `\-\-role`
 .SH "H5I BROWSER SCROLL"
 Scroll the page. Negative scrolls up
 .ie \n(.g .ds Aq \(aq

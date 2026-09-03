@@ -1395,6 +1395,40 @@ fn navigate_to(session: &mut Session, target: &str) -> Result<(), Value> {
     }
 }
 
+/// Submit the form a control sits in, and land on the answer.
+///
+/// Shared by `submit` and by a `click` on a submit control, so the two cannot
+/// drift into submitting forms differently.
+fn submit_the_form(
+    session: &mut Session,
+    node_id: usize,
+    reference: &str,
+) -> (Value, bool) {
+    let submission = match session.page.submit_form(node_id) {
+        Ok(submission) => submission,
+        Err(error) => return (VerbError::refused(format!("{error}")).reply(), false),
+    };
+    match session.factory.open_submission(&submission) {
+        Ok(page) => {
+            session.land(page);
+            (
+                json!({
+                    "ok": true,
+                    "ref": reference,
+                    "url": session.page.url().to_string(),
+                    "method": submission.method,
+                    // Named, because a click that submitted a form did something
+                    // bigger than a click usually does and the caller should not
+                    // have to infer it from the URL having changed.
+                    "submitted": true,
+                }),
+                true,
+            )
+        }
+        Err(error) => (VerbError::refused(format!("{error}")).reply(), false),
+    }
+}
+
 fn control_verb_inner(
     session: &mut Session,
     request: &Value,
@@ -2133,13 +2167,24 @@ fn control_verb_inner(
             // `preventDefault` never wanted the href followed, and a button
             // with no href is only clickable at all because of its handler.
             if session.page.has_script()
-                && let Some(caused) = session.page.dispatch_event(node_id, "click")
+                && let Some((caused, proceed)) = session.page.activate(node_id)
             {
                 let settled = session
                     .page
                     .settled()
                     .map(|s| s.render())
                     .unwrap_or_default();
+                // The page took the click and did not prevent the default, and
+                // this is a submit control: the form still has to be sent. That
+                // is the browser's third step, and skipping it made a scripted
+                // page that merely *watches* its form never submit at all.
+                if proceed
+                    && href.is_none()
+                    && session.page.is_submit_control(node_id)
+                    && session.page.form_of(node_id).is_some()
+                {
+                    return submit_the_form(session, node_id, reference);
+                }
                 if href.is_none() {
                     return (
                         json!({
@@ -2160,6 +2205,18 @@ fn control_verb_inner(
             }
 
             let Some(href) = href else {
+                // No href, and either no script or a handler that did not take
+                // it. A submit control still means something here: a browser
+                // submits the form whether or not script is running, which is
+                // why an ordinary login form works with JavaScript switched off.
+                // Refusing this was refusing the ordinary way into most
+                // applications, and the refusal named the element's role rather
+                // than the verb that would have worked.
+                if session.page.is_submit_control(node_id)
+                    && session.page.form_of(node_id).is_some()
+                {
+                    return submit_the_form(session, node_id, reference);
+                }
                 return (
                     VerbError::wrong_role(reference, &role, "something to follow").reply(),
                     false,
@@ -3460,6 +3517,46 @@ mod tests {
 
     fn session_with(html: &str) -> Session {
         session_and_broker(html, crate::secrets::Secrets::default()).0
+    }
+
+    /// A session whose policy admits the page's own origin.
+    ///
+    /// For the verbs that *navigate*: the default policy allows nothing remote,
+    /// so a form submission from `session_with` is refused before it can be
+    /// checked, and the refusal hides whatever the test was about.
+    fn session_reaching(html: &str) -> Session {
+        let requests = Arc::new(MemorySink::new());
+        let broker = crate::net::LocalBroker::with_secrets(
+            Policy::new().allow("example.com"),
+            requests,
+            None,
+            crate::secrets::Secrets::default(),
+        )
+        .expect("broker");
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let options = crate::engine::PageOptions {
+            width: 400,
+            height: 200,
+            ..Default::default()
+        };
+        let factory = PageFactory::new(broker, fonts.sources.clone(), options);
+        let page = factory.from_html(html, &Url::parse("https://example.com/").unwrap());
+        let page_url = page.url().clone();
+        Session {
+            factory,
+            page,
+            quality: 70,
+            seq: 0,
+            actions: None,
+            last_snapshot: None,
+            served_refs: None,
+            hint_refs: None,
+            frame_owed: false,
+            history: History::seeded(page_url),
+            unknown_verbs: std::collections::BTreeMap::new(),
+            recording: crate::replay::Recording::default(),
+            login: false,
+        }
     }
 
     /// Whoever can connect to the control socket *is* the agent: they can
@@ -5279,6 +5376,56 @@ mod tests {
         // A limit narrows too, and saying otherwise would let two rows read as
         // the whole session.
         assert_eq!(shown(&json!({"verb": "requests", "limit": 2})), (2, true));
+    }
+
+    /// A form works with JavaScript switched off, and so must a click on its
+    /// submit button.
+    ///
+    /// Found by driving a benchmark application: the page was an ordinary form
+    /// with a submit button, the session had no script realm, and `click`
+    /// answered "that is a button, not something to follow" — naming what the
+    /// element was not, rather than doing what a browser does with it. An agent
+    /// reading that has no way to know `submit` was the verb.
+    #[test]
+    fn clicking_a_submit_button_submits_its_form_without_script() {
+        let mut session = session_reaching(
+            "<html><body><form action='/search' method='get'>\
+             <input name='q' value='shoes'>\
+             <button type='submit'>Go</button>\
+             </form></body></html>",
+        );
+        let button = serve_refs(&mut session)
+            .into_iter()
+            .find(|entry| entry.role == "button")
+            .expect("the button is in the reading");
+        let (reply, moved) =
+            control_verb(&mut session, &json!({"verb": "click", "ref": button.id}));
+
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(reply["submitted"], true, "the click says what it did: {reply:?}");
+        assert!(moved, "submitting a form moves the page");
+        assert!(
+            session.page.url().as_str().contains("/search?q=shoes"),
+            "the form's own action and method, with its fields: {}",
+            session.page.url()
+        );
+    }
+
+    /// ...and the two controls that really do nothing without script still say
+    /// so, rather than submitting something nobody asked to submit.
+    #[test]
+    fn a_plain_button_is_still_not_something_to_follow() {
+        let mut session = session_with(
+            "<html><body><form action='/search'>\
+             <button type='button'>Nothing</button>\
+             </form></body></html>",
+        );
+        let button = serve_refs(&mut session)
+            .into_iter()
+            .find(|entry| entry.role == "button")
+            .expect("the button is in the reading");
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "click", "ref": button.id}));
+        assert_eq!(reply["ok"], false, "{reply:?}");
     }
 
     #[test]

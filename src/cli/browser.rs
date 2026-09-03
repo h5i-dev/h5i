@@ -336,8 +336,19 @@ pub enum BrowserCommands {
         /// $H5I_BROWSER_SESSION, then to the session `open` last made.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
-        /// `e3` or `@e3`, from a `snapshot`.
-        reference: String,
+        /// `e3` or `@e3`, from a `snapshot`. Omit when using `--selector` or
+        /// `--role`.
+        reference: Option<String>,
+        /// A CSS selector instead, which survives a navigation where a `@ref`
+        /// does not.
+        #[arg(long, value_name = "CSS", conflicts_with = "reference")]
+        selector: Option<String>,
+        /// Find it by what it is called, the way a person would say it:
+        /// `--role button --name "Sign in"`.
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
+        role: Option<String>,
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -349,20 +360,46 @@ pub enum BrowserCommands {
         /// $H5I_BROWSER_SESSION, then to the session `open` last made.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
-        reference: String,
-        text: String,
+        /// `e3` or `@e3`, from a `snapshot`. Omit when using `--selector` or
+        /// `--role`, and give the text alone.
+        #[arg(value_name = "REF|TEXT")]
+        reference: Option<String>,
+        /// What to type.
+        #[arg(value_name = "TEXT")]
+        text: Option<String>,
+        /// A CSS selector instead.
+        #[arg(long, value_name = "CSS", conflicts_with = "reference")]
+        selector: Option<String>,
+        /// Find the field by what it is called: `--role textbox --name Email`.
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
+        role: Option<String>,
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
         #[arg(long)]
         json: bool,
     },
 
     /// Submit the form containing a `@ref`.
+    ///
+    /// Not always needed: clicking a submit button submits its form, the way a
+    /// browser does with script switched off.
     Submit {
         /// Which session, when more than one is open. A name from
         /// `--session` at open time, or an opaque id. Defaults to
         /// $H5I_BROWSER_SESSION, then to the session `open` last made.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
-        reference: String,
+        /// `e3` or `@e3`, from a `snapshot`. Omit when using `--selector` or
+        /// `--role`.
+        reference: Option<String>,
+        /// A CSS selector instead.
+        #[arg(long, value_name = "CSS", conflicts_with = "reference")]
+        selector: Option<String>,
+        /// Find a control in the form by what it is called.
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
+        role: Option<String>,
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -1106,25 +1143,44 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         BrowserCommands::Click {
             session,
             reference,
+            selector,
+            role,
+            name,
             json,
-        } => verb(&root, session.as_deref(), vec!["click".into(), reference], true, json),
+        } => {
+            let mut argv = vec!["click".to_string()];
+            argv.extend(reference);
+            argv.extend(locator(selector, role, name));
+            verb(&root, session.as_deref(), argv, true, json)
+        }
         BrowserCommands::Type {
             session,
             reference,
             text,
+            selector,
+            role,
+            name,
             json,
-        } => verb(
-            &root,
-            session.as_deref(),
-            vec!["type".into(), reference, text],
-            true,
-            json,
-        ),
+        } => {
+            let mut argv = vec!["type".to_string()];
+            argv.extend(reference);
+            argv.extend(text);
+            argv.extend(locator(selector, role, name));
+            verb(&root, session.as_deref(), argv, true, json)
+        }
         BrowserCommands::Submit {
             session,
             reference,
+            selector,
+            role,
+            name,
             json,
-        } => verb(&root, session.as_deref(), vec!["submit".into(), reference], true, json),
+        } => {
+            let mut argv = vec!["submit".to_string()];
+            argv.extend(reference);
+            argv.extend(locator(selector, role, name));
+            verb(&root, session.as_deref(), argv, true, json)
+        }
         BrowserCommands::Scroll { session, by, json } => verb(
             &root,
             session.as_deref(),
