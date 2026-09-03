@@ -227,6 +227,16 @@ Rules that have to be settled once:
   its own invariants it had to break to do so.
 - **Binary is a path or base64, never a shell argument.** `@file` for a path,
   `base64:` for inline.
+- **Multipart is parsed, edited and rebuilt, never patched as text.** Built
+  2026-09-03 (`crates/h5i-browser/src/multipart.rs`). `multipart.<field>`,
+  `.filename` and `.content_type` are three separate targets because a server
+  checks them separately: the filter reads the declared type and the store uses
+  the filename. With `--set-create` an upload is built from nothing, which is
+  the usual case rather than the exception, since this engine never posts a file
+  itself and so records no upload to start from. The boundary is always the
+  engine's own: re-using the incoming one lets a caller who puts that string in
+  a part's data split the message and send something other than what was asked
+  for.
 - **`--edits-file -` reads stdin.** This exists from day one, because shell
   quoting is where a Bash-driven agent loop actually breaks:
 
@@ -509,7 +519,7 @@ The twenty features, ranked, with the phase that carries them.
 | 9 | multiple sessions and jars | browser sessions | A, built |
 | 13 | machine-readable response diff | Comparer | A, built |
 | 14 | match and extract primitives | Intruder grep | A, built |
-| 8 | multipart and upload editing | Repeater | B |
+| 8 | multipart and upload editing | Repeater | B, built |
 | 10 | replay as another session | Repeater plus session rules | B, built |
 | 11 | extract and bind | macros, session rules | B, built |
 | 12 | multi-request sequences | Repeater sequences | B, built |

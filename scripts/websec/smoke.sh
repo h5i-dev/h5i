@@ -17,7 +17,7 @@ H5I="${1:-target/debug/h5i}"
 [ -x "$H5I" ] || { echo "no h5i at $H5I — cargo build --features browser"; exit 2; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PORT=$((20000 + RANDOM % 10000))
-SESSIONS=(ws-smoke-a ws-smoke-b ws-smoke-csrf ws-smoke-log ws-smoke-time ws-smoke-race)
+SESSIONS=(ws-smoke-a ws-smoke-b ws-smoke-csrf ws-smoke-log ws-smoke-time ws-smoke-race ws-smoke-up)
 FAILED=0
 
 python3 "$HERE/server.py" "$PORT" &
@@ -112,6 +112,30 @@ else
 fi
 is "every send is sampled" \
    "$("$H5I" browser resend 0 --repeat 3 --session ws-smoke-time --json 2>/dev/null | jqp 'len(d["samples"])')" "3"
+
+echo
+echo "── uploads ──────────────────────────────────────────────────────────"
+"$H5I" browser open "http://127.0.0.1:$PORT/page" --session ws-smoke-up --new --capture >/dev/null 2>&1
+# Built from nothing: the engine never posts a file itself, so a file-upload
+# test has no recorded upload to start from.
+UP="$("$H5I" browser resend 0 --create \
+    --set 'method=POST' --set 'path=/upload' \
+    --set 'multipart.file=<?php system($_GET[0]); ?>' \
+    --set 'multipart.file.filename=shell.php' \
+    --set 'multipart.file.content_type=text/php' \
+    --session ws-smoke-up --json 2>/dev/null)"
+is "a type filter refuses the obvious try" "$(echo "$UP" | jqp 'd["response"]["status"]')" "415"
+
+BYPASS="$("$H5I" browser resend 0 --create \
+    --set 'method=POST' --set 'path=/upload' \
+    --set 'multipart.file=<?php system($_GET[0]); ?>' \
+    --set 'multipart.file.filename=../shell.php' \
+    --set 'multipart.file.content_type=image/png' \
+    --session ws-smoke-up --json 2>/dev/null)"
+is "and a lie about the type gets past it" "$(echo "$BYPASS" | jqp 'd["response"]["status"]')" "200"
+SEQ="$(echo "$BYPASS" | jqp 'd["seq"]')"
+has "with the filename the server stored" \
+    "$("$H5I" browser message "$SEQ" --part response --session ws-smoke-up 2>/dev/null)" "../shell.php"
 
 echo
 echo "── races ────────────────────────────────────────────────────────────"

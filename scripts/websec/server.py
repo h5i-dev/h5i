@@ -132,6 +132,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             self.reply(200, b"x", "text/plain")
 
+    def do_POST(self):
+        path = urlparse(self.path).path
+        if path != "/upload":
+            self.reply(404, b'{"error":"no"}')
+            return
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length)
+        kind = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in kind or "boundary=" not in kind:
+            self.reply(400, json.dumps({"error": "expected multipart"}).encode())
+            return
+        # A filter that reads the declared type and trusts it, and a store that
+        # uses the filename as given: the pair that makes an upload interesting.
+        declared = ""
+        filename = ""
+        for chunk in body.split(b"--" + kind.split("boundary=")[-1].strip().encode()):
+            head = chunk.split(b"\r\n\r\n")[0].decode("utf-8", "replace")
+            if 'filename="' in head:
+                filename = head.split('filename="')[1].split('"')[0]
+                for line in head.splitlines():
+                    if line.lower().startswith("content-type:"):
+                        declared = line.split(":", 1)[1].strip()
+        if not filename:
+            self.reply(400, json.dumps({"error": "no file part"}).encode())
+        elif not declared.startswith("image/"):
+            self.reply(415, json.dumps({"error": f"type {declared!r} not allowed"}).encode())
+        else:
+            self.reply(200, json.dumps({"stored_as": filename, "declared": declared}).encode())
+
     def log_message(self, *args):
         pass
 

@@ -17,6 +17,7 @@ pub mod hints;
 pub mod keys;
 pub mod fonts;
 pub mod markdown;
+pub mod multipart;
 pub mod ipc;
 pub mod net;
 pub mod policy;
