@@ -1937,6 +1937,7 @@ dependencies = [
  "h5i-runner",
  "h5i-share",
  "libc",
+ "regex",
  "serde",
  "serde_json",
  "sha2 0.10.9",

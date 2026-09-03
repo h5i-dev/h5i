@@ -12,6 +12,11 @@ pub mod boxes;
 // `runner` follow.
 #[cfg(feature = "browser")]
 pub mod browser;
+// Reading a captured session's stored messages, and comparing two of them. Same
+// gate as `browser`: it reads the shapes the engine writes, so a build with no
+// engine has nothing to read.
+#[cfg(feature = "browser")]
+pub mod websec;
 // The helper lane behind `h5i browser transcript --via yt-dlp`: an outside program, run
 // deliberately, recorded as one.
 #[cfg(feature = "ytdlp")]

@@ -107,8 +107,18 @@ The workbench is mostly a matter of exposing machinery that is shipped.
    the same broker, policy, budget and receipt path as everything else. The
    edits are applied *in the broker process*, so the renderer never holds the
    credential a stored request carries.
-4. **No response comparison, match, timing detail, parallelism, site map,
-   sequence engine, DOM taint or OAST.** Features 11 to 20.
+4. **No timing detail, parallelism, site map, sequence engine, DOM taint or
+   OAST.** Features 11, 12, 15 to 20. Match and extract (feature 14) were built
+   2026-09-03: `h5i browser match` takes regex, substring, JSON path, header,
+   status and length conditions, ANDs them, hands back what each captured, and
+   keeps three answers apart in its exit code (matched, did not match, could not
+   look). Comparison (feature 13) and the raw and
+   typed views (feature 5) were built 2026-09-03 in `src/cli/websec.rs`, reached
+   by `h5i browser message` and `h5i browser diff`. Both read the store from
+   disk on h5i's side rather than through a session verb: a verb's reply travels
+   out through the renderer, and asking the untrusted parser to relay a stored
+   `Authorization` header would undo on request exactly what the broker split
+   is for.
 
 ## W5. The message store, and the credential problem
 
@@ -236,9 +246,13 @@ a polish item.
 - `--json` on every verb, including errors. An error is
   `{"error": {"code": "...", "message": "...", "hint": "..."}}` on stdout with a
   nonzero exit, never a bare string on stderr.
-- Exit codes are stable and few: 0 success, 1 usage, 2 refused by policy or
-  budget, 3 network failure, 4 not found, 5 target of the assertion did not
-  match (so `match` is usable in `if` without `jq`).
+- Exit codes are stable and few, and they follow what the tools around them
+  already use rather than a scheme invented here. `match` is a grep, so it uses
+  grep's: 0 matched, 1 did not match, 2 could not look (a pattern that does not
+  compile, a body that was never stored). A verb that cannot reach its session
+  exits 69, which is what `browser_session::EXIT_SESSION_GONE` has always been.
+  The rule that matters is that "no" and "could not ask" are never the same
+  code.
 - stdout carries machine-readable results only. Progress, timing chatter and
   warnings go to stderr.
 - Every payload carries `"schema": "websec/1"`. Fields are added, never

@@ -988,10 +988,17 @@ impl LocalBroker {
             let caller_sets =
                 |n: &str| caller_now.iter().any(|(k, _)| k.eq_ignore_ascii_case(n));
 
-            let mut request = self
-                .client
-                .request(verb, current.clone())
-                .header(reqwest::header::ACCEPT_ENCODING, ACCEPT_ENCODING);
+            let mut request = self.client.request(verb, current.clone());
+            // Every header the engine sets by default has to stand aside for a
+            // caller that set it, and this one is the reason the rule is
+            // written as a loop rather than as three ifs: a replay hands back
+            // the *stored* header set, which already contains the engine's own
+            // defaults, so any default added unconditionally arrives twice. It
+            // did, and `message --raw` showed two `accept-encoding` lines on
+            // every replayed request.
+            if !caller_sets("accept-encoding") {
+                request = request.header(reqwest::header::ACCEPT_ENCODING, ACCEPT_ENCODING);
+            }
             // Ours only where neither the page nor the caller said: `reqwest`'s
             // builder appends rather than replaces, so setting both would send
             // both, and a request carrying two `Accept` headers is not the
@@ -2266,7 +2273,7 @@ mod caller_header_tests {
     }
 
     /// How many times a header name appears in a recorded head.
-    fn count(head: &str, name: &str) -> usize {
+    pub(super) fn count(head: &str, name: &str) -> usize {
         head.lines()
             .filter(|line| line.starts_with(&format!("{name}:")))
             .count()
@@ -2582,6 +2589,44 @@ mod capture_wire_tests {
 
         let seen = seen.lock().unwrap();
         assert!(seen[1].starts_with("get /api/users?user_id=456"), "{}", seen[1]);
+    }
+
+    /// A replay hands back the stored header set, which already holds the
+    /// engine's own defaults. Every one of them has to stand aside, or the
+    /// request that goes out is not the request that was recorded.
+    #[test]
+    fn a_replay_does_not_duplicate_the_engines_own_headers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture),
+        )
+        .expect("broker");
+
+        let (port, seen) = super::caller_header_tests::head_recorder(2, None);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/api?id=1")).unwrap();
+        assert!(broker.fetch(&url, Initiator::Navigation).is_ok());
+        crate::broker::Broker::send_edited(
+            broker.as_ref(),
+            0,
+            &[crate::edits::parse_set("query.id=2").expect("parses")],
+            false,
+        )
+        .expect("replayed");
+
+        let seen = seen.lock().unwrap();
+        let replay = &seen[1];
+        for header in ["accept-encoding", "accept", "accept-language"] {
+            assert_eq!(
+                super::caller_header_tests::count(replay, header),
+                1,
+                "`{header}` went out more than once on the replay:\n{replay}"
+            );
+        }
     }
 
     /// An edit that would change nothing is a mistake, and saying so is the
