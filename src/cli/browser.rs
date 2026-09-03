@@ -938,6 +938,18 @@ pub enum BrowserCommands {
         /// headers with nothing followed.
         #[arg(long)]
         no_follow: bool,
+        /// Start this page's network allowance again before sending.
+        ///
+        /// The budget exists to bound *page* code: a script in a loop is the
+        /// untrusted thing it stops. A blind extraction is the opposite, an
+        /// agent deliberately sending hundreds of requests it composed, and
+        /// without this it stops partway through with "this page has spent its
+        /// allowance" and every later answer reads as a negative result.
+        ///
+        /// Grants nothing new: navigating resets the same allowance, so this is
+        /// the same act without throwing away the page.
+        #[arg(long)]
+        reset_budget: bool,
         /// Send it from another session instead of this one.
         ///
         /// The authorization test, in one flag: take the request one logged-in
@@ -1493,6 +1505,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             repeat,
             race,
             no_follow,
+            reset_budget,
             as_session,
             keep_credentials,
             session,
@@ -1546,6 +1559,9 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             }
             if no_follow {
                 argv.push("--no-follow".into());
+            }
+            if reset_budget {
+                argv.push("--reset-budget".into());
             }
             // Mutating: it puts bytes on the wire under this session's
             // identity, which is exactly what the control lock exists to stop a

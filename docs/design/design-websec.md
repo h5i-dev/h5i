@@ -286,7 +286,16 @@ done
 
 It stops covering it at adaptive payloads, blind extraction character by
 character, timing statistics, race windows, multipart and crypto, and anything
-past a few hundred replays where process startup dominates. The answer to the
+past a few hundred replays where process startup dominates.
+
+Measured, 2026-09-03, on XBEN-037-24: recovering a 64-character flag through a
+one-bit oracle is 256 probes, and each probe is two `h5i` processes (send, then
+ask about the answer). That run takes 23 seconds, of which almost all is process
+startup; the requests themselves are 45 ms each. It works, and it is the
+clearest argument yet for the RPC below. Two other things that run cost: a
+payload that made the target's own `ping` wait three seconds turned the same
+extraction into ten minutes, and the page's network budget ran out partway
+through, which is why `resend --reset-budget` exists. The answer to the
 last one is not a Python library, it is a long-lived process:
 
 ```

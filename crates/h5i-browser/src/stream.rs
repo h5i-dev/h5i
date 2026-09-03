@@ -1514,6 +1514,23 @@ fn control_verb_inner(
                 );
             };
             let create = request.get("create").and_then(Value::as_bool).unwrap_or(false);
+            // The page's allowance, started again because the agent said so.
+            //
+            // The budget bounds *page* code: a script in a loop is the untrusted
+            // thing it exists to stop. A replay is the opposite case, the agent
+            // exercising its own authority over a request it named, and a blind
+            // extraction is hundreds of them on purpose. Without this an agent
+            // has to navigate away and back to keep going, which works, spends
+            // two more requests, and throws away the page state it was using.
+            // No new authority: navigating already resets this, and only the
+            // agent's verbs reach here.
+            if request
+                .get("reset_budget")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                session.factory.broker().reset_budget();
+            }
             // Bounded here rather than trusted: a caller asking for a million
             // sends is asking this session to spend its whole budget on one
             // verb, and the budget refusing halfway is a worse answer than a

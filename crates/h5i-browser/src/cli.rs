@@ -711,6 +711,9 @@ enum SessionVerb {
         /// Stop at the first redirect and report it, rather than following it.
         #[arg(long)]
         no_follow: bool,
+        /// Start the page's network allowance again before sending.
+        #[arg(long)]
+        reset_budget: bool,
         /// A whole request, as JSON, instead of one from this session's store.
         ///
         /// `{"method":…,"url":…,"headers":[[name,value],…],"body_base64":…}`.
@@ -1619,6 +1622,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             repeat,
             together,
             no_follow,
+            reset_budget,
             request,
             at,
         } => {
@@ -1644,6 +1648,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     "repeat": repeat,
                     "together": together,
                     "no_follow": no_follow,
+                    "reset_budget": reset_budget,
                     "request": composed,
                 }),
             )

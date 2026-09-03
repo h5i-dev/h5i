@@ -121,6 +121,10 @@ enum Verb {
         /// Stop at the first redirect and report it.
         #[arg(long)]
         no_follow: bool,
+        /// Start the page's network allowance again before sending, for a loop
+        /// that is deliberately long.
+        #[arg(long)]
+        reset_budget: bool,
     },
 
     /// How two of this session's responses differ.
@@ -246,6 +250,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             repeat,
             race,
             no_follow,
+            reset_budget,
         } => {
             let seq = sequence_of(&id)?;
             push(&mut argv, &["resend"]);
@@ -268,6 +273,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
             if no_follow {
                 argv.push("--no-follow".into());
+            }
+            if reset_budget {
+                argv.push("--reset-budget".into());
             }
         }
         Verb::Diff { left, right } => {
