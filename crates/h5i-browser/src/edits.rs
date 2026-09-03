@@ -503,7 +503,18 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
         }
 
         Target::Json(path) => {
-            let kind = request.content_type().unwrap_or("");
+            // An empty body with `--set-create` is a body to *build*, the way a
+            // multipart one is. A request that carries no JSON yet is the
+            // ordinary starting point for an API call the page never makes, and
+            // refusing it sent callers to `body.raw` to hand-write the JSON that
+            // this edit exists to maintain.
+            if request.body.is_empty() && create {
+                request.body = b"{}".to_vec();
+                if request.content_type().is_none() {
+                    request.set_header("Content-Type", "application/json");
+                }
+            }
+            let kind = request.content_type().unwrap_or("").to_string();
             let mut document: serde_json::Value = serde_json::from_slice(&request.body)
                 .map_err(|e| {
                     EditError::new(
@@ -511,7 +522,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                         format!(
                             "this request's body is not JSON ({e}); its Content-Type is {}. \
                              Use `form.` for a form body, or `body.raw` for anything else",
-                            if kind.is_empty() { "unset" } else { kind }
+                            if kind.is_empty() { "unset" } else { &kind }
                         ),
                     )
                 })?;
@@ -886,6 +897,44 @@ mod tests {
         assert_eq!(body["user"]["role"], "admin", "bare text stays text");
         assert_eq!(body["user"]["id"], 99, "a number reads as a number");
         assert_eq!(body["active"], true);
+    }
+
+    /// The API call a page never makes has to be composable, not hand-written.
+    #[test]
+    fn a_json_body_can_be_built_where_there_was_none() {
+        let mut request = Editable {
+            method: "GET".to_string(),
+            url: Url::parse("https://app.test/check").unwrap(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+        apply(
+            &mut request,
+            &[set("method=POST"), set("json.service_name=-t custom \"id\"")],
+            true,
+        )
+        .expect("builds");
+        assert_eq!(request.method, "POST");
+        assert_eq!(
+            request.content_type(),
+            Some("application/json"),
+            "and it declares what it now is"
+        );
+        let body: serde_json::Value = serde_json::from_slice(&request.body).expect("json");
+        assert_eq!(body["service_name"], "-t custom \"id\"");
+    }
+
+    /// Without `--set-create` an empty body is still an empty body: the caller
+    /// did not ask for one to be invented.
+    #[test]
+    fn an_empty_body_is_not_quietly_turned_into_json() {
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/check").unwrap(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+        assert!(apply(&mut request, &[set("json.a=1")], false).is_err());
     }
 
     #[test]
