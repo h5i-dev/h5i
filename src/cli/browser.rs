@@ -368,7 +368,13 @@ pub enum BrowserCommands {
         #[arg(value_name = "TEXT")]
         text: Option<String>,
         /// A CSS selector instead.
-        #[arg(long, value_name = "CSS", conflicts_with = "reference")]
+        ///
+        /// No conflict with the positional, unlike `click`'s: with a locator
+        /// given, the one positional left is the *text*, and the engine shifts
+        /// it (`two_positionals`). Declaring a conflict here made
+        /// `type --selector '#password' hunter2` a usage error, which is the
+        /// obvious way to type it.
+        #[arg(long, value_name = "CSS")]
         selector: Option<String>,
         /// Find the field by what it is called: `--role textbox --name Email`.
         #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
