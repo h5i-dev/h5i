@@ -60,6 +60,7 @@ h5i browser read https://example.com          # or: one page, no session
 curl -fsSL https://h5i.dev/install.sh | sh
 # curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh  # if you would rather not add a domain to the chain:
 # cargo install --path .                                                         # build from source
+# x eget use h5i-dev/h5i                                                         # If you are an x-cmd user.
 ```
 
 The agent-facing interface is a skill, and the binary carries it:
