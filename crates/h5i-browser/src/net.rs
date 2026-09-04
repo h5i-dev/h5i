@@ -686,6 +686,43 @@ impl LocalBroker {
         )
     }
 
+    /// The header set this request will actually go out with.
+    ///
+    /// Not `built.headers()` alone. A client-level default — this engine sets
+    /// one, the `User-Agent` — lives on the `Client` and is merged into the
+    /// request at *execute* time, after `build()`, so reading the built
+    /// request's headers records everything except it. The store then held a
+    /// request that was not the one sent, which matters twice: the whole point
+    /// of the store is that it says what went out, and `message --raw` is the
+    /// documented way to produce a file for `resend --raw-request`, which
+    /// writes those bytes verbatim. That round trip was sending a request with
+    /// no `User-Agent` at all, and a UA-gated endpoint answers a different
+    /// question.
+    ///
+    /// Merged the way `reqwest` merges it: the request's own value wins.
+    fn headers_as_sent(&self, built: &reqwest::blocking::Request) -> Vec<(String, String)> {
+        let mut headers: Vec<(String, String)> = built
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|v| (name.as_str().to_string(), v.to_string()))
+            })
+            .collect();
+        if !headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+        {
+            headers.push((
+                "user-agent".to_string(),
+                self.presented.user_agent.clone(),
+            ));
+        }
+        headers
+    }
+
     /// Resolve a URL's host, check every address it answers with, and pin the
     /// result for the connection that follows. `Ok(())` when there is nothing to
     /// do (a proxy in the path, or a URL with no host) so the caller has one
@@ -1091,16 +1128,7 @@ impl LocalBroker {
                         seq,
                         built.method().as_str(),
                         built.url().as_str(),
-                        built
-                            .headers()
-                            .iter()
-                            .filter_map(|(name, value)| {
-                                value
-                                    .to_str()
-                                    .ok()
-                                    .map(|v| (name.as_str().to_string(), v.to_string()))
-                            })
-                            .collect(),
+                        self.headers_as_sent(&built),
                         &body,
                         content_type,
                     );
@@ -3208,6 +3236,52 @@ mod capture_wire_tests {
                 "`{header}` went out more than once on the replay:\n{replay}"
             );
         }
+    }
+
+    /// The store's whole claim is that it says what went out. A client-level
+    /// default header — this engine sets one, the `User-Agent` — is merged into
+    /// the request at *execute* time, after `build()`, so reading the built
+    /// request's headers recorded everything except it. Which also broke the
+    /// documented round trip: `message --raw` produces the file
+    /// `resend --raw-request` writes verbatim, and that file carried no
+    /// `User-Agent` at all, so a UA-gated endpoint answered a different
+    /// question and the difference read as a finding.
+    #[test]
+    fn the_store_records_the_header_set_that_went_on_the_wire() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture.clone()),
+        )
+        .expect("broker");
+
+        let (port, seen) = super::caller_header_tests::head_recorder(1, None);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/api")).unwrap();
+        assert!(broker.fetch(&url, Initiator::Navigation).is_ok());
+
+        let on_the_wire = seen.lock().unwrap()[0].to_ascii_lowercase();
+        let stored = capture.read_request(0).expect("a stored request");
+        for (name, _) in &stored.headers {
+            assert!(
+                on_the_wire.contains(&format!("\n{}:", name.to_ascii_lowercase()))
+                    || name.eq_ignore_ascii_case("host"),
+                "the store holds `{name}`, which never went out:\n{on_the_wire}"
+            );
+        }
+        // And the one that used to be missing is there.
+        assert!(
+            stored
+                .headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("user-agent")),
+            "the store must hold the `User-Agent` the wire carried: {:?}",
+            stored.headers
+        );
+        assert!(on_the_wire.contains("user-agent:"), "{on_the_wire}");
     }
 
     /// An edit that would change nothing is a mistake, and saying so is the
