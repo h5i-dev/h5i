@@ -31,10 +31,6 @@
       <sub>Browser-only or full workflow</sub>
     </td>
     <td align="center">
-      <strong>Automated web testing</strong><br>
-      <sub>Navigate, interact & assert</sub>
-    </td>
-    <td align="center">
       <strong>Built-in HTTP workbench</strong><br>
       <sub>Capture, edit, replay & diff</sub>
     </td>
