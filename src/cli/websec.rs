@@ -569,7 +569,20 @@ pub struct Difference {
     /// on, and the reason this verb is not just a printed diff: reading two
     /// HTML pages per candidate character through a model is the expensive way
     /// to answer "true page or false page".
+    ///
+    /// Only meaningful when [`Difference::bodies_compared`] is set.
     pub similarity: f64,
+    /// Whether there were two bodies to compare at all.
+    ///
+    /// A body that is not in the store reads as the empty string, so two
+    /// responses whose bodies were skipped compared as identical: `same`,
+    /// `similarity` 1.0, nothing to see. That is the mistake `match` refuses to
+    /// make, and it is reachable on purpose — the store refuses new bodies once
+    /// it is full, and a target that answers with 512 MiB of anything, or
+    /// serves its pages as `font/woff`, turns every later comparison into
+    /// "these are the same page". The oracle then says "false page" for every
+    /// candidate character, which is the shape of a finding that is not there.
+    pub bodies_compared: bool,
     pub headers_added: Vec<String>,
     pub headers_removed: Vec<String>,
     pub headers_changed: Vec<String>,
@@ -640,13 +653,19 @@ pub fn compare(left: (&StoredResponse, &Text), right: (&StoredResponse, &Text)) 
         }
     }
 
+    // Two bodies, or none of this is a comparison. `Text::Missing` reads as the
+    // empty string, which made "neither body was kept" indistinguishable from
+    // "both bodies were empty".
+    let bodies_compared =
+        !matches!(a_body, Text::Missing(_)) && !matches!(b_body, Text::Missing(_));
     let left_text = a_body.as_str();
     let right_text = b_body.as_str();
     let (json_changes, line_changes) = body_changes(a, b, left_text, right_text);
 
     let bytes = (left_text.len() as u64, right_text.len() as u64);
     Difference {
-        same: a.status == b.status
+        same: bodies_compared
+            && a.status == b.status
             && added.is_empty()
             && removed.is_empty()
             && changed.is_empty()
@@ -655,7 +674,14 @@ pub fn compare(left: (&StoredResponse, &Text), right: (&StoredResponse, &Text)) 
         status_changed: a.status != b.status,
         bytes,
         length_delta: bytes.1 as i64 - bytes.0 as i64,
-        similarity: similarity(left_text, right_text),
+        // Zero rather than one, so a caller that reads the number without the
+        // flag beside it errs towards looking again.
+        similarity: if bodies_compared {
+            similarity(left_text, right_text)
+        } else {
+            0.0
+        },
+        bodies_compared,
         headers_added: added,
         headers_removed: removed,
         headers_changed: changed,
@@ -839,6 +865,26 @@ pub fn diff(
     let (a, a_body) = read(left)?;
     let (b, b_body) = read(right)?;
     let difference = compare((&a, &a_body), (&b, &b_body));
+
+    // The same discipline `match` applies: a body that is not in the store
+    // cannot be compared, and answering with a number anyway would report an
+    // absence as a measurement.
+    if !difference.bodies_compared {
+        let why = |seq: u64, body: &Text| match body {
+            Text::Missing(reason) => Some(format!("{seq}'s body is not in the store ({reason})")),
+            _ => None,
+        };
+        let missing: Vec<String> = [why(left, &a_body), why(right, &b_body)]
+            .into_iter()
+            .flatten()
+            .collect();
+        anyhow::bail!(
+            "response {}, so these two cannot be compared by body. \
+             `message` shows what the store does hold; a session opened with `--capture` \
+             that has not run out of room keeps them",
+            missing.join(", and response ")
+        );
+    }
 
     if json_out {
         println!("{}", serde_json::to_string_pretty(&difference)?);
@@ -1802,6 +1848,38 @@ mod tests {
         assert!(safe.contains("forged"), "the evidence survives: {safe:?}");
         assert!(safe.contains("u{1b}"), "and says what was there: {safe:?}");
         assert_eq!(printable("ordinary text"), "ordinary text");
+    }
+
+    /// A body that is not in the store reads as the empty string, so two
+    /// responses whose bodies the store skipped compared as identical:
+    /// `same`, similarity 1.0. The store refuses new bodies once it is full and
+    /// skips media outright, so a target can reach that state on purpose and
+    /// turn every later comparison into "the same page" — which is the answer a
+    /// blind-injection loop reads as "false" for every candidate character.
+    #[test]
+    fn two_bodies_that_were_never_kept_are_not_the_same_page() {
+        let left = response(200, "text/html");
+        let right = response(200, "text/html");
+        let absent = Text::Missing("store-full (2000000 bytes)".to_string());
+        let difference = compare((&left, &absent), (&right, &absent));
+        assert!(!difference.bodies_compared, "there was nothing to compare");
+        assert!(!difference.same, "an absence is not a match");
+        assert!(
+            difference.similarity < 0.5,
+            "a number nobody could measure is not 1.0: {}",
+            difference.similarity
+        );
+    }
+
+    /// An empty body is a real body, and two of them are still the same page.
+    #[test]
+    fn two_empty_bodies_are_still_compared() {
+        let left = response(204, "text/html");
+        let right = response(204, "text/html");
+        let empty = Text::Utf8(String::new());
+        let difference = compare((&left, &empty), (&right, &empty));
+        assert!(difference.bodies_compared);
+        assert!(difference.same);
     }
 
     fn response(status: u16, kind: &str) -> StoredResponse {
