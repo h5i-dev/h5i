@@ -1711,8 +1711,18 @@ pub fn sitemap(root: &Path, selector: Option<&str>, json_out: bool) -> anyhow::R
             .unwrap_or_default()
     } else {
         let path = bs::dir(root, &session.id).join(bs::RECEIPTS_FILE);
-        owned = bs::read_log_capped(&path)
-            .unwrap_or_default()
+        let (text, cut) = bs::read_log_capped_saying(&path).unwrap_or_default();
+        if cut {
+            // Said, not implied. A map built from the head of a log is a map of
+            // part of the run, and for a crawl the endpoints past the cap are
+            // the ones worth seeing.
+            eprintln!(
+                "  note     : this session's request log is larger than the {} bytes read \
+                 back, so this map covers the start of the run and not all of it",
+                8 * 1024 * 1024
+            );
+        }
+        owned = text
             .lines()
             .filter_map(|line| serde_json::from_str::<Value>(line).ok())
             .collect();

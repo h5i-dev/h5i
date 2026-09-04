@@ -1175,6 +1175,16 @@ const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
 /// in a directory the box writes, those are two resolutions of a path and only
 /// the second one is read.
 pub fn read_log_capped(path: &Path) -> Option<String> {
+    read_log_capped_saying(path).map(|(text, _)| text)
+}
+
+/// The same read, and whether the cap cut it short.
+///
+/// A bound that says nothing turns a partial log into a complete-looking one:
+/// a run past [`MAX_LOG_BYTES`] would report as a session that simply stopped
+/// making requests, and for a crawl the requests past the cap are the ones
+/// worth seeing. Callers that render a log to a person take the flag.
+pub fn read_log_capped_saying(path: &Path) -> Option<(String, bool)> {
     use std::io::Read as _;
     let mut opts = fs::OpenOptions::new();
     opts.read(true);
@@ -1189,13 +1199,14 @@ pub fn read_log_capped(path: &Path) -> Option<String> {
     }
     let mut buf = Vec::new();
     file.take(MAX_LOG_BYTES).read_to_end(&mut buf).ok()?;
+    let cut = buf.len() as u64 >= MAX_LOG_BYTES;
     let text = String::from_utf8_lossy(&buf).into_owned();
     // These logs are JSONL and the cap can land mid-line. Ending on a whole
     // line means the parse below drops nothing it could have read.
-    match text.rfind('\n') {
-        Some(at) => Some(text[..=at].to_string()),
-        None => Some(text),
-    }
+    Some(match text.rfind('\n') {
+        Some(at) => (text[..=at].to_string(), cut),
+        None => (text, cut),
+    })
 }
 
 /// Assemble the whole record of a session: what the agent asked for, what the engine decided,
@@ -1541,6 +1552,32 @@ mod tests {
         let found = find_ended_by_name(root, "auth").expect("the record stays");
         assert_eq!(found.id, session.id);
         assert!(find_ended_by_name(root, "never").is_none());
+    }
+
+    /// The log read is bounded, and a bound that says nothing turns a partial
+    /// log into a complete-looking one: a run past the cap reads as a session
+    /// that simply stopped making requests, and for a crawl the requests past
+    /// the cap are the ones worth seeing.
+    #[test]
+    fn a_log_read_says_whether_the_cap_cut_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let small = tmp.path().join("small.jsonl");
+        std::fs::write(&small, b"{\"seq\":0}\n{\"seq\":1}\n").unwrap();
+        let (text, cut) = read_log_capped_saying(&small).expect("read");
+        assert!(!cut, "a log under the cap is whole");
+        assert_eq!(text.lines().count(), 2);
+
+        let big = tmp.path().join("big.jsonl");
+        let line = format!("{}\n", "{\"seq\":0,\"pad\":\"aaaaaaaaaaaaaaaa\"}");
+        let mut body = String::new();
+        while body.len() as u64 <= super::MAX_LOG_BYTES {
+            body.push_str(&line);
+        }
+        std::fs::write(&big, body.as_bytes()).unwrap();
+        let (text, cut) = read_log_capped_saying(&big).expect("read");
+        assert!(cut, "a log over the cap says so");
+        // And what comes back is still whole lines, so nothing half-parsed.
+        assert!(text.ends_with('\n'));
     }
 
     /// A session id is joined onto the registry to address the cookie jar, the
