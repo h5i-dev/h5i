@@ -123,6 +123,10 @@ exact bytes and headers, including credentials, so the artifacts stay separate.
 
 The format enforces an 8 MiB per-message cap, a 512 MiB session cap, and a MIME
 skip list for fonts and media. Truncated or skipped bodies have explicit states.
+The session cap counts the header sidecars as well as the bodies: a message
+file is not small, since the raw sender accepts a response head as large as the
+whole response cap, and counting only bodies left the directory unbounded in
+the one case the cap exists for.
 
 Built, 2026-09-02: `crates/h5i-browser/src/capture.rs`, reached by
 `h5i browser open --capture`. Messages land in `<session>/messages/` as one JSON

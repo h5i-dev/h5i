@@ -177,9 +177,17 @@ pub struct Health {
 pub struct Capture {
     dir: PathBuf,
     bodies: PathBuf,
-    /// Bytes this session has put in `bodies`, which is what
-    /// [`MAX_STORE_BYTES`] bounds.
+    /// Bytes of *body* this session holds. What a reader means by "how much
+    /// evidence is in here", and half of what [`MAX_STORE_BYTES`] bounds.
     used: AtomicU64,
+    /// Bytes of message file beside them: the headers, both directions.
+    ///
+    /// The other half of the allowance, and it was outside it entirely. A
+    /// message file is not small — the raw sender accepts a response head as
+    /// large as the whole response cap — so a loop against a server that
+    /// chooses what it answers with grew this directory without limit while the
+    /// quota read as empty.
+    overhead: AtomicU64,
     /// Hashes already stored, used for deduplication and byte accounting.
     seen: Mutex<HashSet<String>>,
     /// How many messages this store failed to write. Reported rather than
@@ -196,7 +204,8 @@ impl Capture {
         std::fs::create_dir_all(&bodies).map_err(|e| H5iError::with_path(e, &bodies))?;
         owner_only_dir(dir);
         owner_only_dir(&bodies);
-        // Include existing bodies in the restored session's quota.
+        // Include what is already here in the restored session's quota: the
+        // bodies, and the message files beside them.
         let mut used = 0u64;
         let mut seen = HashSet::new();
         if let Ok(entries) = std::fs::read_dir(&bodies) {
@@ -211,10 +220,21 @@ impl Capture {
                 }
             }
         }
+        let mut overhead = 0u64;
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if let Ok(meta) = entry.metadata()
+                    && meta.is_file()
+                {
+                    overhead = overhead.saturating_add(meta.len());
+                }
+            }
+        }
         Ok(Self {
             dir: dir.to_path_buf(),
             bodies,
             used: AtomicU64::new(used),
+            overhead: AtomicU64::new(overhead),
             seen: Mutex::new(seen),
             errors: AtomicU64::new(0),
             messages: AtomicU64::new(0),
@@ -234,6 +254,12 @@ impl Capture {
     /// How many bytes of body this store holds.
     pub fn used(&self) -> u64 {
         self.used.load(Ordering::Relaxed)
+    }
+
+    /// Everything this store has put on disk: bodies and message files. What
+    /// [`MAX_STORE_BYTES`] is a bound on.
+    fn held(&self) -> u64 {
+        self.used().saturating_add(self.overhead.load(Ordering::Relaxed))
     }
 
     /// What this store has done, for whoever is asking whether to trust it.
@@ -364,7 +390,7 @@ impl Capture {
             // The allowance is checked under the same lock that claims the
             // hash, so two threads storing two different bodies at once cannot
             // both decide there is room for the last of it.
-            let used = self.used.load(Ordering::Relaxed);
+            let used = self.held();
             if used.saturating_add(kept.len() as u64) > MAX_STORE_BYTES {
                 // Refused rather than evicted. Eviction wants a pin, so that a
                 // body a finding rests on is not the one thrown away to make
@@ -397,11 +423,29 @@ impl Capture {
     }
 
     /// Write one message file. Best-effort, and counted when it fails.
+    ///
+    /// Against the same allowance a body is written against. A message file
+    /// holds every header of one message, and the raw sender will read a
+    /// response head as large as the whole response cap, so leaving these
+    /// outside the quota left the directory unbounded in the one case the quota
+    /// exists for: a loop against a server that chooses what it answers with.
     fn write<T: Serialize>(&self, seq: u64, phase: &str, message: &T) {
         let path = self.dir.join(format!("{seq}.{phase}.json"));
         let wrote = serde_json::to_vec(message)
             .map_err(H5iError::from)
-            .and_then(|bytes| write_owner_only(&path, &bytes));
+            .and_then(|bytes| {
+                let used = self.held();
+                if used.saturating_add(bytes.len() as u64) > MAX_STORE_BYTES {
+                    // Refused rather than evicted, like a body. Counted, so
+                    // `capture` health reports the gap rather than hiding it.
+                    return Err(H5iError::Metadata(format!(
+                        "the message store is full ({used} of {MAX_STORE_BYTES} bytes)"
+                    )));
+                }
+                write_owner_only(&path, &bytes)?;
+                self.overhead.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                Ok(())
+            });
         match wrote {
             Ok(()) => self.messages.fetch_add(1, Ordering::Relaxed),
             Err(_) => self.errors.fetch_add(1, Ordering::Relaxed),
@@ -518,6 +562,46 @@ mod tests {
             std::fs::read(&elsewhere).expect("still there"),
             b"do not touch",
             "and what it pointed at is untouched"
+        );
+    }
+
+    /// A message file holds every header of one message and used to be written
+    /// outside the quota entirely, so `used` could read as empty while the
+    /// directory grew. The raw sender accepts a response head as large as the
+    /// whole response cap, which is what makes that reachable on purpose.
+    #[test]
+    fn a_message_file_is_counted_against_the_store_the_way_a_body_is() {
+        let (_dir, capture) = store();
+        assert_eq!(capture.used(), 0);
+
+        capture.request(
+            1,
+            "GET",
+            "https://app.test/a",
+            vec![("x-big".to_string(), "v".repeat(50_000))],
+            b"",
+            None,
+        );
+
+        assert_eq!(capture.used(), 0, "a GET has no body, so no body is held");
+        assert!(
+            capture.held() > 50_000,
+            "but its headers are on disk and inside the allowance: {}",
+            capture.held()
+        );
+        assert_eq!(capture.errors(), 0);
+    }
+
+    /// And the allowance is over both, so a store filled by message files
+    /// refuses the next body rather than reporting room it does not have.
+    #[test]
+    fn message_files_fill_the_same_allowance_a_body_does() {
+        let (_dir, capture) = store();
+        capture.overhead.store(MAX_STORE_BYTES, Ordering::Relaxed);
+        let body = capture.store_body(Received::Bytes(b"evidence"), Some("text/plain"));
+        assert!(
+            matches!(body, Body::Skipped { reason: Skip::StoreFull, .. }),
+            "{body:?}"
         );
     }
 
