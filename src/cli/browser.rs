@@ -315,6 +315,40 @@ pub enum BrowserCommands {
         json: bool,
     },
 
+    /// Open a WebSocket, send frames, and report what came back.
+    ///
+    /// The workbench verb for the other protocol. `resend` bends one HTTP
+    /// message; this one says something on a socket and reports the reply,
+    /// through the same policy, the same budget and the same receipts.
+    ///
+    /// Needs no `--script`: the socket is the engine's, not the page's, which
+    /// is the whole point. An application whose commands travel over a
+    /// WebSocket was previously one this workbench could watch connect and
+    /// never speak to.
+    ///
+    /// One exchange, not a resident connection: it opens, sends what it was
+    /// given, listens for `--wait-ms`, and closes.
+    Socket {
+        /// The `ws://` or `wss://` endpoint to open.
+        #[arg(value_name = "URL")]
+        url: String,
+        /// A text frame to send. Repeatable, and sent in the order given.
+        #[arg(long = "send", value_name = "TEXT")]
+        send: Vec<String>,
+        /// How long to listen for replies, in milliseconds.
+        ///
+        /// A server that answers by doing something first — running a command,
+        /// say — answers late, and a socket that says nothing at all is a
+        /// result rather than an error.
+        #[arg(long = "wait-ms", value_name = "MS", default_value = "5000")]
+        wait_ms: u64,
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Fetch the current URL again.
     ///
     /// Takes no URL. After a redirect it re-fetches where the session actually
@@ -1192,6 +1226,22 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         } => screenshot(&root, session.as_deref(), out, url, json),
         BrowserCommands::Reload { session, json } => {
             verb(&root, session.as_deref(), vec!["reload".into()], true, json)
+        }
+        BrowserCommands::Socket {
+            url,
+            send,
+            wait_ms,
+            session,
+            json,
+        } => {
+            let mut argv = vec!["socket".to_string(), url];
+            for frame in send {
+                argv.push("--send".into());
+                argv.push(frame);
+            }
+            argv.push("--wait-ms".into());
+            argv.push(wait_ms.to_string());
+            verb(&root, session.as_deref(), argv, false, json)
         }
         BrowserCommands::Click {
             session,

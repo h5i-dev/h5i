@@ -603,6 +603,21 @@ enum SessionVerb {
         at: SessionArgs,
     },
 
+    /// Open a WebSocket, send frames, and report what came back.
+    Socket {
+        /// The `ws://` or `wss://` endpoint.
+        #[arg(value_name = "URL")]
+        url: String,
+        /// A text frame to send. Repeatable, sent in order.
+        #[arg(long = "send", value_name = "TEXT")]
+        send: Vec<String>,
+        /// How long to listen after the last frame, in milliseconds.
+        #[arg(long = "wait-ms", value_name = "MS")]
+        wait_ms: Option<u64>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
     /// What the page publishes about itself: JSON-LD, OpenGraph, `<meta>`.
     ///
     /// The cheapest read there is. An outline is the page's content and costs
@@ -1801,6 +1816,20 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             }),
         ),
         SessionVerb::Reload { at } => (at, serde_json::json!({"verb": Verb::Reload.name()})),
+        SessionVerb::Socket {
+            url,
+            send,
+            wait_ms,
+            at,
+        } => (
+            at,
+            serde_json::json!({
+                "verb": Verb::Socket.name(),
+                "url": url,
+                "send": send,
+                "wait_ms": wait_ms,
+            }),
+        ),
         SessionVerb::Structured { url, at } => (
             at,
             serde_json::json!({"verb": Verb::Structured.name(), "url": url}),

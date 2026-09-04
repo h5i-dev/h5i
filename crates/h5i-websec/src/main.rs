@@ -188,6 +188,19 @@ enum Verb {
         shorter_than: Option<u64>,
     },
 
+    /// Open a WebSocket, send frames, and report what came back.
+    Socket {
+        /// The `ws://` or `wss://` endpoint to open.
+        #[arg(value_name = "URL")]
+        url: String,
+        /// A text frame to send. Repeatable, sent in the order given.
+        #[arg(long = "send", value_name = "TEXT")]
+        send: Vec<String>,
+        /// How long to listen for replies, in milliseconds.
+        #[arg(long = "wait-ms", value_name = "MS")]
+        wait_ms: Option<u64>,
+    },
+
     /// What this session reached, as origins and endpoints.
     Sitemap,
 
@@ -323,6 +336,19 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
             flag(&mut argv, "raw-target", raw_target);
             flag(&mut argv, "raw-request", raw_request);
+        }
+        Verb::Socket {
+            url,
+            send,
+            wait_ms,
+        } => {
+            push(&mut argv, &["socket"]);
+            argv.push(url);
+            for frame in send {
+                argv.push("--send".into());
+                argv.push(frame);
+            }
+            flag(&mut argv, "wait-ms", wait_ms.map(|ms| ms.to_string()));
         }
         Verb::Diff { left, right } => {
             push(&mut argv, &["diff"]);

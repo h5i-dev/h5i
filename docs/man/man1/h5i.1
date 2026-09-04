@@ -1202,6 +1202,35 @@ Go here first, then paint
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I BROWSER SOCKET"
+Open a WebSocket, send frames, and report what came back
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsocket\fR [\fB\-\-send\fR] [\fB\-\-wait\-ms\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-send\fR \fI<TEXT>\fR
+A text frame to send. Repeatable, and sent in the order given
+.TP
+\fB\-\-wait\-ms\fR \fI<MS>\fR [default: 5000]
+How long to listen for replies, in milliseconds.
+
+A server that answers by doing something first \(em running a command, say \(em answers late, and a socket that says nothing at all is a result rather than an error.
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIURL\fR>
+The `ws://` or `wss://` endpoint to open
 .SH "H5I BROWSER RELOAD"
 Fetch the current URL again
 .ie \n(.g .ds Aq \(aq
@@ -1764,7 +1793,9 @@ both
 .RE
 .TP
 \fB\-\-raw\fR
-Print it as an HTTP message rather than a summary
+Print it as an HTTP message rather than a summary.
+
+Wins over `\-\-json`: a wire message is bytes, and bytes wrapped in a JSON string are no longer the message.
 .TP
 \fB\-\-body\-to\fR \fI<PATH>\fR
 Write the body to this file, exactly as it came back.
