@@ -779,9 +779,8 @@ fn body_changes(
         )
     {
         let mut changes = Vec::new();
-        walk_json("", &left, &right, &mut changes);
-        let total = changes.len();
-        changes.truncate(MAX_JSON_CHANGES);
+        let mut total = 0usize;
+        walk_json("", &left, &right, &mut changes, &mut total);
         return (changes, total, Vec::new(), 0);
     }
     let (lines, total) = line_changes(left, right);
@@ -789,10 +788,25 @@ fn body_changes(
 }
 
 /// Field-by-field, so a re-ordered object is not a difference.
-fn walk_json(path: &str, left: &Value, right: &Value, out: &mut Vec<JsonChange>) {
-    if out.len() >= MAX_JSON_CHANGES {
-        return;
-    }
+/// Every difference between two documents, pushing at most [`MAX_JSON_CHANGES`]
+/// of them and counting all of them in `total`.
+///
+/// Counted rather than stopped at. Returning as soon as the list was full meant
+/// the walk itself ended there, so "how many changed" and "how many are listed"
+/// were the same number and a capped diff could not say it had been capped.
+fn walk_json(
+    path: &str,
+    left: &Value,
+    right: &Value,
+    out: &mut Vec<JsonChange>,
+    total: &mut usize,
+) {
+    let note = |change: JsonChange, out: &mut Vec<JsonChange>, total: &mut usize| {
+        *total += 1;
+        if out.len() < MAX_JSON_CHANGES {
+            out.push(change);
+        }
+    };
     let render = |v: &Value| match v {
         Value::String(s) => s.clone(),
         other => other.to_string(),
@@ -807,17 +821,17 @@ fn walk_json(path: &str, left: &Value, right: &Value, out: &mut Vec<JsonChange>)
                     format!("{path}.{name}")
                 };
                 match (a.get(name), b.get(name)) {
-                    (Some(l), Some(r)) => walk_json(&next, l, r, out),
-                    (Some(l), None) => out.push(JsonChange {
-                        path: next,
-                        from: Some(render(l)),
-                        to: None,
-                    }),
-                    (None, Some(r)) => out.push(JsonChange {
-                        path: next,
-                        from: None,
-                        to: Some(render(r)),
-                    }),
+                    (Some(l), Some(r)) => walk_json(&next, l, r, out, total),
+                    (Some(l), None) => note(
+                        JsonChange { path: next, from: Some(render(l)), to: None },
+                        out,
+                        total,
+                    ),
+                    (None, Some(r)) => note(
+                        JsonChange { path: next, from: None, to: Some(render(r)) },
+                        out,
+                        total,
+                    ),
                     (None, None) => {}
                 }
             }
@@ -826,26 +840,30 @@ fn walk_json(path: &str, left: &Value, right: &Value, out: &mut Vec<JsonChange>)
             for index in 0..a.len().max(b.len()) {
                 let next = format!("{path}.{index}");
                 match (a.get(index), b.get(index)) {
-                    (Some(l), Some(r)) => walk_json(&next, l, r, out),
-                    (Some(l), None) => out.push(JsonChange {
-                        path: next,
-                        from: Some(render(l)),
-                        to: None,
-                    }),
-                    (None, Some(r)) => out.push(JsonChange {
-                        path: next,
-                        from: None,
-                        to: Some(render(r)),
-                    }),
+                    (Some(l), Some(r)) => walk_json(&next, l, r, out, total),
+                    (Some(l), None) => note(
+                        JsonChange { path: next, from: Some(render(l)), to: None },
+                        out,
+                        total,
+                    ),
+                    (None, Some(r)) => note(
+                        JsonChange { path: next, from: None, to: Some(render(r)) },
+                        out,
+                        total,
+                    ),
                     (None, None) => {}
                 }
             }
         }
-        (l, r) if l != r => out.push(JsonChange {
-            path: path.to_string(),
-            from: Some(render(l)),
-            to: Some(render(r)),
-        }),
+        (l, r) if l != r => note(
+            JsonChange {
+                path: path.to_string(),
+                from: Some(render(l)),
+                to: Some(render(r)),
+            },
+            out,
+            total,
+        ),
         _ => {}
     }
 }
@@ -2168,6 +2186,35 @@ mod tests {
         );
         assert_eq!(difference.line_changes_of, None);
         assert_eq!(difference.line_changes.len(), 2);
+    }
+
+    /// The JSON walk used to return as soon as its list was full, so the
+    /// number of changes and the number listed were the same number and a
+    /// capped diff could not tell a reader it had been capped. The line diff
+    /// said so; this one silently claimed sixty changes were all of them.
+    #[test]
+    fn a_capped_json_diff_counts_the_changes_it_did_not_list() {
+        let stored = response(200, "application/json");
+        let left: String = format!(
+            "{{{}}}",
+            (0..200)
+                .map(|n| format!("\"k{n}\":\"a\""))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let right: String = format!(
+            "{{{}}}",
+            (0..200)
+                .map(|n| format!("\"k{n}\":\"b\""))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let difference = compare(
+            (&stored, &Text::Utf8(left)),
+            (&stored, &Text::Utf8(right)),
+        );
+        assert_eq!(difference.json_changes.len(), MAX_JSON_CHANGES);
+        assert_eq!(difference.json_changes_of, Some(200));
     }
 
     fn response(status: u16, kind: &str) -> StoredResponse {
