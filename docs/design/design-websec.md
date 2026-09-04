@@ -204,6 +204,15 @@ Rules that have to be settled once:
   is an error naming the actual content type, not a coerced string. An edit
   whose path does not exist is an error unless `--set-create` is given, since a
   typo that silently no-ops is a wrong answer that looks right.
+- **An edit changes what it names and nothing else.** A `query.`, `form.` or
+  `cookie.` edit rewrites one piece of the string it lives in and leaves the
+  other pieces byte for byte, rather than decoding the whole thing and encoding
+  it again: `?debug` is not `?debug=`, `x[]=1` is not `x%5B%5D=1`, and a `Cookie`
+  header carrying a bare token still carries it afterwards. A `json.` edit is
+  the one that cannot manage that, because a structured JSON edit reserialises
+  the document; field order survives (`serde_json` is built with
+  `preserve_order` for exactly this) but whitespace does not, so a body whose
+  exact bytes are signed wants `body.raw` rather than `json.`.
 - **Raw is available and honest.** `--edits-file` accepts a `raw` key holding a
   whole request, in which case h5i sends the bytes given and reports which of
   its own invariants it had to break to do so.

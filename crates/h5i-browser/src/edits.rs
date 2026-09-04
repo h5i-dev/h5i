@@ -1077,7 +1077,10 @@ fn json_remove(document: &mut serde_json::Value, path: &str) -> Result<(), Strin
     }
     match at {
         serde_json::Value::Object(map) => {
-            map.remove(*last);
+            // `shift_remove`, not `remove`: with `preserve_order` the plain one
+            // is a swap, and removing one field would move the last field to
+            // where it used to be.
+            map.shift_remove(*last);
             Ok(())
         }
         serde_json::Value::Array(items) => {
@@ -1602,6 +1605,49 @@ mod tests {
             .expect_err("a `;` in a cookie value writes a second cookie");
         assert!(error.to_string().contains("header.Cookie="), "{error}");
         assert_eq!(request.header("cookie"), Some("session=abc; theme=dark"));
+    }
+
+    /// A JSON edit rewrites the body it edits, so the order the fields come
+    /// back in is the order they go out in. `serde_json`'s default map sorts
+    /// them, so `{"user":…,"role":…,"nonce":…}` was replayed as
+    /// `{"nonce":…,"role":…,"user":…}` — a different body under the name of the
+    /// recorded one, which an API that signs its body answers 401 to. That 401
+    /// is then read as the finding.
+    #[test]
+    fn a_json_edit_keeps_the_fields_in_the_order_they_were_in() {
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/api").expect("a url"),
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            body: br#"{"user":"alice","role":"user","nonce":"z9"}"#.to_vec(),
+        };
+        apply(&mut request, &[set("json.role=\"admin\"")], false).expect("applies");
+        assert_eq!(
+            String::from_utf8_lossy(&request.body),
+            r#"{"user":"alice","role":"admin","nonce":"z9"}"#
+        );
+    }
+
+    /// And removing one field shifts the rest along rather than swapping the
+    /// last one into its place.
+    #[test]
+    fn removing_a_json_field_leaves_the_others_in_order() {
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/api").expect("a url"),
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            body: br#"{"a":1,"b":2,"c":3,"d":4}"#.to_vec(),
+        };
+        apply(
+            &mut request,
+            &[parse_unset("json.b").expect("parses")],
+            false,
+        )
+        .expect("removes");
+        assert_eq!(
+            String::from_utf8_lossy(&request.body),
+            r#"{"a":1,"c":3,"d":4}"#
+        );
     }
 
     /// And an ordinary path still goes through, dots in a filename included.
