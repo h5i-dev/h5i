@@ -259,7 +259,16 @@ pub(crate) fn read_http_response(wire: &mut Wire, cap: usize) -> Result<RawRespo
     let (body, leftover) = if te_chunked {
         read_chunked(wire, &mut rest, &mut chunk, cap)?
     } else if let Some(len) = content_length {
-        read_exact_len(wire, rest, &mut chunk, len.min(cap))?
+        // Refused past the cap rather than cut short, which is what every
+        // other body reader in this engine does. Truncating had a second cost
+        // that belongs to this path alone: the bytes past the cap became
+        // `leftover`, and `leftover` is how a raw send reports that the socket
+        // answered twice. Any page larger than the cap therefore read as a
+        // successful desync — the one signal this path exists to produce.
+        if len > cap {
+            return Err(format!("response exceeds the {cap} byte cap"));
+        }
+        read_exact_len(wire, rest, &mut chunk, len)?
     } else {
         // Without framing, read until the connection closes or the cap is
         // reached. Nothing can follow a response that ends at the close.
@@ -299,7 +308,10 @@ fn read_to_close(
     chunk: &mut [u8],
     cap: usize,
 ) -> Result<Vec<u8>, String> {
-    while have.len() < cap {
+    // One byte past the cap, so that "exactly the cap" and "more than the cap"
+    // are different answers. Silently truncating here handed back a body that
+    // is not the one the server sent, under a status that says it is.
+    while have.len() <= cap {
         match wire.read(chunk) {
             Ok(0) => break,
             Ok(n) => have.extend_from_slice(&chunk[..n]),
@@ -307,7 +319,9 @@ fn read_to_close(
             Err(e) => return Err(format!("reading the response body failed: {e}")),
         }
     }
-    have.truncate(cap);
+    if have.len() > cap {
+        return Err(format!("response exceeds the {cap} byte cap"));
+    }
     Ok(have)
 }
 
@@ -495,6 +509,33 @@ mod tests {
         );
     }
 
+    /// `leftover` is this path's desync signal: bytes on the socket after the
+    /// response its own framing ended. A body larger than the cap used to be
+    /// cut at the cap with the remainder handed back under that name, so an
+    /// ordinary large page reported as a successful request smuggle.
+    #[test]
+    fn a_body_past_the_cap_is_refused_rather_than_reported_as_a_second_response() {
+        let big = "x".repeat(4096);
+        let said = format!("HTTP/1.1 200 OK\r\nContent-Length: 4096\r\n\r\n{big}");
+        let outcome = try_reading_from_a_server_that_says_with_cap(&said, 1024);
+        match outcome {
+            Err(why) => assert!(why.contains("cap"), "{why}"),
+            Ok(response) => panic!(
+                "kept {} bytes and called {} of them a second response",
+                response.body.len(),
+                response.leftover.len()
+            ),
+        }
+    }
+
+    /// And the same for a response with no framing at all, which used to be
+    /// truncated to the cap and handed back under a 200.
+    #[test]
+    fn an_unframed_body_past_the_cap_is_refused_rather_than_cut_short() {
+        let said = format!("HTTP/1.1 200 OK\r\n\r\n{}", "x".repeat(4096));
+        assert!(try_reading_from_a_server_that_says_with_cap(&said, 1024).is_err());
+    }
+
     /// One connection, one write, whatever bytes the test names.
     fn read_from_a_server_that_says(bytes: &str) -> RawResponse {
         use std::io::Write;
@@ -521,6 +562,13 @@ mod tests {
 
     /// The same server, for the cases where the refusal is the answer.
     fn try_reading_from_a_server_that_says(bytes: &str) -> Result<RawResponse, String> {
+        try_reading_from_a_server_that_says_with_cap(bytes, 1 << 20)
+    }
+
+    fn try_reading_from_a_server_that_says_with_cap(
+        bytes: &str,
+        cap: usize,
+    ) -> Result<RawResponse, String> {
         use std::io::Write;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let port = listener.local_addr().expect("addr").port();
@@ -535,7 +583,7 @@ mod tests {
         let sock = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
         sock.set_read_timeout(Some(std::time::Duration::from_secs(5))).expect("timeout");
         let mut wire = Wire::plain(sock);
-        let response = read_http_response(&mut wire, 1 << 20);
+        let response = read_http_response(&mut wire, cap);
         let _ = server.join();
         response
     }
