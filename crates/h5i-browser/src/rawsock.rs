@@ -536,6 +536,44 @@ mod tests {
         assert!(try_reading_from_a_server_that_says_with_cap(&said, 1024).is_err());
     }
 
+    /// Everything this reader parses is what a target chose to send: a status
+    /// line, a header block, a chunk size. It may refuse, it may time out; it
+    /// may not die, because a raw send is how this engine looks at a server
+    /// that is already behaving badly on purpose.
+    #[test]
+    fn no_arrangement_of_these_bytes_makes_the_reader_panic() {
+        let alphabet: &[&str] = &[
+            "\r\n", "\n", "\r", ":", " ", "0", "2", "hi", ";ext", "--", "",
+            "ffffffffffffffee", "ffffffffffffffff", "7fffffffffffffff", "fffffffffffffff0",
+            "8000000000000000", "-1", "1000", "zz", "Trailer: x",
+            "HTTP/1.1 200 OK", "Content-Length: 5",
+            "Content-Length: 99999999999999999999", "Content-Length: -1",
+        ];
+        // Half the cases begin with a head that reaches the chunked reader and
+        // half with one that reaches the length reader, because a random prefix
+        // almost never forms either: the sharp arithmetic is past a valid head,
+        // and a fuzzer that cannot get there is a fuzzer that proves nothing.
+        let heads: &[&str] = &[
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n",
+            "HTTP/1.1 200 OK\r\n\r\n",
+            "",
+        ];
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |modulo: usize| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % modulo
+        };
+        for _ in 0..3_000 {
+            let mut said = heads[next(heads.len())].to_string();
+            for _ in 0..6 {
+                said.push_str(alphabet[next(alphabet.len())]);
+            }
+            // Whatever it answers, including an error, is fine. A panic is not.
+            let _ = read_from_a_server_that_hangs_up(&said, 4096);
+        }
+    }
+
     /// One connection, one write, whatever bytes the test names.
     fn read_from_a_server_that_says(bytes: &str) -> RawResponse {
         use std::io::Write;
@@ -556,6 +594,31 @@ mod tests {
         sock.set_read_timeout(Some(std::time::Duration::from_secs(5))).expect("timeout");
         let mut wire = Wire::plain(sock);
         let response = read_http_response(&mut wire, 1 << 20).expect("a response");
+        let _ = server.join();
+        response
+    }
+
+    /// A server that says its piece and hangs up at once.
+    ///
+    /// The helpers above hold the connection open so the reader has to stop on
+    /// the framing; this one is for the fuzz loop, where two thousand
+    /// two-hundred-millisecond sleeps is seven minutes of holding sockets open
+    /// to learn nothing the close does not also teach.
+    fn read_from_a_server_that_hangs_up(bytes: &str, cap: usize) -> Result<RawResponse, String> {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let said = bytes.to_string();
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.write_all(said.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        let sock = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        sock.set_read_timeout(Some(std::time::Duration::from_secs(2))).expect("timeout");
+        let mut wire = Wire::plain(sock);
+        let response = read_http_response(&mut wire, cap);
         let _ = server.join();
         response
     }

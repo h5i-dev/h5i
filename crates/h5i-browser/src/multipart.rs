@@ -208,6 +208,34 @@ mod tests {
         body
     }
 
+    /// Every body this parser sees is a body somebody else wrote: a page's own
+    /// `fetch` put it in the store, and an edit takes it apart again. It may
+    /// answer `None`, it may answer with odd parts; it may not die.
+    #[test]
+    fn no_arrangement_of_these_bytes_makes_the_parser_panic() {
+        // A small alphabet of exactly the bytes the framing is made of, which
+        // is where the sharp edges are: boundaries, terminators, half of a
+        // CRLF, a header colon.
+        let alphabet: &[&[u8]] = &[
+            b"------abc", b"--", b"\r\n", b"\n", b"\r", b"a", b":", b" ",
+            b"Content-Disposition: form-data; name=\"a\"", b"filename=\"f\"", b"",
+        ];
+        // A cheap deterministic generator: every arrangement of six pieces
+        // would be 11^6, so walk a fixed stride through that space instead.
+        let mut seed: u64 = 0x243f_6a88_85a3_08d3;
+        for _ in 0..200_000 {
+            let mut body = Vec::new();
+            for _ in 0..6 {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                body.extend_from_slice(alphabet[(seed >> 33) as usize % alphabet.len()]);
+            }
+            // Both the boundary it declares and one it does not.
+            let _ = parse(&body, "----abc");
+            let _ = parse(&body, "--");
+            let _ = parse(&body, "");
+        }
+    }
+
     /// A part whose boundary follows the header terminator with nothing
     /// between them is malformed, and a page can post one through `fetch`. The
     /// CRLF the parser stepped over was then the terminator's own, so the data
