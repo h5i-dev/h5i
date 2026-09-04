@@ -1898,6 +1898,32 @@ fn extract_one(spec: &str, response: &StoredResponse, body: &Text) -> anyhow::Re
     })
 }
 
+/// Why a step failed, out of wherever the reply put it.
+///
+/// A refusal carries `code` and `message`; a send that reached the wire and
+/// failed there carries neither, and puts what happened under `response.error`.
+/// Reading only the first meant a sequence stopped and said "the step failed"
+/// while the answer it was holding said "error sending request for url …". A
+/// sequence stops at the first failure by design, so the reason it gives is the
+/// whole of what its author has to act on.
+fn why_a_step_failed(answer: &Value) -> String {
+    let text = |value: &Value| value.as_str().map(str::to_string);
+    let refusal = answer.get("message").and_then(text).map(|message| {
+        match answer.get("code").and_then(text) {
+            Some(code) => format!("{code}: {message}"),
+            None => message,
+        }
+    });
+    refusal
+        .or_else(|| {
+            answer
+                .get("response")
+                .and_then(|response| response.get("error"))
+                .and_then(text)
+        })
+        .unwrap_or_else(|| "the step failed, and the reply said nothing about why".to_string())
+}
+
 /// `h5i browser sequence <file>`.
 ///
 /// Stops at the first failure. A sequence is a chain, and a step that runs after
@@ -1982,11 +2008,7 @@ pub fn sequence(
             .and_then(|r| r.get("status"))
             .and_then(Value::as_u64);
         if !ok {
-            record.error = answer
-                .get("message")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .or_else(|| Some("the step failed".to_string()));
+            record.error = Some(why_a_step_failed(&answer));
             ran.push(record);
             failed = true;
             if !keep_going {
@@ -2440,6 +2462,32 @@ mod tests {
         assert!(users.navigated, "the browser did go here");
         assert!(!admin.navigated, "and it never went here: a replay is not a visit");
         assert_eq!(admin.hits, 1, "but it is still on the map");
+    }
+
+    /// A sequence stops at the first failure by design, so the reason it gives
+    /// is the whole of what its author has to act on. A refusal carries `code`
+    /// and `message`; a send that reached the wire and failed there carries
+    /// neither and puts what happened in `response.error`. Reading only the
+    /// first meant a step reported "the step failed" while the reply it was
+    /// holding said "error sending request for url …".
+    #[test]
+    fn a_failed_step_reports_the_reason_the_reply_carried() {
+        assert_eq!(
+            why_a_step_failed(&json!({
+                "ok": false,
+                "code": "bad-edit",
+                "message": "path: a path has no query in it"
+            })),
+            "bad-edit: path: a path has no query in it"
+        );
+        assert_eq!(
+            why_a_step_failed(&json!({
+                "ok": false,
+                "response": {"error": "error sending request for url (http://a.test/)"}
+            })),
+            "error sending request for url (http://a.test/)"
+        );
+        assert!(why_a_step_failed(&json!({"ok": false})).contains("said nothing about why"));
     }
 
     fn response(status: u16, kind: &str) -> StoredResponse {
