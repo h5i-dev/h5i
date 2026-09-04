@@ -1716,7 +1716,9 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             let target = as_session.as_deref().or(session.as_deref());
             // With one send there is nothing to summarise and the reply is the
             // answer. With several, the medians go in beside the samples.
-            verb_then(&root, target, argv, true, json, |answer| {
+            verb_then(&root, target, argv, true, json, |answer, _refused| {
+                // On a refusal too: a burst that half happened is exactly when
+                // "how many of these were answered" is the question.
                 if let Some(samples) = answer.get("samples").and_then(Value::as_array)
                     && let Some(summary) = super::websec::timing_summary(samples)
                 {
@@ -2918,7 +2920,12 @@ fn screenshot(
     // control lock exists so a human at the wheel is not steered from under.
     let moves_the_page = argv.iter().any(|a| a == "--url");
 
-    verb_then(root, selector, argv, moves_the_page, json, |answer| {
+    verb_then(root, selector, argv, moves_the_page, json, |answer, refused| {
+        // Nothing was painted, so there is nothing to move and nowhere to
+        // point a caller.
+        if refused {
+            return Ok(());
+        }
         let Some(out) = out else {
             return Ok(());
         };
@@ -2993,7 +3000,7 @@ fn verb(
     mutating: bool,
     json: bool,
 ) -> anyhow::Result<()> {
-    verb_then(root, selector, argv, mutating, json, |_| Ok(()))
+    verb_then(root, selector, argv, mutating, json, |_, _| Ok(()))
 }
 
 /// The same, with something to do to the answer before it is printed.
@@ -3078,7 +3085,7 @@ fn verb_then(
     argv: Vec<String>,
     mutating: bool,
     json: bool,
-    after: impl FnOnce(&mut Value) -> anyhow::Result<()>,
+    after: impl FnOnce(&mut Value, bool) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let session = match bs::resolve(root, selector) {
         Ok(session) => session,
@@ -3128,9 +3135,12 @@ fn verb_then(
     // script that checks the status code would read "denied by policy" as
     // success, which is the failure this whole design is arranged against.
     let refused = answer.get("ok").and_then(Value::as_bool) == Some(false);
-    if !refused {
-        after(&mut answer)?;
-    }
+    // The hook runs either way and is told which it is. It used to be skipped
+    // on a refusal, which is right for one that moves a file and wrong for one
+    // that only annotates: a `--repeat` burst the budget stopped halfway came
+    // back with a hundred samples, no summary, and so no way to see that only
+    // twelve of them had happened. Each hook decides for itself now.
+    after(&mut answer, refused)?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&answer)?);
