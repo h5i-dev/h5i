@@ -107,15 +107,22 @@ pub fn parse(body: &[u8], boundary: &str) -> Option<Vec<Part>> {
         let next = find(body, sep, headers_end + gap)?;
         // The CRLF before the next boundary belongs to the framing, not to the
         // data. Dropping it is what makes a round trip byte-identical.
+        //
+        // Only when there is data for it to sit behind. A body whose boundary
+        // follows its header terminator with nothing between them is malformed,
+        // and a page can post one: the line break being stepped over is then
+        // the terminator's own, `end` lands two bytes before the data starts,
+        // and the slice below runs backwards and panics.
+        let data_at = headers_end + gap;
         let mut end = next;
-        if body[..end].ends_with(b"\r\n") {
+        if end >= data_at + 2 && body[..end].ends_with(b"\r\n") {
             end -= 2;
-        } else if body[..end].ends_with(b"\n") {
+        } else if end >= data_at + 1 && body[..end].ends_with(b"\n") {
             end -= 1;
         }
 
         let mut part = Part {
-            data: body[headers_end + gap..end].to_vec(),
+            data: body[data_at..end].to_vec(),
             ..Default::default()
         };
         for line in head.lines().filter(|l| !l.trim().is_empty()) {
@@ -199,6 +206,35 @@ mod tests {
         body.extend_from_slice(b"\x89PNG\r\n\x1a\n binary");
         body.extend_from_slice(b"\r\n------abc--\r\n");
         body
+    }
+
+    /// A part whose boundary follows the header terminator with nothing
+    /// between them is malformed, and a page can post one through `fetch`. The
+    /// CRLF the parser stepped over was then the terminator's own, so the data
+    /// slice ran backwards and the process died on the next edit of that
+    /// stored request.
+    #[test]
+    fn a_part_with_no_data_at_all_is_parsed_rather_than_panicked_on() {
+        let mut body = Vec::new();
+        body.extend_from_slice(b"------abc\r\n");
+        body.extend_from_slice(b"Content-Disposition: form-data; name=\"a\"\r\n\r\n");
+        body.extend_from_slice(b"------abc--\r\n");
+        let parts = parse(&body, "----abc").expect("parses");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].name, "a");
+        assert!(parts[0].data.is_empty(), "{:?}", parts[0].data);
+    }
+
+    /// The well-formed spelling of the same thing keeps working.
+    #[test]
+    fn an_empty_part_written_properly_is_still_empty() {
+        let mut body = Vec::new();
+        body.extend_from_slice(b"------abc\r\n");
+        body.extend_from_slice(b"Content-Disposition: form-data; name=\"a\"\r\n\r\n");
+        body.extend_from_slice(b"\r\n------abc--\r\n");
+        let parts = parse(&body, "----abc").expect("parses");
+        assert_eq!(parts.len(), 1);
+        assert!(parts[0].data.is_empty());
     }
 
     #[test]
