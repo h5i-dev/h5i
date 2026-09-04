@@ -83,6 +83,19 @@ fn read_json<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> anyhow::Result
 pub enum Text {
     /// Decoded, and safe to compare line by line.
     Utf8(String),
+    /// Decoded, and only the head of what the response carried.
+    ///
+    /// The store keeps at most [`h5i_browser::capture::MAX_BODY_BYTES`] of one
+    /// body, so a response past that is text this can read and cannot read all
+    /// of. Distinct from [`Text::Utf8`] because every verb here turns on the
+    /// difference: a search that finds nothing in the head has said nothing
+    /// about the rest, and a length read off the head is the cap's number, not
+    /// the body's. Eight megabytes is a page a target can serve on purpose.
+    Cut {
+        text: String,
+        /// How many bytes the response actually carried.
+        of_bytes: u64,
+    },
     /// Binary data with an inspection-only lossy preview.
     Binary {
         bytes: u64,
@@ -107,6 +120,7 @@ impl Text {
     fn len(&self) -> Option<u64> {
         match self {
             Text::Utf8(text) => Some(text.len() as u64),
+            Text::Cut { of_bytes, .. } => Some(*of_bytes),
             Text::Binary { bytes, .. } => Some(*bytes),
             Text::Missing(_) => None,
         }
@@ -120,6 +134,7 @@ impl Text {
     fn whole(&self) -> bool {
         match self {
             Text::Utf8(_) => true,
+            Text::Cut { .. } => false,
             Text::Binary { bytes, .. } => *bytes <= LOSSY_BODY_BYTES as u64,
             Text::Missing(_) => false,
         }
@@ -128,6 +143,7 @@ impl Text {
     fn as_str(&self) -> &str {
         match self {
             Text::Utf8(text) => text,
+            Text::Cut { text, .. } => text,
             // Let match and diff inspect the lossy preview.
             Text::Binary { text, .. } => text,
             Text::Missing(_) => "",
@@ -137,6 +153,9 @@ impl Text {
     fn to_json(&self) -> Value {
         match self {
             Text::Utf8(text) => json!({"kind": "text", "text": text}),
+            Text::Cut { text, of_bytes } => {
+                json!({"kind": "text", "text": text, "truncated": true, "of_bytes": of_bytes})
+            }
             Text::Binary {
                 bytes,
                 sha256,
@@ -215,7 +234,12 @@ fn body_text(dir: &Path, body: &Body) -> Text {
             (reason, Some(bytes)) => format!("{reason:?} ({bytes} bytes)").to_lowercase(),
             (reason, None) => format!("{reason:?}").to_lowercase(),
         }),
-        Body::Stored { sha256, bytes, .. } => {
+        Body::Stored {
+            sha256,
+            bytes,
+            of_bytes,
+            truncated,
+        } => {
             let Some(path) = body_file(dir, sha256) else {
                 return Text::Missing(format!(
                     "{sha256:?} is not a body hash, so the store has nothing under it"
@@ -224,6 +248,15 @@ fn body_text(dir: &Path, body: &Body) -> Text {
             match std::fs::read(&path) {
                 Err(e) => Text::Missing(format!("the stored body could not be read: {e}")),
                 Ok(raw) => match String::from_utf8(raw) {
+                    // Text, and whether it is all of the text. A body past the
+                    // store's per-message cap is kept as its head, and a cut
+                    // that lands on a character boundary — which for an ASCII
+                    // or HTML page is every cut — still decodes cleanly, so
+                    // this used to be indistinguishable from a whole body.
+                    Ok(text) if *truncated => Text::Cut {
+                        of_bytes: of_bytes.unwrap_or(text.len() as u64),
+                        text,
+                    },
                     Ok(text) => Text::Utf8(text),
                     Err(e) => Text::Binary {
                         bytes: *bytes,
@@ -302,6 +335,13 @@ fn raw_response(stored: &StoredResponse, body: &Text) -> String {
 fn push_body(out: &mut String, body: &Text) {
     match body {
         Text::Utf8(text) => out.push_str(text),
+        Text::Cut { text, of_bytes } => {
+            out.push_str(text);
+            out.push_str(&format!(
+                "\n[the store kept {} of this body's {of_bytes} bytes]\n",
+                text.len()
+            ));
+        }
         Text::Binary {
             bytes,
             sha256,
@@ -485,6 +525,16 @@ fn summarise_body(body: &Text) {
                 println!("    … {} more lines", text.lines().count() - 20);
             }
         }
+        Text::Cut { text, of_bytes } => {
+            println!(
+                "  body     : {of_bytes} bytes, of which the store kept {}",
+                text.len()
+            );
+            for line in text.lines().take(20) {
+                println!("    {}", printable(line));
+            }
+            println!("    … the rest of this body is not in the store");
+        }
         Text::Binary {
             bytes,
             sha256,
@@ -533,6 +583,12 @@ fn carried_body(dir: &Path, seq: u64, body: &Body) -> anyhow::Result<Vec<u8>> {
     }
     match body_text(dir, body) {
         Text::Utf8(text) => Ok(text.into_bytes()),
+        // Unreachable while the check above stands, and spelled out rather than
+        // folded into a catch-all so that a change to that check fails here.
+        Text::Cut { of_bytes, .. } => anyhow::bail!(
+            "request {seq} carried {of_bytes} bytes and the store kept only its head, so \
+             carrying it would send a request that is not the one recorded"
+        ),
         Text::Binary { sha256, .. } => {
             let path = body_file(dir, &sha256)
                 .ok_or_else(|| anyhow::anyhow!("{sha256:?} is not a body hash"))?;
@@ -2271,6 +2327,35 @@ mod tests {
         // change what it can say.
         let why = extract_one("header:X-Nope", &stored, &absent).expect_err("no such header");
         assert!(why.to_string().contains("found nothing in this response"), "{why}");
+    }
+
+    /// The store keeps at most 8 MiB of one body, and a cut that lands on a
+    /// character boundary — which for an ASCII or HTML page is every cut —
+    /// still decodes cleanly. So a truncated page arrived as ordinary text and
+    /// every verb treated its head as the whole thing: `--contains` answered a
+    /// confident "no" over the first 8 MiB, and two different long pages
+    /// compared as the same response. Eight megabytes is a page a target can
+    /// serve on purpose.
+    #[test]
+    fn a_body_the_store_cut_is_not_a_whole_body() {
+        let cut = Text::Cut {
+            text: "the first eight megabytes".to_string(),
+            of_bytes: 20_000_000,
+        };
+        assert!(!cut.whole());
+        assert_eq!(cut.len(), Some(20_000_000), "the body's length, not the head's");
+
+        let stored = response(200, "text/html");
+        let found = evaluate(&Condition::Contains("FLAG{".to_string()), &stored, &cut);
+        assert!(!found.matched);
+        assert!(!found.conclusive, "a search over the head is not a no");
+
+        let difference = compare((&stored, &cut), (&stored, &cut));
+        assert!(
+            !difference.bodies_compared,
+            "two heads matching is not two pages matching"
+        );
+        assert!(!difference.same);
     }
 
     fn response(status: u16, kind: &str) -> StoredResponse {
