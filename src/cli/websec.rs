@@ -108,6 +108,52 @@ impl Text {
     }
 }
 
+/// Target text with what a terminal would act on made visible instead.
+///
+/// Every string in this module that came off the wire is printed to a terminal
+/// by the human view: a header value, a body line, a captured group, a query
+/// parameter name. An escape sequence in one of them repaints the screen —
+/// it can erase the line naming which request this was, or draw a status that
+/// never arrived, which is the one thing a workbench must not let a target do
+/// to the report of what the target did.
+///
+/// Escaped rather than dropped, so a `\u{1b}` in a response is still visible as
+/// one, and still countable. Bidi controls go the same way: `char::is_control`
+/// is false for every one of them and they reorder the line around them without
+/// being seen. `--raw`, `--body-to` and `--json` are untouched, and that is
+/// where exact bytes belong: the first two are the byte channels, and JSON
+/// escapes a control character on the way out by itself.
+fn printable(text: &str) -> String {
+    if !text
+        .chars()
+        .any(|c| c.is_control() || is_bidi_control(c))
+    {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_control() || is_bidi_control(ch) {
+            out.extend(ch.escape_debug());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Bidirectional formatting characters, which reorder the text *around* them.
+///
+/// The overrides, embeddings and isolates only; `U+200C`/`U+200D` carry no
+/// reordering power and are ordinary text. The same set the engine drops from
+/// page text in `snapshot.rs`.
+fn is_bidi_control(c: char) -> bool {
+    matches!(c,
+        '\u{200E}' | '\u{200F}'
+        | '\u{202A}'..='\u{202E}'
+        | '\u{2066}'..='\u{2069}'
+    )
+}
+
 /// Exact stored body bytes, or `None` when unavailable.
 fn body_bytes(dir: &Path, body: &Body) -> Option<Vec<u8>> {
     match body {
@@ -347,7 +393,7 @@ pub fn show(
             println!("  request  : {} {}", request.method, request.url);
             println!("  at       : {}", request.at);
             for (name, value) in &request.headers {
-                println!("    {name}: {value}");
+                println!("    {}: {}", printable(name), printable(value));
             }
             summarise_body(body);
         }
@@ -372,7 +418,7 @@ pub fn show(
                 None => println!("  response : (none: the request did not complete)"),
             }
             for (name, value) in &response.headers {
-                println!("    {name}: {value}");
+                println!("    {}: {}", printable(name), printable(value));
             }
             summarise_body(body);
             if let Some(trailing) = &trailing {
@@ -392,7 +438,7 @@ fn summarise_body(body: &Text) {
         Text::Utf8(text) => {
             println!("  body     : {} bytes", text.len());
             for line in text.lines().take(20) {
-                println!("    {line}");
+                println!("    {}", printable(line));
             }
             if text.lines().count() > 20 {
                 println!("    … {} more lines", text.lines().count() - 20);
@@ -405,7 +451,7 @@ fn summarise_body(body: &Text) {
         } => {
             println!("  body     : {bytes} bytes, not text (sha256 {sha256})");
             for line in text.lines().take(20) {
-                println!("    {line}");
+                println!("    {}", printable(line));
             }
         }
         Text::Missing(why) => println!("  body     : not stored ({why})"),
@@ -814,22 +860,27 @@ pub fn diff(
     );
     println!("  alike    : {:.3}", difference.similarity);
     for name in &difference.headers_added {
-        println!("  + header : {name}");
+        println!("  + header : {}", printable(name));
     }
     for name in &difference.headers_removed {
-        println!("  - header : {name}");
+        println!("  - header : {}", printable(name));
     }
     for name in &difference.headers_changed {
-        println!("  ~ header : {name}");
+        println!("  ~ header : {}", printable(name));
     }
     for change in &difference.json_changes {
         let from = change.from.as_deref().unwrap_or("(absent)");
         let to = change.to.as_deref().unwrap_or("(absent)");
-        println!("  ~ {} : {from} → {to}", change.path);
+        println!(
+            "  ~ {} : {} → {}",
+            printable(&change.path),
+            printable(from),
+            printable(to)
+        );
     }
     for change in &difference.line_changes {
         let mark = if change.side == "added" { '+' } else { '-' };
-        println!("  {mark} {}", change.text);
+        println!("  {mark} {}", printable(&change.text));
     }
     Ok(())
 }
@@ -1119,7 +1170,7 @@ fn look(
                 one.expr
             );
             for capture in &one.captures {
-                println!("      {capture}");
+                println!("      {}", printable(capture));
             }
         }
     }
@@ -1333,12 +1384,15 @@ pub fn sitemap(root: &Path, selector: Option<&str>, json_out: bool) -> anyhow::R
             let params = if endpoint.params.is_empty() {
                 String::new()
             } else {
-                format!("  ?{}", endpoint.params.join("&"))
+                format!("  ?{}", printable(&endpoint.params.join("&")))
             };
             let mark = if endpoint.navigated { "*" } else { " " };
             println!(
                 "  {mark} {:<32} {:<8} {:<12} x{}{params}",
-                endpoint.path, methods, statuses, endpoint.hits
+                printable(&endpoint.path),
+                methods,
+                statuses,
+                endpoint.hits
             );
         }
     }
@@ -1346,7 +1400,7 @@ pub fn sitemap(root: &Path, selector: Option<&str>, json_out: bool) -> anyhow::R
         println!();
         println!("  refused by policy:");
         for url in &map.denied {
-            println!("    {url}");
+            println!("    {}", printable(url));
         }
     }
     Ok(())
@@ -1652,7 +1706,7 @@ pub fn sequence(
         for step in &ran {
             let label = step.name.clone().unwrap_or_else(|| format!("resend {}", step.resend));
             match (&step.error, step.status) {
-                (Some(why), _) => println!("  ✘ {label}: {why}"),
+                (Some(why), _) => println!("  ✘ {label}: {}", printable(why)),
                 (None, Some(status)) => {
                     let bound = if step.bound.is_empty() {
                         String::new()
@@ -1732,6 +1786,22 @@ mod tests {
         let refused = carried_body(&dir, 42, &cut).expect_err("a cut body is not replayable");
         assert!(refused.to_string().contains("not the one recorded"), "{refused}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A header value and a body line are strings the target wrote, and the
+    /// human view prints them to a terminal. An escape sequence in one repaints
+    /// the screen: `\r` alone rewrites the line that says which request this
+    /// was, and `ESC[2J` clears what came before it.
+    #[test]
+    fn what_a_terminal_would_act_on_is_shown_rather_than_obeyed() {
+        let hostile = "ok\u{1b}[2J\rHTTP/1.1 200 forged\u{202e}";
+        let safe = printable(hostile);
+        assert!(!safe.contains('\u{1b}'), "{safe:?}");
+        assert!(!safe.contains('\r'), "{safe:?}");
+        assert!(!safe.contains('\u{202e}'), "{safe:?}");
+        assert!(safe.contains("forged"), "the evidence survives: {safe:?}");
+        assert!(safe.contains("u{1b}"), "and says what was there: {safe:?}");
+        assert_eq!(printable("ordinary text"), "ordinary text");
     }
 
     fn response(status: u16, kind: &str) -> StoredResponse {
