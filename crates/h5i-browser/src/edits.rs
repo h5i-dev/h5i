@@ -287,6 +287,67 @@ fn parse_target(spec: &str) -> Result<Target, EditError> {
     }
 }
 
+/// Whether a header name is one a request can carry.
+///
+/// RFC 9110's token, which is what every HTTP client and server agrees a field
+/// name is. Checked here rather than left to the wire because a name with a
+/// space or a colon in it does not reach the server as a header at all: the
+/// client refuses to build the request, and the caller is told "builder error",
+/// which names neither the header nor the character.
+fn header_name_is_sendable(name: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|b| {
+            b.is_ascii_alphanumeric()
+                || matches!(
+                    b,
+                    b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.'
+                        | b'^' | b'_' | b'`' | b'|' | b'~'
+                )
+        })
+}
+
+/// The character in a header value that a request cannot carry, if there is one.
+///
+/// CR, LF and NUL, and nothing else: a header value is otherwise anything, and
+/// a workbench that narrowed it further would refuse payloads that are the
+/// whole point. These three end the field, and a client that let one through
+/// would be splitting the message — which is a thing worth testing and is what
+/// `--raw-request` is for, byte for byte and with the framing it broke named.
+fn header_value_refuses(value: &str) -> Option<char> {
+    value.chars().find(|c| matches!(c, '\r' | '\n' | '\0'))
+}
+
+/// The refusal both header edits share.
+fn refuse_an_unsendable_header(
+    target: &impl fmt::Display,
+    name: &str,
+    value: &str,
+) -> Result<(), EditError> {
+    if !header_name_is_sendable(name) {
+        return Err(EditError::new(
+            target,
+            format!(
+                "{name:?} is not a header name: a field name is a token, so it holds no \
+                 space, colon or control character. A request whose framing is deliberately \
+                 wrong goes out with `--raw-request`, which writes the bytes given and \
+                 reports what it broke"
+            ),
+        ));
+    }
+    if let Some(bad) = header_value_refuses(value) {
+        return Err(EditError::new(
+            target,
+            format!(
+                "this value contains {bad:?}, which ends a header field rather than sitting \
+                 in one: the request would not be the one it looks like. To send a message \
+                 whose framing is deliberately wrong, use `--raw-request`, which writes the \
+                 bytes given and reports which invariants it had to break"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Is this path segment a dot segment, in any of the spellings a URL parser
 /// treats as one?
 ///
@@ -530,6 +591,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                     created: false,
                 });
             }
+            refuse_an_unsendable_header(&target, name, &text(&value))?;
             let was = request.set_header(name, &text(&value));
             Ok(Applied {
                 target,
@@ -540,6 +602,12 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
         }
 
         Target::Cookie(name) => {
+            // A cookie is a header once it is written, so the same three
+            // characters end it. Checked before the pair list is rebuilt, so a
+            // refused edit leaves the jar's own header alone.
+            if !removing {
+                refuse_an_unsendable_header(&target, "Cookie", &text(&value))?;
+            }
             let current = request.header("cookie").unwrap_or_default().to_string();
             let mut pairs: Vec<(String, String)> = current
                 .split(';')
@@ -1282,6 +1350,35 @@ mod tests {
                 "a refused edit leaves the request alone"
             );
         }
+    }
+
+    /// A header value holding CR or LF does not reach the server as a header:
+    /// the client refuses to build the request and the caller was told
+    /// "builder error", which names neither the header nor the character.
+    /// Refused where the edit is written, and pointed at the path that can
+    /// actually send it.
+    #[test]
+    fn a_header_that_could_not_be_sent_is_refused_by_name() {
+        for spelling in [
+            "header.X-A=one\r\nX-Injected: yes",
+            "header.X-A=one\nX-Injected: yes",
+            "cookie.sid=a\r\nX-Injected: yes",
+        ] {
+            let mut request = request();
+            let error = apply(&mut request, &[set(spelling)], true)
+                .expect_err("a header that cannot be sent is refused");
+            assert!(error.to_string().contains("--raw-request"), "{spelling}: {error}");
+            assert_eq!(
+                request.header("cookie"),
+                Some("session=abc; theme=dark"),
+                "a refused edit leaves the request alone"
+            );
+        }
+        // A name that is not a token goes the same way, and says which.
+        let mut request = request();
+        let error = apply(&mut request, &[set("header.X A=1")], true)
+            .expect_err("a name with a space in it is not a header name");
+        assert!(error.to_string().contains("not a header name"), "{error}");
     }
 
     /// And an ordinary path still goes through, dots in a filename included.
