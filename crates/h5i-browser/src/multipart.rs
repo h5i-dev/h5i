@@ -115,9 +115,9 @@ pub fn parse(body: &[u8], boundary: &str) -> Option<Vec<Part>> {
         // and the slice below runs backwards and panics.
         let data_at = headers_end + gap;
         let mut end = next;
-        if end >= data_at + 2 && body[..end].ends_with(b"\r\n") {
+        if end > data_at + 1 && body[..end].ends_with(b"\r\n") {
             end -= 2;
-        } else if end >= data_at + 1 && body[..end].ends_with(b"\n") {
+        } else if end > data_at && body[..end].ends_with(b"\n") {
             end -= 1;
         }
 

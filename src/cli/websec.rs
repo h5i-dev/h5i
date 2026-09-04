@@ -1030,14 +1030,7 @@ pub struct Found {
     /// body search that only had the head of the body to search. `matches`
     /// turns it into the "could not look" exit rather than the "did not match"
     /// one, which is the whole discipline of this verb.
-    #[serde(default = "yes")]
     pub conclusive: bool,
-}
-
-/// `serde`'s default for [`Found::conclusive`]: a condition was answerable
-/// unless something says otherwise.
-fn yes() -> bool {
-    true
 }
 
 fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Found {
