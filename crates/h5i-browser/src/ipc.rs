@@ -518,6 +518,7 @@ impl Broker for BrokerClient {
                 total: 0,
                 denied: 0,
                 highest: None,
+                cursor: None,
             },
         }
     }
@@ -1551,6 +1552,45 @@ mod tests {
         let url = Url::parse("https://denied.test/").expect("url");
         client.send(&Fetch::get(&url, Initiator::Navigation));
         assert_eq!(client.log_summary().denied, 1);
+    }
+
+    /// A request and its response are two rows sharing one sequence number, and
+    /// the request half is written before the wire. Handing back the highest
+    /// number seen meant an agent that polled while a fetch was in flight took
+    /// that number as its cursor, asked for `seq >` it next time, and never
+    /// received the response half — so the status, the size and the error of
+    /// that request were lost to it permanently.
+    #[test]
+    fn the_cursor_never_moves_past_a_request_still_waiting_for_its_answer() {
+        use crate::receipt::Sink as _;
+        let (client, broker, _served) = paired();
+        let row = |seq: u64| {
+            RequestRecord::request(seq, Initiator::Navigation, "GET", "https://docs.test/")
+        };
+        // Three finished pairs, then one request whose answer has not landed.
+        for seq in 0..3u64 {
+            broker.log().append(&row(seq)).expect("appended");
+            broker.log().append(&row(seq).response()).expect("appended");
+        }
+        broker.log().append(&row(3)).expect("appended");
+
+        let summary = client.log_summary();
+        assert_eq!(summary.highest, Some(3), "the log has seen 3");
+        assert_eq!(
+            summary.cursor,
+            Some(2),
+            "but a reader may only be told it is caught up to 2"
+        );
+
+        // Which is exactly what makes the answer reachable when it lands.
+        broker.log().append(&row(3).response()).expect("appended");
+        let tail = client.records_since(summary.cursor);
+        assert!(
+            tail.iter()
+                .any(|r| r.seq == 3 && r.phase == crate::receipt::Phase::Response),
+            "the response has to be in the next window: {tail:?}"
+        );
+        assert_eq!(client.log_summary().cursor, Some(3), "and now it is past");
     }
 
     #[test]

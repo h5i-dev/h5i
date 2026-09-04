@@ -73,7 +73,7 @@ enum Verb {
         /// Only responses with this status.
         #[arg(long, value_name = "CODE")]
         status: Option<u16>,
-        /// Only `navigation`, `subresource`, `frame` or `redirect`.
+        /// Only `navigation`, `subresource`, `frame`, `redirect` or `replay`.
         #[arg(long, value_name = "KIND")]
         initiator: Option<String>,
         /// Only what policy refused.

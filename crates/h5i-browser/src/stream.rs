@@ -2599,12 +2599,10 @@ fn control_verb_inner(
                     "requests": rows,
                     // The cursor to pass back as `since`. Named rather than
                     // left to be derived from the last row, which is absent
-                    // when the window is empty. The highest sequence, not the
-                    // last appended: numbers are taken before the append and a
-                    // socket's reader thread appends concurrently with the
-                    // page's own fetches, so `last()` would either re-show a
-                    // row or skip one permanently.
-                    "cursor": summary.highest,
+                    // when the window is empty, and stopping below anything
+                    // still in flight rather than at the highest number seen:
+                    // see [`crate::broker::LogSummary::cursor`].
+                    "cursor": summary.cursor,
                     "shown": rows.len(),
                     // Whether what came back is the window or a slice of it, so
                     // "two rows" is never read as "this session made two
