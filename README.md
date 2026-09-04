@@ -37,7 +37,7 @@
   </tr>
 </table>
 
-**Pure Rust. No Chromium. No V8.**
+**Browse, automate, and test web applications with complete control over every request.**
 
 ```bash
 h5i browser open https://example.com
