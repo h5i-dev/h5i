@@ -476,6 +476,28 @@ pub fn dir(root: &Path, id: &str) -> PathBuf {
     root.join(SESSIONS).join(id)
 }
 
+/// Whether an id is one path component and nothing else.
+///
+/// An id reaches [`dir`] from two places that are not this module's to trust: a
+/// `--session` selector, or `$H5I_BROWSER_SESSION`, typed by whoever is driving;
+/// and the `id` field of a `session.json`, which for a boxed session sits on a
+/// filesystem the boxed code can write to. Either one carrying `..` names a
+/// directory outside the registry, and everything below a session directory —
+/// the cookie jar, the control channel, the message store with its
+/// `Authorization` headers in it — is addressed by joining onto it.
+///
+/// The shape [`new_id`] mints, plus what a restore or a test may reasonably
+/// have written: letters, digits, `.`, `_` and `-`, never a separator, never
+/// leading with a dot.
+pub fn id_is_one_component(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 96
+        && !id.starts_with('.')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
 /// Mint an id no session has ever had, and create its directory.
 ///
 /// The directory is the claim: creating it with `create_new` is what makes two
@@ -537,6 +559,9 @@ pub fn write(root: &Path, session: &Session) -> Result<(), H5iError> {
 
 /// Read one record by id.
 pub fn read(root: &Path, id: &str) -> Result<Session, H5iError> {
+    if !id_is_one_component(id) {
+        return Err(unknown(root, id));
+    }
     let path = dir(root, id).join(RECORD);
     let body = fs::read_to_string(&path).map_err(|_| unknown(root, id))?;
     serde_json::from_str(&body)
@@ -1478,6 +1503,29 @@ fn process_alive(_pid: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// A session id is joined onto the registry to address the cookie jar, the
+    /// control channel and the message store, and it arrives from two places
+    /// this module does not own: a `--session` selector, and the `id` field of a
+    /// `session.json`, which for a boxed session sits where boxed code can
+    /// write to it.
+    #[test]
+    fn an_id_that_is_not_one_component_names_no_directory() {
+        for bad in ["..", "../../etc", "a/b", "a\\b", ".hidden", ""] {
+            assert!(!super::id_is_one_component(bad), "`{bad}` should not be an id");
+        }
+        for good in ["br_g9pftf", "br_1", "a.b-c_d"] {
+            assert!(super::id_is_one_component(good), "`{good}` should be an id");
+        }
+    }
+
+    /// And `read` answers "unknown session" rather than following it out of the
+    /// registry and reading whatever is there.
+    #[test]
+    fn reading_a_traversing_id_is_an_unknown_session() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(super::read(root.path(), "../../../etc/passwd").is_err());
+    }
+
     /// The two logs an audit reads live inside the box's own `/tmp`, which the
     /// box writes. Reading them whole made `h5i box export` allocate whatever
     /// the box wrote, and following a link made it read whatever the box

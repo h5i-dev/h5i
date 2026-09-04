@@ -25,6 +25,16 @@ fn store_dir(root: &Path, selector: Option<&str>) -> anyhow::Result<(bs::Session
         Err(bs::SessionGone::Ended { id, .. }) => bs::read(root, &id)?,
         Err(gone) => anyhow::bail!("{gone}"),
     };
+    // The id off the record, checked before it names a directory: for a boxed
+    // session that file sits where the boxed code can write to it, and
+    // everything under a session directory is addressed by joining onto this.
+    if !bs::id_is_one_component(&session.id) {
+        anyhow::bail!(
+            "session record names `{}` as its id, which is not one this registry could \
+             have minted. Nothing was read",
+            session.id
+        );
+    }
     let dir = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
     if !dir.exists() {
         let placed = match &session.placement {
