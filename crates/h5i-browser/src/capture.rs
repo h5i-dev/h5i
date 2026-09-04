@@ -20,6 +20,22 @@ pub const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 /// Maximum total body storage per session.
 pub const MAX_STORE_BYTES: u64 = 512 * 1024 * 1024;
 
+/// The file a body hash names inside a store, or `None` when it is not a hash.
+///
+/// The hash reaches every caller from a JSON file, and a JSON file in a session
+/// directory is not a trusted input: a session that runs inside a box has its
+/// store on a filesystem the boxed code can write to, so a `..` in that field
+/// would name a path outside the store, on the host. Hex and length are the
+/// whole check, because a name that is 64 hex characters cannot traverse
+/// anywhere. Public so that h5i's own reader shares the rule rather than
+/// reimplementing it, which is how the two came apart the first time.
+pub fn body_file(store: &Path, sha256: &str) -> Option<PathBuf> {
+    if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(store.join("bodies").join(sha256))
+}
+
 /// Skip large media unlikely to aid inspection. Images remain capturable for
 /// upload analysis.
 fn is_skipped_type(content_type: Option<&str>) -> bool {
@@ -289,18 +305,12 @@ impl Capture {
     }
 
     /// The file a hash names, refusing anything that is not one.
-    ///
-    /// The hash reaches this from a JSON file, and a JSON file in a session
-    /// directory is not a trusted input: a `..` in that field would otherwise
-    /// name a path outside the store. Hex and length are the whole check because
-    /// a name that is 64 hex characters cannot traverse anywhere.
     fn body_path(&self, sha256: &str) -> Result<PathBuf, H5iError> {
-        if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(H5iError::Internal(format!(
+        body_file(&self.dir, sha256).ok_or_else(|| {
+            H5iError::Internal(format!(
                 "{sha256:?} is not a body hash, so there is nothing in the store to read"
-            )));
-        }
-        Ok(self.bodies.join(sha256))
+            ))
+        })
     }
 
     /// Put a body in the store, and say what became of it.

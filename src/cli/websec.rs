@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use h5i_browser::capture::{Body, StoredRequest, StoredResponse};
+use h5i_browser::capture::{body_file, Body, StoredRequest, StoredResponse};
 use h5i_core::browser_session as bs;
 use serde_json::{json, Value};
 
@@ -113,7 +113,7 @@ fn body_bytes(dir: &Path, body: &Body) -> Option<Vec<u8>> {
     match body {
         Body::Empty => Some(Vec::new()),
         Body::Skipped { .. } => None,
-        Body::Stored { sha256, .. } => std::fs::read(dir.join("bodies").join(sha256)).ok(),
+        Body::Stored { sha256, .. } => std::fs::read(body_file(dir, sha256)?).ok(),
     }
 }
 
@@ -129,7 +129,11 @@ fn body_text(dir: &Path, body: &Body) -> Text {
             (reason, None) => format!("{reason:?}").to_lowercase(),
         }),
         Body::Stored { sha256, bytes, .. } => {
-            let path = dir.join("bodies").join(sha256);
+            let Some(path) = body_file(dir, sha256) else {
+                return Text::Missing(format!(
+                    "{sha256:?} is not a body hash, so the store has nothing under it"
+                ));
+            };
             match std::fs::read(&path) {
                 Err(e) => Text::Missing(format!("the stored body could not be read: {e}")),
                 Ok(raw) => match String::from_utf8(raw) {
@@ -467,8 +471,12 @@ pub fn carry(
 
     let body = match body_text(&dir, &stored.body) {
         Text::Utf8(text) => text.into_bytes(),
-        Text::Binary { sha256, .. } => std::fs::read(dir.join("bodies").join(&sha256))
-            .map_err(|e| anyhow::anyhow!("the stored body could not be read: {e}"))?,
+        Text::Binary { sha256, .. } => {
+            let path = body_file(&dir, &sha256)
+                .ok_or_else(|| anyhow::anyhow!("{sha256:?} is not a body hash"))?;
+            std::fs::read(path)
+                .map_err(|e| anyhow::anyhow!("the stored body could not be read: {e}"))?
+        }
         Text::Missing(why) => {
             anyhow::bail!("request {seq}'s body is not in the store ({why}), so it cannot be carried")
         }
@@ -1656,6 +1664,34 @@ pub fn sequence(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A session that runs in a box keeps its store on a filesystem the boxed
+    /// code can write to, so the hash a message sidecar names is target input
+    /// like everything else in there. Joined unchecked, `../` in that field
+    /// read a host file and handed it back as a captured body — and `resend`
+    /// would then have sent it to the target.
+    #[test]
+    fn a_body_hash_that_is_not_one_names_nothing_in_the_store() {
+        let dir = std::env::temp_dir().join(format!(
+            "h5i-websec-hash-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(dir.join("bodies")).expect("a store");
+        std::fs::write(dir.join("outside.txt"), b"host secret").expect("a file beside it");
+        let escaped = Body::Stored {
+            sha256: "../outside.txt".to_string(),
+            bytes: 11,
+            of_bytes: None,
+            truncated: false,
+        };
+        match body_text(&dir, &escaped) {
+            Text::Missing(why) => assert!(why.contains("not a body hash"), "{why}"),
+            read => panic!("read outside the store: {read:?}"),
+        }
+        assert_eq!(body_bytes(&dir, &escaped), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn response(status: u16, kind: &str) -> StoredResponse {
         StoredResponse {
