@@ -2023,7 +2023,25 @@ pub fn sequence(
         if !step.extract.is_empty() {
             let target = step.as_session.as_deref().or(selector);
             let (_, dir) = store_dir(root, target)?;
-            let seq = record.seq.unwrap_or_default();
+            // The step's own answer, or nothing. Defaulting a missing sequence
+            // number to zero read message 0 instead — the session's first
+            // request, usually the navigation that opened it — and bound the
+            // token, the flag or the CSRF value out of a response that belongs
+            // to a different message. A wrong answer that looks right, in the
+            // verb whose whole job is to carry one step's answer into the next.
+            let Some(seq) = record.seq else {
+                record.error = Some(format!(
+                    "step {index} came back without a sequence number, so there is no \
+                     answer of its own to extract from"
+                ));
+                record.ok = false;
+                failed = true;
+                ran.push(record);
+                if !keep_going {
+                    break;
+                }
+                continue;
+            };
             let stored: StoredResponse =
                 read_json(&dir.join(format!("{seq}.response.json"))).map_err(|_| {
                     anyhow::anyhow!("step {index} left no stored response {seq} to extract from")
