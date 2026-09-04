@@ -53,8 +53,11 @@ h5i already funnels requests through one `Fetch` in
 and the outcome after it. Three things follow that a proxy cannot have:
 
 1. **Provenance.** The receipt carries an `Initiator` (`navigation`,
-   `subresource`, `frame`, `redirect`), and the action log beside it carries the
-   verb the agent asked for. A proxy sees a GET; h5i knows it was the third
+   `subresource`, `frame`, `redirect`, `replay`), and the action log beside it
+   carries the verb the agent asked for. `replay` is the workbench's own: a
+   reviewer separating what the application did from what the tester did is
+   asking that field, and a resend recorded as a navigation said the browser
+   had gone somewhere it never went. A proxy sees a GET; h5i knows it was the third
    redirect hop of a click on "Export".
 2. **No interception gap.** There is nothing to bypass. A request that is not in
    the log did not happen, which is the guarantee the whole product already

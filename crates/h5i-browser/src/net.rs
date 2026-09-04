@@ -49,6 +49,10 @@ fn accept_for(initiator: Initiator) -> &'static str {
             "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
         }
         Initiator::Subresource => "*/*",
+        // A replay carries the stored request's own `Accept` and this default
+        // stands aside for it; it is here for a composed request that named
+        // none, where "whatever the server has" is the honest ask.
+        Initiator::Replay => "*/*",
     }
 }
 
@@ -1976,7 +1980,7 @@ impl crate::broker::Broker for LocalBroker {
 
         let denied = |broker: &Self, seq: u64, reason: &str| -> FetchOutcome {
             let record =
-                RequestRecord::request(seq, Initiator::Navigation, &req.method, &display)
+                RequestRecord::request(seq, Initiator::Replay, &req.method, &display)
                     .denied(reason);
             if let Err(e) = broker.record_pair(&record) {
                 return FetchOutcome::failed(url.clone(), format!("receipt sink refused: {e}"));
@@ -2013,7 +2017,7 @@ impl crate::broker::Broker for LocalBroker {
 
         // 5. Record the decision before sending. Fail closed if this fails.
         let mut record =
-            RequestRecord::request(seq, Initiator::Navigation, &req.method, &display);
+            RequestRecord::request(seq, Initiator::Replay, &req.method, &display);
         record.headers_overridden = req.broke.clone();
         if let Err(e) = self.append(&record) {
             return FetchOutcome::failed(
@@ -2342,7 +2346,7 @@ impl LocalBroker {
             // named, exactly like a navigation, and not a page reaching for a
             // subresource. That is what decides the policy question and what
             // keeps the same-origin rules out of it: there is no document here.
-            initiator: Initiator::Navigation,
+            initiator: Initiator::Replay,
             method: editable.method.clone(),
             body: editable.body.clone(),
             content_type,

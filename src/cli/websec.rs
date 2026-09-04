@@ -2421,6 +2421,27 @@ mod tests {
         assert!(preview_line(&found.captures[0]).chars().count() < MAX_PREVIEW_LINE + 80);
     }
 
+    /// The site map's `*` means the browser went to this endpoint. A replay
+    /// was recorded as a navigation, so bending a parameter at an endpoint
+    /// marked it as one the application had navigated to — a reviewer
+    /// separating "the application did this" from "the tester did this" reads
+    /// exactly that mark.
+    #[test]
+    fn a_replay_is_not_a_page_somebody_went_to() {
+        let map = map_of(&[
+            json!({"seq":0,"phase":"request","initiator":"navigation","method":"GET",
+                   "url":"https://app.test/users","allowed":true}),
+            json!({"seq":1,"phase":"request","initiator":"replay","method":"GET",
+                   "url":"https://app.test/admin","allowed":true}),
+        ]);
+        let endpoints = &map.origins[0].endpoints;
+        let users = endpoints.iter().find(|e| e.path == "/users").expect("users");
+        let admin = endpoints.iter().find(|e| e.path == "/admin").expect("admin");
+        assert!(users.navigated, "the browser did go here");
+        assert!(!admin.navigated, "and it never went here: a replay is not a visit");
+        assert_eq!(admin.hits, 1, "but it is still on the map");
+    }
+
     fn response(status: u16, kind: &str) -> StoredResponse {
         StoredResponse {
             seq: 0,
