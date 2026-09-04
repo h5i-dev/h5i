@@ -431,6 +431,33 @@ fn header_is_the_users(name: &str) -> bool {
     )
 }
 
+/// The exact body to send again, or why there is not one.
+///
+/// The truncation rule is the in-session resend's, kept here so the two cannot
+/// disagree: a body the store had to cut short is not the body that was sent,
+/// and carrying it into another session would put a request on the wire that
+/// nobody recorded, then read the answer as a replay of one that was.
+fn carried_body(dir: &Path, seq: u64, body: &Body) -> anyhow::Result<Vec<u8>> {
+    if let Body::Stored { truncated: true, .. } = body {
+        anyhow::bail!(
+            "request {seq} was too large to keep whole, so carrying it into another \
+             session would send a request that is not the one recorded"
+        );
+    }
+    match body_text(dir, body) {
+        Text::Utf8(text) => Ok(text.into_bytes()),
+        Text::Binary { sha256, .. } => {
+            let path = body_file(dir, &sha256)
+                .ok_or_else(|| anyhow::anyhow!("{sha256:?} is not a body hash"))?;
+            std::fs::read(path)
+                .map_err(|e| anyhow::anyhow!("the stored body could not be read: {e}"))
+        }
+        Text::Missing(why) => anyhow::bail!(
+            "request {seq}'s body is not in the store ({why}), so it cannot be carried"
+        ),
+    }
+}
+
 /// One session's stored request, ready to hand to another session.
 ///
 /// Returns the JSON the `resend` verb takes, and the names of the headers that
@@ -469,18 +496,7 @@ pub fn carry(
         })
         .collect();
 
-    let body = match body_text(&dir, &stored.body) {
-        Text::Utf8(text) => text.into_bytes(),
-        Text::Binary { sha256, .. } => {
-            let path = body_file(&dir, &sha256)
-                .ok_or_else(|| anyhow::anyhow!("{sha256:?} is not a body hash"))?;
-            std::fs::read(path)
-                .map_err(|e| anyhow::anyhow!("the stored body could not be read: {e}"))?
-        }
-        Text::Missing(why) => {
-            anyhow::bail!("request {seq}'s body is not in the store ({why}), so it cannot be carried")
-        }
-    };
+    let body = carried_body(&dir, seq, &stored.body)?;
     use base64::Engine as _;
     Ok((
         json!({
@@ -1690,6 +1706,31 @@ mod tests {
             read => panic!("read outside the store: {read:?}"),
         }
         assert_eq!(body_bytes(&dir, &escaped), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The in-session resend refuses to replay a body the store cut short,
+    /// because the request that would go out is not the one recorded. The
+    /// cross-session path read the same store and did not, so `--as` sent a
+    /// shortened body and reported the answer as a replay.
+    #[test]
+    fn a_truncated_body_is_not_carried_into_another_session() {
+        let dir = std::env::temp_dir().join(format!(
+            "h5i-websec-cut-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(dir.join("bodies")).expect("a store");
+        let hash = "a".repeat(64);
+        std::fs::write(dir.join("bodies").join(&hash), b"the head of it").expect("a body");
+        let cut = Body::Stored {
+            sha256: hash,
+            bytes: 14,
+            of_bytes: Some(9_000_000),
+            truncated: true,
+        };
+        let refused = carried_body(&dir, 42, &cut).expect_err("a cut body is not replayable");
+        assert!(refused.to_string().contains("not the one recorded"), "{refused}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
