@@ -153,6 +153,14 @@ fn body_text(dir: &Path, body: &Body) -> Text {
 }
 
 /// Render a request the way it went out.
+/// The request half, as an HTTP message.
+///
+/// CRLF, because this output is not only for reading: `resend --raw-request`
+/// takes a file holding a whole request and writes it to the socket with
+/// nothing recomputed, and the obvious way to get such a file is to dump the
+/// request that is already stored. A dump that ended its lines with a bare LF
+/// would be a message a server may refuse, produced by the one command whose
+/// job is to hand back exactly what went out.
 fn raw_request(stored: &StoredRequest, body: &Text) -> String {
     let mut out = String::new();
     let target = url::Url::parse(&stored.url)
@@ -165,7 +173,7 @@ fn raw_request(stored: &StoredRequest, body: &Text) -> String {
             target
         })
         .unwrap_or_else(|_| stored.url.clone());
-    out.push_str(&format!("{} {} HTTP/1.1\n", stored.method, target));
+    out.push_str(&format!("{} {} HTTP/1.1\r\n", stored.method, target));
     if let Ok(url) = url::Url::parse(&stored.url)
         && let Some(host) = url.host_str()
     {
@@ -173,14 +181,14 @@ fn raw_request(stored: &StoredRequest, body: &Text) -> String {
         // the message without it would be showing something that is not a
         // request.
         match url.port() {
-            Some(port) => out.push_str(&format!("host: {host}:{port}\n")),
-            None => out.push_str(&format!("host: {host}\n")),
+            Some(port) => out.push_str(&format!("host: {host}:{port}\r\n")),
+            None => out.push_str(&format!("host: {host}\r\n")),
         }
     }
     for (name, value) in &stored.headers {
-        out.push_str(&format!("{name}: {value}\n"));
+        out.push_str(&format!("{name}: {value}\r\n"));
     }
-    out.push('\n');
+    out.push_str("\r\n");
     push_body(&mut out, body);
     out
 }
@@ -255,6 +263,12 @@ pub fn show(
 
     let request_body = request.as_ref().map(|r| body_text(&dir, &r.body));
     let response_body = response.as_ref().map(|r| body_text(&dir, &r.body));
+    // What the socket carried after the response ended. Nothing, for every
+    // fetch that was not a desync.
+    let trailing = response
+        .as_ref()
+        .and_then(|r| r.trailing.as_ref())
+        .map(|body| body_text(&dir, body));
 
     let mut wrote: Option<Value> = None;
     // The bytes, before anything renders them. `--part both` means the
@@ -284,7 +298,13 @@ pub fn show(
         }
     }
 
-    if json_out {
+    // `--raw` outranks the JSON envelope, in both directions. A raw message is
+    // bytes as they went on the wire, and there is no way to put those inside a
+    // JSON document and still have them be those bytes. The alternative was to
+    // keep ignoring the flag whenever the caller had not also typed `--human`,
+    // which is the shape of silently sending something other than what was
+    // asked for.
+    if json_out && !raw {
         let mut value = json!({"seq": seq, "session": session.id});
         if let Some(wrote) = wrote {
             value["wrote"] = wrote;
@@ -308,6 +328,9 @@ pub fn show(
                 "wire_bytes": response.wire_bytes,
                 "body": body.to_json(),
             });
+            if let Some(trailing) = &trailing {
+                value["response"]["trailing"] = trailing.to_json();
+            }
         }
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(());
@@ -331,6 +354,14 @@ pub fn show(
     if let (Some(response), Some(body)) = (&response, &response_body) {
         if raw {
             print!("{}", raw_response(response, body));
+            // Printed after the response and not inside it, because that is
+            // where it arrived: a second message on the same connection,
+            // answering a request this session never sent.
+            if let Some(trailing) = &trailing {
+                let mut after = String::from("\r\n");
+                push_body(&mut after, trailing);
+                print!("{after}");
+            }
         } else {
             match response.status {
                 Some(status) => println!("  response : {status}"),
@@ -340,6 +371,10 @@ pub fn show(
                 println!("    {name}: {value}");
             }
             summarise_body(body);
+            if let Some(trailing) = &trailing {
+                println!("  after    : the connection carried more once this response ended");
+                summarise_body(trailing);
+            }
         }
     } else if matches!(part, Part::Response) {
         println!("  response : not stored. The request half is at `--part request`.");
@@ -1635,6 +1670,7 @@ mod tests {
             content_encoding: None,
             wire_bytes: None,
             body: Body::Empty,
+            trailing: None,
         }
     }
 
@@ -1919,10 +1955,11 @@ mod tests {
             body: Body::Empty,
         };
         let rendered = raw_request(&stored, &Text::Utf8("user=alice".to_string()));
-        assert!(rendered.starts_with("POST /login?next=/home HTTP/1.1\n"), "{rendered}");
-        assert!(rendered.contains("host: app.test\n"), "{rendered}");
-        assert!(rendered.contains("cookie: session=abc\n"), "{rendered}");
-        assert!(rendered.ends_with("\n\nuser=alice"), "{rendered}");
+        // CRLF: this is the file `resend --raw-request` reads back.
+        assert!(rendered.starts_with("POST /login?next=/home HTTP/1.1\r\n"), "{rendered}");
+        assert!(rendered.contains("host: app.test\r\n"), "{rendered}");
+        assert!(rendered.contains("cookie: session=abc\r\n"), "{rendered}");
+        assert!(rendered.ends_with("\r\n\r\nuser=alice"), "{rendered}");
     }
 
     /// A body with two undecodable bytes is still evidence. Hiding it behind a

@@ -411,6 +411,24 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             }
             let asked = text(&value);
             let asked = asked.trim();
+            // A `?` is not part of a path, and `set_path` would escape it to
+            // `%3F` — which reaches the server as a path with a question mark
+            // *in* it, a different request from the one that was typed and one
+            // that usually 404s. Refused rather than encoded, and named: this
+            // edit sets the path and keeps the query, so a caller who wants
+            // both means `url=`, and a caller who wants one parameter means
+            // `query.<name>=`.
+            if let Some(at) = asked.find('?') {
+                return Err(EditError::new(
+                    &target,
+                    format!(
+                        "a path has no query in it, and `{}` would be sent as part of the \
+                         path. Set the whole target with `url=` or one parameter with \
+                         `query.<name>=`",
+                        &asked[at..]
+                    ),
+                ));
+            }
             let was = request.url.path().to_string();
             let mut candidate = request.url.clone();
             candidate.set_path(asked);
@@ -538,7 +556,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
         }
 
         Target::Json(path) => {
-            // An empty body with `--set-create` is a body to *build*, the way a
+            // An empty body with `--create` is a body to *build*, the way a
             // multipart one is. A request that carries no JSON yet is the
             // ordinary starting point for an API call the page never makes, and
             // refusing it sent callers to `body.raw` to hand-write the JSON that
@@ -566,7 +584,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                 return Err(EditError::new(
                     &target,
                     format!(
-                        "this body has no `{path}`. Pass --set-create to add it, \
+                        "this body has no `{path}`. Pass --create to add it, \
                          or check the field name against the stored request"
                     ),
                 ));
@@ -634,7 +652,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                         )
                     })?,
                 None if request.body.is_empty() || create => {
-                    // Not multipart yet. With `--set-create` this *builds* an
+                    // Not multipart yet. With `--create` this *builds* an
                     // upload, which is the common case: a file-upload test
                     // usually has no recorded upload to start from, because the
                     // engine does not post files itself.
@@ -645,7 +663,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                         &target,
                         format!(
                             "this request's body is not multipart; its Content-Type is {}. \
-                             Pass --set-create to build a multipart body instead",
+                             Pass --create to build a multipart body instead",
                             if declared.is_empty() { "unset" } else { &declared }
                         ),
                     ));
@@ -664,7 +682,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                     &target,
                     format!(
                         "no such part, so nothing would change. This request has: {}. \
-                         Pass --set-create to add it",
+                         Pass --create to add it",
                         if names.is_empty() {
                             "none".to_string()
                         } else {
@@ -746,7 +764,7 @@ fn missing(target: &str, kind: &str, have: &[(String, String)]) -> EditError {
     };
     EditError::new(
         target,
-        format!("no such {kind}, so nothing would change. {known}. Pass --set-create to add it"),
+        format!("no such {kind}, so nothing would change. {known}. Pass --create to add it"),
     )
 }
 
@@ -959,7 +977,7 @@ mod tests {
         assert_eq!(body["service_name"], "-t custom \"id\"");
     }
 
-    /// Without `--set-create` an empty body is still an empty body: the caller
+    /// Without `--create` an empty body is still an empty body: the caller
     /// did not ask for one to be invented.
     #[test]
     fn an_empty_body_is_not_quietly_turned_into_json() {
@@ -1181,6 +1199,23 @@ mod tests {
     /// A traversal payload that the URL parser resolves is a request nobody
     /// asked for. Sending it and reporting its answer would be a false
     /// negative wearing the shape of evidence.
+    /// `path=/reset.php?token=…` is a natural thing to type and a different
+    /// request from the one meant: `?` is not in a path, so it is escaped, and
+    /// the server is asked for a file whose name contains a question mark.
+    #[test]
+    fn a_query_inside_a_path_edit_is_refused_and_the_right_target_is_named() {
+        let mut request = request();
+        let error = apply(&mut request, &[set("path=/reset.php?token=abc")], false)
+            .expect_err("a path with a query in it is refused");
+        assert!(error.to_string().contains("query.<name>="), "{error}");
+        assert!(error.to_string().contains("url="), "{error}");
+        assert_eq!(
+            request.url.as_str(),
+            "https://app.test/api/users?user_id=123&page=2",
+            "a refused edit leaves the request alone"
+        );
+    }
+
     #[test]
     fn a_path_the_url_parser_would_resolve_is_refused_rather_than_straightened() {
         for spelling in [

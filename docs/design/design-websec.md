@@ -721,6 +721,43 @@ Two smaller things the corpus caught: `submit` refused a `<form>` selector with
 obviously enough for a caller to read its answer back by name. The rest of what
 the run needed was the corpus's own problem and stayed with it.
 
+**2026-09-04.** A second corpus, the 71-benchmark Argus set, run over its first
+sixty. Different shape from XBOW: current stacks rather than PHP, a randomised
+flag per run, and a third of it not a single request at all but a scenario with
+an admin bot, a mail server, a message broker and an object store. Fifty-four
+solved. The same exercise, and six more changes:
+
+- **A flag that did nothing.** `show --raw` was ignored unless `--human` was
+  also given, which is the shape of silently doing something other than what
+  was asked. It outranks the JSON envelope now: a wire message is bytes, and
+  bytes inside a JSON string are no longer the message.
+- **The plugin could not reach the raw send path.** `--raw-target` and
+  `--raw-request` were on `browser resend` and not on `websec replay`, which is
+  the surface the design leads with. Both are there now, with
+  `--keep-credentials`.
+- **A refusal that named a flag which does not exist.** Editing an absent
+  parameter answered "Pass `--set-create`". The flag is `--create`.
+- **Two raw features that did not compose.** The obvious way to build a file
+  for `--raw-request` is to dump a request that was already sent, and the dump
+  used bare LF. The request half is CRLF now.
+- **A desync with nothing to show for it.** `--raw-request` shipped for request
+  smuggling, and a successful smuggle produces *two* responses on one
+  connection — the second being the smuggled request's answer. The engine read
+  one and closed the socket, so the attack could work and report nothing. What
+  follows a raw response is kept beside it now (`trailing` in the stored
+  message, `trailing_bytes` in the receipt).
+- **A protocol with no verb.** The engine has had a WebSocket client since it
+  had a browser and only page JavaScript could reach it, so an application
+  whose commands travel over a socket was one this workbench could watch
+  connect and never speak to. `websec socket` is `resend` for that protocol.
+
+And one defect characterised but not yet fixed: roughly one send in fifteen
+that takes around two seconds costs about three seconds more than the request
+did, and on one target `total_ms` came back as 587 for a request the server
+cannot answer in under two thousand. A timing oracle is a first-class use of
+this workbench and that corrupts one. The reproducer is a server that sleeps
+two seconds and a loop of forty replays.
+
 ## Raw requests
 
 **Added 2026-09-03 after benchmarking.** Normal requests use parsed `Url`s, which

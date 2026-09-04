@@ -88,6 +88,14 @@ pub enum Verb {
     /// on does the same fetch, but the agent has to hold the URL and re-derive
     /// it after a redirect; this needs neither.
     Reload,
+    /// Open a WebSocket, send frames, and report what came back.
+    ///
+    /// The engine has had a WebSocket client since it had a browser, and until
+    /// now the only thing that could reach it was page JavaScript. That is a
+    /// gap with a shape: an application whose commands travel over a socket is
+    /// one this workbench could read the handshake of and never say anything
+    /// to. `resend` is the same idea for HTTP.
+    Socket,
 }
 
 impl Verb {
@@ -125,6 +133,7 @@ impl Verb {
         Verb::Find,
         Verb::Screenshot,
         Verb::Reload,
+        Verb::Socket,
     ];
 
     /// The name on the wire.
@@ -154,6 +163,7 @@ impl Verb {
             Verb::Find => "find",
             Verb::Screenshot => "screenshot",
             Verb::Reload => "reload",
+            Verb::Socket => "socket",
         }
     }
 
@@ -214,7 +224,11 @@ impl Verb {
             // Not a read, and refused anyway: reloading the page a human is
             // halfway through typing a credential into destroys the form they
             // are filling. LOGIN mode means the human has the wheel.
-            | Verb::Reload => false,
+            | Verb::Reload
+            // Not a page read, and refused all the same: it spends the
+            // session's budget talking to a server while a human is typing a
+            // password into it.
+            | Verb::Socket => false,
         }
     }
 
@@ -252,7 +266,8 @@ impl Verb {
             // It produces handles rather than consuming one.
             | Verb::Find
             | Verb::Screenshot
-            | Verb::Reload => false,
+            | Verb::Reload
+            | Verb::Socket => false,
         }
     }
 
@@ -290,7 +305,12 @@ impl Verb {
             | Verb::Press
             | Verb::Find
             | Verb::Screenshot
-            | Verb::Reload => false,
+            | Verb::Reload
+            // A frame is content the caller hands to a server, so a secret
+            // could reasonably be substituted into one. Not yet: the reply is
+            // returned verbatim, and a credential that goes out in a frame and
+            // comes back in the echo is a credential in the message store.
+            | Verb::Socket => false,
         }
     }
 
@@ -339,7 +359,11 @@ impl Verb {
             // It paints whatever is there. A page with no script renders as
             // the server sent it, which is a picture of something real.
             | Verb::Screenshot
-            | Verb::Reload => false,
+            | Verb::Reload
+            // The socket is the engine's, not a realm's. That is the point:
+            // it works on a session opened without `--script`, where a page
+            // that speaks over one cannot be driven at all.
+            | Verb::Socket => false,
         }
     }
 
@@ -384,7 +408,10 @@ impl Verb {
             | Verb::Find
             // Handing the page to a human is the one step a replay must never
             // reproduce: there is nobody there to take it.
-            | Verb::Login => false,
+            | Verb::Login
+            // Like `resend`: a message the agent composed, not a step in the
+            // page-level story a replay retells.
+            | Verb::Socket => false,
         }
     }
 
@@ -430,7 +457,10 @@ impl Verb {
             // the reported outcome would describe the load rather than the
             // wait. Left out until something asks for it by name.
             | Verb::WaitFor
-            | Verb::WaitForScript => false,
+            | Verb::WaitForScript
+            // It takes a URL of its own, and that URL is a socket rather than
+            // a page: navigating to `ws://` is not a thing a session does.
+            | Verb::Socket => false,
         }
     }
 
@@ -666,6 +696,14 @@ mod tests {
             super::Verb::from_name("resend"),
             Some(super::Verb::Resend),
             "the workbench verb has to be reachable from the wire"
+        );
+        // And its counterpart for the other protocol, which is a verb the CLI
+        // exposes and which would silently not exist if it were left out of
+        // `ALL`.
+        assert_eq!(
+            super::Verb::from_name("socket"),
+            Some(super::Verb::Socket),
+            "the workbench verb for WebSockets has to be reachable from the wire"
         );
     }
 

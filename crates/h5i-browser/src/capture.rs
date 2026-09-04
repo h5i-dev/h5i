@@ -102,6 +102,16 @@ pub struct StoredResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wire_bytes: Option<u64>,
     pub body: Body,
+    /// Bytes the connection carried after this response ended.
+    ///
+    /// Empty for every ordinary fetch, because one request gets one response.
+    /// A raw send that desynchronised a proxy from its backend gets two, and
+    /// the second is the smuggled request's answer — the evidence the attack
+    /// worked. Kept beside the response rather than merged into its body,
+    /// because it is not this response's body; it is a different message that
+    /// arrived on the same socket.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trailing: Option<Body>,
 }
 
 /// Response data offered to the store.
@@ -117,6 +127,9 @@ pub struct Response<'a> {
     /// What crossed the wire, when that is a different number.
     pub wire_bytes: Option<u64>,
     pub body: Received<'a>,
+    /// What the connection carried after this response. See
+    /// [`StoredResponse::trailing`].
+    pub trailing: &'a [u8],
 }
 
 /// What the engine has to offer the store for a response body.
@@ -253,6 +266,8 @@ impl Capture {
             content_encoding: response.content_encoding,
             wire_bytes: response.wire_bytes,
             body: self.store_body(response.body, content_type.as_deref()),
+            trailing: (!response.trailing.is_empty())
+                .then(|| self.store_body(Received::Bytes(response.trailing), None)),
         };
         self.write(stored.seq, "response", &stored);
     }
@@ -460,6 +475,7 @@ mod tests {
             content_encoding: None,
             wire_bytes: None,
             body: Received::Bytes(b"see other"),
+            trailing: &[],
         });
 
         let request = capture.read_request(7).expect("request reads back");
@@ -495,6 +511,7 @@ mod tests {
             content_encoding: None,
             wire_bytes: None,
             body: Received::NotRead,
+            trailing: &[],
         });
         assert_eq!(
             capture.read_response(2).expect("reads").body,
@@ -516,6 +533,7 @@ mod tests {
             content_encoding: None,
             wire_bytes: None,
             body: Received::Bytes(b"not really a font"),
+            trailing: &[],
         });
         assert_eq!(
             capture.read_response(3).expect("reads").body,
@@ -539,6 +557,7 @@ mod tests {
                 content_encoding: None,
                 wire_bytes: None,
                 body: Received::Bytes(b"the same answer"),
+                trailing: &[],
             });
         }
         assert_eq!(capture.used(), 15);
@@ -560,6 +579,7 @@ mod tests {
             content_encoding: None,
             wire_bytes: None,
             body: Received::Bytes(b"body"),
+            trailing: &[],
         });
         drop(capture);
 
@@ -586,6 +606,7 @@ mod tests {
             content_encoding: None,
             wire_bytes: None,
             body: Received::Bytes(&big),
+            trailing: &[],
         });
         let Body::Stored {
             bytes,

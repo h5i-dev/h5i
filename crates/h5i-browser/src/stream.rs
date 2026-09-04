@@ -1944,6 +1944,128 @@ fn control_verb_inner(
             }
         }
 
+        // Open a WebSocket, say something, and report what came back.
+        //
+        // The engine has had a WebSocket client since it had a browser, and
+        // until now only page JavaScript could reach it. An application whose
+        // commands travel over a socket was therefore one this workbench could
+        // watch connect and never speak to. This is `resend` for that
+        // protocol: the agent's own message, through the same policy, the same
+        // budget and the same receipts, on a session that need not be running
+        // script at all.
+        //
+        // Deliberately one exchange rather than a resident connection. A
+        // socket held open across verbs would need a handle, a lifetime and a
+        // rule for what happens when the session navigates; a socket that
+        // opens, says its piece, listens for a bounded moment and closes is
+        // the whole of what a test needs and has no state to get wrong.
+        Verb::Socket => {
+            let Some(url) = request.get("url").and_then(Value::as_str) else {
+                return (
+                    VerbError::bad_request(
+                        "`socket` needs a `url`: the `ws://` or `wss://` endpoint to open",
+                    )
+                    .reply(),
+                    false,
+                );
+            };
+            let parsed = match url::Url::parse(url) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    return (
+                        VerbError::bad_request(format!("`{url}` is not a URL: {error}")).reply(),
+                        false,
+                    );
+                }
+            };
+            if !matches!(parsed.scheme(), "ws" | "wss") {
+                return (
+                    VerbError::bad_request(format!(
+                        "`socket` opens `ws://` and `wss://`, and `{}` is neither. An \
+                         `http://` endpoint is what `resend` is for",
+                        parsed.scheme()
+                    ))
+                    .reply(),
+                    false,
+                );
+            }
+
+            let frames: Vec<String> = request
+                .get("send")
+                .and_then(Value::as_array)
+                .map(|rows| {
+                    rows.iter().filter_map(Value::as_str).map(str::to_string).collect()
+                })
+                .unwrap_or_default();
+            // Long enough for a server that answers after doing some work —
+            // running a command, say — and bounded, because a socket that
+            // never says anything is a normal outcome and not a reason to
+            // hang a session.
+            let listen = std::time::Duration::from_millis(
+                request.get("wait_ms").and_then(Value::as_u64).unwrap_or(5_000).clamp(100, 60_000),
+            );
+
+            let channel = match session.factory.broker().open_socket(&parsed, None) {
+                Ok(channel) => channel,
+                Err(error) => {
+                    return (
+                        VerbError::refused(format!("the socket did not open: {error}")).reply(),
+                        false,
+                    );
+                }
+            };
+            for frame in &frames {
+                if let Err(error) = channel.send(frame) {
+                    channel.close();
+                    return (
+                        VerbError::refused(format!("the frame could not be sent: {error}"))
+                            .reply(),
+                        false,
+                    );
+                }
+            }
+
+            // Everything the peer said, up to the deadline. Drained in a loop
+            // rather than once at the end, because a server that answers in
+            // three frames should be reported as three.
+            let mut received: Vec<Value> = Vec::new();
+            let mut closed: Option<String> = None;
+            let deadline = std::time::Instant::now() + listen;
+            while std::time::Instant::now() < deadline {
+                for event in channel.drain() {
+                    match event {
+                        crate::wsclient::Event::Open => {}
+                        crate::wsclient::Event::Message(text) => {
+                            received.push(json!({"text": text}));
+                        }
+                        crate::wsclient::Event::Named { name, data } => {
+                            received.push(json!({"event": name, "text": data}));
+                        }
+                        crate::wsclient::Event::Closed(why) => closed = Some(why),
+                        crate::wsclient::Event::Failed(why) => {
+                            closed = Some(format!("the transport failed: {why}"));
+                        }
+                    }
+                }
+                if closed.is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            channel.close();
+
+            let mut reply = json!({
+                "ok": true,
+                "url": parsed.to_string(),
+                "sent": frames.len(),
+                "received": received,
+            });
+            if let Some(why) = closed {
+                reply["closed"] = json!(why);
+            }
+            (reply, false)
+        }
+
         // A picture of the page, written where the *caller* said.
         Verb::Screenshot => {
             let Some(path) = request.get("path").and_then(Value::as_str) else {
