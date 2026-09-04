@@ -1789,7 +1789,29 @@ fn extract_one(spec: &str, response: &StoredResponse, body: &Text) -> anyhow::Re
         ),
     };
     found.ok_or_else(|| {
-        anyhow::anyhow!("`{spec}` found nothing in this response")
+        // "Found nothing" is a claim about the response. It is only true when
+        // the whole response was there to look at: a body that is not in the
+        // store, or one read back as a preview of its head, means the binding
+        // failed because there was nothing to search, and a sequence that
+        // stopped on that reason would send its author looking at the target.
+        // The same rule `match` applies, in the verb that chains on the answer.
+        let searched_the_body = matches!(kind.trim(), "regex" | "json");
+        if searched_the_body && !body.whole() {
+            match body {
+                Text::Missing(why) => anyhow::anyhow!(
+                    "`{spec}` could not be answered: this response's body is not in the \
+                     store ({why})"
+                ),
+                _ => anyhow::anyhow!(
+                    "`{spec}` found nothing in the first {LOSSY_BODY_BYTES} bytes of this \
+                     response, which is all of a body that is not text that is read back. \
+                     Whether it is in the rest is not something this can answer; \
+                     `message --body-to PATH` writes the exact bytes"
+                ),
+            }
+        } else {
+            anyhow::anyhow!("`{spec}` found nothing in this response")
+        }
     })
 }
 
@@ -2215,6 +2237,40 @@ mod tests {
         );
         assert_eq!(difference.json_changes.len(), MAX_JSON_CHANGES);
         assert_eq!(difference.json_changes_of, Some(200));
+    }
+
+    /// A binding that fails stops the sequence, so the reason it gives is the
+    /// reason its author acts on. "Found nothing in this response" sends them
+    /// to the target; the truth was that this response's body was never
+    /// searched, or only its head was.
+    #[test]
+    fn a_binding_that_could_not_look_says_so_rather_than_saying_it_is_not_there() {
+        let stored = response(200, "application/octet-stream");
+
+        let absent = Text::Missing("store-full (900000 bytes)".to_string());
+        let why = extract_one("regex:FLAG\\{(.+)\\}", &stored, &absent)
+            .expect_err("nothing to search");
+        assert!(why.to_string().contains("not in the store"), "{why}");
+
+        let partial = Text::Binary {
+            bytes: 5_000_000,
+            sha256: "b".repeat(64),
+            text: "nothing here".to_string(),
+        };
+        let why = extract_one("regex:FLAG\\{(.+)\\}", &stored, &partial)
+            .expect_err("only the head was searched");
+        assert!(why.to_string().contains("is all of a body"), "{why}");
+
+        // And a body that really was searched whole still says it plainly.
+        let whole = Text::Utf8("nothing here".to_string());
+        let why = extract_one("regex:FLAG\\{(.+)\\}", &stored, &whole)
+            .expect_err("searched, and not there");
+        assert!(why.to_string().contains("found nothing in this response"), "{why}");
+
+        // A header extractor is not a body search, so a missing body does not
+        // change what it can say.
+        let why = extract_one("header:X-Nope", &stored, &absent).expect_err("no such header");
+        assert!(why.to_string().contains("found nothing in this response"), "{why}");
     }
 
     fn response(status: u16, kind: &str) -> StoredResponse {
