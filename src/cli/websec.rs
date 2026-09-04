@@ -1401,22 +1401,49 @@ pub fn timing_summary(samples: &[Value]) -> Option<Value> {
     if samples.len() < 2 {
         return None;
     }
+    // Only the sends a server answered. A send that never reached the wire —
+    // refused by policy, or by the budget running out partway through a
+    // `--repeat` — still carries a clock, and that clock measures the refusal:
+    // near zero. Folded in with the rest it drags the median down, and a
+    // time-based injection that was answering three seconds late reads as no
+    // delay at all. Which is the failure this verb exists to avoid: a burst
+    // that half happened, reported as a measurement of the half that did not.
+    let answered: Vec<&Value> = samples
+        .iter()
+        .filter(|s| s.get("status").is_some_and(|status| !status.is_null()))
+        .collect();
     let field = |name: &str| -> Vec<u64> {
-        samples
+        answered
             .iter()
             .filter_map(|s| s.get(name).and_then(Value::as_u64))
             .collect()
     };
+    let unanswered = samples.len() - answered.len();
+    if answered.len() < 2 {
+        return Some(json!({
+            "sends": samples.len(),
+            "measured": answered.len(),
+            "unanswered": unanswered,
+            "note": "too few of these sends were answered to take a median. A send that \
+                     never reached the wire has a clock, and it is the refusal's, not the \
+                     server's",
+        }));
+    }
     let (ttfb, ttfb_spread) = median_and_deviation(&field("ttfb_ms"))?;
     let (total, total_spread) = median_and_deviation(&field("total_ms"))?;
-    Some(json!({
+    let mut summary = json!({
         "sends": samples.len(),
+        "measured": answered.len(),
         "ttfb_ms": {"median": ttfb, "deviation": ttfb_spread},
         "total_ms": {"median": total, "deviation": total_spread},
-        "note": "medians over this session's own sends. A session in a box pays a proxy \
-                 hop and a namespace, so compare within one session rather than across \
-                 placements",
-    }))
+        "note": "medians over the sends this session got an answer to. A session in a box \
+                 pays a proxy hop and a namespace, so compare within one session rather \
+                 than across placements",
+    });
+    if unanswered > 0 {
+        summary["unanswered"] = json!(unanswered);
+    }
+    Some(summary)
 }
 
 
@@ -2382,6 +2409,49 @@ mod tests {
             "one 4-second sample must not become the answer: {median}"
         );
         // A mean would have said ~750.
+    }
+
+    /// A `--repeat` burst can stop reaching the wire partway through: the
+    /// budget runs out, or policy refuses. Those sends still carry a clock, and
+    /// it is the refusal's — a millisecond or two. Averaged in with the real
+    /// ones they pull the median down, so a payload that made the server wait
+    /// three seconds reports as no delay, which is the finding not found.
+    #[test]
+    fn sends_that_never_reached_the_wire_are_not_part_of_the_timing() {
+        let answered = |ms: u64| json!({"status": 200, "ttfb_ms": ms, "total_ms": ms});
+        let refused = json!({"status": Value::Null, "ttfb_ms": 0, "total_ms": 0});
+        let samples = vec![
+            answered(3000),
+            answered(3010),
+            answered(2990),
+            refused.clone(),
+            refused.clone(),
+            refused.clone(),
+            refused,
+        ];
+        let summary = timing_summary(&samples).expect("a summary");
+        assert_eq!(summary["sends"], json!(7));
+        assert_eq!(summary["measured"], json!(3));
+        assert_eq!(summary["unanswered"], json!(4));
+        let median = summary["ttfb_ms"]["median"].as_u64().expect("a median");
+        assert!(
+            (2990..=3010).contains(&median),
+            "the delay is the answer, not the refusals: {median}"
+        );
+    }
+
+    /// And a burst that mostly did not happen says so rather than taking a
+    /// median of one.
+    #[test]
+    fn a_burst_that_almost_never_answered_reports_that_instead_of_a_number() {
+        let samples = vec![
+            json!({"status": 200, "ttfb_ms": 3000, "total_ms": 3000}),
+            json!({"status": Value::Null, "ttfb_ms": 0, "total_ms": 0}),
+            json!({"status": Value::Null, "ttfb_ms": 0, "total_ms": 0}),
+        ];
+        let summary = timing_summary(&samples).expect("a summary");
+        assert_eq!(summary["measured"], json!(1));
+        assert!(summary.get("ttfb_ms").is_none(), "{summary}");
     }
 
     /// A blind test's whole signal: one payload is reliably slower.
