@@ -35,8 +35,8 @@
       <sub>Navigate, interact & assert</sub>
     </td>
     <td align="center">
-      <strong>Burp-style HTTP testing</strong><br>
-      <sub><a href="./docs/design/design-websec.md">Capture, edit, replay & diff</a></sub>
+      <strong>Built-in HTTP workbench</strong><br>
+      <sub>Capture, edit, replay & diff</sub>
     </td>
   </tr>
 </table>
