@@ -708,24 +708,47 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
         }
 
         Target::Form(name) => {
-            let mut pairs: Vec<(String, String)> =
-                form_urlencoded::parse(&request.body).into_owned().collect();
-            let was = pairs.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
-            if was.is_none() && !create && !removing {
-                return Err(missing(&target, "form field", &pairs));
-            }
-            if removing {
-                pairs.retain(|(k, _)| k != name);
-            } else if let Some(slot) = pairs.iter_mut().find(|(k, _)| k == name) {
-                slot.1 = text(&value);
+            // Edited as the pieces the body was written as, for the reason
+            // `query.` is: re-serialising rewrote fields nobody named, and a
+            // body that differs in a field the caller did not touch is a
+            // different request under the same name.
+            let pieces: Vec<&[u8]> = if request.body.is_empty() {
+                Vec::new()
             } else {
-                pairs.push((name.clone(), text(&value)));
+                request.body.split(|b| *b == b'&').collect()
+            };
+            let named: Vec<(String, String)> = pieces
+                .iter()
+                .map(|piece| form_name_and_value(piece))
+                .collect();
+            let was = named.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
+            if was.is_none() && !create && !removing {
+                return Err(missing(&target, "form field", &named));
             }
-            let mut serializer = form_urlencoded::Serializer::new(String::new());
-            for (k, v) in &pairs {
-                serializer.append_pair(k, v);
+            let encoded = format!(
+                "{}={}",
+                encode_query(name),
+                encode_query(&text(&value))
+            );
+            let mut replaced = false;
+            let mut next: Vec<Vec<u8>> = Vec::with_capacity(pieces.len() + 1);
+            for (piece, (k, _)) in pieces.iter().zip(&named) {
+                if k == name {
+                    if removing {
+                        continue;
+                    }
+                    if !replaced {
+                        next.push(encoded.clone().into_bytes());
+                        replaced = true;
+                        continue;
+                    }
+                }
+                next.push(piece.to_vec());
             }
-            request.body = serializer.finish().into_bytes();
+            if !replaced && !removing {
+                next.push(encoded.into_bytes());
+            }
+            request.body = next.join(&b'&');
             if request.content_type().is_none() {
                 request.set_header("Content-Type", "application/x-www-form-urlencoded");
             }
@@ -872,6 +895,23 @@ fn decode_query(raw: &str) -> String {
 
 fn encode_query(value: &str) -> String {
     form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+/// One `k=v` piece of a form body, decoded.
+fn form_name_and_value(piece: &[u8]) -> (String, String) {
+    let at = piece.iter().position(|b| *b == b'=');
+    let (raw_name, raw_value) = match at {
+        Some(at) => (&piece[..at], &piece[at + 1..]),
+        None => (piece, &[][..]),
+    };
+    (decode_form(raw_name), decode_form(raw_value))
+}
+
+fn decode_form(raw: &[u8]) -> String {
+    form_urlencoded::parse(raw)
+        .next()
+        .map(|(k, _)| k.into_owned())
+        .unwrap_or_default()
 }
 
 /// The error for a target that is not there, carrying what is.
@@ -1454,6 +1494,28 @@ mod tests {
         apply(&mut request, &[parse_unset("query.id").expect("parses")], false)
             .expect("removes");
         assert_eq!(request.url.query(), Some("debug&role=admin"));
+    }
+
+    /// The same rule as the query's, for the same reason: a form body that
+    /// differs in a field the caller never named is a different request going
+    /// out under the name of the one that was recorded.
+    #[test]
+    fn editing_one_form_field_leaves_the_others_byte_for_byte() {
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/login").expect("a url"),
+            headers: vec![(
+                "Content-Type".to_string(),
+                "application/x-www-form-urlencoded".to_string(),
+            )],
+            body: b"remember&next=%2Fadmin&tags[]=a&user=alice".to_vec(),
+        };
+        let applied = apply(&mut request, &[set("form.user=admin")], false).expect("applies");
+        assert_eq!(applied[0].was.as_deref(), Some("alice"));
+        assert_eq!(
+            String::from_utf8_lossy(&request.body),
+            "remember&next=%2Fadmin&tags[]=a&user=admin"
+        );
     }
 
     /// And an ordinary path still goes through, dots in a filename included.
