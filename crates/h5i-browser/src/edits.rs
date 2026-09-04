@@ -411,6 +411,24 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             }
             let asked = text(&value);
             let asked = asked.trim();
+            // A `?` is not part of a path, and `set_path` would escape it to
+            // `%3F` — which reaches the server as a path with a question mark
+            // *in* it, a different request from the one that was typed and one
+            // that usually 404s. Refused rather than encoded, and named: this
+            // edit sets the path and keeps the query, so a caller who wants
+            // both means `url=`, and a caller who wants one parameter means
+            // `query.<name>=`.
+            if let Some(at) = asked.find('?') {
+                return Err(EditError::new(
+                    &target,
+                    format!(
+                        "a path has no query in it, and `{}` would be sent as part of the \
+                         path. Set the whole target with `url=` or one parameter with \
+                         `query.<name>=`",
+                        &asked[at..]
+                    ),
+                ));
+            }
             let was = request.url.path().to_string();
             let mut candidate = request.url.clone();
             candidate.set_path(asked);
@@ -1181,6 +1199,23 @@ mod tests {
     /// A traversal payload that the URL parser resolves is a request nobody
     /// asked for. Sending it and reporting its answer would be a false
     /// negative wearing the shape of evidence.
+    /// `path=/reset.php?token=…` is a natural thing to type and a different
+    /// request from the one meant: `?` is not in a path, so it is escaped, and
+    /// the server is asked for a file whose name contains a question mark.
+    #[test]
+    fn a_query_inside_a_path_edit_is_refused_and_the_right_target_is_named() {
+        let mut request = request();
+        let error = apply(&mut request, &[set("path=/reset.php?token=abc")], false)
+            .expect_err("a path with a query in it is refused");
+        assert!(error.to_string().contains("query.<name>="), "{error}");
+        assert!(error.to_string().contains("url="), "{error}");
+        assert_eq!(
+            request.url.as_str(),
+            "https://app.test/api/users?user_id=123&page=2",
+            "a refused edit leaves the request alone"
+        );
+    }
+
     #[test]
     fn a_path_the_url_parser_would_resolve_is_refused_rather_than_straightened() {
         for spelling in [
