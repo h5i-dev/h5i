@@ -411,13 +411,28 @@ fn parse_head(head: &[u8]) -> (Option<u16>, Vec<(String, String)>) {
         .next()
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|code| code.parse::<u16>().ok());
-    let headers = lines
-        .filter(|line| !line.is_empty())
-        .filter_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            Some((name.trim().to_string(), value.trim().to_string()))
-        })
-        .collect();
+    let mut headers: Vec<(String, String)> = Vec::new();
+    for line in lines.filter(|line| !line.is_empty()) {
+        // A line beginning with a space or a tab is an obs-fold: the
+        // continuation of the header above it, which RFC 9110 §5.2 says a
+        // recipient reads as one field with the fold replaced by a space.
+        // Reading it as a header of its own is how a reflected value becomes a
+        // header — `X-Echo: <input>\r\n Set-Cookie: sid=evil` arrived here as a
+        // real `Set-Cookie`, and `send_raw` writes those into the session jar.
+        // No compliant client would have seen it, so neither does this: the
+        // exact bytes are in the message store either way, which is where a
+        // reader goes to see that the fold was there at all.
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if let Some((_, value)) = headers.last_mut() {
+                value.push(' ');
+                value.push_str(line.trim());
+            }
+            continue;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            headers.push((name.trim().to_string(), value.trim().to_string()));
+        }
+    }
     (status, headers)
 }
 
@@ -450,6 +465,30 @@ mod tests {
             .iter()
             .any(|(n, v)| n == "Content-Type" && v == "text/plain"));
         assert!(headers.iter().any(|(n, v)| n == "Content-Length" && v == "3"));
+    }
+
+    /// A line beginning with a space is an obs-fold: the continuation of the
+    /// header above it, not a header of its own. Reading it as one turned
+    /// `X-Echo: <reflected>\r\n Set-Cookie: sid=evil` into a `Set-Cookie` this
+    /// engine then wrote into the session jar — a cookie the origin never set,
+    /// and one no compliant client would have seen.
+    #[test]
+    fn a_folded_header_line_is_a_continuation_and_not_a_new_header() {
+        let head = b"HTTP/1.1 200 OK\r\nX-Echo: hello\r\n Set-Cookie: sid=evil\r\n\r\n";
+        let (status, headers) = parse_head(head);
+        assert_eq!(status, Some(200));
+        assert!(
+            !headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("set-cookie")),
+            "a folded line is not a Set-Cookie: {headers:?}"
+        );
+        assert_eq!(
+            headers
+                .iter()
+                .find(|(n, _)| n == "X-Echo")
+                .map(|(_, v)| v.as_str()),
+            Some("hello Set-Cookie: sid=evil"),
+            "it is part of the value above it: {headers:?}"
+        );
     }
 
     #[test]
