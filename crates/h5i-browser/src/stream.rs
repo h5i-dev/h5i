@@ -1540,13 +1540,35 @@ fn control_verb_inner(
                 .get("raw_target")
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            let raw_request = request
-                .get("raw_request")
-                .and_then(Value::as_str)
-                .and_then(|b| {
-                    use base64::Engine as _;
-                    base64::engine::general_purpose::STANDARD.decode(b).ok()
-                });
+            // A `raw_request` that did not survive the hop is refused, never
+            // dropped. Falling back to `None` sent an ordinary framed request
+            // instead — the exact opposite of what the flag asks for — and
+            // reported its answer as the raw send's, so a smuggling test that
+            // never happened read as a target that is not vulnerable.
+            let raw_request = match request.get("raw_request") {
+                None | Some(Value::Null) => None,
+                Some(value) => {
+                    let decoded = value.as_str().and_then(|b| {
+                        use base64::Engine as _;
+                        base64::engine::general_purpose::STANDARD.decode(b).ok()
+                    });
+                    match decoded {
+                        Some(bytes) => Some(bytes),
+                        None => {
+                            return (
+                                json!({
+                                    "ok": false,
+                                    "code": "bad-raw",
+                                    "message": "the raw request's bytes did not survive the \
+                                                hop, and sending a framed request instead \
+                                                would answer a different question",
+                                }),
+                                false,
+                            );
+                        }
+                    }
+                }
+            };
             let plan = crate::broker::Sends {
                 count: request
                     .get("repeat")
@@ -1652,36 +1674,73 @@ fn control_verb_inner(
 
             // The composed form carries its body base64 in the JSON: this hop
             // is a control channel, not the broker's own socket.
-            let composed = given.map(|value| {
-                let text = |key: &str| {
-                    value.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
-                };
-                let body = value
-                    .get("body_base64")
-                    .and_then(Value::as_str)
-                    .and_then(|b| {
-                        use base64::Engine as _;
-                        base64::engine::general_purpose::STANDARD.decode(b).ok()
-                    })
-                    .unwrap_or_default();
-                let headers = value
-                    .get("headers")
-                    .and_then(Value::as_array)
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|pair| {
-                                let pair = pair.as_array()?;
-                                Some((
-                                    pair.first()?.as_str()?.to_string(),
-                                    pair.get(1)?.as_str()?.to_string(),
-                                ))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                (text("method"), text("url"), headers, body)
-            });
+            //
+            // Every piece is refused rather than defaulted. This is the
+            // cross-session replay, so a body that did not decode used to be
+            // sent as an empty one and a method that did not arrive became a
+            // GET — Alice's POST going out as Bob's bodyless GET, under a reply
+            // that calls it a replay of Alice's POST.
+            let composed = match given {
+                None => None,
+                Some(value) => {
+                    let text = |key: &str| {
+                        value.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
+                    };
+                    let refuse = |what: &str| {
+                        (
+                            json!({
+                                "ok": false,
+                                "code": "bad-request",
+                                "message": format!(
+                                    "the request handed to `resend` {what}, and sending \
+                                     something else in its place would answer a different \
+                                     question"
+                                ),
+                            }),
+                            false,
+                        )
+                    };
+                    let body = match value.get("body_base64") {
+                        None | Some(Value::Null) => Vec::new(),
+                        Some(encoded) => {
+                            let decoded = encoded.as_str().and_then(|b| {
+                                use base64::Engine as _;
+                                base64::engine::general_purpose::STANDARD.decode(b).ok()
+                            });
+                            match decoded {
+                                Some(bytes) => bytes,
+                                None => return refuse("has a body that did not survive the hop"),
+                            }
+                        }
+                    };
+                    let mut headers: Vec<(String, String)> = Vec::new();
+                    match value.get("headers") {
+                        None | Some(Value::Null) => {}
+                        Some(Value::Array(items)) => {
+                            for pair in items {
+                                let read = pair.as_array().and_then(|pair| {
+                                    Some((
+                                        pair.first()?.as_str()?.to_string(),
+                                        pair.get(1)?.as_str()?.to_string(),
+                                    ))
+                                });
+                                match read {
+                                    Some(pair) => headers.push(pair),
+                                    None => {
+                                        return refuse("has a header that is not a name and a value")
+                                    }
+                                }
+                            }
+                        }
+                        Some(_) => return refuse("has headers that are not a list"),
+                    }
+                    let method = text("method");
+                    if method.trim().is_empty() {
+                        return refuse("names no method");
+                    }
+                    Some((method, text("url"), headers, body))
+                }
+            };
 
             let outcome = match composed {
                 Some((method, target, headers, body)) => match url::Url::parse(&target) {
@@ -5241,6 +5300,72 @@ mod tests {
              outline as one reading the CLI: {reply:?}"
         );
         assert!(!changed);
+    }
+
+    /// The control channel carries the composed request `--as` builds and the
+    /// bytes `--raw-request` reads. Every piece of both used to be defaulted
+    /// when it could not be read: a body that did not decode was sent as an
+    /// empty one, a missing method became a GET, and a `raw_request` that did
+    /// not decode fell through to the ordinary framed sender. All three send a
+    /// request the caller did not compose and then report its answer as
+    /// theirs, which for `--as` means Alice's POST going out as a bodyless GET
+    /// under a reply that calls it her POST.
+    #[test]
+    fn a_composed_request_that_cannot_be_read_is_refused_rather_than_defaulted() {
+        let mut session = session_with(tall_page());
+        let resend = |body: Value| {
+            let mut request = json!({"verb": "resend", "from": 0});
+            request["request"] = body;
+            request
+        };
+
+        let (reply, moved) = control_verb(
+            &mut session,
+            &resend(json!({
+                "method": "POST",
+                "url": "https://app.test/a",
+                "headers": [],
+                "body_base64": "not base64 !!",
+            })),
+        );
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert_eq!(reply["code"], "bad-request");
+        assert!(
+            reply["message"].as_str().unwrap_or_default().contains("body"),
+            "{reply}"
+        );
+        assert!(!moved);
+
+        let (reply, _) = control_verb(
+            &mut session,
+            &resend(json!({"url": "https://app.test/a", "headers": [], "body_base64": ""})),
+        );
+        assert_eq!(reply["ok"], false, "a request with no method: {reply}");
+        assert!(
+            reply["message"].as_str().unwrap_or_default().contains("method"),
+            "{reply}"
+        );
+
+        let (reply, _) = control_verb(
+            &mut session,
+            &resend(json!({
+                "method": "GET",
+                "url": "https://app.test/a",
+                "headers": [["only-a-name"]],
+            })),
+        );
+        assert_eq!(reply["ok"], false, "a half-written header: {reply}");
+        assert!(
+            reply["message"].as_str().unwrap_or_default().contains("header"),
+            "{reply}"
+        );
+
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "resend", "from": 0, "raw_request": "not base64 !!"}),
+        );
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert_eq!(reply["code"], "bad-raw");
     }
 
     #[test]
