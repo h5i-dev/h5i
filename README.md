@@ -13,7 +13,7 @@
 
 <h1 align="center">A Secure, Auditable Browser for AI Agents</h1>
 
-**h5i** (pronounced *high-five*) is a lightweight browser for policy-controlled, auditable agent access to the web. Every session records allowed and denied network requests in a reviewable receipt. Run it directly, sandbox only the browser, or contain the agent’s entire workflow in one disposable environment.
+**h5i** (pronounced high-five) is a lightweight, policy-controlled browser for AI agents that combines page automation with direct control over HTTP traffic. Agents can navigate and extract pages, inspect, edit, replay, and compare requests and responses, and run multi-step test flows. It is built for scraping, automated web testing, CTFs, and authorized red teaming. It can sandbox either the browser or the agent’s entire workflow.
 
 
 <table align="center">
