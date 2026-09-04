@@ -346,8 +346,11 @@ Bob's (it carried Alice's credential), and the answer would settle nothing.
 question, and a caller who wants one exact header can read it with `message` and
 set it with `--set`, which is a deliberate act rather than a default.
 
-The dropped names are printed, because a silent strip is a different request
-than the caller thinks they sent.
+The dropped names are reported, because a silent strip is a different request
+than the caller thinks they sent. In the reply as `credentials_dropped` and
+not only on the terminal: `--json` is how an agent reads this verb, and a
+note printed in the human view is a note the one reader who needs it cannot
+see.
 
 ### Stopping at a redirect
 

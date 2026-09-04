@@ -1614,21 +1614,28 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             // request holds credentials, and a verb's reply would carry them
             // out through a renderer.
             let mut argv = vec!["resend".to_string()];
+            // Named in the reply as well as on the terminal. A silent strip is
+            // a different request from the one the caller thinks they sent, and
+            // `--json` is how an agent reads this verb: printing the names only
+            // in the human view told the one reader who cannot see them.
+            let mut dropped: Vec<String> = Vec::new();
             match &as_session {
                 None => {
                     argv.push("--from".into());
                     argv.push(from.to_string());
                 }
                 Some(_) => {
-                    let (request, dropped) = super::websec::carry(
+                    let (request, left_behind) = super::websec::carry(
                         &root,
                         session.as_deref(),
                         from,
                         keep_credentials,
                     )?;
+                    dropped = left_behind;
                     if !dropped.is_empty() && !json {
                         println!(
-                            "  note     : {} left behind, so this is the other session's                              own request",
+                            "  note     : {} left behind, so this is the other session's \
+                             own request",
                             dropped.join(", ")
                         );
                     }
@@ -1700,6 +1707,9 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                     && let Some(summary) = super::websec::timing_summary(samples)
                 {
                     answer["timing"] = summary;
+                }
+                if !dropped.is_empty() {
+                    answer["credentials_dropped"] = serde_json::json!(dropped);
                 }
                 Ok(())
             })
