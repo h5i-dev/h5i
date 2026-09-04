@@ -513,16 +513,38 @@ pub fn show(
     Ok(())
 }
 
+/// How much of one line a preview shows.
+///
+/// The line *count* was bounded and the line *length* was not, so a minified
+/// page — one line, no newlines, megabytes of it — printed whole: into a
+/// terminal, or into the context of the agent that asked. The body diff has
+/// always cut its lines here; this is the same number, for the same reason.
+/// `--raw` and `--body-to` are where the exact bytes live.
+const MAX_PREVIEW_LINE: usize = 400;
+
+/// One line of a body, bounded and inert.
+fn preview_line(line: &str) -> String {
+    let mut shown: String = line.chars().take(MAX_PREVIEW_LINE).collect();
+    if shown.chars().count() < line.chars().count() {
+        shown.push_str(&format!(
+            " … [{} more characters on this line]",
+            line.chars().count() - MAX_PREVIEW_LINE
+        ));
+    }
+    printable(&shown)
+}
+
 fn summarise_body(body: &Text) {
     match body {
         Text::Utf8(text) if text.is_empty() => println!("  body     : empty"),
         Text::Utf8(text) => {
             println!("  body     : {} bytes", text.len());
+            let lines = text.lines().count();
             for line in text.lines().take(20) {
-                println!("    {}", printable(line));
+                println!("    {}", preview_line(line));
             }
-            if text.lines().count() > 20 {
-                println!("    … {} more lines", text.lines().count() - 20);
+            if lines > 20 {
+                println!("    … {} more lines", lines - 20);
             }
         }
         Text::Cut { text, of_bytes } => {
@@ -531,7 +553,7 @@ fn summarise_body(body: &Text) {
                 text.len()
             );
             for line in text.lines().take(20) {
-                println!("    {}", printable(line));
+                println!("    {}", preview_line(line));
             }
             println!("    … the rest of this body is not in the store");
         }
@@ -542,7 +564,7 @@ fn summarise_body(body: &Text) {
         } => {
             println!("  body     : {bytes} bytes, not text (sha256 {sha256})");
             for line in text.lines().take(20) {
-                println!("    {}", printable(line));
+                println!("    {}", preview_line(line));
             }
         }
         Text::Missing(why) => println!("  body     : not stored ({why})"),
@@ -946,7 +968,7 @@ fn line_changes(left: &str, right: &str) -> (Vec<LineChange>, usize) {
             added.push(LineChange {
                 side: "added",
                 line: index + 1,
-                text: line.chars().take(400).collect(),
+                text: line.chars().take(MAX_PREVIEW_LINE).collect(),
             });
         }
     }
@@ -955,7 +977,7 @@ fn line_changes(left: &str, right: &str) -> (Vec<LineChange>, usize) {
             removed.push(LineChange {
                 side: "removed",
                 line: index + 1,
-                text: line.chars().take(400).collect(),
+                text: line.chars().take(MAX_PREVIEW_LINE).collect(),
             });
         }
     }
@@ -2356,6 +2378,25 @@ mod tests {
             "two heads matching is not two pages matching"
         );
         assert!(!difference.same);
+    }
+
+    /// The preview bounded how many lines it showed and not how long one could
+    /// be, so a minified page — one line, no newlines, megabytes of it —
+    /// printed whole into the terminal, or into the context of the agent that
+    /// asked for it. A target chooses whether its page has newlines in it.
+    #[test]
+    fn one_enormous_line_is_bounded_like_every_other() {
+        let shown = preview_line(&"A".repeat(2_000_000));
+        assert!(
+            shown.chars().count() < MAX_PREVIEW_LINE + 80,
+            "a line is bounded: {} characters",
+            shown.chars().count()
+        );
+        assert!(shown.contains("more characters on this line"), "and says so");
+
+        // A line that fits is untouched, and still inert.
+        assert_eq!(preview_line("<p>hello</p>"), "<p>hello</p>");
+        assert!(!preview_line("a\u{1b}[2Jb").contains('\u{1b}'));
     }
 
     fn response(status: u16, kind: &str) -> StoredResponse {
