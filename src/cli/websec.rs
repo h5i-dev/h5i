@@ -619,8 +619,17 @@ pub struct Difference {
     pub headers_changed: Vec<String>,
     /// Changed body fields, when both bodies are JSON. Keyed by dotted path.
     pub json_changes: Vec<JsonChange>,
+    /// How many there were, when the list above is only the first of them.
+    ///
+    /// The lists are capped so one reply cannot be a whole page, and a cap that
+    /// did not say so was a diff reporting part of itself as all of itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json_changes_of: Option<usize>,
     /// Changed lines, when they are not.
     pub line_changes: Vec<LineChange>,
+    /// How many there were. See [`Difference::json_changes_of`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_changes_of: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -694,7 +703,8 @@ pub fn compare(left: (&StoredResponse, &Text), right: (&StoredResponse, &Text)) 
     let bodies_compared = a_body.whole() && b_body.whole();
     let left_text = a_body.as_str();
     let right_text = b_body.as_str();
-    let (json_changes, line_changes) = body_changes(a, b, left_text, right_text);
+    let (json_changes, json_total, line_changes, line_total) =
+        body_changes(a, b, left_text, right_text);
 
     // The bodies' own lengths, not the previews'. A body that is not UTF-8
     // reaches `as_str` as at most 64 KiB, so `length_delta` — a headline
@@ -725,6 +735,8 @@ pub fn compare(left: (&StoredResponse, &Text), right: (&StoredResponse, &Text)) 
         headers_added: added,
         headers_removed: removed,
         headers_changed: changed,
+        json_changes_of: (json_total > json_changes.len()).then_some(json_total),
+        line_changes_of: (line_total > line_changes.len()).then_some(line_total),
         json_changes,
         line_changes,
     }
@@ -738,12 +750,14 @@ fn is_json(response: &StoredResponse) -> bool {
         .is_some_and(|(_, value)| value.to_ascii_lowercase().contains("json"))
 }
 
+/// The JSON changes and the line changes, each with the number there were
+/// before the cap took the rest.
 fn body_changes(
     a: &StoredResponse,
     b: &StoredResponse,
     left: &str,
     right: &str,
-) -> (Vec<JsonChange>, Vec<LineChange>) {
+) -> (Vec<JsonChange>, usize, Vec<LineChange>, usize) {
     // Both sides have to be JSON *and* parse. A body that claims JSON and is
     // not (a truncated answer, an error page served with the wrong type) falls
     // through to the line diff rather than reporting no changes at all.
@@ -756,10 +770,12 @@ fn body_changes(
     {
         let mut changes = Vec::new();
         walk_json("", &left, &right, &mut changes);
+        let total = changes.len();
         changes.truncate(MAX_JSON_CHANGES);
-        return (changes, Vec::new());
+        return (changes, total, Vec::new(), 0);
     }
-    (Vec::new(), line_changes(left, right))
+    let (lines, total) = line_changes(left, right);
+    (Vec::new(), 0, lines, total)
 }
 
 /// Field-by-field, so a re-ordered object is not a difference.
@@ -830,13 +846,20 @@ fn walk_json(path: &str, left: &Value, right: &Value, out: &mut Vec<JsonChange>)
 /// of a diff here is "what appeared and what vanished", and a page that moved a
 /// line without changing it is not a finding. An LCS would also be O(n·m) over
 /// two HTML documents, which is the wrong cost for a loop.
-fn line_changes(left: &str, right: &str) -> Vec<LineChange> {
+/// The changed lines, and how many there were before the cap.
+///
+/// Both sides are cut, not just the tail. The list used to be every addition
+/// followed by every removal and then truncated, so a response with sixty new
+/// lines reported no removals at all — and "this line is gone" is as much of an
+/// answer as "this line is new".
+fn line_changes(left: &str, right: &str) -> (Vec<LineChange>, usize) {
     let before: BTreeSet<&str> = left.lines().collect();
     let after: BTreeSet<&str> = right.lines().collect();
-    let mut out = Vec::new();
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
     for (index, line) in right.lines().enumerate() {
         if !before.contains(line) {
-            out.push(LineChange {
+            added.push(LineChange {
                 side: "added",
                 line: index + 1,
                 text: line.chars().take(400).collect(),
@@ -845,15 +868,28 @@ fn line_changes(left: &str, right: &str) -> Vec<LineChange> {
     }
     for (index, line) in left.lines().enumerate() {
         if !after.contains(line) {
-            out.push(LineChange {
+            removed.push(LineChange {
                 side: "removed",
                 line: index + 1,
                 text: line.chars().take(400).collect(),
             });
         }
     }
-    out.truncate(MAX_LINE_CHANGES);
-    out
+    let total = added.len() + removed.len();
+    if total > MAX_LINE_CHANGES {
+        // Half each, and whatever the shorter side does not use goes to the
+        // longer one, so the cap costs a lopsided diff nothing.
+        let half = MAX_LINE_CHANGES / 2;
+        let keep_added = if removed.len() < half {
+            MAX_LINE_CHANGES - removed.len()
+        } else {
+            half.max(MAX_LINE_CHANGES - removed.len().min(MAX_LINE_CHANGES))
+        };
+        added.truncate(keep_added);
+        removed.truncate(MAX_LINE_CHANGES - added.len());
+    }
+    added.extend(removed);
+    (added, total)
 }
 
 /// How alike two bodies are, 0.0 to 1.0.
@@ -967,6 +1003,20 @@ pub fn diff(
     for change in &difference.line_changes {
         let mark = if change.side == "added" { '+' } else { '-' };
         println!("  {mark} {}", printable(&change.text));
+    }
+    // Said, not implied. A capped list that reads as the whole answer is a
+    // partial diff wearing a complete one's shape.
+    if let Some(total) = difference.json_changes_of {
+        println!(
+            "  … {} more changed fields not listed",
+            total - difference.json_changes.len()
+        );
+    }
+    if let Some(total) = difference.line_changes_of {
+        println!(
+            "  … {} more changed lines not listed",
+            total - difference.line_changes.len()
+        );
     }
     Ok(())
 }
@@ -2034,6 +2084,41 @@ mod tests {
         };
         let found = evaluate(&Condition::Contains("FLAG{".to_string()), &stored, &whole);
         assert!(!found.matched && found.conclusive);
+    }
+
+    /// The change lists are capped, and a cap that says nothing turns a partial
+    /// diff into a complete-looking one. Worse, every addition used to be
+    /// pushed before every removal and the tail cut, so a response with sixty
+    /// new lines reported that nothing had been removed.
+    #[test]
+    fn a_capped_diff_says_how_much_it_left_out_and_keeps_both_sides() {
+        let stored = response(200, "text/html");
+        let left = Text::Utf8((0..100).map(|n| format!("old line {n}\n")).collect());
+        let right = Text::Utf8((0..100).map(|n| format!("new line {n}\n")).collect());
+        let difference = compare((&stored, &left), (&stored, &right));
+
+        assert_eq!(difference.line_changes.len(), MAX_LINE_CHANGES);
+        assert_eq!(difference.line_changes_of, Some(200));
+        assert!(
+            difference.line_changes.iter().any(|c| c.side == "added"),
+            "the additions survive the cap"
+        );
+        assert!(
+            difference.line_changes.iter().any(|c| c.side == "removed"),
+            "and so do the removals"
+        );
+    }
+
+    /// A diff that fits says nothing about a cap, because there was none.
+    #[test]
+    fn a_small_diff_carries_no_truncation_note() {
+        let stored = response(200, "text/html");
+        let difference = compare(
+            (&stored, &Text::Utf8("a\nb\n".to_string())),
+            (&stored, &Text::Utf8("a\nc\n".to_string())),
+        );
+        assert_eq!(difference.line_changes_of, None);
+        assert_eq!(difference.line_changes.len(), 2);
     }
 
     fn response(status: u16, kind: &str) -> StoredResponse {
