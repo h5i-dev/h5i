@@ -423,9 +423,34 @@ pub fn show(
         })?;
         std::fs::write(path, &bytes)
             .map_err(|e| anyhow::anyhow!("{} could not be written: {e}", path.display()))?;
-        wrote = Some(json!({"path": path.display().to_string(), "bytes": bytes.len()}));
+        // Whether this file is the body or the head of it. This is the exact
+        // byte channel — the one every other view points a caller at when it
+        // has had to bound something — so a body the store cut has to say so
+        // here rather than hand over a shorter file and a byte count.
+        let of_bytes = match body {
+            Body::Stored {
+                truncated: true,
+                of_bytes,
+                ..
+            } => *of_bytes,
+            _ => None,
+        };
+        let mut note = json!({"path": path.display().to_string(), "bytes": bytes.len()});
+        if let Some(had) = of_bytes {
+            note["of_bytes"] = json!(had);
+            note["truncated"] = json!(true);
+        }
+        wrote = Some(note);
         if !json_out {
-            println!("  wrote    : {} bytes to {}", bytes.len(), path.display());
+            match of_bytes {
+                None => println!("  wrote    : {} bytes to {}", bytes.len(), path.display()),
+                Some(had) => println!(
+                    "  wrote    : {} bytes to {} — the head of a {had} byte body, which is \
+                     all the store kept",
+                    bytes.len(),
+                    path.display()
+                ),
+            }
         }
     }
 
