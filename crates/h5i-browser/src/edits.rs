@@ -614,37 +614,54 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
 
         Target::Cookie(name) => {
             // A cookie is a header once it is written, so the same three
-            // characters end it. Checked before the pair list is rebuilt, so a
-            // refused edit leaves the jar's own header alone.
+            // characters end it. Checked before anything is rebuilt, so a
+            // refused edit leaves the request alone.
             if !removing {
                 refuse_an_unsendable_header(&target, "Cookie", &text(&value))?;
+                refuse_a_reframed_cookie(&target, name, &text(&value))?;
             }
+            // Edited as the pieces the header was written as. Parsing it into
+            // pairs dropped every piece that had no `=`, so a header carrying a
+            // bare token lost it on any edit at all: a cookie the caller never
+            // named, gone from a request they were told only changed one.
             let current = request.header("cookie").unwrap_or_default().to_string();
-            let mut pairs: Vec<(String, String)> = current
-                .split(';')
-                .filter_map(|pair| pair.split_once('='))
-                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
-                .collect();
-            let was = pairs.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
-            if was.is_none() && !create && !removing {
-                return Err(missing(&target, "cookie", &pairs));
-            }
-            if removing {
-                pairs.retain(|(k, _)| k != name);
-            } else if let Some(slot) = pairs.iter_mut().find(|(k, _)| k == name) {
-                slot.1 = text(&value);
+            let pieces: Vec<&str> = if current.is_empty() {
+                Vec::new()
             } else {
-                pairs.push((name.clone(), text(&value)));
+                current.split(';').collect()
+            };
+            let named: Vec<(String, String)> =
+                pieces.iter().map(|piece| cookie_name_and_value(piece)).collect();
+            let was = named.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
+            if was.is_none() && !create && !removing {
+                return Err(missing(&target, "cookie", &named));
             }
-            if pairs.is_empty() {
+            let mut replaced = false;
+            let mut next: Vec<String> = Vec::with_capacity(pieces.len() + 1);
+            for (piece, (k, _)) in pieces.iter().zip(&named) {
+                if k == name {
+                    if removing {
+                        continue;
+                    }
+                    if !replaced {
+                        // The piece's own leading space, so the header reads as
+                        // it did rather than as this code would have written it.
+                        let lead = &piece[..piece.len() - piece.trim_start().len()];
+                        next.push(format!("{lead}{name}={}", text(&value)));
+                        replaced = true;
+                        continue;
+                    }
+                }
+                next.push((*piece).to_string());
+            }
+            if !replaced && !removing {
+                let lead = if next.is_empty() { "" } else { " " };
+                next.push(format!("{lead}{name}={}", text(&value)));
+            }
+            if next.is_empty() {
                 request.remove_header("cookie");
             } else {
-                let joined = pairs
-                    .iter()
-                    .map(|(k, v)| format!("{k}={v}"))
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                request.set_header("Cookie", &joined);
+                request.set_header("Cookie", &next.join(";"));
             }
             Ok(Applied {
                 target,
@@ -895,6 +912,41 @@ fn decode_query(raw: &str) -> String {
 
 fn encode_query(value: &str) -> String {
     form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+/// One piece of a `Cookie` header, as name and value.
+///
+/// A piece with no `=` is a bare token, which servers do read and which this
+/// therefore has to keep: it is a cookie with an empty value, not an absence.
+fn cookie_name_and_value(piece: &str) -> (String, String) {
+    match piece.split_once('=') {
+        Some((name, value)) => (name.trim().to_string(), value.trim().to_string()),
+        None => (piece.trim().to_string(), String::new()),
+    }
+}
+
+/// Refuse a cookie edit that would write more than one cookie.
+///
+/// `;` separates the pairs and `=` separates a pair, so either one inside a
+/// name or a `;` inside a value makes the header carry something other than the
+/// single cookie the edit named. Refused rather than escaped, because escaping
+/// would send a value that is not the one asked for: to write the header
+/// exactly, `header.Cookie=` takes the whole thing.
+fn refuse_a_reframed_cookie(
+    target: &impl fmt::Display,
+    name: &str,
+    value: &str,
+) -> Result<(), EditError> {
+    let bad_name = name.contains(';') || name.contains('=');
+    if bad_name || value.contains(';') {
+        return Err(EditError::new(
+            target,
+            "`;` separates one cookie from the next and `=` separates a name from its \
+             value, so this edit would write more than the one cookie it names. Set the \
+             whole header with `header.Cookie=` when that is the request you mean",
+        ));
+    }
+    Ok(())
 }
 
 /// One `k=v` piece of a form body, decoded.
@@ -1516,6 +1568,40 @@ mod tests {
             String::from_utf8_lossy(&request.body),
             "remember&next=%2Fadmin&tags[]=a&user=admin"
         );
+    }
+
+    /// A `Cookie` header can carry a bare token, and parsing the header into
+    /// pairs threw every one of them away: editing any cookie deleted a cookie
+    /// the caller never named, out of a request they were told only changed
+    /// one. Which is a logout, or a feature flag turning off, arriving as part
+    /// of the measurement.
+    #[test]
+    fn a_bare_cookie_survives_an_edit_to_a_different_one() {
+        let mut request = Editable {
+            method: "GET".to_string(),
+            url: Url::parse("https://app.test/a").expect("a url"),
+            headers: vec![(
+                "Cookie".to_string(),
+                "session=abc; beta; theme=dark".to_string(),
+            )],
+            body: Vec::new(),
+        };
+        apply(&mut request, &[set("cookie.theme=light")], false).expect("applies");
+        assert_eq!(
+            request.header("cookie"),
+            Some("session=abc; beta; theme=light")
+        );
+    }
+
+    /// And an edit that would write two cookies where it names one is refused,
+    /// rather than escaped into a value nobody asked for.
+    #[test]
+    fn a_cookie_edit_that_would_write_two_is_refused() {
+        let mut request = request();
+        let error = apply(&mut request, &[set("cookie.session=a; admin=1")], false)
+            .expect_err("a `;` in a cookie value writes a second cookie");
+        assert!(error.to_string().contains("header.Cookie="), "{error}");
+        assert_eq!(request.header("cookie"), Some("session=abc; theme=dark"));
     }
 
     /// And an ordinary path still goes through, dots in a filename included.
