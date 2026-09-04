@@ -23,16 +23,20 @@
       <sub>No Chromium or V8</sub>
     </td>
     <td align="center">
-      <strong>~86% less peak memory</strong><br>
-      <sub><a href="./docs/design/design-browser.md">In our benchmarks</a></sub>
-    </td>
-    <td align="center">
-      <strong>~3× faster reads</strong><br>
+      <strong>~3× faster, ~86% less memory</strong><br>
       <sub><a href="./docs/design/design-browser.md">In our benchmarks</a></sub>
     </td>
     <td align="center">
       <strong>Sandboxed & auditable</strong><br>
       <sub>Browser-only or full workflow</sub>
+    </td>
+    <td align="center">
+      <strong>Automated web testing</strong><br>
+      <sub>Navigate, interact & assert</sub>
+    </td>
+    <td align="center">
+      <strong>Burp-style HTTP testing</strong><br>
+      <sub><a href="./docs/design/design-websec.md">Capture, edit, replay & diff</a></sub>
     </td>
   </tr>
 </table>
