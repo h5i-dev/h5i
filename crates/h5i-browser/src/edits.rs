@@ -524,22 +524,33 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
         }
 
         Target::Query(name) => {
-            let pairs: Vec<(String, String)> = request
-                .url
-                .query_pairs()
-                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            // The query is edited as the pieces it was written as, not decoded
+            // into pairs and re-encoded. Re-encoding rewrote parameters nobody
+            // named: `?debug` came back as `debug=`, and `x[]=1` as
+            // `x%5B%5D=1`. Both are a different request, and "the edits named
+            // on the command line and nothing else changed" is the whole claim
+            // this verb makes.
+            let raw = request.url.query().unwrap_or_default().to_string();
+            let pieces: Vec<&str> = if raw.is_empty() {
+                Vec::new()
+            } else {
+                raw.split('&').collect()
+            };
+            let named: Vec<(String, String)> = pieces
+                .iter()
+                .map(|piece| (query_name(piece), query_value(piece)))
                 .collect();
-            let was = pairs
+            let was = named
                 .iter()
                 .find(|(k, _)| k == name)
                 .map(|(_, v)| v.clone());
             if was.is_none() && !create && !removing {
-                return Err(missing(&target, "query parameter", &pairs));
+                return Err(missing(&target, "query parameter", &named));
             }
             let mut replaced = false;
-            let mut next: Vec<(String, String)> = Vec::with_capacity(pairs.len() + 1);
-            for (k, v) in pairs {
-                if &k == name {
+            let mut next: Vec<String> = Vec::with_capacity(pieces.len() + 1);
+            for (piece, (k, _)) in pieces.iter().zip(&named) {
+                if k == name {
                     if removing {
                         continue;
                     }
@@ -547,24 +558,24 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                     // list, and collapsing it would change the request in a way
                     // nobody asked for.
                     if !replaced {
-                        next.push((k, text(&value)));
+                        next.push(format!("{}={}", encode_query(k), encode_query(&text(&value))));
                         replaced = true;
                         continue;
                     }
                 }
-                next.push((k, v));
+                next.push((*piece).to_string());
             }
             if !replaced && !removing {
-                next.push((name.clone(), text(&value)));
+                next.push(format!(
+                    "{}={}",
+                    encode_query(name),
+                    encode_query(&text(&value))
+                ));
             }
             if next.is_empty() {
                 request.url.set_query(None);
             } else {
-                let mut serializer = form_urlencoded::Serializer::new(String::new());
-                for (k, v) in &next {
-                    serializer.append_pair(k, v);
-                }
-                request.url.set_query(Some(&serializer.finish()));
+                request.url.set_query(Some(&next.join("&")));
             }
             Ok(Applied {
                 target,
@@ -836,6 +847,31 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             })
         }
     }
+}
+
+/// The decoded name of one `k=v` piece of a query string.
+///
+/// A piece with no `=` is a name with no value, which is a shape servers do
+/// read: `?debug` and `?debug=` are not the same request everywhere.
+fn query_name(piece: &str) -> String {
+    let raw = piece.split_once('=').map(|(k, _)| k).unwrap_or(piece);
+    decode_query(raw)
+}
+
+/// The decoded value of one piece, empty when it has none.
+fn query_value(piece: &str) -> String {
+    piece.split_once('=').map(|(_, v)| decode_query(v)).unwrap_or_default()
+}
+
+fn decode_query(raw: &str) -> String {
+    form_urlencoded::parse(raw.as_bytes())
+        .next()
+        .map(|(k, _)| k.into_owned())
+        .unwrap_or_default()
+}
+
+fn encode_query(value: &str) -> String {
+    form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
 /// The error for a target that is not there, carrying what is.
@@ -1379,6 +1415,45 @@ mod tests {
         let error = apply(&mut request, &[set("header.X A=1")], true)
             .expect_err("a name with a space in it is not a header name");
         assert!(error.to_string().contains("not a header name"), "{error}");
+    }
+
+    /// "The edits named on the command line and nothing else changed" is what
+    /// replay claims. Decoding the query into pairs and re-encoding it broke
+    /// that for every parameter the caller did not name: `?debug` went out as
+    /// `debug=` and `x[]=1` as `x%5B%5D=1`, and in a workbench the difference
+    /// between two requests is the entire measurement.
+    #[test]
+    fn editing_one_query_parameter_leaves_the_others_byte_for_byte() {
+        let mut request = Editable {
+            method: "GET".to_string(),
+            url: Url::parse("https://app.test/a?debug&next=%2Fadmin&q=a+b&x[]=1&keep=A")
+                .expect("a url"),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+        let applied = apply(&mut request, &[set("query.keep=B")], false).expect("applies");
+        assert_eq!(applied[0].was.as_deref(), Some("A"));
+        assert_eq!(
+            request.url.query(),
+            Some("debug&next=%2Fadmin&q=a+b&x[]=1&keep=B")
+        );
+    }
+
+    /// A parameter that is not there is still added, and a removal still takes
+    /// every copy.
+    #[test]
+    fn a_query_parameter_is_added_and_removed_without_touching_the_rest() {
+        let mut request = Editable {
+            method: "GET".to_string(),
+            url: Url::parse("https://app.test/a?debug&id=1&id=2").expect("a url"),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+        apply(&mut request, &[set("query.role=admin")], true).expect("adds");
+        assert_eq!(request.url.query(), Some("debug&id=1&id=2&role=admin"));
+        apply(&mut request, &[parse_unset("query.id").expect("parses")], false)
+            .expect("removes");
+        assert_eq!(request.url.query(), Some("debug&role=admin"));
     }
 
     /// And an ordinary path still goes through, dots in a filename included.
