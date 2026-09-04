@@ -23,21 +23,21 @@
       <sub>No Chromium or V8</sub>
     </td>
     <td align="center">
-      <strong>~86% less peak memory</strong><br>
-      <sub><a href="./docs/design/design-browser.md">In our benchmarks</a></sub>
-    </td>
-    <td align="center">
-      <strong>~3× faster reads</strong><br>
+      <strong>~3× faster, ~86% less memory</strong><br>
       <sub><a href="./docs/design/design-browser.md">In our benchmarks</a></sub>
     </td>
     <td align="center">
       <strong>Sandboxed & auditable</strong><br>
       <sub>Browser-only or full workflow</sub>
     </td>
+    <td align="center">
+      <strong>Built-in HTTP workbench</strong><br>
+      <sub>Capture, edit, replay & diff</sub>
+    </td>
   </tr>
 </table>
 
-**Pure Rust. No Chromium. No V8.**
+**Browse, automate, and test web applications with complete control over every request.**
 
 ```bash
 h5i browser open https://example.com
@@ -139,8 +139,26 @@ h5i box view <name> --term     # draw it in this terminal instead (needs kitty)
   <img src="./docs/_static/browser-demo.gif" alt="An agent reading and acting on a page through h5i" width="99%" />
 </p>
 
+### 2.2. Web security testing
 
-### 2.2. The configurable sandbox
+h5i lets the agent inspect, edit, replay, and compare browser requests and responses, match conditions, and run 
+multi-step test flows without a MITM proxy, CA certificate, or separate repeater.
+
+Install the optional `websec` plugin, then browse the application normally:
+
+```bash
+h5i plugin install websec
+h5i browser open https://target.example --capture --allow target.example
+
+h5i websec requests                                  # captured HTTP messages
+h5i websec show req_42 --raw                         # inspect one request
+h5i websec replay req_42 --set query.id=456          # edit and resend it
+h5i websec diff res_42 res_43                        # compare the responses
+h5i websec match res_43 --status 200 --contains "ok" # assert a condition
+h5i websec sequence flow.json                        # run a multi-step test
+```
+
+### 2.3. The configurable sandbox
 
 While h5i runs in a light-weight sandbox by default, we can further specify
 fine-grained setting in `.h5i/env.toml`.
@@ -171,7 +189,7 @@ h5i box --profile reading --name docs
 h5i browser open https://docs.rs/ --in docs
 ```
 
-### 2.3. A sandbox holds more than a browser
+### 2.4. A sandbox holds more than a browser
 
 The top rung of that ladder is a whole environment. It can hold the code, the
 toolchain, the dev server and the agent itself, which is what you want when the
