@@ -3668,18 +3668,7 @@ fn list(root: &Path, all: bool, json: bool) -> anyhow::Result<()> {
 fn status(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> {
     // Not `resolve`: a status on a session that has ended is exactly the
     // question worth answering, so this reads the record rather than refusing.
-    let mut session = match bs::resolve(root, selector) {
-        Ok(session) => session,
-        Err(bs::SessionGone::Ended { id, .. }) => bs::read(root, &id)?,
-        // A name only ever resolves to a *live* session, so a closed one asked
-        // for by the name it was opened with arrived here as "no such session".
-        // Which is the one question this verb exists to answer, and `close`
-        // itself says the record stays — the caller has the name, not the id.
-        Err(gone) => match selector.and_then(|name| bs::find_ended_by_name(root, name)) {
-            Some(ended) => ended,
-            None => anyhow::bail!("{gone}"),
-        },
-    };
+    let mut session = resolve_for_reading(root, selector)?;
     let id = &session.id.clone();
     // Reading status is the moment to notice a death and write it down.
     if session.state.is_live() && !session.probe() {
@@ -3865,12 +3854,31 @@ fn close(
 ///
 /// Reads the record rather than requiring a live session: the session a
 /// reviewer most wants to audit is usually the one that has already ended.
+/// The session a *reader* means, live or not.
+///
+/// `resolve` answers for the verbs that act, so a name only ever finds a live
+/// session — which is right for a click and wrong for every verb whose subject
+/// is usually the run that just finished. `status`, `audit` and the whole
+/// websec surface (`message`, `diff`, `match`, `sitemap`) read a record and a
+/// store that both outlive the engine, and asking for them by the name the
+/// session was opened with answered "no such session": the caller had to know
+/// the opaque id, for evidence `close` had just promised was still there.
+pub(crate) fn resolve_for_reading(
+    root: &Path,
+    selector: Option<&str>,
+) -> anyhow::Result<bs::Session> {
+    match bs::resolve(root, selector) {
+        Ok(session) => Ok(session),
+        Err(bs::SessionGone::Ended { id, .. }) => Ok(bs::read(root, &id)?),
+        Err(gone) => match selector.and_then(|name| bs::find_ended_by_name(root, name)) {
+            Some(ended) => Ok(ended),
+            None => anyhow::bail!("{gone}"),
+        },
+    }
+}
+
 fn audit(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> {
-    let session = match bs::resolve(root, selector) {
-        Ok(session) => session,
-        Err(bs::SessionGone::Ended { id, .. }) => bs::read(root, &id)?,
-        Err(gone) => anyhow::bail!("{gone}"),
-    };
+    let session = resolve_for_reading(root, selector)?;
     let audit = bs::audit(root, &session);
 
     if json {

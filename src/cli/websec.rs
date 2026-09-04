@@ -20,11 +20,10 @@ pub enum Part {
 
 /// Where a session's messages are, or why they cannot be read.
 fn store_dir(root: &Path, selector: Option<&str>) -> anyhow::Result<(bs::Session, PathBuf)> {
-    let session = match bs::resolve(root, selector) {
-        Ok(session) => session,
-        Err(bs::SessionGone::Ended { id, .. }) => bs::read(root, &id)?,
-        Err(gone) => anyhow::bail!("{gone}"),
-    };
+    // Live or ended: a store outlives its engine, and reading one after the run
+    // is the ordinary case rather than the exception. See
+    // [`super::browser::resolve_for_reading`].
+    let session = super::browser::resolve_for_reading(root, selector)?;
     // The id off the record, checked before it names a directory: for a boxed
     // session that file sits where the boxed code can write to it, and
     // everything under a session directory is addressed by joining onto this.
@@ -1690,17 +1689,35 @@ pub fn map_of(records: &[Value]) -> Map {
 
 /// `h5i browser sitemap`.
 pub fn sitemap(root: &Path, selector: Option<&str>, json_out: bool) -> anyhow::Result<()> {
-    let answer = super::browser::ask_session(
-        root,
-        selector,
-        vec!["requests".to_string()],
-        false,
-    )?;
-    let empty = Vec::new();
-    let records = answer
-        .get("requests")
-        .and_then(Value::as_array)
-        .unwrap_or(&empty);
+    // From the engine while there is one, and off the log on disk once there is
+    // not. The map of a finished run is the one a reviewer wants, and asking
+    // the engine for it meant closing the session took the site map with it.
+    // The log outlives the engine — that is what `close` means by "its record
+    // stays" — and each of its lines is the record `map_of` already reads.
+    let session = super::browser::resolve_for_reading(root, selector)?;
+    let owned: Vec<Value>;
+    let answer;
+    let records: &[Value] = if session.state.is_live() {
+        answer = super::browser::ask_session(
+            root,
+            selector,
+            vec!["requests".to_string()],
+            false,
+        )?;
+        answer
+            .get("requests")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    } else {
+        let path = bs::dir(root, &session.id).join(bs::RECEIPTS_FILE);
+        owned = bs::read_log_capped(&path)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .collect();
+        &owned
+    };
     let map = map_of(records);
 
     if json_out {

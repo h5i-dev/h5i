@@ -1174,7 +1174,7 @@ const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
 /// Opened `O_NOFOLLOW` first and `fstat`ed after, rather than stat-then-open:
 /// in a directory the box writes, those are two resolutions of a path and only
 /// the second one is read.
-fn read_log_capped(path: &Path) -> Option<String> {
+pub fn read_log_capped(path: &Path) -> Option<String> {
     use std::io::Read as _;
     let mut opts = fs::OpenOptions::new();
     opts.read(true);
