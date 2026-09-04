@@ -339,6 +339,16 @@ fn read_chunked(
         let size_hex = size_text.split(';').next().unwrap_or("").trim();
         let size = usize::from_str_radix(size_hex, 16)
             .map_err(|_| format!("`{size_hex}` is not a chunk size"))?;
+        // A chunk cannot be bigger than the whole response is allowed to be,
+        // and a size that says otherwise is not a body to read: it is
+        // arithmetic to break. `cursor + size + 2` wraps in a release build, so
+        // a size near `usize::MAX` makes the fill loop below decide it already
+        // has enough and then slice a range that runs backwards, which panics.
+        // Refused where the number is read, so every sum after this point is
+        // bounded by the cap.
+        if size > cap {
+            return Err(format!("chunked response exceeded the {cap} byte cap"));
+        }
         cursor = line_end + 2;
         if size == 0 {
             break; // the last chunk; trailers, if any, are ignored
@@ -470,6 +480,21 @@ mod tests {
         );
     }
 
+    /// A chunk size is a number a server chooses, and one near `usize::MAX`
+    /// used to reach `&have[cursor..cursor + size]` with the sum wrapped past
+    /// zero: a range running backwards, which panics. A hostile target could
+    /// therefore end the session by answering a raw send.
+    #[test]
+    fn a_chunk_size_that_would_overflow_is_refused_rather_than_sliced() {
+        let hostile = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffee\r\n";
+        let outcome = try_reading_from_a_server_that_says(hostile);
+        assert!(
+            outcome.is_err(),
+            "a chunk larger than the cap has to be refused, got {:?}",
+            outcome.map(|r| r.body)
+        );
+    }
+
     /// One connection, one write, whatever bytes the test names.
     fn read_from_a_server_that_says(bytes: &str) -> RawResponse {
         use std::io::Write;
@@ -490,6 +515,27 @@ mod tests {
         sock.set_read_timeout(Some(std::time::Duration::from_secs(5))).expect("timeout");
         let mut wire = Wire::plain(sock);
         let response = read_http_response(&mut wire, 1 << 20).expect("a response");
+        let _ = server.join();
+        response
+    }
+
+    /// The same server, for the cases where the refusal is the answer.
+    fn try_reading_from_a_server_that_says(bytes: &str) -> Result<RawResponse, String> {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let said = bytes.to_string();
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.write_all(said.as_bytes());
+                let _ = stream.flush();
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        });
+        let sock = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        sock.set_read_timeout(Some(std::time::Duration::from_secs(5))).expect("timeout");
+        let mut wire = Wire::plain(sock);
+        let response = read_http_response(&mut wire, 1 << 20);
         let _ = server.join();
         response
     }
