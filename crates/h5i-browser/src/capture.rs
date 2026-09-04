@@ -429,6 +429,13 @@ fn hex(bytes: &[u8]) -> String {
 /// The same reasoning as the request log's, one step further along. This holds
 /// session cookies and `Authorization` headers in full, and a boxed session's
 /// directory can be under a `/tmp` the `agent` profile shares with the host.
+///
+/// Which is also why the mode is not left to `OpenOptions`. `mode` applies when
+/// the file is *created* and says nothing about one that is already there, so
+/// anything that could put a 0666 file at one of these names first got the
+/// credentials written into it — and a name that was a symlink got them written
+/// wherever it pointed, over whatever was there. `O_NOFOLLOW` closes the second,
+/// and narrowing the handle after it opens closes the first.
 fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), H5iError> {
     use std::io::Write as _;
     let mut options = std::fs::OpenOptions::new();
@@ -437,8 +444,17 @@ fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), H5iError> {
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
+        options.custom_flags(libc::O_NOFOLLOW);
     }
     let mut file = options.open(path).map_err(|e| H5iError::with_path(e, path))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // On the handle, not the path: nothing can swap the name for another
+        // file between the open and this.
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(H5iError::Io)?;
+    }
     file.write_all(bytes).map_err(H5iError::Io)?;
     file.flush().map_err(H5iError::Io)?;
     Ok(())
@@ -464,6 +480,45 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let capture = Capture::open(&dir.path().join("messages")).expect("store opens");
         (dir, capture)
+    }
+
+    /// `OpenOptions::mode` applies to a file it creates and to no other, so a
+    /// message file that was already there kept whatever mode it had — and this
+    /// store holds `Cookie` and `Authorization` in full, in a directory that
+    /// can sit under a shared `/tmp`.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_was_already_there_is_narrowed_rather_than_written_wide() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("waiting.json");
+        std::fs::write(&path, b"{}").expect("a file to be there first");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666))
+            .expect("wide open");
+
+        write_owner_only(&path, b"{\"secret\":true}").expect("writes");
+
+        let mode = std::fs::metadata(&path).expect("stat").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+    }
+
+    /// And a name that is a symlink is not a place to write a credential: it is
+    /// somebody else naming the file this store is about to truncate.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_is_refused_rather_than_followed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::write(&elsewhere, b"do not touch").expect("a target");
+        let path = dir.path().join("42.response.json");
+        std::os::unix::fs::symlink(&elsewhere, &path).expect("a symlink in the way");
+
+        assert!(write_owner_only(&path, b"{}").is_err(), "a symlink is refused");
+        assert_eq!(
+            std::fs::read(&elsewhere).expect("still there"),
+            b"do not touch",
+            "and what it pointed at is untouched"
+        );
     }
 
     #[test]
