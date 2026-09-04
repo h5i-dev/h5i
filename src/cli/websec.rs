@@ -84,6 +84,24 @@ pub enum Text {
 }
 
 impl Text {
+    /// How many bytes the body actually had.
+    ///
+    /// Not `as_str().len()`, which for a body that is not UTF-8 is the length
+    /// of a 64 KiB lossy *preview*. One invalid byte anywhere in a response is
+    /// enough to put it on that path, so a length verdict read off the preview
+    /// is a number a target can choose: pad past 64 KiB and every
+    /// `--longer-than` and `--shorter-than` answers about the cap instead of
+    /// about the page.
+    ///
+    /// `None` when the body is not in the store, which is not a length of zero.
+    fn len(&self) -> Option<u64> {
+        match self {
+            Text::Utf8(text) => Some(text.len() as u64),
+            Text::Binary { bytes, .. } => Some(*bytes),
+            Text::Missing(_) => None,
+        }
+    }
+
     fn as_str(&self) -> &str {
         match self {
             Text::Utf8(text) => text,
@@ -662,7 +680,13 @@ pub fn compare(left: (&StoredResponse, &Text), right: (&StoredResponse, &Text)) 
     let right_text = b_body.as_str();
     let (json_changes, line_changes) = body_changes(a, b, left_text, right_text);
 
-    let bytes = (left_text.len() as u64, right_text.len() as u64);
+    // The bodies' own lengths, not the previews'. A body that is not UTF-8
+    // reaches `as_str` as at most 64 KiB, so `length_delta` — a headline
+    // verdict field — read zero for any two binary responses past the cap.
+    let bytes = (
+        a_body.len().unwrap_or_default(),
+        b_body.len().unwrap_or_default(),
+    );
     Difference {
         same: bodies_compared
             && a.status == b.status
@@ -1087,17 +1111,18 @@ fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Fo
             matched: response.status == Some(*want),
             captures: response.status.map(|s| s.to_string()).into_iter().collect(),
         },
+        // Off the body's own length, never the preview's. See [`Text::len`].
         Condition::LongerThan(bytes) => Found {
             kind: "longer-than",
             expr: bytes.to_string(),
-            matched: text.len() as u64 > *bytes,
-            captures: vec![text.len().to_string()],
+            matched: body.len().is_some_and(|had| had > *bytes),
+            captures: body.len().map(|had| had.to_string()).into_iter().collect(),
         },
         Condition::ShorterThan(bytes) => Found {
             kind: "shorter-than",
             expr: bytes.to_string(),
-            matched: (text.len() as u64) < *bytes,
-            captures: vec![text.len().to_string()],
+            matched: body.len().is_some_and(|had| had < *bytes),
+            captures: body.len().map(|had| had.to_string()).into_iter().collect(),
         },
     }
 }
@@ -1880,6 +1905,47 @@ mod tests {
         let difference = compare((&left, &empty), (&right, &empty));
         assert!(difference.bodies_compared);
         assert!(difference.same);
+    }
+
+    /// A body that is not UTF-8 reaches the matcher as a 64 KiB lossy preview,
+    /// and one invalid byte anywhere in a response is enough to put it there.
+    /// Length verdicts read off the preview answered about the cap, so a target
+    /// could pick the number by padding past it.
+    #[test]
+    fn a_length_condition_measures_the_body_and_not_its_preview() {
+        let stored = response(200, "application/octet-stream");
+        let big = Text::Binary {
+            bytes: 5_000_000,
+            sha256: "b".repeat(64),
+            text: "x".repeat(64 * 1024),
+        };
+        let shorter = evaluate(&Condition::ShorterThan(100_000), &stored, &big);
+        assert!(!shorter.matched, "5 MB is not shorter than 100 kB");
+        assert_eq!(shorter.captures, vec!["5000000".to_string()]);
+        let longer = evaluate(&Condition::LongerThan(1_000_000), &stored, &big);
+        assert!(longer.matched, "and it is longer than 1 MB");
+    }
+
+    /// The same number is the one `diff` reports, and `length_delta` is a
+    /// headline field: two binary responses past the cap both measured 64 KiB
+    /// and read as no change at all.
+    #[test]
+    fn a_length_delta_is_over_the_bodies_not_the_previews() {
+        let stored = response(200, "application/octet-stream");
+        let preview = "x".repeat(64 * 1024);
+        let small = Text::Binary {
+            bytes: 1_000_000,
+            sha256: "a".repeat(64),
+            text: preview.clone(),
+        };
+        let large = Text::Binary {
+            bytes: 5_000_000,
+            sha256: "b".repeat(64),
+            text: preview,
+        };
+        let difference = compare((&stored, &small), (&stored, &large));
+        assert_eq!(difference.bytes, (1_000_000, 5_000_000));
+        assert_eq!(difference.length_delta, 4_000_000);
     }
 
     fn response(status: u16, kind: &str) -> StoredResponse {
