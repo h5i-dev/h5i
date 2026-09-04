@@ -952,6 +952,19 @@ fn refuse_a_reframed_cookie(
              whole header with `header.Cookie=` when that is the request you mean",
         ));
     }
+    // A `Cookie` header allows whitespace around each pair, and every reader
+    // strips it, so a value that begins or ends with a space is not a value a
+    // cookie can carry: the header would go out saying one thing and be read as
+    // another. Inside the value it is ordinary and stays.
+    if value != value.trim() || name != name.trim() {
+        return Err(EditError::new(
+            target,
+            "a `Cookie` header allows whitespace around each pair and every reader strips \
+             it, so a name or value that begins or ends with a space would not arrive as \
+             the one asked for. Set the whole header with `header.Cookie=` to send those \
+             bytes exactly",
+        ));
+    }
     Ok(())
 }
 
@@ -1702,6 +1715,123 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The query, form and cookie editors work on the pieces the request was
+    /// written as, which means slicing strings a target or a caller chose.
+    /// Multi-byte characters, lone separators and empty pieces are where that
+    /// goes wrong, and an edit that panics takes the whole session with it.
+    #[test]
+    fn no_arrangement_of_these_edits_panics() {
+        let targets = [
+            "query.a", "query.é", "query.", "form.f", "form.é", "cookie.s", "cookie.é",
+            "json.a", "body.raw", "header.X", "method", "path", "url",
+        ];
+        let values = [
+            "", "=", "&", ";", " ", "é", "🙂", "a=b&c", "a; b", "\u{a0}x", "%", "%zz",
+            "\u{feff}", "..", "/a/../b",
+        ];
+        // Bodies and URLs built out of the same sharp pieces.
+        let queries = ["", "?a", "?a=1", "?é=1&a", "?=1", "?&&", "?a=%", "?🙂=1"];
+        let bodies: [&[u8]; 6] = [
+            b"",
+            b"a=1&b",
+            b"=1",
+            b"&&",
+            "é=1&🙂=2".as_bytes(),
+            b"\xff\xfe not text",
+        ];
+        let cookies = ["", "s=1", " s = 1 ; t", ";;", "é=1", "s"];
+
+        let mut cases = 0usize;
+        for query in queries {
+            for body in bodies {
+                for cookie in cookies {
+                    for target in targets {
+                        for value in values {
+                            for create in [false, true] {
+                                let mut request = Editable {
+                                    method: "POST".to_string(),
+                                    url: Url::parse(&format!("https://app.test/p{query}"))
+                                        .expect("a url"),
+                                    headers: vec![(
+                                        "Cookie".to_string(),
+                                        cookie.to_string(),
+                                    )],
+                                    body: body.to_vec(),
+                                };
+                                let spec = format!("{target}={value}");
+                                if let Ok(edit) = parse_set(&spec) {
+                                    let applied = apply(&mut request, &[edit], create);
+                                    cases += 1;
+                                    // An edit that succeeded put the value
+                                    // where it said it did. This is the half a
+                                    // panic hunt misses: writing the pieces
+                                    // back by hand is how an encoding bug gets
+                                    // in, and a request that quietly carries a
+                                    // different value than the one asked for is
+                                    // the failure this whole module is written
+                                    // against.
+                                    if applied.is_ok() {
+                                        if let Some(name) = target.strip_prefix("query.") {
+                                            assert!(
+                                                request
+                                                    .url
+                                                    .query_pairs()
+                                                    .any(|(k, v)| k == name && v == value),
+                                                "`{spec}` did not read back: {:?}",
+                                                request.url.query()
+                                            );
+                                        }
+                                        if let Some(name) = target.strip_prefix("form.") {
+                                            assert!(
+                                                form_urlencoded::parse(&request.body)
+                                                    .any(|(k, v)| k == name && v == value),
+                                                "`{spec}` did not read back: {:?}",
+                                                String::from_utf8_lossy(&request.body)
+                                            );
+                                        }
+                                        if let Some(name) = target.strip_prefix("cookie.") {
+                                            let header =
+                                                request.header("cookie").unwrap_or_default();
+                                            assert!(
+                                                header.split(';').any(|piece| {
+                                                    cookie_name_and_value(piece)
+                                                        == (name.to_string(), value.to_string())
+                                                }),
+                                                "`{spec}` did not read back: {header:?}"
+                                            );
+                                        }
+                                    }
+                                }
+                                if let Ok(edit) = parse_unset(target) {
+                                    let _ = apply(&mut request, &[edit], create);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(cases > 10_000, "the sweep actually ran: {cases}");
+    }
+
+    /// A `Cookie` header allows whitespace around each pair and every reader
+    /// strips it, so `cookie.s= ` went out as `s= ` and arrived as `s=`. Found
+    /// by the sweep below, which is what a round-trip property is for.
+    #[test]
+    fn a_cookie_value_the_header_cannot_carry_is_refused() {
+        for spec in ["cookie.s= ", "cookie.s=  a", "cookie.s=a "] {
+            let mut request = request();
+            let error = apply(&mut request, &[set(spec)], true)
+                .expect_err("a value the header cannot carry is refused");
+            assert!(error.to_string().contains("header.Cookie="), "{spec}: {error}");
+            assert_eq!(request.header("cookie"), Some("session=abc; theme=dark"));
+        }
+        // Whitespace inside the value is ordinary and survives.
+        let mut request = request();
+        apply(&mut request, &[set("cookie.theme=a b")], false).expect("applies");
+        assert_eq!(request.header("cookie"), Some("session=abc; theme=a b"));
     }
 
     /// And an ordinary path still goes through, dots in a filename included.
