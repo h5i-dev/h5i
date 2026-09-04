@@ -942,34 +942,43 @@ pub fn diff(
     let (b, b_body) = read(right)?;
     let difference = compare((&a, &a_body), (&b, &b_body));
 
-    // The same discipline `match` applies: a body that is not in the store
-    // cannot be compared, and answering with a number anyway would report an
-    // absence as a measurement.
-    if !difference.bodies_compared {
-        let why = |seq: u64, body: &Text| match body {
-            Text::Missing(reason) => Some(format!("{seq}'s body is not in the store ({reason})")),
-            _ => None,
-        };
-        let missing: Vec<String> = [why(left, &a_body), why(right, &b_body)]
-            .into_iter()
-            .flatten()
-            .collect();
-        anyhow::bail!(
-            "response {}, so these two cannot be compared by body. \
-             `message` shows what the store does hold; a session opened with `--capture` \
-             that has not run out of room keeps them",
-            missing.join(", and response ")
-        );
-    }
+    // The same discipline `match` applies, and the same division: a body that
+    // is not in the store, or is only previewed, cannot be compared, and a
+    // number reported anyway would be an absence wearing a measurement's name.
+    // The status and the headers are still real, so they are still reported —
+    // what changes is the exit code, so a script cannot read this as a clean
+    // answer the way it reads a real one.
+    let unanswerable = |seq: u64, body: &Text| match body {
+        Text::Missing(reason) => Some(format!("{seq}'s body is not in the store ({reason})")),
+        Text::Binary { bytes, .. } if !body.whole() => Some(format!(
+            "{seq}'s body is {bytes} bytes of something that is not text, and only its \
+             first {LOSSY_BODY_BYTES} are read back"
+        )),
+        _ => None,
+    };
+    let why: Vec<String> = [unanswerable(left, &a_body), unanswerable(right, &b_body)]
+        .into_iter()
+        .flatten()
+        .collect();
 
     if json_out {
         println!("{}", serde_json::to_string_pretty(&difference)?);
+        if !difference.bodies_compared {
+            std::process::exit(EXIT_CANNOT_LOOK);
+        }
         return Ok(());
     }
 
     if difference.same {
         println!("  {left} and {right} are the same response.");
         return Ok(());
+    }
+    if !difference.bodies_compared {
+        println!("  bodies   : not compared. Response {}.", why.join("; and response "));
+        println!(
+            "             `message --body-to PATH` writes the exact bytes; a session \
+             opened with `--capture` that has not run out of room keeps them whole."
+        );
     }
     println!(
         "  status   : {} → {}",
@@ -1017,6 +1026,9 @@ pub fn diff(
             "  … {} more changed lines not listed",
             total - difference.line_changes.len()
         );
+    }
+    if !difference.bodies_compared {
+        std::process::exit(EXIT_CANNOT_LOOK);
     }
     Ok(())
 }
