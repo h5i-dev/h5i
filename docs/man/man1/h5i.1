@@ -1115,7 +1115,7 @@ End a session. Its record stays
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBclose\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-all\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBclose\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-all\fR] [\fB\-\-capture\-drop\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1126,11 +1126,16 @@ Which session, when more than one is open. A name from `\-\-session` at open tim
 \fB\-\-all\fR
 End every live session on this machine
 .TP
+\fB\-\-capture\-drop\fR
+Delete the captured messages as well as ending the session.
+
+A `\-\-capture` store holds what the receipts deliberately do not: whole bodies, and `Cookie` and `Authorization` in full. The record and the request log stay either way, because those are the audit trail; this drops the evidence that is also a credential, once it is no longer being worked on.
+.TP
 \fB\-\-json\fR
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH "H5I BROWSER SNAPSHOT"
 The page as a model should read it: the outline, with `@ref` handles
 .ie \n(.g .ds Aq \(aq

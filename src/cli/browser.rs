@@ -248,6 +248,15 @@ pub enum BrowserCommands {
         /// End every live session on this machine.
         #[arg(long, conflicts_with = "session")]
         all: bool,
+        /// Delete the captured messages as well as ending the session.
+        ///
+        /// A `--capture` store holds what the receipts deliberately do not:
+        /// whole bodies, and `Cookie` and `Authorization` in full. The record
+        /// and the request log stay either way, because those are the audit
+        /// trail; this drops the evidence that is also a credential, once it is
+        /// no longer being worked on.
+        #[arg(long = "capture-drop")]
+        capture_drop: bool,
         #[arg(long)]
         json: bool,
     },
@@ -1197,7 +1206,12 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         ),
         BrowserCommands::List { all, json } => list(&root, all, json),
         BrowserCommands::Status { session, json } => status(&root, session.as_deref(), json),
-        BrowserCommands::Close { session, all, json } => close(&root, session.as_deref(), all, json),
+        BrowserCommands::Close {
+            session,
+            all,
+            capture_drop,
+            json,
+        } => close(&root, session.as_deref(), all, capture_drop, json),
 
         BrowserCommands::Snapshot {
             session,
@@ -3732,6 +3746,7 @@ fn close(
     root: &Path,
     selector: Option<&str>,
     all: bool,
+    capture_drop: bool,
     json: bool,
 ) -> anyhow::Result<()> {
     let targets: Vec<bs::Session> = if all {
@@ -3759,10 +3774,21 @@ fn close(
     }
 
     let mut closed = Vec::new();
+    let mut dropped: Vec<String> = Vec::new();
     for mut session in targets {
         if session.state.is_live() {
             stop_engine(&session)?;
             bs::end(root, &mut session, bs::State::Closed, "closed by the user");
+        }
+        // After the engine has stopped, so nothing is still writing into the
+        // directory being removed.
+        if capture_drop {
+            let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
+            match std::fs::remove_dir_all(&store) {
+                Ok(()) => dropped.push(session.id.clone()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => anyhow::bail!("{} could not be removed: {e}", store.display()),
+            }
         }
         if !json {
             println!(
@@ -3772,6 +3798,9 @@ fn close(
                 session.state.describe(),
                 bs::dir(root, &session.id).display()
             );
+            if dropped.last() == Some(&session.id) {
+                println!("  dropped  : its captured messages. The request log stays.");
+            }
         }
         closed.push(session);
     }
