@@ -3683,10 +3683,27 @@ fn status(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()>
             "the engine stopped answering",
         );
     }
+    // What the engine knows and the record cannot: how the message store is
+    // doing. `errors` there is the only signal that the evidence an agent is
+    // about to read has a hole in it — the messages that *are* stored look no
+    // different either way — and it was computed, documented and shown by no
+    // verb at all. Best-effort and only while the session is live, because
+    // `status` answers about ended sessions too and must not need an engine.
+    let health = session
+        .state
+        .is_live()
+        .then(|| deliver(&session, &bs::dir(root, id), vec!["status".to_string()]).ok())
+        .flatten()
+        .and_then(|reply| reply.get("capture").cloned())
+        .filter(|capture| !capture.is_null());
+
     if json {
         let control = h5i_core::control::read(&bs::dir(root, id));
         let mut value = serde_json::to_value(&session)?;
         value["control_lock"] = serde_json::to_value(&control)?;
+        if let Some(health) = health {
+            value["capture"] = health;
+        }
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(());
     }
@@ -3711,6 +3728,23 @@ fn status(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()>
              (`h5i browser snapshot`)",
             style("stale").yellow()
         );
+    }
+    if let Some(health) = &health {
+        let number = |key: &str| health.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let errors = number("errors");
+        let line = format!(
+            "{} messages, {} bytes",
+            number("messages"),
+            number("bytes")
+        );
+        if errors > 0 {
+            println!(
+                "  captured : {line}, and {} it could not write — the store has a hole in it",
+                style(errors).red()
+            );
+        } else {
+            println!("  captured : {line}");
+        }
     }
     if let Some(reason) = &session.end_reason {
         println!("  ended    : {} — {}", session.state.as_str(), reason);
