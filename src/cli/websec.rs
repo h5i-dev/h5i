@@ -102,6 +102,19 @@ impl Text {
         }
     }
 
+    /// Whether [`Text::as_str`] is the whole body or only the head of it.
+    ///
+    /// A body that is not UTF-8 is read back as a lossy preview of its first
+    /// [`LOSSY_BODY_BYTES`], so a search over it that finds nothing has looked
+    /// at part of the response and can say nothing about the rest.
+    fn whole(&self) -> bool {
+        match self {
+            Text::Utf8(_) => true,
+            Text::Binary { bytes, .. } => *bytes <= LOSSY_BODY_BYTES as u64,
+            Text::Missing(_) => false,
+        }
+    }
+
     fn as_str(&self) -> &str {
         match self {
             Text::Utf8(text) => text,
@@ -674,8 +687,11 @@ pub fn compare(left: (&StoredResponse, &Text), right: (&StoredResponse, &Text)) 
     // Two bodies, or none of this is a comparison. `Text::Missing` reads as the
     // empty string, which made "neither body was kept" indistinguishable from
     // "both bodies were empty".
-    let bodies_compared =
-        !matches!(a_body, Text::Missing(_)) && !matches!(b_body, Text::Missing(_));
+    // Whole bodies, or none of this is a comparison. `Text::Missing` reads as
+    // the empty string, which made "neither body was kept" indistinguishable
+    // from "both bodies were empty"; a body that is not UTF-8 reads as the head
+    // of itself, which made two different large responses look identical.
+    let bodies_compared = a_body.whole() && b_body.whole();
     let left_text = a_body.as_str();
     let right_text = b_body.as_str();
     let (json_changes, line_changes) = body_changes(a, b, left_text, right_text);
@@ -1008,6 +1024,20 @@ pub struct Found {
     /// is running a match and reading this.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub captures: Vec<String>,
+    /// Whether this condition could be answered at all.
+    ///
+    /// A `false` here is never a "no": a pattern that does not compile, or a
+    /// body search that only had the head of the body to search. `matches`
+    /// turns it into the "could not look" exit rather than the "did not match"
+    /// one, which is the whole discipline of this verb.
+    #[serde(default = "yes")]
+    pub conclusive: bool,
+}
+
+/// `serde`'s default for [`Found::conclusive`]: a condition was answerable
+/// unless something says otherwise.
+fn yes() -> bool {
+    true
 }
 
 fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Found {
@@ -1023,13 +1053,15 @@ fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Fo
                 expr: format!("{pattern} (not a regular expression: {e})"),
                 matched: false,
                 captures: Vec::new(),
+                conclusive: false,
             },
             Ok(re) => {
                 let found = re.captures(text);
+                let hit = found.is_some();
                 Found {
                     kind: "regex",
                     expr: pattern.clone(),
-                    matched: found.is_some(),
+                    matched: hit,
                     // Groups when the pattern has them, the whole match when it
                     // does not. A pattern without a group is the ordinary way to
                     // ask "is this in there, and what was it", and handing back
@@ -1052,15 +1084,22 @@ fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Fo
                             }
                         })
                         .unwrap_or_default(),
+                    // A miss over part of a body is not a miss. See
+                    // [`Text::whole`].
+                    conclusive: hit || body.whole(),
                 }
             }
         },
-        Condition::Contains(needle) => Found {
-            kind: "contains",
-            expr: needle.clone(),
-            matched: text.contains(needle.as_str()),
-            captures: Vec::new(),
-        },
+        Condition::Contains(needle) => {
+            let matched = text.contains(needle.as_str());
+            Found {
+                kind: "contains",
+                expr: needle.clone(),
+                matched,
+                captures: Vec::new(),
+                conclusive: matched || body.whole(),
+            }
+        }
         Condition::Json { path, value } => {
             let found = serde_json::from_str::<Value>(text)
                 .ok()
@@ -1082,6 +1121,7 @@ fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Fo
                 },
                 matched,
                 captures: rendered.into_iter().collect(),
+                conclusive: matched || body.whole(),
             }
         }
         Condition::Header { name, value } => {
@@ -1103,6 +1143,8 @@ fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Fo
                 },
                 matched,
                 captures: have.into_iter().collect(),
+                // Headers are stored whole; only bodies are previewed.
+                conclusive: true,
             }
         }
         Condition::Status(want) => Found {
@@ -1110,6 +1152,7 @@ fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Fo
             expr: want.to_string(),
             matched: response.status == Some(*want),
             captures: response.status.map(|s| s.to_string()).into_iter().collect(),
+            conclusive: true,
         },
         // Off the body's own length, never the preview's. See [`Text::len`].
         Condition::LongerThan(bytes) => Found {
@@ -1117,12 +1160,14 @@ fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Fo
             expr: bytes.to_string(),
             matched: body.len().is_some_and(|had| had > *bytes),
             captures: body.len().map(|had| had.to_string()).into_iter().collect(),
+            conclusive: body.len().is_some(),
         },
         Condition::ShorterThan(bytes) => Found {
             kind: "shorter-than",
             expr: bytes.to_string(),
             matched: body.len().is_some_and(|had| had < *bytes),
             captures: body.len().map(|had| had.to_string()).into_iter().collect(),
+            conclusive: body.len().is_some(),
         },
     }
 }
@@ -1218,9 +1263,10 @@ fn look(
         .iter()
         .map(|condition| evaluate(condition, &stored, &body))
         .collect();
-    let bad_pattern = found
-        .iter()
-        .any(|f| f.kind == "regex" && f.expr.contains("not a regular expression"));
+    // "Could not look" is read off the condition rather than sniffed out of its
+    // rendered text: a pattern that did not compile said so in `expr`, and a
+    // search that only had the head of a body to search said nothing at all.
+    let could_not_look = found.iter().any(|f| !f.conclusive);
     let matched = found.iter().all(|f| f.matched);
 
     if json_out {
@@ -1245,8 +1291,13 @@ fn look(
             }
         }
     }
-    if bad_pattern {
-        anyhow::bail!("a condition could not be evaluated; see the report above");
+    if could_not_look {
+        anyhow::bail!(
+            "a condition could not be answered, so this is not a `no`. A body that is not \
+             text is read back as a preview of its first {LOSSY_BODY_BYTES} bytes, and a \
+             search that found nothing in the preview has said nothing about the rest; \
+             `message --body-to PATH` writes the exact bytes"
+        );
     }
     Ok(matched)
 }
@@ -1946,6 +1997,50 @@ mod tests {
         let difference = compare((&stored, &small), (&stored, &large));
         assert_eq!(difference.bytes, (1_000_000, 5_000_000));
         assert_eq!(difference.length_delta, 4_000_000);
+    }
+
+    /// A body that is not text is read back as a preview of its head. A
+    /// search that finds nothing in the preview has said nothing about the
+    /// rest, so answering "did not match" would be a conclusion drawn from an
+    /// absence — and a target only has to emit one invalid byte and pad past
+    /// the cap to put every body search on that path.
+    #[test]
+    fn a_miss_over_part_of_a_body_is_not_a_miss() {
+        let stored = response(200, "application/octet-stream");
+        let partial = Text::Binary {
+            bytes: 5_000_000,
+            sha256: "b".repeat(64),
+            text: "nothing interesting".to_string(),
+        };
+        for condition in [
+            Condition::Contains("FLAG{".to_string()),
+            Condition::Regex("FLAG\\{.*\\}".to_string()),
+        ] {
+            let found = evaluate(&condition, &stored, &partial);
+            assert!(!found.matched);
+            assert!(!found.conclusive, "{:?} claimed to be a real no", found.kind);
+        }
+        // A hit is still a hit: finding it in the head proves it is there.
+        let hit = Text::Binary {
+            bytes: 5_000_000,
+            sha256: "b".repeat(64),
+            text: "FLAG{here}".to_string(),
+        };
+        let found = evaluate(&Condition::Contains("FLAG{".to_string()), &stored, &hit);
+        assert!(found.matched && found.conclusive);
+    }
+
+    /// And a body small enough to be previewed whole answers for real.
+    #[test]
+    fn a_miss_over_a_whole_body_is_a_miss() {
+        let stored = response(200, "application/octet-stream");
+        let whole = Text::Binary {
+            bytes: 19,
+            sha256: "b".repeat(64),
+            text: "nothing interesting".to_string(),
+        };
+        let found = evaluate(&Condition::Contains("FLAG{".to_string()), &stored, &whole);
+        assert!(!found.matched && found.conclusive);
     }
 
     fn response(status: u16, kind: &str) -> StoredResponse {
