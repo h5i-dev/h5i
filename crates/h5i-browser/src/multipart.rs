@@ -131,8 +131,8 @@ pub fn parse(body: &[u8], boundary: &str) -> Option<Vec<Part>> {
             };
             let (name, value) = (name.trim(), value.trim());
             if name.eq_ignore_ascii_case("content-disposition") {
-                part.name = quoted(value, "name").unwrap_or_default();
-                part.filename = quoted(value, "filename");
+                part.name = parameter(value, "name").unwrap_or_default();
+                part.filename = parameter(value, "filename");
             } else if name.eq_ignore_ascii_case("content-type") {
                 part.content_type = Some(value.to_string());
             } else {
@@ -145,13 +145,35 @@ pub fn parse(body: &[u8], boundary: &str) -> Option<Vec<Part>> {
     Some(parts)
 }
 
-/// `name="value"` out of a `Content-Disposition`.
-fn quoted(header: &str, key: &str) -> Option<String> {
-    let needle = format!("{key}=\"");
-    let at = header.find(&needle)? + needle.len();
-    let rest = &header[at..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
+/// One `Content-Disposition` parameter, quoted or bare.
+///
+/// Both spellings, because both arrive. A browser quotes; a page building its
+/// own body through `fetch` writes whatever its author typed, and servers read
+/// either. Reading only `name="x"` gave a bare `name=x` an empty name, and the
+/// rebuild then wrote `name=""` over it — so editing one field of an upload
+/// renamed every other field in the request to nothing.
+///
+/// The parameter is matched at a boundary (start of the header, or after a
+/// `;`), so `filename=` is not found inside `x-filename=` and `name=` is not
+/// found inside `filename=`.
+fn parameter(header: &str, key: &str) -> Option<String> {
+    let mut rest = header;
+    loop {
+        let at = rest.find(key)?;
+        let before = rest[..at].trim_end();
+        let starts_here = before.is_empty() || before.ends_with(';');
+        let after = &rest[at + key.len()..];
+        if starts_here && after.starts_with('=') {
+            let value = &after[1..];
+            return Some(match value.strip_prefix('"') {
+                // Quoted: to the closing quote.
+                Some(quoted) => quoted.split('"').next().unwrap_or_default().to_string(),
+                // Bare: to the next `;`, trimmed.
+                None => value.split(';').next().unwrap_or_default().trim().to_string(),
+            });
+        }
+        rest = &rest[at + key.len()..];
+    }
 }
 
 fn find(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
@@ -263,6 +285,49 @@ mod tests {
         let parts = parse(&body, "----abc").expect("parses");
         assert_eq!(parts.len(), 1);
         assert!(parts[0].data.is_empty());
+    }
+
+    /// `Content-Disposition` parameters may be quoted or bare, and a page that
+    /// builds its own multipart body through `fetch` writes whichever it likes.
+    /// Reading only the quoted form gave the part an empty name, and rebuilding
+    /// then wrote `name=""` — so an edit to one field silently renamed every
+    /// other field in the request to nothing.
+    #[test]
+    fn an_unquoted_disposition_parameter_is_read_like_a_quoted_one() {
+        let mut body = Vec::new();
+        body.extend_from_slice(b"------abc\r\n");
+        body.extend_from_slice(b"Content-Disposition: form-data; name=avatar; filename=cat.png\r\n");
+        body.extend_from_slice(b"Content-Type: image/png\r\n\r\n");
+        body.extend_from_slice(b"PNGDATA");
+        body.extend_from_slice(b"\r\n------abc--\r\n");
+
+        let parts = parse(&body, "----abc").expect("parses");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].name, "avatar");
+        assert_eq!(parts[0].filename.as_deref(), Some("cat.png"));
+        assert_eq!(parts[0].data, b"PNGDATA");
+
+        // And it survives a rebuild, which is what an edit does to it.
+        let again = serialize(&parts, "----xyz");
+        let round = parse(&again, "----xyz").expect("parses again");
+        assert_eq!(round, parts);
+    }
+
+    /// `name=` occurs inside `filename=`, and a plain substring search found it
+    /// there: a part that wrote its filename first came back with the
+    /// filename as its field name. Parameter order is the sender's choice.
+    #[test]
+    fn a_filename_written_first_is_not_read_as_the_field_name() {
+        let mut body = Vec::new();
+        body.extend_from_slice(b"------abc\r\n");
+        body.extend_from_slice(
+            b"Content-Disposition: form-data; filename=\"cat.png\"; name=\"avatar\"\r\n\r\n",
+        );
+        body.extend_from_slice(b"PNGDATA");
+        body.extend_from_slice(b"\r\n------abc--\r\n");
+        let parts = parse(&body, "----abc").expect("parses");
+        assert_eq!(parts[0].name, "avatar");
+        assert_eq!(parts[0].filename.as_deref(), Some("cat.png"));
     }
 
     #[test]
