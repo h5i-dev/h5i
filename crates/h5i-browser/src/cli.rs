@@ -2583,20 +2583,15 @@ fn local_base(path: &Path) -> Result<Url, H5iError> {
     })
 }
 
-/// Most a `--set-file` payload may be.
-///
-/// Generous, because testing what a server does with a large upload is a real
-/// test. A bound at all, because the whole file is read into memory, base64'd
-/// and carried through a JSON control message, so a mistyped path costs several
-/// times the file in the CLI and again in the engine.
+/// Most a `--set-file` payload may be. Generous, because a large upload is a
+/// real test; bounded, because the file is read whole and base64'd through a
+/// control message.
 const MAX_PAYLOAD_BYTES: u64 = 64 * 1024 * 1024;
 
 /// One `--set-file` payload, read whole and bounded.
 ///
-/// The shape check is the one that matters: `/dev/zero` and `/dev/urandom` are
-/// named like files and are not, and `fs::read` on either grows a `Vec` until
-/// the machine gives out. A fifo is worse, since it blocks on a writer that may
-/// never come and the session simply stops answering.
+/// The shape check is the one that matters: `fs::read` on `/dev/zero` grows a
+/// `Vec` until the machine gives out, and a fifo blocks forever.
 fn read_a_payload(target: &str, path: &str) -> Result<Vec<u8>, H5iError> {
     let meta = std::fs::metadata(path).map_err(|e| {
         H5iError::Metadata(format!("`--set-file {target}`: {path} could not be read: {e}"))

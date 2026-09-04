@@ -425,14 +425,9 @@ pub fn check_preflight(
 
     let (headers_any, allowed) = listed(allow_headers);
     for wanted in &ask.headers {
-        // `*` covers every header a page asked for except one. Fetch carves
-        // `Authorization` out of the wildcard by name, and every browser
-        // implements the carve-out, for the reason the rest of this module
-        // exists: a server answering `*` has said "any header", which is not
-        // the same as agreeing to receive somebody's bearer token. Without the
-        // carve-out a page on one allowlisted origin could hand another origin
-        // a credential that origin never asked for, and the wildcard is the
-        // answer a server gives when it has not thought about the question.
+        // Fetch carves `Authorization` out of the wildcard by name, and every
+        // browser implements it: a server answering `*` has said "any header",
+        // not "I agree to receive somebody's bearer token".
         let covered_by_wildcard =
             headers_any && !ask.credentials && wanted != "authorization";
         if covered_by_wildcard || allowed.iter().any(|a| a == wanted) {
@@ -736,12 +731,8 @@ mod tests {
         assert!(refused.is_err(), "a wildcard must not cover credentials");
     }
 
-    /// `Access-Control-Allow-Headers: *` covers every header a page asked for
-    /// except one. Fetch carves `Authorization` out of the wildcard by name and
-    /// every browser implements the carve-out, because a server answering `*`
-    /// has said "any header", not "I agree to receive somebody's bearer token".
-    /// Without it, a page on one allowlisted origin hands another origin a
-    /// credential that origin never asked for by name.
+    /// Fetch carves `Authorization` out of `Allow-Headers: *`, because a server
+    /// answering `*` has said "any header", not "send me a bearer token".
     #[test]
     fn a_wildcard_preflight_does_not_cover_authorization() {
         let asking_for = |header: &str| Preflight {

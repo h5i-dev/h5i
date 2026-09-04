@@ -1129,7 +1129,7 @@ End every live session on this machine
 \fB\-\-capture\-drop\fR
 Delete the captured messages as well as ending the session.
 
-A `\-\-capture` store holds what the receipts deliberately do not: whole bodies, and `Cookie` and `Authorization` in full. The record and the request log stay either way, because those are the audit trail; this drops the evidence that is also a credential, once it is no longer being worked on.
+The store holds whole bodies and `Cookie` and `Authorization` in full. The record and the request log stay either way.
 .TP
 \fB\-\-json\fR
 

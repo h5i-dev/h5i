@@ -287,13 +287,10 @@ fn parse_target(spec: &str) -> Result<Target, EditError> {
     }
 }
 
-/// Whether a header name is one a request can carry.
+/// Whether a header name is one a request can carry: RFC 9110's token.
 ///
-/// RFC 9110's token, which is what every HTTP client and server agrees a field
-/// name is. Checked here rather than left to the wire because a name with a
-/// space or a colon in it does not reach the server as a header at all: the
-/// client refuses to build the request, and the caller is told "builder error",
-/// which names neither the header nor the character.
+/// Checked here because the wire's refusal is "builder error", which names
+/// neither the header nor the character.
 fn header_name_is_sendable(name: &str) -> bool {
     !name.is_empty()
         && name.bytes().all(|b| {
@@ -306,13 +303,10 @@ fn header_name_is_sendable(name: &str) -> bool {
         })
 }
 
-/// The character in a header value that a request cannot carry, if there is one.
+/// The character in a header value a request cannot carry, if there is one.
 ///
-/// CR, LF and NUL, and nothing else: a header value is otherwise anything, and
-/// a workbench that narrowed it further would refuse payloads that are the
-/// whole point. These three end the field, and a client that let one through
-/// would be splitting the message — which is a thing worth testing and is what
-/// `--raw-request` is for, byte for byte and with the framing it broke named.
+/// CR, LF and NUL only — anything narrower would refuse the payloads this is
+/// for. Splitting a message deliberately is what `--raw-request` is for.
 fn header_value_refuses(value: &str) -> Option<char> {
     value.chars().find(|c| matches!(c, '\r' | '\n' | '\0'))
 }
@@ -382,10 +376,8 @@ fn refuse_a_resolved_traversal(
 ) -> Result<(), EditError> {
     // Whatever was named — a path or a whole URL — only its path can hold a
     // dot segment.
-    // The authority ends at the first separator, and a backslash is one of
-    // those: `https://app.test\..\..\x` has a path even though it holds no
-    // `/`, and looking only for a slash would hand back "/" and find nothing to
-    // refuse in a URL the parser resolves down to `/x`.
+    // The authority ends at the first separator, and `\` is one:
+    // `https://app.test\..\..\x` has a path despite holding no `/`.
     let asked = match asked.split_once("://") {
         Some((_, rest)) => match rest.find(['/', '\\']) {
             Some(at) => &rest[at..],
@@ -394,12 +386,9 @@ fn refuse_a_resolved_traversal(
         None => asked,
     };
     let asked_path = asked.split(['?', '#']).next().unwrap_or(asked);
-    // A backslash is a path separator too, for exactly the schemes this engine
-    // speaks: the URL standard reads `\` as `/` in a special URL, so
-    // `/cgi-bin/..\..\etc/passwd` is resolved to `/etc/passwd` before any
-    // request exists. Refused for the same reason a dot segment is, and named
-    // separately because the traversal is not the only rewrite: `/a\b` goes out
-    // as `/a/b`, which is a different request from the one that was typed.
+    // The URL standard reads `\` as `/` in an http(s) URL, so
+    // `/cgi-bin/..\..\etc/passwd` resolves to `/etc/passwd` before a request
+    // exists — and even `/a\b` goes out as `/a/b`.
     if asked_path.contains('\\') {
         return Err(EditError::new(
             target,
@@ -524,12 +513,9 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
         }
 
         Target::Query(name) => {
-            // The query is edited as the pieces it was written as, not decoded
-            // into pairs and re-encoded. Re-encoding rewrote parameters nobody
-            // named: `?debug` came back as `debug=`, and `x[]=1` as
-            // `x%5B%5D=1`. Both are a different request, and "the edits named
-            // on the command line and nothing else changed" is the whole claim
-            // this verb makes.
+            // Edited as the pieces it was written as. Decoding and re-encoding
+            // rewrote parameters nobody named: `?debug` came back as `debug=`,
+            // `x[]=1` as `x%5B%5D=1`.
             let raw = request.url.query().unwrap_or_default().to_string();
             let pieces: Vec<&str> = if raw.is_empty() {
                 Vec::new()
@@ -613,17 +599,14 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
         }
 
         Target::Cookie(name) => {
-            // A cookie is a header once it is written, so the same three
-            // characters end it. Checked before anything is rebuilt, so a
-            // refused edit leaves the request alone.
+            // A cookie is a header once written, so the same three characters
+            // end it. Checked before anything is rebuilt.
             if !removing {
                 refuse_an_unsendable_header(&target, "Cookie", &text(&value))?;
                 refuse_a_reframed_cookie(&target, name, &text(&value))?;
             }
-            // Edited as the pieces the header was written as. Parsing it into
-            // pairs dropped every piece that had no `=`, so a header carrying a
-            // bare token lost it on any edit at all: a cookie the caller never
-            // named, gone from a request they were told only changed one.
+            // As the pieces it was written as: parsing into pairs dropped
+            // every piece with no `=`, so a bare token was lost on any edit.
             let current = request.header("cookie").unwrap_or_default().to_string();
             let pieces: Vec<&str> = if current.is_empty() {
                 Vec::new()
@@ -644,8 +627,8 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                         continue;
                     }
                     if !replaced {
-                        // The piece's own leading space, so the header reads as
-                        // it did rather than as this code would have written it.
+                        // The piece's own leading space, so the header reads
+                        // as it did.
                         let lead = &piece[..piece.len() - piece.trim_start().len()];
                         next.push(format!("{lead}{name}={}", text(&value)));
                         replaced = true;
@@ -677,11 +660,8 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             // ordinary starting point for an API call the page never makes, and
             // refusing it sent callers to `body.raw` to hand-write the JSON that
             // this edit exists to maintain.
-            // Built here and committed at the end, rather than written into
-            // the request and then edited. Starting the body off as `{}` before
-            // the edit could fail left a refused edit having changed the
-            // request: an empty body became `{}` with a `Content-Type` beside
-            // it, under an error saying nothing had happened.
+            // Built here and committed at the end: starting the body off as
+            // `{}` left a refused edit having already changed the request.
             let building = request.body.is_empty() && create;
             let kind = request.content_type().unwrap_or("").to_string();
             let mut document: serde_json::Value = if building {
@@ -731,10 +711,8 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
         }
 
         Target::Form(name) => {
-            // Edited as the pieces the body was written as, for the reason
-            // `query.` is: re-serialising rewrote fields nobody named, and a
-            // body that differs in a field the caller did not touch is a
-            // different request under the same name.
+            // As the pieces it was written as, for the reason `query.` is:
+            // re-serialising rewrote fields nobody named.
             let pieces: Vec<&[u8]> = if request.body.is_empty() {
                 Vec::new()
             } else {
@@ -895,10 +873,8 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
     }
 }
 
-/// The decoded name of one `k=v` piece of a query string.
-///
-/// A piece with no `=` is a name with no value, which is a shape servers do
-/// read: `?debug` and `?debug=` are not the same request everywhere.
+/// The decoded name of one `k=v` piece of a query string. A piece with no `=`
+/// is a name with no value: `?debug` and `?debug=` are not the same request.
 fn query_name(piece: &str) -> String {
     let raw = piece.split_once('=').map(|(k, _)| k).unwrap_or(piece);
     decode_query(raw)
@@ -933,11 +909,9 @@ fn cookie_name_and_value(piece: &str) -> (String, String) {
 
 /// Refuse a cookie edit that would write more than one cookie.
 ///
-/// `;` separates the pairs and `=` separates a pair, so either one inside a
-/// name or a `;` inside a value makes the header carry something other than the
-/// single cookie the edit named. Refused rather than escaped, because escaping
-/// would send a value that is not the one asked for: to write the header
-/// exactly, `header.Cookie=` takes the whole thing.
+/// `;` separates pairs and `=` separates a pair, so either inside a name — or a
+/// `;` in a value — writes something other than the cookie named. Refused
+/// rather than escaped; `header.Cookie=` takes the whole header.
 fn refuse_a_reframed_cookie(
     target: &impl fmt::Display,
     name: &str,
@@ -952,10 +926,8 @@ fn refuse_a_reframed_cookie(
              whole header with `header.Cookie=` when that is the request you mean",
         ));
     }
-    // A `Cookie` header allows whitespace around each pair, and every reader
-    // strips it, so a value that begins or ends with a space is not a value a
-    // cookie can carry: the header would go out saying one thing and be read as
-    // another. Inside the value it is ordinary and stays.
+    // Every reader strips whitespace around a pair, so a value that begins or
+    // ends with one goes out saying something it is not read as. Inside, it stays.
     if value != value.trim() || name != name.trim() {
         return Err(EditError::new(
             target,
@@ -1096,9 +1068,7 @@ fn json_remove(document: &mut serde_json::Value, path: &str) -> Result<(), Strin
     }
     match at {
         serde_json::Value::Object(map) => {
-            // `shift_remove`, not `remove`: with `preserve_order` the plain one
-            // is a swap, and removing one field would move the last field to
-            // where it used to be.
+            // `shift_remove`: with `preserve_order` the plain one is a swap.
             map.shift_remove(*last);
             Ok(())
         }
@@ -1478,9 +1448,7 @@ mod tests {
         }
     }
 
-    /// The URL standard reads `\` as `/` in an http or https URL, so a
-    /// traversal spelled with backslashes resolves just as far and used to slip
-    /// past the check above: it splits on `/`, and `..\..\etc` holds none.
+    /// The check above splits on `/`, and `..\..\etc` holds none — so
     /// `path=/cgi-bin/..\..\etc/passwd` went out as `/etc/passwd`.
     #[test]
     fn a_backslash_is_a_separator_too_and_is_refused_with_it() {
@@ -1502,11 +1470,8 @@ mod tests {
         }
     }
 
-    /// A header value holding CR or LF does not reach the server as a header:
-    /// the client refuses to build the request and the caller was told
-    /// "builder error", which names neither the header nor the character.
-    /// Refused where the edit is written, and pointed at the path that can
-    /// actually send it.
+    /// A CR or LF in a header value came back as "builder error", which names
+    /// neither the header nor the character.
     #[test]
     fn a_header_that_could_not_be_sent_is_refused_by_name() {
         for spelling in [
@@ -1531,11 +1496,9 @@ mod tests {
         assert!(error.to_string().contains("not a header name"), "{error}");
     }
 
-    /// "The edits named on the command line and nothing else changed" is what
-    /// replay claims. Decoding the query into pairs and re-encoding it broke
-    /// that for every parameter the caller did not name: `?debug` went out as
-    /// `debug=` and `x[]=1` as `x%5B%5D=1`, and in a workbench the difference
-    /// between two requests is the entire measurement.
+    /// Replay claims nothing else changed. Re-encoding the query broke that
+    /// for every parameter the caller did not name: `?debug` went out as
+    /// `debug=`, `x[]=1` as `x%5B%5D=1`.
     #[test]
     fn editing_one_query_parameter_leaves_the_others_byte_for_byte() {
         let mut request = Editable {
@@ -1570,9 +1533,8 @@ mod tests {
         assert_eq!(request.url.query(), Some("debug&role=admin"));
     }
 
-    /// The same rule as the query's, for the same reason: a form body that
-    /// differs in a field the caller never named is a different request going
-    /// out under the name of the one that was recorded.
+    /// The query's rule, for the same reason: a body differing in a field the
+    /// caller never named is a different request.
     #[test]
     fn editing_one_form_field_leaves_the_others_byte_for_byte() {
         let mut request = Editable {
@@ -1592,11 +1554,8 @@ mod tests {
         );
     }
 
-    /// A `Cookie` header can carry a bare token, and parsing the header into
-    /// pairs threw every one of them away: editing any cookie deleted a cookie
-    /// the caller never named, out of a request they were told only changed
-    /// one. Which is a logout, or a feature flag turning off, arriving as part
-    /// of the measurement.
+    /// Parsing into pairs threw away every bare token, so editing one cookie
+    /// deleted another the caller never named — a logout inside a measurement.
     #[test]
     fn a_bare_cookie_survives_an_edit_to_a_different_one() {
         let mut request = Editable {
@@ -1615,8 +1574,7 @@ mod tests {
         );
     }
 
-    /// And an edit that would write two cookies where it names one is refused,
-    /// rather than escaped into a value nobody asked for.
+    /// And an edit naming one cookie but writing two is refused, not escaped.
     #[test]
     fn a_cookie_edit_that_would_write_two_is_refused() {
         let mut request = request();
@@ -1626,12 +1584,9 @@ mod tests {
         assert_eq!(request.header("cookie"), Some("session=abc; theme=dark"));
     }
 
-    /// A JSON edit rewrites the body it edits, so the order the fields come
-    /// back in is the order they go out in. `serde_json`'s default map sorts
-    /// them, so `{"user":…,"role":…,"nonce":…}` was replayed as
-    /// `{"nonce":…,"role":…,"user":…}` — a different body under the name of the
-    /// recorded one, which an API that signs its body answers 401 to. That 401
-    /// is then read as the finding.
+    /// A JSON edit rewrites the body, and `serde_json`'s default map sorts the
+    /// keys — so a signed body was replayed as a different one, and the 401
+    /// that came back read as the finding.
     #[test]
     fn a_json_edit_keeps_the_fields_in_the_order_they_were_in() {
         let mut request = Editable {
@@ -1647,8 +1602,7 @@ mod tests {
         );
     }
 
-    /// And removing one field shifts the rest along rather than swapping the
-    /// last one into its place.
+    /// And a removal shifts the rest along rather than swapping in the last.
     #[test]
     fn removing_a_json_field_leaves_the_others_in_order() {
         let mut request = Editable {
@@ -1669,11 +1623,8 @@ mod tests {
         );
     }
 
-    /// The rule every refusal in this module is written to: an edit that
-    /// errors changed nothing. A caller who reads the error and tries a
-    /// different spelling is otherwise editing a request that has already been
-    /// half-edited, and the request that eventually goes out is one nobody
-    /// composed.
+    /// The rule every refusal here is written to: an edit that errors changed
+    /// nothing, or the next attempt edits a half-edited request.
     #[test]
     fn an_edit_that_is_refused_leaves_the_request_exactly_as_it_was() {
         let targets = [
@@ -1717,10 +1668,8 @@ mod tests {
         }
     }
 
-    /// The query, form and cookie editors work on the pieces the request was
-    /// written as, which means slicing strings a target or a caller chose.
-    /// Multi-byte characters, lone separators and empty pieces are where that
-    /// goes wrong, and an edit that panics takes the whole session with it.
+    /// The editors slice strings a target or caller chose. Multi-byte
+    /// characters, lone separators and empty pieces are where that goes wrong.
     #[test]
     fn no_arrangement_of_these_edits_panics() {
         let targets = [
@@ -1765,13 +1714,8 @@ mod tests {
                                     let applied = apply(&mut request, &[edit], create);
                                     cases += 1;
                                     // An edit that succeeded put the value
-                                    // where it said it did. This is the half a
-                                    // panic hunt misses: writing the pieces
-                                    // back by hand is how an encoding bug gets
-                                    // in, and a request that quietly carries a
-                                    // different value than the one asked for is
-                                    // the failure this whole module is written
-                                    // against.
+                                    // where it said it did — the half a panic
+                                    // hunt misses.
                                     if applied.is_ok() {
                                         if let Some(name) = target.strip_prefix("query.") {
                                             assert!(
@@ -1816,9 +1760,8 @@ mod tests {
         assert!(cases > 10_000, "the sweep actually ran: {cases}");
     }
 
-    /// A `Cookie` header allows whitespace around each pair and every reader
-    /// strips it, so `cookie.s= ` went out as `s= ` and arrived as `s=`. Found
-    /// by the sweep below, which is what a round-trip property is for.
+    /// Every reader strips whitespace around a pair, so `cookie.s= ` went out
+    /// as `s= ` and arrived as `s=`. Found by the sweep below.
     #[test]
     fn a_cookie_value_the_header_cannot_carry_is_refused() {
         for spec in ["cookie.s= ", "cookie.s=  a", "cookie.s=a "] {

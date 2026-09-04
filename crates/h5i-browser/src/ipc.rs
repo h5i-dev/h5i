@@ -1554,12 +1554,9 @@ mod tests {
         assert_eq!(client.log_summary().denied, 1);
     }
 
-    /// A request and its response are two rows sharing one sequence number, and
-    /// the request half is written before the wire. Handing back the highest
-    /// number seen meant an agent that polled while a fetch was in flight took
-    /// that number as its cursor, asked for `seq >` it next time, and never
-    /// received the response half — so the status, the size and the error of
-    /// that request were lost to it permanently.
+    /// A request and its response share a sequence number, and the request row
+    /// is written before the wire — so a poll during a fetch took that number
+    /// as its cursor and never saw the response half.
     #[test]
     fn the_cursor_never_moves_past_a_request_still_waiting_for_its_answer() {
         use crate::receipt::Sink as _;

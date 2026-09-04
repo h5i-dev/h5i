@@ -250,11 +250,8 @@ pub enum BrowserCommands {
         all: bool,
         /// Delete the captured messages as well as ending the session.
         ///
-        /// A `--capture` store holds what the receipts deliberately do not:
-        /// whole bodies, and `Cookie` and `Authorization` in full. The record
-        /// and the request log stay either way, because those are the audit
-        /// trail; this drops the evidence that is also a credential, once it is
-        /// no longer being worked on.
+        /// The store holds whole bodies and `Cookie` and `Authorization` in
+        /// full. The record and the request log stay either way.
         #[arg(long = "capture-drop")]
         capture_drop: bool,
         #[arg(long)]
@@ -1628,10 +1625,8 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             // request holds credentials, and a verb's reply would carry them
             // out through a renderer.
             let mut argv = vec!["resend".to_string()];
-            // Named in the reply as well as on the terminal. A silent strip is
-            // a different request from the one the caller thinks they sent, and
-            // `--json` is how an agent reads this verb: printing the names only
-            // in the human view told the one reader who cannot see them.
+            // In the reply as well as on the terminal: `--json` is how an
+            // agent reads this verb, and a silent strip is a different request.
             let mut dropped: Vec<String> = Vec::new();
             match &as_session {
                 None => {
@@ -1717,8 +1712,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             // With one send there is nothing to summarise and the reply is the
             // answer. With several, the medians go in beside the samples.
             verb_then(&root, target, argv, true, json, |answer, _refused| {
-                // On a refusal too: a burst that half happened is exactly when
-                // "how many of these were answered" is the question.
+                // On a refusal too: that is when the count matters most.
                 if let Some(samples) = answer.get("samples").and_then(Value::as_array)
                     && let Some(summary) = super::websec::timing_summary(samples)
                 {
@@ -2921,8 +2915,7 @@ fn screenshot(
     let moves_the_page = argv.iter().any(|a| a == "--url");
 
     verb_then(root, selector, argv, moves_the_page, json, |answer, refused| {
-        // Nothing was painted, so there is nothing to move and nowhere to
-        // point a caller.
+        // Nothing was painted, so there is nothing to move.
         if refused {
             return Ok(());
         }
@@ -3135,11 +3128,9 @@ fn verb_then(
     // script that checks the status code would read "denied by policy" as
     // success, which is the failure this whole design is arranged against.
     let refused = answer.get("ok").and_then(Value::as_bool) == Some(false);
-    // The hook runs either way and is told which it is. It used to be skipped
-    // on a refusal, which is right for one that moves a file and wrong for one
-    // that only annotates: a `--repeat` burst the budget stopped halfway came
-    // back with a hundred samples, no summary, and so no way to see that only
-    // twelve of them had happened. Each hook decides for itself now.
+    // The hook runs either way and is told which it is. Skipping it on a
+    // refusal is right for one that moves a file and wrong for one that only
+    // annotates: a burst stopped halfway came back with samples and no summary.
     after(&mut answer, refused)?;
 
     if json {
@@ -3679,12 +3670,9 @@ fn status(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()>
             "the engine stopped answering",
         );
     }
-    // What the engine knows and the record cannot: how the message store is
-    // doing. `errors` there is the only signal that the evidence an agent is
-    // about to read has a hole in it — the messages that *are* stored look no
-    // different either way — and it was computed, documented and shown by no
-    // verb at all. Best-effort and only while the session is live, because
-    // `status` answers about ended sessions too and must not need an engine.
+    // What the engine knows and the record cannot. `errors` is the only signal
+    // that the stored evidence has a hole in it. Best-effort and live-only,
+    // because `status` answers about ended sessions too.
     let health = session
         .state
         .is_live()
@@ -3820,8 +3808,7 @@ fn close(
             stop_engine(&session)?;
             bs::end(root, &mut session, bs::State::Closed, "closed by the user");
         }
-        // After the engine has stopped, so nothing is still writing into the
-        // directory being removed.
+        // After the engine has stopped, so nothing is still writing there.
         if capture_drop {
             let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
             match std::fs::remove_dir_all(&store) {
@@ -3856,13 +3843,10 @@ fn close(
 /// reviewer most wants to audit is usually the one that has already ended.
 /// The session a *reader* means, live or not.
 ///
-/// `resolve` answers for the verbs that act, so a name only ever finds a live
-/// session — which is right for a click and wrong for every verb whose subject
-/// is usually the run that just finished. `status`, `audit` and the whole
-/// websec surface (`message`, `diff`, `match`, `sitemap`) read a record and a
-/// store that both outlive the engine, and asking for them by the name the
-/// session was opened with answered "no such session": the caller had to know
-/// the opaque id, for evidence `close` had just promised was still there.
+/// `resolve` answers for the verbs that act, so a name only finds a live
+/// session. The readers — `status`, `audit`, and the websec surface — work on a
+/// record and a store that outlive the engine, and asking by name answered "no
+/// such session" for evidence `close` had just promised was still there.
 pub(crate) fn resolve_for_reading(
     root: &Path,
     selector: Option<&str>,

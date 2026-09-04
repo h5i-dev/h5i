@@ -259,12 +259,9 @@ pub(crate) fn read_http_response(wire: &mut Wire, cap: usize) -> Result<RawRespo
     let (body, leftover) = if te_chunked {
         read_chunked(wire, &mut rest, &mut chunk, cap)?
     } else if let Some(len) = content_length {
-        // Refused past the cap rather than cut short, which is what every
-        // other body reader in this engine does. Truncating had a second cost
-        // that belongs to this path alone: the bytes past the cap became
-        // `leftover`, and `leftover` is how a raw send reports that the socket
-        // answered twice. Any page larger than the cap therefore read as a
-        // successful desync — the one signal this path exists to produce.
+        // Refused past the cap, as every other body reader here does.
+        // Truncating made the overflow `leftover`, which is how this path
+        // reports a second response — so a large page read as a desync.
         if len > cap {
             return Err(format!("response exceeds the {cap} byte cap"));
         }
@@ -308,9 +305,8 @@ fn read_to_close(
     chunk: &mut [u8],
     cap: usize,
 ) -> Result<Vec<u8>, String> {
-    // One byte past the cap, so that "exactly the cap" and "more than the cap"
-    // are different answers. Silently truncating here handed back a body that
-    // is not the one the server sent, under a status that says it is.
+    // One byte past the cap, so "exactly" and "more than" differ. Truncating
+    // handed back a body that is not the one the server sent.
     while have.len() <= cap {
         match wire.read(chunk) {
             Ok(0) => break,
@@ -353,13 +349,8 @@ fn read_chunked(
         let size_hex = size_text.split(';').next().unwrap_or("").trim();
         let size = usize::from_str_radix(size_hex, 16)
             .map_err(|_| format!("`{size_hex}` is not a chunk size"))?;
-        // A chunk cannot be bigger than the whole response is allowed to be,
-        // and a size that says otherwise is not a body to read: it is
-        // arithmetic to break. `cursor + size + 2` wraps in a release build, so
-        // a size near `usize::MAX` makes the fill loop below decide it already
-        // has enough and then slice a range that runs backwards, which panics.
-        // Refused where the number is read, so every sum after this point is
-        // bounded by the cap.
+        // A size past the cap is not a body to read, it is arithmetic to
+        // break: `cursor + size + 2` wraps and the slice below runs backwards.
         if size > cap {
             return Err(format!("chunked response exceeded the {cap} byte cap"));
         }
@@ -413,15 +404,11 @@ fn parse_head(head: &[u8]) -> (Option<u16>, Vec<(String, String)>) {
         .and_then(|code| code.parse::<u16>().ok());
     let mut headers: Vec<(String, String)> = Vec::new();
     for line in lines.filter(|line| !line.is_empty()) {
-        // A line beginning with a space or a tab is an obs-fold: the
-        // continuation of the header above it, which RFC 9110 §5.2 says a
-        // recipient reads as one field with the fold replaced by a space.
-        // Reading it as a header of its own is how a reflected value becomes a
-        // header — `X-Echo: <input>\r\n Set-Cookie: sid=evil` arrived here as a
-        // real `Set-Cookie`, and `send_raw` writes those into the session jar.
-        // No compliant client would have seen it, so neither does this: the
-        // exact bytes are in the message store either way, which is where a
-        // reader goes to see that the fold was there at all.
+        // An obs-fold: the continuation of the header above it, which RFC 9110
+        // §5.2 reads as one field. Taken as a header of its own,
+        // `X-Echo: <input>\r\n Set-Cookie: sid=evil` became a real
+        // `Set-Cookie` that `send_raw` wrote into the jar. The store keeps the
+        // exact bytes either way.
         if line.starts_with(' ') || line.starts_with('\t') {
             if let Some((_, value)) = headers.last_mut() {
                 value.push(' ');
@@ -467,11 +454,9 @@ mod tests {
         assert!(headers.iter().any(|(n, v)| n == "Content-Length" && v == "3"));
     }
 
-    /// A line beginning with a space is an obs-fold: the continuation of the
-    /// header above it, not a header of its own. Reading it as one turned
-    /// `X-Echo: <reflected>\r\n Set-Cookie: sid=evil` into a `Set-Cookie` this
-    /// engine then wrote into the session jar — a cookie the origin never set,
-    /// and one no compliant client would have seen.
+    /// An obs-fold is a continuation, not a header. Read as one,
+    /// `X-Echo: <reflected>\r\n Set-Cookie: sid=evil` became a cookie in the
+    /// jar that the origin never set.
     #[test]
     fn a_folded_header_line_is_a_continuation_and_not_a_new_header() {
         let head = b"HTTP/1.1 200 OK\r\nX-Echo: hello\r\n Set-Cookie: sid=evil\r\n\r\n";
@@ -533,10 +518,8 @@ mod tests {
         );
     }
 
-    /// A chunk size is a number a server chooses, and one near `usize::MAX`
-    /// used to reach `&have[cursor..cursor + size]` with the sum wrapped past
-    /// zero: a range running backwards, which panics. A hostile target could
-    /// therefore end the session by answering a raw send.
+    /// A chunk size near `usize::MAX` reached `&have[cursor..cursor + size]`
+    /// with the sum wrapped past zero: a backwards range, which panics.
     #[test]
     fn a_chunk_size_that_would_overflow_is_refused_rather_than_sliced() {
         let hostile = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffee\r\n";
@@ -548,10 +531,9 @@ mod tests {
         );
     }
 
-    /// `leftover` is this path's desync signal: bytes on the socket after the
-    /// response its own framing ended. A body larger than the cap used to be
-    /// cut at the cap with the remainder handed back under that name, so an
-    /// ordinary large page reported as a successful request smuggle.
+    /// `leftover` is this path's desync signal. Cutting an oversized body at
+    /// the cap handed the remainder back under that name, so a large page
+    /// reported as a successful smuggle.
     #[test]
     fn a_body_past_the_cap_is_refused_rather_than_reported_as_a_second_response() {
         let big = "x".repeat(4096);
@@ -567,18 +549,15 @@ mod tests {
         }
     }
 
-    /// And the same for a response with no framing at all, which used to be
-    /// truncated to the cap and handed back under a 200.
+    /// And the same with no framing at all, truncated under a 200.
     #[test]
     fn an_unframed_body_past_the_cap_is_refused_rather_than_cut_short() {
         let said = format!("HTTP/1.1 200 OK\r\n\r\n{}", "x".repeat(4096));
         assert!(try_reading_from_a_server_that_says_with_cap(&said, 1024).is_err());
     }
 
-    /// Everything this reader parses is what a target chose to send: a status
-    /// line, a header block, a chunk size. It may refuse, it may time out; it
-    /// may not die, because a raw send is how this engine looks at a server
-    /// that is already behaving badly on purpose.
+    /// Everything here is what a target chose to send. It may refuse or time
+    /// out; it may not die — a raw send is aimed at servers behaving badly.
     #[test]
     fn no_arrangement_of_these_bytes_makes_the_reader_panic() {
         let alphabet: &[&str] = &[
@@ -588,10 +567,8 @@ mod tests {
             "HTTP/1.1 200 OK", "Content-Length: 5",
             "Content-Length: 99999999999999999999", "Content-Length: -1",
         ];
-        // Half the cases begin with a head that reaches the chunked reader and
-        // half with one that reaches the length reader, because a random prefix
-        // almost never forms either: the sharp arithmetic is past a valid head,
-        // and a fuzzer that cannot get there is a fuzzer that proves nothing.
+        // Seeded with real heads: the sharp arithmetic is past a valid one,
+        // and a random prefix almost never forms one.
         let heads: &[&str] = &[
             "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
             "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n",
@@ -637,12 +614,8 @@ mod tests {
         response
     }
 
-    /// A server that says its piece and hangs up at once.
-    ///
-    /// The helpers above hold the connection open so the reader has to stop on
-    /// the framing; this one is for the fuzz loop, where two thousand
-    /// two-hundred-millisecond sleeps is seven minutes of holding sockets open
-    /// to learn nothing the close does not also teach.
+    /// A server that says its piece and hangs up at once. The helpers above
+    /// hold the connection open, which the fuzz loop cannot afford.
     fn read_from_a_server_that_hangs_up(bytes: &str, cap: usize) -> Result<RawResponse, String> {
         use std::io::Write;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");

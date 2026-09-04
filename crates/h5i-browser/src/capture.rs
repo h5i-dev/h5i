@@ -22,13 +22,9 @@ pub const MAX_STORE_BYTES: u64 = 512 * 1024 * 1024;
 
 /// The file a body hash names inside a store, or `None` when it is not a hash.
 ///
-/// The hash reaches every caller from a JSON file, and a JSON file in a session
-/// directory is not a trusted input: a session that runs inside a box has its
-/// store on a filesystem the boxed code can write to, so a `..` in that field
-/// would name a path outside the store, on the host. Hex and length are the
-/// whole check, because a name that is 64 hex characters cannot traverse
-/// anywhere. Public so that h5i's own reader shares the rule rather than
-/// reimplementing it, which is how the two came apart the first time.
+/// A boxed session's store is on a filesystem the boxed code can write to, so a
+/// `..` in that field would name a path outside it. Hex and length are the
+/// whole check. Public so h5i's own reader shares the rule rather than drifting.
 pub fn body_file(store: &Path, sha256: &str) -> Option<PathBuf> {
     if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
@@ -177,16 +173,13 @@ pub struct Health {
 pub struct Capture {
     dir: PathBuf,
     bodies: PathBuf,
-    /// Bytes of *body* this session holds. What a reader means by "how much
-    /// evidence is in here", and half of what [`MAX_STORE_BYTES`] bounds.
+    /// Bytes of *body* held: what a reader means by "how much evidence is in
+    /// here", and half of what [`MAX_STORE_BYTES`] bounds.
     used: AtomicU64,
-    /// Bytes of message file beside them: the headers, both directions.
+    /// Bytes of message file beside them, the other half of the allowance.
     ///
-    /// The other half of the allowance, and it was outside it entirely. A
-    /// message file is not small — the raw sender accepts a response head as
-    /// large as the whole response cap — so a loop against a server that
-    /// chooses what it answers with grew this directory without limit while the
-    /// quota read as empty.
+    /// These were outside it entirely, and they are not small: the raw sender
+    /// accepts a response head as large as the whole response cap.
     overhead: AtomicU64,
     /// Hashes already stored, used for deduplication and byte accounting.
     seen: Mutex<HashSet<String>>,
@@ -204,8 +197,7 @@ impl Capture {
         std::fs::create_dir_all(&bodies).map_err(|e| H5iError::with_path(e, &bodies))?;
         owner_only_dir(dir);
         owner_only_dir(&bodies);
-        // Include what is already here in the restored session's quota: the
-        // bodies, and the message files beside them.
+        // What is already here counts against the restored session's quota.
         let mut used = 0u64;
         let mut seen = HashSet::new();
         if let Ok(entries) = std::fs::read_dir(&bodies) {
@@ -424,11 +416,8 @@ impl Capture {
 
     /// Write one message file. Best-effort, and counted when it fails.
     ///
-    /// Against the same allowance a body is written against. A message file
-    /// holds every header of one message, and the raw sender will read a
-    /// response head as large as the whole response cap, so leaving these
-    /// outside the quota left the directory unbounded in the one case the quota
-    /// exists for: a loop against a server that chooses what it answers with.
+    /// Against the same allowance a body is: these hold every header, and
+    /// leaving them outside the quota left the directory unbounded.
     fn write<T: Serialize>(&self, seq: u64, phase: &str, message: &T) {
         let path = self.dir.join(format!("{seq}.{phase}.json"));
         let wrote = serde_json::to_vec(message)
@@ -436,8 +425,7 @@ impl Capture {
             .and_then(|bytes| {
                 let used = self.held();
                 if used.saturating_add(bytes.len() as u64) > MAX_STORE_BYTES {
-                    // Refused rather than evicted, like a body. Counted, so
-                    // `capture` health reports the gap rather than hiding it.
+                    // Refused rather than evicted, like a body, and counted.
                     return Err(H5iError::Metadata(format!(
                         "the message store is full ({used} of {MAX_STORE_BYTES} bytes)"
                     )));
@@ -470,16 +458,10 @@ fn hex(bytes: &[u8]) -> String {
 
 /// Write a file readable only by its owner.
 ///
-/// The same reasoning as the request log's, one step further along. This holds
-/// session cookies and `Authorization` headers in full, and a boxed session's
-/// directory can be under a `/tmp` the `agent` profile shares with the host.
-///
-/// Which is also why the mode is not left to `OpenOptions`. `mode` applies when
-/// the file is *created* and says nothing about one that is already there, so
-/// anything that could put a 0666 file at one of these names first got the
-/// credentials written into it — and a name that was a symlink got them written
-/// wherever it pointed, over whatever was there. `O_NOFOLLOW` closes the second,
-/// and narrowing the handle after it opens closes the first.
+/// This holds session cookies and `Authorization` in full, in a directory that
+/// can sit under a shared `/tmp`. `OpenOptions::mode` applies only on create,
+/// so a pre-made 0666 file got the credentials written into it and a symlink
+/// got them written wherever it pointed.
 fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), H5iError> {
     use std::io::Write as _;
     let mut options = std::fs::OpenOptions::new();
@@ -494,8 +476,7 @@ fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), H5iError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        // On the handle, not the path: nothing can swap the name for another
-        // file between the open and this.
+        // On the handle, not the path.
         file.set_permissions(std::fs::Permissions::from_mode(0o600))
             .map_err(H5iError::Io)?;
     }
@@ -526,10 +507,8 @@ mod tests {
         (dir, capture)
     }
 
-    /// `OpenOptions::mode` applies to a file it creates and to no other, so a
-    /// message file that was already there kept whatever mode it had — and this
-    /// store holds `Cookie` and `Authorization` in full, in a directory that
-    /// can sit under a shared `/tmp`.
+    /// `mode` applies only to a file it creates, so one already there kept
+    /// whatever mode it had — with `Cookie` and `Authorization` written into it.
     #[cfg(unix)]
     #[test]
     fn a_file_that_was_already_there_is_narrowed_rather_than_written_wide() {
@@ -546,8 +525,7 @@ mod tests {
         assert_eq!(mode & 0o777, 0o600, "{mode:o}");
     }
 
-    /// And a name that is a symlink is not a place to write a credential: it is
-    /// somebody else naming the file this store is about to truncate.
+    /// And a symlink is somebody else naming the file this is about to truncate.
     #[cfg(unix)]
     #[test]
     fn a_symlink_is_refused_rather_than_followed() {
@@ -565,10 +543,8 @@ mod tests {
         );
     }
 
-    /// A message file holds every header of one message and used to be written
-    /// outside the quota entirely, so `used` could read as empty while the
-    /// directory grew. The raw sender accepts a response head as large as the
-    /// whole response cap, which is what makes that reachable on purpose.
+    /// Message files were written outside the quota entirely, so `used` read
+    /// as empty while the directory grew.
     #[test]
     fn a_message_file_is_counted_against_the_store_the_way_a_body_is() {
         let (_dir, capture) = store();
@@ -592,8 +568,7 @@ mod tests {
         assert_eq!(capture.errors(), 0);
     }
 
-    /// And the allowance is over both, so a store filled by message files
-    /// refuses the next body rather than reporting room it does not have.
+    /// And the allowance is over both.
     #[test]
     fn message_files_fill_the_same_allowance_a_body_does() {
         let (_dir, capture) = store();

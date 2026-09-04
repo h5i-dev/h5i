@@ -108,11 +108,9 @@ pub fn parse(body: &[u8], boundary: &str) -> Option<Vec<Part>> {
         // The CRLF before the next boundary belongs to the framing, not to the
         // data. Dropping it is what makes a round trip byte-identical.
         //
-        // Only when there is data for it to sit behind. A body whose boundary
-        // follows its header terminator with nothing between them is malformed,
-        // and a page can post one: the line break being stepped over is then
-        // the terminator's own, `end` lands two bytes before the data starts,
-        // and the slice below runs backwards and panics.
+        // Only when there is data for it to sit behind. A boundary following
+        // the header terminator directly makes `end` land before the data
+        // starts, and the slice below then runs backwards.
         let data_at = headers_end + gap;
         let mut end = next;
         if end > data_at + 1 && body[..end].ends_with(b"\r\n") {
@@ -147,15 +145,9 @@ pub fn parse(body: &[u8], boundary: &str) -> Option<Vec<Part>> {
 
 /// One `Content-Disposition` parameter, quoted or bare.
 ///
-/// Both spellings, because both arrive. A browser quotes; a page building its
-/// own body through `fetch` writes whatever its author typed, and servers read
-/// either. Reading only `name="x"` gave a bare `name=x` an empty name, and the
-/// rebuild then wrote `name=""` over it — so editing one field of an upload
-/// renamed every other field in the request to nothing.
-///
-/// The parameter is matched at a boundary (start of the header, or after a
-/// `;`), so `filename=` is not found inside `x-filename=` and `name=` is not
-/// found inside `filename=`.
+/// Both spellings arrive, and reading only `name="x"` gave a bare `name=x` an
+/// empty name — which the rebuild then wrote back as `name=""`. Matched at a
+/// parameter boundary, so `name=` is not found inside `filename=`.
 fn parameter(header: &str, key: &str) -> Option<String> {
     let mut rest = header;
     loop {
@@ -230,20 +222,16 @@ mod tests {
         body
     }
 
-    /// Every body this parser sees is a body somebody else wrote: a page's own
-    /// `fetch` put it in the store, and an edit takes it apart again. It may
-    /// answer `None`, it may answer with odd parts; it may not die.
+    /// Every body here was written by somebody else. It may answer `None` or
+    /// with odd parts; it may not die.
     #[test]
     fn no_arrangement_of_these_bytes_makes_the_parser_panic() {
-        // A small alphabet of exactly the bytes the framing is made of, which
-        // is where the sharp edges are: boundaries, terminators, half of a
-        // CRLF, a header colon.
+        // Exactly the bytes the framing is made of, where the edges are.
         let alphabet: &[&[u8]] = &[
             b"------abc", b"--", b"\r\n", b"\n", b"\r", b"a", b":", b" ",
             b"Content-Disposition: form-data; name=\"a\"", b"filename=\"f\"", b"",
         ];
-        // A cheap deterministic generator: every arrangement of six pieces
-        // would be 11^6, so walk a fixed stride through that space instead.
+        // A fixed stride through the space, rather than all 11^6 of it.
         let mut seed: u64 = 0x243f_6a88_85a3_08d3;
         for _ in 0..200_000 {
             let mut body = Vec::new();
@@ -258,11 +246,9 @@ mod tests {
         }
     }
 
-    /// A part whose boundary follows the header terminator with nothing
-    /// between them is malformed, and a page can post one through `fetch`. The
-    /// CRLF the parser stepped over was then the terminator's own, so the data
-    /// slice ran backwards and the process died on the next edit of that
-    /// stored request.
+    /// A page can post a part whose boundary follows the header terminator
+    /// directly. The CRLF stepped over was then the terminator's own, so the
+    /// data slice ran backwards.
     #[test]
     fn a_part_with_no_data_at_all_is_parsed_rather_than_panicked_on() {
         let mut body = Vec::new();
@@ -287,11 +273,8 @@ mod tests {
         assert!(parts[0].data.is_empty());
     }
 
-    /// `Content-Disposition` parameters may be quoted or bare, and a page that
-    /// builds its own multipart body through `fetch` writes whichever it likes.
-    /// Reading only the quoted form gave the part an empty name, and rebuilding
-    /// then wrote `name=""` — so an edit to one field silently renamed every
-    /// other field in the request to nothing.
+    /// Reading only the quoted form gave the part an empty name, and the
+    /// rebuild wrote `name=""` — so editing one field renamed all the others.
     #[test]
     fn an_unquoted_disposition_parameter_is_read_like_a_quoted_one() {
         let mut body = Vec::new();
@@ -313,9 +296,8 @@ mod tests {
         assert_eq!(round, parts);
     }
 
-    /// `name=` occurs inside `filename=`, and a plain substring search found it
-    /// there: a part that wrote its filename first came back with the
-    /// filename as its field name. Parameter order is the sender's choice.
+    /// `name=` occurs inside `filename=`, so a part that wrote its filename
+    /// first came back with the filename as its field name.
     #[test]
     fn a_filename_written_first_is_not_read_as_the_field_name() {
         let mut body = Vec::new();

@@ -49,9 +49,8 @@ fn accept_for(initiator: Initiator) -> &'static str {
             "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
         }
         Initiator::Subresource => "*/*",
-        // A replay carries the stored request's own `Accept` and this default
-        // stands aside for it; it is here for a composed request that named
-        // none, where "whatever the server has" is the honest ask.
+        // A replay carries its own `Accept`; this is for a composed request
+        // that named none.
         Initiator::Replay => "*/*",
     }
 }
@@ -688,18 +687,11 @@ impl LocalBroker {
 
     /// The header set this request will actually go out with.
     ///
-    /// Not `built.headers()` alone. A client-level default — this engine sets
-    /// one, the `User-Agent` — lives on the `Client` and is merged into the
-    /// request at *execute* time, after `build()`, so reading the built
-    /// request's headers records everything except it. The store then held a
-    /// request that was not the one sent, which matters twice: the whole point
-    /// of the store is that it says what went out, and `message --raw` is the
-    /// documented way to produce a file for `resend --raw-request`, which
-    /// writes those bytes verbatim. That round trip was sending a request with
-    /// no `User-Agent` at all, and a UA-gated endpoint answers a different
-    /// question.
-    ///
-    /// Merged the way `reqwest` merges it: the request's own value wins.
+    /// Not `built.headers()` alone: `reqwest` merges the client's defaults —
+    /// here, the `User-Agent` — at *execute* time, so the store held a request
+    /// that was not the one sent. `message --raw` feeds `--raw-request`, and
+    /// that round trip was going out with no `User-Agent` at all. Merged the
+    /// way `reqwest` does: the request's own value wins.
     fn headers_as_sent(&self, built: &reqwest::blocking::Request) -> Vec<(String, String)> {
         let mut headers: Vec<(String, String)> = built
             .headers()
@@ -3238,14 +3230,9 @@ mod capture_wire_tests {
         }
     }
 
-    /// The store's whole claim is that it says what went out. A client-level
-    /// default header — this engine sets one, the `User-Agent` — is merged into
-    /// the request at *execute* time, after `build()`, so reading the built
-    /// request's headers recorded everything except it. Which also broke the
-    /// documented round trip: `message --raw` produces the file
-    /// `resend --raw-request` writes verbatim, and that file carried no
-    /// `User-Agent` at all, so a UA-gated endpoint answered a different
-    /// question and the difference read as a finding.
+    /// `reqwest` merges client defaults at *execute* time, so reading the
+    /// built request recorded everything but the `User-Agent`. That also broke
+    /// the `message --raw` → `--raw-request` round trip, which went out bare.
     #[test]
     fn the_store_records_the_header_set_that_went_on_the_wire() {
         let dir = tempfile::tempdir().expect("tempdir");

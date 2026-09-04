@@ -20,13 +20,10 @@ pub enum Part {
 
 /// Where a session's messages are, or why they cannot be read.
 fn store_dir(root: &Path, selector: Option<&str>) -> anyhow::Result<(bs::Session, PathBuf)> {
-    // Live or ended: a store outlives its engine, and reading one after the run
-    // is the ordinary case rather than the exception. See
-    // [`super::browser::resolve_for_reading`].
+    // Live or ended: a store outlives its engine.
     let session = super::browser::resolve_for_reading(root, selector)?;
-    // The id off the record, checked before it names a directory: for a boxed
-    // session that file sits where the boxed code can write to it, and
-    // everything under a session directory is addressed by joining onto this.
+    // A boxed session's record sits where boxed code can write it, and this id
+    // becomes a path.
     if !bs::id_is_one_component(&session.id) {
         anyhow::bail!(
             "session record names `{}` as its id, which is not one this registry could \
@@ -84,12 +81,9 @@ pub enum Text {
     Utf8(String),
     /// Decoded, and only the head of what the response carried.
     ///
-    /// The store keeps at most [`h5i_browser::capture::MAX_BODY_BYTES`] of one
-    /// body, so a response past that is text this can read and cannot read all
-    /// of. Distinct from [`Text::Utf8`] because every verb here turns on the
-    /// difference: a search that finds nothing in the head has said nothing
-    /// about the rest, and a length read off the head is the cap's number, not
-    /// the body's. Eight megabytes is a page a target can serve on purpose.
+    /// Its own state because every verb here turns on the difference: a search
+    /// over the head says nothing about the rest, and its length is the cap's
+    /// number rather than the body's.
     Cut {
         text: String,
         /// How many bytes the response actually carried.
@@ -108,14 +102,9 @@ pub enum Text {
 impl Text {
     /// How many bytes the body actually had.
     ///
-    /// Not `as_str().len()`, which for a body that is not UTF-8 is the length
-    /// of a 64 KiB lossy *preview*. One invalid byte anywhere in a response is
-    /// enough to put it on that path, so a length verdict read off the preview
-    /// is a number a target can choose: pad past 64 KiB and every
-    /// `--longer-than` and `--shorter-than` answers about the cap instead of
-    /// about the page.
-    ///
-    /// `None` when the body is not in the store, which is not a length of zero.
+    /// Not `as_str().len()`: one invalid byte puts a response on the preview
+    /// path, and a length read off a 64 KiB preview is a number the target
+    /// chose. `None` when the body is not stored, which is not a length of zero.
     fn len(&self) -> Option<u64> {
         match self {
             Text::Utf8(text) => Some(text.len() as u64),
@@ -125,11 +114,8 @@ impl Text {
         }
     }
 
-    /// Whether [`Text::as_str`] is the whole body or only the head of it.
-    ///
-    /// A body that is not UTF-8 is read back as a lossy preview of its first
-    /// [`LOSSY_BODY_BYTES`], so a search over it that finds nothing has looked
-    /// at part of the response and can say nothing about the rest.
+    /// Whether [`Text::as_str`] is the whole body or only its head. A search
+    /// over part of a body cannot answer "not there".
     fn whole(&self) -> bool {
         match self {
             Text::Utf8(_) => true,
@@ -169,19 +155,11 @@ impl Text {
 
 /// Target text with what a terminal would act on made visible instead.
 ///
-/// Every string in this module that came off the wire is printed to a terminal
-/// by the human view: a header value, a body line, a captured group, a query
-/// parameter name. An escape sequence in one of them repaints the screen —
-/// it can erase the line naming which request this was, or draw a status that
-/// never arrived, which is the one thing a workbench must not let a target do
-/// to the report of what the target did.
-///
-/// Escaped rather than dropped, so a `\u{1b}` in a response is still visible as
-/// one, and still countable. Bidi controls go the same way: `char::is_control`
-/// is false for every one of them and they reorder the line around them without
-/// being seen. `--raw`, `--body-to` and `--json` are untouched, and that is
-/// where exact bytes belong: the first two are the byte channels, and JSON
-/// escapes a control character on the way out by itself.
+/// The human view prints strings the target wrote; an escape in one repaints
+/// the report of what the target did. Escaped rather than dropped, so it stays
+/// visible. Bidi controls go too: they are not `is_control` and reorder the
+/// line around them. `--raw`, `--body-to` and `--json` are the byte channels
+/// and are untouched.
 fn printable(text: &str) -> String {
     if !text
         .chars()
@@ -201,10 +179,7 @@ fn printable(text: &str) -> String {
 }
 
 /// Bidirectional formatting characters, which reorder the text *around* them.
-///
-/// The overrides, embeddings and isolates only; `U+200C`/`U+200D` carry no
-/// reordering power and are ordinary text. The same set the engine drops from
-/// page text in `snapshot.rs`.
+/// Overrides, embeddings and isolates only, as `snapshot.rs` drops from page text.
 fn is_bidi_control(c: char) -> bool {
     matches!(c,
         '\u{200E}' | '\u{200F}'
@@ -247,11 +222,8 @@ fn body_text(dir: &Path, body: &Body) -> Text {
             match std::fs::read(&path) {
                 Err(e) => Text::Missing(format!("the stored body could not be read: {e}")),
                 Ok(raw) => match String::from_utf8(raw) {
-                    // Text, and whether it is all of the text. A body past the
-                    // store's per-message cap is kept as its head, and a cut
-                    // that lands on a character boundary — which for an ASCII
-                    // or HTML page is every cut — still decodes cleanly, so
-                    // this used to be indistinguishable from a whole body.
+                    // A cut on a character boundary — every cut, for ASCII —
+                    // decodes cleanly, so the head used to look like a body.
                     Ok(text) if *truncated => Text::Cut {
                         of_bytes: of_bytes.unwrap_or(text.len() as u64),
                         text,
@@ -422,10 +394,8 @@ pub fn show(
         })?;
         std::fs::write(path, &bytes)
             .map_err(|e| anyhow::anyhow!("{} could not be written: {e}", path.display()))?;
-        // Whether this file is the body or the head of it. This is the exact
-        // byte channel — the one every other view points a caller at when it
-        // has had to bound something — so a body the store cut has to say so
-        // here rather than hand over a shorter file and a byte count.
+        // The exact byte channel every bounded view points at, so a body the
+        // store cut has to say so rather than hand over a shorter file.
         let of_bytes = match body {
             Body::Stored {
                 truncated: true,
@@ -539,11 +509,8 @@ pub fn show(
 
 /// How much of one line a preview shows.
 ///
-/// The line *count* was bounded and the line *length* was not, so a minified
-/// page — one line, no newlines, megabytes of it — printed whole: into a
-/// terminal, or into the context of the agent that asked. The body diff has
-/// always cut its lines here; this is the same number, for the same reason.
-/// `--raw` and `--body-to` are where the exact bytes live.
+/// The line count was bounded and the length was not, so a minified page — one
+/// line, megabytes of it — printed whole. The same number the body diff cuts at.
 const MAX_PREVIEW_LINE: usize = 400;
 
 /// One line of a body, bounded and inert.
@@ -616,10 +583,8 @@ fn header_is_the_users(name: &str) -> bool {
 
 /// The exact body to send again, or why there is not one.
 ///
-/// The truncation rule is the in-session resend's, kept here so the two cannot
-/// disagree: a body the store had to cut short is not the body that was sent,
-/// and carrying it into another session would put a request on the wire that
-/// nobody recorded, then read the answer as a replay of one that was.
+/// The in-session resend's truncation rule, kept here so the two cannot
+/// disagree: a body the store cut short is not the body that was sent.
 fn carried_body(dir: &Path, seq: u64, body: &Body) -> anyhow::Result<Vec<u8>> {
     if let Body::Stored { truncated: true, .. } = body {
         anyhow::bail!(
@@ -629,8 +594,8 @@ fn carried_body(dir: &Path, seq: u64, body: &Body) -> anyhow::Result<Vec<u8>> {
     }
     match body_text(dir, body) {
         Text::Utf8(text) => Ok(text.into_bytes()),
-        // Unreachable while the check above stands, and spelled out rather than
-        // folded into a catch-all so that a change to that check fails here.
+        // Unreachable while the check above stands; spelled out so a change
+        // to it fails here.
         Text::Cut { of_bytes, .. } => anyhow::bail!(
             "request {seq} carried {of_bytes} bytes and the store kept only its head, so \
              carrying it would send a request that is not the one recorded"
@@ -717,24 +682,17 @@ pub struct Difference {
     pub similarity: f64,
     /// Whether there were two bodies to compare at all.
     ///
-    /// A body that is not in the store reads as the empty string, so two
-    /// responses whose bodies were skipped compared as identical: `same`,
-    /// `similarity` 1.0, nothing to see. That is the mistake `match` refuses to
-    /// make, and it is reachable on purpose — the store refuses new bodies once
-    /// it is full, and a target that answers with 512 MiB of anything, or
-    /// serves its pages as `font/woff`, turns every later comparison into
-    /// "these are the same page". The oracle then says "false page" for every
-    /// candidate character, which is the shape of a finding that is not there.
+    /// An unstored body reads as the empty string, so two of them compared as
+    /// identical. Reachable on purpose: fill the store, or serve pages as
+    /// `font/woff`, and every later comparison says "the same page".
     pub bodies_compared: bool,
     pub headers_added: Vec<String>,
     pub headers_removed: Vec<String>,
     pub headers_changed: Vec<String>,
     /// Changed body fields, when both bodies are JSON. Keyed by dotted path.
     pub json_changes: Vec<JsonChange>,
-    /// How many there were, when the list above is only the first of them.
-    ///
-    /// The lists are capped so one reply cannot be a whole page, and a cap that
-    /// did not say so was a diff reporting part of itself as all of itself.
+    /// How many there were, when the list above is only the first of them. A
+    /// cap that says nothing is a partial diff shaped like a complete one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub json_changes_of: Option<usize>,
     /// Changed lines, when they are not.
@@ -808,19 +766,16 @@ pub fn compare(left: (&StoredResponse, &Text), right: (&StoredResponse, &Text)) 
     // Two bodies, or none of this is a comparison. `Text::Missing` reads as the
     // empty string, which made "neither body was kept" indistinguishable from
     // "both bodies were empty".
-    // Whole bodies, or none of this is a comparison. `Text::Missing` reads as
-    // the empty string, which made "neither body was kept" indistinguishable
-    // from "both bodies were empty"; a body that is not UTF-8 reads as the head
-    // of itself, which made two different large responses look identical.
+    // Whole bodies, or none of this is a comparison: an unstored one reads as
+    // empty and a previewed one as its own head.
     let bodies_compared = a_body.whole() && b_body.whole();
     let left_text = a_body.as_str();
     let right_text = b_body.as_str();
     let (json_changes, json_total, line_changes, line_total) =
         body_changes(a, b, left_text, right_text);
 
-    // The bodies' own lengths, not the previews'. A body that is not UTF-8
-    // reaches `as_str` as at most 64 KiB, so `length_delta` — a headline
-    // verdict field — read zero for any two binary responses past the cap.
+    // The bodies' own lengths, not the previews': `length_delta` read zero for
+    // any two binary responses past the 64 KiB cap.
     let bytes = (
         a_body.len().unwrap_or_default(),
         b_body.len().unwrap_or_default(),
@@ -836,8 +791,7 @@ pub fn compare(left: (&StoredResponse, &Text), right: (&StoredResponse, &Text)) 
         status_changed: a.status != b.status,
         bytes,
         length_delta: bytes.1 as i64 - bytes.0 as i64,
-        // Zero rather than one, so a caller that reads the number without the
-        // flag beside it errs towards looking again.
+        // Zero rather than one, so a caller ignoring the flag looks again.
         similarity: if bodies_compared {
             similarity(left_text, right_text)
         } else {
@@ -891,11 +845,8 @@ fn body_changes(
 
 /// Field-by-field, so a re-ordered object is not a difference.
 /// Every difference between two documents, pushing at most [`MAX_JSON_CHANGES`]
-/// of them and counting all of them in `total`.
-///
-/// Counted rather than stopped at. Returning as soon as the list was full meant
-/// the walk itself ended there, so "how many changed" and "how many are listed"
-/// were the same number and a capped diff could not say it had been capped.
+/// and counting all of them in `total`. Stopping the walk at the cap made those
+/// two numbers equal, so a capped diff could not say it had been capped.
 fn walk_json(
     path: &str,
     left: &Value,
@@ -978,10 +929,8 @@ fn walk_json(
 /// two HTML documents, which is the wrong cost for a loop.
 /// The changed lines, and how many there were before the cap.
 ///
-/// Both sides are cut, not just the tail. The list used to be every addition
-/// followed by every removal and then truncated, so a response with sixty new
-/// lines reported no removals at all — and "this line is gone" is as much of an
-/// answer as "this line is new".
+/// Both sides are cut, not just the tail: additions came first and truncating
+/// the end meant sixty new lines reported no removals at all.
 fn line_changes(left: &str, right: &str) -> (Vec<LineChange>, usize) {
     let before: BTreeSet<&str> = left.lines().collect();
     let after: BTreeSet<&str> = right.lines().collect();
@@ -1007,8 +956,7 @@ fn line_changes(left: &str, right: &str) -> (Vec<LineChange>, usize) {
     }
     let total = added.len() + removed.len();
     if total > MAX_LINE_CHANGES {
-        // Half each, and whatever the shorter side does not use goes to the
-        // longer one, so the cap costs a lopsided diff nothing.
+        // Half each, with the shorter side's unused share going to the longer.
         let half = MAX_LINE_CHANGES / 2;
         let keep_added = if removed.len() < half {
             MAX_LINE_CHANGES - removed.len()
@@ -1072,12 +1020,8 @@ pub fn diff(
     let (b, b_body) = read(right)?;
     let difference = compare((&a, &a_body), (&b, &b_body));
 
-    // The same discipline `match` applies, and the same division: a body that
-    // is not in the store, or is only previewed, cannot be compared, and a
-    // number reported anyway would be an absence wearing a measurement's name.
-    // The status and the headers are still real, so they are still reported —
-    // what changes is the exit code, so a script cannot read this as a clean
-    // answer the way it reads a real one.
+    // The division `match` makes: the status and headers are real and still
+    // reported; only the exit code says the bodies could not be compared.
     let unanswerable = |seq: u64, body: &Text| match body {
         Text::Missing(reason) => Some(format!("{seq}'s body is not in the store ({reason})")),
         Text::Binary { bytes, .. } if !body.whole() => Some(format!(
@@ -1143,8 +1087,7 @@ pub fn diff(
         let mark = if change.side == "added" { '+' } else { '-' };
         println!("  {mark} {}", printable(&change.text));
     }
-    // Said, not implied. A capped list that reads as the whole answer is a
-    // partial diff wearing a complete one's shape.
+    // Said, not implied.
     if let Some(total) = difference.json_changes_of {
         println!(
             "  … {} more changed fields not listed",
@@ -1216,12 +1159,8 @@ pub struct Found {
     /// is running a match and reading this.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub captures: Vec<String>,
-    /// Whether this condition could be answered at all.
-    ///
-    /// A `false` here is never a "no": a pattern that does not compile, or a
-    /// body search that only had the head of the body to search. `matches`
-    /// turns it into the "could not look" exit rather than the "did not match"
-    /// one, which is the whole discipline of this verb.
+    /// Whether this condition could be answered at all. `false` is never a
+    /// "no", and `matches` turns it into the "could not look" exit.
     pub conclusive: bool,
 }
 
@@ -1269,8 +1208,7 @@ fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Fo
                             }
                         })
                         .unwrap_or_default(),
-                    // A miss over part of a body is not a miss. See
-                    // [`Text::whole`].
+                    // A miss over part of a body is not a miss.
                     conclusive: hit || body.whole(),
                 }
             }
@@ -1448,9 +1386,7 @@ fn look(
         .iter()
         .map(|condition| evaluate(condition, &stored, &body))
         .collect();
-    // "Could not look" is read off the condition rather than sniffed out of its
-    // rendered text: a pattern that did not compile said so in `expr`, and a
-    // search that only had the head of a body to search said nothing at all.
+    // Read off the condition rather than sniffed out of its rendered text.
     let could_not_look = found.iter().any(|f| !f.conclusive);
     let matched = found.iter().all(|f| f.matched);
 
@@ -1472,11 +1408,8 @@ fn look(
                 one.expr
             );
             for capture in &one.captures {
-                // Bounded in the human view for the reason a body line is: the
-                // target chooses how much text sits between a pattern's
-                // anchors, so `--regex 'flag=(.*)'` over a one-line page
-                // captures the page. `--json` still carries it whole, because
-                // that is the channel a script reads a token out of.
+                // The target chooses how much page sits between a pattern's
+                // anchors. `--json` still carries it whole, for tokens.
                 println!("      {}", preview_line(capture));
             }
         }
@@ -1526,13 +1459,9 @@ pub fn timing_summary(samples: &[Value]) -> Option<Value> {
     if samples.len() < 2 {
         return None;
     }
-    // Only the sends a server answered. A send that never reached the wire —
-    // refused by policy, or by the budget running out partway through a
-    // `--repeat` — still carries a clock, and that clock measures the refusal:
-    // near zero. Folded in with the rest it drags the median down, and a
-    // time-based injection that was answering three seconds late reads as no
-    // delay at all. Which is the failure this verb exists to avoid: a burst
-    // that half happened, reported as a measurement of the half that did not.
+    // Only the sends a server answered. One refused by policy or budget still
+    // carries a clock, and it is the refusal's — near zero — which drags the
+    // median down until a three-second delay reads as none.
     let answered: Vec<&Value> = samples
         .iter()
         .filter(|s| s.get("status").is_some_and(|status| !status.is_null()))
@@ -1689,11 +1618,9 @@ pub fn map_of(records: &[Value]) -> Map {
 
 /// `h5i browser sitemap`.
 pub fn sitemap(root: &Path, selector: Option<&str>, json_out: bool) -> anyhow::Result<()> {
-    // From the engine while there is one, and off the log on disk once there is
-    // not. The map of a finished run is the one a reviewer wants, and asking
-    // the engine for it meant closing the session took the site map with it.
-    // The log outlives the engine — that is what `close` means by "its record
-    // stays" — and each of its lines is the record `map_of` already reads.
+    // From the engine while there is one, and off the log once there is not:
+    // the map of a finished run is the one a reviewer wants, and each line of
+    // that log is already the record `map_of` reads.
     let session = super::browser::resolve_for_reading(root, selector)?;
     let owned: Vec<Value>;
     let answer;
@@ -1713,9 +1640,7 @@ pub fn sitemap(root: &Path, selector: Option<&str>, json_out: bool) -> anyhow::R
         let path = bs::dir(root, &session.id).join(bs::RECEIPTS_FILE);
         let (text, cut) = bs::read_log_capped_saying(&path).unwrap_or_default();
         if cut {
-            // Said, not implied. A map built from the head of a log is a map of
-            // part of the run, and for a crawl the endpoints past the cap are
-            // the ones worth seeing.
+            // A map built from the head of a log covers part of the run.
             eprintln!(
                 "  note     : this session's request log is larger than the {} bytes read \
                  back, so this map covers the start of the run and not all of it",
@@ -1924,12 +1849,8 @@ fn extract_one(spec: &str, response: &StoredResponse, body: &Text) -> anyhow::Re
         ),
     };
     found.ok_or_else(|| {
-        // "Found nothing" is a claim about the response. It is only true when
-        // the whole response was there to look at: a body that is not in the
-        // store, or one read back as a preview of its head, means the binding
-        // failed because there was nothing to search, and a sequence that
-        // stopped on that reason would send its author looking at the target.
-        // The same rule `match` applies, in the verb that chains on the answer.
+        // "Found nothing" is a claim about the response, and only true when
+        // the whole response was there to look at.
         let searched_the_body = matches!(kind.trim(), "regex" | "json");
         if searched_the_body && !body.whole() {
             match body {
@@ -1950,14 +1871,10 @@ fn extract_one(spec: &str, response: &StoredResponse, body: &Text) -> anyhow::Re
     })
 }
 
-/// Why a step failed, out of wherever the reply put it.
-///
-/// A refusal carries `code` and `message`; a send that reached the wire and
-/// failed there carries neither, and puts what happened under `response.error`.
-/// Reading only the first meant a sequence stopped and said "the step failed"
-/// while the answer it was holding said "error sending request for url …". A
-/// sequence stops at the first failure by design, so the reason it gives is the
-/// whole of what its author has to act on.
+/// Why a step failed, out of wherever the reply put it: a refusal carries
+/// `code` and `message`, a send that failed at the wire puts it under
+/// `response.error`. A sequence stops at the first failure, so this string is
+/// all its author gets.
 fn why_a_step_failed(answer: &Value) -> String {
     let text = |value: &Value| value.as_str().map(str::to_string);
     let refusal = answer.get("message").and_then(text).map(|message| {
@@ -2075,12 +1992,8 @@ pub fn sequence(
         if !step.extract.is_empty() {
             let target = step.as_session.as_deref().or(selector);
             let (_, dir) = store_dir(root, target)?;
-            // The step's own answer, or nothing. Defaulting a missing sequence
-            // number to zero read message 0 instead — the session's first
-            // request, usually the navigation that opened it — and bound the
-            // token, the flag or the CSRF value out of a response that belongs
-            // to a different message. A wrong answer that looks right, in the
-            // verb whose whole job is to carry one step's answer into the next.
+            // The step's own answer, or nothing. Defaulting to zero bound the
+            // token out of message 0 — the navigation that opened the session.
             let Some(seq) = record.seq else {
                 record.error = Some(format!(
                     "step {index} came back without a sequence number, so there is no \
@@ -2164,11 +2077,8 @@ pub fn sequence(
 mod tests {
     use super::*;
 
-    /// A session that runs in a box keeps its store on a filesystem the boxed
-    /// code can write to, so the hash a message sidecar names is target input
-    /// like everything else in there. Joined unchecked, `../` in that field
-    /// read a host file and handed it back as a captured body — and `resend`
-    /// would then have sent it to the target.
+    /// A boxed session's store is writable by boxed code, so the hash in a
+    /// sidecar is target input: joined unchecked, `../` read a host file.
     #[test]
     fn a_body_hash_that_is_not_one_names_nothing_in_the_store() {
         let dir = std::env::temp_dir().join(format!(
@@ -2192,10 +2102,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The in-session resend refuses to replay a body the store cut short,
-    /// because the request that would go out is not the one recorded. The
-    /// cross-session path read the same store and did not, so `--as` sent a
-    /// shortened body and reported the answer as a replay.
+    /// The in-session resend refuses a body the store cut short; `--as` read
+    /// the same store and did not, so it sent a shortened body as a replay.
     #[test]
     fn a_truncated_body_is_not_carried_into_another_session() {
         let dir = std::env::temp_dir().join(format!(
@@ -2217,10 +2125,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A header value and a body line are strings the target wrote, and the
-    /// human view prints them to a terminal. An escape sequence in one repaints
-    /// the screen: `\r` alone rewrites the line that says which request this
-    /// was, and `ESC[2J` clears what came before it.
+    /// The human view prints strings the target wrote. `\r` alone rewrites the
+    /// line naming which request this was; `ESC[2J` clears what came before it.
     #[test]
     fn what_a_terminal_would_act_on_is_shown_rather_than_obeyed() {
         let hostile = "ok\u{1b}[2J\rHTTP/1.1 200 forged\u{202e}";
@@ -2233,12 +2139,9 @@ mod tests {
         assert_eq!(printable("ordinary text"), "ordinary text");
     }
 
-    /// A body that is not in the store reads as the empty string, so two
-    /// responses whose bodies the store skipped compared as identical:
-    /// `same`, similarity 1.0. The store refuses new bodies once it is full and
-    /// skips media outright, so a target can reach that state on purpose and
-    /// turn every later comparison into "the same page" — which is the answer a
-    /// blind-injection loop reads as "false" for every candidate character.
+    /// An unstored body reads as the empty string, so two of them compared as
+    /// identical. A target reaches that state on purpose by filling the store
+    /// or serving `font/woff`, and the oracle then says "false page" forever.
     #[test]
     fn two_bodies_that_were_never_kept_are_not_the_same_page() {
         let left = response(200, "text/html");
@@ -2265,10 +2168,8 @@ mod tests {
         assert!(difference.same);
     }
 
-    /// A body that is not UTF-8 reaches the matcher as a 64 KiB lossy preview,
-    /// and one invalid byte anywhere in a response is enough to put it there.
-    /// Length verdicts read off the preview answered about the cap, so a target
-    /// could pick the number by padding past it.
+    /// One invalid byte puts a response on the 64 KiB preview path, so a
+    /// length read off the preview is a number the target picked.
     #[test]
     fn a_length_condition_measures_the_body_and_not_its_preview() {
         let stored = response(200, "application/octet-stream");
@@ -2284,9 +2185,8 @@ mod tests {
         assert!(longer.matched, "and it is longer than 1 MB");
     }
 
-    /// The same number is the one `diff` reports, and `length_delta` is a
-    /// headline field: two binary responses past the cap both measured 64 KiB
-    /// and read as no change at all.
+    /// `length_delta` is a headline field, and two binary responses past the
+    /// cap both measured 64 KiB: no change at all.
     #[test]
     fn a_length_delta_is_over_the_bodies_not_the_previews() {
         let stored = response(200, "application/octet-stream");
@@ -2306,11 +2206,8 @@ mod tests {
         assert_eq!(difference.length_delta, 4_000_000);
     }
 
-    /// A body that is not text is read back as a preview of its head. A
-    /// search that finds nothing in the preview has said nothing about the
-    /// rest, so answering "did not match" would be a conclusion drawn from an
-    /// absence — and a target only has to emit one invalid byte and pad past
-    /// the cap to put every body search on that path.
+    /// A search over a preview that finds nothing has said nothing about the
+    /// rest, and one invalid byte puts every body search on that path.
     #[test]
     fn a_miss_over_part_of_a_body_is_not_a_miss() {
         let stored = response(200, "application/octet-stream");
@@ -2350,10 +2247,8 @@ mod tests {
         assert!(!found.matched && found.conclusive);
     }
 
-    /// The change lists are capped, and a cap that says nothing turns a partial
-    /// diff into a complete-looking one. Worse, every addition used to be
-    /// pushed before every removal and the tail cut, so a response with sixty
-    /// new lines reported that nothing had been removed.
+    /// A cap that says nothing turns a partial diff into a complete-looking
+    /// one — and additions came first, so sixty new lines hid every removal.
     #[test]
     fn a_capped_diff_says_how_much_it_left_out_and_keeps_both_sides() {
         let stored = response(200, "text/html");
@@ -2385,10 +2280,8 @@ mod tests {
         assert_eq!(difference.line_changes.len(), 2);
     }
 
-    /// The JSON walk used to return as soon as its list was full, so the
-    /// number of changes and the number listed were the same number and a
-    /// capped diff could not tell a reader it had been capped. The line diff
-    /// said so; this one silently claimed sixty changes were all of them.
+    /// The JSON walk stopped at the cap, so the count and the listed count
+    /// were equal and the diff could not say it had been capped.
     #[test]
     fn a_capped_json_diff_counts_the_changes_it_did_not_list() {
         let stored = response(200, "application/json");
@@ -2414,10 +2307,9 @@ mod tests {
         assert_eq!(difference.json_changes_of, Some(200));
     }
 
-    /// A binding that fails stops the sequence, so the reason it gives is the
-    /// reason its author acts on. "Found nothing in this response" sends them
-    /// to the target; the truth was that this response's body was never
-    /// searched, or only its head was.
+    /// A failed binding stops the sequence, so its reason is what the author
+    /// acts on: "found nothing" sent them to the target when the truth was
+    /// that the body was never searched.
     #[test]
     fn a_binding_that_could_not_look_says_so_rather_than_saying_it_is_not_there() {
         let stored = response(200, "application/octet-stream");
@@ -2448,13 +2340,9 @@ mod tests {
         assert!(why.to_string().contains("found nothing in this response"), "{why}");
     }
 
-    /// The store keeps at most 8 MiB of one body, and a cut that lands on a
-    /// character boundary — which for an ASCII or HTML page is every cut —
-    /// still decodes cleanly. So a truncated page arrived as ordinary text and
-    /// every verb treated its head as the whole thing: `--contains` answered a
-    /// confident "no" over the first 8 MiB, and two different long pages
-    /// compared as the same response. Eight megabytes is a page a target can
-    /// serve on purpose.
+    /// A cut at the store's 8 MiB cap lands on a character boundary — every
+    /// cut, for ASCII — and still decodes, so the head arrived as ordinary
+    /// text and every verb treated it as the whole body.
     #[test]
     fn a_body_the_store_cut_is_not_a_whole_body() {
         let cut = Text::Cut {
@@ -2477,10 +2365,8 @@ mod tests {
         assert!(!difference.same);
     }
 
-    /// The preview bounded how many lines it showed and not how long one could
-    /// be, so a minified page — one line, no newlines, megabytes of it —
-    /// printed whole into the terminal, or into the context of the agent that
-    /// asked for it. A target chooses whether its page has newlines in it.
+    /// The line count was bounded and the length was not, so a minified page —
+    /// one line, megabytes of it — printed whole. The target picks the newlines.
     #[test]
     fn one_enormous_line_is_bounded_like_every_other() {
         let shown = preview_line(&"A".repeat(2_000_000));
@@ -2496,10 +2382,8 @@ mod tests {
         assert!(!preview_line("a\u{1b}[2Jb").contains('\u{1b}'));
     }
 
-    /// The same bound, everywhere a target's text reaches the terminal. A
-    /// capture is the clearest case: the target chooses how much page sits
-    /// between a pattern's anchors, so `--regex 'flag=(.*)'` over a page with
-    /// no newlines in it captures the page.
+    /// The same bound wherever target text reaches a terminal. The target
+    /// chooses how much page sits between a pattern's anchors.
     #[test]
     fn a_capture_over_a_whole_page_is_bounded_in_the_human_view() {
         let stored = response(200, "text/html");
@@ -2513,11 +2397,9 @@ mod tests {
         assert!(preview_line(&found.captures[0]).chars().count() < MAX_PREVIEW_LINE + 80);
     }
 
-    /// The site map's `*` means the browser went to this endpoint. A replay
-    /// was recorded as a navigation, so bending a parameter at an endpoint
-    /// marked it as one the application had navigated to — a reviewer
-    /// separating "the application did this" from "the tester did this" reads
-    /// exactly that mark.
+    /// The site map's `*` means the browser went here. Replays were recorded
+    /// as navigations, which is the mark a reviewer reads to tell what the
+    /// application did from what the tester did.
     #[test]
     fn a_replay_is_not_a_page_somebody_went_to() {
         let map = map_of(&[
@@ -2534,12 +2416,8 @@ mod tests {
         assert_eq!(admin.hits, 1, "but it is still on the map");
     }
 
-    /// A sequence stops at the first failure by design, so the reason it gives
-    /// is the whole of what its author has to act on. A refusal carries `code`
-    /// and `message`; a send that reached the wire and failed there carries
-    /// neither and puts what happened in `response.error`. Reading only the
-    /// first meant a step reported "the step failed" while the reply it was
-    /// holding said "error sending request for url …".
+    /// A step that failed at the wire carries no `message`, so reading only
+    /// that reported "the step failed" while the reply said why.
     #[test]
     fn a_failed_step_reports_the_reason_the_reply_carried() {
         assert_eq!(
@@ -2801,11 +2679,9 @@ mod tests {
         // A mean would have said ~750.
     }
 
-    /// A `--repeat` burst can stop reaching the wire partway through: the
-    /// budget runs out, or policy refuses. Those sends still carry a clock, and
-    /// it is the refusal's — a millisecond or two. Averaged in with the real
-    /// ones they pull the median down, so a payload that made the server wait
-    /// three seconds reports as no delay, which is the finding not found.
+    /// A burst can stop reaching the wire partway through, and those sends
+    /// carry the refusal's clock — a millisecond or two — which pulls the
+    /// median down until a three-second delay reports as none.
     #[test]
     fn sends_that_never_reached_the_wire_are_not_part_of_the_timing() {
         let answered = |ms: u64| json!({"status": 200, "ttfb_ms": ms, "total_ms": ms});

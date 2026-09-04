@@ -1540,11 +1540,8 @@ fn control_verb_inner(
                 .get("raw_target")
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            // A `raw_request` that did not survive the hop is refused, never
-            // dropped. Falling back to `None` sent an ordinary framed request
-            // instead — the exact opposite of what the flag asks for — and
-            // reported its answer as the raw send's, so a smuggling test that
-            // never happened read as a target that is not vulnerable.
+            // Refused, never dropped: falling back to `None` sent an ordinary
+            // framed request and reported its answer as the raw send's.
             let raw_request = match request.get("raw_request") {
                 None | Some(Value::Null) => None,
                 Some(value) => {
@@ -1675,11 +1672,8 @@ fn control_verb_inner(
             // The composed form carries its body base64 in the JSON: this hop
             // is a control channel, not the broker's own socket.
             //
-            // Every piece is refused rather than defaulted. This is the
-            // cross-session replay, so a body that did not decode used to be
-            // sent as an empty one and a method that did not arrive became a
-            // GET — Alice's POST going out as Bob's bodyless GET, under a reply
-            // that calls it a replay of Alice's POST.
+            // Every piece is refused rather than defaulted: a body that did not
+            // decode was sent as an empty one and a missing method became a GET.
             let composed = match given {
                 None => None,
                 Some(value) => {
@@ -5300,14 +5294,9 @@ mod tests {
         assert!(!changed);
     }
 
-    /// The control channel carries the composed request `--as` builds and the
-    /// bytes `--raw-request` reads. Every piece of both used to be defaulted
-    /// when it could not be read: a body that did not decode was sent as an
-    /// empty one, a missing method became a GET, and a `raw_request` that did
-    /// not decode fell through to the ordinary framed sender. All three send a
-    /// request the caller did not compose and then report its answer as
-    /// theirs, which for `--as` means Alice's POST going out as a bodyless GET
-    /// under a reply that calls it her POST.
+    /// Every piece of a composed request was defaulted when it could not be
+    /// read: an undecodable body went out empty, a missing method became a GET,
+    /// and an undecodable `raw_request` fell through to the framed sender.
     #[test]
     fn a_composed_request_that_cannot_be_read_is_refused_rather_than_defaulted() {
         let mut session = session_with(tall_page());

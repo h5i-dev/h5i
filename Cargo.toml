@@ -9,11 +9,8 @@ resolver = "3"
 thiserror = "2.0.18"
 git2 = "0.20.4"
 serde = { version = "1.0", features = ["derive"] }
-# `preserve_order` because a JSON body edit rewrites the body it edits, and a
-# request whose keys came back alphabetised is not the request that was
-# recorded: an API that signs its body sees a different one and answers 401,
-# which a workbench reads as a finding. Insertion order costs an `IndexMap`
-# and buys `resend --set json.…` sending what it replayed.
+# `preserve_order`: a `json.` edit rewrites the body, and a replay whose keys
+# came back sorted is not the request that was recorded.
 serde_json = { version = "1.0", features = ["preserve_order"] }
 toml = { version = "0.8", features = ["parse", "display"] }
 sha2 = "0.10"

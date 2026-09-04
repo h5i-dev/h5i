@@ -478,17 +478,10 @@ pub fn dir(root: &Path, id: &str) -> PathBuf {
 
 /// Whether an id is one path component and nothing else.
 ///
-/// An id reaches [`dir`] from two places that are not this module's to trust: a
-/// `--session` selector, or `$H5I_BROWSER_SESSION`, typed by whoever is driving;
-/// and the `id` field of a `session.json`, which for a boxed session sits on a
-/// filesystem the boxed code can write to. Either one carrying `..` names a
-/// directory outside the registry, and everything below a session directory —
-/// the cookie jar, the control channel, the message store with its
-/// `Authorization` headers in it — is addressed by joining onto it.
-///
-/// The shape [`new_id`] mints, plus what a restore or a test may reasonably
-/// have written: letters, digits, `.`, `_` and `-`, never a separator, never
-/// leading with a dot.
+/// An id reaches [`dir`] from a `--session` selector and from a `session.json`
+/// that, for a boxed session, boxed code can write. Everything under a session
+/// directory — jar, control channel, message store — is addressed by joining
+/// onto it, so a `..` here names a directory outside the registry.
 pub fn id_is_one_component(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 96
@@ -648,16 +641,11 @@ pub fn find_by_name(root: &Path, name: &str) -> Option<Session> {
         .find(|s| s.state.is_live() && s.name.as_deref() == Some(name))
 }
 
-/// A session that has ended, by the name it was opened with. Newest first,
-/// which is what [`list`] already orders by.
+/// A session that has ended, by the name it was opened with. Newest first.
 ///
-/// Separate from [`find_by_name`] on purpose: a verb that acts on a session must
-/// only ever find a live one, and folding the two together would let a fetch or
-/// a click address a session that is no longer there. This is for the readers —
-/// `status` and `audit` — whose whole subject is often the run that just
-/// finished. `close` says "its record stays at …", and the name is what the
-/// caller has; making them find the opaque id first is making them look up
-/// something h5i already knows.
+/// Separate from [`find_by_name`] on purpose: a verb that *acts* must only find
+/// a live session. This is for the readers, whose subject is usually the run
+/// that just finished — and `close` says the record stays.
 pub fn find_ended_by_name(root: &Path, name: &str) -> Option<Session> {
     list(root)
         .unwrap_or_default()
@@ -1178,12 +1166,8 @@ pub fn read_log_capped(path: &Path) -> Option<String> {
     read_log_capped_saying(path).map(|(text, _)| text)
 }
 
-/// The same read, and whether the cap cut it short.
-///
-/// A bound that says nothing turns a partial log into a complete-looking one:
-/// a run past [`MAX_LOG_BYTES`] would report as a session that simply stopped
-/// making requests, and for a crawl the requests past the cap are the ones
-/// worth seeing. Callers that render a log to a person take the flag.
+/// The same read, and whether the cap cut it short. A bound that says nothing
+/// makes a run past [`MAX_LOG_BYTES`] read as one that stopped making requests.
 pub fn read_log_capped_saying(path: &Path) -> Option<(String, bool)> {
     use std::io::Read as _;
     let mut opts = fs::OpenOptions::new();
@@ -1531,10 +1515,8 @@ fn process_alive(_pid: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    /// A name only ever resolves to a live session, which is right for a verb
-    /// that acts and wrong for the readers: a closed session asked for by the
-    /// name it was opened with came back as "no such session", and `close`
-    /// itself says the record stays. The caller has the name, not the id.
+    /// A name only resolves to a live session, so a closed one asked for by
+    /// name came back as "no such session" — though its record stays.
     #[test]
     fn a_closed_session_is_still_findable_by_the_name_it_was_opened_with() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1554,10 +1536,8 @@ mod tests {
         assert!(find_ended_by_name(root, "never").is_none());
     }
 
-    /// The log read is bounded, and a bound that says nothing turns a partial
-    /// log into a complete-looking one: a run past the cap reads as a session
-    /// that simply stopped making requests, and for a crawl the requests past
-    /// the cap are the ones worth seeing.
+    /// A bound that says nothing makes a run past the cap read as a session
+    /// that simply stopped making requests.
     #[test]
     fn a_log_read_says_whether_the_cap_cut_it() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1580,11 +1560,8 @@ mod tests {
         assert!(text.ends_with('\n'));
     }
 
-    /// A session id is joined onto the registry to address the cookie jar, the
-    /// control channel and the message store, and it arrives from two places
-    /// this module does not own: a `--session` selector, and the `id` field of a
-    /// `session.json`, which for a boxed session sits where boxed code can
-    /// write to it.
+    /// An id addresses the jar, the control channel and the message store, and
+    /// arrives from a selector and from a file boxed code can write.
     #[test]
     fn an_id_that_is_not_one_component_names_no_directory() {
         for bad in ["..", "../../etc", "a/b", "a\\b", ".hidden", ""] {
@@ -1595,8 +1572,7 @@ mod tests {
         }
     }
 
-    /// And `read` answers "unknown session" rather than following it out of the
-    /// registry and reading whatever is there.
+    /// And `read` answers "unknown session" rather than following it out.
     #[test]
     fn reading_a_traversing_id_is_an_unknown_session() {
         let root = tempfile::tempdir().unwrap();

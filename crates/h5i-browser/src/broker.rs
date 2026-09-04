@@ -129,16 +129,10 @@ pub struct LogSummary {
     pub highest: Option<u64>,
     /// The cursor to pass back as `since`.
     ///
-    /// Not [`Self::highest`], and the difference is an evidence gap. A request
-    /// and its response are two rows sharing one sequence number, and the
-    /// request half is written *before* the wire. An agent that polled while a
-    /// fetch was in flight took the in-flight request's number as its cursor,
-    /// and the next read asked for `seq > that` — so the response half, which
-    /// carries the status, the size and the error, was never handed to anyone.
-    ///
-    /// This is the highest sequence below which nothing is still in flight, so
-    /// the worst a poll can do is show a request row twice. Which is the right
-    /// side of that trade for a log whose whole claim is that it is complete.
+    /// Not [`Self::highest`]: a request and its response share a sequence
+    /// number and the request half is written *before* the wire, so a poll
+    /// during a fetch took that number and never saw the response half. This
+    /// stops below anything in flight, so the worst it does is repeat a row.
     pub cursor: Option<u64>,
 }
 
@@ -434,9 +428,7 @@ pub trait Broker: Send + Sync {
     fn log_summary(&self) -> LogSummary {
         let records = self.records();
         // The lowest sequence whose pair is not finished. Everything below it
-        // is complete and safe to move a cursor past; it and everything after
-        // are not, because a response row lands later and would fall behind a
-        // cursor that had already gone past its number.
+        // is complete and safe to move a cursor past.
         let mut answered: std::collections::HashSet<u64> = std::collections::HashSet::new();
         for record in &records {
             if record.phase == crate::receipt::Phase::Response {
@@ -451,7 +443,6 @@ pub trait Broker: Send + Sync {
             .min();
         let highest = records.iter().map(|r| r.seq).max();
         let cursor = match in_flight {
-            // Nothing outstanding: the whole log has been handed over.
             None => highest,
             // Stop below the first request still waiting for its answer.
             Some(0) => None,
