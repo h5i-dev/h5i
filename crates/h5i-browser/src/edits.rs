@@ -677,15 +677,17 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             // ordinary starting point for an API call the page never makes, and
             // refusing it sent callers to `body.raw` to hand-write the JSON that
             // this edit exists to maintain.
-            if request.body.is_empty() && create {
-                request.body = b"{}".to_vec();
-                if request.content_type().is_none() {
-                    request.set_header("Content-Type", "application/json");
-                }
-            }
+            // Built here and committed at the end, rather than written into
+            // the request and then edited. Starting the body off as `{}` before
+            // the edit could fail left a refused edit having changed the
+            // request: an empty body became `{}` with a `Content-Type` beside
+            // it, under an error saying nothing had happened.
+            let building = request.body.is_empty() && create;
             let kind = request.content_type().unwrap_or("").to_string();
-            let mut document: serde_json::Value = serde_json::from_slice(&request.body)
-                .map_err(|e| {
+            let mut document: serde_json::Value = if building {
+                serde_json::Value::Object(serde_json::Map::new())
+            } else {
+                serde_json::from_slice(&request.body).map_err(|e| {
                     EditError::new(
                         &target,
                         format!(
@@ -694,7 +696,8 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                             if kind.is_empty() { "unset" } else { &kind }
                         ),
                     )
-                })?;
+                })?
+            };
             let was = json_at(&document, path).map(render_json);
             if was.is_none() && !create && !removing {
                 return Err(EditError::new(
@@ -716,6 +719,9 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             }
             request.body = serde_json::to_vec(&document)
                 .map_err(|e| EditError::new(&target, format!("could not rebuild the body: {e}")))?;
+            if building && request.content_type().is_none() {
+                request.set_header("Content-Type", "application/json");
+            }
             Ok(Applied {
                 target,
                 value: (!removing).then(|| text(&value)),
@@ -1648,6 +1654,54 @@ mod tests {
             String::from_utf8_lossy(&request.body),
             r#"{"a":1,"c":3,"d":4}"#
         );
+    }
+
+    /// The rule every refusal in this module is written to: an edit that
+    /// errors changed nothing. A caller who reads the error and tries a
+    /// different spelling is otherwise editing a request that has already been
+    /// half-edited, and the request that eventually goes out is one nobody
+    /// composed.
+    #[test]
+    fn an_edit_that_is_refused_leaves_the_request_exactly_as_it_was() {
+        let targets = [
+            "method", "url", "path", "query.a", "query.", "header.X", "header.X A",
+            "cookie.s", "cookie.s;x", "json.a", "json.a.b", "json.", "form.f",
+            "multipart.f", "multipart.f.filename", "multipart.f.content_type",
+            "body.raw", "body.other", "nonsense", "", ".", "..", "query.a.b",
+        ];
+        let values = [
+            "", "1", "..", "/a/../b", "\\\\..\\\\", "https://app.test/../x", "not a url",
+            "a\r\nb", "a; b=c", "{\"a\":1}", "%2e%2e", "@", "=", "a=b",
+        ];
+        let bodies: [&[u8]; 4] = [b"", b"{\"a\":{\"b\":1}}", b"a=1&b=2", b"\xff\xd8not text"];
+
+        for body in bodies {
+            for target in targets {
+                for value in values {
+                    for create in [false, true] {
+                        for removing in [false, true] {
+                            let mut request = request();
+                            request.body = body.to_vec();
+                            let before = request.clone();
+                            let edit = if removing {
+                                parse_unset(target)
+                            } else {
+                                parse_set(&format!("{target}={value}"))
+                            };
+                            let Ok(edit) = edit else { continue };
+                            if apply(&mut request, &[edit], create).is_err() {
+                                assert_eq!(
+                                    request, before,
+                                    "`{target}` = `{value}` (create={create}, \
+                                     removing={removing}) was refused and still \
+                                     changed the request"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// And an ordinary path still goes through, dots in a filename included.
