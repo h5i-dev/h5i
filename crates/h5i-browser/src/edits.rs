@@ -321,15 +321,35 @@ fn refuse_a_resolved_traversal(
 ) -> Result<(), EditError> {
     // Whatever was named — a path or a whole URL — only its path can hold a
     // dot segment.
+    // The authority ends at the first separator, and a backslash is one of
+    // those: `https://app.test\..\..\x` has a path even though it holds no
+    // `/`, and looking only for a slash would hand back "/" and find nothing to
+    // refuse in a URL the parser resolves down to `/x`.
     let asked = match asked.split_once("://") {
-        Some((_, rest)) => match rest.find('/') {
+        Some((_, rest)) => match rest.find(['/', '\\']) {
             Some(at) => &rest[at..],
             None => "/",
         },
         None => asked,
     };
     let asked_path = asked.split(['?', '#']).next().unwrap_or(asked);
-    if !asked_path.split('/').any(is_a_dot_segment) {
+    // A backslash is a path separator too, for exactly the schemes this engine
+    // speaks: the URL standard reads `\` as `/` in a special URL, so
+    // `/cgi-bin/..\..\etc/passwd` is resolved to `/etc/passwd` before any
+    // request exists. Refused for the same reason a dot segment is, and named
+    // separately because the traversal is not the only rewrite: `/a\b` goes out
+    // as `/a/b`, which is a different request from the one that was typed.
+    if asked_path.contains('\\') {
+        return Err(EditError::new(
+            target,
+            format!(
+                "{asked_path:?} contains a backslash, and the URL standard reads that as a \
+                 path separator in an http or https URL: this would have gone out as \
+                 {resolved:?}. Percent-encode it as %5C to send the character itself."
+            ),
+        ));
+    }
+    if !asked_path.split(['/', '\\']).any(is_a_dot_segment) {
         return Ok(());
     }
     Err(EditError::new(
@@ -1232,6 +1252,30 @@ mod tests {
                 error.to_string().contains("dot segment"),
                 "{spelling}: {error}"
             );
+            assert_eq!(
+                request.url.as_str(),
+                "https://app.test/api/users?user_id=123&page=2",
+                "a refused edit leaves the request alone"
+            );
+        }
+    }
+
+    /// The URL standard reads `\` as `/` in an http or https URL, so a
+    /// traversal spelled with backslashes resolves just as far and used to slip
+    /// past the check above: it splits on `/`, and `..\..\etc` holds none.
+    /// `path=/cgi-bin/..\..\etc/passwd` went out as `/etc/passwd`.
+    #[test]
+    fn a_backslash_is_a_separator_too_and_is_refused_with_it() {
+        for spelling in [
+            "path=/cgi-bin/..\\..\\etc/passwd",
+            "path=/a\\b",
+            "url=https://app.test/cgi-bin/..\\..\\etc/passwd",
+            "url=https://app.test\\..\\..\\x",
+        ] {
+            let mut request = request();
+            let error = apply(&mut request, &[set(spelling)], false)
+                .expect_err("a backslash the parser rewrites is refused");
+            assert!(error.to_string().contains("backslash"), "{spelling}: {error}");
             assert_eq!(
                 request.url.as_str(),
                 "https://app.test/api/users?user_id=123&page=2",
