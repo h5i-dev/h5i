@@ -3671,7 +3671,14 @@ fn status(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()>
     let mut session = match bs::resolve(root, selector) {
         Ok(session) => session,
         Err(bs::SessionGone::Ended { id, .. }) => bs::read(root, &id)?,
-        Err(gone) => anyhow::bail!("{gone}"),
+        // A name only ever resolves to a *live* session, so a closed one asked
+        // for by the name it was opened with arrived here as "no such session".
+        // Which is the one question this verb exists to answer, and `close`
+        // itself says the record stays — the caller has the name, not the id.
+        Err(gone) => match selector.and_then(|name| bs::find_ended_by_name(root, name)) {
+            Some(ended) => ended,
+            None => anyhow::bail!("{gone}"),
+        },
     };
     let id = &session.id.clone();
     // Reading status is the moment to notice a death and write it down.

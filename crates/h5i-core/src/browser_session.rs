@@ -648,6 +648,23 @@ pub fn find_by_name(root: &Path, name: &str) -> Option<Session> {
         .find(|s| s.state.is_live() && s.name.as_deref() == Some(name))
 }
 
+/// A session that has ended, by the name it was opened with. Newest first,
+/// which is what [`list`] already orders by.
+///
+/// Separate from [`find_by_name`] on purpose: a verb that acts on a session must
+/// only ever find a live one, and folding the two together would let a fetch or
+/// a click address a session that is no longer there. This is for the readers —
+/// `status` and `audit` — whose whole subject is often the run that just
+/// finished. `close` says "its record stays at …", and the name is what the
+/// caller has; making them find the opaque id first is making them look up
+/// something h5i already knows.
+pub fn find_ended_by_name(root: &Path, name: &str) -> Option<Session> {
+    list(root)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|s| !s.state.is_live() && s.name.as_deref() == Some(name))
+}
+
 /// Turn what the caller said (or did not say) into a session a verb may act on.
 pub fn resolve(root: &Path, selector: Option<&str>) -> Result<Session, SessionGone> {
     let selector = selector
@@ -1503,6 +1520,29 @@ fn process_alive(_pid: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// A name only ever resolves to a live session, which is right for a verb
+    /// that acts and wrong for the readers: a closed session asked for by the
+    /// name it was opened with came back as "no such session", and `close`
+    /// itself says the record stays. The caller has the name, not the id.
+    #[test]
+    fn a_closed_session_is_still_findable_by_the_name_it_was_opened_with() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let mut session = named(root, "auth");
+
+        // While it is live, only the live lookup finds it.
+        assert!(find_by_name(root, "auth").is_some());
+        assert!(find_ended_by_name(root, "auth").is_none());
+
+        end(root, &mut session, State::Closed, "closed by the user");
+
+        // And once it has ended, the other way round.
+        assert!(find_by_name(root, "auth").is_none());
+        let found = find_ended_by_name(root, "auth").expect("the record stays");
+        assert_eq!(found.id, session.id);
+        assert!(find_ended_by_name(root, "never").is_none());
+    }
+
     /// A session id is joined onto the registry to address the cookie jar, the
     /// control channel and the message store, and it arrives from two places
     /// this module does not own: a `--session` selector, and the `id` field of a
