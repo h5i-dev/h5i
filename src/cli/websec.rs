@@ -474,7 +474,7 @@ pub fn show(
             println!("  request  : {} {}", request.method, request.url);
             println!("  at       : {}", request.at);
             for (name, value) in &request.headers {
-                println!("    {}: {}", printable(name), printable(value));
+                println!("    {}: {}", preview_line(name), preview_line(value));
             }
             summarise_body(body);
         }
@@ -499,7 +499,7 @@ pub fn show(
                 None => println!("  response : (none: the request did not complete)"),
             }
             for (name, value) in &response.headers {
-                println!("    {}: {}", printable(name), printable(value));
+                println!("    {}: {}", preview_line(name), preview_line(value));
             }
             summarise_body(body);
             if let Some(trailing) = &trailing {
@@ -1097,22 +1097,22 @@ pub fn diff(
     );
     println!("  alike    : {:.3}", difference.similarity);
     for name in &difference.headers_added {
-        println!("  + header : {}", printable(name));
+        println!("  + header : {}", preview_line(name));
     }
     for name in &difference.headers_removed {
-        println!("  - header : {}", printable(name));
+        println!("  - header : {}", preview_line(name));
     }
     for name in &difference.headers_changed {
-        println!("  ~ header : {}", printable(name));
+        println!("  ~ header : {}", preview_line(name));
     }
     for change in &difference.json_changes {
         let from = change.from.as_deref().unwrap_or("(absent)");
         let to = change.to.as_deref().unwrap_or("(absent)");
         println!(
             "  ~ {} : {} → {}",
-            printable(&change.path),
-            printable(from),
-            printable(to)
+            preview_line(&change.path),
+            preview_line(from),
+            preview_line(to)
         );
     }
     for change in &difference.line_changes {
@@ -1448,7 +1448,12 @@ fn look(
                 one.expr
             );
             for capture in &one.captures {
-                println!("      {}", printable(capture));
+                // Bounded in the human view for the reason a body line is: the
+                // target chooses how much text sits between a pattern's
+                // anchors, so `--regex 'flag=(.*)'` over a one-line page
+                // captures the page. `--json` still carries it whole, because
+                // that is the channel a script reads a token out of.
+                println!("      {}", preview_line(capture));
             }
         }
     }
@@ -1694,12 +1699,12 @@ pub fn sitemap(root: &Path, selector: Option<&str>, json_out: bool) -> anyhow::R
             let params = if endpoint.params.is_empty() {
                 String::new()
             } else {
-                format!("  ?{}", printable(&endpoint.params.join("&")))
+                format!("  ?{}", preview_line(&endpoint.params.join("&")))
             };
             let mark = if endpoint.navigated { "*" } else { " " };
             println!(
                 "  {mark} {:<32} {:<8} {:<12} x{}{params}",
-                printable(&endpoint.path),
+                preview_line(&endpoint.path),
                 methods,
                 statuses,
                 endpoint.hits
@@ -1710,7 +1715,7 @@ pub fn sitemap(root: &Path, selector: Option<&str>, json_out: bool) -> anyhow::R
         println!();
         println!("  refused by policy:");
         for url in &map.denied {
-            println!("    {}", printable(url));
+            println!("    {}", preview_line(url));
         }
     }
     Ok(())
@@ -2038,7 +2043,7 @@ pub fn sequence(
         for step in &ran {
             let label = step.name.clone().unwrap_or_else(|| format!("resend {}", step.resend));
             match (&step.error, step.status) {
-                (Some(why), _) => println!("  ✘ {label}: {}", printable(why)),
+                (Some(why), _) => println!("  ✘ {label}: {}", preview_line(why)),
                 (None, Some(status)) => {
                     let bound = if step.bound.is_empty() {
                         String::new()
@@ -2397,6 +2402,23 @@ mod tests {
         // A line that fits is untouched, and still inert.
         assert_eq!(preview_line("<p>hello</p>"), "<p>hello</p>");
         assert!(!preview_line("a\u{1b}[2Jb").contains('\u{1b}'));
+    }
+
+    /// The same bound, everywhere a target's text reaches the terminal. A
+    /// capture is the clearest case: the target chooses how much page sits
+    /// between a pattern's anchors, so `--regex 'flag=(.*)'` over a page with
+    /// no newlines in it captures the page.
+    #[test]
+    fn a_capture_over_a_whole_page_is_bounded_in_the_human_view() {
+        let stored = response(200, "text/html");
+        let page = format!("flag={}", "A".repeat(2_000_000));
+        let body = Text::Utf8(page);
+        let found = evaluate(&Condition::Regex("flag=(.*)".to_string()), &stored, &body);
+        assert!(found.matched);
+        // Whole in the machine channel, which is where a token is read from.
+        assert_eq!(found.captures[0].len(), 2_000_000);
+        // Bounded on the way to a terminal.
+        assert!(preview_line(&found.captures[0]).chars().count() < MAX_PREVIEW_LINE + 80);
     }
 
     fn response(status: u16, kind: &str) -> StoredResponse {
