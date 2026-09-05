@@ -11,7 +11,7 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-<h1 align="center">A Secure, Auditable Browser for AI Agents</h1>
+<h1 align="center">A Security-First Browser for AI Agents</h1>
 
 **h5i** (pronounced high-five) is a lightweight, policy-controlled browser for AI agents that combines page automation with direct control over HTTP traffic. Agents can navigate and extract pages, inspect, edit, replay, and compare requests and responses, and run multi-step test flows. It is built for scraping, automated web testing, CTFs, and authorized red teaming. It can sandbox either the browser or the agent’s entire workflow.
 
