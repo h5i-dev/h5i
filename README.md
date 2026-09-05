@@ -83,11 +83,6 @@ curl -fsSL https://h5i.dev/install.sh --websec | sh
 h5i plugin install websec --from ./h5i-websec
 ```
 
-Two optional runtimes add stronger sandbox tiers: rootless
-[Podman](https://podman.io/) provides `container`, while
-[microsandbox](https://microsandbox.dev) (`msb`) provides `microvm` on a host
-with hardware virtualization (`/dev/kvm` on Linux or Apple Silicon on macOS).
-
 ---
 
 ## 2. Use it
