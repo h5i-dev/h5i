@@ -441,14 +441,26 @@
       <p class="section-sub"><a href="https://github.com/h5i-dev/h5i-benchmark" style="color:var(--red-text)">Make your agent a professional hacker &#8594;</a></p>
     </div>
     <div class="terminal"><div class="terminal-bar"><span class="terminal-path">one session, from page to traffic</span></div>
-<div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://target.example --capture --allow target.example</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser click @e7</span>
+<div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://target.example --capture --allow target.example</span>      <span class="t-cmt"># keep every message</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot</span>                                                          <span class="t-cmt"># the page as an outline</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser click @e7</span>                                                         <span class="t-cmt"># drive it like a user</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i websec requests</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i websec show req_42 --raw</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i websec replay req_42 --set query.id=456</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i websec diff res_42 res_43</span></pre></div></div>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i websec requests --human</span>                                                   <span class="t-cmt"># what the session sent</span>
+<span class="t-out">  #41 GET  /login            200  2.1 kB</span>
+<span class="t-out">  #42 GET  /api/item?id=123  200  1.4 kB</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i websec show req_42 --raw</span>                                                  <span class="t-cmt"># byte for byte, as it went out</span>
+<span class="t-out">  GET /api/item?id=123 HTTP/1.1</span>
+<span class="t-out">  host: target.example</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i websec replay req_42 --set query.id=456</span>                                   <span class="t-cmt"># resend with one field changed</span>
+<span class="t-out">  res_43  200  1.9 kB</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i websec diff res_42 res_43 --human</span>                                         <span class="t-cmt"># how the two answers differ</span>
+<span class="t-out">  status   : 200 &#8594; 200</span>
+<span class="t-out">  bytes    : 1412 &#8594; 1903 (+491)</span>
+<span class="t-out">  alike    : 0.712</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i websec match res_43 --contains "not your item"</span>                            <span class="t-cmt"># exits 0 when it holds</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i websec sitemap --human</span>                                                    <span class="t-cmt"># origins and endpoints reached</span>
+<span class="t-out">  target.example</span>
+<span class="t-out">  * /api/item                        GET      200          x3  ?id</span></pre></div></div>
     <div class="feat-grid">
       <div class="feat-card">
         <div class="feat-name">See what the browser actually sent</div>
