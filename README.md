@@ -76,6 +76,13 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 # h5i skill show policy            # or just read a page
 ```
 
+Install the optional `websec` plugin to directly control HTTP traffic:
+
+```bash
+curl -fsSL https://h5i.dev/install.sh --websec | sh
+h5i plugin install websec --from ./h5i-websec
+```
+
 Two optional runtimes add stronger sandbox tiers: rootless
 [Podman](https://podman.io/) provides `container`, while
 [microsandbox](https://microsandbox.dev) (`msb`) provides `microvm` on a host
