@@ -371,9 +371,8 @@
     <div class="section-head">
       <span class="section-tag">The browser</span>
       <h2 class="section-title">A browser built for agents. Still under your control.</h2>
-      <p class="section-sub">Agents browse with simple commands and receive compact, structured snapshots
-        instead of raw HTML. You can review the complete session, take control when needed, and keep
-        credentials out of the model's context.</p>
+      <p class="section-sub">Agents browse with simple CLI and receive compact, structured snapshots. You can keep
+        credentials out of the model's context, and review the complete session.</p>
       <p class="section-sub"><a href="/guides/drive-a-browser-session/" style="color:var(--red-text)">Open a session and read what it reached &#8594;</a></p>
     </div>
     <div class="terminal"><div class="terminal-bar"><span class="terminal-path">one session, start to close</span></div>
@@ -391,24 +390,23 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i browser audit</span>             <span class="t-cmt"># the whole session, afterwards</span>
 <span class="t-ai">  host  </span> <span class="t-out">session opened</span>
 <span class="t-out">  engine  verb   snapshot</span>
-<span class="t-ai">  host  </span> <span class="t-out">control -&gt; human  (taken by a human)</span>
 <span class="t-out">  engine  #1 </span><span class="t-red">DENIED</span><span class="t-out"> GET https://tracker.example/px</span>
 <span class="t-ai">  host  </span> <span class="t-out">session closed</span></pre></div></div>
     <div class="feat-grid">
       <div class="feat-card">
         <div class="feat-name">Pages in a format agents can use</div>
         <div class="feat-desc">h5i returns a compact page outline with <code>@ref</code> handles. Agents
-          can read, click, type, and extract data without processing screenshots or noisy HTML.</div>
+          can read, click, type, and extract data.</div>
       </div>
       <div class="feat-card">
         <div class="feat-name">A complete session history</div>
-        <div class="feat-desc">Browser actions, network requests, blocked connections, human takeovers,
-          crashes, and how the session ended are kept in one timeline.</div>
+        <div class="feat-desc">Browser actions, network requests, blocked connections,
+          and crashes are kept in one timeline.</div>
       </div>
       <div class="feat-card">
         <div class="feat-name">Human control for sensitive steps</div>
         <div class="feat-desc">Take control for logins, payments, or approvals, then hand the session back
-          to the agent. Credentials are entered or substituted without being returned to the model.</div>
+          to the agent.</div>
       </div>
     </div>
   </div>
@@ -460,11 +458,9 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">The box</span>
-      <h2 class="section-title">Sandbox the browser, or the entire agent workflow.</h2>
-      <p class="section-sub">Run only the browser in a sandbox, or isolate the agent, source code,
-        dependencies, development server, and browser together. This lets agents build and test web apps
-        while limiting access to your host files, credentials, and network. Choose lightweight process
-        isolation, a container, or a microVM without changing the browser commands.</p>
+      <h2 class="section-title">Sandbox the workflow.</h2>
+      <p class="section-sub">Isolate the agent, source code,
+        dependencies, development server, and browser together. Choose lightweight process isolation, a container, or a microVM.</p>
     </div>
   </div>
 </section>
@@ -475,8 +471,8 @@
     <div class="n">01</div>
     <div>
       <h3>Create the right boundary<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>Start from a repository or pull request and choose the isolation the task needs: lightweight OS controls,
-        a rootless container, or a microVM with its own kernel.</p>
+      <p>Choose the isolation level: lightweight OS controls,
+        a container, or a microVM.</p>
     </div>
     <div class="ev">
       <div class="tape"><b>$</b> <span>h5i box create fix-auth --profile agent-claude</span></div>
@@ -488,8 +484,7 @@
     <div class="n">02</div>
     <div>
       <h3>Build and test inside it<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>The agent, child processes, dependencies, dev server, and browser run in the same boundary. Host files,
-        browser profiles, and credentials stay outside.</p>
+      <p>The agent, dependencies, dev server, and browser run in the same boundary.</p>
     </div>
     <div class="ev">
       <div class="tape"><b>$</b> <span>h5i box view fix-auth</span></div>
@@ -501,8 +496,7 @@
     <div class="n">03</div>
     <div>
       <h3>Share only the demo service<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>Expose one port from the box without exposing your laptop. Use an end-to-end P2P connection
-        , or generate a browser-ready demo link for everyone else.</p>
+      <p>Securely share a demo service in a sandbox with an end-to-end P2P connection.</p>
     </div>
     <div class="ev">
       <div class="tape"><b>$</b> <span>h5i box share fix-auth --port 3000</span></div>
@@ -514,8 +508,7 @@
     <div class="n">04</div>
     <div>
       <h3>Review, then take the work<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>Inspect the proposed diff and the boundary's record of what ran and what was denied. Only then apply the
-        snapshot to the parent branch.</p>
+      <p>Inspect the proposed diff and the record of what ran and what was denied.</p>
     </div>
     <div class="ev">
       <div class="tape"><b>$</b> <span>h5i box propose fix-auth</span></div>
