@@ -403,7 +403,11 @@
 <span class="t-ai">  host  </span> <span class="t-out">session opened</span>
 <span class="t-out">  engine  verb   snapshot</span>
 <span class="t-out">  engine  #1 </span><span class="t-red">DENIED</span><span class="t-out"> GET https://tracker.example/px</span>
-<span class="t-ai">  host  </span> <span class="t-out">session closed</span></pre></div></div>
+<span class="t-ai">  host  </span> <span class="t-out">session closed</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">printf '[profile.custom-sandbox]\nisolation = "container"\n' &gt; .h5i/env.toml</span>  <span class="t-cmt"># a container-isolation profile</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box --profile custom-sandbox --name custom-sandbox</span>                        <span class="t-cmt"># create the box with it</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://docs.rs/ --in custom-sandbox</span>                         <span class="t-cmt"># open the session inside that box</span></pre></div></div>
     <div class="feat-grid">
       <div class="feat-card">
         <div class="feat-name">Pages in a format agents can use</div>
@@ -464,71 +468,6 @@
     </div>
   </div>
 </section>
-
-<!-- ── The box ────────────────────────────────────────────── -->
-<section id="whatis">
-  <div class="container">
-    <div class="section-head">
-      <span class="section-tag">The box</span>
-      <h2 class="section-title">Sandbox the workflow.</h2>
-      <p class="section-sub">Isolate the agent, source code,
-        dependencies, development server, and browser together. Choose lightweight process isolation, a container, or a microVM.</p>
-    </div>
-  </div>
-</section>
-
-<div class="caps">
-
-  <a class="cap" href="/features/">
-    <div class="n">01</div>
-    <div>
-      <h3>Create the right boundary<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>Choose the isolation level: lightweight OS controls,
-        a container, or a microVM.</p>
-    </div>
-    <div class="ev">
-      <div class="tape"><b>$</b> <span>h5i box create fix-auth --profile agent-claude</span></div>
-      <div class="ev-note">under 200 ms lightweight &#183; container &#183; microVM</div>
-    </div>
-  </a>
-
-  <a class="cap" href="/blog/choosing-agent-isolation/">
-    <div class="n">02</div>
-    <div>
-      <h3>Build and test inside it<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>The agent, dependencies, dev server, and browser run in the same boundary.</p>
-    </div>
-    <div class="ev">
-      <div class="tape"><b>$</b> <span>h5i box view fix-auth</span></div>
-      <div class="ev-note">agent + toolchain + dev server + browser &#183; one boundary</div>
-    </div>
-  </a>
-
-  <a class="cap" href="/features/">
-    <div class="n">03</div>
-    <div>
-      <h3>Share only the demo service<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>Securely share a demo service in a sandbox with an end-to-end P2P connection.</p>
-    </div>
-    <div class="ev">
-      <div class="tape"><b>$</b> <span>h5i box share fix-auth --port 3000</span></div>
-      <div class="ev-note">encrypted P2P &#183; add <code>--tunnel</code> for a browser-ready link</div>
-    </div>
-  </a>
-
-  <a class="cap" href="/blog/the-h5i-loop/">
-    <div class="n">04</div>
-    <div>
-      <h3>Review, then take the work<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>Inspect the proposed diff and the record of what ran and what was denied.</p>
-    </div>
-    <div class="ev">
-      <div class="tape"><b>$</b> <span>h5i box propose fix-auth</span></div>
-      <div class="ev-note">review diff &#183; export receipt &#183; apply snapshot</div>
-    </div>
-  </a>
-
-</div>
 
 <!-- ── FAQ ────────────────────────────────────────────────────── -->
 <!-- ── The dashboard ────────────────────────────────────────────
