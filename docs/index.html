@@ -392,14 +392,14 @@
 <span class="t-pass">&#10004;</span>  browser session <span class="t-ai">br_7k2xqa</span>
    requests : <span class="t-warn">engine-claimed</span> (fail-closed, and the engine's own account of what it fetched)
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot</span>          <span class="t-cmt"># outline, with @ref handles</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot</span>                                                          <span class="t-cmt"># outline, with @ref handles</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i browser click @e3</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot --delta</span>  <span class="t-cmt"># only what changed</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser requests</span>          <span class="t-cmt"># refusals included</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot --delta</span>                                                  <span class="t-cmt"># only what changed</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser requests</span>                                                          <span class="t-cmt"># refusals included</span>
 <span class="t-out">  4 requests, 1 denied</span>
 <span class="t-red">  denied</span> <span class="t-out">https://tracker.example/px  origin not in the allowlist</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i browser close</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser audit</span>             <span class="t-cmt"># the whole session, afterwards</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser audit</span>                                                             <span class="t-cmt"># the whole session, afterwards</span>
 <span class="t-ai">  host  </span> <span class="t-out">session opened</span>
 <span class="t-out">  engine  verb   snapshot</span>
 <span class="t-out">  engine  #1 </span><span class="t-red">DENIED</span><span class="t-out"> GET https://tracker.example/px</span>
@@ -420,9 +420,9 @@
           and crashes are kept in one timeline.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Human control for sensitive steps</div>
-        <div class="feat-desc">Take control for logins, payments, or approvals, then hand the session back
-          to the agent.</div>
+        <div class="feat-name">Sandbox the workflow</div>
+        <div class="feat-desc">Wrap the browser, or the entire workflow, in a customizable sandbox:
+          process isolation, a container, or a microVM.</div>
       </div>
     </div>
   </div>
