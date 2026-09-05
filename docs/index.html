@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>h5i: A Security-First Browser for AI Agents</title>
-  <meta name="description" content="h5i gives an AI agent a browser it can drive and you can audit: every request is policy-checked and written down before the bytes move, or the fetch is refused.">
-  <meta name="keywords" content="browser for ai agents, agent browser, auditable browser, headless browser for agents, browser automation audit log, sandboxed browser, agentic browsing, web agent security, prompt injection page content, egress allowlist, browser session isolation, human takeover browser, landlock seccomp sandbox, microvm isolation, claude code, codex, h5i">
+  <meta name="description" content="h5i is a security-first browser for AI agents. Browse, scrape, and automate the web under your policies, with sandboxing, credential isolation, and an auditable record of every request. The same browser inspects, replays, and compares HTTP traffic for web security testing.">
+  <meta name="keywords" content="browser for ai agents, agent browser, security-first browser, web scraping for agents, browser automation, auditable browser, headless browser for agents, sandboxed browser, agentic browsing, web agent security, prompt injection page content, egress allowlist, browser session isolation, human takeover browser, landlock seccomp sandbox, microvm isolation, web security testing, http request replay, traffic capture, ctf, authorized pentesting, claude code, codex, h5i">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -21,8 +21,8 @@
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i: A Secure, Auditable Browser for AI Agents">
-  <meta property="og:description" content="A browser for AI agents whose request log is a decision record, not a trace. The engine is the HTTP client, so a request that is not in the log did not happen. Run it here like any headless browser, or place the same session in a sandbox.">
+  <meta property="og:title" content="h5i: A Security-First Browser for AI Agents">
+  <meta property="og:description" content="h5i lets agents browse, scrape, and automate the web under your policies, and inspect web apps through the same browser. It reads pages ~3× faster with ~86% less peak memory than headless Chromium. Every browser action and network request is recorded for review.">
   <meta property="og:url" content="https://h5i.dev/">
   <meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
   <meta property="og:image:alt" content="An h5i browser session: the page an agent is reading, beside the request log the engine wrote before any bytes moved">
@@ -30,7 +30,7 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i: A Secure, Auditable Browser for AI Agents">
+  <meta name="twitter:title" content="h5i: A Security-First Browser for AI Agents">
   <meta name="twitter:description" content="h5i lets agents browse, scrape, and automate the web under your policies, and inspect web apps through the same browser. It reads pages ~3× faster with ~86% less peak memory than headless Chromium. Every browser action and network request is recorded for review.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
   <meta name="twitter:image:alt" content="An h5i browser session: the page an agent is reading, beside the request log the engine wrote before any bytes moved">
@@ -61,7 +61,7 @@
       "name": "h5i",
       "alternateName": "high-five",
       "url": "https://h5i.dev/",
-      "description": "A secure, auditable browser for AI agents. The engine is the HTTP client, so every request is policy-checked and recorded before the bytes move and a fetch that cannot be recorded is refused. Sessions run on the host by default and can be placed inside a sandbox without changing a single verb.",
+      "description": "A security-first browser for AI agents to browse, scrape, test, and automate the web. Network policies, sandboxing, credential isolation, and auditable sessions reduce the risk of giving an agent web access, and the same controls let an agent inspect, edit, replay, and compare HTTP traffic for web security testing.",
       "publisher": {
         "@id": "https://h5i.dev/#org"
       },
@@ -73,11 +73,12 @@
       "name": "h5i",
       "alternateName": "high-five",
       "applicationCategory": "DeveloperApplication",
-      "applicationSubCategory": "Web browser for AI agents",
+      "applicationSubCategory": "Browser and web security testing tool for AI agents",
       "operatingSystem": "Linux, macOS, Windows (WSL2)",
-      "description": "A secure, auditable browser for AI agents. An agent drives a session by id and reads the page as a compact outline of @ref handles; the engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused. A request that is not in the log did not happen. Sessions run on the host by default, with no containment claimed, and one flag places the same session inside a Landlock, seccomp, container or microVM sandbox, which adds an egress allowlist enforced outside the browser and makes a human takeover a boundary rather than a request.",
+      "description": "A security-first browser for AI agents, written in Rust with no Chromium or V8. An agent drives a session by id and reads the page as a compact outline of @ref handles, so it can browse, scrape, and automate the web; in our benchmarks it reads pages about 3 times faster with about 86% less peak memory than headless Chromium. The engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused. One flag places the same session inside a Landlock, seccomp, container or microVM sandbox, which adds an egress allowlist enforced outside the browser and makes a human takeover a boundary rather than a request. With capture on, h5i websec turns the traffic the browser generated into a workbench: inspect, edit, replay, compare, and assert on requests and responses for authorized web security testing, CTFs, and red teaming.",
       "featureList": [
         "A browser an agent drives by session id: open, snapshot, click, type, take, audit, close",
+        "Written in Rust with no Chromium or V8: about 3x faster page reads with about 86% less peak memory in our benchmarks",
         "Pages returned as a compact outline with @ref handles instead of raw HTML or screenshots",
         "Policy first, record second, wire third: a fetch that cannot be recorded is refused",
         "A fail-closed request log, so a request that is not in the log did not happen",
@@ -88,9 +89,12 @@
         "Five isolation tiers (workspace, process, supervised, container, microvm) that fail closed",
         "A network egress allowlist enforced outside the browser at L3/L4, or through an L7 proxy",
         "A disposable box holding the code, the toolchain, the dev server and the browser session",
-        "An output gate: h5i box export writes a reviewable patch, a report and an execution receipt"
+        "An output gate: h5i box export writes a reviewable patch, a report and an execution receipt",
+        "Full HTTP capture of a browser session: headers and bodies, both directions, kept out of the audit log",
+        "An HTTP workbench, h5i websec: inspect, edit, replay and compare the requests and responses the browser made",
+        "Assertions over stored responses, so captured traffic becomes a repeatable test for CTFs and authorized pentesting"
       ],
-      "keywords": "browser for AI agents, agent browser, auditable browser, headless browser for AI agents, browser automation audit log, agentic browsing, fail-closed request log, egress allowlist, browser session isolation, human takeover, prompt injection containment, AI agent sandbox, microVM isolation, Claude Code, Codex",
+      "keywords": "browser for AI agents, agent browser, security-first browser, web scraping for agents, browser automation, auditable browser, headless browser for AI agents, agentic browsing, fail-closed request log, egress allowlist, browser session isolation, human takeover, prompt injection containment, AI agent sandbox, microVM isolation, web security testing, HTTP capture and replay, CTF, authorized penetration testing, Claude Code, Codex",
       "url": "https://h5i.dev/",
       "downloadUrl": "https://github.com/h5i-dev/h5i",
       "installUrl": "https://github.com/h5i-dev/h5i#install",
@@ -119,7 +123,7 @@
       "@type": "WebPage",
       "@id": "https://h5i.dev/#webpage",
       "url": "https://h5i.dev/",
-      "name": "h5i: A Secure, Auditable Browser for AI Agents",
+      "name": "h5i: A Security-First Browser for AI Agents",
       "isPartOf": {
         "@id": "https://h5i.dev/#website"
       },
@@ -157,7 +161,7 @@
           "name": "What is h5i?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "h5i is a fast, lightweight browser for AI agents, with built-in auditing and configurable sandboxing. It runs locally and is open source."
+            "text": "h5i is a fast, lightweight browser for AI agents to browse, scrape, test, and automate the web, with built-in auditing and configurable sandboxing. The same browser can inspect, edit, replay, and compare the HTTP traffic it generated. It runs locally and is open source."
           }
         },
         {
@@ -166,6 +170,14 @@
           "acceptedAnswer": {
             "@type": "Answer",
             "text": "Use Playwright or Puppeteer when maximum website compatibility is your priority. Use h5i when you need lower resource use, network controls, a complete session record, or a sandbox for both the browser and agent."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can h5i test web apps for security issues?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Open a session with capture on and h5i websec works on the traffic the browser generated: list the requests, inspect a message with its headers and body, edit and replay it, compare two responses, and assert conditions to build repeatable tests. It is meant for CTFs, security research, and authorized pentesting."
           }
         },
         {
