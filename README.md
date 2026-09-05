@@ -260,17 +260,31 @@ receives a private, one-time copy of approved HOME state.
 <details>
 <summary>What is h5i?</summary>
 
-h5i is a fast, lightweight browser for AI agents, with built-in auditing and
-configurable sandboxing. It runs locally and is open source.
+h5i is a lightweight, open-source browser built for AI agents to browse, scrape,
+and automate the web. It combines policy-controlled, auditable sessions and
+configurable sandboxing with optional tools for inspecting and testing HTTP
+traffic. It runs locally and is written in Rust without Chromium or V8.
 
 </details>
 
 <details>
 <summary>Why use h5i instead of Playwright or Puppeteer?</summary>
 
-Use Playwright or Puppeteer when maximum website compatibility is your
-priority. Use h5i when you need lower resource use, network controls, a
-complete session record, or a sandbox for both the browser and agent.
+Use Playwright or Puppeteer when maximum compatibility with complex websites is
+the priority. Use h5i when you want lower resource use, direct network controls,
+a complete session record, built-in HTTP testing tools, or a sandbox for the
+browser and agent.
+
+</details>
+
+<details>
+<summary>Is h5i a replacement for Burp Suite?</summary>
+
+Not for every use case. h5i is useful when an AI agent needs to browse an
+application and capture, edit, replay, and compare its HTTP traffic through one
+interface, without a separate proxy or CA setup. Burp Suite remains better
+suited to mature manual workflows, automated scanning, extensions, and
+low-level protocol testing.
 
 </details>
 
@@ -287,17 +301,18 @@ run Chromium inside an h5i sandbox.
 <summary>Is h5i sandboxed by default?</summary>
 
 The browser uses lightweight process isolation when available. For stronger
-isolation, place the browser, or the agent's entire workflow, inside a
-container or microVM.
+isolation, place the browser or the agent's entire workflow inside a supervised
+network sandbox, container, or microVM.
 
 </details>
 
 <details>
 <summary>Can h5i prevent prompt injection?</summary>
 
-No browser can guarantee that. h5i limits the damage by treating page content
-as untrusted and restricting what a misled agent can access through network
-rules and sandboxing.
+No browser can reliably detect or prevent every prompt injection. h5i reduces
+the potential impact by treating page content as untrusted, restricting network
+and filesystem access, isolating credentials, and recording the resulting
+actions for review.
 
 </details>
 
@@ -313,9 +328,9 @@ returning the password or cookie to the model.
 <details>
 <summary>Does h5i keep my data local?</summary>
 
-h5i has no hosted service and stores its sessions locally. Browser traffic
-still goes to websites you allow, and model traffic goes to your configured
-model provider.
+h5i has no hosted service and stores its sessions locally. Browser traffic still
+goes to websites you allow, and model traffic goes to your configured model
+provider.
 
 </details>
 
