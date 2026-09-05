@@ -37,7 +37,7 @@
   </tr>
 </table>
 
-**Browse, automate, and test web applications with complete control over every request.**
+**Protect agents from the web. Use agents to test the web.**
 
 ```bash
 h5i browser open https://example.com
