@@ -27,12 +27,12 @@
       <sub><a href="./docs/design/design-browser.md">In our benchmarks</a></sub>
     </td>
     <td align="center">
-      <strong>Sandboxed & auditable</strong><br>
-      <sub>Browser-only or full workflow</sub>
+      <strong>Safer browsing for agents</strong><br>
+      <sub>Network policies, sandboxing & audit</sub>
     </td>
     <td align="center">
-      <strong>Built-in HTTP workbench</strong><br>
-      <sub>Capture, edit, replay & diff</sub>
+      <strong>Web security testing</strong><br>
+      <sub>Capture, edit, replay & compare HTTP traffic</sub>
     </td>
   </tr>
 </table>
