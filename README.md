@@ -231,10 +231,10 @@ h5i ui # watch the whole fleet in a browser
 
 ---
 
-## 3. What confinement means here
+## 3. Sandbox and isolation levels
 
-`h5i box probe` reports the tiers your host can run. h5i never silently
-downgrades: an unsatisfiable request fails closed.
+h5i provides four sandbox levels, plus an unconstrained workspace mode.
+Run `h5i box probe` to see which levels your host supports.
 
 | Tier | What enforces it |
 | --- | --- |
