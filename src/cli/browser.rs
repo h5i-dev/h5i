@@ -3982,6 +3982,8 @@ fn availability(a: bs::Availability) -> console::StyledObject<&'static str> {
         // The one that must stand out: nothing can be concluded from the
         // silence of a log h5i could not read.
         bs::Availability::Unavailable => style(a.as_str()).red(),
+        // Nor from the end of one that was cut short.
+        bs::Availability::Partial => style(a.as_str()).yellow(),
     }
 }
 

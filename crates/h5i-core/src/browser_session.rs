@@ -1076,6 +1076,11 @@ pub enum Availability {
     Empty,
     /// Not readable from here. Nothing can be concluded from its silence.
     Unavailable,
+    /// Read, and only the start of it: the byte cap cut the rest off.
+    ///
+    /// Its own state because the rows that *are* here look no different either
+    /// way, so a timeline that stops reads as a session that went quiet.
+    Partial,
 }
 
 impl Availability {
@@ -1084,6 +1089,7 @@ impl Availability {
             Availability::Read => "read",
             Availability::Empty => "empty",
             Availability::Unavailable => "unavailable",
+            Availability::Partial => "partial",
         }
     }
 
@@ -1092,6 +1098,14 @@ impl Availability {
             None => Availability::Unavailable,
             Some(t) if t.trim().is_empty() => Availability::Empty,
             Some(_) => Availability::Read,
+        }
+    }
+
+    /// The same, for a read that says whether the cap cut it.
+    fn of_capped(read: &Option<(String, bool)>) -> Availability {
+        match read {
+            Some((_, true)) => Availability::Partial,
+            other => Availability::of(&other.as_ref().map(|(text, _)| text.clone())),
         }
     }
 }
@@ -1199,8 +1213,10 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
     use crate::browser_events as ev;
 
     let dir = dir(root, &session.id);
-    let read = |path: &Option<PathBuf>| -> Option<String> {
-        path.as_ref().and_then(|p| read_log_capped(p))
+    // The flag comes back with the text: a log the cap cut short is a timeline
+    // that stops early, and the rows that are here look no different for it.
+    let read = |path: &Option<PathBuf>| -> Option<(String, bool)> {
+        path.as_ref().and_then(|p| read_log_capped_saying(p))
     };
     let actions = read(&session.logs.actions);
     let requests = read(&session.logs.requests);
@@ -1247,12 +1263,12 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
     // first and read by the second. The one ordering dependency here, and the
     // same one `BoxStream::poll` states in its own comment.
     let mut caused = std::collections::BTreeMap::new();
-    if let Some(text) = &actions {
+    if let Some((text, _)) = &actions {
         for draft in ev::ingest_light_actions_with(text, &mut caused) {
             rows.push(Row::engine(&session.started_at, &read_at, draft));
         }
     }
-    if let Some(text) = &requests {
+    if let Some((text, _)) = &requests {
         for draft in ev::ingest_request_log_with(text, &caused) {
             rows.push(Row::engine(&session.started_at, &read_at, draft));
         }
@@ -1311,8 +1327,8 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
     Audit {
         session: session.clone(),
         sources: Sources {
-            actions: Availability::of(&actions),
-            requests: Availability::of(&requests),
+            actions: Availability::of_capped(&actions),
+            requests: Availability::of_capped(&requests),
             control: if handovers.is_empty() {
                 Availability::Empty
             } else {
@@ -1534,6 +1550,39 @@ mod tests {
         let found = find_ended_by_name(root, "auth").expect("the record stays");
         assert_eq!(found.id, session.id);
         assert!(find_ended_by_name(root, "never").is_none());
+    }
+
+    /// And the audit built on it says so, rather than rendering the head of a
+    /// log as the whole run. The rows that are there look no different either
+    /// way, so a timeline that stops reads as a session that went quiet.
+    #[test]
+    fn an_audit_over_a_capped_log_reports_the_source_as_partial() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let mut session = named(root, "long");
+        let dir = dir(root, &session.id);
+
+        // A request log past the cap, and an action log comfortably under it.
+        let mut requests = String::new();
+        while requests.len() as u64 <= super::MAX_LOG_BYTES {
+            requests.push_str(
+                "{\"seq\":0,\"at\":\"2026-09-04T00:00:00.000000Z\",\"phase\":\"request\",\
+                 \"initiator\":\"navigation\",\"method\":\"GET\",\
+                 \"url\":\"https://app.test/\",\"allowed\":true}\n",
+            );
+        }
+        std::fs::write(dir.join(RECEIPTS_FILE), requests.as_bytes()).unwrap();
+        std::fs::write(dir.join("browser-actions.jsonl"), b"").unwrap();
+        session.logs.requests = Some(dir.join(RECEIPTS_FILE));
+        session.logs.actions = Some(dir.join("browser-actions.jsonl"));
+
+        let audit = audit(root, &session);
+        assert_eq!(
+            audit.sources.requests,
+            Availability::Partial,
+            "a log the cap cut short is not one that was read whole"
+        );
+        assert_eq!(audit.sources.actions, Availability::Empty);
     }
 
     /// A bound that says nothing makes a run past the cap read as a session

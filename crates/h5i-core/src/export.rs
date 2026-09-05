@@ -498,6 +498,22 @@ fn report(
                  timeline there is not evidence of a quiet session.\n"
             ));
         }
+        // A log that was read *in part* is a different fact from one that could
+        // not be read at all, and reporting it as neither would make a timeline
+        // that stops at the cap read as a session that went quiet.
+        let cut = sessions
+            .iter()
+            .filter(|x| {
+                x.sources.actions == crate::browser_session::Availability::Partial
+                    || x.sources.requests == crate::browser_session::Availability::Partial
+            })
+            .count();
+        if cut > 0 {
+            out.push_str(&format!(
+                "\n**{cut} session(s) had a log too large to read whole.** The timeline for \
+                 those covers the start of the run and not the end of it.\n"
+            ));
+        }
         out.push('\n');
     }
 
