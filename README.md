@@ -76,7 +76,7 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 # h5i skill show policy            # or just read a page
 ```
 
-Install the optional `websec` plugin to directly control HTTP traffic:
+The optional `websec` plugin is distributed separately:
 
 ```bash
 curl -fsSL https://h5i.dev/install.sh --websec | sh
@@ -87,146 +87,142 @@ h5i plugin install websec --from ./h5i-websec
 
 ## 2. Use it
 
-### 2.1. A headless browser
+### 2.1. Browse, scrape, and automate
 
-A **session** is the whole agent-facing surface: one page state, one cookie jar,
-one request log, one policy:
+A **session** combines one page state, cookie jar, network policy, and request
+record. Agents can read pages, interact with elements, and extract structured
+data through one CLI:
 
 ```bash
 h5i browser open https://docs.rs/ --allow docs.rs
-h5i browser snapshot                        # outline, with @ref handles
-h5i browser snapshot --delta                # only what changed since the last read
-h5i browser click    @e3
-h5i browser type     @e5 "serde"
-h5i browser extract  '{"titles": ["h2"]}'   # structured, by selector
-h5i browser markdown                        # the page a reader would read
-h5i browser login                           # hand the page to the human at the viewer
+h5i browser snapshot                        # page outline with @ref handles
+h5i browser snapshot --delta                # only what changed
+h5i browser click @e3
+h5i browser type @e5 "serde"
+h5i browser extract '{"titles": ["h2"]}'    # structured extraction
+h5i browser markdown                        # readable page content
 h5i browser close
+
+h5i browser read https://docs.rs/           # for a single page without a persistent session
 ```
 
-Running several at once is what names are for:
+### 2.2. Test web applications
+
+Because h5i owns the browser’s network layer, agents can capture, inspect, edit,
+replay, and compare HTTP traffic without a MITM proxy, CA certificate, or
+separate repeater.
+
+Use these capabilities only on systems you own or are authorized to test:
 
 ```bash
-h5i browser open https://example.com/login --session auth --new
-h5i browser open https://example.com/      --session public --new
-h5i browser snapshot --session auth
-```
-
-Read what the page's media says:
-
-```bash
-h5i browser transcript --url https://example.com/talk --lang en                     # captions from <track>
-h5i browser transcript --via yt-dlp --url https://www.youtube.com/watch?v=VIDEO_ID  # captions from YouTube and other sites
-```
-
-Choose a coherent browser identity for stealth-mode browsing:
-
-```bash
-h5i browser open https://example.com --identity privacy                      # h5i with its exact version hidden and time zone set to UTC
-h5i browser open https://example.com --script --identity firefox-143-linux   # Firefox 143 on Linux
-h5i browser open https://example.com --script --identity ./my-identity.toml  # custom identity from TOML
-```
-
-Read the record:
-
-```bash
-h5i browser requests           # every request, including the refusals
-h5i browser audit              # the whole session: verbs, fetches, handovers, ending
-h5i browser status             # placement, policy digest, who saw the network
-h5i browser list               # every session on this machine, and which is default
-```
-
-Watch the browser it drives:
-
-```bash
-h5i box view <name>            # the box's page, through a loopback-only forward
-h5i box view <name> --term     # draw it in this terminal instead (needs kitty)
-```
-
-<p align="center">
-  <img src="./docs/_static/browser-demo.gif" alt="An agent reading and acting on a page through h5i" width="99%" />
-</p>
-
-### 2.2. Web security testing
-
-h5i lets the agent inspect, edit, replay, and compare browser requests and responses, match conditions, and run 
-multi-step test flows without a MITM proxy, CA certificate, or separate repeater.
-
-Install the optional `websec` plugin, then browse the application normally. The
-plugin is a separate archive on the release page, so installing it is a
-deliberate act:
-
-```bash
-h5i plugin install websec --from ./h5i-websec
 h5i browser open https://target.example --capture --allow target.example
 
-h5i websec requests                                  # captured HTTP messages
-h5i websec show req_42 --raw                         # inspect one request
+h5i websec requests                                  # list messages and IDs
+h5i websec show req_42 --raw                         # inspect a request
 h5i websec replay req_42 --set query.id=456          # edit and resend it
-h5i websec diff res_42 res_43                        # compare the responses
+h5i websec diff res_42 res_43                        # compare responses
 h5i websec match res_43 --status 200 --contains "ok" # assert a condition
 h5i websec sequence flow.json                        # run a multi-step test
 ```
 
-### 2.3. The configurable sandbox
+### 2.3. Control and audit agent access
 
-While h5i runs in a light-weight sandbox by default, we can further specify
-fine-grained setting in `.h5i/env.toml`.
+Web content is untrusted input to an AI agent. h5i reduces the risks of giving
+agents web access by applying a network policy and recording both allowed and
+denied requests:
+
+```bash
+h5i browser requests    # allowed and denied network requests
+h5i browser audit       # actions, fetches, handovers, and session ending
+h5i browser status      # isolation, policy digest, and network placement
+```
+
+For sensitive interactions, a human can take control without returning
+credentials to the agent:
+
+```bash
+h5i browser login
+```
+
+For stronger isolation, define network and filesystem limits in
+`.h5i/env.toml`:
 
 ```toml
 [profile.reading]
 isolation = "supervised"          # workspace | process | supervised | container | microvm
 
 [profile.reading.net]
-mode   = "host"
-egress = ["docs.rs", "static.crates.io"]   # everything else is refused
+mode = "host"
+egress = ["docs.rs", "static.crates.io"]
 
 [profile.reading.fs]
-read  = ["/usr", "/etc"]          # replaces the defaults, so grant what it needs
+read = ["/usr", "/etc"]
 write = []
-
-[profile.reading.resources]
-mem   = "512M"
-procs = 64
-
-secrets = ["ACME_PASS"]           # the only $H5I_SECRET_* it may substitute
 ```
 
-Give it to a browser session through a box:
+Then place the browser inside that environment:
 
 ```bash
 h5i box --profile reading --name docs
 h5i browser open https://docs.rs/ --in docs
 ```
 
-### 2.4. A sandbox holds more than a browser
+### 2.4. Contain the entire agent workflow
 
-The top rung of that ladder is a whole environment. It can hold the code, the
-toolchain, the dev server and the agent itself, which is what you want when the
-agent is building the app it is about to browse.
+A sandbox can contain more than the browser. It can also hold the workspace,
+toolchain, development server, and agent itself. This is useful when an agent is
+building and testing an application in the same environment.
 
 ```bash
-h5i box create alpha --profile agent-claude   # a sandboxed git worktree
-h5i box shell alpha                           # an interactive confined session
-h5i box run   alpha -- cargo test             # one command; the exit code passes through
-h5i box propose alpha                         # freeze the work into a reviewable snapshot
-h5i box apply   alpha                         # merge it onto the parent branch
-h5i box export  alpha                         # patch, report and receipts you can read
-h5i box rm      alpha                         # throw it away
+h5i box create alpha --profile agent-claude   # sandboxed git worktree
+h5i box shell alpha                           # interactive confined session
+h5i box run alpha -- cargo test               # run a command inside it
+h5i box propose alpha                         # create a reviewable snapshot
+h5i box apply alpha                           # merge approved changes
+h5i box export alpha                          # export the patch and receipts
+h5i box rm alpha                              # discard the environment
 ```
 
-```bash
-h5i box share alpha --port 3000            # end-to-end encrypted P2P sharing
-h5i box share alpha --port 3000 --tunnel   # or a browser-ready demo link
-h5i join <ticket>                          # what the recipient runs
-```
+Share a running service or watch the workflow from the host:
 
 ```bash
-h5i ui # watch the whole fleet in a browser
+h5i box share alpha --port 3000
+h5i box share alpha --port 3000 --tunnel
+h5i join <ticket>
+
+h5i ui
 ```
 
 <p align="center">
   <img src="./docs/_static/sandbox-ui-demo.png" alt="Watching a sandboxed browser session from the host" width="99%" />
+</p>
+
+### 2.5. More browser capabilities
+
+Name sessions to run several browsers independently:
+
+```bash
+h5i browser open https://example.com/login --session auth --new
+h5i browser open https://example.com/ --session public --new
+h5i browser snapshot --session auth
+```
+
+Read media transcripts, choose a coherent browser identity, or watch a running
+browser:
+
+```bash
+h5i browser transcript --url https://example.com/talk --lang en
+h5i browser transcript --via yt-dlp --url https://www.youtube.com/watch?v=VIDEO_ID
+
+h5i browser open https://example.com --identity privacy
+h5i browser open https://example.com --script --identity firefox-143-linux
+
+h5i box view <name>
+h5i box view <name> --term
+```
+
+<p align="center">
+  <img src="./docs/_static/browser-demo.gif" alt="An agent reading and acting on a page through h5i" width="99%" />
 </p>
 
 ---
