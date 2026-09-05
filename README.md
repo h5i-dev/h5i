@@ -28,7 +28,7 @@
     </td>
     <td align="center">
       <strong>Safer browsing for AI</strong><br>
-      <sub>Network policies, sandboxing & audit</sub>
+      <sub>Sandboxing & audit</sub>
     </td>
     <td align="center">
       <strong>Web security testing</strong><br>
