@@ -767,7 +767,7 @@ body > footer {
 .hero-title {
   font-family: var(--disp); font-weight: 900;
   font-size: clamp(38px, 6.4vw, 100px);
-  letter-spacing: -0.055em; line-height: 0.88;
+  letter-spacing: -0.055em; word-spacing: 0.12em; line-height: 0.88;
   margin: 24px 0 0; max-width: 22ch; color: var(--ink);
 }
 .hero-title .hl { color: var(--ink); }

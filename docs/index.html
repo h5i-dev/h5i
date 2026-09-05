@@ -31,7 +31,7 @@
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="h5i: A Secure, Auditable Browser for AI Agents">
-  <meta name="twitter:description" content="Let agents securely browse the web and test web apps. In benchmarks on simple websites, h5i reads pages ~3× faster with ~86% less peak memory, while recording every browser action and network request for review.">
+  <meta name="twitter:description" content="h5i lets agents browse, scrape, and automate the web under your policies, and inspect web apps through the same browser. It reads pages ~3× faster with ~86% less peak memory than headless Chromium. Every browser action and network request is recorded for review.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
   <meta name="twitter:image:alt" content="An h5i browser session: the page an agent is reading, beside the request log the engine wrote before any bytes moved">
 
@@ -219,7 +219,7 @@
   <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
-  <link rel="stylesheet" href="/_static/blog.css?v=16bf3ac0cf">
+  <link rel="stylesheet" href="/_static/blog.css?v=3fac769d8f">
   <link rel="stylesheet" href="/_static/console-mock.css?v=d3dbcad9d5">
   <link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
   <style>
@@ -255,9 +255,10 @@
     <div class="hero-badge">Browse and automate &middot; Test web apps &middot; Control and audit every session</div>
     <h1 class="hero-title"><em>A Security-First Browser</em><br>for AI Agents</h1>
     <p class="hero-sub">
-      Let agents securely browse the web and test web apps. In benchmarks on simple websites,
-      h5i reads pages <strong>~3&times; faster</strong> with <strong>~86% less peak memory</strong>, while recording
-      every browser action and network request for review.
+      h5i lets agents browse, scrape, and automate the web under your policies, and inspect
+      web apps through the same browser. It reads pages
+      <strong>~3&times; faster</strong> with <strong>~86% less peak memory</strong> than headless Chromium.
+      Every browser action and network request is recorded for review.
     </p>
     <div class="hero-install" id="quickstart">
       <code id="install-cmd">curl -fsSL https://h5i.dev/install.sh | sh</code>
@@ -276,10 +277,10 @@
      the repository grows and never needs a deploy to stop lying. -->
 <div class="strip">
   <a class="stat" href="https://github.com/h5i-dev/h5i/stargazers">
-    <b>580+</b><span>GitHub stars</span>
+    <b>600+</b><span>GitHub stars</span>
   </a>
   <a class="stat" href="https://github.com/h5i-dev/h5i/forks">
-    <b>50+</b><span>forks</span>
+    <b>60+</b><span>forks</span>
   </a>
   <a class="stat" href="https://github.com/h5i-dev/h5i/graphs/contributors">
     <b>20+</b><span>contributors</span>
@@ -294,33 +295,34 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">The problem</span>
-      <h2 class="section-title">Giving AI agents a browser creates new security risks.</h2>
-      <p class="section-sub">Agents do more than read pages. They follow instructions, submit forms, use
-        logged-in sessions, access local services, and test code on your machine. A malicious website,
-        a vulnerable app, or a simple agent mistake can turn that access into unsafe actions.</p>
+      <h2 class="section-title">Giving an AI agent a browser changes web security.</h2>
+      <p class="section-sub">A browser has always played two security roles. It protects its user from
+        untrusted websites, while also giving security testers a way to inspect and manipulate those
+        websites. Giving the browser to an AI agent makes both roles more
+        demanding.</p>
     </div>
     <div class="feat-grid feat-grid-four">
       <div class="feat-card">
-        <div class="feat-name">Websites can manipulate the agent</div>
-        <div class="feat-desc">A prompt injection can make an agent ignore its task, click unsafe links,
-          submit forms, or send data somewhere it should not.</div>
+        <div class="feat-name">Web content becomes agent input</div>
+        <div class="feat-desc">A prompt injection can redirect an agent from its task, misuse a logged-in
+          session, submit unsafe forms, or send data somewhere it should not.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">The agent can leak local data</div>
-        <div class="feat-desc">An agent with access to source code, credentials, logged-in sessions, or
-          internal services can accidentally expose them through the browser.</div>
+        <div class="feat-name">The browser carries the agent's authority</div>
+        <div class="feat-desc">Through the browser, an agent may reach credentials, source code, internal
+          services, and applications running on localhost. One unsafe action can expose them to the
+          web.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Web app testing runs code on your machine</div>
-        <div class="feat-desc">Testing an app often means running agent-written code, third-party
-          dependencies, and a browser on the same host. Without isolation, they share
-          access to your files and network.</div>
+        <div class="feat-name">Page automation hides security-relevant traffic</div>
+        <div class="feat-desc">Finding vulnerabilities often requires inspecting, editing, replaying, and
+          comparing HTTP requests and responses. Page-level automation alone does not give the agent that
+          control.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Ordinary browser logs are incomplete</div>
-        <div class="feat-desc">A list of clicks, background requests, redirects,
-          blocked connections, crashes, and restarts may be missing when you need to understand what
-          happened.</div>
+        <div class="feat-name">Security state is split across tools</div>
+        <div class="feat-desc">Proxies, certificates, browser logs, sandboxes, test scripts, and development
+          servers each hold part of the workflow. This makes agent actions harder to control and isolate.</div>
       </div>
     </div>
   </div>
