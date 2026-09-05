@@ -230,7 +230,7 @@ h5i box view <name> --term
 ## 3. Sandbox and isolation levels
 
 h5i provides four sandbox levels, plus an unconstrained workspace mode.
-Run `h5i box probe` to see which levels your host supports.
+Run `h5i box probe` to see which levels your host supports. h5i never silently downgrades: an unsatisfiable request fails closed.
 
 | Tier | What enforces it |
 | --- | --- |
