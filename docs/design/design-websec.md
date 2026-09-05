@@ -617,7 +617,10 @@ file describes.
 ### What is built, 2026-09-03
 
 `h5i plugin install|list|remove`, and `h5i websec` dispatching to an installed
-`h5i-websec` (`src/cli/plugin.rs`, `crates/h5i-websec`). A name h5i knows but
+`h5i-websec` (`src/cli/plugin.rs`, `crates/h5i-websec`). The release ships
+`h5i-websec` as its own archive per target, so `--from` has a file to point at
+without a source tree; `install` still takes a path rather than fetching one,
+because a downloaded executable needs a provenance story this does not have. A name h5i knows but
 does not have answers with what the capability is and how to install it, rather
 than "unknown command". Installs are refused for names not on the known list,
 because a plugin directory anything can add a name to is a directory where
@@ -646,9 +649,10 @@ than precede it: the benchmark is what will say which of them are load-bearing.
 ### What a plugin is
 
 A separate executable, discovered by name the way `git` finds its subcommands.
-`h5i plugin install websec` fetches `h5i-websec` for this platform into a
-per-user plugin directory, and `h5i websec <verb>` execs it with the arguments
-forwarded and the environment that names the session. A build without the
+`h5i plugin install websec --from <path>` copies `h5i-websec` into a per-user
+plugin directory, and `h5i websec <verb>` execs it with the arguments forwarded
+and the environment that names the session. The release publishes the
+executable; fetching it by name is not built. A build without the
 plugin still knows the name: `h5i websec` prints what it is and how to install
 it, rather than an unknown-subcommand error, so the feature is discoverable
 without being present.

@@ -13,6 +13,9 @@ env:
   # crates.io publish, because the engine depends on boa by git revision and
   # crates.io refuses that (see scripts/check_boa_release.sh).
   BINARY_NAME: h5i
+  # The workbench plugin, shipped beside the binary rather than inside it: see
+  # `docs/design/design-websec.md` W21.
+  PLUGIN_NAME: h5i-websec
 
 permissions:
   contents: write
@@ -162,11 +165,17 @@ jobs:
       # and boa alongside git2, so a target that cannot compile the engine cannot
       # produce a release binary at all. That is the reading the asset guard
       # below already takes.
+      # Both binaries. `h5i-websec` is the workbench plugin: a small clap
+      # wrapper that runs `h5i browser` verbs in a subprocess and links no
+      # engine, so it costs seconds to build and a few hundred kilobytes to
+      # ship. Without it in the release, `h5i plugin install websec --from …`
+      # has no file to point at unless you have the source and a toolchain.
       - name: Build
         env:
           H5I_SKIP_WEB_BUILD: "1"
         run: |
-          cargo build --release --locked --target ${{ matrix.target }}
+          cargo build --release --locked --target ${{ matrix.target }} \
+            -p ${{ env.BINARY_NAME }} -p ${{ env.PLUGIN_NAME }}
 
       # ── Package ───────────────────────────────────────────────────────────
 
@@ -192,6 +201,7 @@ jobs:
             sha256sum "$archive" > "$archive.sha256"
           }
           package "${{ env.BINARY_NAME }}"
+          package "${{ env.PLUGIN_NAME }}"
 
       - name: Package (Windows)
         if: matrix.archive_ext == 'zip'
@@ -209,6 +219,7 @@ jobs:
             "$hash  $archive" | Out-File -FilePath "$archive.sha256" -Encoding ASCII
           }
           Package "${{ env.BINARY_NAME }}"
+          Package "${{ env.PLUGIN_NAME }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -241,14 +252,14 @@ jobs:
         run: ls -lh artifacts/
 
       # Fail loudly rather than publishing a short set: four targets, each with
-      # an archive and a checksum. A build job that silently stopped uploading
-      # would otherwise produce a release missing a platform, which nobody
-      # notices until someone's install breaks.
+      # two archives and their checksums. A build job that silently stopped
+      # uploading would otherwise produce a release missing a platform, which
+      # nobody notices until someone's install breaks.
       - name: Every expected asset is present, and nothing else
         run: |
-          # Four targets x one binary x (archive + checksum). The engine used to
-          # be a second archive per target, which is where 16 came from.
-          expected=8
+          # Four targets x two binaries (`h5i` and the `h5i-websec` plugin) x
+          # (archive + checksum).
+          expected=16
           found=$(find artifacts -maxdepth 1 -type f \
             \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' \) | wc -l)
           extra=$(find artifacts -mindepth 1 -maxdepth 1 \
@@ -305,6 +316,20 @@ jobs:
             second archive (`h5i-browser-light`); `h5i browser` execs itself to
             become it now, and `h5i __engine` reaches its own CLI for the cases
             that want it directly.
+
+            ### The websec workbench
+
+            `h5i-websec` is a separate archive, and installing it is a
+            deliberate act:
+
+            ```bash
+            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/h5i-websec-${{ github.ref_name }}-<TARGET>.tar.gz | tar -xz
+            h5i plugin install websec --from ./h5i-websec
+            ```
+
+            It holds no privilege of its own: every verb runs the `h5i browser`
+            verbs a person would type, through the same policy, budget and
+            receipts.
 
             Every request it makes is checked against an allowlist — every
             request and every redirect hop — and written to the log before any
