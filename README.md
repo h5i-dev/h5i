@@ -27,7 +27,7 @@
       <sub><a href="./docs/design/design-browser.md">In our benchmarks</a></sub>
     </td>
     <td align="center">
-      <strong>Safer browsing for agents</strong><br>
+      <strong>Safer browsing for AI</strong><br>
       <sub>Network policies, sandboxing & audit</sub>
     </td>
     <td align="center">
