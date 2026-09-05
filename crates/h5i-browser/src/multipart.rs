@@ -107,15 +107,20 @@ pub fn parse(body: &[u8], boundary: &str) -> Option<Vec<Part>> {
         let next = find(body, sep, headers_end + gap)?;
         // The CRLF before the next boundary belongs to the framing, not to the
         // data. Dropping it is what makes a round trip byte-identical.
+        //
+        // Only when there is data for it to sit behind. A boundary following
+        // the header terminator directly makes `end` land before the data
+        // starts, and the slice below then runs backwards.
+        let data_at = headers_end + gap;
         let mut end = next;
-        if body[..end].ends_with(b"\r\n") {
+        if end > data_at + 1 && body[..end].ends_with(b"\r\n") {
             end -= 2;
-        } else if body[..end].ends_with(b"\n") {
+        } else if end > data_at && body[..end].ends_with(b"\n") {
             end -= 1;
         }
 
         let mut part = Part {
-            data: body[headers_end + gap..end].to_vec(),
+            data: body[data_at..end].to_vec(),
             ..Default::default()
         };
         for line in head.lines().filter(|l| !l.trim().is_empty()) {
@@ -124,8 +129,8 @@ pub fn parse(body: &[u8], boundary: &str) -> Option<Vec<Part>> {
             };
             let (name, value) = (name.trim(), value.trim());
             if name.eq_ignore_ascii_case("content-disposition") {
-                part.name = quoted(value, "name").unwrap_or_default();
-                part.filename = quoted(value, "filename");
+                part.name = parameter(value, "name").unwrap_or_default();
+                part.filename = parameter(value, "filename");
             } else if name.eq_ignore_ascii_case("content-type") {
                 part.content_type = Some(value.to_string());
             } else {
@@ -138,13 +143,29 @@ pub fn parse(body: &[u8], boundary: &str) -> Option<Vec<Part>> {
     Some(parts)
 }
 
-/// `name="value"` out of a `Content-Disposition`.
-fn quoted(header: &str, key: &str) -> Option<String> {
-    let needle = format!("{key}=\"");
-    let at = header.find(&needle)? + needle.len();
-    let rest = &header[at..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
+/// One `Content-Disposition` parameter, quoted or bare.
+///
+/// Both spellings arrive, and reading only `name="x"` gave a bare `name=x` an
+/// empty name — which the rebuild then wrote back as `name=""`. Matched at a
+/// parameter boundary, so `name=` is not found inside `filename=`.
+fn parameter(header: &str, key: &str) -> Option<String> {
+    let mut rest = header;
+    loop {
+        let at = rest.find(key)?;
+        let before = rest[..at].trim_end();
+        let starts_here = before.is_empty() || before.ends_with(';');
+        let after = &rest[at + key.len()..];
+        if starts_here && after.starts_with('=') {
+            let value = &after[1..];
+            return Some(match value.strip_prefix('"') {
+                // Quoted: to the closing quote.
+                Some(quoted) => quoted.split('"').next().unwrap_or_default().to_string(),
+                // Bare: to the next `;`, trimmed.
+                None => value.split(';').next().unwrap_or_default().trim().to_string(),
+            });
+        }
+        rest = &rest[at + key.len()..];
+    }
 }
 
 fn find(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
@@ -199,6 +220,96 @@ mod tests {
         body.extend_from_slice(b"\x89PNG\r\n\x1a\n binary");
         body.extend_from_slice(b"\r\n------abc--\r\n");
         body
+    }
+
+    /// Every body here was written by somebody else. It may answer `None` or
+    /// with odd parts; it may not die.
+    #[test]
+    fn no_arrangement_of_these_bytes_makes_the_parser_panic() {
+        // Exactly the bytes the framing is made of, where the edges are.
+        let alphabet: &[&[u8]] = &[
+            b"------abc", b"--", b"\r\n", b"\n", b"\r", b"a", b":", b" ",
+            b"Content-Disposition: form-data; name=\"a\"", b"filename=\"f\"", b"",
+        ];
+        // A fixed stride through the space, rather than all 11^6 of it.
+        let mut seed: u64 = 0x243f_6a88_85a3_08d3;
+        for _ in 0..200_000 {
+            let mut body = Vec::new();
+            for _ in 0..6 {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                body.extend_from_slice(alphabet[(seed >> 33) as usize % alphabet.len()]);
+            }
+            // Both the boundary it declares and one it does not.
+            let _ = parse(&body, "----abc");
+            let _ = parse(&body, "--");
+            let _ = parse(&body, "");
+        }
+    }
+
+    /// A page can post a part whose boundary follows the header terminator
+    /// directly. The CRLF stepped over was then the terminator's own, so the
+    /// data slice ran backwards.
+    #[test]
+    fn a_part_with_no_data_at_all_is_parsed_rather_than_panicked_on() {
+        let mut body = Vec::new();
+        body.extend_from_slice(b"------abc\r\n");
+        body.extend_from_slice(b"Content-Disposition: form-data; name=\"a\"\r\n\r\n");
+        body.extend_from_slice(b"------abc--\r\n");
+        let parts = parse(&body, "----abc").expect("parses");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].name, "a");
+        assert!(parts[0].data.is_empty(), "{:?}", parts[0].data);
+    }
+
+    /// The well-formed spelling of the same thing keeps working.
+    #[test]
+    fn an_empty_part_written_properly_is_still_empty() {
+        let mut body = Vec::new();
+        body.extend_from_slice(b"------abc\r\n");
+        body.extend_from_slice(b"Content-Disposition: form-data; name=\"a\"\r\n\r\n");
+        body.extend_from_slice(b"\r\n------abc--\r\n");
+        let parts = parse(&body, "----abc").expect("parses");
+        assert_eq!(parts.len(), 1);
+        assert!(parts[0].data.is_empty());
+    }
+
+    /// Reading only the quoted form gave the part an empty name, and the
+    /// rebuild wrote `name=""` — so editing one field renamed all the others.
+    #[test]
+    fn an_unquoted_disposition_parameter_is_read_like_a_quoted_one() {
+        let mut body = Vec::new();
+        body.extend_from_slice(b"------abc\r\n");
+        body.extend_from_slice(b"Content-Disposition: form-data; name=avatar; filename=cat.png\r\n");
+        body.extend_from_slice(b"Content-Type: image/png\r\n\r\n");
+        body.extend_from_slice(b"PNGDATA");
+        body.extend_from_slice(b"\r\n------abc--\r\n");
+
+        let parts = parse(&body, "----abc").expect("parses");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].name, "avatar");
+        assert_eq!(parts[0].filename.as_deref(), Some("cat.png"));
+        assert_eq!(parts[0].data, b"PNGDATA");
+
+        // And it survives a rebuild, which is what an edit does to it.
+        let again = serialize(&parts, "----xyz");
+        let round = parse(&again, "----xyz").expect("parses again");
+        assert_eq!(round, parts);
+    }
+
+    /// `name=` occurs inside `filename=`, so a part that wrote its filename
+    /// first came back with the filename as its field name.
+    #[test]
+    fn a_filename_written_first_is_not_read_as_the_field_name() {
+        let mut body = Vec::new();
+        body.extend_from_slice(b"------abc\r\n");
+        body.extend_from_slice(
+            b"Content-Disposition: form-data; filename=\"cat.png\"; name=\"avatar\"\r\n\r\n",
+        );
+        body.extend_from_slice(b"PNGDATA");
+        body.extend_from_slice(b"\r\n------abc--\r\n");
+        let parts = parse(&body, "----abc").expect("parses");
+        assert_eq!(parts[0].name, "avatar");
+        assert_eq!(parts[0].filename.as_deref(), Some("cat.png"));
     }
 
     #[test]

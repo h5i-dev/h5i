@@ -125,8 +125,15 @@ pub struct LogSummary {
     pub total: usize,
     /// Requests the policy refused.
     pub denied: usize,
-    /// The cursor to pass back as `since`.
+    /// The highest sequence recorded, over both phases.
     pub highest: Option<u64>,
+    /// The cursor to pass back as `since`.
+    ///
+    /// Not [`Self::highest`]: a request and its response share a sequence
+    /// number and the request half is written *before* the wire, so a poll
+    /// during a fetch took that number and never saw the response half. This
+    /// stops below anything in flight, so the worst it does is repeat a row.
+    pub cursor: Option<u64>,
 }
 
 /// A stored request, sent again with changes.
@@ -420,7 +427,29 @@ pub trait Broker: Send + Sync {
     /// [`Self::records_since`] exists.
     fn log_summary(&self) -> LogSummary {
         let records = self.records();
+        // The lowest sequence whose pair is not finished. Everything below it
+        // is complete and safe to move a cursor past.
+        let mut answered: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        for record in &records {
+            if record.phase == crate::receipt::Phase::Response {
+                answered.insert(record.seq);
+            }
+        }
+        let in_flight = records
+            .iter()
+            .filter(|r| r.phase == crate::receipt::Phase::Request)
+            .map(|r| r.seq)
+            .filter(|seq| !answered.contains(seq))
+            .min();
+        let highest = records.iter().map(|r| r.seq).max();
+        let cursor = match in_flight {
+            None => highest,
+            // Stop below the first request still waiting for its answer.
+            Some(0) => None,
+            Some(seq) => Some(seq - 1),
+        };
         LogSummary {
+            cursor,
             total: records.len(),
             denied: records
                 .iter()
@@ -430,7 +459,7 @@ pub trait Broker: Send + Sync {
             // before the append and a socket's reader thread appends
             // concurrently with the page's own fetches, so append order and
             // sequence order can differ.
-            highest: records.iter().map(|r| r.seq).max(),
+            highest,
         }
     }
 

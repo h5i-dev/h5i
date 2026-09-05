@@ -424,15 +424,27 @@ pub fn check_preflight(
     }
 
     let (headers_any, allowed) = listed(allow_headers);
-    if !(headers_any && !ask.credentials) {
-        for wanted in &ask.headers {
-            if !allowed.iter().any(|a| a == wanted) {
-                return Err(format!(
-                    "the preflight does not allow the `{wanted}` header. The server would \
-                     have to list it in `Access-Control-Allow-Headers`."
-                ));
-            }
+    for wanted in &ask.headers {
+        // Fetch carves `Authorization` out of the wildcard by name, and every
+        // browser implements it: a server answering `*` has said "any header",
+        // not "I agree to receive somebody's bearer token".
+        let covered_by_wildcard =
+            headers_any && !ask.credentials && wanted != "authorization";
+        if covered_by_wildcard || allowed.iter().any(|a| a == wanted) {
+            continue;
         }
+        if wanted == "authorization" && headers_any {
+            return Err(
+                "the preflight allows `*`, and `*` does not cover `Authorization`: a \
+                 server must name that header in `Access-Control-Allow-Headers` before a \
+                 page may send it to another origin."
+                    .to_string(),
+            );
+        }
+        return Err(format!(
+            "the preflight does not allow the `{wanted}` header. The server would \
+             have to list it in `Access-Control-Allow-Headers`."
+        ));
     }
     Ok(())
 }
@@ -717,6 +729,52 @@ mod tests {
             Some("*"),
         );
         assert!(refused.is_err(), "a wildcard must not cover credentials");
+    }
+
+    /// Fetch carves `Authorization` out of `Allow-Headers: *`, because a server
+    /// answering `*` has said "any header", not "send me a bearer token".
+    #[test]
+    fn a_wildcard_preflight_does_not_cover_authorization() {
+        let asking_for = |header: &str| Preflight {
+            origin: "https://a.example".into(),
+            method: "GET".into(),
+            headers: vec![header.into()],
+            credentials: false,
+        };
+        // Any other header the wildcard does cover.
+        assert!(
+            check_preflight(
+                &asking_for("x-token"),
+                Some("*"),
+                None,
+                Some("*"),
+                Some("*")
+            )
+            .is_ok(),
+            "`*` covers an ordinary header"
+        );
+        let refused = check_preflight(
+            &asking_for("authorization"),
+            Some("*"),
+            None,
+            Some("*"),
+            Some("*"),
+        )
+        .expect_err("`*` does not cover Authorization");
+        assert!(refused.contains("does not cover"), "{refused}");
+
+        // Named explicitly, it goes through: that is the server agreeing.
+        assert!(
+            check_preflight(
+                &asking_for("authorization"),
+                Some("*"),
+                None,
+                Some("*"),
+                Some("authorization, x-token")
+            )
+            .is_ok(),
+            "a server that names it has agreed to it"
+        );
     }
 
     #[test]

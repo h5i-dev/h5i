@@ -248,6 +248,12 @@ pub enum BrowserCommands {
         /// End every live session on this machine.
         #[arg(long, conflicts_with = "session")]
         all: bool,
+        /// Delete the captured messages as well as ending the session.
+        ///
+        /// The store holds whole bodies and `Cookie` and `Authorization` in
+        /// full. The record and the request log stay either way.
+        #[arg(long = "capture-drop")]
+        capture_drop: bool,
         #[arg(long)]
         json: bool,
     },
@@ -753,7 +759,7 @@ pub enum BrowserCommands {
         /// Only responses with this status.
         #[arg(long, value_name = "CODE")]
         status: Option<u16>,
-        /// Only `navigation`, `subresource`, `frame` or `redirect`.
+        /// Only `navigation`, `subresource`, `frame`, `redirect` or `replay`.
         #[arg(long, value_name = "KIND")]
         initiator: Option<String>,
         /// Only what policy refused.
@@ -1197,7 +1203,12 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         ),
         BrowserCommands::List { all, json } => list(&root, all, json),
         BrowserCommands::Status { session, json } => status(&root, session.as_deref(), json),
-        BrowserCommands::Close { session, all, json } => close(&root, session.as_deref(), all, json),
+        BrowserCommands::Close {
+            session,
+            all,
+            capture_drop,
+            json,
+        } => close(&root, session.as_deref(), all, capture_drop, json),
 
         BrowserCommands::Snapshot {
             session,
@@ -1614,21 +1625,26 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             // request holds credentials, and a verb's reply would carry them
             // out through a renderer.
             let mut argv = vec!["resend".to_string()];
+            // In the reply as well as on the terminal: `--json` is how an
+            // agent reads this verb, and a silent strip is a different request.
+            let mut dropped: Vec<String> = Vec::new();
             match &as_session {
                 None => {
                     argv.push("--from".into());
                     argv.push(from.to_string());
                 }
                 Some(_) => {
-                    let (request, dropped) = super::websec::carry(
+                    let (request, left_behind) = super::websec::carry(
                         &root,
                         session.as_deref(),
                         from,
                         keep_credentials,
                     )?;
+                    dropped = left_behind;
                     if !dropped.is_empty() && !json {
                         println!(
-                            "  note     : {} left behind, so this is the other session's                              own request",
+                            "  note     : {} left behind, so this is the other session's \
+                             own request",
                             dropped.join(", ")
                         );
                     }
@@ -1695,11 +1711,15 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             let target = as_session.as_deref().or(session.as_deref());
             // With one send there is nothing to summarise and the reply is the
             // answer. With several, the medians go in beside the samples.
-            verb_then(&root, target, argv, true, json, |answer| {
+            verb_then(&root, target, argv, true, json, |answer, _refused| {
+                // On a refusal too: that is when the count matters most.
                 if let Some(samples) = answer.get("samples").and_then(Value::as_array)
                     && let Some(summary) = super::websec::timing_summary(samples)
                 {
                     answer["timing"] = summary;
+                }
+                if !dropped.is_empty() {
+                    answer["credentials_dropped"] = serde_json::json!(dropped);
                 }
                 Ok(())
             })
@@ -2894,7 +2914,11 @@ fn screenshot(
     // control lock exists so a human at the wheel is not steered from under.
     let moves_the_page = argv.iter().any(|a| a == "--url");
 
-    verb_then(root, selector, argv, moves_the_page, json, |answer| {
+    verb_then(root, selector, argv, moves_the_page, json, |answer, refused| {
+        // Nothing was painted, so there is nothing to move.
+        if refused {
+            return Ok(());
+        }
         let Some(out) = out else {
             return Ok(());
         };
@@ -2969,7 +2993,7 @@ fn verb(
     mutating: bool,
     json: bool,
 ) -> anyhow::Result<()> {
-    verb_then(root, selector, argv, mutating, json, |_| Ok(()))
+    verb_then(root, selector, argv, mutating, json, |_, _| Ok(()))
 }
 
 /// The same, with something to do to the answer before it is printed.
@@ -3054,7 +3078,7 @@ fn verb_then(
     argv: Vec<String>,
     mutating: bool,
     json: bool,
-    after: impl FnOnce(&mut Value) -> anyhow::Result<()>,
+    after: impl FnOnce(&mut Value, bool) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let session = match bs::resolve(root, selector) {
         Ok(session) => session,
@@ -3104,9 +3128,10 @@ fn verb_then(
     // script that checks the status code would read "denied by policy" as
     // success, which is the failure this whole design is arranged against.
     let refused = answer.get("ok").and_then(Value::as_bool) == Some(false);
-    if !refused {
-        after(&mut answer)?;
-    }
+    // The hook runs either way and is told which it is. Skipping it on a
+    // refusal is right for one that moves a file and wrong for one that only
+    // annotates: a burst stopped halfway came back with samples and no summary.
+    after(&mut answer, refused)?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&answer)?);
@@ -3634,11 +3659,7 @@ fn list(root: &Path, all: bool, json: bool) -> anyhow::Result<()> {
 fn status(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> {
     // Not `resolve`: a status on a session that has ended is exactly the
     // question worth answering, so this reads the record rather than refusing.
-    let mut session = match bs::resolve(root, selector) {
-        Ok(session) => session,
-        Err(bs::SessionGone::Ended { id, .. }) => bs::read(root, &id)?,
-        Err(gone) => anyhow::bail!("{gone}"),
-    };
+    let mut session = resolve_for_reading(root, selector)?;
     let id = &session.id.clone();
     // Reading status is the moment to notice a death and write it down.
     if session.state.is_live() && !session.probe() {
@@ -3649,10 +3670,24 @@ fn status(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()>
             "the engine stopped answering",
         );
     }
+    // What the engine knows and the record cannot. `errors` is the only signal
+    // that the stored evidence has a hole in it. Best-effort and live-only,
+    // because `status` answers about ended sessions too.
+    let health = session
+        .state
+        .is_live()
+        .then(|| deliver(&session, &bs::dir(root, id), vec!["status".to_string()]).ok())
+        .flatten()
+        .and_then(|reply| reply.get("capture").cloned())
+        .filter(|capture| !capture.is_null());
+
     if json {
         let control = h5i_core::control::read(&bs::dir(root, id));
         let mut value = serde_json::to_value(&session)?;
         value["control_lock"] = serde_json::to_value(&control)?;
+        if let Some(health) = health {
+            value["capture"] = health;
+        }
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(());
     }
@@ -3677,6 +3712,23 @@ fn status(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()>
              (`h5i browser snapshot`)",
             style("stale").yellow()
         );
+    }
+    if let Some(health) = &health {
+        let number = |key: &str| health.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let errors = number("errors");
+        let line = format!(
+            "{} messages, {} bytes",
+            number("messages"),
+            number("bytes")
+        );
+        if errors > 0 {
+            println!(
+                "  captured : {line}, and {} it could not write — the store has a hole in it",
+                style(errors).red()
+            );
+        } else {
+            println!("  captured : {line}");
+        }
     }
     if let Some(reason) = &session.end_reason {
         println!("  ended    : {} — {}", session.state.as_str(), reason);
@@ -3722,6 +3774,7 @@ fn close(
     root: &Path,
     selector: Option<&str>,
     all: bool,
+    capture_drop: bool,
     json: bool,
 ) -> anyhow::Result<()> {
     let targets: Vec<bs::Session> = if all {
@@ -3749,10 +3802,20 @@ fn close(
     }
 
     let mut closed = Vec::new();
+    let mut dropped: Vec<String> = Vec::new();
     for mut session in targets {
         if session.state.is_live() {
             stop_engine(&session)?;
             bs::end(root, &mut session, bs::State::Closed, "closed by the user");
+        }
+        // After the engine has stopped, so nothing is still writing there.
+        if capture_drop {
+            let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
+            match std::fs::remove_dir_all(&store) {
+                Ok(()) => dropped.push(session.id.clone()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => anyhow::bail!("{} could not be removed: {e}", store.display()),
+            }
         }
         if !json {
             println!(
@@ -3762,6 +3825,9 @@ fn close(
                 session.state.describe(),
                 bs::dir(root, &session.id).display()
             );
+            if dropped.last() == Some(&session.id) {
+                println!("  dropped  : its captured messages. The request log stays.");
+            }
         }
         closed.push(session);
     }
@@ -3775,12 +3841,28 @@ fn close(
 ///
 /// Reads the record rather than requiring a live session: the session a
 /// reviewer most wants to audit is usually the one that has already ended.
+/// The session a *reader* means, live or not.
+///
+/// `resolve` answers for the verbs that act, so a name only finds a live
+/// session. The readers — `status`, `audit`, and the websec surface — work on a
+/// record and a store that outlive the engine, and asking by name answered "no
+/// such session" for evidence `close` had just promised was still there.
+pub(crate) fn resolve_for_reading(
+    root: &Path,
+    selector: Option<&str>,
+) -> anyhow::Result<bs::Session> {
+    match bs::resolve(root, selector) {
+        Ok(session) => Ok(session),
+        Err(bs::SessionGone::Ended { id, .. }) => Ok(bs::read(root, &id)?),
+        Err(gone) => match selector.and_then(|name| bs::find_ended_by_name(root, name)) {
+            Some(ended) => Ok(ended),
+            None => anyhow::bail!("{gone}"),
+        },
+    }
+}
+
 fn audit(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> {
-    let session = match bs::resolve(root, selector) {
-        Ok(session) => session,
-        Err(bs::SessionGone::Ended { id, .. }) => bs::read(root, &id)?,
-        Err(gone) => anyhow::bail!("{gone}"),
-    };
+    let session = resolve_for_reading(root, selector)?;
     let audit = bs::audit(root, &session);
 
     if json {
@@ -3900,6 +3982,8 @@ fn availability(a: bs::Availability) -> console::StyledObject<&'static str> {
         // The one that must stand out: nothing can be concluded from the
         // silence of a log h5i could not read.
         bs::Availability::Unavailable => style(a.as_str()).red(),
+        // Nor from the end of one that was cut short.
+        bs::Availability::Partial => style(a.as_str()).yellow(),
     }
 }
 

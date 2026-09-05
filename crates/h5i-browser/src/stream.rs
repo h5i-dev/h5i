@@ -1540,13 +1540,32 @@ fn control_verb_inner(
                 .get("raw_target")
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            let raw_request = request
-                .get("raw_request")
-                .and_then(Value::as_str)
-                .and_then(|b| {
-                    use base64::Engine as _;
-                    base64::engine::general_purpose::STANDARD.decode(b).ok()
-                });
+            // Refused, never dropped: falling back to `None` sent an ordinary
+            // framed request and reported its answer as the raw send's.
+            let raw_request = match request.get("raw_request") {
+                None | Some(Value::Null) => None,
+                Some(value) => {
+                    let decoded = value.as_str().and_then(|b| {
+                        use base64::Engine as _;
+                        base64::engine::general_purpose::STANDARD.decode(b).ok()
+                    });
+                    match decoded {
+                        Some(bytes) => Some(bytes),
+                        None => {
+                            return (
+                                json!({
+                                    "ok": false,
+                                    "code": "bad-raw",
+                                    "message": "the raw request's bytes did not survive the \
+                                                hop, and sending a framed request instead \
+                                                would answer a different question",
+                                }),
+                                false,
+                            );
+                        }
+                    }
+                }
+            };
             let plan = crate::broker::Sends {
                 count: request
                     .get("repeat")
@@ -1652,36 +1671,70 @@ fn control_verb_inner(
 
             // The composed form carries its body base64 in the JSON: this hop
             // is a control channel, not the broker's own socket.
-            let composed = given.map(|value| {
-                let text = |key: &str| {
-                    value.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
-                };
-                let body = value
-                    .get("body_base64")
-                    .and_then(Value::as_str)
-                    .and_then(|b| {
-                        use base64::Engine as _;
-                        base64::engine::general_purpose::STANDARD.decode(b).ok()
-                    })
-                    .unwrap_or_default();
-                let headers = value
-                    .get("headers")
-                    .and_then(Value::as_array)
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|pair| {
-                                let pair = pair.as_array()?;
-                                Some((
-                                    pair.first()?.as_str()?.to_string(),
-                                    pair.get(1)?.as_str()?.to_string(),
-                                ))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                (text("method"), text("url"), headers, body)
-            });
+            //
+            // Every piece is refused rather than defaulted: a body that did not
+            // decode was sent as an empty one and a missing method became a GET.
+            let composed = match given {
+                None => None,
+                Some(value) => {
+                    let text = |key: &str| {
+                        value.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
+                    };
+                    let refuse = |what: &str| {
+                        (
+                            json!({
+                                "ok": false,
+                                "code": "bad-request",
+                                "message": format!(
+                                    "the request handed to `resend` {what}, and sending \
+                                     something else in its place would answer a different \
+                                     question"
+                                ),
+                            }),
+                            false,
+                        )
+                    };
+                    let body = match value.get("body_base64") {
+                        None | Some(Value::Null) => Vec::new(),
+                        Some(encoded) => {
+                            let decoded = encoded.as_str().and_then(|b| {
+                                use base64::Engine as _;
+                                base64::engine::general_purpose::STANDARD.decode(b).ok()
+                            });
+                            match decoded {
+                                Some(bytes) => bytes,
+                                None => return refuse("has a body that did not survive the hop"),
+                            }
+                        }
+                    };
+                    let mut headers: Vec<(String, String)> = Vec::new();
+                    match value.get("headers") {
+                        None | Some(Value::Null) => {}
+                        Some(Value::Array(items)) => {
+                            for pair in items {
+                                let read = pair.as_array().and_then(|pair| {
+                                    Some((
+                                        pair.first()?.as_str()?.to_string(),
+                                        pair.get(1)?.as_str()?.to_string(),
+                                    ))
+                                });
+                                match read {
+                                    Some(pair) => headers.push(pair),
+                                    None => {
+                                        return refuse("has a header that is not a name and a value")
+                                    }
+                                }
+                            }
+                        }
+                        Some(_) => return refuse("has headers that are not a list"),
+                    }
+                    let method = text("method");
+                    if method.trim().is_empty() {
+                        return refuse("names no method");
+                    }
+                    Some((method, text("url"), headers, body))
+                }
+            };
 
             let outcome = match composed {
                 Some((method, target, headers, body)) => match url::Url::parse(&target) {
@@ -2540,12 +2593,10 @@ fn control_verb_inner(
                     "requests": rows,
                     // The cursor to pass back as `since`. Named rather than
                     // left to be derived from the last row, which is absent
-                    // when the window is empty. The highest sequence, not the
-                    // last appended: numbers are taken before the append and a
-                    // socket's reader thread appends concurrently with the
-                    // page's own fetches, so `last()` would either re-show a
-                    // row or skip one permanently.
-                    "cursor": summary.highest,
+                    // when the window is empty, and stopping below anything
+                    // still in flight rather than at the highest number seen:
+                    // see [`crate::broker::LogSummary::cursor`].
+                    "cursor": summary.cursor,
                     "shown": rows.len(),
                     // Whether what came back is the window or a slice of it, so
                     // "two rows" is never read as "this session made two
@@ -5241,6 +5292,67 @@ mod tests {
              outline as one reading the CLI: {reply:?}"
         );
         assert!(!changed);
+    }
+
+    /// Every piece of a composed request was defaulted when it could not be
+    /// read: an undecodable body went out empty, a missing method became a GET,
+    /// and an undecodable `raw_request` fell through to the framed sender.
+    #[test]
+    fn a_composed_request_that_cannot_be_read_is_refused_rather_than_defaulted() {
+        let mut session = session_with(tall_page());
+        let resend = |body: Value| {
+            let mut request = json!({"verb": "resend", "from": 0});
+            request["request"] = body;
+            request
+        };
+
+        let (reply, moved) = control_verb(
+            &mut session,
+            &resend(json!({
+                "method": "POST",
+                "url": "https://app.test/a",
+                "headers": [],
+                "body_base64": "not base64 !!",
+            })),
+        );
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert_eq!(reply["code"], "bad-request");
+        assert!(
+            reply["message"].as_str().unwrap_or_default().contains("body"),
+            "{reply}"
+        );
+        assert!(!moved);
+
+        let (reply, _) = control_verb(
+            &mut session,
+            &resend(json!({"url": "https://app.test/a", "headers": [], "body_base64": ""})),
+        );
+        assert_eq!(reply["ok"], false, "a request with no method: {reply}");
+        assert!(
+            reply["message"].as_str().unwrap_or_default().contains("method"),
+            "{reply}"
+        );
+
+        let (reply, _) = control_verb(
+            &mut session,
+            &resend(json!({
+                "method": "GET",
+                "url": "https://app.test/a",
+                "headers": [["only-a-name"]],
+            })),
+        );
+        assert_eq!(reply["ok"], false, "a half-written header: {reply}");
+        assert!(
+            reply["message"].as_str().unwrap_or_default().contains("header"),
+            "{reply}"
+        );
+
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "resend", "from": 0, "raw_request": "not base64 !!"}),
+        );
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert_eq!(reply["code"], "bad-raw");
     }
 
     #[test]

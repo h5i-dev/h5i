@@ -49,6 +49,9 @@ fn accept_for(initiator: Initiator) -> &'static str {
             "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
         }
         Initiator::Subresource => "*/*",
+        // A replay carries its own `Accept`; this is for a composed request
+        // that named none.
+        Initiator::Replay => "*/*",
     }
 }
 
@@ -682,6 +685,36 @@ impl LocalBroker {
         )
     }
 
+    /// The header set this request will actually go out with.
+    ///
+    /// Not `built.headers()` alone: `reqwest` merges the client's defaults —
+    /// here, the `User-Agent` — at *execute* time, so the store held a request
+    /// that was not the one sent. `message --raw` feeds `--raw-request`, and
+    /// that round trip was going out with no `User-Agent` at all. Merged the
+    /// way `reqwest` does: the request's own value wins.
+    fn headers_as_sent(&self, built: &reqwest::blocking::Request) -> Vec<(String, String)> {
+        let mut headers: Vec<(String, String)> = built
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|v| (name.as_str().to_string(), v.to_string()))
+            })
+            .collect();
+        if !headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+        {
+            headers.push((
+                "user-agent".to_string(),
+                self.presented.user_agent.clone(),
+            ));
+        }
+        headers
+    }
+
     /// Resolve a URL's host, check every address it answers with, and pin the
     /// result for the connection that follows. `Ok(())` when there is nothing to
     /// do (a proxy in the path, or a URL with no host) so the caller has one
@@ -1087,16 +1120,7 @@ impl LocalBroker {
                         seq,
                         built.method().as_str(),
                         built.url().as_str(),
-                        built
-                            .headers()
-                            .iter()
-                            .filter_map(|(name, value)| {
-                                value
-                                    .to_str()
-                                    .ok()
-                                    .map(|v| (name.as_str().to_string(), v.to_string()))
-                            })
-                            .collect(),
+                        self.headers_as_sent(&built),
                         &body,
                         content_type,
                     );
@@ -1976,7 +2000,7 @@ impl crate::broker::Broker for LocalBroker {
 
         let denied = |broker: &Self, seq: u64, reason: &str| -> FetchOutcome {
             let record =
-                RequestRecord::request(seq, Initiator::Navigation, &req.method, &display)
+                RequestRecord::request(seq, Initiator::Replay, &req.method, &display)
                     .denied(reason);
             if let Err(e) = broker.record_pair(&record) {
                 return FetchOutcome::failed(url.clone(), format!("receipt sink refused: {e}"));
@@ -2013,7 +2037,7 @@ impl crate::broker::Broker for LocalBroker {
 
         // 5. Record the decision before sending. Fail closed if this fails.
         let mut record =
-            RequestRecord::request(seq, Initiator::Navigation, &req.method, &display);
+            RequestRecord::request(seq, Initiator::Replay, &req.method, &display);
         record.headers_overridden = req.broke.clone();
         if let Err(e) = self.append(&record) {
             return FetchOutcome::failed(
@@ -2342,7 +2366,7 @@ impl LocalBroker {
             // named, exactly like a navigation, and not a page reaching for a
             // subresource. That is what decides the policy question and what
             // keeps the same-origin rules out of it: there is no document here.
-            initiator: Initiator::Navigation,
+            initiator: Initiator::Replay,
             method: editable.method.clone(),
             body: editable.body.clone(),
             content_type,
@@ -3204,6 +3228,47 @@ mod capture_wire_tests {
                 "`{header}` went out more than once on the replay:\n{replay}"
             );
         }
+    }
+
+    /// `reqwest` merges client defaults at *execute* time, so reading the
+    /// built request recorded everything but the `User-Agent`. That also broke
+    /// the `message --raw` → `--raw-request` round trip, which went out bare.
+    #[test]
+    fn the_store_records_the_header_set_that_went_on_the_wire() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture.clone()),
+        )
+        .expect("broker");
+
+        let (port, seen) = super::caller_header_tests::head_recorder(1, None);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/api")).unwrap();
+        assert!(broker.fetch(&url, Initiator::Navigation).is_ok());
+
+        let on_the_wire = seen.lock().unwrap()[0].to_ascii_lowercase();
+        let stored = capture.read_request(0).expect("a stored request");
+        for (name, _) in &stored.headers {
+            assert!(
+                on_the_wire.contains(&format!("\n{}:", name.to_ascii_lowercase()))
+                    || name.eq_ignore_ascii_case("host"),
+                "the store holds `{name}`, which never went out:\n{on_the_wire}"
+            );
+        }
+        // And the one that used to be missing is there.
+        assert!(
+            stored
+                .headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("user-agent")),
+            "the store must hold the `User-Agent` the wire carried: {:?}",
+            stored.headers
+        );
+        assert!(on_the_wire.contains("user-agent:"), "{on_the_wire}");
     }
 
     /// An edit that would change nothing is a mistake, and saying so is the

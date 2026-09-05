@@ -20,6 +20,18 @@ pub const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 /// Maximum total body storage per session.
 pub const MAX_STORE_BYTES: u64 = 512 * 1024 * 1024;
 
+/// The file a body hash names inside a store, or `None` when it is not a hash.
+///
+/// A boxed session's store is on a filesystem the boxed code can write to, so a
+/// `..` in that field would name a path outside it. Hex and length are the
+/// whole check. Public so h5i's own reader shares the rule rather than drifting.
+pub fn body_file(store: &Path, sha256: &str) -> Option<PathBuf> {
+    if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(store.join("bodies").join(sha256))
+}
+
 /// Skip large media unlikely to aid inspection. Images remain capturable for
 /// upload analysis.
 fn is_skipped_type(content_type: Option<&str>) -> bool {
@@ -161,9 +173,14 @@ pub struct Health {
 pub struct Capture {
     dir: PathBuf,
     bodies: PathBuf,
-    /// Bytes this session has put in `bodies`, which is what
-    /// [`MAX_STORE_BYTES`] bounds.
+    /// Bytes of *body* held: what a reader means by "how much evidence is in
+    /// here", and half of what [`MAX_STORE_BYTES`] bounds.
     used: AtomicU64,
+    /// Bytes of message file beside them, the other half of the allowance.
+    ///
+    /// These were outside it entirely, and they are not small: the raw sender
+    /// accepts a response head as large as the whole response cap.
+    overhead: AtomicU64,
     /// Hashes already stored, used for deduplication and byte accounting.
     seen: Mutex<HashSet<String>>,
     /// How many messages this store failed to write. Reported rather than
@@ -180,7 +197,7 @@ impl Capture {
         std::fs::create_dir_all(&bodies).map_err(|e| H5iError::with_path(e, &bodies))?;
         owner_only_dir(dir);
         owner_only_dir(&bodies);
-        // Include existing bodies in the restored session's quota.
+        // What is already here counts against the restored session's quota.
         let mut used = 0u64;
         let mut seen = HashSet::new();
         if let Ok(entries) = std::fs::read_dir(&bodies) {
@@ -195,10 +212,21 @@ impl Capture {
                 }
             }
         }
+        let mut overhead = 0u64;
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if let Ok(meta) = entry.metadata()
+                    && meta.is_file()
+                {
+                    overhead = overhead.saturating_add(meta.len());
+                }
+            }
+        }
         Ok(Self {
             dir: dir.to_path_buf(),
             bodies,
             used: AtomicU64::new(used),
+            overhead: AtomicU64::new(overhead),
             seen: Mutex::new(seen),
             errors: AtomicU64::new(0),
             messages: AtomicU64::new(0),
@@ -218,6 +246,12 @@ impl Capture {
     /// How many bytes of body this store holds.
     pub fn used(&self) -> u64 {
         self.used.load(Ordering::Relaxed)
+    }
+
+    /// Everything this store has put on disk: bodies and message files. What
+    /// [`MAX_STORE_BYTES`] is a bound on.
+    fn held(&self) -> u64 {
+        self.used().saturating_add(self.overhead.load(Ordering::Relaxed))
     }
 
     /// What this store has done, for whoever is asking whether to trust it.
@@ -289,18 +323,12 @@ impl Capture {
     }
 
     /// The file a hash names, refusing anything that is not one.
-    ///
-    /// The hash reaches this from a JSON file, and a JSON file in a session
-    /// directory is not a trusted input: a `..` in that field would otherwise
-    /// name a path outside the store. Hex and length are the whole check because
-    /// a name that is 64 hex characters cannot traverse anywhere.
     fn body_path(&self, sha256: &str) -> Result<PathBuf, H5iError> {
-        if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(H5iError::Internal(format!(
+        body_file(&self.dir, sha256).ok_or_else(|| {
+            H5iError::Internal(format!(
                 "{sha256:?} is not a body hash, so there is nothing in the store to read"
-            )));
-        }
-        Ok(self.bodies.join(sha256))
+            ))
+        })
     }
 
     /// Put a body in the store, and say what became of it.
@@ -354,7 +382,7 @@ impl Capture {
             // The allowance is checked under the same lock that claims the
             // hash, so two threads storing two different bodies at once cannot
             // both decide there is room for the last of it.
-            let used = self.used.load(Ordering::Relaxed);
+            let used = self.held();
             if used.saturating_add(kept.len() as u64) > MAX_STORE_BYTES {
                 // Refused rather than evicted. Eviction wants a pin, so that a
                 // body a finding rests on is not the one thrown away to make
@@ -387,11 +415,25 @@ impl Capture {
     }
 
     /// Write one message file. Best-effort, and counted when it fails.
+    ///
+    /// Against the same allowance a body is: these hold every header, and
+    /// leaving them outside the quota left the directory unbounded.
     fn write<T: Serialize>(&self, seq: u64, phase: &str, message: &T) {
         let path = self.dir.join(format!("{seq}.{phase}.json"));
         let wrote = serde_json::to_vec(message)
             .map_err(H5iError::from)
-            .and_then(|bytes| write_owner_only(&path, &bytes));
+            .and_then(|bytes| {
+                let used = self.held();
+                if used.saturating_add(bytes.len() as u64) > MAX_STORE_BYTES {
+                    // Refused rather than evicted, like a body, and counted.
+                    return Err(H5iError::Metadata(format!(
+                        "the message store is full ({used} of {MAX_STORE_BYTES} bytes)"
+                    )));
+                }
+                write_owner_only(&path, &bytes)?;
+                self.overhead.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                Ok(())
+            });
         match wrote {
             Ok(()) => self.messages.fetch_add(1, Ordering::Relaxed),
             Err(_) => self.errors.fetch_add(1, Ordering::Relaxed),
@@ -416,9 +458,10 @@ fn hex(bytes: &[u8]) -> String {
 
 /// Write a file readable only by its owner.
 ///
-/// The same reasoning as the request log's, one step further along. This holds
-/// session cookies and `Authorization` headers in full, and a boxed session's
-/// directory can be under a `/tmp` the `agent` profile shares with the host.
+/// This holds session cookies and `Authorization` in full, in a directory that
+/// can sit under a shared `/tmp`. `OpenOptions::mode` applies only on create,
+/// so a pre-made 0666 file got the credentials written into it and a symlink
+/// got them written wherever it pointed.
 fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), H5iError> {
     use std::io::Write as _;
     let mut options = std::fs::OpenOptions::new();
@@ -427,8 +470,16 @@ fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), H5iError> {
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
+        options.custom_flags(libc::O_NOFOLLOW);
     }
     let mut file = options.open(path).map_err(|e| H5iError::with_path(e, path))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // On the handle, not the path.
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(H5iError::Io)?;
+    }
     file.write_all(bytes).map_err(H5iError::Io)?;
     file.flush().map_err(H5iError::Io)?;
     Ok(())
@@ -454,6 +505,79 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let capture = Capture::open(&dir.path().join("messages")).expect("store opens");
         (dir, capture)
+    }
+
+    /// `mode` applies only to a file it creates, so one already there kept
+    /// whatever mode it had — with `Cookie` and `Authorization` written into it.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_was_already_there_is_narrowed_rather_than_written_wide() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("waiting.json");
+        std::fs::write(&path, b"{}").expect("a file to be there first");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666))
+            .expect("wide open");
+
+        write_owner_only(&path, b"{\"secret\":true}").expect("writes");
+
+        let mode = std::fs::metadata(&path).expect("stat").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+    }
+
+    /// And a symlink is somebody else naming the file this is about to truncate.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_is_refused_rather_than_followed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::write(&elsewhere, b"do not touch").expect("a target");
+        let path = dir.path().join("42.response.json");
+        std::os::unix::fs::symlink(&elsewhere, &path).expect("a symlink in the way");
+
+        assert!(write_owner_only(&path, b"{}").is_err(), "a symlink is refused");
+        assert_eq!(
+            std::fs::read(&elsewhere).expect("still there"),
+            b"do not touch",
+            "and what it pointed at is untouched"
+        );
+    }
+
+    /// Message files were written outside the quota entirely, so `used` read
+    /// as empty while the directory grew.
+    #[test]
+    fn a_message_file_is_counted_against_the_store_the_way_a_body_is() {
+        let (_dir, capture) = store();
+        assert_eq!(capture.used(), 0);
+
+        capture.request(
+            1,
+            "GET",
+            "https://app.test/a",
+            vec![("x-big".to_string(), "v".repeat(50_000))],
+            b"",
+            None,
+        );
+
+        assert_eq!(capture.used(), 0, "a GET has no body, so no body is held");
+        assert!(
+            capture.held() > 50_000,
+            "but its headers are on disk and inside the allowance: {}",
+            capture.held()
+        );
+        assert_eq!(capture.errors(), 0);
+    }
+
+    /// And the allowance is over both.
+    #[test]
+    fn message_files_fill_the_same_allowance_a_body_does() {
+        let (_dir, capture) = store();
+        capture.overhead.store(MAX_STORE_BYTES, Ordering::Relaxed);
+        let body = capture.store_body(Received::Bytes(b"evidence"), Some("text/plain"));
+        assert!(
+            matches!(body, Body::Skipped { reason: Skip::StoreFull, .. }),
+            "{body:?}"
+        );
     }
 
     #[test]

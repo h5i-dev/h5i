@@ -287,6 +287,61 @@ fn parse_target(spec: &str) -> Result<Target, EditError> {
     }
 }
 
+/// Whether a header name is one a request can carry: RFC 9110's token.
+///
+/// Checked here because the wire's refusal is "builder error", which names
+/// neither the header nor the character.
+fn header_name_is_sendable(name: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|b| {
+            b.is_ascii_alphanumeric()
+                || matches!(
+                    b,
+                    b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.'
+                        | b'^' | b'_' | b'`' | b'|' | b'~'
+                )
+        })
+}
+
+/// The character in a header value a request cannot carry, if there is one.
+///
+/// CR, LF and NUL only — anything narrower would refuse the payloads this is
+/// for. Splitting a message deliberately is what `--raw-request` is for.
+fn header_value_refuses(value: &str) -> Option<char> {
+    value.chars().find(|c| matches!(c, '\r' | '\n' | '\0'))
+}
+
+/// The refusal both header edits share.
+fn refuse_an_unsendable_header(
+    target: &impl fmt::Display,
+    name: &str,
+    value: &str,
+) -> Result<(), EditError> {
+    if !header_name_is_sendable(name) {
+        return Err(EditError::new(
+            target,
+            format!(
+                "{name:?} is not a header name: a field name is a token, so it holds no \
+                 space, colon or control character. A request whose framing is deliberately \
+                 wrong goes out with `--raw-request`, which writes the bytes given and \
+                 reports what it broke"
+            ),
+        ));
+    }
+    if let Some(bad) = header_value_refuses(value) {
+        return Err(EditError::new(
+            target,
+            format!(
+                "this value contains {bad:?}, which ends a header field rather than sitting \
+                 in one: the request would not be the one it looks like. To send a message \
+                 whose framing is deliberately wrong, use `--raw-request`, which writes the \
+                 bytes given and reports which invariants it had to break"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Is this path segment a dot segment, in any of the spellings a URL parser
 /// treats as one?
 ///
@@ -321,15 +376,30 @@ fn refuse_a_resolved_traversal(
 ) -> Result<(), EditError> {
     // Whatever was named — a path or a whole URL — only its path can hold a
     // dot segment.
+    // The authority ends at the first separator, and `\` is one:
+    // `https://app.test\..\..\x` has a path despite holding no `/`.
     let asked = match asked.split_once("://") {
-        Some((_, rest)) => match rest.find('/') {
+        Some((_, rest)) => match rest.find(['/', '\\']) {
             Some(at) => &rest[at..],
             None => "/",
         },
         None => asked,
     };
     let asked_path = asked.split(['?', '#']).next().unwrap_or(asked);
-    if !asked_path.split('/').any(is_a_dot_segment) {
+    // The URL standard reads `\` as `/` in an http(s) URL, so
+    // `/cgi-bin/..\..\etc/passwd` resolves to `/etc/passwd` before a request
+    // exists — and even `/a\b` goes out as `/a/b`.
+    if asked_path.contains('\\') {
+        return Err(EditError::new(
+            target,
+            format!(
+                "{asked_path:?} contains a backslash, and the URL standard reads that as a \
+                 path separator in an http or https URL: this would have gone out as \
+                 {resolved:?}. Percent-encode it as %5C to send the character itself."
+            ),
+        ));
+    }
+    if !asked_path.split(['/', '\\']).any(is_a_dot_segment) {
         return Ok(());
     }
     Err(EditError::new(
@@ -443,22 +513,30 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
         }
 
         Target::Query(name) => {
-            let pairs: Vec<(String, String)> = request
-                .url
-                .query_pairs()
-                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            // Edited as the pieces it was written as. Decoding and re-encoding
+            // rewrote parameters nobody named: `?debug` came back as `debug=`,
+            // `x[]=1` as `x%5B%5D=1`.
+            let raw = request.url.query().unwrap_or_default().to_string();
+            let pieces: Vec<&str> = if raw.is_empty() {
+                Vec::new()
+            } else {
+                raw.split('&').collect()
+            };
+            let named: Vec<(String, String)> = pieces
+                .iter()
+                .map(|piece| (query_name(piece), query_value(piece)))
                 .collect();
-            let was = pairs
+            let was = named
                 .iter()
                 .find(|(k, _)| k == name)
                 .map(|(_, v)| v.clone());
             if was.is_none() && !create && !removing {
-                return Err(missing(&target, "query parameter", &pairs));
+                return Err(missing(&target, "query parameter", &named));
             }
             let mut replaced = false;
-            let mut next: Vec<(String, String)> = Vec::with_capacity(pairs.len() + 1);
-            for (k, v) in pairs {
-                if &k == name {
+            let mut next: Vec<String> = Vec::with_capacity(pieces.len() + 1);
+            for (piece, (k, _)) in pieces.iter().zip(&named) {
+                if k == name {
                     if removing {
                         continue;
                     }
@@ -466,24 +544,24 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                     // list, and collapsing it would change the request in a way
                     // nobody asked for.
                     if !replaced {
-                        next.push((k, text(&value)));
+                        next.push(format!("{}={}", encode_query(k), encode_query(&text(&value))));
                         replaced = true;
                         continue;
                     }
                 }
-                next.push((k, v));
+                next.push((*piece).to_string());
             }
             if !replaced && !removing {
-                next.push((name.clone(), text(&value)));
+                next.push(format!(
+                    "{}={}",
+                    encode_query(name),
+                    encode_query(&text(&value))
+                ));
             }
             if next.is_empty() {
                 request.url.set_query(None);
             } else {
-                let mut serializer = form_urlencoded::Serializer::new(String::new());
-                for (k, v) in &next {
-                    serializer.append_pair(k, v);
-                }
-                request.url.set_query(Some(&serializer.finish()));
+                request.url.set_query(Some(&next.join("&")));
             }
             Ok(Applied {
                 target,
@@ -510,6 +588,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                     created: false,
                 });
             }
+            refuse_an_unsendable_header(&target, name, &text(&value))?;
             let was = request.set_header(name, &text(&value));
             Ok(Applied {
                 target,
@@ -520,32 +599,52 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
         }
 
         Target::Cookie(name) => {
+            // A cookie is a header once written, so the same three characters
+            // end it. Checked before anything is rebuilt.
+            if !removing {
+                refuse_an_unsendable_header(&target, "Cookie", &text(&value))?;
+                refuse_a_reframed_cookie(&target, name, &text(&value))?;
+            }
+            // As the pieces it was written as: parsing into pairs dropped
+            // every piece with no `=`, so a bare token was lost on any edit.
             let current = request.header("cookie").unwrap_or_default().to_string();
-            let mut pairs: Vec<(String, String)> = current
-                .split(';')
-                .filter_map(|pair| pair.split_once('='))
-                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
-                .collect();
-            let was = pairs.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
-            if was.is_none() && !create && !removing {
-                return Err(missing(&target, "cookie", &pairs));
-            }
-            if removing {
-                pairs.retain(|(k, _)| k != name);
-            } else if let Some(slot) = pairs.iter_mut().find(|(k, _)| k == name) {
-                slot.1 = text(&value);
+            let pieces: Vec<&str> = if current.is_empty() {
+                Vec::new()
             } else {
-                pairs.push((name.clone(), text(&value)));
+                current.split(';').collect()
+            };
+            let named: Vec<(String, String)> =
+                pieces.iter().map(|piece| cookie_name_and_value(piece)).collect();
+            let was = named.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
+            if was.is_none() && !create && !removing {
+                return Err(missing(&target, "cookie", &named));
             }
-            if pairs.is_empty() {
+            let mut replaced = false;
+            let mut next: Vec<String> = Vec::with_capacity(pieces.len() + 1);
+            for (piece, (k, _)) in pieces.iter().zip(&named) {
+                if k == name {
+                    if removing {
+                        continue;
+                    }
+                    if !replaced {
+                        // The piece's own leading space, so the header reads
+                        // as it did.
+                        let lead = &piece[..piece.len() - piece.trim_start().len()];
+                        next.push(format!("{lead}{name}={}", text(&value)));
+                        replaced = true;
+                        continue;
+                    }
+                }
+                next.push((*piece).to_string());
+            }
+            if !replaced && !removing {
+                let lead = if next.is_empty() { "" } else { " " };
+                next.push(format!("{lead}{name}={}", text(&value)));
+            }
+            if next.is_empty() {
                 request.remove_header("cookie");
             } else {
-                let joined = pairs
-                    .iter()
-                    .map(|(k, v)| format!("{k}={v}"))
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                request.set_header("Cookie", &joined);
+                request.set_header("Cookie", &next.join(";"));
             }
             Ok(Applied {
                 target,
@@ -561,15 +660,14 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             // ordinary starting point for an API call the page never makes, and
             // refusing it sent callers to `body.raw` to hand-write the JSON that
             // this edit exists to maintain.
-            if request.body.is_empty() && create {
-                request.body = b"{}".to_vec();
-                if request.content_type().is_none() {
-                    request.set_header("Content-Type", "application/json");
-                }
-            }
+            // Built here and committed at the end: starting the body off as
+            // `{}` left a refused edit having already changed the request.
+            let building = request.body.is_empty() && create;
             let kind = request.content_type().unwrap_or("").to_string();
-            let mut document: serde_json::Value = serde_json::from_slice(&request.body)
-                .map_err(|e| {
+            let mut document: serde_json::Value = if building {
+                serde_json::Value::Object(serde_json::Map::new())
+            } else {
+                serde_json::from_slice(&request.body).map_err(|e| {
                     EditError::new(
                         &target,
                         format!(
@@ -578,7 +676,8 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                             if kind.is_empty() { "unset" } else { &kind }
                         ),
                     )
-                })?;
+                })?
+            };
             let was = json_at(&document, path).map(render_json);
             if was.is_none() && !create && !removing {
                 return Err(EditError::new(
@@ -600,6 +699,9 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             }
             request.body = serde_json::to_vec(&document)
                 .map_err(|e| EditError::new(&target, format!("could not rebuild the body: {e}")))?;
+            if building && request.content_type().is_none() {
+                request.set_header("Content-Type", "application/json");
+            }
             Ok(Applied {
                 target,
                 value: (!removing).then(|| text(&value)),
@@ -609,24 +711,45 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
         }
 
         Target::Form(name) => {
-            let mut pairs: Vec<(String, String)> =
-                form_urlencoded::parse(&request.body).into_owned().collect();
-            let was = pairs.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
-            if was.is_none() && !create && !removing {
-                return Err(missing(&target, "form field", &pairs));
-            }
-            if removing {
-                pairs.retain(|(k, _)| k != name);
-            } else if let Some(slot) = pairs.iter_mut().find(|(k, _)| k == name) {
-                slot.1 = text(&value);
+            // As the pieces it was written as, for the reason `query.` is:
+            // re-serialising rewrote fields nobody named.
+            let pieces: Vec<&[u8]> = if request.body.is_empty() {
+                Vec::new()
             } else {
-                pairs.push((name.clone(), text(&value)));
+                request.body.split(|b| *b == b'&').collect()
+            };
+            let named: Vec<(String, String)> = pieces
+                .iter()
+                .map(|piece| form_name_and_value(piece))
+                .collect();
+            let was = named.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
+            if was.is_none() && !create && !removing {
+                return Err(missing(&target, "form field", &named));
             }
-            let mut serializer = form_urlencoded::Serializer::new(String::new());
-            for (k, v) in &pairs {
-                serializer.append_pair(k, v);
+            let encoded = format!(
+                "{}={}",
+                encode_query(name),
+                encode_query(&text(&value))
+            );
+            let mut replaced = false;
+            let mut next: Vec<Vec<u8>> = Vec::with_capacity(pieces.len() + 1);
+            for (piece, (k, _)) in pieces.iter().zip(&named) {
+                if k == name {
+                    if removing {
+                        continue;
+                    }
+                    if !replaced {
+                        next.push(encoded.clone().into_bytes());
+                        replaced = true;
+                        continue;
+                    }
+                }
+                next.push(piece.to_vec());
             }
-            request.body = serializer.finish().into_bytes();
+            if !replaced && !removing {
+                next.push(encoded.into_bytes());
+            }
+            request.body = next.join(&b'&');
             if request.content_type().is_none() {
                 request.set_header("Content-Type", "application/x-www-form-urlencoded");
             }
@@ -750,6 +873,90 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
     }
 }
 
+/// The decoded name of one `k=v` piece of a query string. A piece with no `=`
+/// is a name with no value: `?debug` and `?debug=` are not the same request.
+fn query_name(piece: &str) -> String {
+    let raw = piece.split_once('=').map(|(k, _)| k).unwrap_or(piece);
+    decode_query(raw)
+}
+
+/// The decoded value of one piece, empty when it has none.
+fn query_value(piece: &str) -> String {
+    piece.split_once('=').map(|(_, v)| decode_query(v)).unwrap_or_default()
+}
+
+fn decode_query(raw: &str) -> String {
+    form_urlencoded::parse(raw.as_bytes())
+        .next()
+        .map(|(k, _)| k.into_owned())
+        .unwrap_or_default()
+}
+
+fn encode_query(value: &str) -> String {
+    form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+/// One piece of a `Cookie` header, as name and value.
+///
+/// A piece with no `=` is a bare token, which servers do read and which this
+/// therefore has to keep: it is a cookie with an empty value, not an absence.
+fn cookie_name_and_value(piece: &str) -> (String, String) {
+    match piece.split_once('=') {
+        Some((name, value)) => (name.trim().to_string(), value.trim().to_string()),
+        None => (piece.trim().to_string(), String::new()),
+    }
+}
+
+/// Refuse a cookie edit that would write more than one cookie.
+///
+/// `;` separates pairs and `=` separates a pair, so either inside a name — or a
+/// `;` in a value — writes something other than the cookie named. Refused
+/// rather than escaped; `header.Cookie=` takes the whole header.
+fn refuse_a_reframed_cookie(
+    target: &impl fmt::Display,
+    name: &str,
+    value: &str,
+) -> Result<(), EditError> {
+    let bad_name = name.contains(';') || name.contains('=');
+    if bad_name || value.contains(';') {
+        return Err(EditError::new(
+            target,
+            "`;` separates one cookie from the next and `=` separates a name from its \
+             value, so this edit would write more than the one cookie it names. Set the \
+             whole header with `header.Cookie=` when that is the request you mean",
+        ));
+    }
+    // Every reader strips whitespace around a pair, so a value that begins or
+    // ends with one goes out saying something it is not read as. Inside, it stays.
+    if value != value.trim() || name != name.trim() {
+        return Err(EditError::new(
+            target,
+            "a `Cookie` header allows whitespace around each pair and every reader strips \
+             it, so a name or value that begins or ends with a space would not arrive as \
+             the one asked for. Set the whole header with `header.Cookie=` to send those \
+             bytes exactly",
+        ));
+    }
+    Ok(())
+}
+
+/// One `k=v` piece of a form body, decoded.
+fn form_name_and_value(piece: &[u8]) -> (String, String) {
+    let at = piece.iter().position(|b| *b == b'=');
+    let (raw_name, raw_value) = match at {
+        Some(at) => (&piece[..at], &piece[at + 1..]),
+        None => (piece, &[][..]),
+    };
+    (decode_form(raw_name), decode_form(raw_value))
+}
+
+fn decode_form(raw: &[u8]) -> String {
+    form_urlencoded::parse(raw)
+        .next()
+        .map(|(k, _)| k.into_owned())
+        .unwrap_or_default()
+}
+
 /// The error for a target that is not there, carrying what is.
 ///
 /// The names, not a bare refusal: nine times out of ten the caller is one
@@ -861,7 +1068,8 @@ fn json_remove(document: &mut serde_json::Value, path: &str) -> Result<(), Strin
     }
     match at {
         serde_json::Value::Object(map) => {
-            map.remove(*last);
+            // `shift_remove`: with `preserve_order` the plain one is a swap.
+            map.shift_remove(*last);
             Ok(())
         }
         serde_json::Value::Array(items) => {
@@ -1238,6 +1446,335 @@ mod tests {
                 "a refused edit leaves the request alone"
             );
         }
+    }
+
+    /// The check above splits on `/`, and `..\..\etc` holds none — so
+    /// `path=/cgi-bin/..\..\etc/passwd` went out as `/etc/passwd`.
+    #[test]
+    fn a_backslash_is_a_separator_too_and_is_refused_with_it() {
+        for spelling in [
+            "path=/cgi-bin/..\\..\\etc/passwd",
+            "path=/a\\b",
+            "url=https://app.test/cgi-bin/..\\..\\etc/passwd",
+            "url=https://app.test\\..\\..\\x",
+        ] {
+            let mut request = request();
+            let error = apply(&mut request, &[set(spelling)], false)
+                .expect_err("a backslash the parser rewrites is refused");
+            assert!(error.to_string().contains("backslash"), "{spelling}: {error}");
+            assert_eq!(
+                request.url.as_str(),
+                "https://app.test/api/users?user_id=123&page=2",
+                "a refused edit leaves the request alone"
+            );
+        }
+    }
+
+    /// A CR or LF in a header value came back as "builder error", which names
+    /// neither the header nor the character.
+    #[test]
+    fn a_header_that_could_not_be_sent_is_refused_by_name() {
+        for spelling in [
+            "header.X-A=one\r\nX-Injected: yes",
+            "header.X-A=one\nX-Injected: yes",
+            "cookie.sid=a\r\nX-Injected: yes",
+        ] {
+            let mut request = request();
+            let error = apply(&mut request, &[set(spelling)], true)
+                .expect_err("a header that cannot be sent is refused");
+            assert!(error.to_string().contains("--raw-request"), "{spelling}: {error}");
+            assert_eq!(
+                request.header("cookie"),
+                Some("session=abc; theme=dark"),
+                "a refused edit leaves the request alone"
+            );
+        }
+        // A name that is not a token goes the same way, and says which.
+        let mut request = request();
+        let error = apply(&mut request, &[set("header.X A=1")], true)
+            .expect_err("a name with a space in it is not a header name");
+        assert!(error.to_string().contains("not a header name"), "{error}");
+    }
+
+    /// Replay claims nothing else changed. Re-encoding the query broke that
+    /// for every parameter the caller did not name: `?debug` went out as
+    /// `debug=`, `x[]=1` as `x%5B%5D=1`.
+    #[test]
+    fn editing_one_query_parameter_leaves_the_others_byte_for_byte() {
+        let mut request = Editable {
+            method: "GET".to_string(),
+            url: Url::parse("https://app.test/a?debug&next=%2Fadmin&q=a+b&x[]=1&keep=A")
+                .expect("a url"),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+        let applied = apply(&mut request, &[set("query.keep=B")], false).expect("applies");
+        assert_eq!(applied[0].was.as_deref(), Some("A"));
+        assert_eq!(
+            request.url.query(),
+            Some("debug&next=%2Fadmin&q=a+b&x[]=1&keep=B")
+        );
+    }
+
+    /// A parameter that is not there is still added, and a removal still takes
+    /// every copy.
+    #[test]
+    fn a_query_parameter_is_added_and_removed_without_touching_the_rest() {
+        let mut request = Editable {
+            method: "GET".to_string(),
+            url: Url::parse("https://app.test/a?debug&id=1&id=2").expect("a url"),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+        apply(&mut request, &[set("query.role=admin")], true).expect("adds");
+        assert_eq!(request.url.query(), Some("debug&id=1&id=2&role=admin"));
+        apply(&mut request, &[parse_unset("query.id").expect("parses")], false)
+            .expect("removes");
+        assert_eq!(request.url.query(), Some("debug&role=admin"));
+    }
+
+    /// The query's rule, for the same reason: a body differing in a field the
+    /// caller never named is a different request.
+    #[test]
+    fn editing_one_form_field_leaves_the_others_byte_for_byte() {
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/login").expect("a url"),
+            headers: vec![(
+                "Content-Type".to_string(),
+                "application/x-www-form-urlencoded".to_string(),
+            )],
+            body: b"remember&next=%2Fadmin&tags[]=a&user=alice".to_vec(),
+        };
+        let applied = apply(&mut request, &[set("form.user=admin")], false).expect("applies");
+        assert_eq!(applied[0].was.as_deref(), Some("alice"));
+        assert_eq!(
+            String::from_utf8_lossy(&request.body),
+            "remember&next=%2Fadmin&tags[]=a&user=admin"
+        );
+    }
+
+    /// Parsing into pairs threw away every bare token, so editing one cookie
+    /// deleted another the caller never named — a logout inside a measurement.
+    #[test]
+    fn a_bare_cookie_survives_an_edit_to_a_different_one() {
+        let mut request = Editable {
+            method: "GET".to_string(),
+            url: Url::parse("https://app.test/a").expect("a url"),
+            headers: vec![(
+                "Cookie".to_string(),
+                "session=abc; beta; theme=dark".to_string(),
+            )],
+            body: Vec::new(),
+        };
+        apply(&mut request, &[set("cookie.theme=light")], false).expect("applies");
+        assert_eq!(
+            request.header("cookie"),
+            Some("session=abc; beta; theme=light")
+        );
+    }
+
+    /// And an edit naming one cookie but writing two is refused, not escaped.
+    #[test]
+    fn a_cookie_edit_that_would_write_two_is_refused() {
+        let mut request = request();
+        let error = apply(&mut request, &[set("cookie.session=a; admin=1")], false)
+            .expect_err("a `;` in a cookie value writes a second cookie");
+        assert!(error.to_string().contains("header.Cookie="), "{error}");
+        assert_eq!(request.header("cookie"), Some("session=abc; theme=dark"));
+    }
+
+    /// A JSON edit rewrites the body, and `serde_json`'s default map sorts the
+    /// keys — so a signed body was replayed as a different one, and the 401
+    /// that came back read as the finding.
+    #[test]
+    fn a_json_edit_keeps_the_fields_in_the_order_they_were_in() {
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/api").expect("a url"),
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            body: br#"{"user":"alice","role":"user","nonce":"z9"}"#.to_vec(),
+        };
+        apply(&mut request, &[set("json.role=\"admin\"")], false).expect("applies");
+        assert_eq!(
+            String::from_utf8_lossy(&request.body),
+            r#"{"user":"alice","role":"admin","nonce":"z9"}"#
+        );
+    }
+
+    /// And a removal shifts the rest along rather than swapping in the last.
+    #[test]
+    fn removing_a_json_field_leaves_the_others_in_order() {
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/api").expect("a url"),
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            body: br#"{"a":1,"b":2,"c":3,"d":4}"#.to_vec(),
+        };
+        apply(
+            &mut request,
+            &[parse_unset("json.b").expect("parses")],
+            false,
+        )
+        .expect("removes");
+        assert_eq!(
+            String::from_utf8_lossy(&request.body),
+            r#"{"a":1,"c":3,"d":4}"#
+        );
+    }
+
+    /// The rule every refusal here is written to: an edit that errors changed
+    /// nothing, or the next attempt edits a half-edited request.
+    #[test]
+    fn an_edit_that_is_refused_leaves_the_request_exactly_as_it_was() {
+        let targets = [
+            "method", "url", "path", "query.a", "query.", "header.X", "header.X A",
+            "cookie.s", "cookie.s;x", "json.a", "json.a.b", "json.", "form.f",
+            "multipart.f", "multipart.f.filename", "multipart.f.content_type",
+            "body.raw", "body.other", "nonsense", "", ".", "..", "query.a.b",
+        ];
+        let values = [
+            "", "1", "..", "/a/../b", "\\\\..\\\\", "https://app.test/../x", "not a url",
+            "a\r\nb", "a; b=c", "{\"a\":1}", "%2e%2e", "@", "=", "a=b",
+        ];
+        let bodies: [&[u8]; 4] = [b"", b"{\"a\":{\"b\":1}}", b"a=1&b=2", b"\xff\xd8not text"];
+
+        for body in bodies {
+            for target in targets {
+                for value in values {
+                    for create in [false, true] {
+                        for removing in [false, true] {
+                            let mut request = request();
+                            request.body = body.to_vec();
+                            let before = request.clone();
+                            let edit = if removing {
+                                parse_unset(target)
+                            } else {
+                                parse_set(&format!("{target}={value}"))
+                            };
+                            let Ok(edit) = edit else { continue };
+                            if apply(&mut request, &[edit], create).is_err() {
+                                assert_eq!(
+                                    request, before,
+                                    "`{target}` = `{value}` (create={create}, \
+                                     removing={removing}) was refused and still \
+                                     changed the request"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The editors slice strings a target or caller chose. Multi-byte
+    /// characters, lone separators and empty pieces are where that goes wrong.
+    #[test]
+    fn no_arrangement_of_these_edits_panics() {
+        let targets = [
+            "query.a", "query.é", "query.", "form.f", "form.é", "cookie.s", "cookie.é",
+            "json.a", "body.raw", "header.X", "method", "path", "url",
+        ];
+        let values = [
+            "", "=", "&", ";", " ", "é", "🙂", "a=b&c", "a; b", "\u{a0}x", "%", "%zz",
+            "\u{feff}", "..", "/a/../b",
+        ];
+        // Bodies and URLs built out of the same sharp pieces.
+        let queries = ["", "?a", "?a=1", "?é=1&a", "?=1", "?&&", "?a=%", "?🙂=1"];
+        let bodies: [&[u8]; 6] = [
+            b"",
+            b"a=1&b",
+            b"=1",
+            b"&&",
+            "é=1&🙂=2".as_bytes(),
+            b"\xff\xfe not text",
+        ];
+        let cookies = ["", "s=1", " s = 1 ; t", ";;", "é=1", "s"];
+
+        let mut cases = 0usize;
+        for query in queries {
+            for body in bodies {
+                for cookie in cookies {
+                    for target in targets {
+                        for value in values {
+                            for create in [false, true] {
+                                let mut request = Editable {
+                                    method: "POST".to_string(),
+                                    url: Url::parse(&format!("https://app.test/p{query}"))
+                                        .expect("a url"),
+                                    headers: vec![(
+                                        "Cookie".to_string(),
+                                        cookie.to_string(),
+                                    )],
+                                    body: body.to_vec(),
+                                };
+                                let spec = format!("{target}={value}");
+                                if let Ok(edit) = parse_set(&spec) {
+                                    let applied = apply(&mut request, &[edit], create);
+                                    cases += 1;
+                                    // An edit that succeeded put the value
+                                    // where it said it did — the half a panic
+                                    // hunt misses.
+                                    if applied.is_ok() {
+                                        if let Some(name) = target.strip_prefix("query.") {
+                                            assert!(
+                                                request
+                                                    .url
+                                                    .query_pairs()
+                                                    .any(|(k, v)| k == name && v == value),
+                                                "`{spec}` did not read back: {:?}",
+                                                request.url.query()
+                                            );
+                                        }
+                                        if let Some(name) = target.strip_prefix("form.") {
+                                            assert!(
+                                                form_urlencoded::parse(&request.body)
+                                                    .any(|(k, v)| k == name && v == value),
+                                                "`{spec}` did not read back: {:?}",
+                                                String::from_utf8_lossy(&request.body)
+                                            );
+                                        }
+                                        if let Some(name) = target.strip_prefix("cookie.") {
+                                            let header =
+                                                request.header("cookie").unwrap_or_default();
+                                            assert!(
+                                                header.split(';').any(|piece| {
+                                                    cookie_name_and_value(piece)
+                                                        == (name.to_string(), value.to_string())
+                                                }),
+                                                "`{spec}` did not read back: {header:?}"
+                                            );
+                                        }
+                                    }
+                                }
+                                if let Ok(edit) = parse_unset(target) {
+                                    let _ = apply(&mut request, &[edit], create);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(cases > 10_000, "the sweep actually ran: {cases}");
+    }
+
+    /// Every reader strips whitespace around a pair, so `cookie.s= ` went out
+    /// as `s= ` and arrived as `s=`. Found by the sweep below.
+    #[test]
+    fn a_cookie_value_the_header_cannot_carry_is_refused() {
+        for spec in ["cookie.s= ", "cookie.s=  a", "cookie.s=a "] {
+            let mut request = request();
+            let error = apply(&mut request, &[set(spec)], true)
+                .expect_err("a value the header cannot carry is refused");
+            assert!(error.to_string().contains("header.Cookie="), "{spec}: {error}");
+            assert_eq!(request.header("cookie"), Some("session=abc; theme=dark"));
+        }
+        // Whitespace inside the value is ordinary and survives.
+        let mut request = request();
+        apply(&mut request, &[set("cookie.theme=a b")], false).expect("applies");
+        assert_eq!(request.header("cookie"), Some("session=abc; theme=a b"));
     }
 
     /// And an ordinary path still goes through, dots in a filename included.

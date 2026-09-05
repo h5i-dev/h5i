@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use h5i_browser::capture::{Body, StoredRequest, StoredResponse};
+use h5i_browser::capture::{body_file, Body, StoredRequest, StoredResponse};
 use h5i_core::browser_session as bs;
 use serde_json::{json, Value};
 
@@ -20,11 +20,17 @@ pub enum Part {
 
 /// Where a session's messages are, or why they cannot be read.
 fn store_dir(root: &Path, selector: Option<&str>) -> anyhow::Result<(bs::Session, PathBuf)> {
-    let session = match bs::resolve(root, selector) {
-        Ok(session) => session,
-        Err(bs::SessionGone::Ended { id, .. }) => bs::read(root, &id)?,
-        Err(gone) => anyhow::bail!("{gone}"),
-    };
+    // Live or ended: a store outlives its engine.
+    let session = super::browser::resolve_for_reading(root, selector)?;
+    // A boxed session's record sits where boxed code can write it, and this id
+    // becomes a path.
+    if !bs::id_is_one_component(&session.id) {
+        anyhow::bail!(
+            "session record names `{}` as its id, which is not one this registry could \
+             have minted. Nothing was read",
+            session.id
+        );
+    }
     let dir = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
     if !dir.exists() {
         let placed = match &session.placement {
@@ -73,6 +79,16 @@ fn read_json<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> anyhow::Result
 pub enum Text {
     /// Decoded, and safe to compare line by line.
     Utf8(String),
+    /// Decoded, and only the head of what the response carried.
+    ///
+    /// Its own state because every verb here turns on the difference: a search
+    /// over the head says nothing about the rest, and its length is the cap's
+    /// number rather than the body's.
+    Cut {
+        text: String,
+        /// How many bytes the response actually carried.
+        of_bytes: u64,
+    },
     /// Binary data with an inspection-only lossy preview.
     Binary {
         bytes: u64,
@@ -84,9 +100,35 @@ pub enum Text {
 }
 
 impl Text {
+    /// How many bytes the body actually had.
+    ///
+    /// Not `as_str().len()`: one invalid byte puts a response on the preview
+    /// path, and a length read off a 64 KiB preview is a number the target
+    /// chose. `None` when the body is not stored, which is not a length of zero.
+    fn len(&self) -> Option<u64> {
+        match self {
+            Text::Utf8(text) => Some(text.len() as u64),
+            Text::Cut { of_bytes, .. } => Some(*of_bytes),
+            Text::Binary { bytes, .. } => Some(*bytes),
+            Text::Missing(_) => None,
+        }
+    }
+
+    /// Whether [`Text::as_str`] is the whole body or only its head. A search
+    /// over part of a body cannot answer "not there".
+    fn whole(&self) -> bool {
+        match self {
+            Text::Utf8(_) => true,
+            Text::Cut { .. } => false,
+            Text::Binary { bytes, .. } => *bytes <= LOSSY_BODY_BYTES as u64,
+            Text::Missing(_) => false,
+        }
+    }
+
     fn as_str(&self) -> &str {
         match self {
             Text::Utf8(text) => text,
+            Text::Cut { text, .. } => text,
             // Let match and diff inspect the lossy preview.
             Text::Binary { text, .. } => text,
             Text::Missing(_) => "",
@@ -96,6 +138,9 @@ impl Text {
     fn to_json(&self) -> Value {
         match self {
             Text::Utf8(text) => json!({"kind": "text", "text": text}),
+            Text::Cut { text, of_bytes } => {
+                json!({"kind": "text", "text": text, "truncated": true, "of_bytes": of_bytes})
+            }
             Text::Binary {
                 bytes,
                 sha256,
@@ -108,12 +153,47 @@ impl Text {
     }
 }
 
+/// Target text with what a terminal would act on made visible instead.
+///
+/// The human view prints strings the target wrote; an escape in one repaints
+/// the report of what the target did. Escaped rather than dropped, so it stays
+/// visible. Bidi controls go too: they are not `is_control` and reorder the
+/// line around them. `--raw`, `--body-to` and `--json` are the byte channels
+/// and are untouched.
+fn printable(text: &str) -> String {
+    if !text
+        .chars()
+        .any(|c| c.is_control() || is_bidi_control(c))
+    {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_control() || is_bidi_control(ch) {
+            out.extend(ch.escape_debug());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Bidirectional formatting characters, which reorder the text *around* them.
+/// Overrides, embeddings and isolates only, as `snapshot.rs` drops from page text.
+fn is_bidi_control(c: char) -> bool {
+    matches!(c,
+        '\u{200E}' | '\u{200F}'
+        | '\u{202A}'..='\u{202E}'
+        | '\u{2066}'..='\u{2069}'
+    )
+}
+
 /// Exact stored body bytes, or `None` when unavailable.
 fn body_bytes(dir: &Path, body: &Body) -> Option<Vec<u8>> {
     match body {
         Body::Empty => Some(Vec::new()),
         Body::Skipped { .. } => None,
-        Body::Stored { sha256, .. } => std::fs::read(dir.join("bodies").join(sha256)).ok(),
+        Body::Stored { sha256, .. } => std::fs::read(body_file(dir, sha256)?).ok(),
     }
 }
 
@@ -128,11 +208,26 @@ fn body_text(dir: &Path, body: &Body) -> Text {
             (reason, Some(bytes)) => format!("{reason:?} ({bytes} bytes)").to_lowercase(),
             (reason, None) => format!("{reason:?}").to_lowercase(),
         }),
-        Body::Stored { sha256, bytes, .. } => {
-            let path = dir.join("bodies").join(sha256);
+        Body::Stored {
+            sha256,
+            bytes,
+            of_bytes,
+            truncated,
+        } => {
+            let Some(path) = body_file(dir, sha256) else {
+                return Text::Missing(format!(
+                    "{sha256:?} is not a body hash, so the store has nothing under it"
+                ));
+            };
             match std::fs::read(&path) {
                 Err(e) => Text::Missing(format!("the stored body could not be read: {e}")),
                 Ok(raw) => match String::from_utf8(raw) {
+                    // A cut on a character boundary — every cut, for ASCII —
+                    // decodes cleanly, so the head used to look like a body.
+                    Ok(text) if *truncated => Text::Cut {
+                        of_bytes: of_bytes.unwrap_or(text.len() as u64),
+                        text,
+                    },
                     Ok(text) => Text::Utf8(text),
                     Err(e) => Text::Binary {
                         bytes: *bytes,
@@ -211,6 +306,13 @@ fn raw_response(stored: &StoredResponse, body: &Text) -> String {
 fn push_body(out: &mut String, body: &Text) {
     match body {
         Text::Utf8(text) => out.push_str(text),
+        Text::Cut { text, of_bytes } => {
+            out.push_str(text);
+            out.push_str(&format!(
+                "\n[the store kept {} of this body's {of_bytes} bytes]\n",
+                text.len()
+            ));
+        }
         Text::Binary {
             bytes,
             sha256,
@@ -292,9 +394,32 @@ pub fn show(
         })?;
         std::fs::write(path, &bytes)
             .map_err(|e| anyhow::anyhow!("{} could not be written: {e}", path.display()))?;
-        wrote = Some(json!({"path": path.display().to_string(), "bytes": bytes.len()}));
+        // The exact byte channel every bounded view points at, so a body the
+        // store cut has to say so rather than hand over a shorter file.
+        let of_bytes = match body {
+            Body::Stored {
+                truncated: true,
+                of_bytes,
+                ..
+            } => *of_bytes,
+            _ => None,
+        };
+        let mut note = json!({"path": path.display().to_string(), "bytes": bytes.len()});
+        if let Some(had) = of_bytes {
+            note["of_bytes"] = json!(had);
+            note["truncated"] = json!(true);
+        }
+        wrote = Some(note);
         if !json_out {
-            println!("  wrote    : {} bytes to {}", bytes.len(), path.display());
+            match of_bytes {
+                None => println!("  wrote    : {} bytes to {}", bytes.len(), path.display()),
+                Some(had) => println!(
+                    "  wrote    : {} bytes to {} — the head of a {had} byte body, which is \
+                     all the store kept",
+                    bytes.len(),
+                    path.display()
+                ),
+            }
         }
     }
 
@@ -343,7 +468,7 @@ pub fn show(
             println!("  request  : {} {}", request.method, request.url);
             println!("  at       : {}", request.at);
             for (name, value) in &request.headers {
-                println!("    {name}: {value}");
+                println!("    {}: {}", preview_line(name), preview_line(value));
             }
             summarise_body(body);
         }
@@ -368,7 +493,7 @@ pub fn show(
                 None => println!("  response : (none: the request did not complete)"),
             }
             for (name, value) in &response.headers {
-                println!("    {name}: {value}");
+                println!("    {}: {}", preview_line(name), preview_line(value));
             }
             summarise_body(body);
             if let Some(trailing) = &trailing {
@@ -382,17 +507,46 @@ pub fn show(
     Ok(())
 }
 
+/// How much of one line a preview shows.
+///
+/// The line count was bounded and the length was not, so a minified page — one
+/// line, megabytes of it — printed whole. The same number the body diff cuts at.
+const MAX_PREVIEW_LINE: usize = 400;
+
+/// One line of a body, bounded and inert.
+fn preview_line(line: &str) -> String {
+    let mut shown: String = line.chars().take(MAX_PREVIEW_LINE).collect();
+    if shown.chars().count() < line.chars().count() {
+        shown.push_str(&format!(
+            " … [{} more characters on this line]",
+            line.chars().count() - MAX_PREVIEW_LINE
+        ));
+    }
+    printable(&shown)
+}
+
 fn summarise_body(body: &Text) {
     match body {
         Text::Utf8(text) if text.is_empty() => println!("  body     : empty"),
         Text::Utf8(text) => {
             println!("  body     : {} bytes", text.len());
+            let lines = text.lines().count();
             for line in text.lines().take(20) {
-                println!("    {line}");
+                println!("    {}", preview_line(line));
             }
-            if text.lines().count() > 20 {
-                println!("    … {} more lines", text.lines().count() - 20);
+            if lines > 20 {
+                println!("    … {} more lines", lines - 20);
             }
+        }
+        Text::Cut { text, of_bytes } => {
+            println!(
+                "  body     : {of_bytes} bytes, of which the store kept {}",
+                text.len()
+            );
+            for line in text.lines().take(20) {
+                println!("    {}", preview_line(line));
+            }
+            println!("    … the rest of this body is not in the store");
         }
         Text::Binary {
             bytes,
@@ -401,7 +555,7 @@ fn summarise_body(body: &Text) {
         } => {
             println!("  body     : {bytes} bytes, not text (sha256 {sha256})");
             for line in text.lines().take(20) {
-                println!("    {line}");
+                println!("    {}", preview_line(line));
             }
         }
         Text::Missing(why) => println!("  body     : not stored ({why})"),
@@ -425,6 +579,37 @@ fn header_is_the_users(name: &str) -> bool {
         name.trim().to_ascii_lowercase().as_str(),
         "cookie" | "authorization" | "proxy-authorization"
     )
+}
+
+/// The exact body to send again, or why there is not one.
+///
+/// The in-session resend's truncation rule, kept here so the two cannot
+/// disagree: a body the store cut short is not the body that was sent.
+fn carried_body(dir: &Path, seq: u64, body: &Body) -> anyhow::Result<Vec<u8>> {
+    if let Body::Stored { truncated: true, .. } = body {
+        anyhow::bail!(
+            "request {seq} was too large to keep whole, so carrying it into another \
+             session would send a request that is not the one recorded"
+        );
+    }
+    match body_text(dir, body) {
+        Text::Utf8(text) => Ok(text.into_bytes()),
+        // Unreachable while the check above stands; spelled out so a change
+        // to it fails here.
+        Text::Cut { of_bytes, .. } => anyhow::bail!(
+            "request {seq} carried {of_bytes} bytes and the store kept only its head, so \
+             carrying it would send a request that is not the one recorded"
+        ),
+        Text::Binary { sha256, .. } => {
+            let path = body_file(dir, &sha256)
+                .ok_or_else(|| anyhow::anyhow!("{sha256:?} is not a body hash"))?;
+            std::fs::read(path)
+                .map_err(|e| anyhow::anyhow!("the stored body could not be read: {e}"))
+        }
+        Text::Missing(why) => anyhow::bail!(
+            "request {seq}'s body is not in the store ({why}), so it cannot be carried"
+        ),
+    }
 }
 
 /// One session's stored request, ready to hand to another session.
@@ -465,14 +650,7 @@ pub fn carry(
         })
         .collect();
 
-    let body = match body_text(&dir, &stored.body) {
-        Text::Utf8(text) => text.into_bytes(),
-        Text::Binary { sha256, .. } => std::fs::read(dir.join("bodies").join(&sha256))
-            .map_err(|e| anyhow::anyhow!("the stored body could not be read: {e}"))?,
-        Text::Missing(why) => {
-            anyhow::bail!("request {seq}'s body is not in the store ({why}), so it cannot be carried")
-        }
-    };
+    let body = carried_body(&dir, seq, &stored.body)?;
     use base64::Engine as _;
     Ok((
         json!({
@@ -499,14 +677,29 @@ pub struct Difference {
     /// on, and the reason this verb is not just a printed diff: reading two
     /// HTML pages per candidate character through a model is the expensive way
     /// to answer "true page or false page".
+    ///
+    /// Only meaningful when [`Difference::bodies_compared`] is set.
     pub similarity: f64,
+    /// Whether there were two bodies to compare at all.
+    ///
+    /// An unstored body reads as the empty string, so two of them compared as
+    /// identical. Reachable on purpose: fill the store, or serve pages as
+    /// `font/woff`, and every later comparison says "the same page".
+    pub bodies_compared: bool,
     pub headers_added: Vec<String>,
     pub headers_removed: Vec<String>,
     pub headers_changed: Vec<String>,
     /// Changed body fields, when both bodies are JSON. Keyed by dotted path.
     pub json_changes: Vec<JsonChange>,
+    /// How many there were, when the list above is only the first of them. A
+    /// cap that says nothing is a partial diff shaped like a complete one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json_changes_of: Option<usize>,
     /// Changed lines, when they are not.
     pub line_changes: Vec<LineChange>,
+    /// How many there were. See [`Difference::json_changes_of`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_changes_of: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -570,13 +763,26 @@ pub fn compare(left: (&StoredResponse, &Text), right: (&StoredResponse, &Text)) 
         }
     }
 
+    // Two bodies, or none of this is a comparison. `Text::Missing` reads as the
+    // empty string, which made "neither body was kept" indistinguishable from
+    // "both bodies were empty".
+    // Whole bodies, or none of this is a comparison: an unstored one reads as
+    // empty and a previewed one as its own head.
+    let bodies_compared = a_body.whole() && b_body.whole();
     let left_text = a_body.as_str();
     let right_text = b_body.as_str();
-    let (json_changes, line_changes) = body_changes(a, b, left_text, right_text);
+    let (json_changes, json_total, line_changes, line_total) =
+        body_changes(a, b, left_text, right_text);
 
-    let bytes = (left_text.len() as u64, right_text.len() as u64);
+    // The bodies' own lengths, not the previews': `length_delta` read zero for
+    // any two binary responses past the 64 KiB cap.
+    let bytes = (
+        a_body.len().unwrap_or_default(),
+        b_body.len().unwrap_or_default(),
+    );
     Difference {
-        same: a.status == b.status
+        same: bodies_compared
+            && a.status == b.status
             && added.is_empty()
             && removed.is_empty()
             && changed.is_empty()
@@ -585,10 +791,18 @@ pub fn compare(left: (&StoredResponse, &Text), right: (&StoredResponse, &Text)) 
         status_changed: a.status != b.status,
         bytes,
         length_delta: bytes.1 as i64 - bytes.0 as i64,
-        similarity: similarity(left_text, right_text),
+        // Zero rather than one, so a caller ignoring the flag looks again.
+        similarity: if bodies_compared {
+            similarity(left_text, right_text)
+        } else {
+            0.0
+        },
+        bodies_compared,
         headers_added: added,
         headers_removed: removed,
         headers_changed: changed,
+        json_changes_of: (json_total > json_changes.len()).then_some(json_total),
+        line_changes_of: (line_total > line_changes.len()).then_some(line_total),
         json_changes,
         line_changes,
     }
@@ -602,12 +816,14 @@ fn is_json(response: &StoredResponse) -> bool {
         .is_some_and(|(_, value)| value.to_ascii_lowercase().contains("json"))
 }
 
+/// The JSON changes and the line changes, each with the number there were
+/// before the cap took the rest.
 fn body_changes(
     a: &StoredResponse,
     b: &StoredResponse,
     left: &str,
     right: &str,
-) -> (Vec<JsonChange>, Vec<LineChange>) {
+) -> (Vec<JsonChange>, usize, Vec<LineChange>, usize) {
     // Both sides have to be JSON *and* parse. A body that claims JSON and is
     // not (a truncated answer, an error page served with the wrong type) falls
     // through to the line diff rather than reporting no changes at all.
@@ -619,18 +835,31 @@ fn body_changes(
         )
     {
         let mut changes = Vec::new();
-        walk_json("", &left, &right, &mut changes);
-        changes.truncate(MAX_JSON_CHANGES);
-        return (changes, Vec::new());
+        let mut total = 0usize;
+        walk_json("", &left, &right, &mut changes, &mut total);
+        return (changes, total, Vec::new(), 0);
     }
-    (Vec::new(), line_changes(left, right))
+    let (lines, total) = line_changes(left, right);
+    (Vec::new(), 0, lines, total)
 }
 
 /// Field-by-field, so a re-ordered object is not a difference.
-fn walk_json(path: &str, left: &Value, right: &Value, out: &mut Vec<JsonChange>) {
-    if out.len() >= MAX_JSON_CHANGES {
-        return;
-    }
+/// Every difference between two documents, pushing at most [`MAX_JSON_CHANGES`]
+/// and counting all of them in `total`. Stopping the walk at the cap made those
+/// two numbers equal, so a capped diff could not say it had been capped.
+fn walk_json(
+    path: &str,
+    left: &Value,
+    right: &Value,
+    out: &mut Vec<JsonChange>,
+    total: &mut usize,
+) {
+    let note = |change: JsonChange, out: &mut Vec<JsonChange>, total: &mut usize| {
+        *total += 1;
+        if out.len() < MAX_JSON_CHANGES {
+            out.push(change);
+        }
+    };
     let render = |v: &Value| match v {
         Value::String(s) => s.clone(),
         other => other.to_string(),
@@ -645,17 +874,17 @@ fn walk_json(path: &str, left: &Value, right: &Value, out: &mut Vec<JsonChange>)
                     format!("{path}.{name}")
                 };
                 match (a.get(name), b.get(name)) {
-                    (Some(l), Some(r)) => walk_json(&next, l, r, out),
-                    (Some(l), None) => out.push(JsonChange {
-                        path: next,
-                        from: Some(render(l)),
-                        to: None,
-                    }),
-                    (None, Some(r)) => out.push(JsonChange {
-                        path: next,
-                        from: None,
-                        to: Some(render(r)),
-                    }),
+                    (Some(l), Some(r)) => walk_json(&next, l, r, out, total),
+                    (Some(l), None) => note(
+                        JsonChange { path: next, from: Some(render(l)), to: None },
+                        out,
+                        total,
+                    ),
+                    (None, Some(r)) => note(
+                        JsonChange { path: next, from: None, to: Some(render(r)) },
+                        out,
+                        total,
+                    ),
                     (None, None) => {}
                 }
             }
@@ -664,26 +893,30 @@ fn walk_json(path: &str, left: &Value, right: &Value, out: &mut Vec<JsonChange>)
             for index in 0..a.len().max(b.len()) {
                 let next = format!("{path}.{index}");
                 match (a.get(index), b.get(index)) {
-                    (Some(l), Some(r)) => walk_json(&next, l, r, out),
-                    (Some(l), None) => out.push(JsonChange {
-                        path: next,
-                        from: Some(render(l)),
-                        to: None,
-                    }),
-                    (None, Some(r)) => out.push(JsonChange {
-                        path: next,
-                        from: None,
-                        to: Some(render(r)),
-                    }),
+                    (Some(l), Some(r)) => walk_json(&next, l, r, out, total),
+                    (Some(l), None) => note(
+                        JsonChange { path: next, from: Some(render(l)), to: None },
+                        out,
+                        total,
+                    ),
+                    (None, Some(r)) => note(
+                        JsonChange { path: next, from: None, to: Some(render(r)) },
+                        out,
+                        total,
+                    ),
                     (None, None) => {}
                 }
             }
         }
-        (l, r) if l != r => out.push(JsonChange {
-            path: path.to_string(),
-            from: Some(render(l)),
-            to: Some(render(r)),
-        }),
+        (l, r) if l != r => note(
+            JsonChange {
+                path: path.to_string(),
+                from: Some(render(l)),
+                to: Some(render(r)),
+            },
+            out,
+            total,
+        ),
         _ => {}
     }
 }
@@ -694,30 +927,47 @@ fn walk_json(path: &str, left: &Value, right: &Value, out: &mut Vec<JsonChange>)
 /// of a diff here is "what appeared and what vanished", and a page that moved a
 /// line without changing it is not a finding. An LCS would also be O(n·m) over
 /// two HTML documents, which is the wrong cost for a loop.
-fn line_changes(left: &str, right: &str) -> Vec<LineChange> {
+/// The changed lines, and how many there were before the cap.
+///
+/// Both sides are cut, not just the tail: additions came first and truncating
+/// the end meant sixty new lines reported no removals at all.
+fn line_changes(left: &str, right: &str) -> (Vec<LineChange>, usize) {
     let before: BTreeSet<&str> = left.lines().collect();
     let after: BTreeSet<&str> = right.lines().collect();
-    let mut out = Vec::new();
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
     for (index, line) in right.lines().enumerate() {
         if !before.contains(line) {
-            out.push(LineChange {
+            added.push(LineChange {
                 side: "added",
                 line: index + 1,
-                text: line.chars().take(400).collect(),
+                text: line.chars().take(MAX_PREVIEW_LINE).collect(),
             });
         }
     }
     for (index, line) in left.lines().enumerate() {
         if !after.contains(line) {
-            out.push(LineChange {
+            removed.push(LineChange {
                 side: "removed",
                 line: index + 1,
-                text: line.chars().take(400).collect(),
+                text: line.chars().take(MAX_PREVIEW_LINE).collect(),
             });
         }
     }
-    out.truncate(MAX_LINE_CHANGES);
-    out
+    let total = added.len() + removed.len();
+    if total > MAX_LINE_CHANGES {
+        // Half each, with the shorter side's unused share going to the longer.
+        let half = MAX_LINE_CHANGES / 2;
+        let keep_added = if removed.len() < half {
+            MAX_LINE_CHANGES - removed.len()
+        } else {
+            half.max(MAX_LINE_CHANGES - removed.len().min(MAX_LINE_CHANGES))
+        };
+        added.truncate(keep_added);
+        removed.truncate(MAX_LINE_CHANGES - added.len());
+    }
+    added.extend(removed);
+    (added, total)
 }
 
 /// How alike two bodies are, 0.0 to 1.0.
@@ -770,14 +1020,39 @@ pub fn diff(
     let (b, b_body) = read(right)?;
     let difference = compare((&a, &a_body), (&b, &b_body));
 
+    // The division `match` makes: the status and headers are real and still
+    // reported; only the exit code says the bodies could not be compared.
+    let unanswerable = |seq: u64, body: &Text| match body {
+        Text::Missing(reason) => Some(format!("{seq}'s body is not in the store ({reason})")),
+        Text::Binary { bytes, .. } if !body.whole() => Some(format!(
+            "{seq}'s body is {bytes} bytes of something that is not text, and only its \
+             first {LOSSY_BODY_BYTES} are read back"
+        )),
+        _ => None,
+    };
+    let why: Vec<String> = [unanswerable(left, &a_body), unanswerable(right, &b_body)]
+        .into_iter()
+        .flatten()
+        .collect();
+
     if json_out {
         println!("{}", serde_json::to_string_pretty(&difference)?);
+        if !difference.bodies_compared {
+            std::process::exit(EXIT_CANNOT_LOOK);
+        }
         return Ok(());
     }
 
     if difference.same {
         println!("  {left} and {right} are the same response.");
         return Ok(());
+    }
+    if !difference.bodies_compared {
+        println!("  bodies   : not compared. Response {}.", why.join("; and response "));
+        println!(
+            "             `message --body-to PATH` writes the exact bytes; a session \
+             opened with `--capture` that has not run out of room keeps them whole."
+        );
     }
     println!(
         "  status   : {} → {}",
@@ -790,22 +1065,43 @@ pub fn diff(
     );
     println!("  alike    : {:.3}", difference.similarity);
     for name in &difference.headers_added {
-        println!("  + header : {name}");
+        println!("  + header : {}", preview_line(name));
     }
     for name in &difference.headers_removed {
-        println!("  - header : {name}");
+        println!("  - header : {}", preview_line(name));
     }
     for name in &difference.headers_changed {
-        println!("  ~ header : {name}");
+        println!("  ~ header : {}", preview_line(name));
     }
     for change in &difference.json_changes {
         let from = change.from.as_deref().unwrap_or("(absent)");
         let to = change.to.as_deref().unwrap_or("(absent)");
-        println!("  ~ {} : {from} → {to}", change.path);
+        println!(
+            "  ~ {} : {} → {}",
+            preview_line(&change.path),
+            preview_line(from),
+            preview_line(to)
+        );
     }
     for change in &difference.line_changes {
         let mark = if change.side == "added" { '+' } else { '-' };
-        println!("  {mark} {}", change.text);
+        println!("  {mark} {}", printable(&change.text));
+    }
+    // Said, not implied.
+    if let Some(total) = difference.json_changes_of {
+        println!(
+            "  … {} more changed fields not listed",
+            total - difference.json_changes.len()
+        );
+    }
+    if let Some(total) = difference.line_changes_of {
+        println!(
+            "  … {} more changed lines not listed",
+            total - difference.line_changes.len()
+        );
+    }
+    if !difference.bodies_compared {
+        std::process::exit(EXIT_CANNOT_LOOK);
     }
     Ok(())
 }
@@ -863,6 +1159,9 @@ pub struct Found {
     /// is running a match and reading this.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub captures: Vec<String>,
+    /// Whether this condition could be answered at all. `false` is never a
+    /// "no", and `matches` turns it into the "could not look" exit.
+    pub conclusive: bool,
 }
 
 fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Found {
@@ -878,13 +1177,15 @@ fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Fo
                 expr: format!("{pattern} (not a regular expression: {e})"),
                 matched: false,
                 captures: Vec::new(),
+                conclusive: false,
             },
             Ok(re) => {
                 let found = re.captures(text);
+                let hit = found.is_some();
                 Found {
                     kind: "regex",
                     expr: pattern.clone(),
-                    matched: found.is_some(),
+                    matched: hit,
                     // Groups when the pattern has them, the whole match when it
                     // does not. A pattern without a group is the ordinary way to
                     // ask "is this in there, and what was it", and handing back
@@ -907,15 +1208,21 @@ fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Fo
                             }
                         })
                         .unwrap_or_default(),
+                    // A miss over part of a body is not a miss.
+                    conclusive: hit || body.whole(),
                 }
             }
         },
-        Condition::Contains(needle) => Found {
-            kind: "contains",
-            expr: needle.clone(),
-            matched: text.contains(needle.as_str()),
-            captures: Vec::new(),
-        },
+        Condition::Contains(needle) => {
+            let matched = text.contains(needle.as_str());
+            Found {
+                kind: "contains",
+                expr: needle.clone(),
+                matched,
+                captures: Vec::new(),
+                conclusive: matched || body.whole(),
+            }
+        }
         Condition::Json { path, value } => {
             let found = serde_json::from_str::<Value>(text)
                 .ok()
@@ -937,6 +1244,7 @@ fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Fo
                 },
                 matched,
                 captures: rendered.into_iter().collect(),
+                conclusive: matched || body.whole(),
             }
         }
         Condition::Header { name, value } => {
@@ -958,6 +1266,8 @@ fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Fo
                 },
                 matched,
                 captures: have.into_iter().collect(),
+                // Headers are stored whole; only bodies are previewed.
+                conclusive: true,
             }
         }
         Condition::Status(want) => Found {
@@ -965,18 +1275,22 @@ fn evaluate(condition: &Condition, response: &StoredResponse, body: &Text) -> Fo
             expr: want.to_string(),
             matched: response.status == Some(*want),
             captures: response.status.map(|s| s.to_string()).into_iter().collect(),
+            conclusive: true,
         },
+        // Off the body's own length, never the preview's. See [`Text::len`].
         Condition::LongerThan(bytes) => Found {
             kind: "longer-than",
             expr: bytes.to_string(),
-            matched: text.len() as u64 > *bytes,
-            captures: vec![text.len().to_string()],
+            matched: body.len().is_some_and(|had| had > *bytes),
+            captures: body.len().map(|had| had.to_string()).into_iter().collect(),
+            conclusive: body.len().is_some(),
         },
         Condition::ShorterThan(bytes) => Found {
             kind: "shorter-than",
             expr: bytes.to_string(),
-            matched: (text.len() as u64) < *bytes,
-            captures: vec![text.len().to_string()],
+            matched: body.len().is_some_and(|had| had < *bytes),
+            captures: body.len().map(|had| had.to_string()).into_iter().collect(),
+            conclusive: body.len().is_some(),
         },
     }
 }
@@ -1072,9 +1386,8 @@ fn look(
         .iter()
         .map(|condition| evaluate(condition, &stored, &body))
         .collect();
-    let bad_pattern = found
-        .iter()
-        .any(|f| f.kind == "regex" && f.expr.contains("not a regular expression"));
+    // Read off the condition rather than sniffed out of its rendered text.
+    let could_not_look = found.iter().any(|f| !f.conclusive);
     let matched = found.iter().all(|f| f.matched);
 
     if json_out {
@@ -1095,12 +1408,19 @@ fn look(
                 one.expr
             );
             for capture in &one.captures {
-                println!("      {capture}");
+                // The target chooses how much page sits between a pattern's
+                // anchors. `--json` still carries it whole, for tokens.
+                println!("      {}", preview_line(capture));
             }
         }
     }
-    if bad_pattern {
-        anyhow::bail!("a condition could not be evaluated; see the report above");
+    if could_not_look {
+        anyhow::bail!(
+            "a condition could not be answered, so this is not a `no`. A body that is not \
+             text is read back as a preview of its first {LOSSY_BODY_BYTES} bytes, and a \
+             search that found nothing in the preview has said nothing about the rest; \
+             `message --body-to PATH` writes the exact bytes"
+        );
     }
     Ok(matched)
 }
@@ -1139,22 +1459,45 @@ pub fn timing_summary(samples: &[Value]) -> Option<Value> {
     if samples.len() < 2 {
         return None;
     }
+    // Only the sends a server answered. One refused by policy or budget still
+    // carries a clock, and it is the refusal's — near zero — which drags the
+    // median down until a three-second delay reads as none.
+    let answered: Vec<&Value> = samples
+        .iter()
+        .filter(|s| s.get("status").is_some_and(|status| !status.is_null()))
+        .collect();
     let field = |name: &str| -> Vec<u64> {
-        samples
+        answered
             .iter()
             .filter_map(|s| s.get(name).and_then(Value::as_u64))
             .collect()
     };
+    let unanswered = samples.len() - answered.len();
+    if answered.len() < 2 {
+        return Some(json!({
+            "sends": samples.len(),
+            "measured": answered.len(),
+            "unanswered": unanswered,
+            "note": "too few of these sends were answered to take a median. A send that \
+                     never reached the wire has a clock, and it is the refusal's, not the \
+                     server's",
+        }));
+    }
     let (ttfb, ttfb_spread) = median_and_deviation(&field("ttfb_ms"))?;
     let (total, total_spread) = median_and_deviation(&field("total_ms"))?;
-    Some(json!({
+    let mut summary = json!({
         "sends": samples.len(),
+        "measured": answered.len(),
         "ttfb_ms": {"median": ttfb, "deviation": ttfb_spread},
         "total_ms": {"median": total, "deviation": total_spread},
-        "note": "medians over this session's own sends. A session in a box pays a proxy \
-                 hop and a namespace, so compare within one session rather than across \
-                 placements",
-    }))
+        "note": "medians over the sends this session got an answer to. A session in a box \
+                 pays a proxy hop and a namespace, so compare within one session rather \
+                 than across placements",
+    });
+    if unanswered > 0 {
+        summary["unanswered"] = json!(unanswered);
+    }
+    Some(summary)
 }
 
 
@@ -1275,17 +1618,41 @@ pub fn map_of(records: &[Value]) -> Map {
 
 /// `h5i browser sitemap`.
 pub fn sitemap(root: &Path, selector: Option<&str>, json_out: bool) -> anyhow::Result<()> {
-    let answer = super::browser::ask_session(
-        root,
-        selector,
-        vec!["requests".to_string()],
-        false,
-    )?;
-    let empty = Vec::new();
-    let records = answer
-        .get("requests")
-        .and_then(Value::as_array)
-        .unwrap_or(&empty);
+    // From the engine while there is one, and off the log once there is not:
+    // the map of a finished run is the one a reviewer wants, and each line of
+    // that log is already the record `map_of` reads.
+    let session = super::browser::resolve_for_reading(root, selector)?;
+    let owned: Vec<Value>;
+    let answer;
+    let records: &[Value] = if session.state.is_live() {
+        answer = super::browser::ask_session(
+            root,
+            selector,
+            vec!["requests".to_string()],
+            false,
+        )?;
+        answer
+            .get("requests")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    } else {
+        let path = bs::dir(root, &session.id).join(bs::RECEIPTS_FILE);
+        let (text, cut) = bs::read_log_capped_saying(&path).unwrap_or_default();
+        if cut {
+            // A map built from the head of a log covers part of the run.
+            eprintln!(
+                "  note     : this session's request log is larger than the {} bytes read \
+                 back, so this map covers the start of the run and not all of it",
+                8 * 1024 * 1024
+            );
+        }
+        owned = text
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .collect();
+        &owned
+    };
     let map = map_of(records);
 
     if json_out {
@@ -1309,12 +1676,15 @@ pub fn sitemap(root: &Path, selector: Option<&str>, json_out: bool) -> anyhow::R
             let params = if endpoint.params.is_empty() {
                 String::new()
             } else {
-                format!("  ?{}", endpoint.params.join("&"))
+                format!("  ?{}", preview_line(&endpoint.params.join("&")))
             };
             let mark = if endpoint.navigated { "*" } else { " " };
             println!(
                 "  {mark} {:<32} {:<8} {:<12} x{}{params}",
-                endpoint.path, methods, statuses, endpoint.hits
+                preview_line(&endpoint.path),
+                methods,
+                statuses,
+                endpoint.hits
             );
         }
     }
@@ -1322,7 +1692,7 @@ pub fn sitemap(root: &Path, selector: Option<&str>, json_out: bool) -> anyhow::R
         println!();
         println!("  refused by policy:");
         for url in &map.denied {
-            println!("    {url}");
+            println!("    {}", preview_line(url));
         }
     }
     Ok(())
@@ -1479,8 +1849,48 @@ fn extract_one(spec: &str, response: &StoredResponse, body: &Text) -> anyhow::Re
         ),
     };
     found.ok_or_else(|| {
-        anyhow::anyhow!("`{spec}` found nothing in this response")
+        // "Found nothing" is a claim about the response, and only true when
+        // the whole response was there to look at.
+        let searched_the_body = matches!(kind.trim(), "regex" | "json");
+        if searched_the_body && !body.whole() {
+            match body {
+                Text::Missing(why) => anyhow::anyhow!(
+                    "`{spec}` could not be answered: this response's body is not in the \
+                     store ({why})"
+                ),
+                _ => anyhow::anyhow!(
+                    "`{spec}` found nothing in the first {LOSSY_BODY_BYTES} bytes of this \
+                     response, which is all of a body that is not text that is read back. \
+                     Whether it is in the rest is not something this can answer; \
+                     `message --body-to PATH` writes the exact bytes"
+                ),
+            }
+        } else {
+            anyhow::anyhow!("`{spec}` found nothing in this response")
+        }
     })
+}
+
+/// Why a step failed, out of wherever the reply put it: a refusal carries
+/// `code` and `message`, a send that failed at the wire puts it under
+/// `response.error`. A sequence stops at the first failure, so this string is
+/// all its author gets.
+fn why_a_step_failed(answer: &Value) -> String {
+    let text = |value: &Value| value.as_str().map(str::to_string);
+    let refusal = answer.get("message").and_then(text).map(|message| {
+        match answer.get("code").and_then(text) {
+            Some(code) => format!("{code}: {message}"),
+            None => message,
+        }
+    });
+    refusal
+        .or_else(|| {
+            answer
+                .get("response")
+                .and_then(|response| response.get("error"))
+                .and_then(text)
+        })
+        .unwrap_or_else(|| "the step failed, and the reply said nothing about why".to_string())
 }
 
 /// `h5i browser sequence <file>`.
@@ -1567,11 +1977,7 @@ pub fn sequence(
             .and_then(|r| r.get("status"))
             .and_then(Value::as_u64);
         if !ok {
-            record.error = answer
-                .get("message")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .or_else(|| Some("the step failed".to_string()));
+            record.error = Some(why_a_step_failed(&answer));
             ran.push(record);
             failed = true;
             if !keep_going {
@@ -1586,7 +1992,21 @@ pub fn sequence(
         if !step.extract.is_empty() {
             let target = step.as_session.as_deref().or(selector);
             let (_, dir) = store_dir(root, target)?;
-            let seq = record.seq.unwrap_or_default();
+            // The step's own answer, or nothing. Defaulting to zero bound the
+            // token out of message 0 — the navigation that opened the session.
+            let Some(seq) = record.seq else {
+                record.error = Some(format!(
+                    "step {index} came back without a sequence number, so there is no \
+                     answer of its own to extract from"
+                ));
+                record.ok = false;
+                failed = true;
+                ran.push(record);
+                if !keep_going {
+                    break;
+                }
+                continue;
+            };
             let stored: StoredResponse =
                 read_json(&dir.join(format!("{seq}.response.json"))).map_err(|_| {
                     anyhow::anyhow!("step {index} left no stored response {seq} to extract from")
@@ -1628,7 +2048,7 @@ pub fn sequence(
         for step in &ran {
             let label = step.name.clone().unwrap_or_else(|| format!("resend {}", step.resend));
             match (&step.error, step.status) {
-                (Some(why), _) => println!("  ✘ {label}: {why}"),
+                (Some(why), _) => println!("  ✘ {label}: {}", preview_line(why)),
                 (None, Some(status)) => {
                     let bound = if step.bound.is_empty() {
                         String::new()
@@ -1656,6 +2076,367 @@ pub fn sequence(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A boxed session's store is writable by boxed code, so the hash in a
+    /// sidecar is target input: joined unchecked, `../` read a host file.
+    #[test]
+    fn a_body_hash_that_is_not_one_names_nothing_in_the_store() {
+        let dir = std::env::temp_dir().join(format!(
+            "h5i-websec-hash-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(dir.join("bodies")).expect("a store");
+        std::fs::write(dir.join("outside.txt"), b"host secret").expect("a file beside it");
+        let escaped = Body::Stored {
+            sha256: "../outside.txt".to_string(),
+            bytes: 11,
+            of_bytes: None,
+            truncated: false,
+        };
+        match body_text(&dir, &escaped) {
+            Text::Missing(why) => assert!(why.contains("not a body hash"), "{why}"),
+            read => panic!("read outside the store: {read:?}"),
+        }
+        assert_eq!(body_bytes(&dir, &escaped), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The in-session resend refuses a body the store cut short; `--as` read
+    /// the same store and did not, so it sent a shortened body as a replay.
+    #[test]
+    fn a_truncated_body_is_not_carried_into_another_session() {
+        let dir = std::env::temp_dir().join(format!(
+            "h5i-websec-cut-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(dir.join("bodies")).expect("a store");
+        let hash = "a".repeat(64);
+        std::fs::write(dir.join("bodies").join(&hash), b"the head of it").expect("a body");
+        let cut = Body::Stored {
+            sha256: hash,
+            bytes: 14,
+            of_bytes: Some(9_000_000),
+            truncated: true,
+        };
+        let refused = carried_body(&dir, 42, &cut).expect_err("a cut body is not replayable");
+        assert!(refused.to_string().contains("not the one recorded"), "{refused}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The human view prints strings the target wrote. `\r` alone rewrites the
+    /// line naming which request this was; `ESC[2J` clears what came before it.
+    #[test]
+    fn what_a_terminal_would_act_on_is_shown_rather_than_obeyed() {
+        let hostile = "ok\u{1b}[2J\rHTTP/1.1 200 forged\u{202e}";
+        let safe = printable(hostile);
+        assert!(!safe.contains('\u{1b}'), "{safe:?}");
+        assert!(!safe.contains('\r'), "{safe:?}");
+        assert!(!safe.contains('\u{202e}'), "{safe:?}");
+        assert!(safe.contains("forged"), "the evidence survives: {safe:?}");
+        assert!(safe.contains("u{1b}"), "and says what was there: {safe:?}");
+        assert_eq!(printable("ordinary text"), "ordinary text");
+    }
+
+    /// An unstored body reads as the empty string, so two of them compared as
+    /// identical. A target reaches that state on purpose by filling the store
+    /// or serving `font/woff`, and the oracle then says "false page" forever.
+    #[test]
+    fn two_bodies_that_were_never_kept_are_not_the_same_page() {
+        let left = response(200, "text/html");
+        let right = response(200, "text/html");
+        let absent = Text::Missing("store-full (2000000 bytes)".to_string());
+        let difference = compare((&left, &absent), (&right, &absent));
+        assert!(!difference.bodies_compared, "there was nothing to compare");
+        assert!(!difference.same, "an absence is not a match");
+        assert!(
+            difference.similarity < 0.5,
+            "a number nobody could measure is not 1.0: {}",
+            difference.similarity
+        );
+    }
+
+    /// An empty body is a real body, and two of them are still the same page.
+    #[test]
+    fn two_empty_bodies_are_still_compared() {
+        let left = response(204, "text/html");
+        let right = response(204, "text/html");
+        let empty = Text::Utf8(String::new());
+        let difference = compare((&left, &empty), (&right, &empty));
+        assert!(difference.bodies_compared);
+        assert!(difference.same);
+    }
+
+    /// One invalid byte puts a response on the 64 KiB preview path, so a
+    /// length read off the preview is a number the target picked.
+    #[test]
+    fn a_length_condition_measures_the_body_and_not_its_preview() {
+        let stored = response(200, "application/octet-stream");
+        let big = Text::Binary {
+            bytes: 5_000_000,
+            sha256: "b".repeat(64),
+            text: "x".repeat(64 * 1024),
+        };
+        let shorter = evaluate(&Condition::ShorterThan(100_000), &stored, &big);
+        assert!(!shorter.matched, "5 MB is not shorter than 100 kB");
+        assert_eq!(shorter.captures, vec!["5000000".to_string()]);
+        let longer = evaluate(&Condition::LongerThan(1_000_000), &stored, &big);
+        assert!(longer.matched, "and it is longer than 1 MB");
+    }
+
+    /// `length_delta` is a headline field, and two binary responses past the
+    /// cap both measured 64 KiB: no change at all.
+    #[test]
+    fn a_length_delta_is_over_the_bodies_not_the_previews() {
+        let stored = response(200, "application/octet-stream");
+        let preview = "x".repeat(64 * 1024);
+        let small = Text::Binary {
+            bytes: 1_000_000,
+            sha256: "a".repeat(64),
+            text: preview.clone(),
+        };
+        let large = Text::Binary {
+            bytes: 5_000_000,
+            sha256: "b".repeat(64),
+            text: preview,
+        };
+        let difference = compare((&stored, &small), (&stored, &large));
+        assert_eq!(difference.bytes, (1_000_000, 5_000_000));
+        assert_eq!(difference.length_delta, 4_000_000);
+    }
+
+    /// A search over a preview that finds nothing has said nothing about the
+    /// rest, and one invalid byte puts every body search on that path.
+    #[test]
+    fn a_miss_over_part_of_a_body_is_not_a_miss() {
+        let stored = response(200, "application/octet-stream");
+        let partial = Text::Binary {
+            bytes: 5_000_000,
+            sha256: "b".repeat(64),
+            text: "nothing interesting".to_string(),
+        };
+        for condition in [
+            Condition::Contains("FLAG{".to_string()),
+            Condition::Regex("FLAG\\{.*\\}".to_string()),
+        ] {
+            let found = evaluate(&condition, &stored, &partial);
+            assert!(!found.matched);
+            assert!(!found.conclusive, "{:?} claimed to be a real no", found.kind);
+        }
+        // A hit is still a hit: finding it in the head proves it is there.
+        let hit = Text::Binary {
+            bytes: 5_000_000,
+            sha256: "b".repeat(64),
+            text: "FLAG{here}".to_string(),
+        };
+        let found = evaluate(&Condition::Contains("FLAG{".to_string()), &stored, &hit);
+        assert!(found.matched && found.conclusive);
+    }
+
+    /// And a body small enough to be previewed whole answers for real.
+    #[test]
+    fn a_miss_over_a_whole_body_is_a_miss() {
+        let stored = response(200, "application/octet-stream");
+        let whole = Text::Binary {
+            bytes: 19,
+            sha256: "b".repeat(64),
+            text: "nothing interesting".to_string(),
+        };
+        let found = evaluate(&Condition::Contains("FLAG{".to_string()), &stored, &whole);
+        assert!(!found.matched && found.conclusive);
+    }
+
+    /// A cap that says nothing turns a partial diff into a complete-looking
+    /// one — and additions came first, so sixty new lines hid every removal.
+    #[test]
+    fn a_capped_diff_says_how_much_it_left_out_and_keeps_both_sides() {
+        let stored = response(200, "text/html");
+        let left = Text::Utf8((0..100).map(|n| format!("old line {n}\n")).collect());
+        let right = Text::Utf8((0..100).map(|n| format!("new line {n}\n")).collect());
+        let difference = compare((&stored, &left), (&stored, &right));
+
+        assert_eq!(difference.line_changes.len(), MAX_LINE_CHANGES);
+        assert_eq!(difference.line_changes_of, Some(200));
+        assert!(
+            difference.line_changes.iter().any(|c| c.side == "added"),
+            "the additions survive the cap"
+        );
+        assert!(
+            difference.line_changes.iter().any(|c| c.side == "removed"),
+            "and so do the removals"
+        );
+    }
+
+    /// A diff that fits says nothing about a cap, because there was none.
+    #[test]
+    fn a_small_diff_carries_no_truncation_note() {
+        let stored = response(200, "text/html");
+        let difference = compare(
+            (&stored, &Text::Utf8("a\nb\n".to_string())),
+            (&stored, &Text::Utf8("a\nc\n".to_string())),
+        );
+        assert_eq!(difference.line_changes_of, None);
+        assert_eq!(difference.line_changes.len(), 2);
+    }
+
+    /// The JSON walk stopped at the cap, so the count and the listed count
+    /// were equal and the diff could not say it had been capped.
+    #[test]
+    fn a_capped_json_diff_counts_the_changes_it_did_not_list() {
+        let stored = response(200, "application/json");
+        let left: String = format!(
+            "{{{}}}",
+            (0..200)
+                .map(|n| format!("\"k{n}\":\"a\""))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let right: String = format!(
+            "{{{}}}",
+            (0..200)
+                .map(|n| format!("\"k{n}\":\"b\""))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let difference = compare(
+            (&stored, &Text::Utf8(left)),
+            (&stored, &Text::Utf8(right)),
+        );
+        assert_eq!(difference.json_changes.len(), MAX_JSON_CHANGES);
+        assert_eq!(difference.json_changes_of, Some(200));
+    }
+
+    /// A failed binding stops the sequence, so its reason is what the author
+    /// acts on: "found nothing" sent them to the target when the truth was
+    /// that the body was never searched.
+    #[test]
+    fn a_binding_that_could_not_look_says_so_rather_than_saying_it_is_not_there() {
+        let stored = response(200, "application/octet-stream");
+
+        let absent = Text::Missing("store-full (900000 bytes)".to_string());
+        let why = extract_one("regex:FLAG\\{(.+)\\}", &stored, &absent)
+            .expect_err("nothing to search");
+        assert!(why.to_string().contains("not in the store"), "{why}");
+
+        let partial = Text::Binary {
+            bytes: 5_000_000,
+            sha256: "b".repeat(64),
+            text: "nothing here".to_string(),
+        };
+        let why = extract_one("regex:FLAG\\{(.+)\\}", &stored, &partial)
+            .expect_err("only the head was searched");
+        assert!(why.to_string().contains("is all of a body"), "{why}");
+
+        // And a body that really was searched whole still says it plainly.
+        let whole = Text::Utf8("nothing here".to_string());
+        let why = extract_one("regex:FLAG\\{(.+)\\}", &stored, &whole)
+            .expect_err("searched, and not there");
+        assert!(why.to_string().contains("found nothing in this response"), "{why}");
+
+        // A header extractor is not a body search, so a missing body does not
+        // change what it can say.
+        let why = extract_one("header:X-Nope", &stored, &absent).expect_err("no such header");
+        assert!(why.to_string().contains("found nothing in this response"), "{why}");
+    }
+
+    /// A cut at the store's 8 MiB cap lands on a character boundary — every
+    /// cut, for ASCII — and still decodes, so the head arrived as ordinary
+    /// text and every verb treated it as the whole body.
+    #[test]
+    fn a_body_the_store_cut_is_not_a_whole_body() {
+        let cut = Text::Cut {
+            text: "the first eight megabytes".to_string(),
+            of_bytes: 20_000_000,
+        };
+        assert!(!cut.whole());
+        assert_eq!(cut.len(), Some(20_000_000), "the body's length, not the head's");
+
+        let stored = response(200, "text/html");
+        let found = evaluate(&Condition::Contains("FLAG{".to_string()), &stored, &cut);
+        assert!(!found.matched);
+        assert!(!found.conclusive, "a search over the head is not a no");
+
+        let difference = compare((&stored, &cut), (&stored, &cut));
+        assert!(
+            !difference.bodies_compared,
+            "two heads matching is not two pages matching"
+        );
+        assert!(!difference.same);
+    }
+
+    /// The line count was bounded and the length was not, so a minified page —
+    /// one line, megabytes of it — printed whole. The target picks the newlines.
+    #[test]
+    fn one_enormous_line_is_bounded_like_every_other() {
+        let shown = preview_line(&"A".repeat(2_000_000));
+        assert!(
+            shown.chars().count() < MAX_PREVIEW_LINE + 80,
+            "a line is bounded: {} characters",
+            shown.chars().count()
+        );
+        assert!(shown.contains("more characters on this line"), "and says so");
+
+        // A line that fits is untouched, and still inert.
+        assert_eq!(preview_line("<p>hello</p>"), "<p>hello</p>");
+        assert!(!preview_line("a\u{1b}[2Jb").contains('\u{1b}'));
+    }
+
+    /// The same bound wherever target text reaches a terminal. The target
+    /// chooses how much page sits between a pattern's anchors.
+    #[test]
+    fn a_capture_over_a_whole_page_is_bounded_in_the_human_view() {
+        let stored = response(200, "text/html");
+        let page = format!("flag={}", "A".repeat(2_000_000));
+        let body = Text::Utf8(page);
+        let found = evaluate(&Condition::Regex("flag=(.*)".to_string()), &stored, &body);
+        assert!(found.matched);
+        // Whole in the machine channel, which is where a token is read from.
+        assert_eq!(found.captures[0].len(), 2_000_000);
+        // Bounded on the way to a terminal.
+        assert!(preview_line(&found.captures[0]).chars().count() < MAX_PREVIEW_LINE + 80);
+    }
+
+    /// The site map's `*` means the browser went here. Replays were recorded
+    /// as navigations, which is the mark a reviewer reads to tell what the
+    /// application did from what the tester did.
+    #[test]
+    fn a_replay_is_not_a_page_somebody_went_to() {
+        let map = map_of(&[
+            json!({"seq":0,"phase":"request","initiator":"navigation","method":"GET",
+                   "url":"https://app.test/users","allowed":true}),
+            json!({"seq":1,"phase":"request","initiator":"replay","method":"GET",
+                   "url":"https://app.test/admin","allowed":true}),
+        ]);
+        let endpoints = &map.origins[0].endpoints;
+        let users = endpoints.iter().find(|e| e.path == "/users").expect("users");
+        let admin = endpoints.iter().find(|e| e.path == "/admin").expect("admin");
+        assert!(users.navigated, "the browser did go here");
+        assert!(!admin.navigated, "and it never went here: a replay is not a visit");
+        assert_eq!(admin.hits, 1, "but it is still on the map");
+    }
+
+    /// A step that failed at the wire carries no `message`, so reading only
+    /// that reported "the step failed" while the reply said why.
+    #[test]
+    fn a_failed_step_reports_the_reason_the_reply_carried() {
+        assert_eq!(
+            why_a_step_failed(&json!({
+                "ok": false,
+                "code": "bad-edit",
+                "message": "path: a path has no query in it"
+            })),
+            "bad-edit: path: a path has no query in it"
+        );
+        assert_eq!(
+            why_a_step_failed(&json!({
+                "ok": false,
+                "response": {"error": "error sending request for url (http://a.test/)"}
+            })),
+            "error sending request for url (http://a.test/)"
+        );
+        assert!(why_a_step_failed(&json!({"ok": false})).contains("said nothing about why"));
+    }
 
     fn response(status: u16, kind: &str) -> StoredResponse {
         StoredResponse {
@@ -1896,6 +2677,47 @@ mod tests {
             "one 4-second sample must not become the answer: {median}"
         );
         // A mean would have said ~750.
+    }
+
+    /// A burst can stop reaching the wire partway through, and those sends
+    /// carry the refusal's clock — a millisecond or two — which pulls the
+    /// median down until a three-second delay reports as none.
+    #[test]
+    fn sends_that_never_reached_the_wire_are_not_part_of_the_timing() {
+        let answered = |ms: u64| json!({"status": 200, "ttfb_ms": ms, "total_ms": ms});
+        let refused = json!({"status": Value::Null, "ttfb_ms": 0, "total_ms": 0});
+        let samples = vec![
+            answered(3000),
+            answered(3010),
+            answered(2990),
+            refused.clone(),
+            refused.clone(),
+            refused.clone(),
+            refused,
+        ];
+        let summary = timing_summary(&samples).expect("a summary");
+        assert_eq!(summary["sends"], json!(7));
+        assert_eq!(summary["measured"], json!(3));
+        assert_eq!(summary["unanswered"], json!(4));
+        let median = summary["ttfb_ms"]["median"].as_u64().expect("a median");
+        assert!(
+            (2990..=3010).contains(&median),
+            "the delay is the answer, not the refusals: {median}"
+        );
+    }
+
+    /// And a burst that mostly did not happen says so rather than taking a
+    /// median of one.
+    #[test]
+    fn a_burst_that_almost_never_answered_reports_that_instead_of_a_number() {
+        let samples = vec![
+            json!({"status": 200, "ttfb_ms": 3000, "total_ms": 3000}),
+            json!({"status": Value::Null, "ttfb_ms": 0, "total_ms": 0}),
+            json!({"status": Value::Null, "ttfb_ms": 0, "total_ms": 0}),
+        ];
+        let summary = timing_summary(&samples).expect("a summary");
+        assert_eq!(summary["measured"], json!(1));
+        assert!(summary.get("ttfb_ms").is_none(), "{summary}");
     }
 
     /// A blind test's whole signal: one payload is reliably slower.

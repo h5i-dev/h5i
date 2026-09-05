@@ -682,7 +682,7 @@ enum SessionVerb {
         /// Only responses with this status.
         #[arg(long, value_name = "CODE")]
         status: Option<u16>,
-        /// Only `navigation`, `subresource`, `frame` or `redirect`.
+        /// Only `navigation`, `subresource`, `frame`, `redirect` or `replay`.
         #[arg(long, value_name = "KIND")]
         initiator: Option<String>,
         /// Only what policy refused.
@@ -1677,9 +1677,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                         "`--set-file {spec}` is `target=path`, and this has no `=`"
                     ))
                 })?;
-                let bytes = std::fs::read(path).map_err(|e| {
-                    H5iError::Metadata(format!("`--set-file {target}`: {path} could not be read: {e}"))
-                })?;
+                let bytes = read_a_payload(target, path)?;
                 use base64::Engine as _;
                 from_files.push((
                     target.to_string(),
@@ -2582,6 +2580,38 @@ fn local_base(path: &Path) -> Result<Url, H5iError> {
             "{} cannot be expressed as a file:// base",
             absolute.display()
         ))
+    })
+}
+
+/// Most a `--set-file` payload may be. Generous, because a large upload is a
+/// real test; bounded, because the file is read whole and base64'd through a
+/// control message.
+const MAX_PAYLOAD_BYTES: u64 = 64 * 1024 * 1024;
+
+/// One `--set-file` payload, read whole and bounded.
+///
+/// The shape check is the one that matters: `fs::read` on `/dev/zero` grows a
+/// `Vec` until the machine gives out, and a fifo blocks forever.
+fn read_a_payload(target: &str, path: &str) -> Result<Vec<u8>, H5iError> {
+    let meta = std::fs::metadata(path).map_err(|e| {
+        H5iError::Metadata(format!("`--set-file {target}`: {path} could not be read: {e}"))
+    })?;
+    if !meta.is_file() {
+        return Err(H5iError::Metadata(format!(
+            "`--set-file {target}`: {path} is not a regular file, so it has no bytes to \
+             send — a device or a pipe is read until it stops, and these do not stop"
+        )));
+    }
+    if meta.len() > MAX_PAYLOAD_BYTES {
+        return Err(H5iError::Metadata(format!(
+            "`--set-file {target}`: {path} is {} bytes, past the {MAX_PAYLOAD_BYTES} byte \
+             limit on one payload. It is read whole, encoded and carried through a control \
+             message, so this would cost several times that in memory",
+            meta.len()
+        )));
+    }
+    std::fs::read(path).map_err(|e| {
+        H5iError::Metadata(format!("`--set-file {target}`: {path} could not be read: {e}"))
     })
 }
 

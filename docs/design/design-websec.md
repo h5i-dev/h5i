@@ -53,8 +53,11 @@ h5i already funnels requests through one `Fetch` in
 and the outcome after it. Three things follow that a proxy cannot have:
 
 1. **Provenance.** The receipt carries an `Initiator` (`navigation`,
-   `subresource`, `frame`, `redirect`), and the action log beside it carries the
-   verb the agent asked for. A proxy sees a GET; h5i knows it was the third
+   `subresource`, `frame`, `redirect`, `replay`), and the action log beside it
+   carries the verb the agent asked for. `replay` is the workbench's own: a
+   reviewer separating what the application did from what the tester did is
+   asking that field, and a resend recorded as a navigation said the browser
+   had gone somewhere it never went. A proxy sees a GET; h5i knows it was the third
    redirect hop of a click on "Export".
 2. **No interception gap.** There is nothing to bypass. A request that is not in
    the log did not happen, which is the guarantee the whole product already
@@ -123,6 +126,10 @@ exact bytes and headers, including credentials, so the artifacts stay separate.
 
 The format enforces an 8 MiB per-message cap, a 512 MiB session cap, and a MIME
 skip list for fonts and media. Truncated or skipped bodies have explicit states.
+The session cap counts the header sidecars as well as the bodies: a message
+file is not small, since the raw sender accepts a response head as large as the
+whole response cap, and counting only bodies left the directory unbounded in
+the one case the cap exists for.
 
 Built, 2026-09-02: `crates/h5i-browser/src/capture.rs`, reached by
 `h5i browser open --capture`. Messages land in `<session>/messages/` as one JSON
@@ -204,6 +211,15 @@ Rules that have to be settled once:
   is an error naming the actual content type, not a coerced string. An edit
   whose path does not exist is an error unless `--set-create` is given, since a
   typo that silently no-ops is a wrong answer that looks right.
+- **An edit changes what it names and nothing else.** A `query.`, `form.` or
+  `cookie.` edit rewrites one piece of the string it lives in and leaves the
+  other pieces byte for byte, rather than decoding the whole thing and encoding
+  it again: `?debug` is not `?debug=`, `x[]=1` is not `x%5B%5D=1`, and a `Cookie`
+  header carrying a bare token still carries it afterwards. A `json.` edit is
+  the one that cannot manage that, because a structured JSON edit reserialises
+  the document; field order survives (`serde_json` is built with
+  `preserve_order` for exactly this) but whitespace does not, so a body whose
+  exact bytes are signed wants `body.raw` rather than `json.`.
 - **Raw is available and honest.** `--edits-file` accepts a `raw` key holding a
   whole request, in which case h5i sends the bytes given and reports which of
   its own invariants it had to break to do so.
@@ -346,8 +362,11 @@ Bob's (it carried Alice's credential), and the answer would settle nothing.
 question, and a caller who wants one exact header can read it with `message` and
 set it with `--set`, which is a deliberate act rather than a default.
 
-The dropped names are printed, because a silent strip is a different request
-than the caller thinks they sent.
+The dropped names are reported, because a silent strip is a different request
+than the caller thinks they sent. In the reply as `credentials_dropped` and
+not only on the terminal: `--json` is how an agent reads this verb, and a
+note printed in the human view is a note the one reader who needs it cannot
+see.
 
 ### Stopping at a redirect
 
@@ -598,7 +617,10 @@ file describes.
 ### What is built, 2026-09-03
 
 `h5i plugin install|list|remove`, and `h5i websec` dispatching to an installed
-`h5i-websec` (`src/cli/plugin.rs`, `crates/h5i-websec`). A name h5i knows but
+`h5i-websec` (`src/cli/plugin.rs`, `crates/h5i-websec`). The release ships
+`h5i-websec` as its own archive per target, so `--from` has a file to point at
+without a source tree; `install` still takes a path rather than fetching one,
+because a downloaded executable needs a provenance story this does not have. A name h5i knows but
 does not have answers with what the capability is and how to install it, rather
 than "unknown command". Installs are refused for names not on the known list,
 because a plugin directory anything can add a name to is a directory where
@@ -627,9 +649,10 @@ than precede it: the benchmark is what will say which of them are load-bearing.
 ### What a plugin is
 
 A separate executable, discovered by name the way `git` finds its subcommands.
-`h5i plugin install websec` fetches `h5i-websec` for this platform into a
-per-user plugin directory, and `h5i websec <verb>` execs it with the arguments
-forwarded and the environment that names the session. A build without the
+`h5i plugin install websec --from <path>` copies `h5i-websec` into a per-user
+plugin directory, and `h5i websec <verb>` execs it with the arguments forwarded
+and the environment that names the session. The release publishes the
+executable; fetching it by name is not built. A build without the
 plugin still knows the name: `h5i websec` prints what it is and how to install
 it, rather than an unknown-subcommand error, so the feature is discoverable
 without being present.

@@ -40,6 +40,12 @@ pub enum Initiator {
     Frame,
     /// A hop the server asked for via `Location`.
     Redirect,
+    /// The agent sending a message again, through `resend`.
+    ///
+    /// Its own name because a replay recorded as a navigation said the browser
+    /// went somewhere it never went. This is the field a reviewer reads to tell
+    /// what the application did from what the tester did.
+    Replay,
 }
 
 /// The engine's clock, RFC3339 with microseconds.

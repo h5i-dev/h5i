@@ -9,7 +9,9 @@ resolver = "3"
 thiserror = "2.0.18"
 git2 = "0.20.4"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# `preserve_order`: a `json.` edit rewrites the body, and a replay whose keys
+# came back sorted is not the request that was recorded.
+serde_json = { version = "1.0", features = ["preserve_order"] }
 toml = { version = "0.8", features = ["parse", "display"] }
 sha2 = "0.10"
 

@@ -144,10 +144,12 @@ h5i box view <name> --term     # draw it in this terminal instead (needs kitty)
 h5i lets the agent inspect, edit, replay, and compare browser requests and responses, match conditions, and run 
 multi-step test flows without a MITM proxy, CA certificate, or separate repeater.
 
-Install the optional `websec` plugin, then browse the application normally:
+Install the optional `websec` plugin, then browse the application normally. The
+plugin is a separate archive on the release page, so installing it is a
+deliberate act:
 
 ```bash
-h5i plugin install websec
+h5i plugin install websec --from ./h5i-websec
 h5i browser open https://target.example --capture --allow target.example
 
 h5i websec requests                                  # captured HTTP messages

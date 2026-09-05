@@ -135,7 +135,10 @@ pub fn not_installed(name: &str) -> String {
          It is not part of the default build on purpose: h5i ships a browser, and \
          an install should not quietly include everything that could be built on \
          one. Adding it is a deliberate act.\n\n  \
-         Build it and install it with:\n    \
+         Download `h5i-{name}` for this platform from the release and install \
+         it:\n    \
+         h5i plugin install {name} --from ./h5i-{name}\n\n  \
+         Or build it first:\n    \
          cargo build --release -p h5i-{name}\n    \
          h5i plugin install {name} --from target/release/h5i-{name}\n\n  \
          `h5i plugin list` shows what is installed."

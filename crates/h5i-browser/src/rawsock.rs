@@ -259,7 +259,13 @@ pub(crate) fn read_http_response(wire: &mut Wire, cap: usize) -> Result<RawRespo
     let (body, leftover) = if te_chunked {
         read_chunked(wire, &mut rest, &mut chunk, cap)?
     } else if let Some(len) = content_length {
-        read_exact_len(wire, rest, &mut chunk, len.min(cap))?
+        // Refused past the cap, as every other body reader here does.
+        // Truncating made the overflow `leftover`, which is how this path
+        // reports a second response — so a large page read as a desync.
+        if len > cap {
+            return Err(format!("response exceeds the {cap} byte cap"));
+        }
+        read_exact_len(wire, rest, &mut chunk, len)?
     } else {
         // Without framing, read until the connection closes or the cap is
         // reached. Nothing can follow a response that ends at the close.
@@ -299,7 +305,9 @@ fn read_to_close(
     chunk: &mut [u8],
     cap: usize,
 ) -> Result<Vec<u8>, String> {
-    while have.len() < cap {
+    // One byte past the cap, so "exactly" and "more than" differ. Truncating
+    // handed back a body that is not the one the server sent.
+    while have.len() <= cap {
         match wire.read(chunk) {
             Ok(0) => break,
             Ok(n) => have.extend_from_slice(&chunk[..n]),
@@ -307,7 +315,9 @@ fn read_to_close(
             Err(e) => return Err(format!("reading the response body failed: {e}")),
         }
     }
-    have.truncate(cap);
+    if have.len() > cap {
+        return Err(format!("response exceeds the {cap} byte cap"));
+    }
     Ok(have)
 }
 
@@ -339,6 +349,11 @@ fn read_chunked(
         let size_hex = size_text.split(';').next().unwrap_or("").trim();
         let size = usize::from_str_radix(size_hex, 16)
             .map_err(|_| format!("`{size_hex}` is not a chunk size"))?;
+        // A size past the cap is not a body to read, it is arithmetic to
+        // break: `cursor + size + 2` wraps and the slice below runs backwards.
+        if size > cap {
+            return Err(format!("chunked response exceeded the {cap} byte cap"));
+        }
         cursor = line_end + 2;
         if size == 0 {
             break; // the last chunk; trailers, if any, are ignored
@@ -387,13 +402,24 @@ fn parse_head(head: &[u8]) -> (Option<u16>, Vec<(String, String)>) {
         .next()
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|code| code.parse::<u16>().ok());
-    let headers = lines
-        .filter(|line| !line.is_empty())
-        .filter_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            Some((name.trim().to_string(), value.trim().to_string()))
-        })
-        .collect();
+    let mut headers: Vec<(String, String)> = Vec::new();
+    for line in lines.filter(|line| !line.is_empty()) {
+        // An obs-fold: the continuation of the header above it, which RFC 9110
+        // §5.2 reads as one field. Taken as a header of its own,
+        // `X-Echo: <input>\r\n Set-Cookie: sid=evil` became a real
+        // `Set-Cookie` that `send_raw` wrote into the jar. The store keeps the
+        // exact bytes either way.
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if let Some((_, value)) = headers.last_mut() {
+                value.push(' ');
+                value.push_str(line.trim());
+            }
+            continue;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            headers.push((name.trim().to_string(), value.trim().to_string()));
+        }
+    }
     (status, headers)
 }
 
@@ -426,6 +452,28 @@ mod tests {
             .iter()
             .any(|(n, v)| n == "Content-Type" && v == "text/plain"));
         assert!(headers.iter().any(|(n, v)| n == "Content-Length" && v == "3"));
+    }
+
+    /// An obs-fold is a continuation, not a header. Read as one,
+    /// `X-Echo: <reflected>\r\n Set-Cookie: sid=evil` became a cookie in the
+    /// jar that the origin never set.
+    #[test]
+    fn a_folded_header_line_is_a_continuation_and_not_a_new_header() {
+        let head = b"HTTP/1.1 200 OK\r\nX-Echo: hello\r\n Set-Cookie: sid=evil\r\n\r\n";
+        let (status, headers) = parse_head(head);
+        assert_eq!(status, Some(200));
+        assert!(
+            !headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("set-cookie")),
+            "a folded line is not a Set-Cookie: {headers:?}"
+        );
+        assert_eq!(
+            headers
+                .iter()
+                .find(|(n, _)| n == "X-Echo")
+                .map(|(_, v)| v.as_str()),
+            Some("hello Set-Cookie: sid=evil"),
+            "it is part of the value above it: {headers:?}"
+        );
     }
 
     #[test]
@@ -470,6 +518,78 @@ mod tests {
         );
     }
 
+    /// A chunk size near `usize::MAX` reached `&have[cursor..cursor + size]`
+    /// with the sum wrapped past zero: a backwards range, which panics.
+    #[test]
+    fn a_chunk_size_that_would_overflow_is_refused_rather_than_sliced() {
+        let hostile = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffee\r\n";
+        let outcome = try_reading_from_a_server_that_says(hostile);
+        assert!(
+            outcome.is_err(),
+            "a chunk larger than the cap has to be refused, got {:?}",
+            outcome.map(|r| r.body)
+        );
+    }
+
+    /// `leftover` is this path's desync signal. Cutting an oversized body at
+    /// the cap handed the remainder back under that name, so a large page
+    /// reported as a successful smuggle.
+    #[test]
+    fn a_body_past_the_cap_is_refused_rather_than_reported_as_a_second_response() {
+        let big = "x".repeat(4096);
+        let said = format!("HTTP/1.1 200 OK\r\nContent-Length: 4096\r\n\r\n{big}");
+        let outcome = try_reading_from_a_server_that_says_with_cap(&said, 1024);
+        match outcome {
+            Err(why) => assert!(why.contains("cap"), "{why}"),
+            Ok(response) => panic!(
+                "kept {} bytes and called {} of them a second response",
+                response.body.len(),
+                response.leftover.len()
+            ),
+        }
+    }
+
+    /// And the same with no framing at all, truncated under a 200.
+    #[test]
+    fn an_unframed_body_past_the_cap_is_refused_rather_than_cut_short() {
+        let said = format!("HTTP/1.1 200 OK\r\n\r\n{}", "x".repeat(4096));
+        assert!(try_reading_from_a_server_that_says_with_cap(&said, 1024).is_err());
+    }
+
+    /// Everything here is what a target chose to send. It may refuse or time
+    /// out; it may not die — a raw send is aimed at servers behaving badly.
+    #[test]
+    fn no_arrangement_of_these_bytes_makes_the_reader_panic() {
+        let alphabet: &[&str] = &[
+            "\r\n", "\n", "\r", ":", " ", "0", "2", "hi", ";ext", "--", "",
+            "ffffffffffffffee", "ffffffffffffffff", "7fffffffffffffff", "fffffffffffffff0",
+            "8000000000000000", "-1", "1000", "zz", "Trailer: x",
+            "HTTP/1.1 200 OK", "Content-Length: 5",
+            "Content-Length: 99999999999999999999", "Content-Length: -1",
+        ];
+        // Seeded with real heads: the sharp arithmetic is past a valid one,
+        // and a random prefix almost never forms one.
+        let heads: &[&str] = &[
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n",
+            "HTTP/1.1 200 OK\r\n\r\n",
+            "",
+        ];
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |modulo: usize| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % modulo
+        };
+        for _ in 0..3_000 {
+            let mut said = heads[next(heads.len())].to_string();
+            for _ in 0..6 {
+                said.push_str(alphabet[next(alphabet.len())]);
+            }
+            // Whatever it answers, including an error, is fine. A panic is not.
+            let _ = read_from_a_server_that_hangs_up(&said, 4096);
+        }
+    }
+
     /// One connection, one write, whatever bytes the test names.
     fn read_from_a_server_that_says(bytes: &str) -> RawResponse {
         use std::io::Write;
@@ -490,6 +610,55 @@ mod tests {
         sock.set_read_timeout(Some(std::time::Duration::from_secs(5))).expect("timeout");
         let mut wire = Wire::plain(sock);
         let response = read_http_response(&mut wire, 1 << 20).expect("a response");
+        let _ = server.join();
+        response
+    }
+
+    /// A server that says its piece and hangs up at once. The helpers above
+    /// hold the connection open, which the fuzz loop cannot afford.
+    fn read_from_a_server_that_hangs_up(bytes: &str, cap: usize) -> Result<RawResponse, String> {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let said = bytes.to_string();
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.write_all(said.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        let sock = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        sock.set_read_timeout(Some(std::time::Duration::from_secs(2))).expect("timeout");
+        let mut wire = Wire::plain(sock);
+        let response = read_http_response(&mut wire, cap);
+        let _ = server.join();
+        response
+    }
+
+    /// The same server, for the cases where the refusal is the answer.
+    fn try_reading_from_a_server_that_says(bytes: &str) -> Result<RawResponse, String> {
+        try_reading_from_a_server_that_says_with_cap(bytes, 1 << 20)
+    }
+
+    fn try_reading_from_a_server_that_says_with_cap(
+        bytes: &str,
+        cap: usize,
+    ) -> Result<RawResponse, String> {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let said = bytes.to_string();
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.write_all(said.as_bytes());
+                let _ = stream.flush();
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        });
+        let sock = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        sock.set_read_timeout(Some(std::time::Duration::from_secs(5))).expect("timeout");
+        let mut wire = Wire::plain(sock);
+        let response = read_http_response(&mut wire, cap);
         let _ = server.join();
         response
     }

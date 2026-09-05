@@ -476,6 +476,21 @@ pub fn dir(root: &Path, id: &str) -> PathBuf {
     root.join(SESSIONS).join(id)
 }
 
+/// Whether an id is one path component and nothing else.
+///
+/// An id reaches [`dir`] from a `--session` selector and from a `session.json`
+/// that, for a boxed session, boxed code can write. Everything under a session
+/// directory — jar, control channel, message store — is addressed by joining
+/// onto it, so a `..` here names a directory outside the registry.
+pub fn id_is_one_component(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 96
+        && !id.starts_with('.')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
 /// Mint an id no session has ever had, and create its directory.
 ///
 /// The directory is the claim: creating it with `create_new` is what makes two
@@ -537,6 +552,9 @@ pub fn write(root: &Path, session: &Session) -> Result<(), H5iError> {
 
 /// Read one record by id.
 pub fn read(root: &Path, id: &str) -> Result<Session, H5iError> {
+    if !id_is_one_component(id) {
+        return Err(unknown(root, id));
+    }
     let path = dir(root, id).join(RECORD);
     let body = fs::read_to_string(&path).map_err(|_| unknown(root, id))?;
     serde_json::from_str(&body)
@@ -621,6 +639,18 @@ pub fn find_by_name(root: &Path, name: &str) -> Option<Session> {
         .unwrap_or_default()
         .into_iter()
         .find(|s| s.state.is_live() && s.name.as_deref() == Some(name))
+}
+
+/// A session that has ended, by the name it was opened with. Newest first.
+///
+/// Separate from [`find_by_name`] on purpose: a verb that *acts* must only find
+/// a live session. This is for the readers, whose subject is usually the run
+/// that just finished — and `close` says the record stays.
+pub fn find_ended_by_name(root: &Path, name: &str) -> Option<Session> {
+    list(root)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|s| !s.state.is_live() && s.name.as_deref() == Some(name))
 }
 
 /// Turn what the caller said (or did not say) into a session a verb may act on.
@@ -1046,6 +1076,11 @@ pub enum Availability {
     Empty,
     /// Not readable from here. Nothing can be concluded from its silence.
     Unavailable,
+    /// Read, and only the start of it: the byte cap cut the rest off.
+    ///
+    /// Its own state because the rows that *are* here look no different either
+    /// way, so a timeline that stops reads as a session that went quiet.
+    Partial,
 }
 
 impl Availability {
@@ -1054,6 +1089,7 @@ impl Availability {
             Availability::Read => "read",
             Availability::Empty => "empty",
             Availability::Unavailable => "unavailable",
+            Availability::Partial => "partial",
         }
     }
 
@@ -1062,6 +1098,14 @@ impl Availability {
             None => Availability::Unavailable,
             Some(t) if t.trim().is_empty() => Availability::Empty,
             Some(_) => Availability::Read,
+        }
+    }
+
+    /// The same, for a read that says whether the cap cut it.
+    fn of_capped(read: &Option<(String, bool)>) -> Availability {
+        match read {
+            Some((_, true)) => Availability::Partial,
+            other => Availability::of(&other.as_ref().map(|(text, _)| text.clone())),
         }
     }
 }
@@ -1132,7 +1176,13 @@ const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
 /// Opened `O_NOFOLLOW` first and `fstat`ed after, rather than stat-then-open:
 /// in a directory the box writes, those are two resolutions of a path and only
 /// the second one is read.
-fn read_log_capped(path: &Path) -> Option<String> {
+pub fn read_log_capped(path: &Path) -> Option<String> {
+    read_log_capped_saying(path).map(|(text, _)| text)
+}
+
+/// The same read, and whether the cap cut it short. A bound that says nothing
+/// makes a run past [`MAX_LOG_BYTES`] read as one that stopped making requests.
+pub fn read_log_capped_saying(path: &Path) -> Option<(String, bool)> {
     use std::io::Read as _;
     let mut opts = fs::OpenOptions::new();
     opts.read(true);
@@ -1147,13 +1197,14 @@ fn read_log_capped(path: &Path) -> Option<String> {
     }
     let mut buf = Vec::new();
     file.take(MAX_LOG_BYTES).read_to_end(&mut buf).ok()?;
+    let cut = buf.len() as u64 >= MAX_LOG_BYTES;
     let text = String::from_utf8_lossy(&buf).into_owned();
     // These logs are JSONL and the cap can land mid-line. Ending on a whole
     // line means the parse below drops nothing it could have read.
-    match text.rfind('\n') {
-        Some(at) => Some(text[..=at].to_string()),
-        None => Some(text),
-    }
+    Some(match text.rfind('\n') {
+        Some(at) => (text[..=at].to_string(), cut),
+        None => (text, cut),
+    })
 }
 
 /// Assemble the whole record of a session: what the agent asked for, what the engine decided,
@@ -1162,8 +1213,10 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
     use crate::browser_events as ev;
 
     let dir = dir(root, &session.id);
-    let read = |path: &Option<PathBuf>| -> Option<String> {
-        path.as_ref().and_then(|p| read_log_capped(p))
+    // The flag comes back with the text: a log the cap cut short is a timeline
+    // that stops early, and the rows that are here look no different for it.
+    let read = |path: &Option<PathBuf>| -> Option<(String, bool)> {
+        path.as_ref().and_then(|p| read_log_capped_saying(p))
     };
     let actions = read(&session.logs.actions);
     let requests = read(&session.logs.requests);
@@ -1210,12 +1263,12 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
     // first and read by the second. The one ordering dependency here, and the
     // same one `BoxStream::poll` states in its own comment.
     let mut caused = std::collections::BTreeMap::new();
-    if let Some(text) = &actions {
+    if let Some((text, _)) = &actions {
         for draft in ev::ingest_light_actions_with(text, &mut caused) {
             rows.push(Row::engine(&session.started_at, &read_at, draft));
         }
     }
-    if let Some(text) = &requests {
+    if let Some((text, _)) = &requests {
         for draft in ev::ingest_request_log_with(text, &caused) {
             rows.push(Row::engine(&session.started_at, &read_at, draft));
         }
@@ -1274,8 +1327,8 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
     Audit {
         session: session.clone(),
         sources: Sources {
-            actions: Availability::of(&actions),
-            requests: Availability::of(&requests),
+            actions: Availability::of_capped(&actions),
+            requests: Availability::of_capped(&requests),
             control: if handovers.is_empty() {
                 Availability::Empty
             } else {
@@ -1478,6 +1531,103 @@ fn process_alive(_pid: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// A name only resolves to a live session, so a closed one asked for by
+    /// name came back as "no such session" — though its record stays.
+    #[test]
+    fn a_closed_session_is_still_findable_by_the_name_it_was_opened_with() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let mut session = named(root, "auth");
+
+        // While it is live, only the live lookup finds it.
+        assert!(find_by_name(root, "auth").is_some());
+        assert!(find_ended_by_name(root, "auth").is_none());
+
+        end(root, &mut session, State::Closed, "closed by the user");
+
+        // And once it has ended, the other way round.
+        assert!(find_by_name(root, "auth").is_none());
+        let found = find_ended_by_name(root, "auth").expect("the record stays");
+        assert_eq!(found.id, session.id);
+        assert!(find_ended_by_name(root, "never").is_none());
+    }
+
+    /// And the audit built on it says so, rather than rendering the head of a
+    /// log as the whole run. The rows that are there look no different either
+    /// way, so a timeline that stops reads as a session that went quiet.
+    #[test]
+    fn an_audit_over_a_capped_log_reports_the_source_as_partial() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let mut session = named(root, "long");
+        let dir = dir(root, &session.id);
+
+        // A request log past the cap, and an action log comfortably under it.
+        let mut requests = String::new();
+        while requests.len() as u64 <= super::MAX_LOG_BYTES {
+            requests.push_str(
+                "{\"seq\":0,\"at\":\"2026-09-04T00:00:00.000000Z\",\"phase\":\"request\",\
+                 \"initiator\":\"navigation\",\"method\":\"GET\",\
+                 \"url\":\"https://app.test/\",\"allowed\":true}\n",
+            );
+        }
+        std::fs::write(dir.join(RECEIPTS_FILE), requests.as_bytes()).unwrap();
+        std::fs::write(dir.join("browser-actions.jsonl"), b"").unwrap();
+        session.logs.requests = Some(dir.join(RECEIPTS_FILE));
+        session.logs.actions = Some(dir.join("browser-actions.jsonl"));
+
+        let audit = audit(root, &session);
+        assert_eq!(
+            audit.sources.requests,
+            Availability::Partial,
+            "a log the cap cut short is not one that was read whole"
+        );
+        assert_eq!(audit.sources.actions, Availability::Empty);
+    }
+
+    /// A bound that says nothing makes a run past the cap read as a session
+    /// that simply stopped making requests.
+    #[test]
+    fn a_log_read_says_whether_the_cap_cut_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let small = tmp.path().join("small.jsonl");
+        std::fs::write(&small, b"{\"seq\":0}\n{\"seq\":1}\n").unwrap();
+        let (text, cut) = read_log_capped_saying(&small).expect("read");
+        assert!(!cut, "a log under the cap is whole");
+        assert_eq!(text.lines().count(), 2);
+
+        let big = tmp.path().join("big.jsonl");
+        let line = format!("{}\n", "{\"seq\":0,\"pad\":\"aaaaaaaaaaaaaaaa\"}");
+        let mut body = String::new();
+        while body.len() as u64 <= super::MAX_LOG_BYTES {
+            body.push_str(&line);
+        }
+        std::fs::write(&big, body.as_bytes()).unwrap();
+        let (text, cut) = read_log_capped_saying(&big).expect("read");
+        assert!(cut, "a log over the cap says so");
+        // And what comes back is still whole lines, so nothing half-parsed.
+        assert!(text.ends_with('\n'));
+    }
+
+    /// An id addresses the jar, the control channel and the message store, and
+    /// arrives from a selector and from a file boxed code can write.
+    #[test]
+    fn an_id_that_is_not_one_component_names_no_directory() {
+        for bad in ["..", "../../etc", "a/b", "a\\b", ".hidden", ""] {
+            assert!(!super::id_is_one_component(bad), "`{bad}` should not be an id");
+        }
+        for good in ["br_g9pftf", "br_1", "a.b-c_d"] {
+            assert!(super::id_is_one_component(good), "`{good}` should be an id");
+        }
+    }
+
+    /// And `read` answers "unknown session" rather than following it out.
+    #[test]
+    fn reading_a_traversing_id_is_an_unknown_session() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(super::read(root.path(), "../../../etc/passwd").is_err());
+    }
+
     /// The two logs an audit reads live inside the box's own `/tmp`, which the
     /// box writes. Reading them whole made `h5i box export` allocate whatever
     /// the box wrote, and following a link made it read whatever the box
