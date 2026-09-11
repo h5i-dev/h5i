@@ -215,7 +215,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css?v=3fac769d8f">
-  <link rel="stylesheet" href="/_static/console-mock.css?v=d3dbcad9d5">
+  <link rel="stylesheet" href="/_static/console-mock.css?v=bfdef1691e">
   <link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
   <style>
     @media (min-width: 900px) {
@@ -405,250 +405,236 @@
      that shows nothing when the script is still in flight. -->
 <section class="fig">
   <div class="console-plate tabbed">
-    <input class="tabpick" type="radio" name="fig01" id="fig01-fleet" checked>
-    <input class="tabpick" type="radio" name="fig01" id="fig01-browser">
+    <input class="tabpick" type="radio" name="fig01" id="fig01-sessions" checked>
+    <input class="tabpick" type="radio" name="fig01" id="fig01-boxes">
     <div class="console-tabs">
-      <label for="fig01-fleet">Fleet &amp; evidence</label>
-      <label for="fig01-browser">Browser terminal</label>
+      <label for="fig01-sessions">Sessions &amp; HTTP history</label>
+      <label for="fig01-boxes">Boxes &amp; evidence</label>
     </div>
     <div class="console-views">
-
-      <!-- ── tab 1: the fleet and one box's evidence ── -->
       <div class="console-view">
-        <div class="console" role="img" aria-label="The h5i box console: a top strip of what this host can enforce and fleet vitals, the fleet on the left with each box's tier, status and one signal, and on the right one box's findings, its flight recorder across five lanes, and the policy that was actually enforced.">
-
-          <div class="console-strip">
-            <div class="grp">
-              <span class="console-label">host</span>
-              <span class="console-tag ok">workspace &#10003;</span>
-              <span class="console-tag ok">process &#10003;</span>
-              <span class="console-tag ok">supervised &#10003;</span>
-              <span class="console-tag ok">container &#10003;</span>
-              <span class="console-tag off">microvm &#10007;</span>
-              <span class="console-tag ok">egress &#10003;</span>
-              <span class="console-tag ok">limits &#10003;</span>
-              <span class="console-tag">strongest: supervised</span>
-            </div>
-            <div class="console-vitals">
-              <span class="console-vital"><b>4</b><span>boxes</span></span>
-              <span class="console-vital"><b>2</b><span>active</span></span>
-              <span class="console-vital"><b>1</b><span>proposed</span></span>
-              <span class="console-vital alert"><b>1</b><span>denials</span></span>
-              <span class="console-vital"><b>31</b><span>runs</span></span>
-            </div>
-          </div>
-
-          <div class="console-body">
-
-            <div class="console-fleet">
-              <div class="console-head">Boxes <span class="count">4</span></div>
-              <div class="console-chips">
-                <span class="console-chip active">all</span>
-                <span class="console-chip">running</span>
-                <span class="console-chip">proposed</span>
-                <span class="console-chip">pressure</span>
-                <span class="console-chip">drifted</span>
-                <span class="console-chip">container</span>
-                <span class="console-chip">supervised</span>
-                <span class="console-chip">process</span>
-                <span class="console-chip">workspace</span>
+        <div class="console" role="img" aria-label="The h5i console, Sessions view: a left rail of sections, the browser sessions on this machine sorted loudest first, and a workspace whose HTTP history table names the agent verb that spent each fetch, with a filter bar, refused rows in red, and an inspector that traces why one fetch exists.">
+          <div class="cm-app">
+            <nav class="cm-rail" aria-hidden="true">
+              <div class="cm-brand"><b>h5i</b><span>console</span></div>
+              <div class="cm-nav"><span>Overview</span></div>
+              <div class="cm-nav on"><span>Sessions</span><span class="b">3</span></div>
+              <div class="cm-nav"><span>Boxes</span></div>
+              <div class="cm-nav"><span>Host</span></div>
+              <div class="cm-rail-foot"><b>watches, never drives.</b><br>Every button copies a command.</div>
+            </nav>
+            <div class="cm-main">
+              <div class="cm-topbar">
+                <h4>Sessions</h4>
+                <span class="scope">this machine's browser sessions</span>
+                <span class="vitals"><span><b>3</b> live</span><span><b>214</b> recorded</span></span>
               </div>
-              <div class="console-colhead"><span>Box</span><span>Isolation</span><span>Status</span><span>Signal</span></div>
-
-              <div class="console-row selected">
-                <span class="name">claude/fix-auth</span>
-                <span class="console-tag ok">supervised</span>
-                <span class="status">idle</span>
-                <span class="sig blocked">&#9940; blocked</span>
-                <span class="sub">14 runs &#183; 6f +212/&#8722;48</span>
-              </div>
-              <div class="console-row">
-                <span class="name">codex/pr-1234</span>
-                <span class="console-tag ok">container</span>
-                <span class="status">running</span>
-                <span class="sig attention">&#9888; 2 kinds</span>
-                <span class="sub">9 runs &#183; 3f +61/&#8722;7 &#183; detached</span>
-              </div>
-              <div class="console-row">
-                <span class="name">claude/preview</span>
-                <span class="console-tag ok">container</span>
-                <span class="status">running</span>
-                <span class="sig clean">clean</span>
-                <span class="sub">8 runs</span>
-                <!-- the one lane that lets somebody *in*, said on the row -->
-                <span class="shared">&#8646; shared :3000 tunnel</span>
-              </div>
-              <div class="console-row">
-                <span class="name">codex/spike-ui</span>
-                <span class="console-tag off">workspace</span>
-                <span class="status">proposed</span>
-                <span class="sig weak">&#9676; box-claimed</span>
-                <span class="sub">0 runs &#183; proposed</span>
-              </div>
-            </div>
-
-            <div class="console-detail">
-              <div class="console-head">
-                claude/fix-auth
-                <span class="console-tag ok">supervised</span>
-                <span class="console-tag">agent-claude</span>
-                <span class="digest">a1f4c9e70b32</span>
-              </div>
-
-              <div class="console-note bad">
-                <b>The egress allowlist refused 3 requests</b> to <code>paste.example.invalid:443</code>.
-                This is host-observed: the proxy recorded it, not the box.
-              </div>
-
-              <div class="console-panel">
-                <div class="console-panel-head">Flight recorder &#183; 14 records &#183; 9 older folded</div>
-                <div class="lane-row head">
-                  <div><span class="lane-name">policy allows &#8594;</span></div>
-                  <div><div class="lane-name">FS</div><div class="lane-allow">$WORK</div></div>
-                  <div><div class="lane-name">NET</div><div class="lane-allow">3 hosts</div></div>
-                  <div><div class="lane-name">PROC</div><div class="lane-allow">any</div></div>
-                  <div><div class="lane-name">RES</div><div class="lane-allow">wall 1800s</div></div>
-                  <div><div class="lane-name">PAGE</div><div class="lane-allow">in-box</div></div>
-                </div>
-                <div class="lane-row">
-                  <div>
-                    <div class="run-cmd">npm ci &amp;&amp; npm test</div>
-                    <div class="run-meta"><span class="src observed">host-observed</span> exit 0 &#183; 48.2s &#183; 11:04:19</div>
+              <div class="cm-split">
+                <div class="cm-col">
+                  <div class="cm-tools">
+                    <div class="cm-search"><span>find by name, id or target</span><span>214</span></div>
+                    <div class="cm-chips">
+                      <span class="cm-chip"><b>1</b> waiting on you</span>
+                      <span class="cm-chip"><b>1</b> finished, unread</span>
+                      <span class="cm-chip"><b>1</b> working</span>
+                    </div>
                   </div>
-                  <div><span class="v info">31 files</span></div>
-                  <div><span class="v ok">&#10003; 42</span></div>
-                  <div><span class="v ok">&#10003;</span></div>
-                  <div><span class="v info">412 MB</span></div>
-                  <div><span class="v none">&#183;</span></div>
-                </div>
-                <div class="lane-row">
-                  <div>
-                    <div class="run-cmd">curl https://paste.example.invalid</div>
-                    <div class="run-meta"><span class="src observed">host-observed</span> exit 7 &#183; 0.3s &#183; 11:07:02</div>
+                  <div class="cm-srow on">
+                    <div class="cm-srow-top"><span class="cm-srow-name">checkout-idor<code>br_9f3k2a</code></span><span class="cm-age">2m ago</span></div>
+                    <div class="cm-srow-target">shop.example.test</div>
+                    <div class="cm-srow-bottom">
+                      <span class="cm-counts"><span>128 <b>fetches</b></span><span class="bad"><b>6</b> refused</span><span class="warn"><b>1</b> finding</span></span>
+                      <span class="cm-attn blocked"><i></i>waiting on you</span>
+                    </div>
                   </div>
-                  <div><span class="v none">&#183;</span></div>
-                  <div><span class="v bad">&#9940; 3 refused</span></div>
-                  <div><span class="v warn">&#9888; exit 7</span></div>
-                  <div><span class="v none">&#183;</span></div>
-                  <div><span class="v none">&#183;</span></div>
-                </div>
-                <div class="lane-row">
-                  <div>
-                    <div class="run-cmd">agent-browser open http://localhost:3000</div>
-                    <div class="run-meta"><span class="src claimed">box-claimed</span> exit 0 &#183; 1.9s &#183; 11:09:44</div>
+                  <div class="cm-srow">
+                    <div class="cm-srow-top"><span class="cm-srow-name">crawl-portal<code>br_1qf62p</code></span><span class="cm-age">just now</span></div>
+                    <div class="cm-srow-target">portal.example.test +2</div>
+                    <div class="cm-srow-bottom">
+                      <span class="cm-counts"><span>512 <b>fetches</b></span><span class="good"><b>34</b> confirmed</span></span>
+                      <span class="cm-attn working"><i></i>working</span>
+                    </div>
                   </div>
-                  <div><span class="v none">&#183;</span></div>
-                  <div><span class="v ok">&#10003; 6</span></div>
-                  <div><span class="v ok">&#10003;</span></div>
-                  <div><span class="v none">&#183;</span></div>
-                  <div><span class="v warn">&#9888; 2 console</span></div>
+                  <div class="cm-srow">
+                    <div class="cm-srow-top"><span class="cm-srow-name">login-probe<code>br_e3263j</code></span><span class="cm-age">14m ago</span></div>
+                    <div class="cm-srow-target">app.example.test</div>
+                    <div class="cm-srow-bottom">
+                      <span class="cm-counts"><span>47 <b>fetches</b></span><span><b>47</b> kept</span></span>
+                      <span class="cm-attn done"><i></i>finished, unread</span>
+                    </div>
+                  </div>
+                  <div class="cm-srow">
+                    <div class="cm-srow-top"><span class="cm-srow-name">news-scrape<code>br_txrqd1</code></span><span class="cm-age">1h ago</span></div>
+                    <div class="cm-srow-target">www.example.test</div>
+                    <div class="cm-srow-bottom">
+                      <span class="cm-counts"><span>188 <b>fetches</b></span></span>
+                      <span class="cm-attn"><i></i>idle</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-
-              <div class="console-panel">
-                <div class="console-panel-head">Enforced policy &#183; what was actually allowed</div>
-                <div class="pol">
-                  <div><span class="k">isolation</span><span class="val on">supervised</span></div>
-                  <div><span class="k">net.mode</span><span class="val">allowlist</span></div>
-                  <div><span class="k">net.egress</span><span class="val">api.anthropic.com, registry.npmjs.org, github.com</span></div>
-                  <div><span class="k">fs.write</span><span class="val">$WORK</span></div>
-                  <div><span class="k">fs.read</span><span class="val">$WORK, /usr, /etc/ssl</span></div>
-                  <div><span class="k">secrets</span><span class="val">GITHUB_TOKEN (brokered)</span></div>
-                  <div><span class="k">wall</span><span class="val">1800s</span></div>
-                  <div><span class="k">mem</span><span class="val">4.0G</span></div>
+                <div class="rule"></div>
+                <div class="cm-work">
+                  <div class="cm-work-head">
+                    <div class="cm-title">
+                      <h3>checkout-idor</h3><code>br_9f3k2a</code>
+                      <span class="cm-attn blocked"><i></i>waiting on you</span>
+                      <span class="cm-tag bad">6 refused</span>
+                    </div>
+                    <div class="cm-sub">
+                      <span class="mono">https://shop.example.test/checkout?order=1042</span>
+                      <span>h5i-light</span><span>engine-claimed</span><span>alice</span><span>live for 2m</span>
+                    </div>
+                    <div class="cm-tabs">
+                      <span class="cm-tab on">History <span class="n">128</span></span>
+                      <span class="cm-tab">Sitemap <span class="n">4</span></span>
+                      <span class="cm-tab">Actions <span class="n">12</span></span>
+                      <span class="cm-tab">Findings <span class="n loud">1</span></span>
+                      <span class="cm-tab">Recon <span class="n">37</span></span>
+                      <span class="cm-tab">About</span>
+                    </div>
+                  </div>
+                  <div class="cm-filter">
+                    <div class="cm-filter-input">host:shop status:4xx|refused verb:replay<span class="cur">&#9612;</span></div>
+                    <div class="cm-presets"><span class="lbl">show</span><span class="cm-chip on dim">refused</span><span class="cm-chip dim">errors</span><span class="cm-chip dim">replays</span><span class="cm-chip dim">slow</span><span class="cm-chip dim">shop.example.test</span></div>
+                  </div>
+                  <div class="cm-hist">
+                    <div style="overflow:hidden">
+                      <table class="cm-grid">
+                        <thead><tr><th class="cm-num">#</th><th>verb</th><th>method</th><th>host</th><th class="sorted">path &#8595;</th><th class="cm-num">status</th><th class="cm-num">time</th><th>initiator</th></tr></thead>
+                        <tbody>
+                          <tr><td class="cm-num">108</td><td class="cm-verb">replay</td><td class="cm-method">GET</td><td class="cm-host">shop.example.test</td><td class="cm-path"><span class="dir">/api/order/</span><span class="last">1041</span></td><td class="cm-num cm-st-2">200</td><td class="cm-num">31ms</td><td>replay</td></tr>
+                          <tr class="on"><td class="cm-num">109</td><td class="cm-verb">replay</td><td class="cm-method">GET</td><td class="cm-host">shop.example.test</td><td class="cm-path"><span class="dir">/api/order/</span><span class="last">1042</span></td><td class="cm-num cm-st-2">200</td><td class="cm-num">29ms</td><td>replay</td></tr>
+                          <tr><td class="cm-num">110</td><td class="cm-verb">click</td><td class="cm-method post">POST</td><td class="cm-host">shop.example.test</td><td class="cm-path"><span class="dir">/api/</span><span class="last">pay</span></td><td class="cm-num cm-st-4">402</td><td class="cm-num">88ms</td><td>subresource</td></tr>
+                          <tr><td class="cm-num">111</td><td class="cm-verb">replay</td><td class="cm-method">GET</td><td class="cm-host">shop.example.test</td><td class="cm-path"><span class="dir">/api/order/</span><span class="last">9001</span></td><td class="cm-num"><span class="cm-refused">refused</span></td><td class="cm-num">&#8212;</td><td>replay</td></tr>
+                          <tr><td class="cm-num">112</td><td class="cm-verb">&#8212;</td><td class="cm-method">GET</td><td class="cm-host">px.example.invalid</td><td class="cm-path"><span class="dir">/</span><span class="last">t.js</span></td><td class="cm-num"><span class="cm-refused">refused</span></td><td class="cm-num">&#8212;</td><td>subresource</td></tr>
+                        </tbody>
+                      </table>
+                      <div class="cm-foot"><span>5 of 128 fetches match</span><span class="bad">6 refused</span><span>the oldest are in <code>h5i websec requests</code></span></div>
+                    </div>
+                    <div class="rule"></div>
+                    <div class="cm-insp">
+                      <div class="cm-insp-head"><code>req_109</code><span class="cm-method">GET</span><span class="cm-st-2" style="font-family:var(--cm-mono)">200</span></div>
+                      <div class="cm-insp-url">https://shop.example.test/api/order/1042</div>
+                      <h5>Why this fetch exists</h5>
+                      <div class="cm-trace">
+                        <div class="cm-trace-step info"><i></i><span>the agent asked for <b>replay</b> <code>req_108 --set order=1042</code></span></div>
+                        <div class="cm-trace-step"><i></i><span>the engine decided a <b>replay</b> fetch of <code>shop.example.test</code></span></div>
+                        <div class="cm-trace-step good"><i></i><span>policy <b>allowed</b> it; the receipt was written before the bytes moved</span></div>
+                        <div class="cm-trace-step good"><i></i><span>the server answered <b>200</b> with 1.2K in 29ms &#8212; a different tenant's order</span></div>
+                      </div>
+                      <h5>Read the bytes</h5>
+                      <span class="cm-cmd">h5i websec show res_109 --session checkout-idor</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
-
           </div>
         </div>
       </div>
-
-      <!-- ── tab 2: what the browser in that box actually did ── -->
       <div class="console-view">
-        <div class="bt" role="img" aria-label="The browser terminal in the h5i console: a trusted status row, the page pane, and four panes of rows — agent actions, network, console and policy verdicts — each row labelled with the lane that observed it and how complete that record is.">
-
-          <div class="bt-status">
-            <span class="bt-badge">box</span><span class="bt-val">claude/fix-auth</span>
-            <span class="bt-badge">engine</span><span class="bt-val">h5i</span>
-            <span class="bt-badge">page</span><span class="bt-val url">http://localhost:3000/checkout</span>
-            <span class="bt-badge">requests</span><span class="bt-val">18 allowed, <em>1 denied</em></span>
-          </div>
-
-          <div class="bt-pane bt-page">
-            <header><h3>page</h3><p>box-claimed: the box's own rendering of its page</p></header>
-            <div class="bt-page-body">
-              <!-- The frame is the page the box rendered, so it is drawn as a page and not as
-                   console furniture. It is also the story the panes below tell: the total is
-                   $NaN because `total is undefined` threw, and the tracker is missing because
-                   the allowlist refused it. -->
-              <figure class="bt-frame">
-                <div class="bt-shot" aria-hidden="true">
-                  <div class="shot-nav"><b>acme</b><span>Store</span><span>Cart</span><span class="on">Checkout</span></div>
-                  <div class="shot-body">
-                    <h4>Checkout</h4>
-                    <div class="shot-line"><span>Mechanical keyboard</span><b>$89.00</b></div>
-                    <div class="shot-line"><span>USB-C cable &#215; 2</span><b>$24.00</b></div>
-                    <div class="shot-line total"><span>Total</span><b class="broken">$NaN</b></div>
-                    <div class="shot-pay">Pay</div>
-                    <div class="shot-foot">Ships in 2&#8211;4 days &#183; free returns</div>
+        <div class="console" role="img" aria-label="The h5i console, Boxes view: the repository's confined environments on the left, and for one box a flight recorder of one row per receipt across six lanes with host-observed and box-claimed marked apart, above the policy that was actually enforced.">
+          <div class="cm-app">
+            <nav class="cm-rail" aria-hidden="true">
+              <div class="cm-brand"><b>h5i</b><span>console</span></div>
+              <div class="cm-nav"><span>Overview</span></div>
+              <div class="cm-nav"><span>Sessions</span><span class="b">3</span></div>
+              <div class="cm-nav on"><span>Boxes</span></div>
+              <div class="cm-nav"><span>Host</span></div>
+              <div class="cm-rail-foot"><b>watches, never drives.</b><br>Every button copies a command.</div>
+            </nav>
+            <div class="cm-main">
+              <div class="cm-topbar">
+                <h4>Boxes</h4>
+                <span class="scope">this repository's confined environments</span>
+                <span class="vitals"><span><b>4</b> boxes</span><span><b>2</b> active</span><span class="loud"><b>1</b> refused egress</span><span><b>31</b> runs</span></span>
+              </div>
+              <div class="cm-split">
+                <div class="cm-col">
+                  <div class="cm-tools">
+                    <div class="cm-chips"><span class="cm-chip dim on">all</span><span class="cm-chip dim">running</span><span class="cm-chip dim">pressure</span><span class="cm-chip dim">container</span><span class="cm-chip dim">supervised</span></div>
+                  </div>
+                  <div class="cm-fleet-row on">
+                    <div class="cm-fleet-top"><span class="name">claude/fix-auth</span><span class="cm-sig blocked">refused</span></div>
+                    <div class="cm-fleet-sub"><span>14 runs</span><span>6f +212/&#8722;48</span></div>
+                    <div class="cm-fleet-bottom"><span class="cm-tag good">supervised</span><span class="cm-tag">idle</span><span class="cm-tag">agent-claude</span></div>
+                  </div>
+                  <div class="cm-fleet-row">
+                    <div class="cm-fleet-top"><span class="name">codex/pr-1234</span><span class="cm-sig attention">2 kinds</span></div>
+                    <div class="cm-fleet-sub"><span>9 runs</span><span>3f +61/&#8722;7</span><span>detached</span></div>
+                    <div class="cm-fleet-bottom"><span class="cm-tag good">container</span><span class="cm-tag">running</span></div>
+                  </div>
+                  <div class="cm-fleet-row">
+                    <div class="cm-fleet-top"><span class="name">claude/preview</span><span class="cm-sig clean">clean</span></div>
+                    <div class="cm-fleet-sub"><span>8 runs</span><span class="shared">&#8646; shared :3000 tunnel</span></div>
+                    <div class="cm-fleet-bottom"><span class="cm-tag good">container</span><span class="cm-tag">running</span></div>
+                  </div>
+                  <div class="cm-fleet-row">
+                    <div class="cm-fleet-top"><span class="name">codex/spike-ui</span><span class="cm-sig weak">box-claimed</span></div>
+                    <div class="cm-fleet-sub"><span>0 runs</span><span>proposed</span></div>
+                    <div class="cm-fleet-bottom"><span class="cm-tag">workspace</span><span class="cm-tag">proposed</span></div>
                   </div>
                 </div>
-                <figcaption>frame #418 &#183; pixels the box rendered and reported. Nothing derived from this
-                  reaches the trusted row above.</figcaption>
-              </figure>
-            </div>
-          </div>
-
-          <div class="bt-tabs">
-            <span class="on">all panes</span>
-            <span>agent actions <b>3</b></span>
-            <span>network <b>19</b></span>
-            <span>console <b>2</b></span>
-            <span>policy verdicts <b>1</b></span>
-          </div>
-
-          <div class="bt-panes">
-
-            <div class="bt-pane">
-              <header><h3>agent actions</h3><p>box-claimed: the engine reports its own verbs &#8212; there is no
-                socket for h5i to watch</p></header>
-              <div class="bt-rows">
-                <div class="bt-row action"><span class="prov"><span class="lane box">box</span><span class="grade effort">best-effort</span></span><span class="text">open http://localhost:3000/checkout</span></div>
-                <div class="bt-row action"><span class="prov"><span class="lane box">box</span><span class="grade effort">best-effort</span></span><span class="text">click #pay</span></div>
-                <div class="bt-row refused"><span class="prov"><span class="lane box">box</span><span class="grade effort">best-effort</span></span><span class="text">REFUSED read /etc/shadow &#8212; outside the box's reach</span></div>
+                <div class="rule"></div>
+                <div class="cm-work">
+                  <div class="cm-work-head">
+                    <div class="cm-title"><h3>claude/fix-auth</h3><span class="cm-tag good">supervised</span><span class="cm-tag">agent-claude</span><span class="cm-sig blocked">refused</span></div>
+                    <div class="cm-sub"><span class="mono">policy a1f4c9e70b32</span><span>idle</span><span>fix-auth</span></div>
+                    <div class="cm-tabs"><span class="cm-tab on">Evidence</span><span class="cm-tab">Browser</span></div>
+                  </div>
+                  <div class="cm-note bad"><b>The egress allowlist refused 3 requests</b> to <code>paste.example.invalid:443</code>. This is host-observed: the proxy recorded it, not the box.</div>
+                  <div class="cm-panel">
+                    <div class="cm-panel-head">Flight recorder <span>&#183; 14 records &#183; 9 older folded</span></div>
+                    <div class="cm-lanes">
+                      <div class="cm-lane head">
+                        <div class="cm-run" style="padding-top:9px;padding-bottom:9px">policy allows</div>
+                        <div class="cm-lane-cell"><span class="nm">files</span><span class="al">$WORK</span></div>
+                        <div class="cm-lane-cell"><span class="nm">egress</span><span class="al">3 hosts</span></div>
+                        <div class="cm-lane-cell"><span class="nm">exit</span><span class="al">any</span></div>
+                        <div class="cm-lane-cell"><span class="nm">limits</span><span class="al">wall 1800s</span></div>
+                        <div class="cm-lane-cell"><span class="nm">page</span><span class="al">in box</span></div>
+                        <div class="cm-lane-cell"><span class="nm">kernel</span><span class="al">observe</span></div>
+                      </div>
+                      <div class="cm-lane">
+                        <div class="cm-run"><div class="cm-run-cmd">npm ci &amp;&amp; npm test</div><div class="cm-run-meta"><span class="cm-src observed">host-observed</span><span>exit 0</span><span>48.2s</span></div></div>
+                        <div class="cm-lane-cell"><span class="cm-v info">31 files</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v ok">&#10003; 42</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v ok">&#10003;</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v info">412M</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v ok">&#10003;</span></div>
+                      </div>
+                      <div class="cm-lane on">
+                        <div class="cm-run"><div class="cm-run-cmd">curl https://paste.example.invalid</div><div class="cm-run-meta"><span class="cm-src observed">host-observed</span><span>exit 7</span><span>0.3s</span></div></div>
+                        <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v bad">3 refused</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v warn">exit 7</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v warn">1</span></div>
+                      </div>
+                      <div class="cm-lane">
+                        <div class="cm-run"><div class="cm-run-cmd">h5i browser open http://localhost:3000</div><div class="cm-run-meta"><span class="cm-src claimed">box-claimed</span><span>exit 0</span><span>1.9s</span></div></div>
+                        <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v ok">&#10003; 6</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v ok">&#10003;</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v warn">2 console</span></div>
+                        <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="cm-panel">
+                    <div class="cm-panel-head">Enforced policy <span>&#183; what was actually allowed</span></div>
+                    <div class="cm-note" style="margin:0"><code>isolation</code> supervised &#183; <code>net.egress</code> api.anthropic.com, registry.npmjs.org, github.com &#183; <code>fs.write</code> $WORK &#183; <code>secrets</code> GITHUB_TOKEN (brokered) &#183; <code>wall</code> 1800s &#183; <code>mem</code> 4.0G</div>
+                  </div>
+                  <div style="height:16px"></div>
+                </div>
               </div>
             </div>
-
-            <div class="bt-pane">
-              <header><h3>network</h3><p>box-claimed, fail-closed: the engine will not fetch what it cannot
-                record</p></header>
-              <div class="bt-rows">
-                <div class="bt-row ok"><span class="prov"><span class="lane box">box</span><span class="grade closed">fail-closed</span></span><span class="text">GET http://localhost:3000/api/cart (subresource)</span><span class="cause">&#8592; #7</span></div>
-                <div class="bt-row ok"><span class="prov"><span class="lane box">box</span><span class="grade closed">fail-closed</span></span><span class="text">#12 200 &#183; 1841 B &#183; 23 ms</span><span class="cause">&#8592; #12</span></div>
-                <div class="bt-row refused"><span class="prov"><span class="lane box">box</span><span class="grade closed">fail-closed</span></span><span class="text">REFUSED GET https://px.example.invalid/t.js &#8212; not on this box's allowlist</span></div>
-              </div>
-            </div>
-
-            <div class="bt-pane">
-              <header><h3>console</h3><p>box-claimed, best-effort: drained from the page after the fact</p></header>
-              <div class="bt-rows">
-                <div class="bt-row error"><span class="prov"><span class="lane box">box</span><span class="grade effort">best-effort</span></span><span class="text">page-error: Uncaught TypeError: total is undefined</span></div>
-                <div class="bt-row warn"><span class="prov"><span class="lane box">box</span><span class="grade effort">best-effort</span></span><span class="text">warning: failed to load https://px.example.invalid/t.js</span></div>
-              </div>
-            </div>
-
-            <div class="bt-pane">
-              <header><h3>policy verdicts</h3><p>what h5i refused, and why</p></header>
-              <div class="bt-rows">
-                <div class="bt-row refused"><span class="prov"><span class="lane box">box</span><span class="grade closed">fail-closed</span></span><span class="text">https://px.example.invalid/t.js &#8212; not on this box's allowlist</span><span class="cause">&#8592; #13</span></div>
-              </div>
-            </div>
-
           </div>
         </div>
       </div>
-
     </div>
   </div>
 </section>

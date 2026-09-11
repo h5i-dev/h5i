@@ -1123,18 +1123,33 @@ h5i ui --port 0
 h5i ui --open
 ```
 
-The read-only web console lists boxes, resolved policies, services, diffstats,
-receipts, and browser evidence. Selecting a box shows its filesystem, network,
-process, resource, and page lanes; selecting a row shows the same receipt text
-as `h5i box inspect`.
+The read-only web console is one screen over everything h5i is doing on this
+machine. Four sections: an overview of what wants a person, the browser
+sessions, the boxes, and what this host can enforce. Every route it calls is a
+GET, and every next step it suggests is a command it copies to the clipboard.
 
-It also lists **browser sessions**, which is where the workbench and recon do
-their work. Boxes are the repository's; sessions are the machine's, because
-`h5i browser open` needs no repository. A session row carries what its own
-files say: requests and refusals, whether capture was on and how many messages
-are stored, the recon ledger folded into counts by state, and the runs that
-spent requests. Selecting one shows the request log, the endpoint inventory and
-the job records.
+**Sessions** are where the workbench and recon do their work. Boxes are the
+repository's; sessions are the machine's, because `h5i browser open` needs no
+repository. The column lists them loudest first and searches the whole registry
+by name, id or target. Selecting one opens six tabs:
+
+| tab | shows |
+|---|---|
+| History | every fetch: the agent verb that spent it, method, host, path, status, size, time, initiator. A filter bar (`host:api status:4xx -path:/static verb:click refused`), sortable columns, and an inspector that draws why the fetch exists and the command that reads its bytes |
+| Sitemap | what the session reached as a tree of origins and paths, counts folded upward, refusals kept apart |
+| Actions | `h5i browser audit` as a timeline: each verb, whether it succeeded, and the receipts it spent |
+| Findings | what the agent concluded with `h5i websec finding`, each with the message ids it rests on |
+| Recon | the endpoint ledger by state, and the runs that spent requests |
+| About | the record: placement, confinement, engine, identity, policy digest, capture |
+
+The console never renders a stored message. Headers, cookies and bodies stay
+on disk, owner-only, and every row prints the `h5i websec show` that reads it.
+
+**Boxes** show each box's tier, status and one signal, and for a selected box
+its findings, a flight recorder of one row per receipt across six lanes
+(files, egress, exit, limits, page, kernel), the policy that was actually
+enforced, and the diff against the pinned base. A browser box has a second
+tab with the live in-box browser terminal.
 
 ### Reclaiming space
 
