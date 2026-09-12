@@ -8,7 +8,7 @@
       <description>Burp Suite, ZAP, Caido, and h5i compared for AI pentesting: AI-assisted manual testing, AI-authored scan automation, and agent-led investigation.</description></item>
     <item><title>Browse, contain, work, export, apply</title><link>https://h5i.dev/blog/the-h5i-loop/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/the-h5i-loop/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
-      <description>The whole h5i loop in one essay: open a browser session whose request log is written before the bytes move, place it in a disposable box, let an agent work inside the same boundary, then read a patch, a report and a receipt before anything crosses back.</description></item>
+      <description>The whole h5i workflow in one essay: open a browser session whose request log is written before the bytes move, place it in a disposable box, let an agent work inside the same boundary, then read a patch, a report and a receipt before anything crosses back.</description></item>
     <item><title>The environment is the sandbox</title><link>https://h5i.dev/blog/the-environment-is-the-sandbox/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/the-environment-is-the-sandbox/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
       <description>Coding agents do not execute one risky command. They operate a development environment, so that whole environment must become the security boundary.</description></item>

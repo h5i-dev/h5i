@@ -42,14 +42,14 @@ PAGE_HISTORY = {
     "pitch/": ("2026-09-10", "57ee2a579d40f90e"),
     "demo/": ("2026-09-12", "729de49b887b5c3f"),
     "guides/": ("2026-09-09", "0e4d298584ce7b5e"),
-    "blog/": ("2026-09-12", "e832c9a7e47c6979"),
+    "blog/": ("2026-09-12", "c20b5bc8384aefb5"),
     "guides/drive-a-browser-session/": ("2026-09-02", "148a857cf6c0d8e7"),
     "guides/first-box/": ("2026-08-30", "c52289c78be574db"),
     "guides/review-a-pull-request/": ("2026-08-30", "0bbf47c079810ec7"),
     "guides/write-a-box-policy/": ("2026-09-02", "221c1ba59175513e"),
     "guides/watch-the-browser/": ("2026-09-02", "e28eb2f9a82441ca"),
     "guides/authorized-web-security-testing/": ("2026-09-09", "6280e1e26326ec3a"),
-    "blog/the-h5i-loop/": ("2026-08-31", "52f52d2673ec45a5"),
+    "blog/the-h5i-loop/": ("2026-09-12", "cf182cb2a3717ed8"),
     "blog/the-environment-is-the-sandbox/": ("2026-08-30", "c01dc2a3400b213d"),
     "blog/choosing-agent-isolation/": ("2026-08-30", "df7a164c63457c5e"),
     "blog/evidence-for-agent-work/": ("2026-08-30", "9f0011911123d79c"),
@@ -1201,36 +1201,33 @@ CAIDO_COMPARISON = {
 
 
 LOOP = {
-    "section": "blog", "slug": "the-h5i-loop", "eyebrow": "Essay / The loop",
+    "section": "blog", "slug": "the-h5i-loop", "eyebrow": "Essay / Sandboxed workflow",
     "time": "11 min", "tags": "Browser &middot; Box &middot; Export",
     "title": "Browse, contain, work, export, apply | h5i",
     "h1": "Browse, contain, work, export, apply",
-    "description": "The whole h5i loop in one essay: open a browser session whose request log is written before the bytes move, place it in a disposable box, let an agent work inside the same boundary, then read a patch, a report and a receipt before anything crosses back.",
-    "meta": "The whole h5i loop: open a browser session whose request log is written before the bytes move, box it, work inside that boundary, read a patch before it lands.",
-    "deck": "The loop is not five commands that happen to compose. It is one property expressed five times: at every step the record is written by something other than the thing being reviewed, and there is exactly one door out, operated by a person.",
+    "description": "The whole h5i workflow in one essay: open a browser session whose request log is written before the bytes move, place it in a disposable box, let an agent work inside the same boundary, then read a patch, a report and a receipt before anything crosses back.",
+    "meta": "Sandbox an agent's whole workflow with h5i: a browser session with a fail-closed request log, a disposable box, work inside that boundary, and a patch you read before it lands.",
+    "deck": "h5i gives you five easy-to-use commands that take an agent from a browser session to a reviewed patch inside one sandbox. Each command writes its own record, the agent cannot edit that record, and nothing leaves the sandbox until a person has read it.",
     "body": f"""
-<div class="callout"><strong>The claim.</strong> An agent session should be reviewable without trusting anything the agent wrote. That single requirement decides the whole shape: a request that is not in the log did not happen, and nothing comes out that a person has not read.</div>
-<figure class="feature-figure"><img src="/_static/agent-loop.svg" alt="Four steps left to right, browse, contain, work and export, each with the record it leaves behind, above an output gate a person operates"><figcaption>Each step is chosen for what it leaves behind. The last one is the only path back to your repository.</figcaption></figure>
-<p>The familiar way to make an agent safe is to stand in front of it. A prompt before each command, an allowlist of tools, a rule file describing what it must not do. Then, at the end, the agent writes a summary of what it did and you read that.</p>
-<p>Both halves of that arrangement are authored inside the loop. The prompt is answered by a person who has seen a hundred of them that afternoon and is now answering by reflex. The summary is written by the subject of the review. Neither is dishonest. Both are simply the wrong observer.</p>
-<p>So the loop below is built around a different question. Not "what is the agent allowed to do", which is a policy question and a hard one, but "who wrote down what happened, and could the agent have changed it". Everything else follows.</p>
+<p>h5i sandboxes an agent's whole workflow: the browser session it reads the web with, the repository checkout it edits, the tests and dev servers it runs, and the patch it hands back at the end. Each step leaves a record the agent cannot rewrite, and work reaches your repository only after a person has read it.</p>
+<div class="callout"><strong>The claim.</strong> An agent session should be reviewable without trusting anything the agent wrote. A request that is not in the log did not happen, and nothing comes out that a person has not read.</div>
 <h2 id="install">1. Install</h2>
 <p>One binary. It works on Linux and macOS, which confine by different means: Landlock, seccomp and namespaces on Linux, Seatbelt on macOS. Two optional runtimes add tiers on top of either.</p>
 {terminal('install', '$ curl -fsSL https://h5i.dev/install.sh | sh\n# or from source\n$ cargo install --path .')}
 <p>Then tell your agent how to use it. The skill is embedded in the binary, so it can never document a version you do not have.</p>
 {terminal('skill', '$ h5i skill install     # writes into ~/.claude/skills/h5i (or ~/.codex)\n$ h5i box probe         # what this host can actually enforce')}
-<p>Run the probe before you rely on anything. It executes a functional self-test rather than reading capability bits, because a hardened kernel or an AppArmor profile can deny confined exec while Landlock, seccomp and user namespaces all report present. The difference between a bit that is set and a boundary that holds is the whole reason the probe exists.</p>
+<p>Run the probe before you rely on anything. It executes a functional self-test rather than reading capability bits, because a hardened kernel or an AppArmor profile can deny confined exec while Landlock, seccomp and user namespaces all report present. A capability bit that is set and a boundary that holds are different things, and the probe reports the second.</p>
 <h2 id="session">2. Open a browser session</h2>
 <p>A session is the entire agent-facing surface: one page state, one cookie jar, one request log, one policy. <code>open</code> makes one, every verb that follows acts on it, <code>close</code> ends it. Nothing else is a concept the agent has to learn.</p>
 {terminal('a session, on this machine', "$ h5i browser open https://docs.rs/ --allow docs.rs\nok  browser session br_7k2xqa\n   placed   : this machine (no containment beyond the engine)\n   requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)\n\n$ h5i browser snapshot      # outline, with @ref handles\n$ h5i browser click @e3\n$ h5i browser requests      # refusals included")}
 <p>That runs here, in your ordinary process space, and h5i says so on the placement line rather than letting the word browser imply a boundary you do not have. What it gives you without one is the record: the engine is the HTTP client, so it checks the policy, writes the decision, and only then touches the wire. When the record cannot be written the fetch is refused. There is no path that reaches the network quietly.</p>
-<p>Read the log the way you read a receipt. A denied request is in it with its reason, so the log shows what was <em>attempted</em> and not only what succeeded, and a redirect out of the allowlist is refused at the hop rather than followed and explained afterwards. That is the first instance of the property: the observer is the client itself, and it is arranged so that failing to observe means failing to act.</p>
+<p>Read the log the way you read a receipt. A denied request is in it with its reason, so the log shows what was <em>attempted</em> and not only what succeeded, and a redirect out of the allowlist is refused at the hop rather than followed and explained afterwards. The client is its own observer here, and it is arranged so that failing to record means failing to act.</p>
 <p>The label matters as much as the log. h5i calls this lane <code>engine-claimed</code>, because a browser describing its own traffic is testimony, however honest. Step 3 is what upgrades it.</p>
 <div class="callout"><strong>Sessions end, and the ending is written down.</strong> A verb sent to a session that is not live is refused with exit code 69 and never silently restarted. An agent whose retry cannot tell "the session is gone" from "the click did not work" quietly starts a second browser and loses both the page it was reasoning about and the record of losing it. <code>--restore</code> carries the old storage into a <em>new</em> id, with the inheritance recorded; an id is never reused.</div>
 <h2 id="box">3. Make a box</h2>
 <p>Where the code comes from decides the shape of the box, and the difference matters more than the syntax suggests.</p>
 {terminal('create', '$ h5i box .                          # this repository at HEAD\n$ h5i box --pr 1234                  # a pull request head\n$ h5i box https://github.com/o/r     # an external repository\n$ h5i box --new                      # empty; the agent builds from nothing')}
-<p><strong>This repository</strong> gives you a real git worktree on its own branch, sharing the object store, which is what lets <code>h5i box apply</code> land the work back locally. <strong>A URL, a pull request, or <code>--new</code></strong> gives you a <strong>detached</strong> box: its own repository, your repository neither read nor written after creation, and the inherited <code>origin</code> remote dropped so the box arrives holding no network handle. <code>apply</code> and <code>rebase</code> refuse there and point at <code>export</code>. External code should always arrive in that shape.</p>
+<p>This repository gives you a real git worktree on its own branch, sharing the object store, which is what lets <code>h5i box apply</code> land the work back locally. A URL, a pull request, or <code>--new</code> gives you a detached box: its own repository, your repository neither read nor written after creation, and the inherited <code>origin</code> remote dropped so the box arrives holding no network handle. <code>apply</code> and <code>rebase</code> refuse there and point at <code>export</code>. External code should always arrive in that shape.</p>
 <p>At creation the policy is resolved, written to <code>policy.resolved.toml</code> and hashed <em>before</em> any state exists on disk, so a request the host cannot satisfy fails closed rather than leaving half a box behind. The base revision is pinned immutably at the same moment. Those two facts are what stop the meaning of "this run" from drifting: if the parent branch moves or the policy file is edited later, the box still names the code and the rules it actually started with.</p>
 <div class="tbl-wrap">
 <table class="data">
@@ -1238,13 +1235,13 @@ LOOP = {
 <tbody>
 <tr><td><code>workspace</code></td><td>A separate worktree, no confinement</td><td>none</td></tr>
 <tr><td><code>process</code></td><td>Landlock, seccomp, namespaces; a supervisor and a private pid namespace</td><td>deny or host</td></tr>
-<tr><td><code>supervised</code></td><td>The above plus a private netns and a seccomp-notify gate on <code>socket()</code></td><td><strong>L3/L4</strong></td></tr>
+<tr><td><code>supervised</code></td><td>The above plus a private netns and a seccomp-notify gate on <code>socket()</code></td><td>L3/L4</td></tr>
 <tr><td><code>container</code></td><td>Rootless Podman on a portable image</td><td>L7 proxy</td></tr>
-<tr><td><code>microvm</code></td><td>A guest with its own kernel, booted by microsandbox</td><td><strong>L3/L4</strong> in the guest</td></tr>
+<tr><td><code>microvm</code></td><td>A guest with its own kernel, booted by microsandbox</td><td>L3/L4 in the guest</td></tr>
 </tbody>
 </table>
 </div>
-<p><code>auto</code> is the default and picks the strongest tier this host can run. Naming a tier explicitly makes it <strong>fail closed</strong> rather than downgrade, which is the behaviour you want, because a silent downgrade puts a claim in the record the run never had.</p>
+<p><code>auto</code> is the default and picks the strongest tier this host can run. Naming a tier explicitly makes it fail closed rather than downgrade, which is the behaviour you want, because a silent downgrade puts a claim in the record the run never had.</p>
 <p>Adding <code>--in</code> to <code>h5i browser open</code> places the session from step 2 inside the box, and every verb works unchanged. What changes is the requests line: the egress allowlist is now enforced at the box boundary, outside the browser being described, so the lane goes from <code>engine-claimed</code> to <code>host-observed</code>. Being inside a box does not earn that on its own. A box whose policy lets the browser reach the whole network corroborates nothing, and h5i keeps calling that session <code>engine-claimed</code>.</p>
 <h2 id="work">4. Work in it</h2>
 {terminal('work', '$ h5i box shell fix-auth\nbox$ claude                          # or codex; this is the agent-in-box\nbox$ npm ci && npm test\nbox$ npm run dev &\nbox$ agent-browser open http://localhost:3000\nbox$ exit')}
@@ -1255,17 +1252,17 @@ LOOP = {
 <h2 id="export">5. Export, read, apply</h2>
 {terminal('export', '$ h5i box diff fix-auth                    # against the pinned base\n$ h5i box export fix-auth --out ./review\n  wrote ./review/patch.diff, ./review/report.md, ./review/receipt.json\n\n$ $EDITOR ./review/report.md              # read this first\n$ git apply --3way ./review/patch.diff')}
 <p><code>report.md</code> is ordered by how much you should trust each section. Denied egress attempts come first, because a box that tried to reach a host the policy refused is the most interesting thing a review can contain, and it was observed host-side by the allowlist proxy rather than reported by anything inside the box. Then every command with its lane and exit code, then what the page said back, then whether a human took the controls, and last the agent's own proposal, because that is the only section written by the thing being reviewed.</p>
-<p>That ordering is the whole essay in one file. Nothing is hidden, but the sections a person reads first are the ones the box could not author, and the section it did author is at the bottom where a summary belongs.</p>
+<p>Nothing is hidden. The sections a person reads first are the ones the box could not have written, and the one it did write sits at the bottom, where a summary belongs.</p>
 <p>For the local case, where the box came from this repository and landing it here is what you meant, <code>h5i box apply fix-auth</code> does it in one step. It refuses on a detached box.</p>
 <h2 id="lifecycle">Cleaning up</h2>
 {terminal('lifecycle', "$ h5i box ls                  # every box on this clone\n$ h5i box status fix-auth     # policy enforced, evidence, base drift\n$ h5i box rebase fix-auth     # re-pin onto the parent's current tip\n$ h5i box abort fix-auth      # stop, preserving it for forensics\n$ h5i box rm fix-auth\n$ h5i box gc                  # reclaim finished workspaces")}
 <p><code>abort</code> and <code>rm</code> are separate verbs on purpose. Stopping a box that has done something surprising and deleting it are different intentions, and a tool that merges them loses the evidence exactly when it becomes worth having.</p>
 <h2 id="cost">Making it cheap enough to do constantly</h2>
-<p>A boundary reserved for obviously dangerous work leaves ordinary work uncontained, and most supply-chain surprises arrive in code nobody preclassified as dangerous. So the cost of the loop is a security property, not a comfort.</p>
-<p>Startup cost is attacked by the lightweight tiers. Dependency cost is attacked by warm caches, without creating a writable rendezvous between boxes: one cache per project and ecosystem, keyed by lockfile digest, mounted read-only into agent boxes, and written only by a box with no agent in it.</p>
+<p>If the boundary is reserved for work that looks dangerous, ordinary work runs uncontained, and most supply-chain surprises arrive in code nobody had classified as dangerous. So the sandbox has to be cheap enough to use every time.</p>
+<p>The lightweight tiers keep startup cheap. Warm caches keep dependency installs cheap without giving two boxes a writable place to meet: one cache per project and ecosystem, keyed by lockfile digest, mounted read-only into agent boxes, and written only by a box with no agent in it.</p>
 {terminal('cache', '$ h5i box cache refresh npm\n$ h5i box cache ls            # which are stale, and therefore unused')}
 <h2 id="test">A test you can apply to any agent sandbox</h2>
-<p>The loop above is one answer. The questions behind it are portable, and worth asking of anything else that claims to contain an agent:</p>
+<p>The workflow above is h5i's answer. The questions behind it apply to anything that claims to contain an agent:</p>
 <ol>
 <li>Where do package install scripts execute, and under which home directory?</li>
 <li>Which browser profile opens the page the agent was told to read?</li>
@@ -1273,8 +1270,8 @@ LOOP = {
 <li>Is a refused action recorded, or does it simply not appear?</li>
 <li>Can the agent write the accepted result directly, or does a person carry it across?</li>
 </ol>
-<p>If the answers cross the boundary in different directions, the sandbox is smaller than the work.</p>
-<h2 id="limits">What the loop does not claim</h2>
+<p>If any answer points outside the boundary, the sandbox is smaller than the work it is supposed to hold.</p>
+<h2 id="limits">What this does not claim</h2>
 <p>Containment stops the agent touching your host. It does not stop it putting private source into a model prompt, which is a separate control: if source must not leave, the answer is a self-hosted model or no model egress, not stronger language around the same permitted API call.</p>
 <p>Four of the five tiers share the host kernel. That is strong against a runaway agent and careless dependency code, and it is not a claim against a targeted kernel exploit. <code>microvm</code> is the tier where the boundary is a hypervisor.</p>
 <p>And a receipt is protected from the box, not notarized against the host owner. It answers "could the agent have written this", which is the question a reviewer of agent work actually has. It does not answer "could the person showing me this have written it", and h5i does not pretend otherwise.</p>
@@ -1282,7 +1279,7 @@ LOOP = {
 <ul>
 <li><a href="/blog/the-environment-is-the-sandbox/">The environment is the sandbox</a>, for why the unit of isolation is the whole development environment.</li>
 <li><a href="/blog/evidence-for-agent-work/">Evidence for agent work</a>, for what a receipt can and cannot settle.</li>
-<li><a href="/guides/first-box/">The first-box guide</a>, for running this loop once on a real repository.</li>
+<li><a href="/guides/first-box/">The first-box guide</a>, for running this workflow once on a real repository.</li>
 <li><a href="/manual/#the-loop">The manual</a>, for every flag named above.</li>
 </ul>""",
     "faq": [
@@ -1291,7 +1288,7 @@ LOOP = {
         ("Is a box a container?", "Only on the container tier. workspace is a worktree with no confinement, process and supervised are kernel-level confinement of a process tree, container is rootless Podman, and microvm boots a guest with its own kernel. h5i box probe reports which of them this host can actually run."),
     ],
     "next": ("/blog/the-environment-is-the-sandbox/", "Read next", "The environment is the sandbox", "Why the unit of isolation is the whole development environment and not the risky command."),
-    "cta": ("Start with one box", "h5i box probe to see what your host can enforce, then h5i box . The loop is five commands, and every one of them writes down what it did.", "/guides/first-box/", "Follow the first-box guide"),
+    "cta": ("Start with one box", "h5i box probe to see what your host can enforce, then h5i box . Five commands, and every one of them writes down what it did.", "/guides/first-box/", "Follow the first-box guide"),
 }
 
 
@@ -1462,7 +1459,7 @@ def build():
 
 ## Design essays
 
-- [Browse, contain, work, export, apply](https://h5i.dev/blog/the-h5i-loop/): The whole loop, arranged so every step's record is written by something other than the agent.
+- [Browse, contain, work, export, apply](https://h5i.dev/blog/the-h5i-loop/): The whole sandboxed workflow, arranged so every step's record is written by something other than the agent.
 - [The environment is the sandbox](https://h5i.dev/blog/the-environment-is-the-sandbox/): The isolation unit is the entire development session, not one command or checkout.
 - [Five tiers, five different promises](https://h5i.dev/blog/choosing-agent-isolation/): Choose process, supervised, container, or microVM isolation by the property required.
 - [A transcript is not an audit trail](https://h5i.dev/blog/evidence-for-agent-work/): Separate host-observed evidence, box-claimed records, Git state, and agent testimony.
