@@ -36,13 +36,13 @@ PUBLISHED = "2026-08-21"
 # without its date. Changing a page's content and forgetting the date is a
 # build error, not a silent regression.
 PAGE_HISTORY = {
-    "": ("2026-09-12", "d5f1d799e345b119"),
-    "features/": ("2026-09-12", "0b41004817ea5bb6"),
+    "": ("2026-09-12", "e20b3d18d07021b6"),
+    "features/": ("2026-09-12", "7a387af144ced01b"),
     "manual/": ("2026-09-12", "98f1a4a1a45ec6a8"),
     "pitch/": ("2026-09-10", "57ee2a579d40f90e"),
     "demo/": ("2026-09-12", "729de49b887b5c3f"),
     "guides/": ("2026-09-09", "0e4d298584ce7b5e"),
-    "blog/": ("2026-09-09", "b089ca0b8ea70ceb"),
+    "blog/": ("2026-09-12", "e832c9a7e47c6979"),
     "guides/drive-a-browser-session/": ("2026-09-02", "148a857cf6c0d8e7"),
     "guides/first-box/": ("2026-08-30", "c52289c78be574db"),
     "guides/review-a-pull-request/": ("2026-08-30", "0bbf47c079810ec7"),
@@ -54,7 +54,7 @@ PAGE_HISTORY = {
     "blog/choosing-agent-isolation/": ("2026-08-30", "df7a164c63457c5e"),
     "blog/evidence-for-agent-work/": ("2026-08-30", "9f0011911123d79c"),
     "blog/prompt-injection-is-a-boundary-problem/": ("2026-09-02", "95e6c28db36b0778"),
-    "blog/ai-pentesting-tools/": ("2026-09-09", "b51988ed7e5aad27"),
+    "blog/ai-pentesting-tools/": ("2026-09-12", "812fe92f28bdb3ec"),
     "blog/burp-suite-vs-h5i-for-ai-agents/": ("2026-09-09", "762219bdd179fe17"),
     "blog/owasp-zap-vs-h5i-for-ai-agents/": ("2026-09-09", "b03f05dbf7412b0b"),
     "blog/caido-vs-h5i-for-ai-agents/": ("2026-09-09", "6d0e292a5cfc6e16"),
@@ -970,63 +970,62 @@ WEB_SECURITY_GUIDE = {
 
 AI_PENTESTING_TOOLS = {
     "section": "blog", "slug": "ai-pentesting-tools", "eyebrow": "Buyer guide / Web security",
-    "published": "2026-09-09", "time": "12 min", "tags": "AI pentesting &middot; DAST &middot; Agent security",
+    "published": "2026-09-09", "time": "7 min", "tags": "AI pentesting &middot; DAST &middot; Agent security",
     "social_image": "https://h5i.dev/_static/ai-security-tools-map.svg",
     "social_alt": "Burp Suite and Caido sit toward human-led investigation, OWASP ZAP toward plan-driven scanning, and h5i toward agent-led investigation with a bounded session",
     "title": "AI pentesting tools compared: Burp, ZAP, Caido, h5i",
     "h1": "AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?",
-    "description": "Compare four tools for AI-assisted pentesting and authorized red teaming: Burp Suite, OWASP ZAP, Caido, and h5i, with decisions by operator, scanning, automation, and containment.",
-    "meta": "Compare Burp Suite, OWASP ZAP, Caido, and h5i for AI-assisted pentesting by operator, scanning, automation, agent interface, containment, and evidence.",
-    "deck": "The best AI pentesting tool depends on whether AI assists a human, executes a predefined scan, or drives the investigation itself. Those are three different security architectures, even when all three send HTTP requests.",
+    "description": "Burp Suite, ZAP, Caido, and h5i compared for AI pentesting: AI-assisted manual testing, AI-authored scan automation, and agent-led investigation.",
+    "meta": "Burp Suite, ZAP, Caido, and h5i compared for AI pentesting: AI-assisted manual testing, AI-authored scan automation, and agent-led investigation.",
+    "deck": "The right tool depends on what you want to delegate: help with manual testing, repeatable vulnerability scans, or an investigation where the agent chooses what to try next.",
     "body": f"""
-<div class="callout"><strong>The short answer.</strong> Burp Suite is the broad professional platform. OWASP ZAP is the open-source scanner and automation engine. Caido is the modern proxy workspace with strong traffic analysis, workflows, and official agent skills. h5i is the bounded browser session for agent-led work. Choose the operating model before comparing feature lists.</div>
-<figure class="feature-figure"><img src="/_static/ai-security-tools-map.svg" alt="A map places Burp Suite and Caido near human-led interactive investigation, OWASP ZAP near plan-driven scanning, and h5i near agent-led interactive investigation"><figcaption>This map describes workflow fit, not overall product quality. Each tool can reach neighboring quadrants through APIs, extensions, or surrounding automation.</figcaption></figure>
-<h2 id="method">Methodology and limits</h2>
-<p>This guide was reviewed on 9 September 2026 against official documentation from PortSwigger, the ZAP project, and Caido, plus the h5i manual in this repository. We compared the primary operator, browser and proxy model, scanning, request experimentation, discovery, automation interface, scope, agent containment, credential path, evidence, deployment, and extension model.</p>
-<p>We did not run a vulnerability benchmark. There are no claims here about detection rate, false positives, requests per second, memory, exploit coverage, or total engagement time. Those measurements need a public target corpus, fixed product versions and editions, identical authentication, declared scan policies, repeat runs, and raw artifacts. Until that exists, a numeric winner would be invented precision.</p>
-<h2 id="matrix">The comparison matrix</h2>
-<div class="tbl-wrap"><table class="data"><thead><tr><th>Need</th><th>Best starting point</th><th>Why</th></tr></thead><tbody>
-<tr><td>Professional manual web pentest</td><td>Burp Suite</td><td>Mature proxy workflow, scanner, extensions, and protocol tooling</td></tr>
-<tr><td>Open-source DAST in CI</td><td>OWASP ZAP</td><td>YAML Automation Framework, spiders, passive and active scans, APIs</td></tr>
-<tr><td>Modern collaborative proxy workspace</td><td>Caido</td><td>HTTPQL, Replay, Automate, pipelines, workflows, and agent skills</td></tr>
-<tr><td>Autonomous agent on one bounded target</td><td>h5i</td><td>Agent browser, executable origin scope, sandbox placement, evidence ledger</td></tr>
-<tr><td>CTF web challenge with agent assistance</td><td>Caido or h5i</td><td>Caido for richer testing machinery; h5i for a smaller delegated boundary</td></tr>
-<tr><td>Scanner finding followed by agent investigation</td><td>ZAP/Burp + h5i</td><td>Separate broad coverage from narrow, reviewed follow-up</td></tr>
+<p>AI agents have already demonstrated strong capabilities in web security testing. Research has shown that agents can find and exploit web vulnerabilities and carry out multistep attacks (<a href="https://arxiv.org/abs/2402.06664">website hacking study</a>).</p>
+<p>Putting those capabilities to work means choosing the tools an agent will use. Should it operate Burp Suite, run ZAP scans, investigate traffic in Caido, or use a CLI-based tool like h5i?</p>
+<p>The answer depends on what you want to delegate. This article compares the four tools through three practical uses.</p>
+<h2 id="three-uses">What do you want AI to do?</h2>
+<p>&ldquo;AI pentesting&rdquo; covers several kinds of work. Consider an application that lets users download invoices.</p>
+<p>In <strong>AI-assisted manual testing</strong>, you inspect the download request and ask a model to explain its parameters or suggest tests. You decide which requests to send and check the results.</p>
+<p>In <strong>AI-authored automation</strong>, you ask a model to prepare a scan configuration. You review it, then run the scanner. The scan follows the configured procedure.</p>
+<p>In <strong>agent-led testing</strong>, the agent logs in, finds an invoice, changes its identifier, compares responses, and decides what to investigate next. It needs browser interaction, HTTP request control, and enough history to track its experiments.</p>
+<p>These approaches can overlap. They are useful starting points for choosing a tool, rather than exclusive categories.</p>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Your main task</th><th>A useful starting point</th><th>Why</th></tr></thead><tbody>
+<tr><td>Investigate a web application manually</td><td>Burp Suite</td><td>Integrated request testing tools and a large extension ecosystem</td></tr>
+<tr><td>Run repeatable vulnerability scans in CI</td><td>OWASP ZAP</td><td>Open-source scanning with a YAML Automation Framework</td></tr>
+<tr><td>Explore traffic and let an agent use a proxy workspace</td><td>Caido</td><td>Request search, replay, payload testing, and official agent skills</td></tr>
+<tr><td>Let an agent browse and test through a CLI</td><td>h5i</td><td>Browser interaction and direct HTTP control in one session</td></tr>
 </tbody></table></div>
-<h2 id="three-models">Three meanings of “AI pentesting”</h2>
-<p><strong>AI-assisted manual testing</strong> keeps a human in control of target selection and request execution. The model explains traffic, drafts payloads, searches history, or operates tools under supervision. Burp and Caido are natural centers for this workflow because their interfaces preserve the tester's broad situational awareness.</p>
-<p><strong>AI-authored automation</strong> has a model produce or adjust a scan plan, then a deterministic engine executes it. ZAP's Automation Framework is a strong example: the environment, authentication, spiders, scans, tests, reports, and exit behavior can be reviewed as YAML before execution.</p>
-<p><strong>Agent-led investigation</strong> lets a model choose the next observation while the run is live. This is where h5i is most differentiated. The browser, request capture, recon ledger, origin policy, sandbox, and ending share one session identity. The agent adapts, but destination scope and host authority do not adapt with it.</p>
-<h2 id="burp">Burp Suite: maximum professional breadth</h2>
-<p>Choose Burp when the tester needs a comprehensive manual platform and wants AI inside that established workflow. Its browser arrives preconfigured for the proxy; traffic moves through Proxy history into Repeater, Intruder, Scanner, and extensions. Professional and DAST editions add automated scanning. The BApp ecosystem extends requests, responses, UI, scanner checks, and external integrations.</p>
-<p>The question for an autonomous agent is not whether Burp can be automated—it can—but what authority the integration grants. A general agent connected to a powerful project inherits whatever scope, credentials, traffic, extensions, and host access the surrounding system exposes. Supply containment separately and audit that integration as carefully as the target.</p>
-<p><a href="/blog/burp-suite-vs-h5i-for-ai-agents/">Read the detailed Burp Suite vs h5i comparison.</a></p>
-<h2 id="zap">OWASP ZAP: open-source scanning and repeatable plans</h2>
-<p>Choose ZAP when the job is automated vulnerability discovery with an open-source stack. Its Automation Framework expresses ordered jobs for traditional, AJAX, and client spiders, passive and active scanning, authentication, schema imports, tests, reports, and process exit. That is a better fit than an open-ended agent when the procedure should be stable and reviewable before it touches the target.</p>
-<p>An agent can call ZAP's API or write plans, but the scanner remains the component interpreting responses into alerts. h5i makes the opposite trade: it supplies no scanner, preserving observed messages and endpoint states while leaving vulnerability interpretation to the agent and reviewer.</p>
-<p><a href="/blog/owasp-zap-vs-h5i-for-ai-agents/">Read the detailed OWASP ZAP vs h5i comparison.</a></p>
-<h2 id="caido">Caido: a modern proxy workspace with real agent access</h2>
-<p>Choose Caido for fast traffic exploration and customizable testing. HTTPQL gives structured search across requests and responses. Replay handles individual experiments; Automate applies payloads; pipelines coordinate multi-request tests; workflows perform reusable active and passive processing. Official Caido Skills expose broad API coverage to coding agents.</p>
-<p>That official agent support is important: Caido is not merely a GUI alternative to Burp. The architectural question is whether you want the agent to enter a feature-rich existing workspace or want its browser and network authority created narrowly for one task. The first favors Caido; the second favors h5i.</p>
-<p><a href="/blog/caido-vs-h5i-for-ai-agents/">Read the detailed Caido vs h5i comparison.</a></p>
-<h2 id="h5i">h5i: bounded agent-led browsing</h2>
-<p>h5i starts from the agent's unit of work rather than a proxy project. A session contains a page, cookie jar, request policy, fail-closed log, optional captured bodies, endpoint ledger, and recorded ending. The agent receives page outlines with handles, then inspects, edits, replays, diffs, or matches HTTP messages through the same session.</p>
-<p>Place that session inside an h5i box and the surrounding agent, dependencies, local server, browser, credentials, network, and output path share one disposable boundary. This is not a substitute for Scanner, Automate, Intruder, extensions, or HTTPQL. It answers a different question: how little authority can an autonomous investigation receive while remaining useful?</p>
-<h2 id="ctf">For CTFs, bug bounty, and red-team work</h2>
-<p>For a CTF, first check whether automation is allowed. Caido offers richer payload and workflow machinery; h5i offers compact agent interaction and explicit request budgets. For bug bounty, the program's asset list, exclusions, rate limits, and automation rules remain authoritative. For a red-team engagement, web tooling is only one part of rules of engagement that may cover identities, infrastructure, persistence, reporting, and stop conditions.</p>
-<p>No tool establishes authorization. A scope configuration can help enforce a written agreement, but it cannot create one. Record permitted origins, accounts, methods, rate, time window, data-handling rules, and emergency contact outside the agent prompt.</p>
-<h2 id="decision">A five-question selection test</h2>
-<ol><li>Is the primary operator a human, a deterministic scan plan, or an adaptive agent?</li><li>Do you need vulnerability findings, or evidence for a reviewer to interpret?</li><li>Is broad traffic analysis more important than narrow delegated authority?</li><li>Who supplies the filesystem, credential, socket, and egress boundary around the agent?</li><li>Can the result be reproduced from request identifiers and retained artifacts?</li></ol>
-<p>If the answers span several columns, use more than one tool. A scanner can provide coverage, a proxy workspace can support human validation, and a bounded agent can perform narrow follow-up without forcing one product to impersonate the others.</p>
+<figure class="feature-figure"><img src="/_static/ai-security-tools-map.svg" alt="A map places Burp Suite and Caido near human-led interactive investigation, OWASP ZAP near plan-driven scanning, and h5i near agent-led interactive investigation"><figcaption>The same four tools placed by who drives the test and how. This describes workflow fit, not product quality, and each tool can reach neighboring ground through APIs, extensions, or surrounding automation.</figcaption></figure>
+<h2 id="burp">Burp Suite: a comprehensive web testing toolkit</h2>
+<p>Burp combines a proxy, browser, and tools for investigating captured traffic. You can send a request to Repeater to modify and resend it, or use Intruder to test payload variations. Burp Scanner is available in Professional and DAST. Extensions add further testing and integrations (<a href="https://portswigger.net/burp/documentation/desktop/tools">Burp tool documentation</a>).</p>
+<p>For someone already working in Burp, AI can build on that familiar process: explain a response, suggest an experiment, or help automate a task. PortSwigger also documents AI features in Repeater. The details of an external agent's access depend on the integration you use.</p>
+<p>Burp is a good starting point when you want a human to investigate findings with a broad set of tools close at hand. <a href="/blog/burp-suite-vs-h5i-for-ai-agents/">Read the detailed Burp Suite vs h5i comparison.</a></p>
+<h2 id="zap">OWASP ZAP: repeatable scanning and CI automation</h2>
+<p>ZAP's Automation Framework lets you describe a scan in YAML, including authentication, crawling, passive and active scanning, reports, and exit behavior. An AI model can help prepare that configuration, while ZAP executes the jobs (<a href="https://www.zaproxy.org/docs/automate/automation-framework/">ZAP Automation Framework</a>).</p>
+<p>This fits a recurring task such as scanning a staging application after deployment. You can review the configuration, keep it in version control, and reuse it across runs.</p>
+<p>An agent can also use ZAP during an investigation. Its particular appeal here is that you can get automated vulnerability checks without making every testing decision depend on a live conversation with a model. <a href="/blog/owasp-zap-vs-h5i-for-ai-agents/">Read the detailed OWASP ZAP vs h5i comparison.</a></p>
+<h2 id="caido">Caido: a proxy workspace agents can use</h2>
+<p>Caido provides traffic search with HTTPQL, individual request experiments with Replay, and payload testing with Automate. Its workflows support reusable processing. Official Caido Skills let coding agents interact with Caido through its APIs (<a href="https://docs.caido.io/app/tutorials/skills">Caido documentation</a>).</p>
+<p>That makes Caido relevant to both manual and agent-assisted testing. You can investigate captured traffic yourself, then ask an agent to help with work in the same workspace.</p>
+<p>Choose it when the proxy workflow suits you and you want an agent to use the requests and testing tools already available there. Check the installed skills and their permissions to understand what the agent can access. <a href="/blog/caido-vs-h5i-for-ai-agents/">Read the detailed Caido vs h5i comparison.</a></p>
+<h2 id="h5i">h5i: browser interaction and HTTP testing from the terminal</h2>
+<p>h5i is a headless browser controlled through a CLI. It combines page interaction with direct HTTP request inspection and manipulation, so an agent can browse an application, inspect the requests it generates, edit and replay them, and compare responses without a separate interception proxy (<a href="/manual/#h5i-websec">h5i HTTP workbench</a>).</p>
+<p>For the invoice example, the agent can find the download link through the page, inspect its request, change the invoice identifier, and examine the result. Page navigation and request experiments belong to the same session.</p>
+<p>h5i also supports destination restrictions, audit logs, and sandboxing for the browser or the surrounding workflow. Those controls matter when you want to limit an agent's access. It does not include a vulnerability scanner: the agent or tester interprets the responses and develops the tests.</p>
+<p>Choose h5i when you want an agent to work through browser and HTTP operations from the terminal, and are comfortable letting that agent direct the investigation.</p>
+<h2 id="combine">You can combine them</h2>
+<p>You do not need to commit every stage of testing to one product. A ZAP scan might produce a finding that you investigate manually in Burp or Caido. An agent using h5i might identify a suspicious authorization flow that you reproduce in Repeater.</p>
+<p>Before choosing, ask what you need most: scanner-generated findings, an interactive traffic workspace, or browser and HTTP tools for an agent. Then check how you will authenticate, retain requests and responses, and reproduce a finding.</p>
+<p>For work on a real target, follow the engagement or bug bounty program's scope and automation rules. Tool settings can help enforce those limits, but no tool establishes authorization.</p>
+<div class="callout"><strong>Scope of this comparison.</strong> This is a workflow and feature comparison, based on the linked documentation. It does not rank vulnerability detection rates or benchmark performance. Features and availability vary by version and edition.</div>
 <h2 id="sources">Official sources</h2>
 <ul><li><a href="https://portswigger.net/burp/documentation/desktop/tools">PortSwigger: Burp Suite tools</a></li><li><a href="https://www.zaproxy.org/docs/automate/automation-framework/">ZAP Automation Framework</a></li><li><a href="https://docs.caido.io/app/tutorials/skills">Caido Skills</a></li><li><a href="/manual/#h5i-websec">h5i HTTP workbench</a> and <a href="/manual/#h5i-recon">recon ledger</a></li></ul>""",
     "faq": [
-        ("What is the best AI pentesting tool?", "Burp Suite is the broad professional platform, ZAP the open-source scanner, Caido the modern proxy workspace, and h5i the bounded agent browser. The best choice depends on who drives the test."),
-        ("Which tool is best for an autonomous pentesting agent?", "h5i is purpose-built for narrow agent-led sessions. Caido also has official agent skills and a much broader workbench, but its surrounding containment must be designed separately."),
-        ("Which tool should I use for automated vulnerability scanning?", "Start with OWASP ZAP for open-source DAST or Burp Scanner in Burp Suite Professional or DAST. h5i is not a vulnerability scanner."),
+        ("Which AI pentesting tool should I start with?", "Start from the task. Burp Suite suits manual investigation with a broad toolkit, ZAP suits repeatable scans described in YAML, Caido suits traffic exploration that an agent can join through its official skills, and h5i suits an agent that browses and tests HTTP from the terminal."),
+        ("Can an agent drive the whole investigation?", "Yes, if it has browser interaction, control over HTTP requests, and enough history to compare its experiments. Caido offers that inside a proxy workspace through its skills, and h5i offers it as a CLI session. In both cases decide beforehand what the agent may reach."),
+        ("Which tool should I use for automated vulnerability scanning?", "ZAP for an open-source scanner with CI automation, or Burp Scanner in Burp Suite Professional or DAST. h5i has no vulnerability scanner: the agent or tester interprets the responses."),
     ],
     "next": ("/guides/authorized-web-security-testing/", "Run a bounded test", "Authorized web security testing with h5i", "Turn target scope and request budgets into an auditable agent session."),
-    "cta": ("Choose the operating model first", "Then select the scanner, workbench, or agent boundary that fits it.", "/guides/authorized-web-security-testing/", "Follow the authorized-testing guide"),
+    "cta": ("Decide what you want to delegate", "Then select the scanner, workbench, or agent session that fits it.", "/guides/authorized-web-security-testing/", "Follow the authorized-testing guide"),
 }
 
 
@@ -1442,7 +1441,7 @@ def build():
 - [Features](https://h5i.dev/features/): Product overview: automated browsing, reconnaissance, HTTP capture and editing, the limits you place around the agent, and the review surface.
 - [Run an authorized web security test](https://h5i.dev/guides/authorized-web-security-testing/): Scope a session to one target, inventory its endpoints, replay one request, and close with the evidence intact.
 - [Drive a browser session](https://h5i.dev/guides/drive-a-browser-session/): Open a session, read the page, act on it, and read back what it reached.
-- [AI pentesting tools compared](https://h5i.dev/blog/ai-pentesting-tools/): Burp Suite, OWASP ZAP, Caido, and h5i, chosen by operator, scanning depth, and containment.
+- [AI pentesting tools compared](https://h5i.dev/blog/ai-pentesting-tools/): Burp Suite, OWASP ZAP, Caido, and h5i, chosen by what you delegate to AI.
 - [Manual](https://h5i.dev/manual/): Authoritative command, policy, receipt, and limitation reference.
 
 ## Guides
@@ -1456,7 +1455,7 @@ def build():
 
 ## Tool comparisons
 
-- [AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?](https://h5i.dev/blog/ai-pentesting-tools/): Four workbenches compared by operator, scanning, agent interface, and containment.
+- [AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?](https://h5i.dev/blog/ai-pentesting-tools/): Four tools compared through AI-assisted manual testing, AI-authored scan automation, and agent-led investigation.
 - [Burp Suite vs h5i for AI agents](https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/): Proxy depth and a mature human interface against an agent-native session with enforced scope.
 - [OWASP ZAP vs h5i for AI agents](https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/): Automated scanning and spiders against bounded browsing, recon, and replay.
 - [Caido vs h5i for AI agents](https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/): Proxy history, Replay, Automate, and HTTPQL against a policy-controlled session record.
