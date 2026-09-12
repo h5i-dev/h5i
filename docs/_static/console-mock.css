@@ -87,7 +87,7 @@
 .cm-app {
   display: grid;
   grid-template-columns: 150px minmax(0, 1fr);
-  min-height: 480px;
+  min-height: 445px;
 }
 .cm-rail {
   background: var(--cm-surface);

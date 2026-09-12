@@ -215,7 +215,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css?v=3fac769d8f">
-  <link rel="stylesheet" href="/_static/console-mock.css?v=bfdef1691e">
+  <link rel="stylesheet" href="/_static/console-mock.css?v=7feba71d40">
   <link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
   <style>
     @media (min-width: 900px) {
@@ -517,13 +517,10 @@
                       <div class="cm-insp-url">https://shop.example.test/api/order/1042</div>
                       <h5>Why this fetch exists</h5>
                       <div class="cm-trace">
-                        <div class="cm-trace-step info"><i></i><span>the agent asked for <b>replay</b> <code>req_108 --set order=1042</code></span></div>
-                        <div class="cm-trace-step"><i></i><span>the engine decided a <b>replay</b> fetch of <code>shop.example.test</code></span></div>
-                        <div class="cm-trace-step good"><i></i><span>policy <b>allowed</b> it; the receipt was written before the bytes moved</span></div>
-                        <div class="cm-trace-step good"><i></i><span>the server answered <b>200</b> with 1.2K in 29ms &#8212; a different tenant's order</span></div>
+                        <div class="cm-trace-step info"><i></i><span>agent asked for <b>replay</b> <code>req_108</code>, order=1042</span></div>
+                        <div class="cm-trace-step good"><i></i><span>policy <b>allowed</b> it, recorded before the wire</span></div>
+                        <div class="cm-trace-step good"><i></i><span>answered <b>200</b> &#8212; a different tenant's order</span></div>
                       </div>
-                      <h5>Read the bytes</h5>
-                      <span class="cm-cmd">h5i websec show res_109 --session checkout-idor</span>
                     </div>
                   </div>
                 </div>
@@ -626,7 +623,7 @@
                   </div>
                   <div class="cm-panel">
                     <div class="cm-panel-head">Enforced policy <span>&#183; what was actually allowed</span></div>
-                    <div class="cm-note" style="margin:0"><code>isolation</code> supervised &#183; <code>net.egress</code> api.anthropic.com, registry.npmjs.org, github.com &#183; <code>fs.write</code> $WORK &#183; <code>secrets</code> GITHUB_TOKEN (brokered) &#183; <code>wall</code> 1800s &#183; <code>mem</code> 4.0G</div>
+                    <div class="cm-note" style="margin:0"><code>net.egress</code> api.anthropic.com, registry.npmjs.org, github.com &#183; <code>fs.write</code> $WORK &#183; <code>secrets</code> GITHUB_TOKEN (brokered) &#183; <code>wall</code> 1800s &#183; <code>mem</code> 4.0G</div>
                   </div>
                   <div style="height:16px"></div>
                 </div>
