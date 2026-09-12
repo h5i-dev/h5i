@@ -1,53 +1,56 @@
-# h5i demo film — the browser
+# h5i demo film — AI red teaming
 
-The h5i product video (0:58), built as a deterministic HTML timeline and
-rendered to mp4. It tells the same story the front page and the pitch deck
-tell: **a fast, auditable browser for AI agents**. Linked from the site footer
-as "Demo video".
+The h5i product video (0:59), built as a deterministic HTML timeline and
+rendered to mp4. It tells the same story as the front page and pitch deck:
+**the red-teaming browser for AI agents**. It is linked from the site footer as
+"Demo video".
 
 ## The claim the film makes
 
-Browsers built for people are both *too heavy* and *too risky* for agents, and
-h5i answers both. So the first half is the engine and the second half is the
-record, and neither half is an afterthought: a film that opened on prompt
-injection would read as a security wrapper around somebody else's browser.
+Automated red teaming usually makes an agent coordinate a browser, discovery
+tools, a proxy, a request editor, and a separate sandbox. h5i joins those steps
+into one policy-controlled, evidence-linked session. The film follows that
+session from authorized target to verified flaw, then shows what happens when
+the agent drifts outside its allowed scope.
 
-One session runs through all three working scenes, and there is exactly one
-denial in the whole film. Repeating a single refusal is stronger than parading
-several attacks.
+There is exactly one denial in the film. It proves that scope is enforced and
+recorded without turning the story into a parade of hypothetical attacks.
 
-## The four scenes
+## The six scenes
 
-**1. The engine (0:00 to 0:12).** *Run more browser sessions.* Four sessions
-come up in about a quarter of a second each, then the three numbers: ~5×
-faster reads, ~80% less peak memory, 300k+ web standards tests passed, with
-"Benchmarked on simple websites." under them. Twelve seconds spent establishing
-that this is a headless browser, not a security wrapper.
+**1. The workflow (0:00 to 0:08).** Open one authorized target with capture and
+an origin allowlist. Browse, recon, and test appear as parts of one workflow,
+with one session, one policy, and one evidence trail.
 
-**2. The browser (0:12 to 0:28).** *The agent reads and controls the page
-directly.* `open`, `snapshot`, `click @e2`, with a beat between each command and
-its result. Three things and no more: it can read the page, it can act on it,
-and the session is still there afterwards. No security yet.
+**2. Browse (0:08 to 0:18).** The agent reads the application as a compact
+outline, follows an invoice link, and sees the captured request and response.
+The browser action and HTTP messages share the same authenticated session.
 
-**3. The record (0:28 to 0:50).** *A malicious page can mislead the agent. It
-cannot change the browser policy.* The same session. A `snapshot --delta` brings
-back new text the page's readers wrote, fenced as untrusted, telling the agent
-to send credentials to `paste.example`. The agent tries it. The refusal lands as
-a full-width red band, `h5i browser requests` shows the two rows that matter,
-and then an ordinary `click` proves the session survived. Twenty-two seconds for
-one event, because this is the event.
+**3. Recon (0:18 to 0:29).** The agent extracts endpoint candidates, performs a
+bounded crawl, calibrates away soft 404s, and lists confirmed endpoints. Each
+row names the captured message that supports it; recon says what exists, not
+whether it is vulnerable.
 
-**4. The close (0:50 to 0:58).** Fast enough to run more sessions. Controlled
-enough to trust them. Then "Let agents browse. Keep control.", the two URLs and
-the licence line.
+**4. Test (0:29 to 0:44).** From the browser's own traffic, the agent inspects
+Alice's invoice request, changes the ID to Bob's, replays it, compares the
+responses, and verifies an access-control flaw. Browser state never has to be
+handed to a separate proxy or repeater.
+
+**5. Enforce and audit (0:44 to 0:53).** Untrusted page content directs the
+agent to `paste.example`. The configured allowlist refuses the destination,
+and `h5i browser audit` shows the denied attempt in the same session record.
+
+**6. The close (0:53 to 0:59).** "Let agents test like professional hackers.
+Keep every action contained and auditable." Then the product position, URLs,
+and license line.
 
 ## What is deliberately not in it
 
-Human takeover and the sandbox are both real and both worth showing, and both
-belong in their own short films rather than this one. Carrying them here makes
-it ambiguous again whether h5i is a browser or a sandbox platform. The same goes
-for `engine-claimed` versus `host-observed`, the broker and renderer split, and
-`h5i box export`: all true, none of them the point of a first look.
+The console, human takeover, individual isolation tiers, credential brokering,
+and export are all real, but none is the point of this first look. The film
+shows the configured network limit at work without turning into a tour of the
+sandbox platform. Performance remains supporting proof on the website and in
+the pitch deck rather than the opening premise here.
 
 There are also no diagrams. Everything the film asserts, it asserts with the
 outline an agent actually gets and the terminal a person actually types into.
@@ -59,7 +62,8 @@ outline an agent actually gets and the terminal a person actually types into.
   **orange** is h5i and nothing else. `@ref` handles get violet, which is none
   of the three.
 - The terminal appears only when it is proving something.
-- No persistent chip rail, and the request record appears in scene 3 alone.
+- No persistent chip rail. Each command appears only where it advances the one
+  session's story.
 
 ## Files
 
@@ -93,8 +97,9 @@ node render.mjs --stills 27,49 --scale 1 # fast PNG frames for eyeballing a layo
 
 All content lives in `index.html`:
 
-- Scene scripts (`evOpen`, `evBrowse`, `evDeny`) are arrays of `{at, cmd}` /
-  `{at, out:[html lines]}` events, times in seconds local to the scene. `out`
+- Scene scripts (`evOpen`, `evBrowse`, `evRecon`, `evWebsec`, `evDeny`) are
+  arrays of `{at, cmd}` / `{at, out:[html lines]}` events, times in seconds
+  local to the scene. `out`
   lines are raw HTML; `cmd` is escaped and typed out.
 - Scene boundaries and eyebrow labels are in the `SCENES` table; the total
   runtime is `TOTAL`, and the duration in the scrub display is derived from it.

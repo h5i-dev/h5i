@@ -40,7 +40,7 @@ PAGE_HISTORY = {
     "features/": ("2026-09-12", "0b41004817ea5bb6"),
     "manual/": ("2026-09-12", "98f1a4a1a45ec6a8"),
     "pitch/": ("2026-09-10", "57ee2a579d40f90e"),
-    "demo/": ("2026-09-05", "0a8f7602497278cf"),
+    "demo/": ("2026-09-12", "729de49b887b5c3f"),
     "guides/": ("2026-09-09", "0e4d298584ce7b5e"),
     "blog/": ("2026-09-09", "b089ca0b8ea70ceb"),
     "guides/drive-a-browser-session/": ("2026-09-02", "148a857cf6c0d8e7"),
