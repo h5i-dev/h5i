@@ -31,8 +31,8 @@
 - [Sandbox the entire workflow: browse, develop, review, apply](https://h5i.dev/blog/the-h5i-loop/): Put the browser, checkout, agent, tools, tests, and dev server in one box, then review the evidence before the patch crosses out.
 - [Why sandbox the entire AI agent workload](https://h5i.dev/blog/the-environment-is-the-sandbox/): Coding tasks execute dependencies, build tools, tests, servers, and pages—not only the agent process.
 - [How to choose an AI agent sandbox](https://h5i.dev/blog/choosing-agent-isolation/): Choose process, supervised, container, or microVM isolation by the failure it must prevent.
-- [A transcript is not an audit trail](https://h5i.dev/blog/evidence-for-agent-work/): Separate host-observed evidence, box-claimed records, Git state, and agent testimony.
-- [How to protect a coding agent from prompt injection](https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/): Limit what a compromised agent can read, hold, reach, and merge, so a successful injection has nowhere to go.
+- [Review AI-generated code with execution evidence](https://h5i.dev/blog/evidence-for-agent-work/): Check the diff alongside observed test results, denied actions, browser errors, and explicit gaps in collection.
+- [How to protect a coding agent from prompt injection](https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/): Restrict host files, reusable credentials, network destinations, local sockets, browser state, and writes to the parent repository.
 
 ## The browser session
 

@@ -42,18 +42,18 @@ PAGE_HISTORY = {
     "pitch/": ("2026-09-10", "57ee2a579d40f90e"),
     "demo/": ("2026-09-12", "729de49b887b5c3f"),
     "guides/": ("2026-09-09", "0e4d298584ce7b5e"),
-    "blog/": ("2026-09-13", "151215754e0791d7"),
+    "blog/": ("2026-09-13", "2d5a1695b99b5c66"),
     "guides/drive-a-browser-session/": ("2026-09-02", "148a857cf6c0d8e7"),
     "guides/first-box/": ("2026-08-30", "c52289c78be574db"),
     "guides/review-a-pull-request/": ("2026-08-30", "0bbf47c079810ec7"),
     "guides/write-a-box-policy/": ("2026-09-13", "2ddec5bdd360277d"),
     "guides/watch-the-browser/": ("2026-09-13", "1878eb38306a2423"),
     "guides/authorized-web-security-testing/": ("2026-09-09", "6280e1e26326ec3a"),
-    "blog/the-h5i-loop/": ("2026-09-13", "c04350e0e24e28c3"),
+    "blog/the-h5i-loop/": ("2026-09-13", "78a64276929d8202"),
     "blog/the-environment-is-the-sandbox/": ("2026-09-13", "c0003c9a5de6bc53"),
     "blog/choosing-agent-isolation/": ("2026-09-13", "0eff3260305a64d7"),
-    "blog/evidence-for-agent-work/": ("2026-08-30", "9f0011911123d79c"),
-    "blog/prompt-injection-is-a-boundary-problem/": ("2026-09-12", "0dd2a0910367312f"),
+    "blog/evidence-for-agent-work/": ("2026-09-13", "3a266f6d55c32baa"),
+    "blog/prompt-injection-is-a-boundary-problem/": ("2026-09-13", "b15f2e7954362847"),
     "blog/ai-pentesting-tools/": ("2026-09-12", "812fe92f28bdb3ec"),
     "blog/burp-suite-vs-h5i-for-ai-agents/": ("2026-09-09", "762219bdd179fe17"),
     "blog/owasp-zap-vs-h5i-for-ai-agents/": ("2026-09-09", "b03f05dbf7412b0b"),
@@ -700,78 +700,46 @@ $ h5i box status review-1234</code></pre></div></div>
 
 
 EVIDENCE = {
-    "section": "blog", "slug": "evidence-for-agent-work", "eyebrow": "Essay / Review",
-    "time": "12 min", "tags": "Receipts &middot; Audit &middot; Diffs",
-    "title": "What counts as evidence for agent-written code? | h5i", "h1": "A transcript is not an audit trail",
-    "description": "Review agent-written code with evidence collected outside the agent: the patch, observed execution, denied activity, and explicit gaps in observation.",
-    "deck": "The agent can explain what it did in perfect prose. That account is useful—and it is still testimony from the subject of the review. Evidence begins where self-report ends.",
+    "section": "blog", "slug": "evidence-for-agent-work", "eyebrow": "Essay / Code review",
+    "time": "6 min", "tags": "Code review &middot; Execution records &middot; Receipts",
+    "title": "Review AI-generated code with execution evidence | h5i", "h1": "Review AI-generated code with execution evidence",
+    "description": "Review AI-generated code using the diff, externally observed test results, denied actions, browser errors, and explicit gaps in evidence.",
+    "deck": "A diff shows what changed. It does not show which tests ran, what failed, or what the agent tried to access. Review the code together with execution records collected outside the agent.",
     "body": """
-<div class="callout"><strong>The test.</strong> Point at a line in the record and ask: <em>could the agent have written this?</em> If yes, keep it as testimony. Do not promote it into independent evidence.</div>
-<figure class="feature-figure"><img src="/_static/sandbox-ui-demo.png" alt="The h5i box console showing policy, diff statistics, and execution events in separate lanes"><figcaption>The useful view does not compress everything into one confidence score. Policy, tree state, process events, network decisions, and page evidence keep their own provenance.</figcaption></figure>
-<p>Suppose an agent returns a twelve-line authentication fix and this summary: “Implemented token refresh, added regression coverage, all tests pass.” The prose is specific. The patch is small. The test file exists. This is exactly the kind of result that feels easy to approve.</p>
-<p>Now add three observations the summary omitted: the full test suite was never run; one command exited 137 after hitting the memory ceiling; and the process tried seven times to reach a telemetry host outside policy. None proves the patch is malicious. All three change the review. The difference between the two versions of the story is not better summarization. It is independent collection.</p>
-<h2 id="diff">A diff records state, not execution</h2>
-<p>A Git diff is excellent at its job. It describes how one tree differs from another, composes through merges, and gives reviewers a stable object to discuss.</p>
-<p>It cannot show a failed network connection, a read that left no edit, an install hook that ran, a test that was skipped, or a browser exception that did not change a file. Those are events. Tree comparison has no place to store them.</p>
-<p>Human review papered over that gap with conversation. The author remembered the work and answered questions. An autonomous agent removes that memory while making the replacement self-report unusually fluent.</p>
-<h2 id="source">The source of a record sets its value</h2>
-<p>Suppose a transcript says “ran <code>cargo test</code>, exit 0.” The line may be true. If the agent or its in-process tool shim produced it, the line is the subject's account of itself.</p>
-<p>Now suppose the supervisor that launched the child waits for it and records the exit status. The words can be identical. The evidence is different because the child did not author the observation.</p>
-<p>This distinction must travel with every event. Flatten host-observed and box-claimed records into one log and no downstream dashboard can reconstruct the trust boundary.</p>
-<h2 id="storage">Evidence must live outside the subject's write path</h2>
-<p>External observation is not enough if the result is written somewhere the agent can edit. The storage layout matters.</p>
-<p>In h5i, the box can stage capture data in its spool. The host ingests it into receipt storage outside every grant the box holds. Host-observed process exits and proxy decisions are already produced there. The box cannot rewrite an earlier receipt without first escaping the boundary.</p>
-<p>This is local protection, not notarization. A user with control of the host can edit local files. The claim is narrower: the code under review cannot silently rewrite the record of its own run.</p>
-<h2 id="lanes">Keep evidence grades visible</h2>
-<div class="tbl-wrap"><table class="data"><thead><tr><th>Record</th><th>Observer</th><th>What it supports</th></tr></thead><tbody>
-<tr><th>Patch</th><td>Git tree comparison</td><td>What changed</td></tr>
-<tr><th>Process exit</th><td>Host supervisor</td><td>What command ended and how</td></tr>
-<tr><th>Egress refusal</th><td>Boundary or proxy</td><td>Which destination was denied</td></tr>
-<tr><th>Browser error</th><td>In-box browser capture</td><td>What the instrumented page reported</td></tr>
-<tr><th>Agent proposal</th><td>Agent</td><td>What the agent says the result means</td></tr>
+<div class="callout"><strong>The rule.</strong> Use the agent's summary to understand its intent. Use records collected outside the agent to verify what ran and what the sandbox allowed or refused.</div>
+<h2 id="gap">A diff does not record execution</h2>
+<p>Suppose an agent changes authentication code and reports: “Added token refresh, wrote regression tests, and all tests pass.” The diff can confirm the code and test files. It cannot confirm that the full suite ran or passed.</p>
+<p>A diff also cannot show an install script reading outside the workspace, a command killed by a resource limit, a refused network destination, or a browser error. These events may leave no file change.</p>
+<p>Code review therefore needs two kinds of information: repository state and execution records.</p>
+<h2 id="records">Use each record for the question it can answer</h2>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Record</th><th>Answers</th><th>Does not prove</th></tr></thead><tbody>
+<tr><td>Diff against the pinned base</td><td>What files changed</td><td>Which commands ran</td></tr>
+<tr><td>Host-observed process exit</td><td>Which launched command ended, and how</td><td>Every command typed inside an interactive shell</td></tr>
+<tr><td>Boundary refusal</td><td>Which file, socket, destination, or limit was denied</td><td>Why the workload attempted it</td></tr>
+<tr><td>Box-claimed browser or shell event</td><td>What the instrumented component reported</td><td>That the component reported everything honestly</td></tr>
+<tr><td>Agent summary</td><td>What the agent intended and believes it completed</td><td>That its claims are correct</td></tr>
 </tbody></table></div>
-<p>These records belong together. They do not deserve the same color, ordering, or confidence.</p>
-<h2 id="absence">Absence must not impersonate success</h2>
-<p>A missing browser section can mean no errors, no browser, or a failed capture. An empty egress summary can mean no attempts or a tier whose packet filter does not report them. Good evidence formats name the difference.</p>
-<p>This is the hardest discipline in audit UI: make uncertainty visible even when it makes the product look less complete. Grey is information. “Unavailable” is a result. Silence is ambiguity.</p>
-<h2 id="review">A better review order</h2>
-<ol><li>Start with boundary refusals and failed execution.</li><li>Confirm the meaningful build and test commands actually ran.</li><li>Read browser and resource observations, including unavailable sections.</li><li>Review the patch against the pinned base.</li><li>Read the agent's explanation last.</li></ol>
-<p>This order does not replace code review. It stops eloquent testimony from framing the evidence before you see it.</p>
-<h2 id="receipt-anatomy">What a useful receipt has to bind together</h2>
-<p>An event record becomes reviewable when it answers more than “what text was printed?” At minimum it needs the command or event kind, time, exit result, observer, payload reference, and the digest of the policy in force. Without the digest, a clean-looking run can be separated from the rules that supposedly constrained it. Without the observer, testimony and observation collapse into the same JSON shape.</p>
-<p>The pinned base matters for the same reason. A patch is meaningful only relative to the tree it changed. A receipt is meaningful only relative to the boundary that produced it. h5i freezes both at box creation so a later branch update or profile edit cannot rewrite the premise of an old run.</p>
+<p>Do not merge these sources into one unlabeled log. <code>host-observed</code> means h5i recorded an event from outside the box. <code>box-claimed</code> means a component inside the box reported it. Both can be useful, but they support different conclusions.</p>
+<h2 id="storage">Store evidence outside the workload's write access</h2>
+<p>An external observation loses its value if the agent can edit it afterwards. h5i stores ingested receipts outside every filesystem path granted to the box. The workload can submit detailed records, but it cannot rewrite host-observed exits or earlier ingested history without escaping the sandbox.</p>
+<p>This is protection from the box, not from the host owner. A person who controls the machine can alter local files. h5i receipts are not third-party signatures, timestamps, or notarized audit records.</p>
+<h2 id="denials">Keep failures and refused actions</h2>
+<p>Retaining only the final successful test run removes useful context. An earlier failure may show what the agent fixed—or that it weakened an assertion until the test passed.</p>
+<p>Refused actions also matter. A request to a telemetry host may be harmless, while an attempt to read a credential directory may require investigation. The record should state what was refused without assigning intent.</p>
+<h2 id="missing">Report missing evidence explicitly</h2>
+<p>An empty browser-error list can mean that no errors occurred, no browser ran, or browser collection failed. An empty network section can mean no connections were refused or that the selected isolation tier does not report them.</p>
+<p>Use distinct states such as <code>empty</code> and <code>unavailable</code>. Missing observation must not appear as a successful result.</p>
+<h2 id="review">Review in this order</h2>
+<ol><li>Check the resolved policy and isolation tier.</li><li>Read refused actions, failed commands, and resource-limit events.</li><li>Confirm that the required build and test commands have observed results.</li><li>Read browser errors and other box-claimed records, including unavailable sections.</li><li>Review the diff against its pinned base.</li><li>Compare the agent's summary with the records above.</li></ol>
+<p>This order prevents a confident summary from becoming the evidence against which everything else is interpreted.</p>
+<h2 id="export">What h5i exports</h2>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">review bundle</span></div><div class="terminal-body"><pre><code>review/
-├── patch.diff      # tree state against the frozen base
-├── report.md       # evidence ordered for a human review
-└── receipt.json    # events, observer lanes, policy digest</code></pre></div></div>
-<h2 id="two-paths">Observation needs two paths, because each catches the other's lie</h2>
-<p>The host supervisor can reliably observe the child it launched: start, exit status, elapsed time, and resource use. It cannot reconstruct every command typed inside a long-lived interactive shell. An in-box hook can report that detail, including nested shell commands. The box can also suppress or fabricate that hook.</p>
-<p>The right response is not to choose one and pretend it is complete. Keep both. A host-observed shell exit with no matching in-box command is a gap worth showing. An in-box command claiming success beside a host-observed nonzero exit is a disagreement worth showing. Redundancy becomes evidence only when sources remain distinguishable.</p>
-<h2 id="denials">Denied actions are often the most valuable rows</h2>
-<p>Successful work dominates normal logs. Security review is disproportionately interested in failed attempts: a path outside the grant, a refused address family, an off-list destination, a resource ceiling, a browser verb denied at the control socket.</p>
-<p>A diff cannot represent any of these because the attempt left no accepted state change. A transcript may omit them because they were noisy or because the agent moved on. The boundary that made the decision is the natural observer, and its denial should appear before the agent's proposal in the report.</p>
-<p>Do not overread a denial. A build tool reaching a telemetry endpoint can be normal. Seven retries can reflect an ordinary client. The record does not assign intent. It tells the reviewer where intent is worth investigating.</p>
-<h2 id="tamper-model">“Sealed” is a local, scoped claim</h2>
-<p>The box's writable spool is a staging area. Receipt storage is a sibling outside its grants. The host ingests staged records and assigns ordering. A process inside the box cannot reopen yesterday's host record and change an exit code.</p>
-<p>A user who owns the host can still edit the file. There is no external timestamp authority, signature service, or transparency log. Calling the receipt tamper-proof would be false. The actual claim is narrower and useful: the subject of the review has no filesystem path to its ingested history.</p>
-<h2 id="worked-review">A worked review order</h2>
-<p>For an unattended change, begin with the highest-consequence, lowest-interpretation evidence:</p>
-<ol><li><strong>Policy and tier.</strong> Was the session actually confined, and at which layer was egress enforced?</li><li><strong>Denials and limits.</strong> What did the boundary stop? What died under a ceiling?</li><li><strong>Observed execution.</strong> Which meaningful build and test commands have externally observed exits?</li><li><strong>Page evidence.</strong> Were there console exceptions or failed requests? Was a browser even available?</li><li><strong>Patch.</strong> Does the state change match the execution story?</li><li><strong>Proposal.</strong> What does the agent believe it achieved, and where does that account diverge?</li></ol>
-<p>The order is intentionally unfriendly to polished prose. By the time you read the summary, you already know which claims need proof.</p>
-<h2 id="anti-patterns">Four ways evidence turns back into decoration</h2>
-<h3>One risk score</h3>
-<p>Combining a denied destination, a failed test, a large diff, and a box-claimed command into “risk: 72” destroys the semantics a reviewer needs. The score cannot explain whether the boundary stopped something or whether the agent merely said it did. Keep the lanes. Let the human weigh them for the task.</p>
-<h3>Only successful final runs</h3>
-<p>Retries contain the debugging story. A failure followed by a pass can be ordinary progress, or the agent can have weakened an assertion until it turned green. Retaining only the final exit removes the comparison that makes the patch intelligible.</p>
-<h3>Unlimited payloads</h3>
-<p>Raw command output can be enormous and attacker-controlled. Evidence collection needs byte caps, truncation markers, redaction, and payload references. Otherwise one verbose build can make the review artifact unusable—or push secrets into every downstream index built from it.</p>
-<h3>Silence as green</h3>
-<p>An empty array is not a universal success state. It may mean the observer saw no errors, the subsystem was never started, the tier cannot report that class, or collection failed. Good schemas make these states distinct before a UI assigns color.</p>
-<h2 id="compare">Compare claims across artifacts, not only within one log</h2>
-<p>The strongest review questions cross boundaries. The proposal says tests pass; do host-observed exits contain the meaningful suite? The patch adds a network client; does the report show new destinations or repeated refusals? The browser screenshot looks correct; were there console exceptions? The profile says no network; does status show that the resolved tier could enforce the claim?</p>
-<p>This is where a bundle beats a transcript. Patch, report, receipt, and policy digest are deliberately different views. Agreement increases confidence. Disagreement tells you exactly where to look.</p>
+├── patch.diff      # file changes against the pinned base
+├── report.md       # execution and browser records for review
+└── receipt.json    # events, observer labels, policy digest</code></pre></div></div>
+<p>The bundle does not approve the patch. It gives the reviewer the code change, the policy applied to the run, and the available execution records in one place.</p>
 <h2 id="sources">Sources and further reading</h2>
-<ul><li><a href="/manual/#receipts">The receipt reference</a>, including observer lanes and explicit limits.</li><li><a href="/manual/#h5i-box-export">The export bundle</a>, for report ordering and path validation.</li><li><a href="/guides/review-a-pull-request/">Review a pull request in a detached box</a>, for the evidence-first workflow.</li><li><a href="https://github.com/h5i-dev/h5i/tree/main/crates/h5i-core">h5i-core</a>, where box state, policy digests, and receipt storage are implemented.</li></ul>""",
+<ul><li><a href="/manual/#receipts">Receipt fields and observer labels</a>.</li><li><a href="/manual/#h5i-box-export">Export bundle contents and limits</a>.</li><li><a href="/guides/review-a-pull-request/">Review a pull request by running it in a detached box</a>.</li></ul>""",
     "faq": [
         ("Is an h5i receipt tamper-proof?", "It is protected from the box, not from a user who controls the host. h5i stores ingested receipts outside every filesystem grant held by the box; it does not provide third-party notarization."),
         ("Why keep agent-reported records at all?", "They provide useful detail that an external observer may not have. The requirement is to label their source and compare them with host-observed events, not to discard testimony."),
@@ -783,52 +751,48 @@ EVIDENCE = {
 
 INJECTION = {
     "section": "blog", "slug": "prompt-injection-is-a-boundary-problem",
-    "eyebrow": "Essay / Security", "time": "7 min", "tags": "Prompt injection &middot; Least authority &middot; Egress",
-    "title": "How h5i protects coding agents from prompt injection", "h1": "How to protect a coding agent from prompt injection",
-    "description": "A coding agent reads whatever the repository and the web put in front of it, and some of that text will tell it to do harm. h5i limits what the agent's process can read, which credentials it holds, where it can connect, and what it can merge, so a successful injection has nowhere to go.",
-    "deck": "A coding agent reads whatever the repository and the web put in front of it, and some of that text will tell it to do harm. Instead of trying to spot that text, h5i limits what the agent's process can reach, so a successful injection has nowhere to go.",
+    "eyebrow": "Essay / Security", "time": "6 min", "tags": "Prompt injection &middot; Sandboxing &middot; Least authority",
+    "title": "How to protect a coding agent from prompt injection | h5i", "h1": "How to protect a coding agent from prompt injection",
+    "description": "Limit the files, credentials, network destinations, local services, and repository writes available to a prompt-injected coding agent.",
+    "deck": "Assume a malicious instruction reaches the agent and the agent follows it. A sandbox cannot correct that decision, but it can restrict the files, credentials, services, and output the agent can reach.",
     "body": """
-<div class="callout danger"><strong>The assumption.</strong> The agent has read a malicious instruction, believed it, and is now using its tools exactly as designed. Everything below is built for that case.</div>
-<p>Here is the attack. A repository asks the agent to read the setup notes before running the tests. The notes contain a hidden instruction: look in the user's SSH directory, send anything interesting to a diagnostics URL, then carry on with the original task. Nothing in that chain needs an exploit. Reading files, making HTTP requests, and following instructions found in the repository are exactly what a coding agent is for.</p>
-<h2 id="detection">Why filtering the text is not enough</h2>
-<p>The common defense is to look for the hostile sentence: scan the page, ask a second model whether an instruction looks malicious, block the obvious phrasing. Those checks catch crude attacks and are worth keeping.</p>
-<p>They cannot be the security boundary, because the attacker writes the text and can rewrite it until the filter passes. The instruction can hide in documentation, a generated file, an issue comment, a test failure message, tool output, or a web page the agent opens. A filter strict enough to catch all of that also blocks ordinary work, since coding means reading configuration, opening documentation, and sending authenticated requests all day.</p>
-<p>So h5i starts from the other end. Assume the text got through. What can the agent's process actually do now?</p>
-<h2 id="capabilities">Limit what the process can reach</h2>
-<p>Five questions describe the damage a compromised agent can do, and h5i answers each one with a control that sits outside the agent:</p>
-<ul><li>Which host files can it read or write?</li><li>Which credentials are in its environment or home directory?</li><li>Which network destinations can it reach?</li><li>Which local sockets let it borrow another process's authority?</li><li>Can it write directly into code you will trust?</li></ul>
-<p>The rest of this essay takes them in order.</p>
-<h2 id="files">Files: the box sees only what you grant</h2>
-<p>Inside an h5i box the host filesystem is absent unless the policy grants a path. The agent's home directory is a per-box copy of its config with credential-shaped entries stripped at any depth, so there is no <code>~/.ssh</code> or <code>~/.aws</code> to find. Files you deliberately copied into the workspace remain readable, which is the point of copying them.</p>
-<h2 id="credentials">Credentials: the real key never enters the box</h2>
-<p>An API key in an environment variable or a dotfile is just bytes the compromised process can read. h5i keeps the real key on the host. The box gets a per-run dummy token and a route to a host-side broker; the broker pins the upstream origin, swaps the dummy for the real credential, and makes the TLS request itself. Stealing the dummy gives the attacker nothing reusable.</p>
-<p>The route is scoped to one runtime, so a Claude box cannot use the OpenAI key just because both agents are installed on the host. Two limits apply. The broker handles authentication, not authorization: a broad GitHub token stays broad when used through it, so issue narrow service tokens. And it cannot stop a legitimate model request from containing private source. If source must not leave, use a self-hosted model or a policy with no model egress.</p>
-<h2 id="network">Network: deny by default, at a layer that holds</h2>
-<p>Proxy environment variables only constrain programs that choose to honor them. A compromised process clears them and opens a socket. If off-list destinations must be unreachable, enforcement has to meet raw traffic: on the <code>supervised</code> tier that is a private network namespace with a gate on <code>socket()</code>, on the <code>microvm</code> tier it is the guest's own network stack. The <code>container</code> tier scopes at an L7 proxy, which is weaker, and h5i names the layer in the box status rather than calling both "egress control".</p>
-<h2 id="sockets">Local sockets count as network</h2>
-<p>Unix sockets rarely appear in threat models because they do not look like internet access. They connect the box to the SSH agent, the container daemon, and desktop services, and some can pass open file descriptors. h5i denies the address family by default. A profile that needs one socket, such as a browser control daemon, grants that socket explicitly. A test runner gets none.</p>
-<h2 id="browser">The browser: a fresh profile, no inherited sessions</h2>
-<p>A normal browser profile is the sharpest case. It holds live cookies for source control, email, CI, and cloud dashboards, and the agent never has to read them: it navigates, and the browser attaches them. The same browser reaches host loopback, where local developer services often rely on "local only" instead of authentication. And its main input is page content written by someone else.</p>
-<p>A browser session opened inside a box starts from an empty profile, so there are no inherited sessions or extensions, and its loopback is the box's, not the developer's machine. The page can still inject the agent. The injected agent finds much less waiting for it.</p>
-<h2 id="output">Output: the agent does not merge its own work</h2>
-<p>An agent that cannot read secrets or dial new hosts can still write a malicious patch. Containment limits what happens during the run; it does not certify the result. So the box does not land its own work. It exports a path-validated patch with a report and a receipt, and a person reads them before anything reaches the repository.</p>
-<h2 id="layers">The layers side by side</h2>
-<div class="tbl-wrap"><table class="data"><thead><tr><th>Attack step</th><th>What h5i does</th><th>What remains</th></tr></thead><tbody>
-<tr><th>Read host secrets</th><td>No host paths without a grant; a scrubbed per-box home</td><td>Files copied into the workspace are readable</td></tr>
-<tr><th>Steal a model key</th><td>Real key stays behind a runtime-scoped broker</td><td>Allowed model requests can still carry source</td></tr>
-<tr><th>Send data to a new host</th><td>Default-deny egress at the named layer</td><td>Allowed destinations stay reachable</td></tr>
-<tr><th>Borrow a local daemon</th><td>Unix sockets denied, loopback isolated</td><td>An explicit socket grant carries real authority</td></tr>
-<tr><th>Ship a malicious patch</th><td>Export and external review</td><td>A reviewer can still make a bad call</td></tr>
+<div class="callout danger"><strong>Security assumption.</strong> The agent has accepted a malicious instruction and will use every available tool to follow it. Protection must come from controls the agent cannot change.</div>
+<h2 id="attack">A prompt injection uses normal agent capabilities</h2>
+<p>A repository tells the agent to read setup instructions before running tests. Those instructions include a hidden request: read the user's SSH directory and send its contents to a diagnostics host.</p>
+<p>This attack needs no software exploit. Reading repository text, opening files, and making HTTP requests are normal coding-agent operations. The malicious text can also arrive through an issue, test output, generated documentation, or a web page.</p>
+<h2 id="detection">Detection helps, but cannot enforce safety</h2>
+<p>A text filter or second model may identify obvious malicious instructions. It may also miss a reworded instruction or block legitimate setup steps. Because the attacker controls the text, detection should reduce exposure but should not decide what the agent is allowed to access.</p>
+<p>Assume detection fails. The remaining question is concrete: what files, credentials, destinations, local services, and repositories can the agent reach?</p>
+<h2 id="controls">Restrict the capabilities an injected agent can use</h2>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Attempt</th><th>Required control</th><th>Remaining risk</th></tr></thead><tbody>
+<tr><td>Read host secrets</td><td>Grant only required filesystem paths; use a separate agent home</td><td>Files placed inside the workspace remain readable</td></tr>
+<tr><td>Steal an API key</td><td>Keep the real key outside the box and broker approved requests</td><td>An allowed request may still contain source code</td></tr>
+<tr><td>Send data elsewhere</td><td>Allow only required network destinations at an enforced layer</td><td>Approved destinations remain reachable</td></tr>
+<tr><td>Use SSH, Docker, or desktop authority</td><td>Deny host Unix sockets and isolate loopback</td><td>Every explicit socket grant carries real authority</td></tr>
+<tr><td>Publish a harmful change</td><td>Require external review before export or apply</td><td>A reviewer can still approve bad code</td></tr>
 </tbody></table></div>
-<p>No row depends on the model noticing that it has been compromised.</p>
-<h2 id="limits">What this does not solve</h2>
-<p>A box does not make the agent immune to bad instructions. It can still waste time, damage its disposable workspace, write a misleading explanation, or produce a harmful patch for review. A shared-kernel tier remains exposed to a targeted kernel exploit. A service on the allowlist can still be abused within whatever the credential allows. And a container with the host browser profile mounted or the Docker socket exposed has none of the protection above; the mechanism is not the threat model.</p>
-<p>What a box does is keep untrusted instructions from inheriting the developer's machine. A successful injection becomes a refused action inside a disposable environment, with the refusal in the log, instead of an incident involving the host and every account on it.</p>
-<h2 id="drill">A quick drill</h2>
-<p>Take a real profile and assume the agent has turned hostile. List the host paths it can read, the credentials it holds, the internet hosts and loopback services it can reach, the Unix sockets it can open, and the ways it can write to code you accept. Do not exfiltrate anything; read the resolved policy and try harmless denials.</p>
-<p>If any answer is "the agent would not do that", the authority is still there. If every answer is "the syscall, packet, or export path is refused and the refusal is recorded", the boundary survives the model making the wrong decision.</p>
+<h2 id="files">Do not expose the developer's home directory</h2>
+<p>An h5i box receives only the filesystem paths granted by its resolved policy. Its agent home is a per-box copy with credential-shaped entries removed. Paths such as <code>~/.ssh</code> and <code>~/.aws</code> should not be present unless the task explicitly requires them.</p>
+<p>Workspace contents are intentionally readable. Do not copy a secret into the repository and expect the sandbox to hide it from the agent.</p>
+<h2 id="credentials">Keep reusable credentials outside the box</h2>
+<p>A secret in an environment variable or dotfile can be copied by any compromised process. h5i instead gives the box a per-run placeholder and sends approved requests through a host-side credential broker. The broker selects the upstream service and adds the real credential outside the box.</p>
+<p>The broker prevents direct theft of the key; it does not narrow the service permissions attached to that key. Use service credentials with the minimum required scope. It also cannot stop source code from appearing in an allowed model request.</p>
+<h2 id="network">Enforce network and local-service boundaries</h2>
+<p>Proxy variables constrain only software that uses the proxy. If raw off-list connections must fail, use an isolation tier that enforces destinations at L3/L4, such as <code>supervised</code> or <code>microvm</code>. The container tier's HTTP proxy does not constrain a program that opens its own socket.</p>
+<p>Unix sockets and loopback services need the same attention. An SSH agent or container daemon can give the box substantial host authority without any internet connection. Deny Unix sockets by default and grant only the specific local service a task needs.</p>
+<h2 id="browser">Use a fresh browser profile inside the box</h2>
+<p>A daily browser profile contains cookies, extensions, downloads, and authenticated sessions. Headless mode does not remove that authority. Place browser work inside the box with a fresh profile so page code cannot inherit the user's sessions and <code>localhost</code> refers to the box's dev server.</p>
+<h2 id="output">Review the patch outside the sandbox</h2>
+<p>Capability restrictions do not make the generated code safe. A prompt-injected agent can still write a backdoor or weaken a test inside its workspace. The box must not decide that its own result is acceptable.</p>
+<p>Export the patch with its execution report and receipt. Review them before applying the change to the parent repository.</p>
+<h2 id="limits">What remains possible</h2>
+<ul><li>The agent can damage or delete its disposable workspace.</li><li>It can misuse any file, destination, socket, or credential explicitly granted by policy.</li><li>It can send source through an allowed model request.</li><li>It can produce convincing but unsafe code for a human to review.</li><li>A shared-kernel tier does not protect against a successful host-kernel exploit.</li></ul>
+<p>Sandboxing reduces the authority available after prompt injection. It does not prevent the injection or verify the final code.</p>
+<h2 id="check">Check the boundary before running the agent</h2>
+<p>Inspect the resolved policy and answer five questions: Which host files are readable? Which reusable credentials enter the box? Which internet destinations and local sockets are reachable? Which browser profile is used? Can the box write directly to the parent repository?</p>
+<p>Test harmless denials for paths and destinations that should be unavailable. A security boundary should fail because of an enforced rule, not because the agent was asked to behave.</p>
 <h2 id="sources">Sources and further reading</h2>
-<ul><li><a href="/manual/#credentials">Credentials</a> and <a href="/manual/#af_unix-sockets">Unix sockets</a> in the manual.</li><li><a href="/guides/write-a-box-policy/">Write a box policy</a>, for expressing filesystem, network, and socket authority.</li><li><a href="/guides/watch-the-browser/">Watch the isolated browser</a>, for the fresh-profile and control-lock workflow.</li><li><a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-credential-proxy.md">Credential proxy design</a>, including the origin-pinning and SSRF threat model.</li></ul>""",
+<ul><li><a href="/guides/write-a-box-policy/">Write a box policy</a>, for filesystem, network, socket, and resource controls.</li><li><a href="/manual/#credentials">Credential handling</a> and <a href="/manual/#af_unix-sockets">Unix-socket policy</a>.</li><li><a href="/guides/watch-the-browser/">Run the browser beside the dev server inside a box</a>.</li></ul>""",
     "faq": [
         ("Does sandboxing prevent source code from reaching the model?", "No. A coding agent can include source in an allowed model request. Preventing that requires a self-hosted model or a policy with no model egress."),
         ("Are permission prompts still useful inside a box?", "They catch mistakes and are fine to keep, but they are not the security boundary. A prompt-injected agent can approve or bypass its own application-level permissions; the box policy sits outside it."),
@@ -1210,7 +1174,7 @@ LOOP = {
 <h2 id="sources">Sources and further reading</h2>
 <ul>
 <li><a href="/blog/the-environment-is-the-sandbox/">Why sandbox the entire AI agent workload</a>, for the threat model behind the workflow.</li>
-<li><a href="/blog/evidence-for-agent-work/">Evidence for agent work</a>, for what a receipt can and cannot settle.</li>
+<li><a href="/blog/evidence-for-agent-work/">Review AI-generated code with execution evidence</a>, for what a diff, receipt, and agent summary can each establish.</li>
 <li><a href="/guides/first-box/">The first-box guide</a>, for running this workflow once on a real repository.</li>
 <li><a href="/guides/watch-the-browser/">Watch the browser</a>, for dev-server loopback and human control transfer.</li>
 <li><a href="/manual/#the-loop">The manual</a>, for every flag named above.</li>
@@ -1395,8 +1359,8 @@ def build():
 - [Sandbox the entire workflow: browse, develop, review, apply](https://h5i.dev/blog/the-h5i-loop/): Put the browser, checkout, agent, tools, tests, and dev server in one box, then review the evidence before the patch crosses out.
 - [Why sandbox the entire AI agent workload](https://h5i.dev/blog/the-environment-is-the-sandbox/): Coding tasks execute dependencies, build tools, tests, servers, and pages—not only the agent process.
 - [How to choose an AI agent sandbox](https://h5i.dev/blog/choosing-agent-isolation/): Choose process, supervised, container, or microVM isolation by the failure it must prevent.
-- [A transcript is not an audit trail](https://h5i.dev/blog/evidence-for-agent-work/): Separate host-observed evidence, box-claimed records, Git state, and agent testimony.
-- [How to protect a coding agent from prompt injection](https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/): Limit what a compromised agent can read, hold, reach, and merge, so a successful injection has nowhere to go.
+- [Review AI-generated code with execution evidence](https://h5i.dev/blog/evidence-for-agent-work/): Check the diff alongside observed test results, denied actions, browser errors, and explicit gaps in collection.
+- [How to protect a coding agent from prompt injection](https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/): Restrict host files, reusable credentials, network destinations, local sockets, browser state, and writes to the parent repository.
 
 ## The browser session
 
