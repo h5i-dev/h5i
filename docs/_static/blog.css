@@ -401,7 +401,7 @@ article.post h1 {
   margin: 18px 0 0; color: var(--ink);
 }
 .post-deck {
-  margin: 20px 0 0; color: var(--dim);
+  margin: 0; padding-top: 28px; color: var(--dim);
   font-size: 16.5px; line-height: 1.7; font-weight: 400; max-width: 64ch;
 }
 .post-meta {
