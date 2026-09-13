@@ -115,12 +115,27 @@
 <tr><td>Apply</td><td>No direct write path to the parent repository</td><td>Human exports or applies the accepted patch</td></tr>
 </tbody></table></div>
 <h2 id="box">1. Start with one boundary</h2>
-<p>Create a named sandbox from the repository before opening the browser or starting the agent. The <code>browser</code> profile supplies a fresh browser identity and the control path needed to operate it inside the box.</p>
+<p>Create a named box from the repository before opening the browser or starting the agent. The <code>browser</code> profile supplies a fresh browser identity and the control path needed to operate it inside the box.</p>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">repository root</span></div>
 <div class="terminal-body"><pre><code>$ h5i box --profile browser --engine h5i --isolation process --name fix-auth
 $ h5i box status fix-auth</code></pre></div></div>
 <p>Creation freezes the base revision and resolves the policy before the workspace exists. <code>status</code> tells you which isolation tier the host actually provided, which paths are writable, how network access is scoped, and the digest that later receipts carry. If the requested policy cannot be enforced, creation fails instead of quietly substituting a weaker tier.</p>
-<h2 id="browse">2. Put the browser inside the same box</h2>
+<p>The source determines the output path. A box made from the current repository is a worktree on its own branch, so an accepted result can later be applied locally. A URL, pull request, or <code>--new</code> produces a detached box. Detached work can be exported as a patch, but <code>apply</code> and <code>rebase</code> refuse because that box has no authority over the parent repository.</p>
+<div class="tbl-wrap">
+<table class="data">
+<thead><tr><th>Tier</th><th>What confines the code</th><th>Egress scoping</th></tr></thead>
+<tbody>
+<tr><td><code>workspace</code></td><td>A separate worktree, no confinement</td><td>none</td></tr>
+<tr><td><code>process</code></td><td>Landlock, seccomp, namespaces; a supervisor and a private pid namespace</td><td>deny or host</td></tr>
+<tr><td><code>supervised</code></td><td>The above plus a private netns and a seccomp-notify gate on <code>socket()</code></td><td>L3/L4</td></tr>
+<tr><td><code>container</code></td><td>Rootless Podman on a portable image</td><td>L7 proxy</td></tr>
+<tr><td><code>microvm</code></td><td>A guest with its own kernel, booted by microsandbox</td><td>L3/L4 in the guest</td></tr>
+</tbody>
+</table>
+</div>
+<p>The example names <code>process</code> because it can hold a resident browser without a heavyweight runtime. The tier changes what “inside” proves. A process-tier browser is confined for files and environment, but its request log remains the engine's own account. A tier with egress enforcement outside the browser can add host-observed network evidence. Resident browser sessions also need a tier that can keep the engine alive; on Linux today, a microVM is the tier that provides both residence and a network boundary. Read <code>status</code> rather than inferring guarantees from the word sandbox.</p>
+<h2 id="browse">2. Put browsing inside the same box</h2>
+<p>This flag connects the two workflows:</p>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
 <div class="terminal-body"><pre><code>$ h5i browser open https://docs.rs/ --allow docs.rs --in fix-auth
 ok  browser session br_7k2xqa
@@ -130,8 +145,10 @@ $ h5i browser snapshot
 $ h5i browser click @e3
 $ h5i browser requests</code></pre></div></div>
 <p><code>--in fix-auth</code> places the browser engine and its fresh profile in the named box. Later browser verbs address the same resident session, so the page state, cookies, downloads, and requests stay with the development environment instead of appearing in a host browser profile.</p>
-<p>The browser still checks its origin policy before every request and records the decision before bytes move. Denied requests and refused redirects remain in the log. When the box tier enforces egress outside the engine, h5i can label that traffic <code>host-observed</code>. Without an outside network observer, it remains <code>engine-claimed</code>.</p>
+<p>The distinction matters in both directions. External documentation can contain instructions that influence the agent, so it should not gain more filesystem or network authority than the coding task. Later, when the browser opens <code>http://localhost:3000</code>, loopback should mean the dev server inside the box—not some unrelated service on the developer's machine.</p>
+<p>The browser still checks its origin policy before every request and records the decision before bytes move. Denied requests and refused redirects remain in the log. When the box tier enforces egress outside the engine, h5i can label that traffic <code>host-observed</code>. Without an outside network observer, it remains <code>engine-claimed</code>. Placement and evidence strength are related, but they are not the same claim.</p>
 <h2 id="work">3. Develop and verify without crossing the boundary</h2>
+<p>Enter the same named box for the coding session:</p>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">inside fix-auth</span></div>
 <div class="terminal-body"><pre><code>$ h5i box shell fix-auth
 box$ claude                          # or codex
@@ -145,14 +162,25 @@ box$ npm run dev &amp;</code></pre></div></div>
 $ h5i browser snapshot --session app
 $ h5i browser requests --session app</code></pre></div></div>
 <p>The browser and server meet on the box's loopback. The useful loop is now continuous: the agent edits, tests, starts the app, reads the page, inspects failed requests or console errors, fixes the code, and tests again. There is no host-browser detour in the middle.</p>
+<p>If the agent invokes the browser from inside an existing <code>box shell</code>, it opens the session without <code>--in</code>; it is already in the box. The flag is for a host-side command that places a browser into a box the caller stands outside. h5i refuses <code>--in</code> from inside rather than pretending to add a second boundary.</p>
 <p>Model API keys remain on the host. A reverse proxy injects the right key into outbound model requests and scopes it to the runtime, so a Claude box cannot obtain the OpenAI credential. The box gets a copy of the agent's HOME state with credential-shaped entries removed.</p>
+<p>The human can observe the page without moving the browser back onto the host:</p>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">watch</span></div>
+<div class="terminal-body"><pre><code>$ h5i box view fix-auth          # the box's page, on a loopback-only forward
+$ h5i box view fix-auth --term   # draw it in this terminal instead
+$ h5i ui                         # the whole fleet, read-only, every route a GET</code></pre></div></div>
+<p>Frames cross outward through the viewer. The browser profile, page execution, and network identity do not. If a human takes control, the control transfer is recorded and stale page handles are invalidated before the agent resumes.</p>
 <h2 id="review">4. Review the whole run, not only the diff</h2>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">export</span></div>
 <div class="terminal-body"><pre><code>$ h5i box diff fix-auth                    # against the pinned base
 $ h5i box export fix-auth --out ./review
   wrote ./review/patch.diff, ./review/report.md, ./review/receipt.json
-</code></pre></div></div>
-<p>h5i allows you to easily audit what changed. <code>report.md</code>also shows which tests ran, what the browser reached, what the boundary refused, or whether a human changed page state during the run.</p>
+
+$ $EDITOR ./review/report.md              # read this first
+$ git apply --3way ./review/patch.diff</code></pre></div></div>
+<p>The patch answers what changed. It does not answer which tests ran, what the browser reached, what the boundary refused, or whether a human changed page state during the run. <code>report.md</code> brings those records together without flattening their sources.</p>
+<p>Start with denied egress and unavailable evidence. Then read commands with their lanes and exit codes, browser requests and errors, control handovers, and finally the agent's proposal. The proposal comes last because it is testimony from the subject of the review, not an outside observation.</p>
+<p>Export is an output gate, not another agent command. The box cannot write <code>./review</code>; h5i writes the validated bundle from outside after the human asks. Reviewers can carry the patch elsewhere with <code>git apply --3way</code>, which is mandatory for detached boxes.</p>
 <h2 id="apply">5. Apply only the result you accept</h2>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">local box only</span></div>
 <div class="terminal-body"><pre><code>$ h5i box status fix-auth          # check base drift and evidence gaps
@@ -192,7 +220,7 @@ $ h5i box cache ls            # which are stale, and therefore unused</code></pr
 <h2 id="sources">Sources and further reading</h2>
 <ul>
 <li><a href="/blog/the-environment-is-the-sandbox/">Why sandbox the entire AI agent workload</a>, for the threat model behind the workflow.</li>
-<li><a href="/blog/evidence-for-agent-work/">Evidence for agent work</a>, for what a receipt can and cannot settle.</li>
+<li><a href="/blog/evidence-for-agent-work/">Review AI-generated code with execution evidence</a>, for what a diff, receipt, and agent summary can each establish.</li>
 <li><a href="/guides/first-box/">The first-box guide</a>, for running this workflow once on a real repository.</li>
 <li><a href="/guides/watch-the-browser/">Watch the browser</a>, for dev-server loopback and human control transfer.</li>
 <li><a href="/manual/#the-loop">The manual</a>, for every flag named above.</li>

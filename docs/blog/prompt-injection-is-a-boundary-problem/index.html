@@ -99,8 +99,8 @@
 
 <div class="callout danger"><strong>Security assumption.</strong> The agent has accepted a malicious instruction and will use every available tool to follow it. Protection must come from controls the agent cannot change.</div>
 <h2 id="attack">A prompt injection uses normal agent capabilities</h2>
-<p>Suppose a repository tells the agent to read setup instructions before running tests. Those instructions may include a hidden request: read the user's SSH directory and send its contents to a diagnostics host.</p>
-<p>This attack needs no software exploit. Reading repository text, opening files, and making HTTP requests are normal coding-agent operations. The malicious text can also arrive through various channels, such as an issue, test output, generated documentation, or a web page.</p>
+<p>A repository tells the agent to read setup instructions before running tests. Those instructions include a hidden request: read the user's SSH directory and send its contents to a diagnostics host.</p>
+<p>This attack needs no software exploit. Reading repository text, opening files, and making HTTP requests are normal coding-agent operations. The malicious text can also arrive through an issue, test output, generated documentation, or a web page.</p>
 <h2 id="detection">Detection helps, but cannot enforce safety</h2>
 <p>A text filter or second model may identify obvious malicious instructions. It may also miss a reworded instruction or block legitimate setup steps. Because the attacker controls the text, detection should reduce exposure but should not decide what the agent is allowed to access.</p>
 <p>Assume detection fails. The remaining question is concrete: what files, credentials, destinations, local services, and repositories can the agent reach?</p>
