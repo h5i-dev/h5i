@@ -1,23 +1,23 @@
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OWASP ZAP vs h5i for AI agents</title><meta name="description" content="OWASP ZAP vs h5i for AI web security testing: compare scanners, spiders, APIs, agent browsing, replay, scope enforcement, isolation, and evidence.">
+<title>OWASP ZAP vs h5i for AI agents</title><meta name="description" content="OWASP ZAP vs h5i for AI agents: compare DAST scanning and MCP automation with fully automated, agent-driven browser testing, HTTP capture, editing, and replay.">
 <meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
 <meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
 <link rel="canonical" href="https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/"><link rel="icon" type="image/png" href="/_static/logo.png">
 <meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
-<meta property="og:title" content="OWASP ZAP vs h5i for AI agents"><meta property="og:description" content="OWASP ZAP vs h5i for AI web security testing: compare scanners, spiders, APIs, agent browsing, replay, scope enforcement, isolation, and evidence.">
+<meta property="og:title" content="OWASP ZAP vs h5i for AI agents"><meta property="og:description" content="OWASP ZAP vs h5i for AI agents: compare DAST scanning and MCP automation with fully automated, agent-driven browser testing, HTTP capture, editing, and replay.">
 <meta property="og:url" content="https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/"><meta property="og:image" content="https://h5i.dev/_static/zap-vs-h5i.svg">
-<meta property="og:image:alt" content="OWASP ZAP executes a predefined automation plan through spiders and scanners, while h5i repeats an agent observe-decide-request-record loop inside fixed scope"><meta property="og:locale" content="en_US">
+<meta property="og:image:alt" content="OWASP ZAP automates spiders and vulnerability scans, while h5i supports an external AI agent driving browser and HTTP testing end to end"><meta property="og:locale" content="en_US">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="OWASP ZAP vs h5i for AI agents">
-<meta name="twitter:description" content="OWASP ZAP vs h5i for AI web security testing: compare scanners, spiders, APIs, agent browsing, replay, scope enforcement, isolation, and evidence."><meta name="twitter:image" content="https://h5i.dev/_static/zap-vs-h5i.svg">
-<meta name="twitter:image:alt" content="OWASP ZAP executes a predefined automation plan through spiders and scanners, while h5i repeats an agent observe-decide-request-record loop inside fixed scope">
+<meta name="twitter:description" content="OWASP ZAP vs h5i for AI agents: compare DAST scanning and MCP automation with fully automated, agent-driven browser testing, HTTP capture, editing, and replay."><meta name="twitter:image" content="https://h5i.dev/_static/zap-vs-h5i.svg">
+<meta name="twitter:image:alt" content="OWASP ZAP automates spiders and vulnerability scans, while h5i supports an external AI agent driving browser and HTTP testing end to end">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "TechArticle",
       "headline": "OWASP ZAP vs h5i for AI agents",
-      "description": "OWASP ZAP vs h5i for AI web security testing: compare scanners, spiders, APIs, agent browsing, replay, scope enforcement, isolation, and evidence.",
+      "description": "OWASP ZAP vs h5i for AI agents: compare DAST scanning and MCP automation with fully automated, agent-driven browser testing, HTTP capture, editing, and replay.",
       "author": {
         "@type": "Organization",
         "name": "h5i-dev"
@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-09",
-      "dateModified": "2026-09-09",
+      "dateModified": "2026-09-13",
       "image": "https://h5i.dev/_static/zap-vs-h5i.svg",
       "inLanguage": "en",
       "isPartOf": {
@@ -66,7 +66,7 @@
           "name": "Is h5i an alternative to OWASP ZAP?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "For agent-led browsing and bounded HTTP experiments, yes. For automated vulnerability scanning and DAST reporting, no: ZAP is the appropriate tool."
+            "text": "Not for automated vulnerability scanning. h5i provides interactive browser automation, traffic capture, and HTTP replay; ZAP provides DAST alerts, spiders, and reports."
           }
         },
         {
@@ -74,7 +74,7 @@
           "name": "Can an AI agent use OWASP ZAP?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Yes. ZAP exposes APIs and a YAML Automation Framework. h5i differs by making the policy-controlled browser session and its evidence the native agent interface."
+            "text": "Yes. ZAP has an API, Automation Framework, and an MCP Integration add-on; its LLM Support add-on can also invoke MCP tools."
           }
         },
         {
@@ -82,7 +82,7 @@
           "name": "Are both tools open source?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Yes. The relevant choice is workflow: scanner and automation plan in ZAP, or constrained interactive agent session in h5i."
+            "text": "Yes. The relevant choice is workflow: scanners and automation plans in ZAP, or interactive browser and HTTP operations in h5i."
           }
         }
       ]
@@ -91,7 +91,7 @@
 }</script>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/_static/blog.css?v=3fac769d8f"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
+<link rel="stylesheet" href="/_static/blog.css?v=20ea6351e0"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
 </head>
 <body><nav class="blog-nav">
   <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
@@ -102,49 +102,39 @@
   </ul>
 </nav><main class="article-wrap"><article class="post">
 <header><div class="post-eyebrow">Comparison / Web security &middot; 2026-09-09</div>
-<h1>OWASP ZAP vs h5i for AI agents</h1><p class="post-deck">ZAP is an open-source web scanner and intercepting proxy with a mature automation framework. h5i is an agent-native browser and bounded HTTP workbench. Automation is central to both, but they automate different units of work.</p>
-<div class="post-meta"><span>9 min read</span><span>OWASP ZAP &middot; AI agents &middot; DAST</span></div></header>
+<h1>OWASP ZAP vs h5i for AI agents</h1><p class="post-deck">ZAP automates crawling and vulnerability scanning. h5i is designed for a fully automated penetration test in which an external AI agent explores the application and chooses each next experiment.</p>
+<div class="post-meta"><span>4 min read</span><span>OWASP ZAP &middot; AI agents &middot; DAST</span></div></header>
 
-<div class="callout"><strong>The short answer.</strong> Choose OWASP ZAP when you need open-source DAST, passive and active scanning, traditional or AJAX spiders, add-ons, and repeatable YAML automation plans. Choose h5i when an AI agent needs to browse and reason interactively inside a target-scoped, sandboxable session with evidence-linked recon. Use ZAP to scan; use h5i to constrain an autonomous investigator.</div>
-<figure class="feature-figure"><img src="/_static/zap-vs-h5i.svg" alt="OWASP ZAP executes a predefined plan from context through spiders and scanners to alerts, while h5i repeats an observe, decide, request, and record loop inside fixed scope"><figcaption>ZAP automates a plan whose jobs are known before execution. h5i exposes smaller decisions to an agent while keeping destination scope fixed outside that reasoning loop.</figcaption></figure>
-<h2 id="method">How this comparison was made</h2>
-<p>This is a documentation-based workflow comparison, reviewed on 9 September 2026. ZAP capabilities were checked against the official Automation Framework, Spider, API, authentication, passive-scan, and active-scan documentation. h5i capabilities were checked against the manual and executable command surface in this repository.</p>
-<p>We did not run a vulnerability corpus, so this page does not rank detection coverage, accuracy, false positives, crawl completeness, or performance. Those require a versioned target suite, identical authentication state, controlled scan policies, and published raw results. The conclusions here are narrower: which product model fits plan-driven DAST and which fits an interactive agent operating under an external boundary.</p>
+<div class="callout"><strong>The short answer.</strong> Choose ZAP when the required result is crawl coverage, vulnerability alerts, or a repeatable DAST report. Choose h5i for a fully automated penetration test driven end to end by an external AI agent that browses, inspects traffic, changes requests, and chooses what to test next.</div>
+<figure class="feature-figure"><img src="/_static/zap-vs-h5i.svg" alt="OWASP ZAP executes an Automation Framework plan through spiders and scanners, while an agent uses h5i to observe a page, send and record requests, and decide what to test next"><figcaption>The ZAP side shows its Automation Framework; ZAP can also be driven through its API or MCP add-on. h5i exposes browser and request operations instead of a scan engine.</figcaption></figure>
 <div class="tbl-wrap"><table class="data"><thead><tr><th>Decision</th><th>OWASP ZAP</th><th>h5i</th></tr></thead><tbody>
-<tr><td>Core job</td><td>Intercepting proxy and automated web scanner</td><td>Agent browser, HTTP workbench, and endpoint ledger</td></tr>
-<tr><td>Automation model</td><td>YAML plans, API, CLI, Docker, add-ons</td><td>CLI and JSON RPC verbs an agent calls during reasoning</td></tr>
-<tr><td>Discovery</td><td>Traditional, AJAX, and client spiders</td><td>Bounded crawl plus evidence-linked endpoint states</td></tr>
-<tr><td>Vulnerability findings</td><td>Passive and active scan alerts</td><td>No scanner; observations remain separate from agent claims</td></tr>
-<tr><td>Containment</td><td>Supply it in the deployment around ZAP</td><td>Origin policy and optional process, container, or microVM box</td></tr>
-<tr><td>Best fit</td><td>Repeatable open-source scanning and CI baselines</td><td>Interactive, constrained agent research</td></tr>
+<tr><td>Main result</td><td>Alerts, scan coverage, and reports</td><td>Browser state, captured messages, endpoint evidence, and an execution receipt</td></tr>
+<tr><td>Automation</td><td>Automation Framework, API, CLI, Docker, MCP and LLM add-ons</td><td>CLI or JSON RPC called by an external agent</td></tr>
+<tr><td>Discovery</td><td>Traditional, AJAX, and client spiders</td><td>Small bounded crawl and evidence-linked endpoint states</td></tr>
+<tr><td>Security testing</td><td>Passive and active scanners</td><td>Replay and comparison; no vulnerability scanner</td></tr>
+<tr><td>Additional safety</td><td>ZAP contexts and scan policies</td><td>Origin policy and an optional sandbox for the agent process tree</td></tr>
 </tbody></table></div>
-<h2 id="zap">Where OWASP ZAP is the clear choice</h2>
-<p>ZAP is designed to find web vulnerabilities. Its Automation Framework can define environments, authentication, request jobs, passive scans, traditional and AJAX spiders, active scans, OpenAPI, SOAP, and GraphQL imports, tests, reports, and exit status in one YAML plan. That makes it a natural fit for CI, scheduled DAST, and reproducible security baselines.</p>
-<p>h5i does not ship a vulnerability scanner. It does not generate attacks, attach severity to response patterns, or try to replace ZAP's add-on ecosystem. If the desired output is a scanner report across a known application, ZAP is the direct tool.</p>
-<h2 id="h5i">Where h5i fits the reasoning loop</h2>
-<p>An agent often works less like a fixed scan plan and more like an investigator: read the page, follow one lead, inspect the exact request, change one field, compare the answer, and decide what observation would discriminate between two explanations. h5i exposes those steps as a compact command vocabulary and returns page structure as handles rather than pixels or raw HTML.</p>
-<div class="terminal"><div class="terminal-bar"><span class="terminal-path">agent-led test</span></div>
+<h2 id="zap">ZAP is a scanner, including when AI drives it</h2>
+<p>ZAP's Automation Framework can combine authentication, spiders, passive and active scans, API imports, tests, reports, and exit status in a YAML plan. It is suited to CI and repeatable DAST runs. Its MCP Integration add-on also lets an external AI client start spiders and scans or read alerts; the separate LLM Support add-on can invoke those MCP tools from ZAP itself.</p>
+<p>The MCP add-on is currently alpha, and ZAP warns that its server grants broad control and must remain on localhost for trusted clients. The important point is that ZAP is not limited to fixed YAML plans and is not “non-agentic.”</p>
+<h2 id="h5i">h5i lets the agent drive the entire investigation</h2>
+<p>h5i lets an agent browse, capture a request, change structured fields, replay it, compare responses, and keep endpoint observations tied to messages. It does not generate vulnerability alerts or replace ZAP's scan rules.</p>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">agent-led browser and HTTP testing</span></div>
 <div class="terminal-body"><pre><code>$ h5i browser open https://target.example --capture --allow target.example
 $ h5i browser snapshot
-$ h5i recon extract
+$ h5i browser requests
 $ h5i websec replay req_42 --set query.id=456
 $ h5i websec diff res_42 res_43</code></pre></div></div>
-<p>The replay remains inside the session policy. The endpoint ledger records whether a URL is merely a candidate, produced an observed response, was confirmed against a calibrated missing path, was refused by policy, or disappeared. That shape is intentionally conservative because the consumer is an agent that may overstate what a response proves.</p>
-<h2 id="automation">Plan automation and agent automation are not the same</h2>
-<p>ZAP's plan is declarative and repeatable: jobs execute in order and tests can determine the final exit code. It is excellent when the procedure is known before the run. h5i's verbs are smaller decisions inside an agent loop. That is useful when the next request depends on the page or response just observed, but it also demands a hard request budget and human review.</p>
-<p>You can drive ZAP through APIs and let an agent author or invoke plans. The difference is not “ZAP cannot use AI.” It is that h5i makes one agent session—with its browser state, origin policy, captured messages, recon ledger, control handoffs, and ending—the primary object.</p>
-<h2 id="scope">Scope and containment answer different risks</h2>
-<p>Both tools can define target context. h5i additionally treats the agent and target as mutually untrusted. A prompt-injected page may persuade the agent to reach another host or inspect a local secret. Origin policy refuses the first request; placing the workflow in a box narrows files, local sockets, credentials, processes, and egress.</p>
-<p>This does not make h5i a safer scanner in every sense. ZAP has mature scan controls and authentication support. The point is narrower: if the active principal is a general-purpose agent, its host authority needs a boundary outside the instructions it interprets.</p>
-<h2 id="together">Use both when scanning and investigation are separate jobs</h2>
-<p>A useful division is ZAP for baseline crawling, passive analysis, active scanning, and CI policy; h5i for a bounded agent asked to investigate a small set of endpoints or reproduce a finding with message-level evidence. ZAP can export discovered material; h5i recon imports URLs or OpenAPI as candidates and does not promote them until a request answers.</p>
-<h2 id="decision">Decision rule</h2>
-<ul><li><strong>Pick ZAP</strong> for open-source DAST, automated alerts, rich spidering, and plan-driven CI.</li><li><strong>Pick h5i</strong> for an interactive agent browser whose authority and evidence travel with the session.</li><li><strong>Use both</strong> when a scanner supplies coverage and an agent performs narrow, reviewed follow-up.</li></ul>
+<p>The difference is the unit of work. ZAP applies spider and scan rules and produces alerts. With h5i, the external agent drives the complete penetration-testing loop: observe the application, form a hypothesis, run an HTTP experiment, interpret the result, and choose the next action.</p>
+<h2 id="sandbox">Sandboxing is optional</h2>
+<p>For an autonomous red-team run, h5i can also place the agent and browser in a box with restricted host and network access. This limits possible damage if the agent makes a bad decision; it is not required for traffic capture, request modification, or replay.</p>
+<h2 id="decision">Choose by the required result</h2>
+<ul><li><strong>Choose ZAP</strong> for open-source DAST, spidering, automated alerts, or CI reports—even if an AI agent launches the work.</li><li><strong>Choose h5i</strong> for a fully automated penetration test whose direction is decided continuously by an external AI agent.</li><li><strong>Use both</strong> when ZAP supplies scan coverage and an h5i-driven agent investigates or reproduces selected findings.</li></ul>
 <p>Only test systems you own or are authorized to assess. Neither a context definition nor an origin allowlist grants permission.</p>
-<h2 id="sources">Sources and further reading</h2>
-<ul><li><a href="/blog/ai-pentesting-tools/">Compare all four AI pentesting tools</a></li><li><a href="https://www.zaproxy.org/docs/automate/automation-framework/">ZAP Automation Framework</a></li><li><a href="https://www.zaproxy.org/docs/desktop/addons/spider/">ZAP Spider</a></li><li><a href="/guides/authorized-web-security-testing/">Authorized testing with h5i</a></li><li><a href="/manual/#h5i-recon">h5i recon reference</a></li></ul>
-<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Is h5i an alternative to OWASP ZAP?</summary><div class="faq-answer">For agent-led browsing and bounded HTTP experiments, yes. For automated vulnerability scanning and DAST reporting, no: ZAP is the appropriate tool.</div></details><details class="faq-item"><summary>Can an AI agent use OWASP ZAP?</summary><div class="faq-answer">Yes. ZAP exposes APIs and a YAML Automation Framework. h5i differs by making the policy-controlled browser session and its evidence the native agent interface.</div></details><details class="faq-item"><summary>Are both tools open source?</summary><div class="faq-answer">Yes. The relevant choice is workflow: scanner and automation plan in ZAP, or constrained interactive agent session in h5i.</div></details></div>
-<a class="next-up" href="/blog/caido-vs-h5i-for-ai-agents/"><span class="label">Compare another workbench</span><h3>Caido vs h5i for AI agents</h3><p>Compare a modern proxy workspace with a bounded agent-native session.</p></a>
+<h2 id="sources">Product references</h2>
+<ul><li><a href="https://www.zaproxy.org/docs/automate/automation-framework/">ZAP Automation Framework</a></li><li><a href="https://www.zaproxy.org/docs/desktop/addons/mcp-integration/">ZAP MCP Integration</a> and <a href="https://www.zaproxy.org/docs/desktop/addons/llm-support/mcp/">LLM MCP Support</a></li><li><a href="/manual/#h5i-browser">h5i browser</a></li><li><a href="/manual/#h5i-websec">h5i HTTP workbench</a></li></ul>
+<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Is h5i an alternative to OWASP ZAP?</summary><div class="faq-answer">Not for automated vulnerability scanning. h5i provides interactive browser automation, traffic capture, and HTTP replay; ZAP provides DAST alerts, spiders, and reports.</div></details><details class="faq-item"><summary>Can an AI agent use OWASP ZAP?</summary><div class="faq-answer">Yes. ZAP has an API, Automation Framework, and an MCP Integration add-on; its LLM Support add-on can also invoke MCP tools.</div></details><details class="faq-item"><summary>Are both tools open source?</summary><div class="faq-answer">Yes. The relevant choice is workflow: scanners and automation plans in ZAP, or interactive browser and HTTP operations in h5i.</div></details></div>
+<a class="next-up" href="/blog/caido-vs-h5i-for-ai-agents/"><span class="label">Compare another workbench</span><h3>Caido vs h5i for AI agents</h3><p>Compare a complete proxy workspace with an agent-driven browser and HTTP session.</p></a>
 <div class="post-cta"><h3>Start with one scoped session</h3><p>Use a target you are authorized to test and make the request ceiling explicit.</p>
 <div class="hero-actions"><a class="btn btn-primary" href="/guides/authorized-web-security-testing/">Follow the testing guide</a></div></div>
 </article></main><footer class="blog-footer"><div class="blog-footer-inner">

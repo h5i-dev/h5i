@@ -14,8 +14,19 @@ use crate::browser_session as bs;
 /// cap: this runs every few seconds, for every session.
 pub const MAX_LEDGER_BYTES: u64 = 4 * 1024 * 1024;
 
-/// The most receipts one detail view returns.
-pub const MAX_REQUESTS_SHOWN: usize = 200;
+/// The most fetches one detail view returns, newest last. Each is two log
+/// lines, so the wire carries twice this many records.
+pub const MAX_REQUESTS_SHOWN: usize = 1000;
+
+/// The most verbs one detail view returns, newest last.
+pub const MAX_ACTIONS_SHOWN: usize = 500;
+
+/// How much of a findings log the console folds. Findings are short; a log
+/// past this is not one a screen can show anyway.
+pub const MAX_FINDINGS_BYTES: u64 = 4 * 1024 * 1024;
+
+/// How much of an action log the console reads on one poll.
+pub const MAX_ACTIONS_BYTES: u64 = 8 * 1024 * 1024;
 
 /// The most endpoints one detail view returns.
 pub const MAX_ENDPOINTS_SHOWN: usize = 500;
@@ -69,6 +80,10 @@ pub struct SessionSignals {
     pub ledger: Option<LedgerCounts>,
     /// Recon runs that spent requests, newest last.
     pub jobs: Vec<JobRow>,
+    /// Findings the agent wrote beside the store, folded by id.
+    pub findings: usize,
+    /// Verbs the agent asked for, as the action log counts them.
+    pub verbs: usize,
 }
 
 /// A ledger, as a fleet row needs it.
@@ -326,6 +341,321 @@ pub fn captured(session_dir: &Path) -> Option<usize> {
     )
 }
 
+/// One verb the agent asked for, with its result folded onto it.
+///
+/// The action log writes two lines per verb: `request` before it runs and
+/// `result` after. A reader wants one row, and the receipts it spent are the
+/// join to the request log: a proxy sees a GET, this row says which verb
+/// caused it.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ActionRow {
+    pub seq: u64,
+    pub at: String,
+    pub verb: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// `None` while the verb has not reported back.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<String>,
+    /// Receipt sequence numbers written while this verb ran.
+    pub requests: Vec<u64>,
+}
+
+/// The action log, folded into one row per verb, oldest first. Capped to the
+/// newest [`MAX_ACTIONS_SHOWN`].
+pub fn actions(session_dir: &Path) -> Vec<ActionRow> {
+    let path = session_dir.join(bs::ACTIONS_FILE);
+    let Ok(bytes) = std::fs::read(&path) else {
+        return Vec::new();
+    };
+    // The tail is the recent half. Reading from the end keeps a long session's
+    // newest verbs rather than its first ones.
+    let start = bytes.len().saturating_sub(MAX_ACTIONS_BYTES as usize);
+    let text = String::from_utf8_lossy(&bytes[start..]);
+    let mut rows: Vec<ActionRow> = Vec::new();
+    let mut index: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    for line in text.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(seq) = value.get("seq").and_then(|v| v.as_u64()) else {
+            continue;
+        };
+        let text_of = |name: &str| {
+            value
+                .get(name)
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        };
+        let phase = text_of("phase").unwrap_or_default();
+        let at = text_of("at").unwrap_or_default();
+        let slot = match index.get(&seq) {
+            Some(&i) => i,
+            None => {
+                rows.push(ActionRow {
+                    seq,
+                    at: at.clone(),
+                    verb: text_of("verb").unwrap_or_default(),
+                    ..ActionRow::default()
+                });
+                index.insert(seq, rows.len() - 1);
+                rows.len() - 1
+            }
+        };
+        let row = &mut rows[slot];
+        if let Some(target) = text_of("target") {
+            row.target = Some(target);
+        }
+        if let Some(url) = text_of("url") {
+            row.url = Some(url);
+        }
+        if phase == "result" {
+            row.ok = value.get("ok").and_then(|v| v.as_bool());
+            row.error = text_of("error");
+            row.ended_at = Some(at);
+            if let Some(reqs) = value.get("requests").and_then(|v| v.as_array()) {
+                row.requests = reqs.iter().filter_map(|r| r.as_u64()).collect();
+            }
+        }
+    }
+    let drop = rows.len().saturating_sub(MAX_ACTIONS_SHOWN);
+    rows.drain(..drop);
+    rows
+}
+
+/// One note on a finding, and when it was written.
+#[derive(Debug, Clone, Serialize)]
+pub struct FindingNote {
+    pub at: String,
+    pub text: String,
+}
+
+/// A finding as the agent left it: the same fold `h5i websec finding` makes,
+/// so the console and the CLI agree on what a finding currently says.
+#[derive(Debug, Clone, Serialize)]
+pub struct FindingRow {
+    pub id: String,
+    pub title: String,
+    /// The agent's own word for where this stands. Free text on purpose.
+    pub state: String,
+    /// Message ids the finding rests on. Every one names a stored message.
+    pub evidence: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repro: Option<String>,
+    pub notes: Vec<FindingNote>,
+    pub created: String,
+    pub updated: String,
+}
+
+/// The findings log beside a session, folded by id, oldest first.
+pub fn findings(session_dir: &Path) -> Vec<FindingRow> {
+    let path = session_dir.join("findings").join("findings.jsonl");
+    let Ok(bytes) = std::fs::read(&path) else {
+        return Vec::new();
+    };
+    let head = &bytes[..bytes.len().min(MAX_FINDINGS_BYTES as usize)];
+    let text = String::from_utf8_lossy(head);
+    fold_findings(text.lines())
+}
+
+/// Titles and states replace; notes and evidence accumulate. A title is a
+/// statement of what the finding is, so two of them is one wrong; a note is
+/// something learned, which does not stop being true.
+pub fn fold_findings<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<FindingRow> {
+    let mut rows: Vec<FindingRow> = Vec::new();
+    for line in lines {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let text_of = |name: &str| {
+            value
+                .get(name)
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        };
+        let Some(id) = text_of("id") else {
+            continue;
+        };
+        let at = text_of("at").unwrap_or_default();
+        let slot = match rows.iter().position(|r| r.id == id) {
+            Some(i) => i,
+            None => {
+                rows.push(FindingRow {
+                    id,
+                    title: String::new(),
+                    state: String::new(),
+                    evidence: Vec::new(),
+                    repro: None,
+                    notes: Vec::new(),
+                    created: at.clone(),
+                    updated: at.clone(),
+                });
+                rows.len() - 1
+            }
+        };
+        let row = &mut rows[slot];
+        if let Some(title) = text_of("title") {
+            row.title = title;
+        }
+        if let Some(state) = text_of("state") {
+            row.state = state;
+        }
+        if let Some(repro) = text_of("repro") {
+            row.repro = Some(repro);
+        }
+        if let Some(note) = text_of("note") {
+            row.notes.push(FindingNote {
+                at: at.clone(),
+                text: note,
+            });
+        }
+        if let Some(evidence) = value.get("evidence").and_then(|v| v.as_array()) {
+            for item in evidence.iter().filter_map(|e| e.as_str()) {
+                if !row.evidence.iter().any(|have| have == item) {
+                    row.evidence.push(item.to_string());
+                }
+            }
+        }
+        row.updated = at;
+    }
+    rows
+}
+
+/// One path under one origin, as the receipts reached it.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SiteEndpoint {
+    pub path: String,
+    pub methods: Vec<String>,
+    pub statuses: Vec<u16>,
+    /// Query parameter names seen on this path, in first-seen order.
+    pub params: Vec<String>,
+    /// Fetches that were allowed.
+    pub hits: usize,
+    /// Fetches policy refused before the wire.
+    pub refused: usize,
+    /// Reached by a navigation at least once, rather than only pulled in.
+    pub navigated: bool,
+    /// The newest receipt on this path, for a reader who wants the row.
+    pub last_seq: u64,
+}
+
+/// One origin the session touched, and what under it.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SiteOrigin {
+    pub origin: String,
+    pub hits: usize,
+    pub refused: usize,
+    pub endpoints: Vec<SiteEndpoint>,
+}
+
+/// The most paths one origin keeps on the map. Past this the fold counts and
+/// says so through `hits` rather than growing the screen without bound.
+pub const MAX_SITEMAP_PATHS: usize = 2000;
+
+/// The request log folded into origins and paths: what this session reached,
+/// and what it was refused. The same shape `h5i websec sitemap` prints, from
+/// the same receipts, so the two never disagree about where a session went.
+pub fn sitemap(records: &[serde_json::Value]) -> Vec<SiteOrigin> {
+    let mut origins: Vec<SiteOrigin> = Vec::new();
+    let mut paths = 0usize;
+    for record in records {
+        let Some(url) = record.get("url").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Ok(parsed) = url::Url::parse(url) else {
+            continue;
+        };
+        let Some(host) = parsed.host_str() else {
+            continue;
+        };
+        let origin = match parsed.port() {
+            Some(port) => format!("{}://{host}:{port}", parsed.scheme()),
+            None => format!("{}://{host}", parsed.scheme()),
+        };
+        let phase = record.get("phase").and_then(|v| v.as_str()).unwrap_or("");
+        let allowed = record.get("allowed").and_then(|v| v.as_bool()).unwrap_or(true);
+        let seq = record.get("seq").and_then(|v| v.as_u64()).unwrap_or(0);
+        let o = match origins.iter().position(|o| o.origin == origin) {
+            Some(i) => i,
+            None => {
+                origins.push(SiteOrigin {
+                    origin,
+                    ..SiteOrigin::default()
+                });
+                origins.len() - 1
+            }
+        };
+        let origin = &mut origins[o];
+        let path = parsed.path().to_string();
+        let e = match origin.endpoints.iter().position(|e| e.path == path) {
+            Some(i) => i,
+            None => {
+                if paths >= MAX_SITEMAP_PATHS {
+                    if phase == "request" {
+                        if allowed {
+                            origin.hits += 1;
+                        } else {
+                            origin.refused += 1;
+                        }
+                    }
+                    continue;
+                }
+                paths += 1;
+                origin.endpoints.push(SiteEndpoint {
+                    path,
+                    ..SiteEndpoint::default()
+                });
+                origin.endpoints.len() - 1
+            }
+        };
+        let endpoint = &mut origin.endpoints[e];
+        endpoint.last_seq = endpoint.last_seq.max(seq);
+        if let Some(method) = record.get("method").and_then(|v| v.as_str())
+            && !endpoint.methods.iter().any(|m| m == method)
+        {
+            endpoint.methods.push(method.to_string());
+        }
+        for (name, _) in parsed.query_pairs() {
+            if !endpoint.params.iter().any(|p| *p == name) && endpoint.params.len() < 64 {
+                endpoint.params.push(name.into_owned());
+            }
+        }
+        if record.get("initiator").and_then(|v| v.as_str()) == Some("navigation") {
+            endpoint.navigated = true;
+        }
+        match phase {
+            "request" => {
+                if allowed {
+                    endpoint.hits += 1;
+                    origin.hits += 1;
+                } else {
+                    endpoint.refused += 1;
+                    origin.refused += 1;
+                }
+            }
+            "response" => {
+                if let Some(status) = record.get("status").and_then(|v| v.as_u64())
+                    && let Ok(status) = u16::try_from(status)
+                    && !endpoint.statuses.contains(&status)
+                {
+                    endpoint.statuses.push(status);
+                    endpoint.statuses.sort_unstable();
+                }
+            }
+            _ => {}
+        }
+    }
+    // Busiest origins first; within one, paths in the order they were reached.
+    origins.sort_by_key(|o| std::cmp::Reverse(o.hits + o.refused));
+    origins
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,5 +802,77 @@ mod tests {
         assert_eq!(signals.denied, 1);
         assert_eq!(signals.origins, vec!["https://a.test", "https://b.test"]);
         assert_eq!(signals.last_request_at.as_deref(), Some("2026-09-07T10:00:02Z"));
+    }
+
+    #[test]
+    fn verbs_fold_onto_one_row_and_keep_the_receipts_they_spent() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(bs::ACTIONS_FILE),
+            concat!(
+                r#"{"seq":0,"at":"2026-09-11T00:00:00Z","phase":"request","verb":"open","url":"https://a.test/"}"#,
+                "\n",
+                r#"{"seq":0,"at":"2026-09-11T00:00:01Z","phase":"result","verb":"open","ok":true,"requests":[0,1,2]}"#,
+                "\n",
+                r#"{"seq":1,"at":"2026-09-11T00:00:02Z","phase":"request","verb":"click","target":"@e3"}"#,
+                "\n",
+                "not json\n",
+            ),
+        )
+        .unwrap();
+        let rows = actions(dir.path());
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].verb, "open");
+        assert_eq!(rows[0].ok, Some(true));
+        assert_eq!(rows[0].requests, vec![0, 1, 2]);
+        assert_eq!(rows[0].ended_at.as_deref(), Some("2026-09-11T00:00:01Z"));
+        assert_eq!(rows[1].target.as_deref(), Some("@e3"));
+        assert_eq!(rows[1].ok, None, "a verb that has not reported back is in flight");
+    }
+
+    #[test]
+    fn findings_fold_like_the_workbench_does() {
+        let lines = [
+            r#"{"id":"finding_1","at":"t1","title":"idor","state":"suspected","note":"first","evidence":["req_3"]}"#,
+            r#"{"id":"finding_1","at":"t2","state":"confirmed","note":"second","evidence":["req_3","req_9"]}"#,
+            r#"{"id":"finding_2","at":"t3","title":"other"}"#,
+        ];
+        let rows = fold_findings(lines.iter().copied());
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].title, "idor");
+        assert_eq!(rows[0].state, "confirmed", "the newest state replaces");
+        assert_eq!(rows[0].notes.len(), 2, "notes accumulate");
+        assert_eq!(rows[0].evidence, vec!["req_3", "req_9"], "evidence is a set");
+        assert_eq!(rows[0].created, "t1");
+        assert_eq!(rows[0].updated, "t2");
+        assert_eq!(rows[1].id, "finding_2");
+    }
+
+    #[test]
+    fn the_sitemap_keeps_refusals_apart_from_hits() {
+        let records = vec![
+            json!({"seq":0,"phase":"request","initiator":"navigation","method":"GET","url":"https://a.test/x?id=1","allowed":true}),
+            json!({"seq":0,"phase":"response","initiator":"navigation","method":"GET","url":"https://a.test/x?id=1","allowed":true,"status":200}),
+            json!({"seq":1,"phase":"request","initiator":"subresource","method":"POST","url":"https://a.test/x?id=2&q=z","allowed":true}),
+            json!({"seq":1,"phase":"response","initiator":"subresource","method":"POST","url":"https://a.test/x?id=2&q=z","allowed":true,"status":404}),
+            json!({"seq":2,"phase":"request","initiator":"subresource","method":"GET","url":"https://cdn.test/f.woff","allowed":false,"denied_reason":"off scope"}),
+            json!({"seq":2,"phase":"response","initiator":"subresource","method":"GET","url":"https://cdn.test/f.woff","allowed":false}),
+        ];
+        let map = sitemap(&records);
+        assert_eq!(map.len(), 2);
+        let a = &map[0];
+        assert_eq!(a.origin, "https://a.test");
+        assert_eq!(a.hits, 2);
+        assert_eq!(a.endpoints.len(), 1);
+        let x = &a.endpoints[0];
+        assert_eq!(x.methods, vec!["GET", "POST"]);
+        assert_eq!(x.statuses, vec![200, 404]);
+        assert_eq!(x.params, vec!["id", "q"]);
+        assert!(x.navigated);
+        assert_eq!(x.last_seq, 1);
+        let cdn = &map[1];
+        assert_eq!(cdn.hits, 0);
+        assert_eq!(cdn.refused, 1);
+        assert_eq!(cdn.endpoints[0].refused, 1);
     }
 }

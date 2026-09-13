@@ -13,12 +13,12 @@ export default defineConfig({
   base: "/",
   server: {
     port: 5173,
-    // `npm run dev` proxies the API to a running `h5i ui`, so the frontend can
-    // be iterated on against real boxes. The dev server has no token, so start
+    // `npm run dev` proxies the API to a running `h5i ui` (H5I_UI_PORT picks
+    // the port), so the frontend can be iterated on against real boxes. The dev server has no token, so start
     // the console with the same one the browser already holds — or just reload
     // the printed URL once and let the cookie carry it.
     proxy: {
-      "/api": "http://127.0.0.1:8765",
+      "/api": `http://127.0.0.1:${process.env.H5I_UI_PORT ?? "8765"}`,
     },
   },
   build: {
