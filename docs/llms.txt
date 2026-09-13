@@ -22,9 +22,9 @@
 ## Tool comparisons
 
 - [AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?](https://h5i.dev/blog/ai-pentesting-tools/): Four tools compared through AI-assisted manual testing, AI-authored scan automation, and agent-led investigation.
-- [Burp Suite vs h5i for AI agents](https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/): Proxy depth and a mature human interface against an agent-native session with enforced scope.
-- [OWASP ZAP vs h5i for AI agents](https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/): Automated scanning and spiders against bounded browsing, recon, and replay.
-- [Caido vs h5i for AI agents](https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/): Proxy history, Replay, Automate, and HTTPQL against a policy-controlled session record.
+- [Burp Suite vs h5i for AI agents](https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/): A complete web-testing platform versus fully automated penetration testing driven by an external AI agent.
+- [OWASP ZAP vs h5i for AI agents](https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/): Automated DAST and scanner findings versus an AI agent that directs the complete testing loop.
+- [Caido vs h5i for AI agents](https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/): A full proxy workspace and agent API versus an external AI agent driving the investigation end to end.
 
 ## Design essays
 
