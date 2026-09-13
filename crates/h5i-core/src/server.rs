@@ -79,6 +79,9 @@ struct SessionStamp {
     control: (u64, Option<std::time::SystemTime>),
     jobs: Option<std::time::SystemTime>,
     messages: Option<std::time::SystemTime>,
+    /// The verb log and the findings log: both are counted on the row.
+    actions: (u64, Option<std::time::SystemTime>),
+    findings: (u64, Option<std::time::SystemTime>),
 }
 
 fn stamp_of(path: &std::path::Path) -> (u64, Option<std::time::SystemTime>) {
@@ -102,6 +105,8 @@ impl SessionStamp {
             control: stamp_of(&dir.join(crate::control::CONTROL_JSON)),
             jobs: touched(&dir.join("recon").join("jobs")),
             messages: touched(&dir.join(bs::MESSAGES_DIR)),
+            actions: stamp_of(&dir.join(bs::ACTIONS_FILE)),
+            findings: stamp_of(&dir.join("findings").join("findings.jsonl")),
         }
     }
 }
@@ -813,11 +818,39 @@ pub struct SessionRow {
     pub url: String,
     pub started_at: String,
     pub ended_at: Option<String>,
+    /// One line on how it ended, when the record has one.
+    pub end_reason: Option<String>,
+    /// `h5i-light` or `chromium`: what the request lane is worth follows.
+    pub engine: String,
+    /// What holds the engine process: `process` or `none`.
+    pub confinement: String,
+    /// The box h5i was standing in when it opened this session, if any.
+    pub enclosing_box: Option<String>,
+    /// Whether pages here may send credentials cross-origin.
+    pub permissive_cors: bool,
+    pub policy_digest: String,
+    /// The session whose storage seeded this one, if any.
+    pub restored_from: Option<String>,
+    pub expires_at: Option<String>,
     /// Whether a human holds the control lock.
     pub held_by_human: bool,
     #[serde(flatten)]
     pub signals: crate::session_view::SessionSignals,
     pub attention: crate::session_view::Attention,
+}
+
+/// One record in the registry, for every session the poll did not read.
+///
+/// Enough to find a session by name or target and ask for it; nothing that
+/// needs a file beyond the record itself, which `bs::list` has already read.
+#[derive(Serialize, Clone)]
+pub struct SessionStub {
+    pub id: String,
+    pub name: Option<String>,
+    pub state: String,
+    pub url: String,
+    pub started_at: String,
+    pub ended_at: Option<String>,
 }
 
 /// Everything one session's own files say, for the detail pane.
@@ -828,8 +861,17 @@ pub struct SessionDetail {
     /// The newest receipts, oldest first, both phases as the log holds them.
     /// Named apart from the row's `requests` count, which is flattened in.
     pub requests_log: Vec<Value>,
+    /// Fetches in the whole log, so a capped view can say what it left out.
+    pub requests_total: usize,
     /// The recon ledger, folded.
     pub endpoints: Vec<h5i_wire::ledger::Endpoint>,
+    /// The verbs the agent asked for, each with the receipts it spent.
+    pub actions: Vec<crate::session_view::ActionRow>,
+    /// What the agent concluded, folded the way `h5i websec finding` folds it.
+    /// Named apart from the row's `findings` count, which is flattened in.
+    pub findings_list: Vec<crate::session_view::FindingRow>,
+    /// The whole log folded into origins and paths, refusals kept apart.
+    pub sitemap: Vec<crate::session_view::SiteOrigin>,
 }
 
 /// A serialisable enum as the one word it serialises to.
@@ -861,6 +903,8 @@ fn session_row(h5i_root: &std::path::Path, session: &bs::Session) -> (SessionRow
     signals.reclaimed = bs::reclaimed(h5i_root, &session.id);
     signals.ledger = crate::session_view::ledger_counts(&dir);
     signals.jobs = crate::session_view::jobs(&dir);
+    signals.findings = crate::session_view::findings(&dir).len();
+    signals.verbs = crate::session_view::actions(&dir).len();
 
     let held_by_human = crate::control::read(&dir).holder == crate::control::Holder::Human;
     // A live record whose control file is gone is the one case this cannot
@@ -892,6 +936,14 @@ fn session_row(h5i_root: &std::path::Path, session: &bs::Session) -> (SessionRow
         url: session.url.clone(),
         started_at: session.started_at.clone(),
         ended_at: session.ended_at.clone(),
+        end_reason: session.end_reason.clone(),
+        engine: as_word(&session.engine),
+        confinement: session.confinement.as_str().to_string(),
+        enclosing_box: session.enclosing_box.clone(),
+        permissive_cors: session.permissive_cors,
+        policy_digest: session.policy_digest.clone(),
+        restored_from: session.restored_from.clone(),
+        expires_at: session.expires_at.clone(),
         held_by_human,
         signals,
         attention,
@@ -915,6 +967,9 @@ pub struct SessionFleet {
     pub total: usize,
     /// Sessions still running, whether or not they were read.
     pub live: usize,
+    /// Every record, newest first, so a reader can search the whole registry
+    /// and open a session the poll did not fold.
+    pub index: Vec<SessionStub>,
 }
 
 /// `GET /api/sessions`: browser sessions, the ones wanting a person first.
@@ -937,6 +992,17 @@ async fn api_sessions(State(state): State<Arc<AppState>>) -> Json<SessionFleet> 
                 .cmp(&a.state.is_live())
                 .then(b.started_at.cmp(&a.started_at))
         });
+        let index: Vec<SessionStub> = records
+            .iter()
+            .map(|s| SessionStub {
+                id: s.id.clone(),
+                name: s.name.clone(),
+                state: as_word(&s.state),
+                url: s.url.clone(),
+                started_at: s.started_at.clone(),
+                ended_at: s.ended_at.clone(),
+            })
+            .collect();
         records.truncate(MAX_SESSIONS_READ);
 
         let mut sessions: Vec<SessionRow> = records
@@ -974,6 +1040,7 @@ async fn api_sessions(State(state): State<Arc<AppState>>) -> Json<SessionFleet> 
             sessions,
             total,
             live,
+            index,
         })
     })
     .await;
@@ -981,6 +1048,7 @@ async fn api_sessions(State(state): State<Arc<AppState>>) -> Json<SessionFleet> 
         sessions: Vec::new(),
         total: 0,
         live: 0,
+        index: Vec::new(),
     }))
 }
 
@@ -1010,10 +1078,18 @@ async fn api_session(Path(id): Path<String>) -> Result<Json<SessionDetail>, Stat
         let start = records
             .len()
             .saturating_sub(crate::session_view::MAX_REQUESTS_SHOWN * 2);
+        let requests_total = row.signals.requests;
         Some(SessionDetail {
             row,
+            // The map folds the whole log before the view is cut to its cap,
+            // so "where did this session go" is never an answer about the
+            // newest thousand fetches only.
+            sitemap: crate::session_view::sitemap(&records),
             requests_log: records[start..].to_vec(),
+            requests_total,
             endpoints: crate::session_view::ledger_endpoints(&dir),
+            actions: crate::session_view::actions(&dir),
+            findings_list: crate::session_view::findings(&dir),
         })
     })
     .await;

@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "h5i box console — the read-only fleet dashboard served by `h5i ui`",
+  "description": "h5i console: the read-only screen over sessions and boxes served by `h5i ui`",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -12,9 +12,6 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@blueprintjs/core": "^5.10.5",
-    "@blueprintjs/icons": "^5.10.0",
-    "normalize.css": "^8.0.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
