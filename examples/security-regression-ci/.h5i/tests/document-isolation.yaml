@@ -1,0 +1,38 @@
+version: h5i.test/v1
+id: document-isolation
+name: Alice cannot read Bob's document
+
+actors:
+  alice: {}
+
+requests:
+  login:
+    method: POST
+    path: /api/session
+    headers:
+      content-type: application/json
+    json:
+      username: alice
+      password: "${env.H5I_ALICE_PASSWORD}"
+
+  other-users-document:
+    method: GET
+    path: "/api/documents/${env.H5I_OTHER_DOCUMENT_ID}"
+    headers:
+      accept: application/json
+
+flow:
+  - send: login
+    as: alice
+
+  - send: other-users-document
+    as: alice
+    save: attack
+    covers:
+      operation: getDocument
+      mutation: identifier-substitution
+
+oracle:
+  command: [../oracles/document-isolation.sh]
+  inputs: [attack]
+  timeout_seconds: 10

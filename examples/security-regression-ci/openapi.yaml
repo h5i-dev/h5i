@@ -1,0 +1,27 @@
+openapi: 3.0.0
+info:
+  title: Example document API
+  version: 1.0.0
+paths:
+  /api/documents/{documentId}:
+    get:
+      operationId: getDocument
+      parameters:
+        - in: path
+          name: documentId
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Document
+        "403":
+          description: Forbidden
+        "404":
+          description: Not found
+  /api/profile:
+    get:
+      operationId: getProfile
+      responses:
+        "200":
+          description: Current user profile

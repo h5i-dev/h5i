@@ -1,0 +1,24 @@
+[package]
+name = "h5i-test"
+version = "0.1.0"
+edition = "2024"
+description = "h5i test: replay portable attack flows and hand their evidence to external oracles."
+
+[[bin]]
+name = "h5i-test"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.5.60", features = ["derive"] }
+h5i-core = { path = "../h5i-core", default-features = false }
+h5i-wire = { path = "../h5i-wire" }
+regex = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+url = "2.5"
+wait-timeout = "0.2"
+
+[dev-dependencies]
+tempfile = "3.8"

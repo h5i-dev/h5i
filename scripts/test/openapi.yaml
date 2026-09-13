@@ -1,0 +1,11 @@
+openapi: 3.0.0
+info:
+  title: h5i test fixture
+  version: 1.0.0
+paths:
+  /doc:
+    get:
+      operationId: getDocument
+  /profile:
+    get:
+      operationId: getProfile

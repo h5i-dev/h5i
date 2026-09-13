@@ -1,0 +1,29 @@
+version: h5i.test/v1
+id: doc-isolation
+name: A user cannot read another user's document
+
+actors:
+  alice: {}
+
+requests:
+  login:
+    path: /login?who=alice
+  document:
+    path: /doc?id=2
+    headers:
+      accept: application/json
+
+flow:
+  - send: login
+    as: alice
+  - send: document
+    as: alice
+    save: attack
+    covers:
+      operation: getDocument
+      mutation: identifier-substitution
+
+oracle:
+  command: [../oracle-doc.sh]
+  inputs: [attack]
+  timeout_seconds: 10
