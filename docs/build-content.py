@@ -42,7 +42,7 @@ PAGE_HISTORY = {
     "pitch/": ("2026-09-10", "57ee2a579d40f90e"),
     "demo/": ("2026-09-12", "729de49b887b5c3f"),
     "guides/": ("2026-09-09", "0e4d298584ce7b5e"),
-    "blog/": ("2026-09-13", "60544d025fd299f3"),
+    "blog/": ("2026-09-13", "7ab0f165d3344232"),
     "guides/drive-a-browser-session/": ("2026-09-02", "148a857cf6c0d8e7"),
     "guides/first-box/": ("2026-08-30", "c52289c78be574db"),
     "guides/review-a-pull-request/": ("2026-08-30", "0bbf47c079810ec7"),
@@ -55,9 +55,9 @@ PAGE_HISTORY = {
     "blog/evidence-for-agent-work/": ("2026-09-13", "3a266f6d55c32baa"),
     "blog/prompt-injection-is-a-boundary-problem/": ("2026-09-13", "b15f2e7954362847"),
     "blog/ai-pentesting-tools/": ("2026-09-12", "812fe92f28bdb3ec"),
-    "blog/burp-suite-vs-h5i-for-ai-agents/": ("2026-09-13", "da0bad7784f2eea8"),
-    "blog/owasp-zap-vs-h5i-for-ai-agents/": ("2026-09-13", "8a78927b2d0a3106"),
-    "blog/caido-vs-h5i-for-ai-agents/": ("2026-09-13", "a4321659bad041c3"),
+    "blog/burp-suite-vs-h5i-for-ai-agents/": ("2026-09-13", "7d57b8ebd6dc9467"),
+    "blog/owasp-zap-vs-h5i-for-ai-agents/": ("2026-09-13", "6545e081e6a97a07"),
+    "blog/caido-vs-h5i-for-ai-agents/": ("2026-09-13", "10110eb76f38b20e"),
 }
 
 # The pages this script does not write. They are fingerprinted off disk.
@@ -919,12 +919,12 @@ BURP_COMPARISON = {
     "section": "blog", "slug": "burp-suite-vs-h5i-for-ai-agents", "eyebrow": "Comparison / Web security",
     "published": "2026-09-09",
     "social_image": "https://h5i.dev/_static/burp-vs-h5i.svg",
-    "social_alt": "Burp Suite centers a human around a browser, proxy, scanner, and extensions; h5i places an AI agent inside a scoped session and sandbox whose evidence a human reviews",
+    "social_alt": "Burp Suite provides a broad browser, proxy, scanner, and extension workbench; h5i supports an external AI agent driving a penetration test end to end",
     "time": "4 min", "tags": "Burp Suite &middot; AI agents &middot; Pentesting",
     "title": "Burp Suite vs h5i for AI agents",
     "h1": "Burp Suite vs h5i for AI agents",
-    "description": "Compare Burp Suite and h5i for AI-agent web testing: HTTP traffic capture, request modification and replay, browser automation, scanning, and optional containment.",
-    "meta": "Burp Suite vs h5i for AI agents: compare HTTP capture, request editing and replay, browser automation, scanning, agent interfaces, and containment.",
+    "description": "Burp Suite vs h5i for AI agents: compare HTTP capture, request editing, browser automation, and fully automated penetration testing with Burp AT or h5i.",
+    "meta": "Burp Suite vs h5i for AI agents: compare HTTP capture, request editing, browser automation, and fully automated penetration testing with Burp AT or h5i.",
     "deck": "Both tools support AI-driven web testing. Burp Suite provides the deeper testing platform and its own agent; h5i is designed for fully automated penetration tests driven end to end by an external AI agent.",
     "body": f"""
 <div class="callout"><strong>The short answer.</strong> Choose Burp Suite for a mature proxy workbench, Scanner, Intruder, extensions, and Burp's own agent. Choose h5i when the primary workflow is a fully automated penetration test in which an external AI agent drives the browser, inspects and modifies traffic, and decides what to test next.</div>
@@ -964,12 +964,12 @@ ZAP_COMPARISON = {
     "section": "blog", "slug": "owasp-zap-vs-h5i-for-ai-agents", "eyebrow": "Comparison / Web security",
     "published": "2026-09-09",
     "social_image": "https://h5i.dev/_static/zap-vs-h5i.svg",
-    "social_alt": "OWASP ZAP executes a predefined automation plan through spiders and scanners, while h5i repeats an agent observe-decide-request-record loop inside fixed scope",
+    "social_alt": "OWASP ZAP automates spiders and vulnerability scans, while h5i supports an external AI agent driving browser and HTTP testing end to end",
     "time": "4 min", "tags": "OWASP ZAP &middot; AI agents &middot; DAST",
     "title": "OWASP ZAP vs h5i for AI agents",
     "h1": "OWASP ZAP vs h5i for AI agents",
-    "description": "Compare OWASP ZAP and h5i for AI-agent web testing: automated scanning and spiders versus interactive browser automation, traffic capture, request editing, and replay.",
-    "meta": "OWASP ZAP vs h5i for AI agents: compare scanners, spiders, APIs and MCP with browser automation, HTTP capture, request editing, replay, and optional containment.",
+    "description": "OWASP ZAP vs h5i for AI agents: compare DAST scanning and MCP automation with fully automated, agent-driven browser testing, HTTP capture, editing, and replay.",
+    "meta": "OWASP ZAP vs h5i for AI agents: compare DAST scanning and MCP automation with fully automated, agent-driven browser testing, HTTP capture, editing, and replay.",
     "deck": "ZAP automates crawling and vulnerability scanning. h5i is designed for a fully automated penetration test in which an external AI agent explores the application and chooses each next experiment.",
     "body": f"""
 <div class="callout"><strong>The short answer.</strong> Choose ZAP when the required result is crawl coverage, vulnerability alerts, or a repeatable DAST report. Choose h5i for a fully automated penetration test driven end to end by an external AI agent that browses, inspects traffic, changes requests, and chooses what to test next.</div>
@@ -1013,8 +1013,8 @@ CAIDO_COMPARISON = {
     "time": "4 min", "tags": "Caido &middot; AI agents &middot; Pentesting",
     "title": "Caido vs h5i for AI agents",
     "h1": "Caido vs h5i for AI agents",
-    "description": "Compare Caido and h5i for AI-agent web testing: proxy history, HTTPQL, Replay, Automate and Skills versus browser automation, traffic capture, and structured replay.",
-    "meta": "Caido vs h5i for AI agents: compare HTTPQL, Replay, Automate, workflows and Skills with browser automation, HTTP capture, replay, and optional containment.",
+    "description": "Caido vs h5i for AI agents: compare proxy history, HTTPQL, Replay, Automate, and Skills with fully automated agent-driven browser and HTTP testing.",
+    "meta": "Caido vs h5i for AI agents: compare proxy history, HTTPQL, Replay, Automate, and Skills with fully automated agent-driven browser and HTTP testing.",
     "deck": "Caido gives humans and agents a complete proxy workspace. h5i is designed for fully automated penetration tests driven end to end by an external AI agent through browser and HTTP operations.",
     "body": f"""
 <div class="callout"><strong>The short answer.</strong> Choose Caido for proxy history, HTTPQL, Replay, Automate, workflows, and agent access to the whole Caido API. Choose h5i for a fully automated penetration test in which an external AI agent drives browser exploration and HTTP experiments from start to finish.</div>

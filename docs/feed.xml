@@ -23,10 +23,10 @@
       <description>Limit the files, credentials, network destinations, local services, and repository writes available to a prompt-injected coding agent.</description></item>
     <item><title>Burp Suite vs h5i for AI agents</title><link>https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
-      <description>Compare Burp Suite and h5i for AI-agent web testing: HTTP traffic capture, request modification and replay, browser automation, scanning, and optional containment.</description></item>
+      <description>Burp Suite vs h5i for AI agents: compare HTTP capture, request editing, browser automation, and fully automated penetration testing with Burp AT or h5i.</description></item>
     <item><title>OWASP ZAP vs h5i for AI agents</title><link>https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
-      <description>Compare OWASP ZAP and h5i for AI-agent web testing: automated scanning and spiders versus interactive browser automation, traffic capture, request editing, and replay.</description></item>
+      <description>OWASP ZAP vs h5i for AI agents: compare DAST scanning and MCP automation with fully automated, agent-driven browser testing, HTTP capture, editing, and replay.</description></item>
     <item><title>Caido vs h5i for AI agents</title><link>https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
-      <description>Compare Caido and h5i for AI-agent web testing: proxy history, HTTPQL, Replay, Automate and Skills versus browser automation, traffic capture, and structured replay.</description></item></channel></rss>
+      <description>Caido vs h5i for AI agents: compare proxy history, HTTPQL, Replay, Automate, and Skills with fully automated agent-driven browser and HTTP testing.</description></item></channel></rss>
