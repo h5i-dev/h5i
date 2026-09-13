@@ -9,9 +9,9 @@
     <item><title>Sandbox the entire workflow: browse, develop, review, apply</title><link>https://h5i.dev/blog/the-h5i-loop/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/the-h5i-loop/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
       <description>Create one sandbox for an AI coding task, browse from inside it, develop and test there, then review the evidence before exporting or applying the patch.</description></item>
-    <item><title>The environment is the sandbox</title><link>https://h5i.dev/blog/the-environment-is-the-sandbox/</link>
+    <item><title>Why sandbox the entire AI agent workload</title><link>https://h5i.dev/blog/the-environment-is-the-sandbox/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/the-environment-is-the-sandbox/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
-      <description>Coding agents do not execute one risky command. They operate a development environment, so that whole environment must become the security boundary.</description></item>
+      <description>AI coding agents run package scripts, compilers, tests, servers, and browsers. Sandboxing the whole workload limits what mistakes and untrusted code can reach.</description></item>
     <item><title>Five tiers, five different promises</title><link>https://h5i.dev/blog/choosing-agent-isolation/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/choosing-agent-isolation/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
       <description>Choose coding-agent isolation by threat model: checkout separation, process confinement, L3/L4 egress control, portable containers, or a separate kernel.</description></item>

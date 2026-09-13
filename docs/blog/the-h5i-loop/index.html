@@ -191,14 +191,14 @@ $ h5i box cache ls            # which are stale, and therefore unused</code></pr
 <p>A receipt is protected from the box, but the host owner can still alter it. It answers a narrow question: could the agent have written this record? It does not prove that the person presenting the receipt left it untouched.</p>
 <h2 id="sources">Sources and further reading</h2>
 <ul>
-<li><a href="/blog/the-environment-is-the-sandbox/">The environment is the sandbox</a>, for why the unit of isolation is the whole development environment.</li>
+<li><a href="/blog/the-environment-is-the-sandbox/">Why sandbox the entire AI agent workload</a>, for the threat model behind the workflow.</li>
 <li><a href="/blog/evidence-for-agent-work/">Evidence for agent work</a>, for what a receipt can and cannot settle.</li>
 <li><a href="/guides/first-box/">The first-box guide</a>, for running this workflow once on a real repository.</li>
 <li><a href="/guides/watch-the-browser/">Watch the browser</a>, for dev-server loopback and human control transfer.</li>
 <li><a href="/manual/#the-loop">The manual</a>, for every flag named above.</li>
 </ul>
 <h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Does --in create the box?</summary><div class="faq-answer">No. Create the box first, then pass its name to h5i browser open --in. The browser session runs inside that existing box and uses its resolved policy.</div></details><details class="faq-item"><summary>Can an agent already inside the box use --in?</summary><div class="faq-answer">No. It opens the browser without --in because it is already inside the boundary. The --in flag is for a host-side command placing a browser into a named box.</div></details><details class="faq-item"><summary>What is the difference between export and apply?</summary><div class="faq-answer">export writes patch.diff, report.md and receipt.json to a directory and touches nothing else, so you decide what happens next. apply lands the work directly on the parent repository and is only available when the box came from that repository. On a detached box, created from a URL, a pull request or --new, apply refuses and points at export.</div></details></div>
-<a class="next-up" href="/blog/the-environment-is-the-sandbox/"><span class="label">Read next</span><h3>The environment is the sandbox</h3><p>Why the unit of isolation is the whole development environment and not the risky command.</p></a>
+<a class="next-up" href="/blog/the-environment-is-the-sandbox/"><span class="label">Why sandbox it</span><h3>Why sandbox the entire AI agent workload</h3><p>See why dependencies, tools, tests, servers, and browsers need one boundary.</p></a>
 <div class="post-cta"><h3>Start with one box</h3><p>Run h5i box probe, create a box, and inspect what the host actually enforced.</p>
 <div class="hero-actions"><a class="btn btn-primary" href="/guides/first-box/">Follow the first-box guide</a></div></div>
 </article></main><footer class="blog-footer"><div class="blog-footer-inner">
