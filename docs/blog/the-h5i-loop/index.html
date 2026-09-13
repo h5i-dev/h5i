@@ -102,23 +102,12 @@
   </ul>
 </nav><main class="article-wrap"><article class="post">
 <header><div class="post-eyebrow">Essay / Sandboxed workflow &middot; 2026-08-21</div>
-<h1>Browse, contain, work, export, apply</h1><p class="post-deck">The h5i loop starts with a browser session and ends with a patch you've reviewed. The browser, checkout, tools, and agent stay inside one box, while h5i keeps the record outside the agent's control.</p>
+<h1>Browse, contain, work, export, apply</h1><p class="post-deck">h5i lets the browser, checkout, tools, and agent stay inside one sandbox, while all actions made by agents is also recorded.</p>
 <div class="post-meta"><span>11 min read</span><span>Browser &middot; Box &middot; Export</span></div></header>
 
-<p>The useful boundary is the whole job, not just the shell command that looks risky. In h5i, the browser session, repository checkout, tests, dev servers, and agent all live in the same box. Nothing reaches the parent repository until someone reviews and applies the patch.</p>
-<div class="callout"><strong>The claim.</strong> You should be able to review an agent session without treating the agent's summary as ground truth. h5i keeps request and command records outside the agent's control, then leaves the decision to apply its work to you.</div>
-<h2 id="install">1. Install</h2>
-<p>h5i ships as one binary on Linux and macOS. Linux uses Landlock, seccomp, and namespaces; macOS uses Seatbelt. Optional container and microVM runtimes add stronger tiers where the host supports them.</p>
-<div class="terminal"><div class="terminal-bar"><span class="terminal-path">install</span></div>
-<div class="terminal-body"><pre><code>$ curl -fsSL https://h5i.dev/install.sh | sh
-# or from source
-$ cargo install --path .</code></pre></div></div>
-<p>The binary carries its own agent skill, so the installed instructions match the CLI version on your machine.</p>
-<div class="terminal"><div class="terminal-bar"><span class="terminal-path">skill</span></div>
-<div class="terminal-body"><pre><code>$ h5i skill install     # writes into ~/.claude/skills/h5i (or ~/.codex)
-$ h5i box probe         # what this host can actually enforce</code></pre></div></div>
-<p>Run the probe before relying on a tier. It tries the confinement instead of merely checking capability bits. That catches hosts where Landlock, seccomp, and user namespaces are present but a hardened kernel or AppArmor profile still blocks confined execution.</p>
-<h2 id="session">2. Open a browser session</h2>
+<p>In h5i, the browser session, repository checkout, tests, dev servers, and agent all can live in the same sandbox. This prevents AI agents from running out of control such as destroying the parent repository or leaking secrets. h5i allows users to reflect the modifications made in the sandbox only when the human approve them.</p>
+<div class="callout"><strong>The claim.</strong> You should be able to sandbox agents' activities, and review their sessions. h5i keeps request and command records outside the agent's control, then leaves the decision to apply its work to you.</div>
+<h2 id="session">1. Open a browser session</h2>
 <p>A browser session holds one page state, cookie jar, request log, and policy. <code>open</code> creates it, later commands use it, and <code>close</code> ends it.</p>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">a session, on this machine</span></div>
 <div class="terminal-body"><pre><code>$ h5i browser open https://docs.rs/ --allow docs.rs
