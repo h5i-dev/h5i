@@ -1,23 +1,23 @@
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Prompt injection is a boundary problem | h5i</title><meta name="description" content="Prompt-injection defenses should bound a compromised coding agent's authority: filesystem reach, credentials, sockets, network destinations, and output.">
+<title>How h5i protects coding agents from prompt injection</title><meta name="description" content="A coding agent reads whatever the repository and the web put in front of it, and some of that text will tell it to do harm. h5i limits what the agent's process can read, which credentials it holds, where it can connect, and what it can merge, so a successful injection has nowhere to go.">
 <meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
 <meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
 <link rel="canonical" href="https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/"><link rel="icon" type="image/png" href="/_static/logo.png">
 <meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
-<meta property="og:title" content="Prompt injection is a boundary problem | h5i"><meta property="og:description" content="Prompt-injection defenses should bound a compromised coding agent's authority: filesystem reach, credentials, sockets, network destinations, and output.">
+<meta property="og:title" content="How h5i protects coding agents from prompt injection"><meta property="og:description" content="A coding agent reads whatever the repository and the web put in front of it, and some of that text will tell it to do harm. h5i limits what the agent's process can read, which credentials it holds, where it can connect, and what it can merge, so a successful injection has nowhere to go.">
 <meta property="og:url" content="https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
-<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Prompt injection is a boundary problem | h5i">
-<meta name="twitter:description" content="Prompt-injection defenses should bound a compromised coding agent's authority: filesystem reach, credentials, sockets, network destinations, and output."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="How h5i protects coding agents from prompt injection">
+<meta name="twitter:description" content="A coding agent reads whatever the repository and the web put in front of it, and some of that text will tell it to do harm. h5i limits what the agent's process can read, which credentials it holds, where it can connect, and what it can merge, so a successful injection has nowhere to go."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "TechArticle",
-      "headline": "Assume the prompt injection worked",
-      "description": "Prompt-injection defenses should bound a compromised coding agent's authority: filesystem reach, credentials, sockets, network destinations, and output.",
+      "headline": "How to protect a coding agent from prompt injection",
+      "description": "A coding agent reads whatever the repository and the web put in front of it, and some of that text will tell it to do harm. h5i limits what the agent's process can read, which credentials it holds, where it can connect, and what it can merge, so a successful injection has nowhere to go.",
       "author": {
         "@type": "Organization",
         "name": "h5i-dev"
@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-08-21",
-      "dateModified": "2026-09-02",
+      "dateModified": "2026-09-12",
       "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -53,7 +53,7 @@
         {
           "@type": "ListItem",
           "position": 3,
-          "name": "Assume the prompt injection worked",
+          "name": "How to protect a coding agent from prompt injection",
           "item": "https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/"
         }
       ]
@@ -74,7 +74,7 @@
           "name": "Are permission prompts still useful inside a box?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "They can improve usability and catch mistakes, but they are not the security boundary. A prompt-injected agent can approve or bypass its own application-level permissions; the box policy remains outside it."
+            "text": "They catch mistakes and are fine to keep, but they are not the security boundary. A prompt-injected agent can approve or bypass its own application-level permissions; the box policy sits outside it."
           }
         }
       ]
@@ -94,75 +94,53 @@
   </ul>
 </nav><main class="article-wrap"><article class="post">
 <header><div class="post-eyebrow">Essay / Security &middot; 2026-08-21</div>
-<h1>Assume the prompt injection worked</h1><p class="post-deck">Detection asks hostile text to reveal that it is hostile. Containment asks a simpler question: if the agent follows every instruction in the repository, what can the resulting process still reach?</p>
-<div class="post-meta"><span>12 min read</span><span>Prompt injection &middot; Least authority &middot; Egress</span></div></header>
+<h1>How to protect a coding agent from prompt injection</h1><p class="post-deck">A coding agent reads whatever the repository and the web put in front of it, and some of that text will tell it to do harm. Instead of trying to spot that text, h5i limits what the agent's process can reach, so a successful injection has nowhere to go.</p>
+<div class="post-meta"><span>7 min read</span><span>Prompt injection &middot; Least authority &middot; Egress</span></div></header>
 
-<div class="callout danger"><strong>The operating assumption.</strong> The agent read a malicious instruction, believed it, and is now using every tool exactly as designed. Build the boundary for that case.</div>
-<figure class="feature-figure"><img src="/_static/browser-authority-threat-model.svg" alt="Four sources of browser authority: live sessions, extensions, localhost access, and attacker-controlled page instructions"><figcaption>The browser makes the prompt-injection problem concrete: attacker-controlled text arrives inside a client carrying ambient sessions, standing grants, and loopback reach.</figcaption></figure>
-<p>A repository asks the agent to “read the setup notes before running tests.” The notes include a hidden instruction: inspect the user's SSH directory, send the interesting files to a diagnostics endpoint, then continue with the original task. Nothing in that chain requires a memory-safety exploit. Reading files, making requests, and following repository instructions are the agent's advertised capabilities.</p>
-<p>The security question is therefore not whether the instruction looks suspicious to a model. It is whether the resulting process can read the directory, reach the endpoint, or carry a reusable credential there.</p>
-<p>Prompt injection is often treated as a classification problem. Find the suspicious sentence. Score the page. Ask another model whether the instruction looks malicious. Block the obvious phrasing.</p>
-<p>Those controls can reduce noise. They cannot define the security boundary, because the attacker chooses the text and can iterate against the same cues the detector uses. A repository can hide instructions in documentation, generated files, issue text, tool output, test failures, or a web page the agent opens.</p>
-<p>The durable control begins after detection fails.</p>
-<h2 id="capabilities">Translate the compromise into capabilities</h2>
-<p>Do not ask what the injected agent intends. Ask what its process can do:</p>
-<ul><li>Which host paths can it read or write?</li><li>Which credentials exist in its environment or home directory?</li><li>Which network destinations and address families can it reach?</li><li>Which sockets let it borrow authority from another host process?</li><li>Can it write directly into the repository or artifact you will trust?</li></ul>
-<p>Each answer should be enforced by something outside the agent.</p>
-<h2 id="credentials">A key inside the box is already compromised</h2>
-<p>Environment variables and dotfiles are convenient credential delivery systems. They are also readable bytes in the compromised process's authority domain.</p>
-<p>A credential broker changes the shape. The real key stays on the host. The box receives a route to a narrow proxy, and the proxy injects authentication only for the allowed service. Scope that route to one runtime. A Claude box should not be able to turn an OpenAI key into a laundering channel merely because both agents are installed on the host.</p>
-<p>This does not stop the model service from receiving source included in a legitimate prompt. Source confidentiality against the model is a separate decision: use a self-hosted model or remove model egress.</p>
-<h2 id="network">An allowlist is only as strong as its layer</h2>
-<p>Proxy variables constrain cooperative applications. A compromised process can clear them and open a socket. If off-list destinations must be unreachable, enforcement has to meet raw traffic: a private network namespace and packet rules, or a VM network stack.</p>
-<p>Name the layer. L7 proxy scoping and L3/L4 destination enforcement are not interchangeable promises.</p>
-<h2 id="sockets">Local sockets are network authority too</h2>
-<p>Unix sockets disappear from many threat models because they do not look like internet access. They can connect the box to SSH agents, desktop services, container daemons, and other privileged processes. Some can carry open file descriptors.</p>
-<p>Deny the address family by default. Grant it only to profiles that need it, and keep host sockets outside filesystem grants. A browser control daemon may justify one scoped socket. A test runner usually does not.</p>
-<h2 id="output">The final capability is acceptance</h2>
-<p>A compromised agent that cannot read secrets or dial arbitrary hosts can still produce a malicious patch. Containment limits blast radius during execution; it does not certify the output.</p>
-<p>That is why the box should not merge its own work. Export a path-validated patch and evidence bundle. Review them outside. The human-operated output gate is part of the security design, not workflow polish.</p>
-<h2 id="success">What success looks like</h2>
-<p>Success is not “the detector found every injection.” Success is that an injected agent encountered the same narrow world as a cooperative one:</p>
-<ul><li>the host filesystem was absent except for explicit grants;</li><li>reusable credentials never entered;</li><li>off-list destinations were refused at the claimed layer;</li><li>the process could not reach ambient host sockets;</li><li>the result still required an external decision.</li></ul>
-<p>The injection may succeed as language. It fails as authority.</p>
-<h2 id="detection">Why detection remains useful but cannot carry the boundary</h2>
-<p>Filters can catch crude attacks. A reviewer can notice an instruction in a README. A second model can flag text that asks for secrets. Tool descriptions can be scanned before they enter context. These controls reduce exposure and improve triage.</p>
-<p>They still operate on the attacker's representation. Rename the file, split the instruction across tool outputs, encode the payload in a test failure, or make the dangerous action look like a legitimate debugging step. A sufficiently strict filter also blocks real work, because coding routinely requires reading configuration, opening documentation, and sending authenticated requests.</p>
-<p>Containment works on the action after ambiguity has ended. Whatever prose led to <code>open()</code>, <code>socket()</code>, or a write outside the workspace no longer matters to the enforcement decision.</p>
-<h2 id="browser-chain">The browser chains ambient authority without exposing a token</h2>
-<p>A normal browser profile is the sharpest example. It holds cookies for source control, email, CI, cloud dashboards, and internal tools. The agent never needs to read those cookies. It navigates and the browser authenticates the request automatically.</p>
-<p>The same process reaches host loopback, where developer services often rely on “local only” instead of authentication. And the browser's primary input is page content controlled by someone else. Prompt injection becomes the instruction channel joining live sessions, extensions, and local services.</p>
-<p>A fresh browser profile inside the box removes the inherited sessions and extensions. A private network namespace changes loopback from “the developer's machine” to “this disposable environment.” The page can still inject the agent. The injected agent finds much less authority waiting for it.</p>
-<h2 id="broker">A credential broker removes the reusable secret from the compromise</h2>
-<p>Model access creates an awkward exception. The box must call Anthropic or OpenAI, and the ordinary implementation puts the API key in an environment variable or credential file inside the very process we are assuming compromised.</p>
-<p>h5i can instead point the client at a host-side broker. The box presents a per-run dummy token. The broker pins the upstream origin, validates origin-form request targets, strips the dummy, injects the real host credential, and creates the TLS request itself. Stealing the dummy gives an attacker no reusable API credential.</p>
-<p>The broker is authentication plumbing, not authorization. A broad GitHub token remains broad when used through a broker. Fine-grained service credentials are still required. Nor can the broker stop a legitimate model call from containing private source. It removes credential possession; it does not inspect intent.</p>
-<h2 id="layers">Build the response as independent layers</h2>
-<div class="tbl-wrap"><table class="data"><thead><tr><th>Attack step</th><th>Boundary response</th><th>Residual risk</th></tr></thead><tbody>
-<tr><th>Read host secrets</th><td>Do not grant host paths; seed a scrubbed per-box HOME</td><td>Files intentionally copied into the workspace remain readable</td></tr>
-<tr><th>Steal a model key</th><td>Keep the real key behind a runtime-scoped broker</td><td>Allowed model requests can still contain source</td></tr>
-<tr><th>Exfiltrate to a new host</th><td>Default-deny egress at the claimed layer</td><td>Allowed destinations remain reachable</td></tr>
-<tr><th>Borrow a local daemon</th><td>Deny Unix sockets and isolate loopback by default</td><td>Explicit socket grants carry real authority</td></tr>
-<tr><th>Ship a malicious patch</th><td>Require export and external review</td><td>A reviewer can still make a bad decision</td></tr>
+<div class="callout danger"><strong>The assumption.</strong> The agent has read a malicious instruction, believed it, and is now using its tools exactly as designed. Everything below is built for that case.</div>
+<p>Here is the attack. A repository asks the agent to read the setup notes before running the tests. The notes contain a hidden instruction: look in the user's SSH directory, send anything interesting to a diagnostics URL, then carry on with the original task. Nothing in that chain needs an exploit. Reading files, making HTTP requests, and following instructions found in the repository are exactly what a coding agent is for.</p>
+<h2 id="detection">Why filtering the text is not enough</h2>
+<p>The common defense is to look for the hostile sentence: scan the page, ask a second model whether an instruction looks malicious, block the obvious phrasing. Those checks catch crude attacks and are worth keeping.</p>
+<p>They cannot be the security boundary, because the attacker writes the text and can rewrite it until the filter passes. The instruction can hide in documentation, a generated file, an issue comment, a test failure message, tool output, or a web page the agent opens. A filter strict enough to catch all of that also blocks ordinary work, since coding means reading configuration, opening documentation, and sending authenticated requests all day.</p>
+<p>So h5i starts from the other end. Assume the text got through. What can the agent's process actually do now?</p>
+<h2 id="capabilities">Limit what the process can reach</h2>
+<p>Five questions describe the damage a compromised agent can do, and h5i answers each one with a control that sits outside the agent:</p>
+<ul><li>Which host files can it read or write?</li><li>Which credentials are in its environment or home directory?</li><li>Which network destinations can it reach?</li><li>Which local sockets let it borrow another process's authority?</li><li>Can it write directly into code you will trust?</li></ul>
+<p>The rest of this essay takes them in order.</p>
+<h2 id="files">Files: the box sees only what you grant</h2>
+<p>Inside an h5i box the host filesystem is absent unless the policy grants a path. The agent's home directory is a per-box copy of its config with credential-shaped entries stripped at any depth, so there is no <code>~/.ssh</code> or <code>~/.aws</code> to find. Files you deliberately copied into the workspace remain readable, which is the point of copying them.</p>
+<h2 id="credentials">Credentials: the real key never enters the box</h2>
+<p>An API key in an environment variable or a dotfile is just bytes the compromised process can read. h5i keeps the real key on the host. The box gets a per-run dummy token and a route to a host-side broker; the broker pins the upstream origin, swaps the dummy for the real credential, and makes the TLS request itself. Stealing the dummy gives the attacker nothing reusable.</p>
+<p>The route is scoped to one runtime, so a Claude box cannot use the OpenAI key just because both agents are installed on the host. Two limits apply. The broker handles authentication, not authorization: a broad GitHub token stays broad when used through it, so issue narrow service tokens. And it cannot stop a legitimate model request from containing private source. If source must not leave, use a self-hosted model or a policy with no model egress.</p>
+<h2 id="network">Network: deny by default, at a layer that holds</h2>
+<p>Proxy environment variables only constrain programs that choose to honor them. A compromised process clears them and opens a socket. If off-list destinations must be unreachable, enforcement has to meet raw traffic: on the <code>supervised</code> tier that is a private network namespace with a gate on <code>socket()</code>, on the <code>microvm</code> tier it is the guest's own network stack. The <code>container</code> tier scopes at an L7 proxy, which is weaker, and h5i names the layer in the box status rather than calling both "egress control".</p>
+<h2 id="sockets">Local sockets count as network</h2>
+<p>Unix sockets rarely appear in threat models because they do not look like internet access. They connect the box to the SSH agent, the container daemon, and desktop services, and some can pass open file descriptors. h5i denies the address family by default. A profile that needs one socket, such as a browser control daemon, grants that socket explicitly. A test runner gets none.</p>
+<h2 id="browser">The browser: a fresh profile, no inherited sessions</h2>
+<p>A normal browser profile is the sharpest case. It holds live cookies for source control, email, CI, and cloud dashboards, and the agent never has to read them: it navigates, and the browser attaches them. The same browser reaches host loopback, where local developer services often rely on "local only" instead of authentication. And its main input is page content written by someone else.</p>
+<p>A browser session opened inside a box starts from an empty profile, so there are no inherited sessions or extensions, and its loopback is the box's, not the developer's machine. The page can still inject the agent. The injected agent finds much less waiting for it.</p>
+<h2 id="output">Output: the agent does not merge its own work</h2>
+<p>An agent that cannot read secrets or dial new hosts can still write a malicious patch. Containment limits what happens during the run; it does not certify the result. So the box does not land its own work. It exports a path-validated patch with a report and a receipt, and a person reads them before anything reaches the repository.</p>
+<h2 id="layers">The layers side by side</h2>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Attack step</th><th>What h5i does</th><th>What remains</th></tr></thead><tbody>
+<tr><th>Read host secrets</th><td>No host paths without a grant; a scrubbed per-box home</td><td>Files copied into the workspace are readable</td></tr>
+<tr><th>Steal a model key</th><td>Real key stays behind a runtime-scoped broker</td><td>Allowed model requests can still carry source</td></tr>
+<tr><th>Send data to a new host</th><td>Default-deny egress at the named layer</td><td>Allowed destinations stay reachable</td></tr>
+<tr><th>Borrow a local daemon</th><td>Unix sockets denied, loopback isolated</td><td>An explicit socket grant carries real authority</td></tr>
+<tr><th>Ship a malicious patch</th><td>Export and external review</td><td>A reviewer can still make a bad call</td></tr>
 </tbody></table></div>
-<p>No row depends on the model agreeing that it has been compromised. That independence is the design.</p>
-<h2 id="limits">The honest stopping point</h2>
-<p>A sandbox does not solve prompt injection as a language problem. The agent may still waste time, damage its disposable workspace, produce a deceptive explanation, or create a malicious patch. A shared-kernel tier remains exposed to a targeted kernel exploit. An allowlisted service can still be abused within its authorization.</p>
-<p>The goal is narrower: prevent untrusted instructions from inheriting the developer's ambient machine authority. That turns a successful injection from an account- and host-level incident into a failed or reviewable action inside a disposable box.</p>
-<h2 id="usual-mitigations">Why the usual mitigations stop one layer too early</h2>
-<p><strong>“I require approval for shell commands.”</strong> The dangerous action can be hidden among dozens of ordinary build and inspection calls. Approval fatigue is the predictable output of putting a human gate on a machine-rate loop. More importantly, package hooks and browser requests may occur below the command the human approved.</p>
-<p><strong>“The browser verbs are read-only.”</strong> Navigation can trigger state changes through confirmation links and poorly designed GET endpoints. Reading page content is itself an exfiltration primitive once that content enters the model context. Verb names do not define authority.</p>
-<p><strong>“The key is encrypted on disk.”</strong> The agent does not need to decrypt a browser cookie store if it can drive the browser that decrypts and attaches cookies. It does not need to steal an API key if an allowed client will make any request it asks for. Protecting bytes at rest does not constrain the authorized interpreter.</p>
-<p><strong>“The agent runs in a container.”</strong> A container with the host browser profile mounted, a Docker socket exposed, or host loopback reachable still carries the authority that matters. Containerization is a mechanism, not a completed threat model.</p>
-<p><strong>“The model vendor blocks prompt injection.”</strong> Even a strong detector cannot mediate a native install script, a compromised compiler plugin, or an ordinary request that is dangerous only because of the credential and destination available in this environment. The enforcement point has to sit where the action becomes concrete.</p>
-<h2 id="incident-test">Use the compromise drill</h2>
-<p>Take a real profile and assume the agent has become adversarial. Ask it to enumerate readable host paths, reusable credentials, reachable internet hosts, reachable loopback services, Unix sockets, and direct write paths to accepted code. Do not actually exfiltrate data; inspect the resolved policy and exercise harmless denials.</p>
-<p>If the answer relies on “the agent would not do that,” the authority is still present. If the answer is “the syscall, packet, or export path is refused and the refusal is recorded,” the boundary can survive the model making the wrong semantic decision.</p>
+<p>No row depends on the model noticing that it has been compromised.</p>
+<h2 id="limits">What this does not solve</h2>
+<p>A box does not make the agent immune to bad instructions. It can still waste time, damage its disposable workspace, write a misleading explanation, or produce a harmful patch for review. A shared-kernel tier remains exposed to a targeted kernel exploit. A service on the allowlist can still be abused within whatever the credential allows. And a container with the host browser profile mounted or the Docker socket exposed has none of the protection above; the mechanism is not the threat model.</p>
+<p>What a box does is keep untrusted instructions from inheriting the developer's machine. A successful injection becomes a refused action inside a disposable environment, with the refusal in the log, instead of an incident involving the host and every account on it.</p>
+<h2 id="drill">A quick drill</h2>
+<p>Take a real profile and assume the agent has turned hostile. List the host paths it can read, the credentials it holds, the internet hosts and loopback services it can reach, the Unix sockets it can open, and the ways it can write to code you accept. Do not exfiltrate anything; read the resolved policy and try harmless denials.</p>
+<p>If any answer is "the agent would not do that", the authority is still there. If every answer is "the syscall, packet, or export path is refused and the refusal is recorded", the boundary survives the model making the wrong decision.</p>
 <h2 id="sources">Sources and further reading</h2>
 <ul><li><a href="/manual/#credentials">Credentials</a> and <a href="/manual/#af_unix-sockets">Unix sockets</a> in the manual.</li><li><a href="/guides/write-a-box-policy/">Write a box policy</a>, for expressing filesystem, network, and socket authority.</li><li><a href="/guides/watch-the-browser/">Watch the isolated browser</a>, for the fresh-profile and control-lock workflow.</li><li><a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-credential-proxy.md">Credential proxy design</a>, including the origin-pinning and SSRF threat model.</li></ul>
-<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Does sandboxing prevent source code from reaching the model?</summary><div class="faq-answer">No. A coding agent can include source in an allowed model request. Preventing that requires a self-hosted model or a policy with no model egress.</div></details><details class="faq-item"><summary>Are permission prompts still useful inside a box?</summary><div class="faq-answer">They can improve usability and catch mistakes, but they are not the security boundary. A prompt-injected agent can approve or bypass its own application-level permissions; the box policy remains outside it.</div></details></div>
+<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Does sandboxing prevent source code from reaching the model?</summary><div class="faq-answer">No. A coding agent can include source in an allowed model request. Preventing that requires a self-hosted model or a policy with no model egress.</div></details><details class="faq-item"><summary>Are permission prompts still useful inside a box?</summary><div class="faq-answer">They catch mistakes and are fine to keep, but they are not the security boundary. A prompt-injected agent can approve or bypass its own application-level permissions; the box policy sits outside it.</div></details></div>
 <a class="next-up" href="/guides/write-a-box-policy/"><span class="label">Build the boundary</span><h3>Write down what the agent may reach</h3><p>Create a fail-closed profile for filesystem, network, and resources.</p></a>
-<div class="post-cta"><h3>Design for the compromised session</h3><p>A narrow box makes prompt-injection success less consequential.</p>
+<div class="post-cta"><h3>Limit what the agent can reach</h3><p>A narrow box makes a successful injection much less consequential.</p>
 <div class="hero-actions"><a class="btn btn-primary" href="/guides/write-a-box-policy/">Write a policy</a></div></div>
 </article></main><footer class="blog-footer"><div class="blog-footer-inner">
   <div class="brand">h5i<span class="red"> / high-five</span></div>

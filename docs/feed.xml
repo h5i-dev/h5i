@@ -18,9 +18,9 @@
     <item><title>A transcript is not an audit trail</title><link>https://h5i.dev/blog/evidence-for-agent-work/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/evidence-for-agent-work/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
       <description>Review agent-written code with evidence collected outside the agent: the patch, observed execution, denied activity, and explicit gaps in observation.</description></item>
-    <item><title>Assume the prompt injection worked</title><link>https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/</link>
+    <item><title>How to protect a coding agent from prompt injection</title><link>https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
-      <description>Prompt-injection defenses should bound a compromised coding agent's authority: filesystem reach, credentials, sockets, network destinations, and output.</description></item>
+      <description>A coding agent reads whatever the repository and the web put in front of it, and some of that text will tell it to do harm. h5i limits what the agent's process can read, which credentials it holds, where it can connect, and what it can merge, so a successful injection has nowhere to go.</description></item>
     <item><title>Burp Suite vs h5i for AI agents</title><link>https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
       <description>Compare Burp Suite and h5i for AI-assisted pentesting, CTFs, and authorized red teaming: proxy depth, agent interfaces, HTTP replay, recon, scope, isolation, and audit evidence.</description></item>
