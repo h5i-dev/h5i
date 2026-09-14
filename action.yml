@@ -1,0 +1,82 @@
+name: h5i security regression tests
+description: Replay repository-owned attack flows and evaluate them with external oracles.
+
+inputs:
+  target:
+    description: Application base URL.
+    required: true
+  tests:
+    description: Test file or directory.
+    required: false
+    default: .h5i-tests/tests
+  openapi:
+    description: Optional OpenAPI JSON or YAML coverage denominator.
+    required: false
+    default: ""
+  min-coverage:
+    description: Optional oracle-checked operation coverage gate. Report-only when omitted.
+    required: false
+    default: ""
+  output:
+    description: Result and response artifact directory.
+    required: false
+    default: h5i-test-results
+  h5i-version:
+    description: Release tag to install. Empty means the latest release.
+    required: false
+    default: ""
+
+outputs:
+  result:
+    description: Path to the JSON run result.
+    value: ${{ steps.run.outputs.result }}
+  junit:
+    description: Path to the JUnit XML report.
+    value: ${{ steps.run.outputs.junit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install h5i and its test runner
+      shell: bash
+      env:
+        H5I_ACTION_VERSION: ${{ inputs.h5i-version }}
+      run: |
+        set -euo pipefail
+        bin="$RUNNER_TEMP/h5i/bin"
+        mkdir -p "$bin"
+        H5I_INSTALL_DIR="$bin" H5I_VERSION="$H5I_ACTION_VERSION" \
+          sh "$GITHUB_ACTION_PATH/install.sh" --test
+        echo "$bin" >> "$GITHUB_PATH"
+
+    - name: Run h5i security tests
+      id: run
+      shell: bash
+      env:
+        H5I_ACTION_TARGET: ${{ inputs.target }}
+        H5I_ACTION_TESTS: ${{ inputs.tests }}
+        H5I_ACTION_OPENAPI: ${{ inputs.openapi }}
+        H5I_ACTION_MIN_COVERAGE: ${{ inputs.min-coverage }}
+        H5I_ACTION_OUTPUT: ${{ inputs.output }}
+      run: |
+        set -uo pipefail
+        args=("$H5I_ACTION_TESTS" --target "$H5I_ACTION_TARGET" --output "$H5I_ACTION_OUTPUT")
+        if [ -n "$H5I_ACTION_OPENAPI" ]; then
+          args+=(--openapi "$H5I_ACTION_OPENAPI")
+        fi
+        if [ -n "$H5I_ACTION_MIN_COVERAGE" ]; then
+          args+=(--min-coverage "$H5I_ACTION_MIN_COVERAGE")
+        fi
+        h5i test "${args[@]}"
+        code=$?
+        if [ -f "$H5I_ACTION_OUTPUT/result.json" ]; then
+          {
+            echo "## h5i security tests"
+            echo
+            jq -r '"Pass: \(.passed) · Fail: \(.failed) · Error: \(.errors)"' "$H5I_ACTION_OUTPUT/result.json"
+            jq -r 'if .coverage then "\nChecked operations: \(.coverage.covered_operations) / \(.coverage.total_operations) (\(.coverage.percent | tostring)%)" else empty end' "$H5I_ACTION_OUTPUT/result.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+        echo "result=$H5I_ACTION_OUTPUT/result.json" >> "$GITHUB_OUTPUT"
+        echo "junit=$H5I_ACTION_OUTPUT/junit.xml" >> "$GITHUB_OUTPUT"
+        exit "$code"

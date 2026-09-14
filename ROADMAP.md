@@ -30,6 +30,7 @@ essential to this one.
 | HTTP workbench | phases A and B built and benchmarked, plus experiments and findings (W22, W23); installed with `h5i plugin install websec` | [`docs/design/design-websec.md`](docs/design/design-websec.md) |
 | box console | sessions and the attention model built 2026-09-07 | [`docs/design/design-console.md`](docs/design/design-console.md) |
 | reconnaissance | phase 1 built 2026-09-07: ledger, extract, known, crawl, paths, triage, jobs. `h5i plugin install recon` | [`docs/design/design-recon.md`](docs/design/design-recon.md) |
+| security regression tests | MVP built 2026-09-13: portable flows, external oracles, JSON/JUnit, OpenAPI coverage and an optional gate. `h5i plugin install test` | [`docs/design/design-test.md`](docs/design/design-test.md) |
 
 ## The three decisions the pivot rests on
 
@@ -90,6 +91,7 @@ of it whether you need the rest.
 | W1 to W23 | `docs/design/design-websec.md` | capture, replay, diff, experiments, findings, and the plugin the workbench ships as |
 | N1 to N21 | `docs/design/design-recon.md` | the endpoint ledger, discovery, triage, and where recon stops |
 | C1 to C8 | `docs/design/design-console.md` | what `h5i ui` shows, what it refuses to, and how it says which session wants you |
+| T1 | `docs/design/design-test.md` | portable attack flows, external oracles, CI results and coverage |
 
 Live code cites these section numbers. The prefixes do not collide with
 [`docs/roadmap-history.md`](docs/roadmap-history.md), which holds the superseded

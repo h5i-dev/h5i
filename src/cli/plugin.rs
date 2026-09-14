@@ -39,6 +39,11 @@ pub const KNOWN: &[(&str, &str)] = &[
         "the endpoint ledger: what a target exposes, where each candidate came from, \
          and which message confirmed it",
     ),
+    (
+        "test",
+        "portable security regression tests: replay attack flows and ask repository-owned \
+         oracles whether their properties hold",
+    ),
 ];
 
 #[derive(Subcommand)]

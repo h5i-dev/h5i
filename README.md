@@ -78,11 +78,11 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 # h5i skill show policy            # or just read a page
 ```
 
-The optional `websec` and `recon` plugins ship as their own archives. The
+The optional `websec`, `recon` and `test` plugins ship as their own archives. The
 installer can fetch and register them in the same pass:
 
 ```bash
-curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test
 # h5i plugin list                  # says what is installed
 ```
 
@@ -132,6 +132,36 @@ h5i recon extract                                    # read what the session alr
 h5i recon crawl --max-requests 200 --rate 4          # walk it under this session's login
 h5i recon triage --calibrate                         # soft 404s folded, the rest confirmed
 h5i recon endpoints --state confirmed --json         # each row names the message that proves it
+```
+
+Confirmed attack flows can be kept in a repository and replayed in CI. h5i
+executes the HTTP flow and gives its evidence to a repository-owned program;
+the program may use `jq`, `grep`, an application test client, or anything else
+to decide whether the security property held:
+
+```bash
+h5i test .h5i-tests/tests --target http://localhost:3000
+h5i test .h5i-tests/tests --target http://localhost:3000 \
+  --openapi openapi.yaml                              # coverage is report-only
+h5i test .h5i-tests/tests --target http://localhost:3000 \
+  --openapi openapi.yaml --min-coverage 70            # an explicit coverage gate
+```
+
+The runner writes JSON, JUnit XML and owner-only response artifacts. See
+[`docs/design/design-test.md`](docs/design/design-test.md) for the versioned
+test and external-oracle contracts, or copy the complete
+[`examples/security-regression-ci`](examples/security-regression-ci) GitHub
+Actions example.
+
+In GitHub Actions the same runner is available as a composite action:
+
+```yaml
+- uses: h5i-dev/h5i@v1
+  with:
+    target: http://localhost:3000
+    tests: .h5i-tests/tests
+    openapi: openapi.yaml
+    # min-coverage is optional; omitting it keeps coverage informational.
 ```
 
 ### 2.3. Control and audit agent access

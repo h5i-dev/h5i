@@ -3420,11 +3420,25 @@ fn rpc_one(root: &Path, selector: Option<&str>, request: &Value) -> Value {
 }
 
 fn rpc_resend(root: &Path, selector: Option<&str>, request: &Value) -> anyhow::Result<Value> {
-    let from = request
-        .get("from")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| anyhow::anyhow!("resend needs `from`: the sequence number to send again"))?;
-    let mut argv = vec!["resend".to_string(), "--from".to_string(), from.to_string()];
+    let from = request.get("from").and_then(Value::as_u64);
+    let given = request
+        .get("request")
+        .filter(|value| !value.is_null());
+    if from.is_some() == given.is_some() {
+        anyhow::bail!("resend needs exactly one of `from` or `request`");
+    }
+    let mut argv = vec!["resend".to_string()];
+    if let Some(from) = from {
+        argv.push("--from".to_string());
+        argv.push(from.to_string());
+    } else if let Some(given) = given {
+        // The engine already accepts this shape for cross-session replay. RPC
+        // exposes the same path to repository-portable tests: the request is
+        // still sent by this session's broker, under its jar, policy, budget
+        // and receipts. It is not a second network lane.
+        argv.push("--request".to_string());
+        argv.push(serde_json::to_string(given)?);
+    }
     let strings = |field: &str| -> Vec<String> {
         request
             .get(field)
@@ -4846,6 +4860,18 @@ fn kill(_pid: u32) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rpc_resend_takes_one_request_source() {
+        let root = Path::new("/not-reached");
+        for request in [
+            json!({"from": 7, "request": {"method": "GET", "url": "https://example.test"}}),
+            json!({}),
+        ] {
+            let error = rpc_resend(root, None, &request).expect_err("ambiguous source");
+            assert!(error.to_string().contains("exactly one"), "{error}");
+        }
+    }
 
     /// Two failures wore one message until issue #631.
     #[test]

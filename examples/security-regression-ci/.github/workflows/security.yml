@@ -1,0 +1,44 @@
+name: Security regression tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  security-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Replace this with the command that starts your application and seeded
+      # CI data. The service must be reachable from the runner.
+      - name: Start application
+        run: docker compose up -d --wait
+
+      - name: Replay security regression tests
+        uses: h5i-dev/h5i@v1
+        env:
+          # These are non-production values belonging to the seeded CI fixture.
+          H5I_ALICE_PASSWORD: alice-ci-password
+          H5I_OTHER_DOCUMENT_ID: "2"
+          H5I_FORBIDDEN_MARKER: bob@example.test
+        with:
+          target: http://localhost:3000
+          tests: .h5i-tests/tests
+          openapi: openapi.yaml
+          # Coverage is report-only unless min-coverage is explicitly set.
+          output: h5i-test-results
+
+      - name: Upload h5i evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: h5i-test-results
+          path: h5i-test-results/
+          if-no-files-found: warn
