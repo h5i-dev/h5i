@@ -140,10 +140,10 @@ the program may use `jq`, `grep`, an application test client, or anything else
 to decide whether the security property held:
 
 ```bash
-h5i test .h5i/tests --target http://localhost:3000
-h5i test .h5i/tests --target http://localhost:3000 \
+h5i test .h5i-tests/tests --target http://localhost:3000
+h5i test .h5i-tests/tests --target http://localhost:3000 \
   --openapi openapi.yaml                              # coverage is report-only
-h5i test .h5i/tests --target http://localhost:3000 \
+h5i test .h5i-tests/tests --target http://localhost:3000 \
   --openapi openapi.yaml --min-coverage 70            # an explicit coverage gate
 ```
 
@@ -159,7 +159,7 @@ In GitHub Actions the same runner is available as a composite action:
 - uses: h5i-dev/h5i@v1
   with:
     target: http://localhost:3000
-    tests: .h5i/tests
+    tests: .h5i-tests/tests
     openapi: openapi.yaml
     # min-coverage is optional; omitting it keeps coverage informational.
 ```

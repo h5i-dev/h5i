@@ -33,7 +33,7 @@ static SESSION_NONCE: AtomicU64 = AtomicU64::new(1);
 )]
 struct Cli {
     /// One test file, or a directory searched for .yaml, .yml and .json files.
-    #[arg(value_name = "PATH", default_value = ".h5i/tests")]
+    #[arg(value_name = "PATH", default_value = ".h5i-tests/tests")]
     path: PathBuf,
     /// Application base URL. Test request paths are resolved against it.
     #[arg(long, value_name = "URL")]

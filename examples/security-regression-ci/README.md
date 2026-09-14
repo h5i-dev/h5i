@@ -7,9 +7,9 @@ read Bob's document.
 
 The pieces are deliberately separate:
 
-- [`.h5i/tests/document-isolation.yaml`](.h5i/tests/document-isolation.yaml)
+- [`.h5i-tests/tests/document-isolation.yaml`](.h5i-tests/tests/document-isolation.yaml)
   describes the HTTP attack flow.
-- [`.h5i/oracles/document-isolation.sh`](.h5i/oracles/document-isolation.sh)
+- [`.h5i-tests/oracles/document-isolation.sh`](.h5i-tests/oracles/document-isolation.sh)
   decides whether the resulting evidence satisfies the application's security
   property.
 - [`openapi.yaml`](openapi.yaml) supplies an optional coverage denominator.
@@ -28,7 +28,7 @@ h5i plugin install test
 H5I_ALICE_PASSWORD=alice-ci-password \
 H5I_OTHER_DOCUMENT_ID=2 \
 H5I_FORBIDDEN_MARKER=bob@example.test \
-  h5i test .h5i/tests \
+  h5i test .h5i-tests/tests \
     --target http://localhost:3000 \
     --openapi openapi.yaml
 ```

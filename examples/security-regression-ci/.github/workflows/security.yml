@@ -30,7 +30,7 @@ jobs:
           H5I_FORBIDDEN_MARKER: bob@example.test
         with:
           target: http://localhost:3000
-          tests: .h5i/tests
+          tests: .h5i-tests/tests
           openapi: openapi.yaml
           # Coverage is report-only unless min-coverage is explicitly set.
           output: h5i-test-results

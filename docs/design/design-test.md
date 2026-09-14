@@ -18,6 +18,10 @@ typed `json` body. `${name}` uses a value extracted by an earlier step and
 `${env.NAME}` reads a CI environment variable. Unknown and missing fields are
 errors rather than ignored configuration.
 
+The default test directory is `.h5i-tests/tests`. It is repository-owned and
+intended to be committed together with `.h5i-tests/oracles`; local h5i state
+and machine-specific configuration remain under the gitignored `.h5i/`.
+
 Actors name isolated browser sessions and cookie jars. A flow step sends a
 template as an actor, may apply the existing websec edit language, saves its
 response under a stable name, and may extract a regex, JSON field, header or

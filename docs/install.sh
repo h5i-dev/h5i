@@ -31,11 +31,14 @@ main() {
       # candidate came from, and which message confirmed it. Same posture as
       # websec, and the same reason to be off by default.
       --recon | --with-recon) BINARIES="${BINARIES} h5i-recon" ;;
+      # `test` is the CI harness: portable attack flows, repository-owned
+      # external oracles, JUnit and optional OpenAPI coverage gating.
+      --test | --with-test) BINARIES="${BINARIES} h5i-test" ;;
       # Both accepted and both no-ops: there is one binary now, and quietly
       # rejecting a flag that used to work breaks scripts for no gain.
       --with-browser | --no-browser | --browser-only) ;;
       -h | --help)
-        echo "Usage: install.sh [--websec] [--recon]"
+        echo "Usage: install.sh [--websec] [--recon] [--test]"
         echo
         echo "  Installs h5i, which includes the browser engine."
         echo
@@ -43,11 +46,13 @@ main() {
         echo "                  workbench), then register it as \`h5i websec\`."
         echo "  --recon         also install the recon plugin (the endpoint"
         echo "                  ledger), then register it as \`h5i recon\`."
+        echo "  --test          also install the security regression test"
+        echo "                  runner, then register it as \`h5i test\`."
         echo "  --with-browser, --no-browser and --browser-only are accepted"
         echo "  and do nothing: the engine is part of the binary now."
         echo
         echo "Piped into a shell, options go after \`sh -s --\`:"
-        echo "  curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon"
+        echo "  curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test"
         echo
         echo "Environment: H5I_INSTALL_DIR, H5I_VERSION, H5I_SKIP_CHECKSUM"
         exit 0
@@ -142,7 +147,7 @@ main() {
     URL="https://github.com/${REPO}/releases/download/${VERSION}/${ARCHIVE}"
 
     case "$BINARY" in
-    h5i-websec | h5i-recon)
+    h5i-websec | h5i-recon | h5i-test)
       echo "Installing ${BINARY} ${VERSION} (${target}) → h5i's plugin directory" ;;
     *)
       echo "Installing ${BINARY} ${VERSION} (${target}) → ${INSTALL_DIR}/${BINARY}" ;;
@@ -205,7 +210,7 @@ main() {
     # `--force` because an installer that is re-run should converge rather than
     # fail on the copy it put there last time.
     case "$BINARY" in
-    h5i-websec | h5i-recon)
+    h5i-websec | h5i-recon | h5i-test)
       NAME="${BINARY#h5i-}"
       "${INSTALL_DIR}/h5i" plugin install "$NAME" --from "${TMP}/${BINARY}" --force
       echo "✔  ${NAME} ${VERSION} installed: run h5i ${NAME} --help"

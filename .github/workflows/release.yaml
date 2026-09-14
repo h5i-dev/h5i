@@ -364,7 +364,7 @@ jobs:
             ```bash
             curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/h5i-test-${{ github.ref_name }}-<TARGET>.tar.gz | tar -xz
             h5i plugin install test --from ./h5i-test
-            h5i test .h5i/tests --target http://localhost:3000
+            h5i test .h5i-tests/tests --target http://localhost:3000
             ```
 
             It writes JSON and JUnit. OpenAPI coverage is report-only unless

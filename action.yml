@@ -8,7 +8,7 @@ inputs:
   tests:
     description: Test file or directory.
     required: false
-    default: .h5i/tests
+    default: .h5i-tests/tests
   openapi:
     description: Optional OpenAPI JSON or YAML coverage denominator.
     required: false
