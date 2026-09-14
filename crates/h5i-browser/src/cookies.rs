@@ -550,7 +550,13 @@ impl Jar {
         self.flush();
     }
 
-    /// Drop everything when a navigation leaves the origin that set it.
+    /// Drop every cookie the document now loaded could not itself send.
+    ///
+    /// The test is `domain_matches`, the one the `Cookie:` header is built
+    /// from, so the jar cannot disagree with the wire about what is in scope.
+    /// Host equality *was* that rule before `Domain` was understood here, and
+    /// outlived it: the hop from an apex to its own `www` threw away the
+    /// `Domain=` cookies the redirect had just sent.
     pub fn retain_origin(&self, origin: &Url) -> bool {
         let Some(host) = origin.host_str().map(|h| h.to_ascii_lowercase()) else {
             return false;
@@ -559,7 +565,7 @@ impl Jar {
             return false;
         };
         let before = jar.len();
-        jar.retain(|cookie| cookie.host == host);
+        jar.retain(|cookie| domain_matches(&host, cookie));
         let dropped = before != jar.len();
         drop(jar);
         if dropped {
@@ -1388,6 +1394,41 @@ mod tests {
         );
         assert!(jar.is_empty());
         assert!(jar.header_for(&url("https://bank.example/")).is_none());
+    }
+
+    #[test]
+    fn a_domain_cookie_survives_the_hop_to_a_subdomain() {
+        // The apex redirects to its own `www`, which is the ordinary shape of
+        // a front page. What the redirect request sent, the landing page keeps.
+        let jar = Jar::new();
+        jar.store(
+            &url("https://example.com/"),
+            ["wide=w; Domain=example.com", "narrow=n"],
+        );
+        assert_eq!(jar.len(), 2);
+
+        assert!(
+            jar.retain_origin(&url("https://www.example.com/")),
+            "the host-only cookie goes, so the jar says it dropped something"
+        );
+        let (header, sent) = jar
+            .header_for(&url("https://www.example.com/"))
+            .expect("the Domain cookie is still in scope here");
+        assert_eq!(sent, 1);
+        assert!(header.contains("wide=w"), "{header}");
+        assert!(!header.contains("narrow=n"), "{header}");
+    }
+
+    #[test]
+    fn a_domain_cookie_is_dropped_when_the_navigation_leaves_the_domain() {
+        let jar = Jar::new();
+        jar.store(&url("https://example.com/"), ["wide=w; Domain=example.com"]);
+
+        assert!(jar.retain_origin(&url("https://notexample.com/")));
+        assert!(
+            jar.is_empty(),
+            "a label-boundary miss is another site, not a subdomain"
+        );
     }
 
     #[test]

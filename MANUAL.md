@@ -278,8 +278,10 @@ exactly that: a cross-origin `cors` read still has to be permitted by the server
 and `mode: "same-origin"` still refuses to cross.
 
 One thing it does not do is put a credential where there was not one. The cookie
-jar holds the session for the origin currently loaded and drops the rest on
-navigation, so a cross-host attack page has nothing of the target's to send.
+jar holds only what the page currently loaded could itself send: a `Domain=`
+cookie stays in scope across the domain tree the server scoped it to, and
+everything else is dropped on navigation, so a cross-host attack page has
+nothing of the target's to send.
 Two ports on one host are two origins and one jar, which is the shape a local
 CSRF lab has.
 

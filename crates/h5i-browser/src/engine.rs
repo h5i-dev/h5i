@@ -412,8 +412,8 @@ const INLINE_HANDLER_SELECTOR: &str = "[onload],[onclick],[onerror],[onchange],[
 /// fetched, and again when the page is finished, for an origin change that
 /// happened after that.
 const SESSION_DROPPED_NOTE: &str =
-    "cookies from the previous origin were dropped on navigation: this engine holds a \
-     session only for the origin currently loaded";
+    "cookies from the previous origin were dropped on navigation: this engine keeps only the \
+     cookies the document now loaded could itself send";
 
 /// How many frame documents one page may pull in, including nested ones.
 ///
@@ -3846,12 +3846,13 @@ mod frame_tests {
         assert!(!defuse_attribute("on", "x"));
     }
 
-    /// The jar is bounded to the origin currently loaded, but the drop happened
-    /// in `finish`, at the *end* of the navigation, and a page's frames and
-    /// subresources are fetched before that. So arriving at `evil.example` with
-    /// `bank.example`'s session still in the jar, and being told to fetch
-    /// `bank.example` in a frame, carried the credential, and §B21 then
-    /// flattened the authenticated answer into the outline the agent reads.
+    /// The jar is bounded to what the document now loaded may send, but the
+    /// drop happened in `finish`, at the *end* of the navigation, and a page's
+    /// frames and subresources are fetched before that. So arriving at
+    /// `evil.example` with `bank.example`'s session still in the jar, and being
+    /// told to fetch `bank.example` in a frame, carried the credential, and
+    /// §B21 then flattened the authenticated answer into the outline the agent
+    /// reads.
     #[test]
     fn a_page_cannot_frame_the_previous_origin_with_its_session_still_in_the_jar() {
         let body = "<p>the account page</p>";
@@ -4084,7 +4085,7 @@ mod navigation_origin_tests {
     use crate::receipt::MemorySink;
 
     /// The jar bound `Jar::retain_origin` documents, "at any moment the jar
-    /// holds only cookies for the origin currently loaded", rested on a drop
+    /// holds only cookies the document now loaded could send", rested on a drop
     /// `open` performed and `open_submission` did not.
     ///
     /// The jar is host-scoped, so arriving at another origin with the previous
