@@ -31,7 +31,7 @@
     </td>
     <td align="center">
       <strong>Fast & lightweight</strong><br>
-      <sub><a href="./docs/design/design-browser.md">~3× faster reads, ~86% less peak memory</a></sub>
+      <sub><a href="./docs/design/design-browser.md">~3× faster reads, ~86% less memory</a></sub>
     </td>
   </tr>
 </table>
