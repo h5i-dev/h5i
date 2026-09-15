@@ -140,7 +140,8 @@ h5i recon endpoints --state confirmed --json         # each row names the messag
 
 ### 2.3. CI/CD integration
 
-Confirmed attack flows can be kept in a repository and replayed in CI.
+Confirmed attack flows can be kept in a repository and replayed in CI. Templates and examples 
+of GitHub Actions are available at [`examples/security-regression-ci`](examples/security-regression-ci).
 
 ```yaml
 - uses: h5i-dev/h5i@v1
@@ -150,8 +151,6 @@ Confirmed attack flows can be kept in a repository and replayed in CI.
     openapi: openapi.yaml
     # min-coverage is optional; omitting it keeps coverage informational.
 ```
-
-Templates and examples of GitHub Actions are available at [`examples/security-regression-ci`](examples/security-regression-ci).
 
 ### 2.4. Control and audit agent access
 
