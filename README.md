@@ -138,17 +138,14 @@ h5i recon triage --calibrate                         # soft 404s folded, the res
 h5i recon endpoints --state confirmed --json         # each row names the message that proves it
 ```
 
-Confirmed attack flows can be kept in a repository and replayed in CI. h5i
-executes the HTTP flow and gives its evidence to a repository-owned program;
-the program may use `jq`, `grep`, an application test client, or anything else
-to decide whether the security property held:
+### 2.3. CI/CD integration
+
+Confirmed attack flows can be kept in a repository and replayed in CI.
 
 ```bash
 h5i test .h5i-tests/tests --target http://localhost:3000
 h5i test .h5i-tests/tests --target http://localhost:3000 \
   --openapi openapi.yaml                              # coverage is report-only
-h5i test .h5i-tests/tests --target http://localhost:3000 \
-  --openapi openapi.yaml --min-coverage 70            # an explicit coverage gate
 ```
 
 The runner writes JSON, JUnit XML and owner-only response artifacts. See
@@ -168,7 +165,7 @@ In GitHub Actions the same runner is available as a composite action:
     # min-coverage is optional; omitting it keeps coverage informational.
 ```
 
-### 2.3. Control and audit agent access
+### 2.4. Control and audit agent access
 
 Web content is untrusted input to an AI agent. h5i reduces the risks of giving
 agents web access by applying a network policy and recording both allowed and
@@ -210,7 +207,7 @@ h5i box --profile reading --name docs
 h5i browser open https://docs.rs/ --in docs
 ```
 
-### 2.4. Contain the entire agent workflow
+### 2.5. Contain the entire agent workflow
 
 A sandbox can contain more than the browser. It can also hold the workspace,
 toolchain, development server, and agent itself. This is useful when an agent is
@@ -240,7 +237,7 @@ h5i ui
   <img src="./docs/_static/sandbox-ui-demo.png" alt="Watching a sandboxed browser session from the host" width="99%" />
 </p>
 
-### 2.5. More browser capabilities
+### 2.6. More browser capabilities
 
 Name sessions to run several browsers independently:
 
