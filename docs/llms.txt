@@ -10,14 +10,21 @@
 - [AI pentesting tools compared](https://h5i.dev/blog/ai-pentesting-tools/): Burp Suite, OWASP ZAP, Caido, and h5i, chosen by what you delegate to AI.
 - [Manual](https://h5i.dev/manual/): Authoritative command, policy, receipt, and limitation reference.
 
-## Guides
+## The web security tutorial
 
-1. [Run an authorized web security test with an AI agent](https://h5i.dev/guides/authorized-web-security-testing/): Scope, capture, enumerate, replay, and report a pentest, CTF, or red-team exercise.
-2. [Open a session and read what it reached](https://h5i.dev/guides/drive-a-browser-session/): Drive a page by @ref handle, then audit the fail-closed request log.
-3. [Take one coding task from prompt to reviewed patch](https://h5i.dev/guides/first-box/): Create, work, inspect, export, and remove a local box.
-4. [Run the pull request before you trust the pull request](https://h5i.dev/guides/review-a-pull-request/): Execute external code in a detached box and review evidence before prose.
-5. [Write down what the agent may reach](https://h5i.dev/guides/write-a-box-policy/): Define filesystem, network, isolation, and resource policy in .h5i/env.toml.
-6. [Watch the page, then take the controls](https://h5i.dev/guides/watch-the-browser/): Run the browser beside the dev server and transfer control without stale handles.
+Ten articles that walk the 42 runnable labs in h5i-dev/h5i-tutorial, from recon to a complete exploit chain. Part 1 of the series is on Medium; these are the rest.
+
+1. [Recon and IDOR](https://h5i.dev/guides/recon-and-idor/): Discover hidden endpoints, then test object-level authorization and why an unguessable URL is not an access control.
+2. [Broken Access Control](https://h5i.dev/guides/broken-access-control/): Compare two logged-in users with --as, and find the fields a user interface never sends.
+3. [JWT Attacks](https://h5i.dev/guides/jwt-attacks/): alg confusion, a weak HMAC secret, and a key identifier turned into a path traversal.
+4. [SQL Injection](https://h5i.dev/guides/sql-injection/): A union read, then boolean and timing oracles when the application reveals almost nothing.
+5. [Injection Beyond SQL](https://h5i.dev/guides/injection-beyond-sql/): NoSQL operators, shell commands, server-side templates, XML entities, and second-order input.
+6. [The Browser as a Weapon](https://h5i.dev/guides/browser-as-a-weapon/): Reflected and stored XSS, CSRF, CORS misconfiguration, and an OAuth redirect_uri leak.
+7. [SSRF and File Attacks](https://h5i.dev/guides/ssrf-and-file-attacks/): Internal services, filter bypasses, encoded traversal, upload writes, and log poisoning.
+8. [HTTP Protocol Attacks](https://h5i.dev/guides/http-protocol-attacks/): Request smuggling, CRLF injection, host header poisoning, cache poisoning, WebSocket frames.
+9. [Business Logic, Time, and Crypto](https://h5i.dev/guides/logic-time-and-crypto/): Races, coupon stacking, predictable tokens, length extension, MFA state, and a pickled cookie.
+10. [Building Exploit Chains](https://h5i.dev/guides/exploit-chains/): Carry fresh values between requests and turn small findings into one reproducible compromise.
+11. [Cheatsheet](https://h5i.dev/guides/cheatsheet/): The loop, every --set target, the replay flags, probe values by class, and how to read a sweep.
 
 ## Tool comparisons
 

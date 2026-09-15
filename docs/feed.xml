@@ -6,6 +6,15 @@
     <item><title>AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?</title><link>https://h5i.dev/blog/ai-pentesting-tools/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/ai-pentesting-tools/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
       <description>Burp Suite, ZAP, Caido, and h5i compared for AI pentesting: AI-assisted manual testing, AI-authored scan automation, and agent-led investigation.</description></item>
+    <item><title>Burp Suite vs h5i for AI agents</title><link>https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
+      <description>Burp Suite vs h5i for AI agents: compare HTTP capture, request editing, browser automation, and fully automated penetration testing with Burp AT or h5i.</description></item>
+    <item><title>OWASP ZAP vs h5i for AI agents</title><link>https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
+      <description>OWASP ZAP vs h5i for AI agents: compare DAST scanning and MCP automation with fully automated, agent-driven browser testing, HTTP capture, editing, and replay.</description></item>
+    <item><title>Caido vs h5i for AI agents</title><link>https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
+      <description>Caido vs h5i for AI agents: compare proxy history, HTTPQL, Replay, Automate, and Skills with fully automated agent-driven browser and HTTP testing.</description></item>
     <item><title>Sandbox the entire workflow: browse, develop, review, apply</title><link>https://h5i.dev/blog/the-h5i-loop/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/the-h5i-loop/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
       <description>Create one sandbox for an AI coding task, browse from inside it, develop and test there, then review the evidence before exporting or applying the patch.</description></item>
@@ -20,13 +29,4 @@
       <description>Review AI-generated code using the diff, externally observed test results, denied actions, browser errors, and explicit gaps in evidence.</description></item>
     <item><title>How to protect a coding agent from prompt injection</title><link>https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
-      <description>Limit the files, credentials, network destinations, local services, and repository writes available to a prompt-injected coding agent.</description></item>
-    <item><title>Burp Suite vs h5i for AI agents</title><link>https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/</link>
-      <guid isPermaLink="true">https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
-      <description>Burp Suite vs h5i for AI agents: compare HTTP capture, request editing, browser automation, and fully automated penetration testing with Burp AT or h5i.</description></item>
-    <item><title>OWASP ZAP vs h5i for AI agents</title><link>https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/</link>
-      <guid isPermaLink="true">https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
-      <description>OWASP ZAP vs h5i for AI agents: compare DAST scanning and MCP automation with fully automated, agent-driven browser testing, HTTP capture, editing, and replay.</description></item>
-    <item><title>Caido vs h5i for AI agents</title><link>https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/</link>
-      <guid isPermaLink="true">https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
-      <description>Caido vs h5i for AI agents: compare proxy history, HTTPQL, Replay, Automate, and Skills with fully automated agent-driven browser and HTTP testing.</description></item></channel></rss>
+      <description>Limit the files, credentials, network destinations, local services, and repository writes available to a prompt-injected coding agent.</description></item></channel></rss>

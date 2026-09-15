@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-08-21",
-      "dateModified": "2026-09-02",
+      "dateModified": "2026-09-15",
       "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -170,7 +170,7 @@ $ h5i browser open https://example.com --in web</code></pre></div></div>
 <h2 id="sources">Reference</h2>
 <ul><li><a href="/manual/#h5i-browser">The session reference: verbs, states, and where sessions live</a>.</li><li><a href="/guides/watch-the-browser/">Watch the page, then take the controls</a>.</li><li><a href="/blog/prompt-injection-is-a-boundary-problem/">Why browser authority changes the injection threat model</a>.</li><li><a href="https://github.com/h5i-dev/h5i/tree/main/crates/h5i-browser">The engine implementation</a>.</li></ul>
 <h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Is the session sandboxed?</summary><div class="faq-answer">Not by default, and h5i does not claim it is. A session started with no flags runs in your ordinary process space like any other headless browser. The placement line says so on every status. Containment is the --in flag, which places the same session inside a box without changing any verb.</div></details><details class="faq-item"><summary>What does engine-claimed mean?</summary><div class="faq-answer">It is the browser's own account of what it fetched: fail-closed, complete, and still the browser describing itself. host-observed means h5i also saw the traffic at a box's boundary, outside the browser. h5i never merges the two labels.</div></details><details class="faq-item"><summary>What happens if the browser dies mid-task?</summary><div class="faq-answer">The session is recorded as died, with a time, and the next verb exits 69. Nothing restarts automatically. Use --restore to carry the old session's storage into a new session with a new id; the inheritance is written into the new record and the old id is never reused.</div></details><details class="faq-item"><summary>Does the engine run page JavaScript?</summary><div class="faq-answer">Only if you ask for it with --script. Off is the default because with no script realm there is no delivery channel for page-borne injection at all. Turning it on is a decision, not a default you inherit.</div></details></div>
-<a class="next-up" href="/guides/watch-the-browser/"><span class="label">Next guide</span><h3>Watch the page, then take the controls</h3><p>Put the browser beside the dev server and hand control between agent and human.</p></a>
+<a class="next-up" href="/guides/authorized-web-security-testing/"><span class="label">Next guide</span><h3>Run an authorized web security test with an AI agent</h3><p>Scope the session to a target you may test, then capture, replay, and compare its traffic.</p></a>
 <div class="post-cta"><h3>Open a session in one command</h3><p>No project, no repository, no configuration. h5i browser open takes a URL and gives you an id.</p>
 <div class="hero-actions"><a class="btn btn-primary" href="/manual/#h5i-browser">Read the session reference</a></div></div>
 </article></main><footer class="blog-footer"><div class="blog-footer-inner">

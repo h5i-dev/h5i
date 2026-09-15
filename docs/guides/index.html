@@ -1,15 +1,15 @@
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>h5i guides: agent browsing and web security testing</title><meta name="description" content="Six h5i guides for auditable agent browsing, sandboxed code review, and authorized AI web security testing for pentests, red teams, and CTFs.">
+<title>h5i guides: agent browsing and web security testing</title><meta name="description" content="A ten-part h5i web security tutorial with runnable CTF labs, plus guides to auditable agent browsing, authorized AI pentesting, and sandboxed code review.">
 <meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
 <meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
 <link rel="canonical" href="https://h5i.dev/guides/"><link rel="icon" type="image/png" href="/_static/logo.png">
 <meta property="og:type" content="website"><meta property="og:site_name" content="h5i">
-<meta property="og:title" content="h5i guides: agent browsing and web security testing"><meta property="og:description" content="Six h5i guides for auditable agent browsing, sandboxed code review, and authorized AI web security testing for pentests, red teams, and CTFs.">
+<meta property="og:title" content="h5i guides: agent browsing and web security testing"><meta property="og:description" content="A ten-part h5i web security tutorial with runnable CTF labs, plus guides to auditable agent browsing, authorized AI pentesting, and sandboxed code review.">
 <meta property="og:url" content="https://h5i.dev/guides/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="h5i guides: agent browsing and web security testing">
-<meta name="twitter:description" content="Six h5i guides for auditable agent browsing, sandboxed code review, and authorized AI web security testing for pentests, red teams, and CTFs."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:description" content="A ten-part h5i web security tutorial with runnable CTF labs, plus guides to auditable agent browsing, authorized AI pentesting, and sandboxed code review."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
@@ -19,9 +19,9 @@
       "@id": "https://h5i.dev/guides/#page",
       "url": "https://h5i.dev/guides/",
       "name": "h5i guides: agent browsing and web security testing",
-      "description": "Six h5i guides for auditable agent browsing, sandboxed code review, and authorized AI web security testing for pentests, red teams, and CTFs.",
+      "description": "A ten-part h5i web security tutorial with runnable CTF labs, plus guides to auditable agent browsing, authorized AI pentesting, and sandboxed code review.",
       "inLanguage": "en",
-      "dateModified": "2026-09-09",
+      "dateModified": "2026-09-15",
       "isPartOf": {
         "@id": "https://h5i.dev/#website"
       },
@@ -56,38 +56,104 @@
         {
           "@type": "ListItem",
           "position": 1,
+          "url": "https://h5i.dev/guides/recon-and-idor/",
+          "name": "Recon and IDOR"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "url": "https://h5i.dev/guides/broken-access-control/",
+          "name": "Broken Access Control"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "url": "https://h5i.dev/guides/jwt-attacks/",
+          "name": "JWT Attacks"
+        },
+        {
+          "@type": "ListItem",
+          "position": 4,
+          "url": "https://h5i.dev/guides/sql-injection/",
+          "name": "SQL Injection"
+        },
+        {
+          "@type": "ListItem",
+          "position": 5,
+          "url": "https://h5i.dev/guides/injection-beyond-sql/",
+          "name": "Injection Beyond SQL"
+        },
+        {
+          "@type": "ListItem",
+          "position": 6,
+          "url": "https://h5i.dev/guides/browser-as-a-weapon/",
+          "name": "The Browser as a Weapon"
+        },
+        {
+          "@type": "ListItem",
+          "position": 7,
+          "url": "https://h5i.dev/guides/ssrf-and-file-attacks/",
+          "name": "SSRF and File Attacks"
+        },
+        {
+          "@type": "ListItem",
+          "position": 8,
+          "url": "https://h5i.dev/guides/http-protocol-attacks/",
+          "name": "HTTP Protocol Attacks"
+        },
+        {
+          "@type": "ListItem",
+          "position": 9,
+          "url": "https://h5i.dev/guides/logic-time-and-crypto/",
+          "name": "Business Logic, Time, and Crypto"
+        },
+        {
+          "@type": "ListItem",
+          "position": 10,
+          "url": "https://h5i.dev/guides/exploit-chains/",
+          "name": "Building Exploit Chains"
+        },
+        {
+          "@type": "ListItem",
+          "position": 11,
+          "url": "https://h5i.dev/guides/cheatsheet/",
+          "name": "Cheatsheet"
+        },
+        {
+          "@type": "ListItem",
+          "position": 12,
           "url": "https://h5i.dev/guides/drive-a-browser-session/",
           "name": "Open a session and read what it reached"
         },
         {
           "@type": "ListItem",
-          "position": 2,
+          "position": 13,
+          "url": "https://h5i.dev/guides/authorized-web-security-testing/",
+          "name": "Run an authorized web security test with an AI agent"
+        },
+        {
+          "@type": "ListItem",
+          "position": 14,
           "url": "https://h5i.dev/guides/first-box/",
           "name": "Take one coding task from prompt to reviewed patch"
         },
         {
           "@type": "ListItem",
-          "position": 3,
-          "url": "https://h5i.dev/guides/review-a-pull-request/",
-          "name": "Run the pull request before you trust the pull request"
-        },
-        {
-          "@type": "ListItem",
-          "position": 4,
+          "position": 15,
           "url": "https://h5i.dev/guides/write-a-box-policy/",
           "name": "Write down what the agent may reach"
         },
         {
           "@type": "ListItem",
-          "position": 5,
+          "position": 16,
           "url": "https://h5i.dev/guides/watch-the-browser/",
           "name": "Watch the page, then take the controls"
         },
         {
           "@type": "ListItem",
-          "position": 6,
-          "url": "https://h5i.dev/guides/authorized-web-security-testing/",
-          "name": "Run an authorized web security test with an AI agent"
+          "position": 17,
+          "url": "https://h5i.dev/guides/review-a-pull-request/",
+          "name": "Run the pull request before you trust the pull request"
         }
       ]
     }
@@ -104,20 +170,42 @@
     <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
     <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
   </ul>
-</nav><section class="index-hero"><div class="post-eyebrow">Field guides</div>
-<h1>One path from a browser session to a reviewed patch</h1><p>Start at the top and follow the sequence. Each guide has one outcome, commands you can run, a verification step, and the point where human judgment belongs.</p></section><section class="post-list"><a class="post-card featured" href="/guides/drive-a-browser-session/">
-<div class="card-meta"><span>Step 01</span><span>8 min</span></div>
-<h2>Open a session and read what it reached</h2><p>Open an h5i browser session, drive a page by @ref handle, then audit the fail-closed request log the engine wrote before any bytes moved.</p></a><a class="post-card" href="/guides/first-box/">
-<div class="card-meta"><span>Step 02</span><span>9 min</span></div>
-<h2>Take one coding task from prompt to reviewed patch</h2><p>Create your first h5i sandbox, run an agent inside it, inspect the diff and execution record, then export or apply the result.</p></a><a class="post-card" href="/guides/review-a-pull-request/">
-<div class="card-meta"><span>Step 03</span><span>9 min</span></div>
-<h2>Run the pull request before you trust the pull request</h2><p>Fetch an untrusted pull request into a detached h5i box, build and exercise it, inspect denied activity, and export a review bundle.</p></a><a class="post-card" href="/guides/write-a-box-policy/">
-<div class="card-meta"><span>Step 04</span><span>10 min</span></div>
+</nav><section class="index-hero"><div class="post-eyebrow">17 chapters and guides</div>
+<h1>h5i Guides</h1><p>The web security tutorial runs first, ten articles against 42 deliberately vulnerable labs you run on your own machine, from recon to a full exploit chain. Then the task guides: drive a browser session and audit the requests behind it, scope an agent to a target you are authorized to test, and run untrusted code in a box.</p></section><section class="post-list"><a class="post-card featured" href="/guides/recon-and-idor/">
+<div class="card-meta"><span>Tutorial 01</span><span>10 min</span></div>
+<h2>Recon and IDOR</h2><p>A beginner-friendly CTF tutorial: discover hidden endpoints, test object-level authorization, and learn why an unguessable URL is not an access control.</p></a><a class="post-card" href="/guides/broken-access-control/">
+<div class="card-meta"><span>Tutorial 02</span><span>9 min</span></div>
+<h2>Broken Access Control</h2><p>A beginner-friendly CTF tutorial: compare two logged-in users, test authorization directly, and find fields the user interface never sends.</p></a><a class="post-card" href="/guides/jwt-attacks/">
+<div class="card-meta"><span>Tutorial 03</span><span>9 min</span></div>
+<h2>JWT Attacks</h2><p>A beginner-friendly CTF tutorial: decode JSON Web Tokens, bypass a missing signature check, crack a weak HMAC secret, and turn a key identifier into a path traversal.</p></a><a class="post-card" href="/guides/sql-injection/">
+<div class="card-meta"><span>Tutorial 04</span><span>11 min</span></div>
+<h2>SQL Injection</h2><p>A beginner-friendly CTF tutorial: turn a broken search query into a database read, then extract secrets when the application reveals only a boolean—or only its response time.</p></a><a class="post-card" href="/guides/injection-beyond-sql/">
+<div class="card-meta"><span>Tutorial 05</span><span>6 min</span></div>
+<h2>Injection Beyond SQL</h2><p>A beginner-friendly CTF tutorial: cross the boundaries between JSON, shells, templates, XML, and stored data.</p></a><a class="post-card" href="/guides/browser-as-a-weapon/">
+<div class="card-meta"><span>Tutorial 06</span><span>7 min</span></div>
+<h2>The Browser as a Weapon</h2><p>A beginner-friendly CTF tutorial: make a victim’s browser execute code, send authenticated requests, cross origins, and leak an OAuth authorization code.</p></a><a class="post-card" href="/guides/ssrf-and-file-attacks/">
+<div class="card-meta"><span>Tutorial 07</span><span>6 min</span></div>
+<h2>SSRF and File Attacks</h2><p>A beginner-friendly CTF tutorial: make a server reach internal services, bypass URL filters, preserve encoded paths, overwrite security data, and turn a log file into code.</p></a><a class="post-card" href="/guides/http-protocol-attacks/">
+<div class="card-meta"><span>Tutorial 08</span><span>7 min</span></div>
+<h2>HTTP Protocol Attacks</h2><p>A beginner-friendly CTF tutorial: control raw request framing, inject headers, poison shared caches, and test commands carried over WebSockets.</p></a><a class="post-card" href="/guides/logic-time-and-crypto/">
+<div class="card-meta"><span>Tutorial 09</span><span>8 min</span></div>
+<h2>Business Logic, Time, and Crypto</h2><p>A beginner-friendly CTF tutorial: race a balance check, stack valid discounts, predict recovery tokens, extend a hash, skip MFA state, and turn a signed cookie into code execution.</p></a><a class="post-card" href="/guides/exploit-chains/">
+<div class="card-meta"><span>Tutorial 10</span><span>7 min</span></div>
+<h2>Building Exploit Chains</h2><p>The final h5i tutorial: carry fresh values between requests, turn small findings into a complete compromise, and keep the entire chain reproducible.</p></a><a class="post-card" href="/guides/cheatsheet/">
+<div class="card-meta"><span>Reference</span><span>5 min</span></div>
+<h2>Cheatsheet</h2><p>One page of h5i websec reference: the capture and replay loop, every --set target, the replay flags, probe values by vulnerability class, and how to read a sweep.</p></a><a class="post-card" href="/guides/drive-a-browser-session/">
+<div class="card-meta"><span>Guide 01</span><span>8 min</span></div>
+<h2>Open a session and read what it reached</h2><p>Open an h5i browser session, drive a page by @ref handle, then audit the fail-closed request log the engine wrote before any bytes moved.</p></a><a class="post-card" href="/guides/authorized-web-security-testing/">
+<div class="card-meta"><span>Guide 02</span><span>12 min</span></div>
+<h2>Run an authorized web security test with an AI agent</h2><p>Use h5i for an authorized pentest, CTF, or red-team exercise: scope an agent's network access, capture HTTP traffic, map endpoints, replay requests, and preserve evidence.</p></a><a class="post-card" href="/guides/first-box/">
+<div class="card-meta"><span>Guide 03</span><span>9 min</span></div>
+<h2>Take one coding task from prompt to reviewed patch</h2><p>Create your first h5i sandbox, run an agent inside it, inspect the diff and execution record, then export or apply the result.</p></a><a class="post-card" href="/guides/write-a-box-policy/">
+<div class="card-meta"><span>Guide 04</span><span>10 min</span></div>
 <h2>Write down what the agent may reach</h2><p>Define an h5i profile with an explicit isolation tier, filesystem grants, default-deny networking, and resource limits, then verify it.</p></a><a class="post-card" href="/guides/watch-the-browser/">
-<div class="card-meta"><span>Step 05</span><span>9 min</span></div>
-<h2>Watch the page, then take the controls</h2><p>Run a dev server and browser inside an h5i box, watch it through a loopback-only viewer, and safely transfer control from agent to human.</p></a><a class="post-card" href="/guides/authorized-web-security-testing/">
-<div class="card-meta"><span>Step 06</span><span>12 min</span></div>
-<h2>Run an authorized web security test with an AI agent</h2><p>Use h5i for an authorized pentest, CTF, or red-team exercise: scope an agent's network access, capture HTTP traffic, map endpoints, replay requests, and preserve evidence.</p></a></section><footer class="blog-footer"><div class="blog-footer-inner">
+<div class="card-meta"><span>Guide 05</span><span>9 min</span></div>
+<h2>Watch the page, then take the controls</h2><p>Run a dev server and browser inside an h5i box, watch it through a loopback-only viewer, and safely transfer control from agent to human.</p></a><a class="post-card" href="/guides/review-a-pull-request/">
+<div class="card-meta"><span>Guide 06</span><span>9 min</span></div>
+<h2>Run the pull request before you trust the pull request</h2><p>Fetch an untrusted pull request into a detached h5i box, build and exercise it, inspect denied activity, and export a review bundle.</p></a></section><footer class="blog-footer"><div class="blog-footer-inner">
   <div class="brand">h5i<span class="red"> / high-five</span></div>
   <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
   <div class="legal">Apache 2.0 &middot; Built with Rust</div>

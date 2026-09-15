@@ -1,0 +1,337 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recon and IDOR | h5i web security tutorial</title><meta name="description" content="Discover hidden endpoints in an application, then test object-level authorization and see why an unguessable URL is not an access control.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/recon-and-idor/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Recon and IDOR | h5i web security tutorial"><meta property="og:description" content="Discover hidden endpoints in an application, then test object-level authorization and see why an unguessable URL is not an access control.">
+<meta property="og:url" content="https://h5i.dev/guides/recon-and-idor/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Recon and IDOR | h5i web security tutorial">
+<meta name="twitter:description" content="Discover hidden endpoints in an application, then test object-level authorization and see why an unguessable URL is not an access control."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Recon and IDOR",
+      "description": "Discover hidden endpoints in an application, then test object-level authorization and see why an unguessable URL is not an access control.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-09-13",
+      "dateModified": "2026-09-15",
+      "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/recon-and-idor/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Recon and IDOR",
+          "item": "https://h5i.dev/guides/recon-and-idor/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=20ea6351e0"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Tutorial 01 / Recon &middot; 2026-09-13</div>
+<h1>Recon and IDOR</h1><p class="post-deck">A beginner-friendly CTF tutorial: discover hidden endpoints, test object-level authorization, and learn why an unguessable URL is not an access control.</p>
+<div class="post-meta"><span>10 min read</span><span>Recon &middot; IDOR &middot; Labs 5&ndash;7</span></div></header>
+<p>In <a href="https://medium.com/@Koukyosyumei/web-security-tutorial-with-h5i-part-1-http-request-tampering-39c4a0857b85">Part 1 on Medium</a>, we changed URL parameters, form fields, cookies, and HTTP methods. In every case, the vulnerable request was already in front of us.</p>
+<p>Real applications are less helpful. Before testing a request, we usually have to discover it. We then have to ask not only whether an endpoint requires a login, but whether the logged-in user is allowed to access the particular object they requested.</p>
+<p>In this article, we will use <a href="https://github.com/h5i-dev/h5i">h5i</a> and Labs 5–7 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a> to learn two fundamental web-security skills:</p>
+<ul>
+<li><strong>Reconnaissance:</strong> mapping the application before attacking it.</li>
+<li><strong>Object-level authorization testing:</strong> checking whether one user can access another user's data.</li>
+</ul>
+<p>All three targets are deliberately vulnerable applications that run only on <code>127.0.0.1</code>. Do not test these techniques against systems unless you own them or have explicit permission.</p>
+<h2 id="before-we-begin">Before we begin</h2>
+<p>This article continues from <a href="https://medium.com/@Koukyosyumei/web-security-tutorial-with-h5i-part-1-http-request-tampering-39c4a0857b85">Part 1 on Medium</a>. You need Python 3.11 or later, h5i, and its <code>websec</code> plugin. The complete setup instructions are in the <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec#1-setup">tutorial repository</a>.</p>
+<pre><code class="language-bash">$ git clone https://github.com/h5i-dev/h5i-tutorial.git
+$ cd h5i-tutorial/websec
+$ h5i websec --help
+</code></pre>
+<p>The workflow remains the same:</p>
+<ol>
+<li>Open a page with capture enabled.</li>
+<li>Inspect the recorded requests and responses.</li>
+<li>Replay a request with one deliberate change.</li>
+<li>Compare the result.</li>
+</ol>
+<h2 id="what-is-reconnaissance">What is reconnaissance?</h2>
+<p><strong>Reconnaissance</strong>, usually shortened to <strong>recon</strong>, means learning what an application exposes: pages, API endpoints, parameters, versions, roles, and other reachable services.</p>
+<p>The visible navigation is only one source. Useful information also appears in HTML comments, JavaScript files, HTTP headers, error messages, API documentation, <code>robots.txt</code>, and old endpoints that were hidden but never removed.</p>
+<p>Recon is not just preparation for the “real” work. An endpoint that the development team forgot may be the vulnerability itself.</p>
+<h2 id="lab-5-follow-the-applications-trail">Lab 5: follow the application’s trail</h2>
+<p>Start the intranet lab:</p>
+<pre><code class="language-bash">$ ./run.sh 05
+</code></pre>
+<p>It prints <code>http://127.0.0.1:9050</code>. Open the homepage and record its traffic:</p>
+<pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9050/' \
+  --session lab05 --new --capture
+$ h5i browser markdown --session lab05
+</code></pre>
+<p>The rendered page contains links to <code>/docs</code> and <code>/api/v3/whoami</code>. The API answers with <code>401 Unauthorized</code> because we do not have a bearer token.</p>
+<p>It would be easy to stop there. Instead, read both the rendered page and the original HTTP response:</p>
+<pre><code class="language-bash">$ h5i websec show res_0 --session lab05 --raw
+</code></pre>
+<p>Near the end of the HTML is a comment that the browser does not display as page text:</p>
+<pre><code class="language-html">&lt;!-- TODO(dana): kill the v0 API before the audit --&gt;
+</code></pre>
+<p>An HTML comment is not secret. Anyone who receives the page can read its source. This one tells us that an older API version may still exist.</p>
+<h3 id="check-robotstxt">Check <code>robots.txt</code></h3>
+<p><code>robots.txt</code> tells search-engine crawlers which paths they should avoid. It is public and does not prevent a person from requesting those paths.</p>
+<p>Replay the captured homepage request, changing only its path:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab05 --set path=/robots.txt
+$ h5i websec show res_1 --session lab05 --raw
+</code></pre>
+<p>The response contains:</p>
+<pre><code class="language-text">User-agent: *
+Disallow: /internal/
+Disallow: /api/v0/
+</code></pre>
+<p><code>Disallow</code> means “please do not index this path,” not “deny access to this path.” In practice, <code>robots.txt</code> can become a public list of interesting locations.</p>
+<p>The <code>/docs</code> page also points to <code>/internal/notes.md</code>. Request it by replaying the same captured request:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab05 --set path=/internal/notes.md
+$ h5i websec show res_2 --session lab05 --raw
+</code></pre>
+<p>The notes explain that version 3 requires authentication, while version 0 predates it. They also identify employee <code>1</code> as the service account.</p>
+<p>We can now test the old endpoint directly:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab05 \
+  --set path=/api/v0/employee/1
+$ h5i websec show res_3 --session lab05 --raw
+</code></pre>
+<p>The response contains the service account and:</p>
+<pre><code class="language-text">FLAG{recon_trail}
+</code></pre>
+<p>The precise response number may differ if you sent additional requests. Use the <code>seq</code> value printed by <code>replay</code> to find the corresponding <code>res_N</code>.</p>
+<h3 id="why-did-this-work">Why did this work?</h3>
+<p>The application protects its current API:</p>
+<pre><code class="language-python">@app.get(&quot;/api/v3/whoami&quot;)
+def whoami(req):
+    return js({&quot;error&quot;: &quot;missing bearer token&quot;}, 401)
+</code></pre>
+<p>But the deprecated API remains routable and contains no authorization check:</p>
+<pre><code class="language-python">@app.get(&quot;/api/v0/employee/(\\d+)&quot;)
+def employee_v0(req, emp_id):
+    if emp_id == &quot;1&quot;:
+        return js({&quot;id&quot;: 1, &quot;name&quot;: &quot;svc-deploy&quot;, &quot;notes&quot;: FLAG})
+</code></pre>
+<p>Calling an API “deprecated” does not disable it. The old route must be removed, or it must pass through the same centralized authentication and authorization controls as the new route.</p>
+<h3 id="keep-the-map">Keep the map</h3>
+<p>h5i can summarize everything reached during the session:</p>
+<pre><code class="language-bash">$ h5i websec sitemap --session lab05 --human
+$ h5i websec requests --session lab05 --human
+</code></pre>
+<p>The sitemap is useful because it turns recon into a reproducible artifact instead of a list you try to remember.</p>
+<h2 id="authentication-is-not-authorization">Authentication is not authorization</h2>
+<p>Before the next lab, we need to separate two related ideas.</p>
+<p><strong>Authentication</strong> asks: <em>Who are you?</em></p>
+<p><strong>Authorization</strong> asks: <em>Are you allowed to do this?</em></p>
+<p>A website may correctly identify Alice and still accidentally let Alice read Bob’s invoice. That is an authorization failure.</p>
+<p>When the object is selected using an identifier supplied by the client—such as <code>/invoice/1041</code>, <code>?document_id=7</code>, or a UUID—and the server does not verify ownership, the bug is commonly called an <strong>insecure direct object reference (IDOR)</strong>. It is also described more generally as <strong>broken object-level authorization (BOLA)</strong>.</p>
+<h2 id="lab-6-enumerate-sequential-invoice-ids">Lab 6: enumerate sequential invoice IDs</h2>
+<p>Start the invoice lab:</p>
+<pre><code class="language-bash">$ ./run.sh 06
+</code></pre>
+<p>The homepage tells us that we are account <code>77</code> and that our latest invoice is <code>1041</code>. Open that invoice:</p>
+<pre><code class="language-bash">$ h5i browser open \
+  'http://127.0.0.1:9060/api/invoice?id=1041' \
+  --session lab06 --new --capture
+$ h5i websec show res_0 --session lab06 --raw
+</code></pre>
+<p>The response includes both the invoice ID and its account:</p>
+<pre><code class="language-json">{
+  &quot;viewer_account&quot;: 77,
+  &quot;id&quot;: 1041,
+  &quot;account&quot;: 77,
+  &quot;total&quot;: 41
+}
+</code></pre>
+<p>Now change the invoice ID while keeping our identity unchanged:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab06 --set query.id=1040
+</code></pre>
+<p>One changed value is enough to form the important question: <em>Does the server verify that account 77 owns the requested invoice?</em></p>
+<p>Because the IDs are sequential, we can inspect nearby values. The replay command returns JSON containing the response status and size, so we do not need to print every body:</p>
+<pre><code class="language-bash">$ for id in $(seq 1000 1050); do
+    printf '%s ' &quot;$id&quot;
+    h5i websec replay req_0 --session lab06 \
+      --reset-budget --set &quot;query.id=$id&quot; |
+      python3 -c 'import json,sys; r=json.load(sys.stdin)[&quot;response&quot;]; print(r[&quot;status&quot;], r[&quot;bytes&quot;])'
+  done
+</code></pre>
+<p>Most responses form similar clusters. Invoice <code>1004</code> is larger because it has an additional memo. Replay that ID and read the new response:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab06 --reset-budget \
+  --set query.id=1004
+</code></pre>
+<p>Note the printed <code>seq</code>, then replace <code>N</code> below with that number:</p>
+<pre><code class="language-bash">$ h5i websec show res_N --session lab06 --raw
+</code></pre>
+<p>The body shows an invoice belonging to account <code>1</code>, even though <code>viewer_account</code> is still <code>77</code>. Its memo contains:</p>
+<pre><code class="language-text">FLAG{idor_sequential}
+</code></pre>
+<h3 id="what-does-reset-budget-do">What does <code>--reset-budget</code> do?</h3>
+<p>h5i limits the network allowance of a browser session so that untrusted page code cannot make requests forever. A deliberate security-testing loop may need more requests than a normal page.</p>
+<p><code>--reset-budget</code> renews that allowance for the replay. Use it for sweeps with more than a handful of requests. Otherwise, a stopped sweep can look like evidence that no endpoint exists.</p>
+<h3 id="why-did-this-work_1">Why did this work?</h3>
+<p>The vulnerable handler reads the current account and the requested invoice:</p>
+<pre><code class="language-python">who = req.cookies.get(&quot;account&quot;, &quot;77&quot;)
+row = INVOICES.get(wanted)
+return js({&quot;viewer_account&quot;: int(who), **row})
+</code></pre>
+<p>The application knows who is viewing the invoice. It also knows which account owns the invoice. It never compares them.</p>
+<p>That missing comparison is the vulnerability.</p>
+<p>A safer version checks ownership before returning the record:</p>
+<pre><code class="language-python">row = INVOICES.get(wanted)
+if not row or row[&quot;account&quot;] != session.account:
+    return js({&quot;error&quot;: &quot;no such invoice&quot;}, 404)
+</code></pre>
+<p>Returning the same <code>404 Not Found</code> for both nonexistent and unauthorized objects also avoids confirming that another customer’s invoice exists.</p>
+<h2 id="lab-7-why-uuids-do-not-solve-idor">Lab 7: why UUIDs do not solve IDOR</h2>
+<p>Sequential IDs are easy to enumerate, so a developer might replace them with random-looking identifiers such as UUIDs.</p>
+<p>This is useful defense in depth, but it is not authorization. If an identifier leaks through another endpoint, anyone who obtains it can still request the object.</p>
+<p>Start the document lab:</p>
+<pre><code class="language-bash">$ ./run.sh 07
+</code></pre>
+<p>We belong to the <code>acme</code> tenant. Open the search endpoint:</p>
+<pre><code class="language-bash">$ h5i browser open \
+  'http://127.0.0.1:9070/api/search?q=report' \
+  --session lab07 --new --capture
+$ h5i websec show res_0 --session lab07 --raw
+</code></pre>
+<p>The response contains a result from a different tenant:</p>
+<pre><code class="language-json">{
+  &quot;q&quot;: &quot;report&quot;,
+  &quot;hits&quot;: [
+    {
+      &quot;id&quot;: &quot;0d6d25cc-816e-a822-33f4-43e61907948c&quot;,
+      &quot;title&quot;: &quot;TPS Report&quot;,
+      &quot;tenant&quot;: &quot;initech&quot;
+    }
+  ]
+}
+</code></pre>
+<p>The UUID would be impractical to guess. We did not guess it—the search endpoint gave it to us.</p>
+<p>The lab asks us to find Initech’s break-glass document. Search for the title:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab07 --set query.q=glass
+$ h5i websec show res_1 --session lab07 --raw
+</code></pre>
+<p>The result reveals another Initech document ID. Copy that ID into the document path:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab07 \
+  --set path=/api/document/94e1d935-a208-f5e8-e5b9-b8e47e375110
+$ h5i websec show res_2 --session lab07 --raw
+</code></pre>
+<p>The server returns the cross-tenant document and:</p>
+<pre><code class="language-text">FLAG{idor_uuid}
+</code></pre>
+<h3 id="two-authorization-failures">Two authorization failures</h3>
+<p>The lab contains two separate mistakes.</p>
+<p>First, search is global rather than tenant-scoped:</p>
+<pre><code class="language-python">hits = [
+    {&quot;id&quot;: k, &quot;title&quot;: v[&quot;title&quot;], &quot;tenant&quot;: v[&quot;tenant&quot;]}
+    for k, v in DOCS.items()
+    if q and q in v[&quot;title&quot;].lower()
+]
+</code></pre>
+<p>Second, the read endpoint treats possession of the UUID as permission:</p>
+<pre><code class="language-python">row = DOCS.get(doc_id)
+return js({&quot;id&quot;: doc_id, **row})
+</code></pre>
+<p>Both queries need a tenant condition. Fixing only the search leak would leave the document endpoint vulnerable to identifiers exposed through logs, links, browser history, notifications, exports, or another future endpoint.</p>
+<p>A secure object lookup includes the authorization boundary itself:</p>
+<pre><code class="language-python">row = DOCS.get(doc_id)
+if not row or row[&quot;tenant&quot;] != session.tenant:
+    return js({&quot;error&quot;: &quot;not found&quot;}, 404)
+</code></pre>
+<p>The general rule is simple: <strong>possession of an object identifier is not permission to access the object.</strong></p>
+<h2 id="a-reusable-testing-method">A reusable testing method</h2>
+<p>The three labs suggest a workflow that applies to larger applications.</p>
+<h3 id="1-map-before-probing">1. Map before probing</h3>
+<p>Use the application normally with capture enabled. Then inspect:</p>
+<ul>
+<li>the rendered page and raw HTML;</li>
+<li>recorded API requests;</li>
+<li><code>robots.txt</code> and <code>sitemap.xml</code>;</li>
+<li>documentation and API version prefixes;</li>
+<li>error messages, redirects, headers, and JavaScript files.</li>
+</ul>
+<p>Keep the resulting endpoints in <code>h5i websec sitemap</code>.</p>
+<h3 id="2-identify-actors-and-objects">2. Identify actors and objects</h3>
+<p>Write down the application’s users and roles: anonymous visitor, customer, moderator, administrator, support agent, or another tenant.</p>
+<p>Then identify its objects: invoices, documents, orders, tickets, files, or API keys.</p>
+<h3 id="3-change-one-object-identifier">3. Change one object identifier</h3>
+<p>Capture a legitimate request and change only its object ID. Test:</p>
+<ul>
+<li>the previous and next sequential IDs;</li>
+<li>an ID belonging to another account;</li>
+<li>an ID found through search, autocomplete, exports, or activity feeds;</li>
+<li>read, update, and delete operations on the same object.</li>
+</ul>
+<h3 id="4-confirm-the-impact">4. Confirm the impact</h3>
+<p>A changed response is a lead. A clear cross-account read or write is the finding. Record the original and modified request IDs so another person can reproduce it.</p>
+<h2 id="summary">Summary</h2>
+<p>In Lab 5, public clues led us from the current API to a forgotten, unauthenticated version. In Lab 6, a sequential invoice ID exposed another account’s data. In Lab 7, a search endpoint leaked an unguessable UUID and the document endpoint accepted possession of that UUID as authorization.</p>
+<p>The common lesson is that the visible page is not the whole application, and a valid login is not the end of an authorization decision.</p>
+<p>When you finish, close the sessions and stop the lab servers:</p>
+<pre><code class="language-bash">$ h5i browser close --session lab05
+$ h5i browser close --session lab06
+$ h5i browser close --session lab07
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/broken-access-control/">Broken Access Control</a>, we will test authorization across two logged-in sessions and examine <strong>mass assignment</strong>: what happens when a client sends fields that the user interface never offered.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial: Web application security</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/05-recon-trail">Lab 5: Recon trail</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/06-idor-sequential">Lab 6: Sequential IDOR</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/07-idor-uuid">Lab 7: UUID IDOR</a></li>
+</ul>
+
+<a class="next-up" href="/guides/broken-access-control/"><span class="label">Next in the series</span><h3>Broken Access Control</h3><p>Compare two logged-in users, test authorization directly with --as, and find the fields a user interface never sends.</p></a>
+<div class="post-cta"><h3>Run the labs yourself</h3><p>42 deliberately vulnerable applications, one binary, no Docker and no accounts.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="https://github.com/h5i-dev/h5i-tutorial">Open h5i-tutorial</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

