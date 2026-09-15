@@ -914,8 +914,10 @@ struct NetArgs {
     /// The ceiling the others could not give: a page whose cost is parsing,
     /// layout and fonts is inside every limit above and can still load for two
     /// minutes. Past this the next fetch is refused, so the page finishes with
-    /// what it has rather than becoming one that never returns. Matches
-    /// `--navigation-seconds`, which bounds the same span in the renderer.
+    /// what it has rather than becoming one that never returns. Bounds the
+    /// page's own fetches: a replay is the agent's request and is charged the
+    /// ceilings above instead. Matches `--navigation-seconds`, which bounds the
+    /// same span in the renderer.
     #[arg(long, default_value_t = 45, value_name = "SECONDS")]
     max_load_seconds: u64,
 }

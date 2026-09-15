@@ -8,6 +8,7 @@ use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request};
 use h5i_error::H5iError;
 use url::Url;
 
+use crate::budget::Spender;
 use crate::policy::Policy;
 use crate::receipt::{Initiator, RequestRecord, Sink};
 
@@ -607,7 +608,7 @@ impl LocalBroker {
         // whose preflights the server refuses made unlimited round trips while
         // the allowance recorded none of them. The real request never happened,
         // so the request that was counted never happened either.
-        if let Err(over) = self.budget.claim_request() {
+        if let Err(over) = self.budget.claim_request(Spender::Page) {
             let record = RequestRecord::request(seq, Initiator::Subresource, "OPTIONS", url.as_str())
                 .denied(&over.0);
             let _ = self.record_pair(&record);
@@ -973,7 +974,9 @@ impl LocalBroker {
             //     A refusal here is recorded like any other, because "the page
             //     ran out of allowance" is exactly what a reader of the log
             //     needs to see rather than a request that silently stopped.
-            if let Err(over) = self.budget.claim_request() {
+            //     Charged to whoever asked rather than to the hop: a replay
+            //     that redirects is still the agent's request.
+            if let Err(over) = self.budget.claim_request(asked_as.into()) {
                 let record = RequestRecord::request(seq, initiator, &method, current.as_str())
                     .denied(&over.0);
                 if let Err(e) = self.record_pair(&record) {
@@ -1603,7 +1606,7 @@ impl LocalBroker {
         // frames are charged in `record_socket_frame`, and this is the handshake)
         // so a page could otherwise open as many as it liked and spend
         // nothing to do it.
-        if let Err(over) = self.budget.claim_request() {
+        if let Err(over) = self.budget.claim_request(Spender::Page) {
             let record =
                 RequestRecord::request(seq, Initiator::Subresource, "WS-OPEN", url.as_str())
                     .denied(&over.0);
@@ -1648,7 +1651,7 @@ impl LocalBroker {
         // And charged, which it was not.
         self.budget
             .record(bytes, bytes, std::time::Duration::ZERO);
-        self.budget.within_totals().map_err(|over| {
+        self.budget.within_totals(Spender::Page).map_err(|over| {
             H5iError::Metadata(format!(
                 "{} A long-lived connection is charged per frame, so this is the page's \
                  whole allowance rather than this frame's.",
@@ -1735,7 +1738,7 @@ impl LocalBroker {
         // spends the allowance in `record_socket_frame`. Without this a page
         // could open as many streams as it liked, each one a thread, and the
         // allowance would say it had spent nothing.
-        if let Err(over) = self.budget.claim_request() {
+        if let Err(over) = self.budget.claim_request(Spender::Page) {
             let record =
                 RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str())
                     .denied(&over.0);
@@ -2033,7 +2036,7 @@ impl crate::broker::Broker for LocalBroker {
         }
 
         // 4. Claim the request budget.
-        if let Err(over) = self.budget.claim_request() {
+        if let Err(over) = self.budget.claim_request(Spender::Agent) {
             return denied(self, seq, &over.0);
         }
 
@@ -4455,6 +4458,48 @@ mod cookie_wire_tests {
             })
             .count();
         assert!(denied >= 1, "the refusal must be in the log");
+    }
+
+    /// The load clock measures time since the last navigation, spent or not.
+    /// Charging a replay for it refused every `websec replay` against a session
+    /// the agent had been reading for longer than the ceiling, and said the
+    /// page had been "loading" for the whole of it.
+    #[test]
+    fn the_load_clock_does_not_refuse_the_agents_own_request() {
+        let port = always_answers(20);
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            sink.clone(),
+            None,
+            crate::budget::Limits {
+                max_load_time: Duration::from_millis(50),
+                ..Default::default()
+            },
+            None,
+        )
+        .expect("broker");
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+
+        std::thread::sleep(Duration::from_millis(80));
+
+        let refused = broker.fetch_from(&url, Initiator::Subresource, Some(&url));
+        let why = refused.error.expect("the page is past its clock");
+        assert!(why.contains("has been loading for"), "{why}");
+
+        let replayed = broker.fetch_from(&url, Initiator::Replay, None);
+        assert!(
+            replayed.error.is_none(),
+            "the agent named this request itself: {replayed:?}"
+        );
+
+        // And it reached the wire rather than being answered from the budget.
+        let sent = sink
+            .records()
+            .into_iter()
+            .filter(|r| r.allowed && r.initiator == Initiator::Replay)
+            .count();
+        assert!(sent >= 1, "the replay must be in the log as allowed");
     }
 
     /// A fresh page is a fresh decision by the agent, so it gets a fresh

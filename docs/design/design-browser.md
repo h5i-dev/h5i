@@ -795,6 +795,18 @@ rendered discarded. It bounds the fetch-driven half of a load: a page that stops
 fetching and grinds in layout still meets `HardStop`, and that is the next piece
 of this, not a claim this one makes.
 
+*And it bounds the page, not the agent.* `claim_request` takes a `Spender`, read
+from the initiator that began the chain, and the wall clock is checked only for
+`Spender::Page`. Every other ceiling measures what the caller spent; this one
+measures how long ago the session last navigated, spent or not, so an agent that
+read the previous answer for a minute found `websec replay` refused with "this
+page has been loading for 790s" against a page that was not loading. A replay is
+the principal driving the engine rather than the untrusted code the ceiling
+exists to bound, and it is still charged the request, byte and network-time
+ceilings, which count what it actually spent. Fixed 2026-09-15; before it,
+`--reset-budget` was the only way through and a session older than 45 seconds
+needed it on every send.
+
 ---
 
 ## B3. Security: what script bought and what it cost
