@@ -19,19 +19,15 @@
   <tr>
     <td align="center">
       <strong>Agent-native red teaming</strong><br>
-      <sub>Page automation + direct HTTP control</sub>
     </td>
     <td align="center">
       <strong>Attack replay in CI</strong><br>
-      <sub>Replay confirmed attack flows in CI</sub>
     </td>
     <td align="center">
       <strong>Sandboxed & auditable</strong><br>
-      <sub>Isolated execution & session logs</sub>
     </td>
     <td align="center">
-      <strong>Fast & lightweight</strong><br>
-      <sub><a href="./docs/design/design-browser.md">~3× faster reads, ~86% less memory</a></sub>
+      <strong><a href="./docs/design/design-browser.md">Fast & lightweight</strong></a><br>
     </td>
   </tr>
 </table>
