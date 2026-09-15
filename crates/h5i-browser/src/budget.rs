@@ -113,6 +113,21 @@ impl From<crate::receipt::Initiator> for Spender {
     }
 }
 
+/// How to get the allowance back, which is not the same answer for both.
+///
+/// Navigating is how a *page* gets a fresh one. An agent partway through a walk
+/// has every reason not to: it would throw away the page state the walk stands
+/// on, and spend two more requests getting back to it.
+fn start_again(who: Spender) -> &'static str {
+    match who {
+        Spender::Page => "Navigating gives the page a fresh allowance.",
+        Spender::Agent => {
+            "`--reset-budget` starts the allowance again without leaving the page \
+             (`\"reset_budget\": true` over rpc)."
+        }
+    }
+}
+
 /// Why a request was refused, in the form a receipt records and a page reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Exceeded(pub String);
@@ -171,8 +186,10 @@ impl Budget {
         if spent > self.limits.max_requests {
             return Err(Exceeded(format!(
                 "budget-exceeded: this page has made {} requests, and the limit for one \
-                 navigation is {}. Navigating gives the page a fresh allowance.",
-                spent, self.limits.max_requests
+                 navigation is {}. {}",
+                spent,
+                self.limits.max_requests,
+                start_again(who)
             )));
         }
         self.check_totals(who)
@@ -518,6 +535,29 @@ mod tests {
         assert!(refused.0.contains("is 3"), "{refused}");
         // And it says what to do about it.
         assert!(refused.0.contains("Navigating"), "{refused}");
+    }
+
+    /// Navigating is the page's way back. Telling an agent to navigate is
+    /// telling it to throw away the page its walk is standing on, so the
+    /// refusal names the flag that does not.
+    #[test]
+    fn the_way_back_is_the_one_the_caller_can_take() {
+        let over = |who| {
+            let budget = tight();
+            for _ in 0..3 {
+                let _ = budget.claim_request(who);
+            }
+            budget.claim_request(who).expect_err("the fourth is over").0
+        };
+
+        let page = over(Spender::Page);
+        assert!(page.contains("Navigating gives the page"), "{page}");
+        assert!(!page.contains("--reset-budget"), "{page}");
+
+        let agent = over(Spender::Agent);
+        assert!(agent.contains("--reset-budget"), "{agent}");
+        assert!(agent.contains("reset_budget"), "and over rpc: {agent}");
+        assert!(!agent.contains("Navigating"), "{agent}");
     }
 
     /// A request that is *attempted* is spent, whatever its outcome. Counting
