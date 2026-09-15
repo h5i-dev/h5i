@@ -2,7 +2,7 @@
 name = "h5i-runner"
 version = "0.1.0"
 edition = "2024"
-description = "h5i remote runner: place a box on a second Linux machine over SSH, with the repo, the policy and the credentials staying home (ROADMAP.md R1–R13)."
+description = "h5i remote runner: place a box on a second Linux machine over SSH, with the repo, the policy and the credentials staying home (docs/ROADMAP.md R1–R13)."
 
 [dependencies]
 h5i-error = { path = "../h5i-error" }

@@ -6,7 +6,7 @@
  * <linux/bpf.h> (its include chain reaches asm/types.h, which is absent on a
  * host with no arch headers installed — this one, for instance), and not of
  * libbpf's bpf_helpers.h (libbpf is not a build dependency and adding one
- * would undo the reason aya was chosen; ROADMAP.md D4).
+ * would undo the reason aya was chosen; docs/ROADMAP.md D4).
  *
  * What that costs is the twenty-odd constants and prototypes below, all of
  * them stable kernel ABI. What it buys is that the probe compiles with
@@ -14,7 +14,7 @@
  * every contributor can build and one that needs a package install first.
  *
  * Everything here is UAPI-stable. Nothing here describes a kernel *structure*
- * — that is the CO-RE cut (ROADMAP.md D5), and it is what lets one object
+ * — that is the CO-RE cut (docs/ROADMAP.md D5), and it is what lets one object
  * load on every kernel from 5.8 up without BTF, without vmlinux.h and
  * without a relocating loader.
  */
@@ -79,7 +79,7 @@ static void (*bpf_ringbuf_discard)(void *data, __u64 flags) = (void *)133;
  * register-width from there. The loader re-checks it against
  * /sys/kernel/tracing/events/.../format when that file is readable and
  * refuses to attach if a kernel ever moved a field, so a wrong assumption
- * here fails loudly instead of misreading arguments (ROADMAP.md D5). */
+ * here fails loudly instead of misreading arguments (docs/ROADMAP.md D5). */
 struct h5i_sys_enter {
     __u64 common;
     __s64 syscall_nr;

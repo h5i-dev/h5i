@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Generate docs/manual/index.html from MANUAL.md.
+"""Generate docs/manual/index.html from docs/MANUAL.md.
 
-The /manual/ page is RENDERED OUTPUT, not hand-edited. Edit MANUAL.md, then
+The /manual/ page is RENDERED OUTPUT, not hand-edited. Edit docs/MANUAL.md, then
 regenerate:
 
     pip install markdown        # one-time dependency (python-markdown)
@@ -9,14 +9,15 @@ regenerate:
 
 It wraps the rendered manual in the site shell (nav, footer, dark/red theme)
 with a sticky sidebar TOC + scrollspy, and uses a GitHub-compatible heading
-slugify so MANUAL.md's in-doc cross-references resolve.
+slugify so docs/MANUAL.md's in-doc cross-references resolve.
 """
+import posixpath
 import re, subprocess, sys
 from pathlib import Path
 
 import markdown
 
-src = open("MANUAL.md", encoding="utf-8").read()
+src = open("docs/MANUAL.md", encoding="utf-8").read()
 
 # Drop the hand-written "## Table of Contents" block (we render a styled sidebar instead)
 src = re.sub(r'\n## Table of Contents\n.*?(?=\n## )', '\n', src, count=1, flags=re.S)
@@ -42,11 +43,36 @@ def _check(body):
         problems.append(f"unrendered code fence (indented inside a list?) near: "
                         f"{re.sub(chr(60) + '[^>]+' + chr(62), '', body[i:i + 70]).strip()!r}")
     if problems:
-        raise SystemExit("MANUAL.md renders to broken HTML:\n  - "
+        raise SystemExit("docs/MANUAL.md renders to broken HTML:\n  - "
                          + "\n  - ".join(problems)
                          + "\nSee the note above this check in scripts/gen_manual.py.")
 
 _check(body)
+
+# `docs/MANUAL.md` is a repository file, so its links are relative to `docs/`.
+# The rendered page is served from `/manual/`, where those links resolve against
+# the wrong root: `ROADMAP.md` becomes `/manual/ROADMAP.md`, and the See also
+# section 404s. Point every relative link at the file on GitHub instead, which
+# is the copy a reader following a source-tree reference wants, and is right
+# whether or not the target happens to be published under `docs/`.
+REPO = "https://github.com/h5i-dev/h5i"
+
+def link_out(body):
+    def rewrite(m):
+        href = m.group(1)
+        if re.match(r"[a-z]+:|//|/|#", href):
+            return m.group(0)
+        path, _, frag = href.partition("#")
+        target = posixpath.normpath(posixpath.join("docs", path))
+        if not Path(target).exists():
+            raise SystemExit(f"docs/MANUAL.md links to {path!r}, which is not in "
+                             f"the repository (resolved to {target!r}).")
+        kind = "tree" if Path(target).is_dir() else "blob"
+        url = f"{REPO}/{kind}/main/{target}" + ("/" if path.endswith("/") else "")
+        return f'href="{url}{"#" + frag if frag else ""}"'
+    return re.sub(r'href="([^"]*)"', rewrite, body)
+
+body = link_out(body)
 
 # Build sidebar TOC from the heading tokens (levels 2 and 3)
 def render_toc(tokens):

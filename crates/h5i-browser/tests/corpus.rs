@@ -386,7 +386,7 @@ fn an_empty_page_distinguishes_no_script_from_script_disabled() {
 
 /// A page this engine's *parser* cannot read must still say so, by name.
 ///
-/// This construct is valid JavaScript and Boa rejects it. See ROADMAP.md
+/// This construct is valid JavaScript and Boa rejects it. See docs/ROADMAP.md
 /// §8.11. Minified bundles that keep `/*! @license */` comments between
 /// declarators produce it, which is how lit.dev fails. Nothing here can fix
 /// that; what this pins is that the failure is *attributed* rather than silent,

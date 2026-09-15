@@ -62,19 +62,20 @@ identity = ["browser", "h5i-browser/identity"]
 # captions live behind the player's own API.
 ytdlp = ["browser", "dep:url"]
 # `bpf` adds the runtime-detection collector: an eBPF probe that watches a run
-# from the kernel and files what it saw as its own evidence lane (ROADMAP.md
-# D1–D14). **Off by default**, for two reasons that both have to be true before
-# it earns a place in a default build: it needs `CAP_BPF`, which an ordinary
-# install does not have, and it needs a `clang` that can target BPF at build
-# time. `h5i box detect probe` reports the state of both on any build.
+# from the kernel and files what it saw as its own evidence lane
+# (docs/ROADMAP.md D1–D14). **Off by default**, for two reasons that both have
+# to be true before it earns a place in a default build: it needs `CAP_BPF`,
+# which an ordinary install does not have, and it needs a `clang` that can
+# target BPF at build time. `h5i box detect probe` reports the state of both on
+# any build.
 #
 # The *types* ship either way, through h5i-core, so a receipt written by a
 # `--features bpf` build is readable by one without it.
 bpf = ["h5i-core/bpf"]
 # `runner` adds `h5i runner` — pairing with a second Linux machine and running
-# boxes there over SSH (ROADMAP.md R1–R13). On by default because the worker
-# end of it is this same binary: a runner is an h5i install, so a build that
-# could not serve could not be a runner.
+# boxes there over SSH (docs/ROADMAP.md R1–R13). On by default because the
+# worker end of it is this same binary: a runner is an h5i install, so a build
+# that could not serve could not be a runner.
 runner = ["dep:h5i-runner"]
 # `share` adds `h5i box share` / `h5i join` and, through h5i-share, the iroh QUIC stack.
 share = ["share-tunnel", "h5i-share/p2p"]

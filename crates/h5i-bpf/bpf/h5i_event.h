@@ -61,7 +61,7 @@ struct h5i_event {
     __u32 tgid;
     __u32 tid;
     /* Always zero on the wire: the probe reads no kernel structure, so it has
-     * no parent pointer (ROADMAP.md D5). The loader fills this in from the
+     * no parent pointer (docs/ROADMAP.md D5). The loader fills this in from the
      * Fork events it has already seen, which is the same answer without the
      * CO-RE dependency. */
     __u32 ppid;

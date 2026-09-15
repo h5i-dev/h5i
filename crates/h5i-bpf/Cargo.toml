@@ -2,7 +2,7 @@
 name = "h5i-bpf"
 version = "0.1.0"
 edition = "2024"
-description = "h5i runtime detection: a kernel-observed evidence lane built on eBPF syscall tracepoints (ROADMAP.md D1–D14)."
+description = "h5i runtime detection: a kernel-observed evidence lane built on eBPF syscall tracepoints (docs/ROADMAP.md D1–D14)."
 
 [features]
 # `load` is what turns the crate from a model into a collector: aya, the compiled probe object,
@@ -17,7 +17,7 @@ serde_json = { workspace = true }
 
 # The loader. Pure Rust: no libbpf, no libelf, no bindgen, and therefore no
 # new native link-time dependency for the musl targets the release matrix
-# cross-builds (ROADMAP.md D4). Linux-only by construction — the whole
+# cross-builds (docs/ROADMAP.md D4). Linux-only by construction — the whole
 # `session` module is `cfg(target_os = "linux")`, so a Darwin or Windows build
 # never sees this dependency at all.
 [target.'cfg(target_os = "linux")'.dependencies]

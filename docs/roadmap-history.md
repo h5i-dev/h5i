@@ -1,7 +1,7 @@
 # ROADMAP history: h5i as a contained agentic development environment
 
 Superseded 2026-08-27 by the browser positioning in
-[`ROADMAP.md`](../ROADMAP.md), and kept because the machinery it describes
+[`ROADMAP.md`](ROADMAP.md), and kept because the machinery it describes
 exists and is tested. Read it as the reference for the box, the worktree, the
 viewer, the share path and the phases that built them, not as the product's
 framing. Where it disagrees with `ROADMAP.md`, `ROADMAP.md` wins.

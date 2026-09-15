@@ -19,8 +19,8 @@ pub mod cli;
     name = "h5i",
     // What the product is now. It read "Disposable, confined development
     // environments for coding agents" until 2026-09-10, which was the
-    // positioning before the pivot (ROADMAP.md) and had outlived the README,
-    // the site and the skill.
+    // positioning before the pivot (docs/ROADMAP.md) and had outlived the
+    // README, the site and the skill.
     about = "The red-teaming browser for AI agents: page automation with direct control over \
              HTTP traffic, in sessions that stay contained and auditable",
     version

@@ -23,9 +23,9 @@ to V8.
   (V7).
 
 Part of the h5i design set. The user-facing keys and commands are in
-[`MANUAL.md`](../../MANUAL.md); the engine underneath is
+[`MANUAL.md`](../MANUAL.md); the engine underneath is
 [`design-browser.md`](design-browser.md); the roadmap is
-[`ROADMAP.md`](../../ROADMAP.md).
+[`ROADMAP.md`](../ROADMAP.md).
 
 ---
 

@@ -1902,9 +1902,9 @@ Read these to detect that you are in one; do not set them yourself.
 
 - `h5i <command> --help`: the authoritative flag reference
 - `man h5i`: the terse CLI reference
-- [`skills/h5i/`](skills/h5i/): the agent-facing skill (`h5i skill show`)
-- [`ROADMAP.md`](ROADMAP.md): what is built and what is not
-- [`docs/design/`](docs/design/): the design behind each part
+- [`skills/h5i/`](../skills/h5i/): the agent-facing skill (`h5i skill show`)
+- [`docs/ROADMAP.md`](ROADMAP.md): what is built and what is not
+- [`docs/design/`](design/): the design behind each part
   (`design-browser.md`, `design-policy.md`, `design-runner.md`,
   `design-detect.md`)
-- [`SECURITY.md`](SECURITY.md): reporting a vulnerability
+- [`SECURITY.md`](../SECURITY.md): reporting a vulnerability

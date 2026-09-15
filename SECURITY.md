@@ -11,8 +11,9 @@ and to describe that boundary honestly. This document covers how to report
 vulnerabilities, what the project treats as security-sensitive, and where the
 current protections stop.
 
-`MANUAL.md`'s Limits section is the user-facing companion to this file, and it
-is deliberately specific about what each tier and each platform does not do.
+`docs/MANUAL.md`'s Limits section is the user-facing companion to this file,
+and it is deliberately specific about what each tier and each platform does not
+do.
 Read it alongside this one.
 
 ## Supported versions
@@ -130,10 +131,10 @@ The non-goals, which matter just as much:
   binds proxy-respecting tooling only. `supervised` and `microvm` enforce at
   L3/L4.
 - An interactive `box shell` at a kernel tier shares your terminal, which is a
-  two-way device. `MANUAL.md`'s Limits enumerates the residual, including TTY
-  input injection, whose availability is a property of your kernel on Linux and
-  of the Seatbelt profile on macOS. h5i measures it with `h5i box probe` rather
-  than claiming it.
+  two-way device. `docs/MANUAL.md`'s Limits enumerates the residual, including
+  TTY input injection, whose availability is a property of your kernel on Linux
+  and of the Seatbelt profile on macOS. h5i measures it with `h5i box probe`
+  rather than claiming it.
 - Browser control mediation is not containment against an evasive agent. The
   daemon runs inside the box, and inside a box there is no privilege boundary,
   so a socket the daemon can bind the agent can also reach directly if it goes
@@ -198,7 +199,7 @@ The non-goals, which matter just as much:
 The tiers are `workspace`, `process`, `supervised`, `container` and `microvm`.
 They are not a single ladder: `container` buys portability and an L7 egress
 proxy, while `supervised` enforces egress at L3/L4, so neither strictly
-dominates the other. `MANUAL.md` documents what each one grants. The
+dominates the other. `docs/MANUAL.md` documents what each one grants. The
 security-relevant expectations:
 
 - A requested claim must be checked against what the host can actually enforce,
@@ -346,7 +347,7 @@ Before merging security-sensitive code, verify that:
 - Commands are spawned with structured argv rather than assembled strings.
 - Tests cover malicious and malformed input, not only the happy path.
 - Receipts and logs do not leak avoidable secrets.
-- `MANUAL.md`'s Limits still describes the boundary after your change.
+- `docs/MANUAL.md`'s Limits still describes the boundary after your change.
 
 Run at least:
 

@@ -20,7 +20,7 @@ one they know is missing.
   today is the Landlock ruleset, and nothing re-checks how it was constructed.
 
 Part of the h5i design set. The roadmap, and what is next, is
-[`ROADMAP.md`](../../ROADMAP.md). Superseded positioning and the build logs are in
+[`ROADMAP.md`](../ROADMAP.md). Superseded positioning and the build logs are in
 [`roadmap-history.md`](../roadmap-history.md).
 
 ---

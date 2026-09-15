@@ -1062,7 +1062,7 @@ pub fn render_receipt(s: &Summary) -> String {
     if s.transport == Transport::Tunnel {
         // Said in the receipt, not only in the docs. Whoever reads this later
         // is exactly the person who needs to know a third party could read the
-        // traffic, and they will not be re-reading MANUAL.md to find out.
+        // traffic, and they will not be re-reading docs/MANUAL.md to find out.
         out.push_str(
             "note     a Cloudflare quick tunnel terminated TLS, so this traffic was not \
              end-to-end encrypted\n",

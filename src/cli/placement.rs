@@ -40,10 +40,11 @@ impl PairedRunner {
     /// Refuse early, with the capability named, when the runner does not offer
     /// what this box wants.
     ///
-    /// The worker refuses too, and its refusal is the enforcement (ROADMAP.md
-    /// R7). This one exists so the message arrives before a bundle is built and
-    /// sent, and so it can name what the runner *does* offer, which the client
-    /// knows from its cached probe and the worker would have to be asked for.
+    /// The worker refuses too, and its refusal is the enforcement
+    /// (docs/ROADMAP.md R7). This one exists so the message arrives before a
+    /// bundle is built and sent, and so it can name what the runner *does*
+    /// offer, which the client knows from its cached probe and the worker would
+    /// have to be asked for.
     pub fn check_supports(&self, isolation: &str) -> anyhow::Result<()> {
         let Some(caps) = self.record.cached_capabilities() else {
             // Never probed. Not an error: the worker still checks, and refusing

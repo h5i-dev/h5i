@@ -25,7 +25,7 @@ agent-callable workbench. Sections marked "built" describe later progress.
   workbench data may contain bodies and credentials.
 
 Part of the h5i design set. The roadmap, and what is next, is
-[`ROADMAP.md`](../../ROADMAP.md); the engine it builds on is
+[`ROADMAP.md`](../ROADMAP.md); the engine it builds on is
 [`design-browser.md`](design-browser.md).
 
 ---

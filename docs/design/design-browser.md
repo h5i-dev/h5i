@@ -30,7 +30,7 @@ where it stands, B2 architecture, B3 security, B4 what it is not, B5 the rule
 that produced it.
 
 Part of the h5i design set. The roadmap, and what is next, is
-[`ROADMAP.md`](../../ROADMAP.md). The build log B1 to B22 and the superseded
+[`ROADMAP.md`](../ROADMAP.md). The build log B1 to B22 and the superseded
 positioning are in [`roadmap-history.md`](../roadmap-history.md).
 
 ---

@@ -25,8 +25,8 @@ fn render_man_page<W: std::io::Write>(w: &mut W) -> std::io::Result<()> {
     writeln!(buf, ".SH SEE ALSO")?;
     writeln!(
         buf,
-        "Full narrative manual: \\fBMANUAL.md\\fR in the source tree, or the \
-         rendered \\fB/manual/\\fR page on the project site."
+        "Full narrative manual: \\fBdocs/MANUAL.md\\fR in the source tree, or \
+         the rendered \\fB/manual/\\fR page on the project site."
     )?;
     // clap_mangen passes help text through verbatim, so typographic Unicode
     // (…, —, →, curly quotes) reaches the roff raw and warns under `-Tascii`.

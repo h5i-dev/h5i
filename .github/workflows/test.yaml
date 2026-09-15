@@ -285,9 +285,10 @@ jobs:
   # The man page (docs/man/man1/h5i.1) and the /manual/ HTML
   # (docs/manual/index.html) are GENERATED, not hand-edited: the man page from
   # the clap CLI via `scripts/gen_man.sh`, which renders it with
-  # `examples/gen_man.rs`; the HTML from MANUAL.md via `scripts/gen_manual.py`.
-  # This job regenerates both and fails if the committed copies drift, so a
-  # change to the CLI flags or to MANUAL.md can never land with a stale manual.
+  # `examples/gen_man.rs`; the HTML from docs/MANUAL.md via
+  # `scripts/gen_manual.py`. This job regenerates both and fails if the
+  # committed copies drift, so a change to the CLI flags or to docs/MANUAL.md
+  # can never land with a stale manual.
   # Reproducibility: the man page is pinned by Cargo.lock (`--locked` build) +
   # toolchain; the HTML is pinned by `scripts/requirements.txt` (the `markdown`
   # version). Regenerate locally on Linux with the same pins and commit the diff.
@@ -355,7 +356,7 @@ jobs:
           H5I_MAN_DEV_PROFILE: "1"
         run: ./scripts/gen_man.sh
 
-      - name: Regenerate the /manual/ HTML (from MANUAL.md)
+      - name: Regenerate the /manual/ HTML (from docs/MANUAL.md)
         run: python3 scripts/gen_manual.py
 
       # `docs/` is published verbatim, so `_static/blog.css` is a stable URL

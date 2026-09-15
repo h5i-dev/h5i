@@ -6,9 +6,9 @@ toolchain, the dev server and the browser all run inside one security boundary,
 and the work leaves as a reviewable patch plus a receipt of what ran.
 
 That framing is the whole scope. h5i used to be a much broader provenance tool,
-and `ROADMAP.md` is the authority on what was cut. Read it before proposing a
-feature: an idea that records what an agent did, rather than containing what it
-can do, is probably out of scope on purpose.
+and `docs/ROADMAP.md` is the authority on what was cut. Read it before
+proposing a feature: an idea that records what an agent did, rather than
+containing what it can do, is probably out of scope on purpose.
 
 ## Project shape
 
@@ -32,7 +32,8 @@ A Cargo workspace. The `h5i` binary is at the repository root (so
   rather than an observation of it.
 - `web/`: the React sources for the `h5i ui` console.
 - `tests/`: integration coverage that drives real repositories and real boxes.
-- `docs/`, `MANUAL.md`, `README.md`, `ROADMAP.md`: user-facing documentation.
+- `docs/` (which holds `MANUAL.md` and `ROADMAP.md`) and `README.md`:
+  user-facing documentation.
 
 Dependencies run one way: `h5i-error <- h5i-sandbox <- h5i-core <- the binary`.
 When in doubt, prefer the existing module boundary over a new abstraction.
@@ -194,11 +195,11 @@ temporary directories, fake remotes, fake tokens and deterministic fixtures.
 Update documentation in the same change as the behavior.
 
 - `README.md`: overview, install, and the shortest path to a working box.
-- `MANUAL.md`: the complete command, policy, receipt and limits reference. Its
-  Limits section is a security document in prose. If your change moves a
+- `docs/MANUAL.md`: the complete command, policy, receipt and limits reference.
+  Its Limits section is a security document in prose. If your change moves a
   boundary, it changes there too.
-- `ROADMAP.md`: scope. What is in, what was cut, and why. Short on purpose; it
-  is meant to be read in one sitting.
+- `docs/ROADMAP.md`: scope. What is in, what was cut, and why. Short on purpose;
+  it is meant to be read in one sitting.
 - `docs/design/*.md`: the design behind each part, one file per part
   (`design-browser.md`, `design-policy.md`, `design-runner.md`,
   `design-detect.md`). Live code cites their section numbers, so a section that
@@ -210,7 +211,8 @@ Update documentation in the same change as the behavior.
 
 The manuals are generated and CI diffs them. `docs/man/man1/h5i.1` comes from
 the clap tree, rendered by `examples/gen_man.rs`, and `docs/manual/index.html`
-comes from `MANUAL.md`. A CLI flag change or a `MANUAL.md` edit that lands
+comes from `docs/MANUAL.md`. A CLI flag change or a `docs/MANUAL.md` edit that
+lands
 without regenerating both fails the `docs` job. Regenerate on Linux with the
 pinned generator and commit the result:
 
@@ -279,7 +281,7 @@ Before opening a pull request:
 - Rebase or merge `main` as appropriate for your workflow.
 - Run the relevant tests and include the commands in the PR description.
 - Update docs for user-visible changes, and regenerate the manuals if the CLI
-  or `MANUAL.md` changed.
+  or `docs/MANUAL.md` changed.
 - Note platform coverage, especially for Linux-only sandbox behavior, macOS
   Seatbelt behavior, or cross-target build changes.
 - Call out security-sensitive areas and any residual risk.
@@ -302,7 +304,8 @@ Expect reviewers to ask about:
 - Whether tests prove the refusal path, not just the happy path.
 
 If a change intentionally leaves a limitation, document it where a future
-maintainer will see it, and in `MANUAL.md`'s Limits section if a user would.
+maintainer will see it, and in `docs/MANUAL.md`'s Limits section if a user
+would.
 
 ## Release notes
 

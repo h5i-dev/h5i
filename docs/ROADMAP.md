@@ -4,7 +4,7 @@ Status: in progress, 2026-08-27. This file is the scope authority: what h5i is,
 what is built, and what is deliberately not. It is meant to be read in one
 sitting. The design behind each part lives in `docs/`, one file per part, and
 the two superseded positionings are kept in
-[`docs/roadmap-history.md`](docs/roadmap-history.md) because both describe
+[`docs/roadmap-history.md`](roadmap-history.md) because both describe
 machinery that is still shipped and tested.
 
 > Give an AI agent a browser it can drive and you can audit. Every request is
@@ -22,15 +22,15 @@ essential to this one.
 
 | part | status | design |
 | --- | --- | --- |
-| browser engine | shipped. WPT core tier 75.7%; a production React build is not cleared | [`docs/design/design-browser.md`](docs/design/design-browser.md) |
-| in-terminal viewer | shipped, V1 to V8. Keyboard-driven, in the terminal or a browser | [`docs/design/design-interminal-browser.md`](docs/design/design-interminal-browser.md) |
-| policy resolution | P1 shipped; P2 shipped, opt-in; P3 and P4 designed, not built | [`docs/design/design-policy.md`](docs/design/design-policy.md) |
-| remote runner | R13.1 built. R13.2 to R13.4 are not | [`docs/design/design-runner.md`](docs/design/design-runner.md) |
-| runtime detection | built 2026-08-19, off by default at three layers | [`docs/design/design-detect.md`](docs/design/design-detect.md) |
-| HTTP workbench | phases A and B built and benchmarked, plus experiments and findings (W22, W23); installed with `h5i plugin install websec` | [`docs/design/design-websec.md`](docs/design/design-websec.md) |
-| box console | sessions and the attention model built 2026-09-07 | [`docs/design/design-console.md`](docs/design/design-console.md) |
-| reconnaissance | phase 1 built 2026-09-07: ledger, extract, known, crawl, paths, triage, jobs. `h5i plugin install recon` | [`docs/design/design-recon.md`](docs/design/design-recon.md) |
-| security regression tests | MVP built 2026-09-13: portable flows, external oracles, JSON/JUnit, OpenAPI coverage and an optional gate. `h5i plugin install test` | [`docs/design/design-test.md`](docs/design/design-test.md) |
+| browser engine | shipped. WPT core tier 75.7%; a production React build is not cleared | [`docs/design/design-browser.md`](design/design-browser.md) |
+| in-terminal viewer | shipped, V1 to V8. Keyboard-driven, in the terminal or a browser | [`docs/design/design-interminal-browser.md`](design/design-interminal-browser.md) |
+| policy resolution | P1 shipped; P2 shipped, opt-in; P3 and P4 designed, not built | [`docs/design/design-policy.md`](design/design-policy.md) |
+| remote runner | R13.1 built. R13.2 to R13.4 are not | [`docs/design/design-runner.md`](design/design-runner.md) |
+| runtime detection | built 2026-08-19, off by default at three layers | [`docs/design/design-detect.md`](design/design-detect.md) |
+| HTTP workbench | phases A and B built and benchmarked, plus experiments and findings (W22, W23); installed with `h5i plugin install websec` | [`docs/design/design-websec.md`](design/design-websec.md) |
+| box console | sessions and the attention model built 2026-09-07 | [`docs/design/design-console.md`](design/design-console.md) |
+| reconnaissance | phase 1 built 2026-09-07: ledger, extract, known, crawl, paths, triage, jobs. `h5i plugin install recon` | [`docs/design/design-recon.md`](design/design-recon.md) |
+| security regression tests | MVP built 2026-09-13: portable flows, external oracles, JSON/JUnit, OpenAPI coverage and an optional gate. `h5i plugin install test` | [`docs/design/design-test.md`](design/design-test.md) |
 
 ## The three decisions the pivot rests on
 
@@ -53,9 +53,9 @@ essential to this one.
    that enforce an egress allowlist on Linux, so today only `microvm` does both.
    This is what makes the central claim reachable on an ordinary Linux box.
 2. WPT core tier to 80%. The next ~5,000 subtests are measured and ranked in
-   [`docs/design/design-browser.md`](docs/design/design-browser.md) B1.
+   [`docs/design/design-browser.md`](design/design-browser.md) B1.
 3. R13.2 to R13.4: remote create, exec and export against a paired runner.
-   The design is settled; see [`docs/design/design-runner.md`](docs/design/design-runner.md).
+   The design is settled; see [`docs/design/design-runner.md`](design/design-runner.md).
 4. More than one session per box. Needs per-session service names and stream
    files.
 
@@ -67,14 +67,14 @@ than re-argued.
 - The browser will never grow tabs, extensions, Service Workers, WebRTC, iframes
   or two dozen other surfaces. The full list, and what is simplified rather than
   absent, is B4 in
-  [`docs/design/design-browser.md`](docs/design/design-browser.md).
+  [`docs/design/design-browser.md`](design/design-browser.md).
 - No vendored engine crates, by owner decision on 2026-08-28 (B4).
 - The runtime detector never denies anything: no `bpf_send_signal`, no LSM
   programs, no daemon, no privilege escalation of its own (D12 in
-  [`docs/design/design-detect.md`](docs/design/design-detect.md)).
+  [`docs/design/design-detect.md`](design/design-detect.md)).
 - The runner MVP refuses profiles that need the secrets broker or the auth
   proxy, and any request past a runner's advertised capabilities (R12 in
-  [`docs/design/design-runner.md`](docs/design/design-runner.md)).
+  [`docs/design/design-runner.md`](design/design-runner.md)).
 
 ## How to read the design set
 
@@ -94,6 +94,6 @@ of it whether you need the rest.
 | T1 | `docs/design/design-test.md` | portable attack flows, external oracles, CI results and coverage |
 
 Live code cites these section numbers. The prefixes do not collide with
-[`docs/roadmap-history.md`](docs/roadmap-history.md), which holds the superseded
+[`docs/roadmap-history.md`](roadmap-history.md), which holds the superseded
 environment positioning (sections 1 to 12) and the engine's build log (B1 to
 B22); a `roadmap-history.md` citation always names that file.

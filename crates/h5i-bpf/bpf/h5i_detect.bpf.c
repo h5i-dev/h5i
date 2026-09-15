@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: (BSD-2-Clause OR GPL-2.0)
  *
  * h5i_detect.bpf.c — the kernel half of h5i's runtime detection lane
- * (ROADMAP.md D1–D14).
+ * (docs/ROADMAP.md D1–D14).
  *
  * Twelve syscall/scheduler tracepoints, one fixed-size event, one ring
  * buffer. It reads no kernel structure, calls no unstable helper, and needs
@@ -366,7 +366,7 @@ static __always_inline int h5i_do_open(const char *filename, __u64 flags,
     /* The volume decision, taken in the kernel. An unfiltered `openat` feed
      * is the single loudest thing a build produces, and shipping it to
      * userspace only to throw 99% of it away is how an observability feature
-     * becomes something people switch off (ROADMAP.md D7). */
+     * becomes something people switch off (docs/ROADMAP.md D7). */
     if (!cfg->open_all && !e->a1 && !h5i_prefix_hit(e->path) &&
         !(cfg->want_dotenv && h5i_dotenv_hit(e->path))) {
         h5i_drop(e);
@@ -631,8 +631,8 @@ int h5i_sched_process_exit(struct h5i_sched_exit *ctx)
     }
     /* Pruned here rather than left to expire. The pid-reuse window this
      * leaves open is one scheduler quantum wide and is stated in the limits
-     * (ROADMAP.md D13.5) rather than papered over with a generation counter
-     * that would cost more than the exposure. */
+     * (docs/ROADMAP.md D13.5) rather than papered over with a generation
+     * counter that would cost more than the exposure. */
     bpf_map_delete_elem(&H5I_TRACKED, &tid);
     return 0;
 }

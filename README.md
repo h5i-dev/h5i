@@ -282,7 +282,7 @@ receives a private, one-time copy of approved HOME state.
 ## 5. Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
-- [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
+- [MANUAL.md](docs/MANUAL.md) / `man h5i`: full command reference
 - [CONTRIBUTING.md](CONTRIBUTING.md): we welcome contributions of any kind
 - `curl -fsSL https://h5i.dev/man/man1/h5i.1 -o ~/.local/share/man/man1/h5i.1`: install the man page
 
