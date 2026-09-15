@@ -222,16 +222,18 @@ impl Budget {
         if wire > self.limits.max_wire_bytes {
             return Err(Exceeded(format!(
                 "budget-exceeded: this page has pulled {wire} bytes across the wire, and the \
-                 limit for one navigation is {}.",
-                self.limits.max_wire_bytes
+                 limit for one navigation is {}. {}",
+                self.limits.max_wire_bytes,
+                start_again(who)
             )));
         }
         let decoded = self.decoded_bytes.load(Ordering::Relaxed);
         if decoded > self.limits.max_decoded_bytes {
             return Err(Exceeded(format!(
                 "budget-exceeded: this page has decoded {decoded} bytes, and the limit for \
-                 one navigation is {}.",
-                self.limits.max_decoded_bytes
+                 one navigation is {}. {}",
+                self.limits.max_decoded_bytes,
+                start_again(who)
             )));
         }
         let micros = self.network_micros.load(Ordering::Relaxed);
@@ -239,9 +241,10 @@ impl Budget {
         if micros > limit {
             return Err(Exceeded(format!(
                 "budget-exceeded: this page has spent {}ms waiting on the network, and the \
-                 limit for one navigation is {}ms.",
+                 limit for one navigation is {}ms. {}",
                 micros / 1000,
-                limit / 1000
+                limit / 1000,
+                start_again(who)
             )));
         }
         // Last, because it is the least specific: when a page is over two
@@ -255,10 +258,10 @@ impl Budget {
             if loading > self.limits.max_load_time {
                 return Err(Exceeded(format!(
                     "budget-exceeded: this page has been loading for {}s, and the limit for one \
-                     navigation is {}s. What it has rendered by now is what there is; navigating \
-                     gives the page a fresh allowance.",
+                     navigation is {}s. What it has rendered by now is what there is. {}",
                     loading.as_secs(),
-                    self.limits.max_load_time.as_secs()
+                    self.limits.max_load_time.as_secs(),
+                    start_again(who)
                 )));
             }
         }
@@ -453,6 +456,10 @@ mod tests {
             refused.to_string().contains("what there is"),
             "and says the page is unfinished rather than broken: {refused}"
         );
+        assert!(
+            refused.to_string().ends_with(start_again(Spender::Page)),
+            "and how to get the allowance back: {refused}"
+        );
 
         // A navigation is a fresh decision by the principal, so it gets a
         // fresh clock along with everything else.
@@ -540,24 +547,48 @@ mod tests {
     /// Navigating is the page's way back. Telling an agent to navigate is
     /// telling it to throw away the page its walk is standing on, so the
     /// refusal names the flag that does not.
+    ///
+    /// Every ceiling, because a refusal the caller cannot act on is the same
+    /// dead end whichever number it names.
     #[test]
-    fn the_way_back_is_the_one_the_caller_can_take() {
-        let over = |who| {
+    fn every_refusal_names_a_way_back_the_caller_can_take() {
+        for who in [Spender::Page, Spender::Agent] {
+            let way_back = start_again(who);
+            let says = |refused: Exceeded, names: &str| {
+                assert!(refused.0.contains(names), "{refused}");
+                assert!(refused.0.ends_with(way_back), "{who:?}: {refused}");
+            };
+
             let budget = tight();
             for _ in 0..3 {
                 let _ = budget.claim_request(who);
             }
-            budget.claim_request(who).expect_err("the fourth is over").0
-        };
+            says(
+                budget.claim_request(who).expect_err("the fourth is over"),
+                "made 4 requests",
+            );
 
-        let page = over(Spender::Page);
-        assert!(page.contains("Navigating gives the page"), "{page}");
-        assert!(!page.contains("--reset-budget"), "{page}");
+            let budget = tight();
+            budget.record(2000, 0, Duration::ZERO);
+            says(
+                budget.claim_request(who).expect_err("over the wire ceiling"),
+                "across the wire",
+            );
 
-        let agent = over(Spender::Agent);
-        assert!(agent.contains("--reset-budget"), "{agent}");
-        assert!(agent.contains("reset_budget"), "and over rpc: {agent}");
-        assert!(!agent.contains("Navigating"), "{agent}");
+            let budget = tight();
+            budget.record(0, 3000, Duration::ZERO);
+            says(
+                budget.claim_request(who).expect_err("over the decoded ceiling"),
+                "decoded",
+            );
+
+            let budget = tight();
+            budget.record(0, 0, Duration::from_millis(200));
+            says(
+                budget.claim_request(who).expect_err("over the network clock"),
+                "waiting on the network",
+            );
+        }
     }
 
     /// A request that is *attempted* is spent, whatever its outcome. Counting
