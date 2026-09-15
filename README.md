@@ -26,8 +26,8 @@
       <sub>Replay confirmed attack flows in CI</sub>
     </td>
     <td align="center">
-      <strong>Contained & auditable</strong><br>
-      <sub>Sandboxing, network policies & session records</sub>
+      <strong>Sandboxed & auditable</strong><br>
+      <sub>Isolated execution & session logs</sub>
     </td>
     <td align="center">
       <strong>Fast & lightweight</strong><br>
