@@ -15,7 +15,7 @@
 Ten articles that walk the 42 runnable labs in h5i-dev/h5i-tutorial, from recon to a complete exploit chain. Part 1 of the series is on Medium; these are the rest.
 
 1. [Recon and IDOR](https://h5i.dev/guides/recon-and-idor/): Discover hidden endpoints, then test object-level authorization and why an unguessable URL is not an access control.
-2. [Broken Access Control](https://h5i.dev/guides/broken-access-control/): Compare two logged-in users with --as, and find the fields a user interface never sends.
+2. [Broken Access Control](https://h5i.dev/guides/broken-access-control/): Test authorization with the least privileged account you hold, and find the fields a user interface never sends.
 3. [JWT Attacks](https://h5i.dev/guides/jwt-attacks/): alg confusion, a weak HMAC secret, and a key identifier turned into a path traversal.
 4. [SQL Injection](https://h5i.dev/guides/sql-injection/): A union read, then boolean and timing oracles when the application reveals almost nothing.
 5. [Injection Beyond SQL](https://h5i.dev/guides/injection-beyond-sql/): NoSQL operators, shell commands, server-side templates, XML entities, and second-order input.

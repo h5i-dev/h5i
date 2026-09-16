@@ -1,15 +1,15 @@
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Broken Access Control | h5i web security tutorial</title><meta name="description" content="Compare two logged-in users, test authorization directly with --as, and find the fields a user interface never sends.">
+<title>Broken Access Control | h5i web security tutorial</title><meta name="description" content="Test an endpoint with the least privileged account you hold, and submit the fields a user interface never sends.">
 <meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
 <meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
 <link rel="canonical" href="https://h5i.dev/guides/broken-access-control/"><link rel="icon" type="image/png" href="/_static/logo.png">
 <meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
-<meta property="og:title" content="Broken Access Control | h5i web security tutorial"><meta property="og:description" content="Compare two logged-in users, test authorization directly with --as, and find the fields a user interface never sends.">
+<meta property="og:title" content="Broken Access Control | h5i web security tutorial"><meta property="og:description" content="Test an endpoint with the least privileged account you hold, and submit the fields a user interface never sends.">
 <meta property="og:url" content="https://h5i.dev/guides/broken-access-control/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Broken Access Control | h5i web security tutorial">
-<meta name="twitter:description" content="Compare two logged-in users, test authorization directly with --as, and find the fields a user interface never sends."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:description" content="Test an endpoint with the least privileged account you hold, and submit the fields a user interface never sends."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
@@ -17,7 +17,7 @@
     {
       "@type": "TechArticle",
       "headline": "Broken Access Control",
-      "description": "Compare two logged-in users, test authorization directly with --as, and find the fields a user interface never sends.",
+      "description": "Test an endpoint with the least privileged account you hold, and submit the fields a user interface never sends.",
       "author": {
         "@type": "Organization",
         "name": "h5i-dev"
@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-15",
-      "dateModified": "2026-09-15",
+      "dateModified": "2026-09-16",
       "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -73,17 +73,9 @@
   </ul>
 </nav><main class="article-wrap"><article class="post">
 <header><div class="post-eyebrow">Tutorial 02 / Access control &middot; 2026-09-15</div>
-<h1>Broken Access Control</h1><p class="post-deck">A beginner-friendly CTF tutorial: compare two logged-in users, test authorization directly, and find fields the user interface never sends.</p>
-<div class="post-meta"><span>9 min read</span><span>Authorization &middot; Mass assignment &middot; Labs 8&ndash;9</span></div></header>
-<p>In <a href="/guides/recon-and-idor/">Recon and IDOR</a>, we discovered forgotten endpoints and used object identifiers to read data belonging to another account. Those attacks had one question underneath them: <em>Does the server check that this user is allowed to access this object?</em></p>
-<p>In this article, we will make that question systematic. Using Labs 8 and 9 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a>, we will:</p>
-<ul>
-<li>replay the same request as two different users;</li>
-<li>distinguish authentication from authorization;</li>
-<li>add a privileged field that the signup form never offered; and</li>
-<li>learn why server-side allowlists matter.</li>
-</ul>
-<p>We will use <a href="https://github.com/h5i-dev/h5i">h5i</a>, a headless browser whose <code>websec</code> plugin records, edits, and replays the HTTP traffic produced by a browser session.</p>
+<h1>Broken Access Control</h1><p class="post-deck">Test an endpoint with the least privileged account you hold, replay one user's request as another, and submit a field the form never offered.</p>
+<div class="post-meta"><span>8 min read</span><span>Authorization &middot; Mass assignment &middot; Labs 8&ndash;9</span></div></header>
+<p>In <a href="/guides/recon-and-idor/">Recon and IDOR</a>, we read another account’s data by changing an object identifier. It worked because the server never asked whether the caller owned the object. Labs 8 and 9 of <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">h5i-tutorial</a> test that gap deliberately: first by changing who sends a request, then by changing what it contains. We will use <a href="https://github.com/h5i-dev/h5i">h5i</a>, whose <code>websec</code> plugin records, edits, and replays a browser session’s HTTP traffic.</p>
 <p>Both targets are deliberately vulnerable local applications. Only use these techniques on systems you own or have explicit permission to test.</p>
 <h2 id="before-we-begin">Before we begin</h2>
 <p>This article assumes that h5i and its <code>websec</code> plugin are installed. The complete instructions are in the <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec#1-setup">tutorial repository</a>.</p>
@@ -92,45 +84,17 @@ $ cd h5i-tutorial/websec
 $ h5i websec --help
 </code></pre>
 <h2 id="authentication-and-authorization-are-different-checks">Authentication and authorization are different checks</h2>
-<p><strong>Authentication</strong> establishes an identity: “This request came from Bob.”</p>
-<p><strong>Authorization</strong> applies a rule to that identity: “Bob is an intern, so he cannot read the managers’ quarterly report.”</p>
-<p>A valid session cookie proves only the first statement. Every sensitive endpoint still needs the second check.</p>
-<p>The most direct authorization test is therefore:</p>
-<ol>
-<li>perform an action as a privileged user;</li>
-<li>capture the exact request;</li>
-<li>send that same request with a less privileged user’s credentials; and</li>
-<li>compare the responses.</li>
-</ol>
-<p>Changing only the identity makes the result easy to interpret.</p>
-<h2 id="lab-8-send-alices-request-as-bob">Lab 8: send Alice’s request as Bob</h2>
-<p>Start the ledger lab:</p>
+<p><strong>Authentication</strong> establishes an identity: “This request came from Bob.” <strong>Authorization</strong> applies a rule to it: “Bob is an intern, so he cannot read the managers’ quarterly report.”</p>
+<p>A session cookie proves the first and says nothing about the second. The test is correspondingly short. Sign in as the least privileged account you hold, send the request only a privileged account should be allowed to send, and read whose data came back.</p>
+<h2 id="knowing-which-request-to-send">Knowing which request to send</h2>
+<p>That test needs an endpoint only a manager should reach, which means knowing what a manager can reach. You do not learn it by watching a real one: intercepting a live session falls outside the scope of nearly every engagement, and the evidence is unusable in a report.</p>
+<p>Usually you were handed the account. Role-aware engagements ship a test account per role, often two, and you sign in as the manager yourself. That is what the lab models: alice and bob are both yours. Failing that, the client can run the workflow through your proxy, or export a HAR and give you the file. A HAR carries session cookies verbatim, so treat it as credential material.</p>
+<p>On a bug bounty you often get neither, and reconstruct the request instead of observing it. Administrative routes are still in the single-page bundle, its sourcemaps, <code>/openapi.json</code>, a GraphQL introspection response, error text. The interface hides the link; the route is still there. Most privilege-escalation findings start here.</p>
+<h2 id="lab-8-an-intern-reads-the-managers-report">Lab 8: an intern reads the managers’ report</h2>
+<p>Start the ledger lab. It has two users: <code>alice</code>, a manager, and <code>bob</code>, an intern. The quarterly report is a manager page, and the intern’s dashboard carries no link to it.</p>
 <pre><code class="language-bash">$ ./run.sh 08
 </code></pre>
-<p>The application has two users:</p>
-<ul>
-<li><code>alice</code>, a manager;</li>
-<li><code>bob</code>, an intern.</li>
-</ul>
-<p>The quarterly report should be restricted to managers. First, create an independent browser session for Alice:</p>
-<pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9080/' \
-  --session alice --new --capture
-
-$ h5i websec replay req_0 --session alice --create \
-  --set method=POST \
-  --set path=/login \
-  --set header.Content-Type=application/json \
-  --set json.user=alice
-</code></pre>
-<p><code>--create</code> is required because the captured homepage request was a <code>GET</code> with no JSON body. We are deliberately creating fields that were not in that request.</p>
-<p>The login response sets Alice’s session cookie. Because it belongs to the named <code>alice</code> session, later requests from that session use it automatically.</p>
-<p>Now capture the report request:</p>
-<pre><code class="language-bash">$ h5i websec replay req_0 --session alice --create \
-  --set path=/api/reports/quarterly
-$ h5i websec show res_2 --session alice --raw
-</code></pre>
-<p>The response identifies Alice as a manager and includes the quarterly data. This establishes the expected privileged behavior.</p>
-<p>Next, create a separate session for Bob:</p>
+<p>Open a session for Bob, the account that decides whether there is a finding, and sign him in:</p>
 <pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9080/' \
   --session bob --new --capture
 
@@ -140,17 +104,12 @@ $ h5i websec replay req_0 --session bob --create \
   --set header.Content-Type=application/json \
   --set json.user=bob
 </code></pre>
-<p>We now have two independent cookie jars. Alice’s session contains Alice’s login cookie; Bob’s contains Bob’s.</p>
-<h3 id="replay-the-same-message-with-another-identity">Replay the same message with another identity</h3>
-<p>Alice’s report request is <code>req_2</code> in the <code>alice</code> session. Send that message using Bob’s session:</p>
-<pre><code class="language-bash">$ h5i websec replay req_2 --session alice --as bob
+<p><code>--create</code> is required because the captured homepage request was a <code>GET</code> with no JSON body. We are deliberately creating fields it never had.</p>
+<p>The login response sets Bob’s session cookie, and later requests from the named <code>bob</code> session carry it automatically. So ask for the managers’ report as Bob:</p>
+<pre><code class="language-bash">$ h5i websec replay req_0 --session bob --create \
+  --set path=/api/reports/quarterly
 </code></pre>
-<p><code>--session alice</code> tells h5i where the recorded message comes from. <code>--as bob</code> tells it which session’s cookies, browser identity, policy, and network receipts should be used to send it.</p>
-<p>The replay prints its <code>seq</code>, and that number belongs to <strong>Bob’s</strong> session, because that is where the message was actually sent from and recorded. Read the body there:</p>
-<pre><code class="language-bash">$ h5i websec show res_2 --session bob --raw
-</code></pre>
-<p>If your <code>seq</code> differs, use the number the replay printed. Reading <code>res_N</code> from the <code>alice</code> session is a common mistake here: it either fails or shows you Alice’s own earlier response, which looks like a finding and is not one.</p>
-<p>The response is still <code>200 OK</code>. More importantly, its body says:</p>
+<p>The status is <code>200 OK</code>:</p>
 <pre><code class="language-json">{
   &quot;as&quot;: &quot;bob&quot;,
   &quot;role&quot;: &quot;intern&quot;,
@@ -158,7 +117,8 @@ $ h5i websec replay req_0 --session bob --create \
   &quot;audit_key&quot;: &quot;FLAG{cross_session_authz}&quot;
 }
 </code></pre>
-<p>The request was genuinely sent as Bob. The server authenticated him correctly and then returned the managers’ report anyway.</p>
+<p>The server calls the caller an intern and returns the managers’ report anyway. That is the vulnerability.</p>
+<p>The flag is not the evidence. <code>audit_key</code> is a constant in the handler, returned to every signed-in caller, so Alice receives the same string when she reads the report she is entitled to read. What proves the bug is <code>&quot;as&quot;: &quot;bob&quot;</code> beside <code>&quot;role&quot;: &quot;intern&quot;</code>. Report the field that establishes whose request it was.</p>
 <h3 id="why-did-this-work">Why did this work?</h3>
 <p>The report handler contains an authentication check:</p>
 <pre><code class="language-python">user = SESSIONS.get(req.cookies.get(&quot;sid&quot;, &quot;&quot;))
@@ -172,41 +132,30 @@ return js({
     &quot;audit_key&quot;: FLAG,
 })
 </code></pre>
-<p>The handler asks whether the caller is signed in. It never checks whether the signed-in user is a manager.</p>
-<p>The user interface does not show Bob a link to the report, but hiding a link is not access control. Bob can still send the underlying HTTP request.</p>
-<p>A correct handler performs both checks:</p>
+<p>It asks whether the caller is signed in. It never asks whether the signed-in user is a manager, and hiding the link from Bob’s dashboard is not a substitute. He can still send the request.</p>
 <pre><code class="language-python">if not user:
     return js({&quot;error&quot;: &quot;sign in&quot;}, 401)
 if USERS[user] != &quot;manager&quot;:
     return js({&quot;error&quot;: &quot;forbidden&quot;}, 403)
 </code></pre>
-<p>For larger applications, role requirements are often safer when attached centrally to routes or policies rather than copied into individual handlers.</p>
-<h3 id="interpreting-an-identity-swap">Interpreting an identity swap</h3>
-<p>After replaying a request as another user, read the body as well as the status:</p>
-<ul>
-<li><code>200</code> with Alice’s data means broken authorization.</li>
-<li><code>200</code> with Bob’s correctly scoped data may be safe.</li>
-<li><code>401</code> means Bob’s credential was missing or unusable.</li>
-<li><code>403</code> usually means the authorization control worked.</li>
-</ul>
-<p>A <code>200</code> alone is not enough to report a vulnerability. You must determine whose data or action the response represents.</p>
+<p>In a larger application, attach the role requirement to the route or the policy rather than copying it into each handler.</p>
+<h3 id="reading-the-response">Reading the response</h3>
+<p>The same response body means opposite things depending on the endpoint, so classify it first. A quarterly report is a shared resource behind a role: one document, and only managers may read it. <code>/api/invoice/9</code> is a per-owner resource: it belongs to somebody, and each caller should see their own.</p>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Response</th><th>Shared resource behind a role</th><th>Per-owner resource</th></tr></thead><tbody>
+<tr><th><code>200</code>, body scoped to Bob</th><td><strong>Finding.</strong> The report was never his to be scoped to</td><td>Correct. The endpoint scoped by session rather than by URL</td></tr>
+<tr><th><code>200</code>, body containing Alice’s data</th><td><strong>Finding.</strong> Broken authorization</td><td><strong>Finding.</strong> Broken object-level authorization</td></tr>
+<tr><th><code>401</code></th><td colspan="2">Bob’s credential never arrived. Confirm he is signed in before reading anything into it</td></tr>
+<tr><th><code>403</code></th><td colspan="2">Usually the control working</td></tr>
+</tbody></table></div>
+<p>Lab 8 sits in the first row. The body says <code>&quot;as&quot;: &quot;bob&quot;</code>, which is correctly scoped by any mechanical reading, and it is still the vulnerability.</p>
 <h2 id="lab-9-add-a-field-the-form-never-offered">Lab 9: add a field the form never offered</h2>
-<p>Lab 8 changed the user sending a request. Lab 9 keeps the user but changes the shape of the object being created.</p>
-<p>Start the signup lab:</p>
+<p>Lab 8 changed who sent a request. Lab 9 keeps the sender and changes the object being created.</p>
 <pre><code class="language-bash">$ ./run.sh 09
-</code></pre>
-<p>Open the homepage with capture enabled:</p>
-<pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9090/' \
+
+$ h5i browser open 'http://127.0.0.1:9090/' \
   --session lab09 --new --capture
 </code></pre>
-<p>The page documents a registration endpoint that expects:</p>
-<pre><code class="language-json">{
-  &quot;username&quot;: &quot;newuser&quot;,
-  &quot;email&quot;: &quot;newuser@example.test&quot;,
-  &quot;password&quot;: &quot;hunter2&quot;
-}
-</code></pre>
-<p>Create a normal account first:</p>
+<p>The page documents a registration endpoint taking <code>username</code>, <code>email</code>, and <code>password</code>. Create a normal account:</p>
 <pre><code class="language-bash">$ h5i websec replay req_0 --session lab09 --create \
   --set method=POST \
   --set path=/api/register \
@@ -218,23 +167,15 @@ if USERS[user] != &quot;manager&quot;:
 <p>The response contains a bearer token. Copy it and try the admin endpoint:</p>
 <pre><code class="language-bash">$ h5i websec show res_1 --session lab09 --raw
 $ NORMAL_TOKEN='PASTE_THE_TOKEN_HERE'
-</code></pre>
-<pre><code class="language-bash">$ h5i websec replay req_0 --session lab09 --create \
+
+$ h5i websec replay req_0 --session lab09 --create \
   --set path=/api/admin/keys \
   --set &quot;header.Authorization=Bearer $NORMAL_TOKEN&quot;
 </code></pre>
 <p>The normal account receives <code>403 Forbidden</code>, as expected.</p>
 <h3 id="what-is-mass-assignment">What is mass assignment?</h3>
-<p>Many frameworks can convert request fields into an application object automatically. That is convenient until the internal object contains fields that an ordinary user should never control.</p>
-<p>For example, the public form may send <code>username</code>, <code>email</code>, and <code>password</code>, while the stored user record also contains:</p>
-<pre><code class="language-json">{
-  &quot;plan&quot;: &quot;free&quot;,
-  &quot;is_admin&quot;: false,
-  &quot;credits&quot;: 0
-}
-</code></pre>
-<p>If the server copies every supplied field into that record, we can submit <code>is_admin</code> ourselves even though the form never displayed it. This vulnerability is called <strong>mass assignment</strong>, <strong>over-posting</strong>, or <strong>unsafe object binding</strong>.</p>
-<p>Register a second user and add the privileged field:</p>
+<p>Frameworks convert request fields into an application object for you, which is convenient until the object holds fields an ordinary user should never control. The public form sends <code>username</code>, <code>email</code>, and <code>password</code>; the stored record also carries <code>plan</code>, <code>is_admin</code>, and <code>credits</code>. If the server copies every supplied field into that record, we can set <code>is_admin</code> ourselves. This is <strong>mass assignment</strong>, also called over-posting or unsafe object binding.</p>
+<p>Register a second user and add the field:</p>
 <pre><code class="language-bash">$ h5i websec replay req_0 --session lab09 --create \
   --set method=POST \
   --set path=/api/register \
@@ -244,23 +185,16 @@ $ NORMAL_TOKEN='PASTE_THE_TOKEN_HERE'
   --set json.password=hunter2 \
   --set json.is_admin=true
 </code></pre>
-<p>Notice that <code>true</code> is not quoted. h5i sends it as a JSON boolean:</p>
-<pre><code class="language-json">&quot;is_admin&quot;: true
-</code></pre>
-<p>Copy the new token from the registration response and send it to the admin endpoint:</p>
+<p><code>true</code> is unquoted, so h5i sends a JSON boolean rather than the string <code>&quot;true&quot;</code>. Copy the new token and send it to the admin endpoint:</p>
 <pre><code class="language-bash">$ h5i websec show res_3 --session lab09 --raw
 $ ADMIN_TOKEN='PASTE_THE_NEW_TOKEN_HERE'
-</code></pre>
-<pre><code class="language-bash">$ h5i websec replay req_0 --session lab09 --create \
+
+$ h5i websec replay req_0 --session lab09 --create \
   --set path=/api/admin/keys \
   --set &quot;header.Authorization=Bearer $ADMIN_TOKEN&quot;
 </code></pre>
-<p>The response now contains:</p>
-<pre><code class="language-text">FLAG{mass_assignment}
-</code></pre>
-<p>We did not change a user after registration. We created an account that was already an administrator.</p>
+<p>The response contains <code>FLAG{mass_assignment}</code>. We did not promote a user after registration. We created an account that was already an administrator.</p>
 <h3 id="why-did-this-work_1">Why did this work?</h3>
-<p>The vulnerable code merges the entire request body into the default user:</p>
 <pre><code class="language-python">DEFAULTS = {
     &quot;username&quot;: &quot;&quot;,
     &quot;email&quot;: &quot;&quot;,
@@ -273,42 +207,26 @@ $ ADMIN_TOKEN='PASTE_THE_NEW_TOKEN_HERE'
 row = {**DEFAULTS, **payload}
 USERS[row[&quot;username&quot;]] = row
 </code></pre>
-<p>In Python, values appearing later in this merge replace earlier values. Therefore, the attacker-supplied <code>is_admin: true</code> overwrites the safe default.</p>
-<p>The server should select the allowed public fields explicitly:</p>
+<p>The merge takes the whole request body, and later keys win, so the attacker’s <code>is_admin: true</code> overwrites the default. Select the public fields explicitly instead:</p>
 <pre><code class="language-python">allowed = {&quot;username&quot;, &quot;email&quot;, &quot;password&quot;}
 public = {k: v for k, v in payload.items() if k in allowed}
 row = {**DEFAULTS, **public}
 </code></pre>
-<p>An allowlist says which fields a caller may set. A blocklist says which known fields they may not set—and silently becomes incomplete when a new sensitive field is added later.</p>
+<p>An allowlist names the fields a caller may set. A blocklist names the ones they may not, and goes quietly out of date the next time somebody adds a sensitive field.</p>
 <h3 id="where-to-look-for-hidden-fields">Where to look for hidden fields</h3>
-<p>When the source is unavailable, field names often appear in:</p>
-<ul>
-<li>registration and profile responses;</li>
-<li><code>GET /api/me</code> or user-detail endpoints;</li>
-<li>JavaScript state embedded in a page;</li>
-<li>update requests sent by an administrator;</li>
-<li>error messages and API documentation.</li>
-</ul>
-<p>Common candidates include <code>role</code>, <code>is_admin</code>, <code>is_staff</code>, <code>verified</code>, <code>plan</code>, <code>credits</code>, <code>owner_id</code>, and <code>tenant_id</code>.</p>
+<p>Without source access, field names surface in registration and profile responses, in <code>GET /api/me</code>, in JavaScript state embedded in a page, in update requests an administrator sends, and in error messages. Candidates worth trying: <code>role</code>, <code>is_admin</code>, <code>is_staff</code>, <code>verified</code>, <code>plan</code>, <code>credits</code>, <code>owner_id</code>, <code>tenant_id</code>.</p>
 <p>Test create and update endpoints separately. A signup endpoint may use an allowlist while <code>PATCH /api/me</code> binds the entire request into an existing database record.</p>
 <h2 id="a-reusable-authorization-workflow">A reusable authorization workflow</h2>
-<p>The two labs produce a compact testing method:</p>
 <ol>
-<li>Keep one named h5i session per user or role.</li>
-<li>Capture a legitimate sensitive request from the privileged session.</li>
-<li>Replay it with <code>--as</code> for every lower-privileged session.</li>
-<li>Check whose data was returned—not only the status code.</li>
+<li>Keep one named h5i session per user or role. Mixed cookie jars produce ambiguous evidence.</li>
+<li>Send every sensitive request from the least privileged session. When one succeeds, that alone is the finding.</li>
+<li>Read whose data came back, and against what kind of resource. The status code alone decides nothing.</li>
 <li>For create and update requests, add one plausible internal field at a time.</li>
 <li>Confirm impact with an unauthorized read, write, or privileged action.</li>
 </ol>
-<p>Named sessions matter because mixed cookie jars produce ambiguous evidence. If Alice’s credential accidentally remains in Bob’s request, a successful response proves nothing.</p>
 <h2 id="summary">Summary</h2>
-<p>Lab 8 showed an endpoint that authenticated Bob but never checked his role. h5i’s <code>--as</code> option let us keep Alice’s recorded request constant while replacing the sending identity.</p>
-<p>Lab 9 showed a registration endpoint that accepted every JSON field and copied it into the user record. Adding <code>is_admin: true</code> turned an ordinary signup into an administrator account.</p>
-<p>The shared lesson is that the client does not define the security boundary. A hidden link can still be requested, and a hidden field can still be submitted. The server must authorize every sensitive action and allowlist every client-controlled field.</p>
-<p>When finished:</p>
-<pre><code class="language-bash">$ h5i browser close --session alice
-$ h5i browser close --session bob
+<p>Lab 8 authenticated Bob and never checked his role, and his own session was enough to prove it. Lab 9 accepted every JSON field it was sent, so <code>is_admin: true</code> turned a signup into an administrator account. Both treated the client as the security boundary. A hidden link can still be requested and a hidden field can still be submitted, so the server has to authorize every sensitive action and allowlist every client-controlled field.</p>
+<pre><code class="language-bash">$ h5i browser close --session bob
 $ h5i browser close --session lab09
 $ ./run.sh stop
 </code></pre>
@@ -320,6 +238,7 @@ $ ./run.sh stop
 <li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/08-cross-session-authz">Lab 8: Cross-session authorization</a></li>
 <li><a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec/labs/09-mass-assignment">Lab 9: Mass assignment</a></li>
 </ul>
+
 
 <a class="next-up" href="/guides/jwt-attacks/"><span class="label">Next in the series</span><h3>JWT Attacks</h3><p>Decode JSON Web Tokens, bypass a missing signature check, crack a weak HMAC secret, and turn a key identifier into a path traversal.</p></a>
 <div class="post-cta"><h3>Run the labs yourself</h3><p>42 deliberately vulnerable applications, one binary, no Docker and no accounts.</p>
