@@ -2,8 +2,9 @@
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use url::Url;
 
@@ -13,22 +14,40 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long a TLS reader holds the shared connection lock while idle.
 pub(crate) const TLS_READ_SLICE: Duration = Duration::from_millis(100);
 
+/// The deadline of a reader that has not set one: wait for as long as it takes.
+const NO_DEADLINE: u64 = u64::MAX;
+
 /// A plain or TLS socket.
 pub(crate) struct Wire {
     sock: TcpStream,
     /// `None` for a plain socket. Shared with a reader thread when one exists.
     tls: Option<Arc<Mutex<rustls::ClientConnection>>>,
+    /// How long [`Wire::read`] keeps retrying before it hands the caller the
+    /// timeout. Shared with a clone, as the socket option already is.
+    ///
+    /// Separate from the socket's own timeout because over TLS that one is not
+    /// a deadline: it is the slice that makes the retry loop drop the
+    /// connection lock so a writer can take it. Ending a read on it would end
+    /// a WebSocket that is merely quiet. Ignoring it, which is what this did,
+    /// meant a caller that asked to wait thirty seconds waited forever, and one
+    /// raw send to a silent https server held the engine for good.
+    deadline: Arc<AtomicU64>,
 }
 
 impl Wire {
     pub(crate) fn plain(sock: TcpStream) -> Self {
-        Self { sock, tls: None }
+        Self {
+            sock,
+            tls: None,
+            deadline: Arc::new(AtomicU64::new(NO_DEADLINE)),
+        }
     }
 
     pub(crate) fn tls(sock: TcpStream, conn: rustls::ClientConnection) -> Self {
         Self {
             sock,
             tls: Some(Arc::new(Mutex::new(conn))),
+            deadline: Arc::new(AtomicU64::new(NO_DEADLINE)),
         }
     }
 
@@ -41,6 +60,7 @@ impl Wire {
         Ok(Wire {
             sock: self.sock.try_clone()?,
             tls: self.tls.clone(),
+            deadline: Arc::clone(&self.deadline),
         })
     }
 
@@ -71,6 +91,26 @@ impl Wire {
     pub(crate) fn set_read_timeout(&self, timeout: Option<Duration>) {
         let _ = self.sock.set_read_timeout(timeout);
     }
+
+    /// How long one `read` may go on retrying. `None` waits indefinitely.
+    ///
+    /// A plain socket needs nothing here: its own timeout already ends a read.
+    /// Setting it anyway keeps the two kinds of `Wire` answering the same way.
+    pub(crate) fn set_read_deadline(&self, wait: Option<Duration>) {
+        let millis = match wait {
+            None => NO_DEADLINE,
+            Some(wait) => u64::try_from(wait.as_millis()).unwrap_or(NO_DEADLINE - 1),
+        };
+        self.deadline.store(millis, Ordering::Relaxed);
+    }
+
+    /// When the read running now has to give up, if it has to.
+    fn deadline(&self) -> Option<Instant> {
+        match self.deadline.load(Ordering::Relaxed) {
+            NO_DEADLINE => None,
+            millis => Some(Instant::now() + Duration::from_millis(millis)),
+        }
+    }
 }
 
 impl Read for Wire {
@@ -78,6 +118,7 @@ impl Read for Wire {
         let Some(conn) = self.tls.clone() else {
             return (&self.sock).read(buf);
         };
+        let until = self.deadline();
         loop {
             {
                 let mut conn = conn
@@ -87,12 +128,14 @@ impl Read for Wire {
                 let mut stream = rustls::Stream::new(&mut *conn, &mut sock);
                 match stream.read(buf) {
                     Ok(read) => return Ok(read),
-                    // Release the lock after an idle slice so writers can use it.
-                    Err(error)
-                        if matches!(
-                            error.kind(),
-                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                        ) => {}
+                    // Release the lock after an idle slice so writers can use
+                    // it, then keep waiting. Unless the caller named a deadline
+                    // and it has passed: then the idle slice *is* the answer.
+                    Err(error) if is_timeout(&error) => {
+                        if until.is_some_and(|until| Instant::now() >= until) {
+                            return Err(error);
+                        }
+                    }
                     Err(error) => return Err(error),
                 }
             }
@@ -193,6 +236,9 @@ pub(crate) struct RawResponse {
     pub leftover: Vec<u8>,
 }
 
+/// How long a raw HTTP read waits on a server that has gone quiet.
+pub(crate) const RAW_READ_DEADLINE: Duration = Duration::from_secs(30);
+
 /// Anything the connection still had to say once one response was complete.
 ///
 /// A well-behaved server has nothing: one request, one response. Two responses
@@ -204,8 +250,10 @@ pub(crate) struct RawResponse {
 /// Bounded and short: this is a server that has already answered, so the wait
 /// is for bytes that are either there or are not.
 pub(crate) fn read_whatever_follows(wire: &mut Wire, already: Vec<u8>, cap: usize) -> Vec<u8> {
-    let restore = std::time::Duration::from_secs(30);
-    wire.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+    let restore = RAW_READ_DEADLINE;
+    let listen = Duration::from_millis(500);
+    wire.set_read_timeout(Some(listen));
+    wire.set_read_deadline(Some(listen));
     let mut rest = already;
     let mut chunk = [0u8; 8192];
     while rest.len() < cap {
@@ -216,12 +264,34 @@ pub(crate) fn read_whatever_follows(wire: &mut Wire, already: Vec<u8>, cap: usiz
         }
     }
     wire.set_read_timeout(Some(restore));
+    wire.set_read_deadline(Some(restore));
     rest.truncate(cap);
     rest
 }
 
+/// Whether a response to `method` with this status carries a body at all.
+///
+/// RFC 9110 §6.4.1: the answer to a HEAD is the headers its GET would have sent
+/// and nothing else, so `Content-Length` and `Transfer-Encoding` describe a body
+/// that will never arrive. Believing them here meant blocking on the socket
+/// until the read timeout for every HEAD anybody sent. 204 and 304 are the same
+/// trap for the same reason.
+fn body_is_expected(method: &str, status: Option<u16>) -> bool {
+    if method.eq_ignore_ascii_case("HEAD") {
+        return false;
+    }
+    !matches!(status, Some(204) | Some(304) | Some(100..=199))
+}
+
 /// Read one bounded HTTP/1.1 response using its length, chunks, or connection close.
-pub(crate) fn read_http_response(wire: &mut Wire, cap: usize) -> Result<RawResponse, String> {
+///
+/// `method` is the request's, because what frames a response is a fact about the
+/// pair and not about the bytes coming back.
+pub(crate) fn read_http_response(
+    wire: &mut Wire,
+    method: &str,
+    cap: usize,
+) -> Result<RawResponse, String> {
     let mut buf: Vec<u8> = Vec::with_capacity(8192);
     let mut chunk = [0u8; 8192];
 
@@ -256,7 +326,11 @@ pub(crate) fn read_http_response(wire: &mut Wire, cap: usize) -> Result<RawRespo
         .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
         .and_then(|(_, value)| value.trim().parse::<usize>().ok());
 
-    let (body, leftover) = if te_chunked {
+    let (body, leftover) = if !body_is_expected(method, status) {
+        // Nothing to read, and whatever already arrived belongs to whatever
+        // comes next: for a raw send that is the desync the caller was testing.
+        (Vec::new(), std::mem::take(&mut rest))
+    } else if te_chunked {
         read_chunked(wire, &mut rest, &mut chunk, cap)?
     } else if let Some(len) = content_length {
         // Refused past the cap, as every other body reader here does.
@@ -590,6 +664,147 @@ mod tests {
         }
     }
 
+    /// A TLS reader whose peer never speaks TLS, so every read is idle and the
+    /// retry loop is the only thing deciding when to stop.
+    ///
+    /// Over TLS the socket timeout is the lock-release slice, not a deadline,
+    /// and the loop used to swallow it: one raw send to a silent https server
+    /// held this thread, and the engine behind it, for good. Run on a worker so
+    /// a regression fails the test rather than hanging the suite.
+    #[test]
+    fn a_tls_read_gives_up_when_the_caller_named_a_deadline() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        // Accepts and says nothing at all, ever.
+        std::thread::spawn(move || {
+            let held = listener.accept();
+            std::thread::sleep(std::time::Duration::from_secs(20));
+            drop(held);
+        });
+
+        let sock = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        let name = rustls::pki_types::ServerName::try_from("example.com".to_string())
+            .expect("a name");
+        let conn = rustls::ClientConnection::new(tls_config(), name).expect("client");
+        let wire = Wire::tls(sock, conn);
+        wire.set_read_timeout(Some(TLS_READ_SLICE));
+        wire.set_read_deadline(Some(std::time::Duration::from_millis(400)));
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut wire = wire;
+            let mut buf = [0u8; 64];
+            let _ = tx.send(wire.read(&mut buf));
+        });
+        let answer = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the read has to come back, not wait out the silent server");
+        let error = answer.expect_err("a peer that says nothing cannot be a successful read");
+        assert!(is_timeout(&error), "{error:?}");
+    }
+
+    /// The other half of the same rule: with no deadline the loop keeps waiting,
+    /// which is what a WebSocket that is merely quiet depends on.
+    #[test]
+    fn a_tls_read_without_a_deadline_keeps_waiting() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        std::thread::spawn(move || {
+            let held = listener.accept();
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            drop(held);
+        });
+
+        let sock = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        let name = rustls::pki_types::ServerName::try_from("example.com".to_string())
+            .expect("a name");
+        let conn = rustls::ClientConnection::new(tls_config(), name).expect("client");
+        let wire = Wire::tls(sock, conn);
+        wire.set_read_timeout(Some(TLS_READ_SLICE));
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut wire = wire;
+            let mut buf = [0u8; 64];
+            let _ = tx.send(wire.read(&mut buf).is_ok());
+        });
+        // Well past several lock-release slices, and still reading.
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(700)).is_err(),
+            "a read with no deadline must not end on the idle slice"
+        );
+    }
+
+    /// A server that answers and then holds the connection open, so a reader
+    /// waiting for a body that will never arrive waits for its whole timeout
+    /// rather than being let off by the close.
+    fn read_while_the_connection_is_held(
+        method: &str,
+        bytes: &str,
+    ) -> (RawResponse, std::time::Duration) {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let said = bytes.to_string();
+        let done = std::sync::Arc::new(AtomicBool::new(false));
+        let held = std::sync::Arc::clone(&done);
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.write_all(said.as_bytes());
+                let _ = stream.flush();
+                while !held.load(Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+        });
+        let sock = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        sock.set_read_timeout(Some(std::time::Duration::from_secs(5))).expect("timeout");
+        let mut wire = Wire::plain(sock);
+        let started = std::time::Instant::now();
+        let response = read_http_response(&mut wire, method, 1 << 20).expect("a response");
+        let took = started.elapsed();
+        done.store(true, Ordering::Relaxed);
+        let _ = server.join();
+        (response, took)
+    }
+
+    /// The answer to a HEAD is its GET's headers, so `Content-Length` and
+    /// `Transfer-Encoding` both describe a body nobody will send. Believing
+    /// them blocked until the read timeout on every HEAD `--raw-request` sent.
+    #[test]
+    fn a_head_answer_has_no_body_however_it_is_framed() {
+        for framing in ["Content-Length: 1312", "Transfer-Encoding: chunked"] {
+            let (response, took) = read_while_the_connection_is_held(
+                "HEAD",
+                &format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n{framing}\r\n\r\n"),
+            );
+            assert_eq!(response.status, Some(200), "{framing}");
+            assert!(response.body.is_empty(), "{framing}: {:?}", response.body);
+            assert!(
+                took < std::time::Duration::from_secs(2),
+                "{framing} waited {took:?} for a body that was never coming"
+            );
+        }
+    }
+
+    /// Two statuses that are defined as bodiless, whatever they claim in their
+    /// framing headers and whatever method asked.
+    #[test]
+    fn a_bodiless_status_is_not_waited_on() {
+        for status in ["204 No Content", "304 Not Modified"] {
+            let (response, took) = read_while_the_connection_is_held(
+                "GET",
+                &format!("HTTP/1.1 {status}\r\nContent-Length: 7\r\n\r\n"),
+            );
+            assert!(response.body.is_empty(), "{status}: {:?}", response.body);
+            assert!(
+                took < std::time::Duration::from_secs(2),
+                "{status} waited {took:?}"
+            );
+        }
+    }
+
     /// One connection, one write, whatever bytes the test names.
     fn read_from_a_server_that_says(bytes: &str) -> RawResponse {
         use std::io::Write;
@@ -609,7 +824,7 @@ mod tests {
             std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
         sock.set_read_timeout(Some(std::time::Duration::from_secs(5))).expect("timeout");
         let mut wire = Wire::plain(sock);
-        let response = read_http_response(&mut wire, 1 << 20).expect("a response");
+        let response = read_http_response(&mut wire, "GET", 1 << 20).expect("a response");
         let _ = server.join();
         response
     }
@@ -630,7 +845,7 @@ mod tests {
         let sock = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
         sock.set_read_timeout(Some(std::time::Duration::from_secs(2))).expect("timeout");
         let mut wire = Wire::plain(sock);
-        let response = read_http_response(&mut wire, cap);
+        let response = read_http_response(&mut wire, "GET", cap);
         let _ = server.join();
         response
     }
@@ -658,7 +873,7 @@ mod tests {
         let sock = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
         sock.set_read_timeout(Some(std::time::Duration::from_secs(5))).expect("timeout");
         let mut wire = Wire::plain(sock);
-        let response = read_http_response(&mut wire, cap);
+        let response = read_http_response(&mut wire, "GET", cap);
         let _ = server.join();
         response
     }

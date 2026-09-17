@@ -1363,6 +1363,13 @@ impl LocalBroker {
                 let wire = raw.len() as u64;
                 match &encoding {
                     None => Ok((raw, wire, false)),
+                    // A body that is not there cannot be decompressed. A HEAD
+                    // answer carries the headers its GET would have,
+                    // `content-encoding` among them, and no bytes; 204 and 304
+                    // are the same shape. Running the decoder on nothing turned
+                    // every one of those into a failed read, which is how
+                    // reading a response-header-only channel stopped working.
+                    Some(_) if raw.is_empty() => Ok((raw, wire, true)),
                     Some(encoding) => self
                         .decode_capped(&raw, encoding)
                         .map(|decoded| (decoded, wire, true)),
@@ -2075,8 +2082,14 @@ impl crate::broker::Broker for LocalBroker {
                 return FetchOutcome::failed_at(url.clone(), e, Some(seq));
             }
         };
-        // Do not wait forever for a silent server.
-        wire.set_read_timeout(Some(Duration::from_secs(30)));
+        // Do not wait forever for a silent server. Over TLS the socket timeout
+        // does not do this on its own: the read loop retries on it, so that a
+        // writer can take the connection lock, and the wait has to be said as a
+        // deadline as well. Without it a raw send to an https server that keeps
+        // its connection open blocked this thread and the engine behind it.
+        let wait = crate::rawsock::RAW_READ_DEADLINE;
+        wire.set_read_timeout(Some(wait));
+        wire.set_read_deadline(Some(wait));
 
         if let Err(e) = wire.write_all(&req.wire) {
             wire.shutdown();
@@ -2092,7 +2105,7 @@ impl crate::broker::Broker for LocalBroker {
         }
 
         let cap = self.policy.max_response_bytes() as usize;
-        let response = crate::rawsock::read_http_response(&mut wire, cap);
+        let response = crate::rawsock::read_http_response(&mut wire, &req.method, cap);
         let ttfb = started.elapsed().as_millis() as u64;
         // Only the raw path asks this, and only the raw path has a reason to:
         // an ordinary fetch is one request and one response, while a request
@@ -4864,6 +4877,55 @@ mod cookie_wire_tests {
         assert!(
             outcome.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("content-type")),
             "the safelist should still be visible: {:?}",
+            outcome.headers
+        );
+    }
+
+    /// A server that answers a HEAD the way a real one does: the headers its
+    /// GET would have sent, `content-encoding` among them, and no body at all.
+    fn head_server() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else { return };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap_or(0) > 0 {
+                if line.trim().is_empty() {
+                    break;
+                }
+                line.clear();
+            }
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Encoding: br\r\n\
+                  X-Vault: open\r\nContent-Length: 1312\r\nConnection: close\r\n\r\n",
+            );
+            let _ = stream.flush();
+        });
+        port
+    }
+
+    /// The headers are the whole answer, so failing to decode the body that is
+    /// not there threw the answer away. `content-encoding` describes bytes, and
+    /// a HEAD has none of them.
+    #[test]
+    fn an_absent_body_is_not_run_through_the_decoder() {
+        let port = head_server();
+        let (broker, _sink) = cors_broker();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/vault/")).unwrap();
+        let fetch = crate::broker::Fetch::get(&target, Initiator::Replay)
+            .with_body("HEAD", &[], None);
+        let outcome = Broker::send(broker.as_ref(), &fetch);
+
+        assert!(outcome.error.is_none(), "{outcome:?}");
+        assert_eq!(outcome.status, Some(200), "{outcome:?}");
+        assert!(outcome.body.is_empty(), "{outcome:?}");
+        assert!(
+            outcome
+                .headers
+                .iter()
+                .any(|(name, value)| name.eq_ignore_ascii_case("x-vault") && value == "open"),
+            "the headers are what a HEAD is for: {:?}",
             outcome.headers
         );
     }

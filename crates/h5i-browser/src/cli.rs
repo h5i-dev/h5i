@@ -1468,6 +1468,26 @@ fn serve(
     )
 }
 
+/// Why a session said no, from wherever in the answer it put the reason.
+///
+/// Three keys, because three shapes are already in use: a refusal before the
+/// verb ran says `error`, one the verb itself formed says `message`, and a send
+/// that reached the wire and failed there says `response.error`. Reading only
+/// the first turned every send-level failure into "without saying why", which
+/// is the least useful sentence this CLI can print.
+fn refusal(reply: &serde_json::Value) -> String {
+    ["error", "message"]
+        .iter()
+        .find_map(|key| reply.get(key).and_then(serde_json::Value::as_str))
+        .or_else(|| {
+            reply
+                .get("response")
+                .and_then(|response| response.get("error"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .unwrap_or("the session refused, without saying why")
+        .to_string()
+}
 
 /// Drive the resident session: send a recorded script's steps through the
 /// control channel, in order.
@@ -1508,10 +1528,7 @@ fn replay(script: &Path, keep_going: bool, at: &SessionArgs) -> Result<(), H5iEr
         }
 
         failed += 1;
-        let reason = reply
-            .get("error")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("the session refused, without saying why");
+        let reason = refusal(&reply);
         eprintln!("{:>3}. {} — FAILED: {reason}", at_step + 1, step.render());
         if !keep_going {
             // A sequence, not a set. Carrying on would act on a page the
@@ -1944,11 +1961,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
     }
 
     if reply.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
-        let text = reply
-            .get("error")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("the session refused, without saying why");
-        return Err(H5iError::Metadata(text.to_string()));
+        return Err(H5iError::Metadata(refusal(&reply)));
     }
 
     // A recording asked to be kept. Written as the step list rather than the
@@ -2709,6 +2722,34 @@ fn parse_target(target: &str) -> Result<Target, H5iError> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Why a HEAD replay reported "without saying why": the send reached the
+    /// wire and failed there, so the engine's account of it sat under
+    /// `response`, and only the top-level `error` was ever read.
+    #[test]
+    fn a_refusal_is_read_from_wherever_the_engine_put_it() {
+        let nested = serde_json::json!({
+            "ok": false,
+            "response": {"error": "the br response could not be decoded: Invalid Data"},
+        });
+        assert_eq!(refusal(&nested), "the br response could not be decoded: Invalid Data");
+
+        let formed = serde_json::json!({"ok": false, "code": "bad-each", "message": "pick one"});
+        assert_eq!(refusal(&formed), "pick one");
+
+        // `error` still wins: it is the outer refusal, from before the verb ran.
+        let both = serde_json::json!({
+            "ok": false,
+            "error": "denied by policy",
+            "response": {"error": "never reached"},
+        });
+        assert_eq!(refusal(&both), "denied by policy");
+
+        assert_eq!(
+            refusal(&serde_json::json!({"ok": false})),
+            "the session refused, without saying why"
+        );
+    }
 
     /// The default session path is per-user, or absent.
     ///

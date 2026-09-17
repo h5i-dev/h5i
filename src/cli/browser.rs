@@ -3751,10 +3751,20 @@ fn via_helper(
 }
 
 /// What a session said when it refused, or a stand-in when it said nothing.
+///
+/// Three keys, because three shapes are already in use: a refusal before the
+/// verb ran says `error`, one the verb itself formed says `message`, and a send
+/// that reached the wire and failed there says `response.error`.
 fn refusal(answer: &Value) -> String {
-    answer
-        .get("error")
-        .and_then(Value::as_str)
+    ["error", "message"]
+        .iter()
+        .find_map(|key| answer.get(key).and_then(Value::as_str))
+        .or_else(|| {
+            answer
+                .get("response")
+                .and_then(|response| response.get("error"))
+                .and_then(Value::as_str)
+        })
         .unwrap_or("the session refused, without saying why")
         .to_string()
 }

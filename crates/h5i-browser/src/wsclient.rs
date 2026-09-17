@@ -129,6 +129,12 @@ impl Socket {
             Wire::plain(sock)
         };
 
+        // The same ten seconds, said again where a TLS read will honour it: the
+        // retry loop keeps going past the socket timeout so a writer can take
+        // the connection lock, which over `wss://` left a server that never
+        // answers holding the handshake forever. See [`Wire`].
+        stream.set_read_deadline(Some(HANDSHAKE_TIMEOUT));
+
         // One reader for the handshake *and* the frames that follow it.
         //
         // This was a bug before it was a design note. A `BufReader` reads
@@ -150,6 +156,7 @@ impl Socket {
         } else {
             None
         });
+        stream.set_read_deadline(None);
 
         let (tx, rx) = std::sync::mpsc::sync_channel(MAX_QUEUED);
         // Queued before the reader starts, so `open` reaches the page ahead of
@@ -645,6 +652,42 @@ mod tests {
         };
         assert!(error.contains("cap"), "{error}");
         let _ = server.join();
+    }
+
+    /// The other way a handshake never ends: the server accepts and says
+    /// nothing at all.
+    ///
+    /// `ws://` was always covered by the socket's own read timeout. `wss://`
+    /// was not: the TLS read loop retries past that timeout rather than
+    /// reporting it, so the ten seconds meant nothing and a silent server held
+    /// this thread for good. Run on a worker, because a regression here hangs
+    /// rather than fails.
+    #[test]
+    fn a_silent_tls_server_cannot_hold_the_handshake_open() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let held = listener.accept();
+            std::thread::sleep(HANDSHAKE_TIMEOUT * 3);
+            drop(held);
+        });
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let broker = crate::net::LocalBroker::new(
+                crate::policy::Policy::new(),
+                Arc::new(crate::receipt::MemorySink::new()),
+                None,
+            )
+            .expect("broker");
+            let url = Url::parse(&format!("wss://127.0.0.1:{port}/hmr")).unwrap();
+            let _ = tx.send(Socket::open(broker, &url, None).is_ok());
+        });
+
+        let opened = rx
+            .recv_timeout(HANDSHAKE_TIMEOUT * 2)
+            .expect("the handshake has to give up, not wait out a silent server");
+        assert!(!opened, "a server that never spoke must not open a socket");
     }
 
     /// A page's socket names the page. CORS does not reach a WebSocket, so
