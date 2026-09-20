@@ -146,27 +146,27 @@
 <a class="t2" href="#what-h5i-is">What h5i is</a>
 <div class="t3group">
 <a class="t3" href="#the-division-of-labour">The division of labour</a>
-<a class="t3" href="#the-record-is-the-product">The record is the product</a>
+<a class="t3" href="#two-kinds-of-record">Two kinds of record</a>
 <a class="t3" href="#what-it-is-not">What it is not</a>
 </div>
 <a class="t2" href="#the-engagement">The engagement</a>
 <div class="t3group">
-<a class="t3" href="#containment-is-optional">Containment is optional</a>
+<a class="t3" href="#where-a-box-fits">Where a box fits</a>
 </div>
 <a class="t2" href="#install">Install</a>
 <a class="t2" href="#command-groups">Command groups</a>
 <a class="t2" href="#scope-and-identity">Scope and identity</a>
 <div class="t3group">
-<a class="t3" href="#--project-groups-the-sessions-an-engagement-took">--project groups the sessions an engagement took</a>
+<a class="t3" href="#--project-grouping-sessions-by-engagement">--project: grouping sessions by engagement</a>
 <a class="t3" href="#browser-identities">Browser identities</a>
 <a class="t3" href="#what-a-refusal-looks-like">What a refusal looks like</a>
 </div>
 <a class="t2" href="#h5i-recon">h5i recon</a>
 <a class="t2" href="#h5i-browser">h5i browser</a>
 <div class="t3group">
-<a class="t3" href="#the-id-is-internal">The id is internal</a>
+<a class="t3" href="#which-session-a-verb-acts-on">Which session a verb acts on</a>
 <a class="t3" href="#open-navigates-a-session-that-is-already-there">open navigates a session that is already there</a>
-<a class="t3" href="#what-is-true-by-default">What is true by default</a>
+<a class="t3" href="#defaults">Defaults</a>
 <a class="t3" href="#read-one-page-no-session">read: one page, no session</a>
 <a class="t3" href="#reading-and-acting-beyond-snapshot-and-click">Reading and acting, beyond snapshot and click</a>
 <a class="t3" href="#when-the-page-acts-on-its-own">When the page acts on its own</a>
@@ -183,11 +183,11 @@
 <div class="t3group">
 <a class="t3" href="#experiments">Experiments</a>
 <a class="t3" href="#findings">Findings</a>
-<a class="t3" href="#evidence-is-not-account">Evidence is not account</a>
+<a class="t3" href="#what-is-safe-to-paste-and-what-is-not">What is safe to paste, and what is not</a>
 </div>
 <a class="t2" href="#h5i-test">h5i test</a>
 <div class="t3group">
-<a class="t3" href="#the-files-are-the-repositorys">The files are the repository's</a>
+<a class="t3" href="#where-tests-live">Where tests live</a>
 <a class="t3" href="#what-the-oracle-is-given">What the oracle is given</a>
 <a class="t3" href="#coverage-and-what-it-counts">Coverage, and what it counts</a>
 </div>
@@ -205,7 +205,7 @@
 <a class="t3" href="#h5i-box-export">h5i box export</a>
 <a class="t3" href="#h5i-box-cache">h5i box cache</a>
 <a class="t3" href="#h5i-box-view">h5i box view</a>
-<a class="t3" href="#the-engine-underneath">The engine, underneath</a>
+<a class="t3" href="#where-the-engine-lives">Where the engine lives</a>
 <a class="t3" href="#inspecting-what-happened">Inspecting what happened</a>
 <a class="t3" href="#lifecycle">Lifecycle</a>
 <a class="t3" href="#h5i-box-allow">h5i box allow</a>
@@ -218,10 +218,10 @@
 <a class="t2" href="#h5i-runner">h5i runner</a>
 <div class="t3group">
 <a class="t3" href="#what-pairing-does">What pairing does</a>
-<a class="t3" href="#capabilities-are-advertised-never-assumed">Capabilities are advertised, never assumed</a>
+<a class="t3" href="#what-a-runner-advertises">What a runner advertises</a>
 <a class="t3" href="#putting-a-box-on-one">Putting a box on one</a>
 <a class="t3" href="#working-in-one">Working in one</a>
-<a class="t3" href="#what-is-not-built-yet">What is not built yet</a>
+<a class="t3" href="#not-on-a-runner-yet">Not on a runner yet</a>
 <a class="t3" href="#unpairing">Unpairing</a>
 </div>
 <a class="t2" href="#the-console">The console</a>
@@ -280,20 +280,17 @@ refused when the record cannot be written.</p>
 <p><em>h5i</em> (pronounced <em>high-five</em>) is a red-teaming browser for AI agents. An agent
 drives a session by name, reads the page as an outline with <code>@ref</code> handles, and
 works on the traffic that page produced: inspect it, change one field, send it
-again, compare what came back. One session holds both halves, because the engine
-<em>is</em> the HTTP client.</p>
-<p>That is the part with no equivalent elsewhere. Playwright and Puppeteer drive a
-browser and cannot tell you what it reached. Burp owns the traffic and not the
-browser, so it needs interception, a proxy setting, usually a CA certificate,
-and it can never say <em>why</em> a request happened. h5i writes the decision before
-the bytes move and refuses the fetch when the record cannot be written, so the
-log is a decision record rather than an observation made beside the network: a
-request that is not in it did not happen.</p>
-<p>One Rust binary, engine included. No proxy to configure, no certificate to
-install, no server, no daemon, no SaaS.</p>
+again, compare what came back. The page and its traffic are one session, because
+the engine <em>is</em> the HTTP client.</p>
+<p>No other tool has both ends. Playwright and Puppeteer drive a browser and cannot
+say what it reached. Burp owns the traffic and not the browser, so it needs
+interception, a proxy setting and usually a CA certificate, and it cannot say
+<em>why</em> a request happened. h5i writes the decision before the bytes move, so a
+request that is not in the log did not happen.</p>
+<p>One Rust binary, engine included. No proxy, no certificate, no server, no
+daemon, no SaaS.</p>
 <h3 id="the-division-of-labour">The division of labour</h3>
-<p>h5i owns the deterministic half; the agent owns the judgement half. The line is
-deliberate and load-bearing:</p>
+<p>h5i does the deterministic work; the agent does the judging.</p>
 <table>
 <thead>
 <tr>
@@ -324,44 +321,39 @@ deliberate and load-bearing:</p>
 </tr>
 </tbody>
 </table>
-<p>h5i finds nothing and flags nothing. It generates no payloads, ships no
-wordlists, and calls no response a vulnerability. A finding is a claim the agent
-writes down and signs; what h5i checks is that the evidence it cites exists.</p>
-<h3 id="the-record-is-the-product">The record is the product</h3>
-<p>What h5i keeps is one of two kinds, and the two are never merged:</p>
+<p>h5i finds nothing and flags nothing. No payloads, no wordlists, no verdicts. A
+finding is what the agent writes with <code>h5i websec finding create</code>; h5i stores it
+and checks that the ids it cites exist.</p>
+<h3 id="two-kinds-of-record">Two kinds of record</h3>
 <ul>
-<li><strong>The account.</strong> What was asked for, what was decided, what came back, in a
-  shape that is safe to paste into a bug report. <code>requests.jsonl</code>,
-  <code>actions.jsonl</code>, the receipts, the endpoint ledger.</li>
-<li><strong>The evidence.</strong> The messages themselves, <code>Authorization</code> header and session
-  cookie included. Owner-only on disk, opt-in with <code>--capture</code>, and in no export
-  unless somebody names it.</li>
+<li><strong>The account.</strong> What was asked for, decided, and returned, in a shape that is
+  safe to paste into a bug report: <code>requests.jsonl</code>, <code>actions.jsonl</code>, the
+  receipts, the endpoint ledger.</li>
+<li><strong>The evidence.</strong> The messages themselves, <code>Authorization</code> and cookies
+  included. Owner-only, opt-in with <code>--capture</code>, in no export unless named.</li>
 </ul>
-<p>Every row also says whether it is the engine describing itself or something h5i
-saw from outside. A lane that cannot tell those apart is a lane that can be
-talked into anything.</p>
+<p>The two are never merged. Every row also says which lane saw it:
+<code>engine-claimed</code> is the engine's account of itself, <code>host-observed</code> is something
+outside the engine seeing it too. A lane is never upgraded.</p>
 <h3 id="what-it-is-not">What it is not</h3>
 <ul>
 <li><strong>Not a scanner.</strong> No crawl-and-flag mode, no payload generation, no severity
-  score. See the table above.</li>
-<li><strong>Not a sandbox by default.</strong> A session with no <code>--in</code> runs on your machine
-  like any other headless browser, and <code>h5i browser status</code> says so on every
-  line. Containment is a placement you ask for, never something the word
-  "browser" is allowed to imply.</li>
+  score.</li>
+<li><strong>Not a sandbox by default.</strong> A session with no <code>--in</code> runs like any other
+  headless browser, and <code>h5i browser status</code> says so. Containment is a placement
+  you ask for.</li>
 <li><strong>Not a complete browser.</strong> Of twenty single-page applications measured,
   eighteen read usefully and one not at all. Tabs, extensions, Service Workers,
-  WebRTC and iframes are deliberately absent, and a page needing an API the
-  engine lacks gets that API <em>named</em> in the snapshot rather than a blank space.</li>
+  WebRTC and iframes are absent by decision, and a page needing an API the
+  engine lacks gets that API <em>named</em> in the snapshot.</li>
 <li><strong>Not a content filter.</strong> h5i does not classify what a page says. It bounds
   what a persuaded agent can reach.</li>
 <li><strong>Not a defence against a targeted kernel exploit.</strong> See <a href="#limits">Limits</a>.</li>
 </ul>
 <hr />
 <h2 id="the-engagement">The engagement</h2>
-<p>This manual is ordered the way the work runs. Sections are named after the
-commands, because that is what you search for; the order is the workflow. The
-join between phases is the message id, so every claim points at bytes a reviewer
-can read back.</p>
+<p>Sections are named after the commands; the order is the workflow. The join
+between phases is the message id.</p>
 <table>
 <thead>
 <tr>
@@ -413,13 +405,12 @@ h5i websec replay req_42 --set query.id=456
 h5i websec diff res_42 res_43
 h5i websec finding create --title '...' --evidence req_42,res_43
 </code></pre>
-<p>Recon says what exists and websec tests it. Neither needs the other to have run,
-so you can enter at any phase.</p>
-<h3 id="containment-is-optional">Containment is optional</h3>
-<p>A box is a disposable, confined environment. It is an <em>auxiliary</em> to the work
-above rather than a part of it, and nothing in the loop needs one. You reach for
-a box when the code under test is untrusted, when a target's response might be,
-or when you want the network decision made by something outside the engine:</p>
+<p>Recon says what exists and websec tests it. Neither needs the other, so you can
+enter at any phase.</p>
+<h3 id="where-a-box-fits">Where a box fits</h3>
+<p>A box is a disposable, confined environment, and nothing above needs one. Reach
+for a box when the code under test is untrusted, when a target's response might
+be, or when you want the network decision made outside the engine:</p>
 <pre><code class="language-bash">h5i browser open https://target.example --in mybox
 </code></pre>
 <p>Same session, same verbs, same record. What changes is who saw the network,
@@ -444,7 +435,6 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 </code></pre>
 <hr />
 <h2 id="command-groups">Command groups</h2>
-<p>The work:</p>
 <table>
 <thead>
 <tr>
@@ -469,20 +459,9 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 <td><a href="#h5i-test"><code>h5i test</code></a></td>
 <td>Replay portable attack flows and check them with your own oracles. A plugin.</td>
 </tr>
-</tbody>
-</table>
-<p>Containment, when you want it:</p>
-<table>
-<thead>
-<tr>
-<th>Group</th>
-<th>What it is for</th>
-</tr>
-</thead>
-<tbody>
 <tr>
 <td><a href="#boxes"><code>h5i box</code></a></td>
-<td>Create, run, inspect and export boxes. The confinement a session, an agent or a dev server can be placed in.</td>
+<td>Create, run, inspect and export boxes. Optional containment.</td>
 </tr>
 <tr>
 <td><a href="#h5i-box-share"><code>h5i box share</code></a></td>
@@ -496,20 +475,9 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 <td><a href="#h5i-runner"><code>h5i runner</code></a></td>
 <td>Pair a second Linux machine and run boxes there over SSH.</td>
 </tr>
-</tbody>
-</table>
-<p>Everything else:</p>
-<table>
-<thead>
-<tr>
-<th>Group</th>
-<th>What it is for</th>
-</tr>
-</thead>
-<tbody>
 <tr>
 <td><a href="#the-console"><code>h5i ui</code></a></td>
-<td>The console: every session and box on this machine, as one read-only screen.</td>
+<td>The console: every session and box on this machine, read-only.</td>
 </tr>
 <tr>
 <td><a href="#h5i-skill"><code>h5i skill</code></a></td>
@@ -517,7 +485,7 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 </tr>
 <tr>
 <td><a href="#h5i-plugin"><code>h5i plugin</code></a></td>
-<td>Install a capability that is not in the default build: the workbench, the ledger, the tests.</td>
+<td>Install what is not in the default build: the workbench, the ledger, the tests.</td>
 </tr>
 <tr>
 <td><code>h5i completion</code></td>
@@ -525,13 +493,11 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 </tr>
 </tbody>
 </table>
-<p><code>h5i dev *</code> and <code>h5i env *</code> both remain as hidden aliases for <code>h5i box *</code>
-through one release. The noun the product uses everywhere else is <em>box</em>, so the
-command is too.</p>
+<p><code>h5i dev *</code> and <code>h5i env *</code> remain hidden aliases for <code>h5i box *</code> through one
+release.</p>
 <hr />
 <h2 id="scope-and-identity">Scope and identity</h2>
-<p>Before anything is sent, say what is in bounds and let the engine hold the line.
-Scope in h5i is three separate things, and keeping them apart is the point:</p>
+<p>Before anything is sent, say what is in bounds. Scope is three separate things:</p>
 <table>
 <thead>
 <tr>
@@ -558,10 +524,10 @@ Scope in h5i is three separate things, and keeping them apart is the point:</p>
 </tr>
 </tbody>
 </table>
-<p>The first two are enforced in the same place, before the wire, and a refusal is
-a row in the log with no bytes behind it. The third is not a permission: it is
-what the target sees, and changing it is how a two-account test is run.</p>
-<h3 id="--project-groups-the-sessions-an-engagement-took"><code>--project</code> groups the sessions an engagement took</h3>
+<p>The first two are enforced before the wire, and a refusal is a row in the log
+with no bytes behind it. Identity is not a permission: it is what the target
+sees, and changing it is how a two-account test is run.</p>
+<h3 id="--project-grouping-sessions-by-engagement"><code>--project</code>: grouping sessions by engagement</h3>
 <p>A name addresses one session; a <em>project</em> names the engagement many sessions
 belong to. Because a name is reused and a project is not, the project is what
 survives the work:</p>
@@ -574,10 +540,6 @@ directories in <a href="#a-browser-sessions-directory">Files</a> rather than som
 has to ship a verb for.</p>
 <p>When <code>~/.config/h5i/projects/&lt;name&gt;.toml</code> exists, <code>--project</code> also resolves it
 as the session's engagement scope. See <a href="#scope-the-engagement-kind">Scope</a>.</p>
-<p>There is deliberately <em>no</em> "if only one session is live, use it" rule. It reads
-as helpful and is the same hazard as a moving default: an agent that opened one
-session, had it end, and opened another under a different name would find its
-next verb quietly landing somewhere it never asked for.</p>
 <h3 id="browser-identities">Browser identities</h3>
 <p>A session uses one identity for HTTP headers, JavaScript, screen geometry, locale,
 and time zone. The identity is fixed when the session opens and recorded in its
@@ -616,14 +578,14 @@ WebGL capabilities this engine does not provide.</p>
 <p>Identity consistency is not anonymity. TLS and HTTP/2 fingerprints, installed
 fonts, network location, and input timing remain outside this feature.</p>
 <h3 id="what-a-refusal-looks-like">What a refusal looks like</h3>
-<p>Out of scope is not an error in the tooling. It is a recorded decision:</p>
+<p>Out of scope is a recorded decision, not a tooling error:</p>
 <pre><code>$ h5i browser navigate https://blog.acme.com/ --session acme1
 Error: denied by policy: `blog.acme.com` is refused by the deny rule
 `blog.acme.com`.
 </code></pre>
-<p>The request has an <code>allowed: false</code> row in <code>requests.jsonl</code>, a response record
-describing the refusal, and no bytes between them. Read the named origin, and
-change scope only with authorisation. Never edit a scope from inside a box.</p>
+<p>The request gets an <code>allowed: false</code> row in <code>requests.jsonl</code>, a response record
+describing the refusal, and no bytes between them. Change scope only with
+authorisation, and never from inside a box.</p>
 <hr />
 <h2 id="h5i-recon">h5i recon</h2>
 <p>Discovery, kept apart from testing. Recon records what a target exposes and how
@@ -699,13 +661,10 @@ h5i browser close
 chooses</em>; the engine picks only the bytes. <code>--out</code> names a file instead. Like
 every other verb that reads the page, it is refused while <code>login</code> is on: a
 password is pixels before it is anything else.</p>
-<h3 id="the-id-is-internal">The id is internal</h3>
+<h3 id="which-session-a-verb-acts-on">Which session a verb acts on</h3>
 <p>Every session has an opaque id (<code>br_7k2xqa</code>), and it is in the record, in
 <code>--json</code> and in the receipts, because a durable reference has to be something no
-rename can break. It is not what you type. A CLI that demands an opaque string
-on every verb is copying a remote-browser HTTP API, where the id exists because
-the client and the browser share nothing else. Here they share a filesystem.</p>
-<p>So a verb resolves its session in three steps, most explicit first:</p>
+rename can break. It is not what you type. So a verb resolves its session in three steps, most explicit first:</p>
 <ol>
 <li><code>--session &lt;name&gt;</code> (<code>-s</code>), a name someone chose, or an id pasted from
    <code>--json</code></li>
@@ -730,54 +689,40 @@ one. The flags that only make sense at creation (<code>--allow</code>, <code>--p
 rather than ignored when a session is reused: a session's policy is fixed when its engine starts, so
 accepting a grant and doing nothing with it would be a grant the caller believes
 it made.</p>
-<h3 id="what-is-true-by-default">What is true by default</h3>
-<p>Started with no flags, a session runs on this machine in your ordinary process
-space, like any other headless browser. There is no sandbox, and h5i does not
-claim one.</p>
-<p>What it does that another headless browser does not is record. The engine is the
-HTTP client, so every request is checked against the session's policy and
-written down <em>before</em> the bytes move, and the fetch is refused when the record
-cannot be written. A request that is not in <code>h5i browser requests</code> did not
-happen. That is a property of the engine, not of a container, so it holds
-whether or not there is a box.</p>
-<p>The honest name for that is auditability, and the CLI says so on every status
-line:</p>
+<h3 id="defaults">Defaults</h3>
+<p>With no flags a session runs on this machine in your ordinary process space,
+like any other headless browser. There is no sandbox and h5i does not claim one.</p>
+<p>What it adds is the record. The engine is the HTTP client, so every request is
+checked against the session's policy and written down <em>before</em> the bytes move,
+and the fetch is refused when the record cannot be written. A request that is
+not in <code>h5i browser requests</code> did not happen. That holds whether or not there is
+a box:</p>
 <pre><code>requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
 </code></pre>
 <h4 id="the-page-grants-itself">The page grants itself</h4>
-<p>A session reaches the URL it was opened on, and nothing else remote. Naming a
-URL and then naming its origin again is ceremony that teaches nothing, so <code>open</code>
-grants the page it was given exactly as <code>read</code> grants its targets. <code>--allow</code> is
-for the origins beyond it: an API the page calls, a CDN it pulls from. Loopback
-is reachable by default because it is the dev server, and <code>--no-loopback</code> takes
-that back.</p>
-<p>The grant is the page and not "and whatever this page pulls in". An off-origin
-subresource is still refused, and still says so in the request log, which is the
-part a wider default would have given away.</p>
-<h4 id="cross-site-credentials-and-the-one-flag-that-changes-them">Cross-site credentials, and the one flag that changes them</h4>
-<p>A page here may not send this session's credentials to another origin on a
-request whose answer nobody can read. In fetch terms that is <code>mode: "no-cors"</code>
-with <code>credentials: "include"</code>, and h5i refuses it: an opaque response cannot be
-checked, so nothing could ever show the server agreed.</p>
-<p>That is the right default for containing an agent and the wrong one for testing
-a target, because the shape being refused is the classic POST-based CSRF. With
-the refusal in force h5i cannot act as the <em>victim</em>, so a negative result means
-"h5i declined", not "the target is safe".</p>
-<p><code>--permissive-cors</code> makes one session behave like a browser here:</p>
+<p>A session reaches the URL it was opened on and nothing else remote. <code>--allow</code> is
+for origins beyond it: an API the page calls, a CDN it pulls from. Loopback is
+reachable by default because it is the dev server; <code>--no-loopback</code> takes that
+back.</p>
+<h4 id="cross-site-credentials">Cross-site credentials</h4>
+<p>By default a page here may not send this session's credentials to another origin
+on a request whose answer nobody can read: <code>mode: "no-cors"</code> with
+<code>credentials: "include"</code> is refused, because an opaque response cannot be
+checked.</p>
+<p>That is right for containing an agent and wrong for testing a target, since the
+refused shape is the classic POST-based CSRF. With it in force h5i cannot act as
+the <em>victim</em>, so a negative result means "h5i declined", not "the target is
+safe". <code>--permissive-cors</code> lifts it for one session:</p>
 <pre><code class="language-bash">h5i browser open https://attacker.example --script --permissive-cors
 </code></pre>
-<p>It is scoped to that session, part of its policy digest, and named on the <code>open</code>
-banner and in <code>h5i browser status</code>, so nobody is in it by accident and no
-finding gathered under it can be mistaken for one gathered without it. It widens
-exactly that: a cross-origin <code>cors</code> read still has to be permitted by the server,
-and <code>mode: "same-origin"</code> still refuses to cross.</p>
-<p>One thing it does not do is put a credential where there was not one. The cookie
-jar holds only what the page currently loaded could itself send: a <code>Domain=</code>
-cookie stays in scope across the domain tree the server scoped it to, and
-everything else is dropped on navigation, so a cross-host attack page has
-nothing of the target's to send.
-Two ports on one host are two origins and one jar, which is the shape a local
-CSRF lab has.</p>
+<p>It is in that session's policy digest and named on the <code>open</code> banner and in
+<code>h5i browser status</code>, so no finding gathered under it can be mistaken for one
+gathered without it. A cross-origin <code>cors</code> read still needs the server's
+permission, and <code>mode: "same-origin"</code> still refuses to cross.</p>
+<p>It puts no credential where there was not one. The jar holds only what the
+loaded page could itself send: a <code>Domain=</code> cookie keeps its scope, everything
+else is dropped on navigation, so a cross-host attack page has nothing of the
+target's to send. Two ports on one host are two origins and one jar.</p>
 <h3 id="read-one-page-no-session"><code>read</code>: one page, no session</h3>
 <pre><code class="language-bash">h5i browser read https://example.com
 h5i browser read url1 url2 url3 --json
@@ -785,28 +730,19 @@ h5i browser read url1 url2 url3 --json
 <pre><code>confined : process (files and environment; the origin allowlist is the engine's)
 </code></pre>
 <p>For the shape a crawl has: fetch, read, move on. No cookies carried between
-verbs, no <code>@ref</code> to click, nothing resident afterwards, and <code>h5i browser list</code>
-shows nothing when it is done.</p>
-<p>The targets grant themselves, and only themselves. The engine is fail-closed, so
-something has to name the origins, and a URL you typed is one you asked for:
-making you name it and then name its origin again is ceremony that teaches
-nothing. A page that pulls a script from a third-party CDN, or redirects to
-another host, is refused and says so in the log, which is the part a wider
-default would have given away.</p>
+verbs, no <code>@ref</code> to click, nothing resident afterwards. The targets grant
+themselves and only themselves, so a page pulling a script from a third-party
+CDN, or redirecting to another host, is refused and says so in the log.</p>
 <p><code>--allow ORIGIN</code>, repeatable, is for when that refusal is the problem rather
 than the point: a page written in a library served from a CDN, read without the
-grant, is the page the library never ran on. It is the same flag <code>open</code> takes
-and it grants the same thing, one named origin at a time. Inside a box it can
-only narrow: the box's own egress list is enforced at a boundary outside the
-engine, and a flag cannot widen it.</p>
-<p>Several targets share one browser (one connection pool, one cookie jar and one
-font set across the batch) and a page that fails does not stop the ones after
-it. <code>--json</code> returns the page, its request log, and what was holding the engine
-together, which is what a crawl wants and what no other headless browser can
-hand over completely.</p>
+grant, is the page the library never ran on. Inside a box it can only narrow,
+because the box's egress list is enforced outside the engine.</p>
+<p>Several targets share one browser, one connection pool, one cookie jar and one
+font set, and a page that fails does not stop the ones after it. <code>--json</code>
+returns the page, its request log, and what was holding the engine together.</p>
 <h4 id="--in-box-an-allowlist-a-tier-enforces"><code>--in &lt;box&gt;</code>: an allowlist a tier enforces</h4>
-<p>An allowlist that is not simply "what I asked for" belongs in a file, not in
-arguments. Write it in <code>.h5i/env.toml</code>:</p>
+<p>An allowlist that is not simply "what I asked for" belongs in a file. Write it
+in <code>.h5i/env.toml</code>:</p>
 <pre><code class="language-toml">[profile.docs]
 isolation = &quot;supervised&quot;
 
@@ -818,21 +754,17 @@ egress = [&quot;docs.rs&quot;, &quot;*.rust-lang.org&quot;]
 </code></pre>
 <pre><code>confined : box docs, policy 6bca3b30c268
 </code></pre>
-<p>The read runs inside that box, through the same <code>box run</code> you would type
-yourself: the tier resolves the pinned policy, enforces egress at a network
-namespace boundary outside the engine, and writes a receipt. The digest on the
-line is the policy that was actually enforced, which is the thing an allowlist
-assembled from command-line arguments could never hand back.</p>
-<p>A read can have this and a session cannot, and the reason is the difference
-between the two rather than a preference. A session is resident by design
-(<code>snapshot</code> then <code>click @e3</code> needs the page to still be there), and the
-supervised tier cannot hold a resident process yet: its seccomp-notify gate is
-served by a thread inside the <code>h5i</code> process that started the run, so when that
-command exits the gate has no server and every filtered syscall blocks. A read
-runs to completion inside that command, which is the shape that tier already
-has.</p>
+<p>The tier resolves the pinned policy, enforces egress at a network namespace
+boundary outside the engine, and writes a receipt. The digest on that line is
+the policy actually enforced, which an allowlist assembled from command-line
+arguments could never hand back.</p>
+<p>A read can have this and a session cannot. A session is resident by design, and
+the supervised tier cannot hold a resident process yet: its seccomp-notify gate
+is served by a thread inside the <code>h5i</code> process that started the run, so when
+that command exits every filtered syscall blocks. A read runs to completion
+inside that command.</p>
 <p>Aim a read at <code>localhost</code> and use no box: under a tier with its own network
-namespace the loopback is the sandbox's, not the one your dev server is on.</p>
+namespace the loopback is the sandbox's, not your dev server's.</p>
 <h3 id="reading-and-acting-beyond-snapshot-and-click">Reading and acting, beyond <code>snapshot</code> and <code>click</code></h3>
 <pre><code class="language-bash">h5i browser structured                          # what the page says about itself
 h5i browser transcript                          # what its media says, from `&lt;track&gt;`
@@ -936,9 +868,8 @@ different:</p>
   that drives the engine binary directly is not stopped by it.</li>
 </ul>
 <h3 id="sessions-end-and-endings-are-recorded">Sessions end, and endings are recorded</h3>
-<p>A session directory outlives the session. Closing one writes the ending into its
-record instead of deleting it, which is what makes "how did this end" answerable
-afterwards, and what makes an id impossible to reuse.</p>
+<p>Closing a session writes the ending into its record instead of deleting it, so
+"how did this end" stays answerable and the id can never be reused.</p>
 <table>
 <thead>
 <tr>
@@ -978,17 +909,13 @@ carry this one's storage forward with `h5i browser open &lt;url&gt; --restore br
 $ echo $?
 69
 </code></pre>
-<p>The distinct code is the point. An agent whose retry cannot tell "the session is
-gone" from "the click did not work" is an agent that silently starts a second
-browser and loses both the page it was reasoning about and the record of how it
-lost it.</p>
-<p><code>--restore</code> is an inheritance, not a resurrection: it produces a <em>new id</em>, and
-writes <code>restored_from</code> into the new record.</p>
-<p>What it carries is the <em>cookie jar</em>, and only that. A session mirrors its jar
-into its own directory while it runs: owner-only, written whenever the jar
-changes rather than at exit, because a session is stopped with a signal and a
-shutdown hook would never run. So a login a human performed once at the live
-view survives into the next session:</p>
+<p>The distinct code matters: an agent whose retry cannot tell "the session is
+gone" from "the click did not work" starts a second browser and loses both the
+page and the record of how it lost it.</p>
+<p><code>--restore</code> is an inheritance, not a resurrection. It produces a new id, writes
+<code>restored_from</code> into the new record, and carries the <em>cookie jar</em> and nothing
+else. The jar is mirrored into the session directory whenever it changes, so a
+login a human performed once at the live view survives:</p>
 <pre><code class="language-bash">h5i browser open https://example.com/login --session auth
 h5i browser login --session auth        # the human types the password
 h5i browser login --session auth --off
@@ -996,18 +923,15 @@ h5i browser close --session auth
 
 h5i browser open https://example.com/app --restore br_7k2xqa   # still signed in
 </code></pre>
-<p>No verb returns a cookie value, and this adds none: the file is handed to the
-next engine, never to a model. A session that left no jar (one that ran in a box
-whose <code>/tmp</code> this machine cannot read, or one from before this existed) is
-refused by name rather than silently seeding nothing.</p>
-<p><code>--cookie-jar &lt;path&gt;</code> seeds the same jar from a file instead of from a session,
-which is how a login this engine cannot perform itself gets in: a human signs in
-with their own browser and pastes the cookie into
-<code>{"version": 1, "cookies": [...]}</code>. Both flags write the jar before the engine
-starts, because it reads one early in startup. A row no server could have set,
-such as a <code>__Host-</code> name without the flags that name means, is refused on the
-way in and counted on stderr, so the <code>restored N cookie(s)</code> line is the check
-that the login carried.</p>
+<p>No verb returns a cookie value: the file is handed to the next engine, never to
+a model. A session that left no jar is refused by name rather than silently
+seeding nothing.</p>
+<p><code>--cookie-jar &lt;path&gt;</code> seeds the same jar from a file, which is how a login this
+engine cannot perform gets in: a human signs in with their own browser and
+pastes the cookie into <code>{"version": 1, "cookies": [...]}</code>. Both flags write
+before the engine starts. A row no server could have set, such as a <code>__Host-</code>
+name without the flags that name means, is refused and counted on stderr, so the
+<code>restored N cookie(s)</code> line is the check that the login carried.</p>
 <h3 id="everything-a-session-returns-is-untrusted">Everything a session returns is untrusted</h3>
 <p>The page composed the title, the link text, the error message and the URL; the
 engine only carried them. So every answer h5i relays is scrubbed before it
@@ -1116,22 +1040,20 @@ session ended, merged and ordered.</p>
 </code></pre>
 <p>Three things this does that neither log does alone:</p>
 <ul>
-<li>The two lanes stay apart. The action and request rows are the engine's own
-  account of itself; the handovers and the lifecycle are h5i's, written from
-  outside. Every row says which. Merging them into one confident-looking column
-  is the exact confusion the lane split exists to prevent.</li>
-<li>It orders across sources. "Was a human at the controls when that form was
-  submitted" is a question about two logs at once, and a current-holder field
-  cannot answer it. The engine stamps its own rows and h5i stamps its own; the
-  engine's clock is the engine's claim, and the output says so.</li>
-<li>It says what it could not read. <code>sources</code> reports each log as <code>read</code>, <code>empty</code>
-  or <em><code>unavailable</code></em>. An empty timeline over a log h5i cannot see looks exactly
-  like a session that did nothing, and those are different findings.</li>
+<li><strong>The two lanes stay apart.</strong> Action and request rows are the engine's account
+  of itself; handovers and lifecycle are h5i's, written from outside. Every row
+  says which.</li>
+<li><strong>It orders across sources.</strong> "Was a human at the controls when that form was
+  submitted" is a question about two logs at once. The engine stamps its own
+  rows, h5i stamps its own, and the output says the engine's clock is the
+  engine's claim.</li>
+<li><strong>It says what it could not read.</strong> <code>sources</code> reports each log as <code>read</code>,
+  <code>empty</code> or <em><code>unavailable</code></em>. An empty timeline over a log h5i cannot see looks
+  exactly like a session that did nothing, and those are different findings.</li>
 </ul>
-<p>Rows carry <code>caused_by</code> where the source recorded the link, so a fetch can be
-traced to the verb the page was under when it went out. Nothing here infers a
-link from timing: a request that merely happened near a verb is not a request
-that verb caused.</p>
+<p>Rows carry <code>caused_by</code> where the source recorded the link. Nothing infers a link
+from timing: a request that merely happened near a verb is not one that verb
+caused.</p>
 <p><code>--json</code> gives the whole thing, including the session record. It is the same
 structure <code>h5i box export</code> writes for each session placed in a box.</p>
 <h2 id="h5i-websec">h5i websec</h2>
@@ -1191,40 +1113,35 @@ beside the message store, owner-only, and are never in an export.</p>
 per line in, one per line out, ids matched. A loop that sends hundreds of
 requests pays process startup once instead of every time.</p>
 <hr />
-<h3 id="evidence-is-not-account">Evidence is not account</h3>
+<h3 id="what-is-safe-to-paste-and-what-is-not">What is safe to paste, and what is not</h3>
 <p>The capture store holds <code>Authorization</code> headers and session cookies in full. It
-is the one artifact h5i keeps that is <em>not</em> safe to paste, which is why it is
-owner-only, never in an export unless named, and never rendered by the console.
-The request log is the half you can paste. See <a href="#receipts">Receipts</a> for which
-lane observed what, and <a href="#a-browser-sessions-directory">Files</a> for what is on
-disk.</p>
+is the one artifact h5i keeps that is <em>not</em> safe to paste: owner-only, never in
+an export unless named, never rendered by the console. The request log is the
+part you can paste. See <a href="#receipts">Receipts</a> for which lane observed what, and
+<a href="#a-browser-sessions-directory">Files</a> for what is on disk.</p>
 <hr />
 <h2 id="h5i-test">h5i test</h2>
 <p>A finding that is fixed and never tested again comes back. <code>h5i test</code> replays a
-flow you wrote and asks <em>your</em> oracle whether the property still holds, so the
-bug becomes a test the repository owns.</p>
+flow you wrote and asks <em>your</em> oracle whether the property still holds.</p>
 <pre><code class="language-bash">h5i plugin install test
 h5i test --target https://staging.example --openapi openapi.json
 </code></pre>
-<p>It does not decide what a secure response means. h5i deliberately has no
-assertion language: <code>jq</code>, <code>grep</code>, <code>diff</code>, your application's own test client, or
-any other program may be the oracle. Exit 0 means the property held, 1 means it
-did not, and anything else means the test could not decide, which is a third
-answer and never silently a pass.</p>
-<h3 id="the-files-are-the-repositorys">The files are the repository's</h3>
+<p>It does not decide what a secure response means. There is no assertion
+language: <code>jq</code>, <code>grep</code>, <code>diff</code> or your application's own test client may be the
+oracle. Exit 0 means the property held, 1 means it did not, and anything else
+means the test could not decide. That third answer is never silently a pass.</p>
+<h3 id="where-tests-live">Where tests live</h3>
 <p>Tests are strict YAML or JSON with <code>version: h5i.test/v1</code>, under
-<code>.h5i-tests/tests</code>, and they are meant to be committed together with
-<code>.h5i-tests/oracles</code>. That directory is deliberately outside <code>.h5i/</code>, which is
-local state and gitignored.</p>
+<code>.h5i-tests/tests</code>, committed with <code>.h5i-tests/oracles</code>. That directory sits
+outside <code>.h5i/</code>, which is local state and gitignored.</p>
 <p>A request template carries a method, a target-relative path, headers and a body.
-<code>${name}</code> uses a value an earlier step extracted and <code>${env.NAME}</code> reads a CI
-variable. Unknown and missing fields are errors rather than ignored
-configuration.</p>
+<code>${name}</code> uses a value an earlier step extracted; <code>${env.NAME}</code> reads a CI
+variable. Unknown and missing fields are errors, not ignored configuration.</p>
 <p>Actors name isolated sessions and cookie jars, which is what makes a
 two-identity authorisation test portable. A step sends a template as an actor,
 may apply the websec edit language, saves its response under a stable name, and
-may extract a regex, JSON field, header or status for later steps. Cleanup steps
-run after the oracle even when it fails.</p>
+may extract a regex, JSON field, header or status for later steps. Cleanup runs
+after the oracle even when it fails.</p>
 <h3 id="what-the-oracle-is-given">What the oracle is given</h3>
 <p>The oracle runs with its working directory set to the test file's directory:</p>
 <table>
@@ -1251,34 +1168,31 @@ run after the oracle even when it fails.</p>
 </table>
 <h3 id="coverage-and-what-it-counts">Coverage, and what it counts</h3>
 <p>A send may declare the OpenAPI operation and mutation class it exercises. It
-counts only when the flow completed <em>and</em> the oracle returned a conclusive 0 or
-1; setup and cleanup sends without <code>covers</code> never count.</p>
-<p>With <code>--openapi</code>, h5i reports oracle-checked operation coverage. It is
-report-only unless <code>--min-coverage</code> is given, and without an OpenAPI denominator
-h5i reports no percentage and refuses a minimum rather than inventing one.</p>
-<p>Every run writes <code>result.json</code>, <code>junit.xml</code> and per-response artifacts. The
-directory is owner-only because response bodies are evidence. Credential request
+counts only when the flow completed <em>and</em> the oracle returned 0 or 1; setup and
+cleanup sends without <code>covers</code> never count.</p>
+<p>With <code>--openapi</code>, h5i reports oracle-checked operation coverage, report-only
+unless <code>--min-coverage</code> is given. Without an OpenAPI denominator it reports no
+percentage and refuses a minimum rather than inventing one.</p>
+<p>Every run writes <code>result.json</code>, <code>junit.xml</code> and per-response artifacts, into an
+owner-only directory because response bodies are evidence. Credential request
 headers are redacted from exported request JSON; response bodies stay exact for
-the oracle and are never uploaded automatically.</p>
+the oracle and are never uploaded.</p>
 <hr />
 <h2 id="containment-optional">Containment (optional)</h2>
-<p>Nothing above this line needs a box. A session runs on your machine like any
-other headless browser, and that is the ordinary case: requiring containment up
-front would fail hello-world on CI, under AppArmor, on macOS and in a container,
-for nothing the record does not already give.</p>
-<p>A box is what you reach for when the work is not ordinary:</p>
+<p>Nothing above this line needs a box. Requiring one up front would fail
+hello-world on CI, under AppArmor, on macOS and in a container, for nothing the
+record does not already give.</p>
+<p>Reach for a box when:</p>
 <ul>
 <li>The code under test is untrusted, or an agent wrote it.</li>
-<li>A target's response might be, and you want a parser bug to land somewhere
+<li>A target's response might be, and a parser bug should land somewhere
   disposable.</li>
-<li>You want the network decision made by something <em>outside</em> the engine. This is
-  the one that changes what the record is worth: a boxed session can earn the
-  <code>host-observed</code> lane, and a host session cannot, because the lane is about who
-  else saw the traffic.</li>
+<li>You want the network decision made <em>outside</em> the engine. Only this one changes
+  what the record is worth: a boxed session can earn the <code>host-observed</code> lane.</li>
 </ul>
-<p><code>h5i box run -- h5i browser open</code> is ordinary composition, and <code>--in</code> is sugar
-over the same placement. The box stays a separate, orthogonal surface rather
-than the browser's implementation detail.</p>
+<p><code>h5i box run -- h5i browser open</code> is ordinary composition and <code>--in</code> is sugar
+over the same placement. The box is a separate surface, not the browser's
+implementation detail.</p>
 <h3 id="the-default-sandbox">The default sandbox</h3>
 <p>A local session runs in a process-tier sandbox that confines files, environment,
 syscalls, and resources. It does not enforce the browser origin allowlist at the
@@ -1301,26 +1215,20 @@ network boundary.</p>
 engine binary is installed inside the box or configure
 <code>H5I_BROWSER_ENGINE_IN_BOX</code>.</p>
 <h3 id="opening-a-session-from-inside-a-box">Opening a session from inside a box</h3>
-<p>An agent already in a box does not need <code>--in</code>, and cannot use it: <code>--in</code> means
-"put this session in a box I am outside of", which is what lets it promise an
-enforced takeover and a lane the engine did not claim for itself. From inside,
-neither is true, so it is refused with the reason rather than silently doing
-something weaker.</p>
-<p>Open it without the flag. It runs beside the agent, in the same box, and the
-record says exactly that:</p>
+<p>An agent already in a box cannot use <code>--in</code>: it means "put this session in a box
+I am outside of", which is what lets it promise an enforced takeover and a lane
+the engine did not claim for itself. From inside neither is true, so it is
+refused rather than quietly doing something weaker.</p>
+<p>Open it without the flag. It runs beside the agent, in the same box:</p>
 <pre><code>placed   : this machine, which is box env/human/web (its policy is not readable from in here)
 requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
 </code></pre>
-<p>Two things are deliberate in those lines. The box is <em>named</em>, because a session
-there is not uncontained and saying "no containment beyond the engine" would
-understate what is true: the same class of error as overstating it, in the
-direction that happens to be safe. And nothing is claimed about what the box
-enforces, because the policy is host-side and sealed: from in there, h5i cannot
-read its own boundary.</p>
-<p>The control channel inside a box is a Unix socket rather than a loopback port.
-Not a preference either: a box's netns may have no usable loopback at all
-(<code>net.mode = deny</code> leaves nothing to dial), and every <code>h5i box run</code> gets a fresh
-one, so a port bound in one is unreachable from the next.</p>
+<p>The box is <em>named</em>, because a session there is not uncontained. Nothing is
+claimed about what the box enforces, because the policy is host-side and sealed:
+from in there h5i cannot read its own boundary.</p>
+<p>The control channel inside a box is a Unix socket, not a loopback port: a box's
+netns may have no usable loopback at all, and every <code>h5i box run</code> gets a fresh
+one.</p>
 <h3 id="boxes">Boxes</h3>
 <p>A box is a disposable environment holding a checkout, a toolchain, a dev server
 and, on request, the browser session itself. Nothing of your machine is inside
@@ -1446,11 +1354,11 @@ port = 3000
 <code>container</code> the network namespace belongs to a single session, so run the dev
 server inside the same <code>h5i box shell</code> as everything else.</p>
 <h3 id="h5i-box-export">h5i box export</h3>
-<p>The output gate. A box has no write access to anything outside itself; this is
-the only way out, and it is deliberately a human step.</p>
+<p>The output gate. A box has no write access outside itself; this is the only way
+out, and it is deliberately a human step.</p>
 <pre><code class="language-bash">h5i box export &lt;name&gt; --out ./review
+git apply --3way ./review/patch.diff
 </code></pre>
-<p>Produces:</p>
 <table>
 <thead>
 <tr>
@@ -1473,50 +1381,38 @@ the only way out, and it is deliberately a human step.</p>
 </tr>
 <tr>
 <td><code>receipts/&lt;id&gt;.raw</code></td>
-<td>The full account of each ingress session: who connected, over what path, for how long, how much moved, what was refused. Present when the box was shared.</td>
+<td>Each ingress session: who connected, over what path, for how long, how much moved, what was refused. Present when the box was shared.</td>
 </tr>
 </tbody>
 </table>
-<p>It refuses rather than overwrites an existing non-empty directory (<code>--force</code> to
-replace). Secret redaction and size caps apply to all of it.</p>
-<p>Read <code>report.md</code> before applying. It surfaces, in this order:</p>
-<ul>
-<li>denied egress attempts: the box tried to reach hosts the policy refused</li>
-<li><em>what ran</em>: every command, its lane, its exit code</li>
-<li>what the browser saw: console errors, uncaught exceptions and failed requests,
-  observed by h5i rather than reported by the agent</li>
-<li>what the kernel saw: signatures that fired against the syscalls a box actually
-  made, when runtime detection was on for the run</li>
-<li>viewer sessions: including whether a human took the controls</li>
-<li>the agent's proposal</li>
-</ul>
-<p>Then apply it where you want:</p>
-<pre><code class="language-bash">git apply --3way ./review/patch.diff
-</code></pre>
-<p><code>h5i box apply &lt;name&gt;</code> still lands a proposed box onto its parent branch in this
-repository, for the local case where that is what you want. It refuses for a
-detached box.</p>
+<p>It refuses rather than overwrites a non-empty directory (<code>--force</code> to replace).
+Secret redaction and size caps apply throughout.</p>
+<p>Read <code>report.md</code> before applying. In order: denied egress attempts, every
+command with its lane and exit code, what the browser saw (console errors,
+uncaught exceptions, failed requests, observed by h5i rather than reported by
+the agent), what the kernel saw when runtime detection was on, viewer sessions
+including whether a human took the controls, and the agent's proposal.</p>
+<p><code>h5i box apply &lt;name&gt;</code> lands a proposed box onto its parent branch in this
+repository instead. It refuses for a detached box.</p>
 <h3 id="h5i-box-cache">h5i box cache</h3>
 <p>Cold dependency install is the difference between a 20-second box and a
-four-minute one, so warm caches are in scope.</p>
+four-minute one.</p>
 <pre><code class="language-bash">h5i box cache ls              # caches for this project, and whether they are stale
 h5i box cache mounts          # exactly what a box would get
 h5i box cache refresh &lt;eco&gt;   # populate one, in a dedicated box with no agent in it
 h5i box cache rm &lt;eco&gt;
 </code></pre>
-<p>Rules that make this safe rather than merely fast:</p>
+<p>What makes it safe rather than merely fast:</p>
 <ul>
 <li>One cache per project and ecosystem, keyed by a digest of that ecosystem's
-  lockfiles. A cache whose key no longer matches is listed as stale and never
-  handed to a box: packages resolved for a different dependency set are a
-  silent, hard-to-explain wrong answer.</li>
-<li>Mounted <em>read-only</em> into an agent box. That costs nothing in correctness:
-  every package manager falls back to fetching what it cannot find.</li>
-<li>Written <em>only</em> by <code>h5i box cache refresh</code>, which runs the install step alone,
-  with egress narrowed to the registry hosts and no agent inside. <code>refresh</code>
-  needs a project-declared profile whose egress is the registry hosts and
-  nothing else, and it refuses with that profile written out ready to paste
-  rather than creating a box whose fetch could not have worked.</li>
+  lockfiles. A cache whose key no longer matches is listed stale and never
+  handed to a box.</li>
+<li>Mounted <em>read-only</em> into an agent box. Every package manager falls back to
+  fetching what it cannot find, so this costs no correctness.</li>
+<li>Written only by <code>h5i box cache refresh</code>, which runs the install alone with
+  egress narrowed to the registry hosts and no agent inside. It needs a
+  project-declared profile for that, and refuses with the profile written out
+  ready to paste rather than creating a box whose fetch could not work.</li>
 </ul>
 <p>No mutable surface is ever shared between an agent box and anything else.</p>
 <h3 id="h5i-box-view">h5i box view</h3>
@@ -1602,29 +1498,13 @@ does not infer causal links that are absent from the event stream.</p>
 </table>
 <p>A viewer attaches read-only. It does not weaken the box policy, publish the
 browser port, or become part of the agent's session.</p>
-<h3 id="the-engine-underneath">The engine, underneath</h3>
-<p>The engine is part of the <code>h5i</code> binary. <code>h5i browser</code> runs it as a separate
-process and speaks a protocol to it, the way it always has; what changed is that
-it execs itself to get there instead of a second file.</p>
-<p>It used to ship as <code>h5i-browser-light</code> beside <code>h5i</code>, and two files bought three
-problems. The default install left <code>h5i browser open</code> with nothing to render a
-page. Two halves of one protocol could drift apart with no handshake between
-them. And a box could <em>read</em> the engine without being allowed to <code>exec</code> it,
-because Landlock makes <code>~/.cargo/bin</code> readable and not executable, so <code>command
--v</code> found it and <code>exec</code> refused it.</p>
-<p>The engine's own CLI is still reachable, hidden, for the cases that want it
-directly:</p>
-<pre><code class="language-bash">h5i __engine --help
-h5i __engine open https://docs.rs/ --allow docs.rs   # one-shot render, then exit
+<h3 id="where-the-engine-lives">Where the engine lives</h3>
+<p>The engine is part of the <code>h5i</code> binary, run as a separate process by execing
+itself. Its own CLI is reachable but hidden, and bypasses session names,
+placement, the control lock and the audit:</p>
+<pre><code class="language-bash">h5i __engine open https://docs.rs/ --allow docs.rs   # one-shot render, then exit
 h5i __engine doctor                                  # what fonts it found
-h5i __engine skill install                           # the engine's own skill
 </code></pre>
-<p>Take it deliberately. <code>h5i browser</code> is the surface that knows about session
-names, placement, the control lock and the audit; <code>__engine</code> is what sits under
-it, and reaching past the front door means giving all of that up. It is hidden
-from <code>--help</code> for that reason and documented here for the same one.</p>
-<p>What the engine gives you with no box is a browser whose whole network activity
-is in a log you can read. What a box adds is that the agent cannot go around it.</p>
 <h3 id="inspecting-what-happened">Inspecting what happened</h3>
 <pre><code class="language-bash">h5i box probe                       # what this host can enforce at all
 h5i box capabilities &lt;name&gt; --json  # what this box actually got
@@ -1635,26 +1515,21 @@ h5i box compare &lt;a&gt; &lt;b&gt;             # boxes side by side
 h5i box watch &lt;name&gt;                # policy decisions, one line each, as they happen
 h5i box watch &lt;name&gt; --deny-only    # only what was refused
 </code></pre>
-<p><code>h5i box watch</code> is the tail of the receipt rather than a viewer: no viewport, no
-panes, no control lock, and nothing it prints can take the controls. It is meant
-to be piped, grepped, and left running in a second pane while an agent works.</p>
-<p>Every row names the lane that observed it and the grade of that evidence, as
-words:</p>
+<p><code>h5i box watch</code> is the tail of the receipt, not a viewer: no viewport, no panes,
+no control lock. Pipe it, grep it, leave it in a second pane. Every row names
+the lane that observed it and the grade of that evidence, in words, never by
+colour alone:</p>
 <pre><code>09:14:02  box  fail-closed  request   allow  GET https://docs.rs/blitz/  #41 subresource
 09:14:02  box  fail-closed  response  200    #41 12.0 KB, 84ms
 09:14:03  box  fail-closed  request   DENY   GET https://telemetry.example.com/collect  #43
 09:14:03  box  fail-closed  policy           telemetry.example.com: not in net.egress   (&lt;- #43)
 </code></pre>
-<p>Terse is not licence to drop the qualifier. A row that did not say whether the
-box or the host observed it would assert more than h5i knows, so the lane and
-the grade are on every line and colour never carries them alone.</p>
 <p><code>--deny-only</code> keeps a refusal's <em>pair</em>: the request row carries the method and
-the URL, the verdict row carries the reason, and dropping either leaves half an
-answer. <code>--json</code> emits the same event envelope the console reads, one object per
-line, so the three readers of that stream agree on the wire shape.</p>
-<p>Only h5i's own browser engine writes a live request log, and an image-backed
-tier keeps it out of the host's reach. <code>watch</code> says so in its header rather than
-leaving an empty screen to be interpreted.</p>
+URL, the verdict row the reason. <code>--json</code> emits the same event envelope the
+console reads, one object per line.</p>
+<p>Only h5i's own engine writes a live request log, and an image-backed tier keeps
+it out of the host's reach. <code>watch</code> says so in its header rather than leaving an
+empty screen.</p>
 <h3 id="lifecycle">Lifecycle</h3>
 <pre><code class="language-bash">h5i box rebase &lt;name&gt;       # re-pin onto the parent branch's current tip
 h5i box abort &lt;name&gt;        # stop; manifest and workspace preserved for forensics
@@ -1735,36 +1610,29 @@ h5i runner unpair pi5                 # forget it here
 </code></pre>
 <h3 id="what-pairing-does">What pairing does</h3>
 <ol>
-<li>Reads the machine's SSH <em>host key</em> and pins it. That key is the runner's
+<li>Reads and pins the machine's SSH <em>host key</em>. That key is the runner's
    identity: <code>runner_id</code> is its SHA-256, and a box records the id, never the
-   name. Renaming a runner, or pointing the name at other hardware, therefore
-   cannot move a box onto a machine it was not built for.</li>
-<li>Generates a keypair used for this runner and nothing else, owner-only, under
+   name, so renaming a runner cannot move a box onto other hardware.</li>
+<li>Generates a keypair for this runner alone, owner-only, under
    <code>~/.config/h5i/runners/&lt;name&gt;/</code>.</li>
 <li>Installs one line in the runner's <code>authorized_keys</code>:</li>
 </ol>
 <p><code>restrict,command="/usr/local/bin/h5i runner serve-stdio" ssh-ed25519 AAAA…</code></p>
-<p><code>restrict</code> is the whole security argument in one word: with it that key
-   cannot open a shell, forward a port, forward your agent, or allocate a
-   terminal. It can run that one command and nothing else.
-4. Connects over the new key and probes, so that pairing either works end to end
-   or leaves nothing behind.</p>
-<p>Nothing listens on the runner. There is no daemon, no port, no token and no TLS:
-the worker is a process per request, started by sshd and gone when the request
-ends.</p>
-<p>Pairing trusts the host key it sees the first time, exactly like your first
-<code>ssh</code> to a new host. To close that window, read the real fingerprint on the
-machine itself and pass it:</p>
-<pre><code class="language-bash"># on the runner
-ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
-# here
+<p><code>restrict</code> is the security argument in one word: that key cannot open a
+   shell, forward a port, forward your agent, or allocate a terminal.
+4. Connects over the new key and probes, so pairing either works end to end or
+   leaves nothing behind.</p>
+<p>Nothing listens on the runner: no daemon, no port, no token, no TLS. The worker
+is a process per request, started by sshd and gone when the request ends.</p>
+<p>Pairing trusts the host key it sees first, like your first <code>ssh</code> to a new host.
+To close that window, read the real fingerprint on the machine and pass it:</p>
+<pre><code class="language-bash">ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub   # on the runner
 h5i runner pair pi5 h5i@pi.local --fingerprint SHA256:…
 </code></pre>
-<p><code>--print-only</code> prints the <code>authorized_keys</code> line instead of installing it, for a
-machine where keys are added another way.</p>
-<h3 id="capabilities-are-advertised-never-assumed">Capabilities are advertised, never assumed</h3>
-<p>A runner needs Linux, sshd and <code>h5i</code>. It does not need a container runtime.
-Everything past those three is <em>advertised</em> by <code>h5i runner probe</code>:</p>
+<p><code>--print-only</code> prints the <code>authorized_keys</code> line instead of installing it.</p>
+<h3 id="what-a-runner-advertises">What a runner advertises</h3>
+<p>A runner needs Linux, sshd and <code>h5i</code>, not a container runtime. Everything past
+those three is <em>advertised</em> by <code>h5i runner probe</code>:</p>
 <pre><code>$ h5i runner probe pi5
 ✔ `pi5` — h5i 0.3.4 on linux aarch64, protocol 1
 
@@ -1777,39 +1645,30 @@ Everything past those three is <em>advertised</em> by <code>h5i runner probe</co
   kvm           no
   runner id     3f9a1c04b7e2
 </code></pre>
-<p>A box asking for something a runner does not advertise is refused, with the
-missing capability named. It is never quietly given something weaker: the same
-rule <code>--isolation</code> already follows here.</p>
-<p>The isolation list is what the runner's kernel demonstrably ran a moment ago,
-not which kernel features are present. The two are not the same thing, and only
-the first is worth advertising.</p>
-<p>Two entries change what you can do next, so they are called out rather than left
-as a <code>no</code> in a table:</p>
+<p>A box asking for something a runner does not advertise is refused with the
+missing capability named, never quietly given something weaker. The isolation
+list is what that kernel demonstrably ran a moment ago, not which features are
+present.</p>
+<p>Two entries change what you can do next:</p>
 <ul>
-<li>boxes persist: no. Box state does not survive a reboot (a read-only OS, a
-  tmpfs workspace). A reboot is an expired lease: anything not exported is gone.</li>
+<li>boxes persist: no. Box state does not survive a reboot (read-only OS, tmpfs
+  workspace). Anything not exported is gone.</li>
 <li>own egress: no. The runner has no default route, so a box on it cannot pull
-  images or install packages. Egress brokered through this machine is a later
-  milestone.</li>
+  images or install packages.</li>
 </ul>
 <h3 id="putting-a-box-on-one">Putting a box on one</h3>
 <pre><code class="language-bash">h5i box create fix-auth --runner pi5
 </code></pre>
-<p>The base commit is pinned here, the branch is created here, and the policy is
-resolved and digested here. What crosses is the source, as a git bundle, and
-what comes back is the digest of the policy the runner actually enforced. The
-box is refused if that does not match what was sent.</p>
+<p>The base commit, the branch and the resolved policy digest are all made here.
+What crosses is the source as a git bundle; what comes back is the digest the
+runner actually enforced, and the box is refused if the two differ.</p>
 <pre><code>$ h5i box ls
 env/human/fix-auth   created   isolation=container  base=fa31b1f97547 captures=0 on=pi5
 </code></pre>
-<p>The manifest records the runner's <em>host-key hash</em>, not its name. Renaming a
-runner, or pointing a name at different hardware, therefore cannot move a box
-onto a machine it was not built for: <code>h5i box rm</code> checks the identity before it
-removes anything there.</p>
-<p><code>h5i box rm</code> clears both sides. It removes this side first: <code>rm</code> refuses a box
-that is still live, and clearing the runner before that check would destroy the
-box there while telling you the removal had failed. If the runner is unreachable
-when its turn comes, the box is left there and its lease reaps it.</p>
+<p>The manifest records the runner's host-key hash, not its name, so renaming a
+runner cannot move a box onto other hardware. <code>h5i box rm</code> checks that identity
+before removing anything there, and clears this side first: an unreachable
+runner leaves the box for its lease to reap.</p>
 <h3 id="working-in-one">Working in one</h3>
 <pre><code class="language-bash">h5i box run fix-auth -- cargo test      # runs on the runner
 h5i box propose fix-auth                # bring the work home
@@ -1817,44 +1676,28 @@ h5i box diff fix-auth                   # review it here
 h5i box apply fix-auth                  # land it
 h5i box export fix-auth                 # or take the patch and receipts
 </code></pre>
-<p><code>box run</code> executes on the runner under the policy pinned at create, and the
-receipt comes home with the exit code, the timings and the runner's own egress
-summary. It is filed under a lane of its own, <em><code>runner-observed</code></em>: h5i saw it
-from outside the box, so the box could not have forged it, but <em>this</em> machine
-did not watch it either. It is not counted as host-observed and not counted as
-box-claimed, because it is neither.</p>
-<p><code>box propose</code> is where the work returns, and it is the careful part. The runner
-commits what the box has and sends a bundle of just the new work. That bundle is
-unpacked into a throwaway repository with its own object database (not a branch,
-not a ref namespace, a separate repository) and inspected there: size and count
-ceilings, path traversal, nested git repositories, submodule pointers the base
-did not have. Only a tree that passes crosses into your repository, and h5i
-writes the commit itself. The runner's history and authorship never enter your
-history at all.</p>
+<p><code>box run</code> executes under the policy pinned at create, and the receipt comes home
+with the exit code, timings and the runner's egress summary. Its lane is
+<em><code>runner-observed</code></em>: h5i saw it from outside the box, so the box could not have
+forged it, but this machine did not watch it either. It counts as neither
+host-observed nor box-claimed.</p>
+<p><code>box propose</code> is the careful part. The runner commits what the box has and sends
+a bundle of only the new work. h5i unpacks it into a throwaway repository with
+its own object database and inspects it there: size and count ceilings, path
+traversal, nested git repositories, submodule pointers the base did not have.
+Only a passing tree crosses into your repository, and h5i writes the commit
+itself, so the runner's history and authorship never enter yours.</p>
 <p>If something is refused, nothing lands:</p>
 <pre><code>$ h5i box propose fix-auth
 Error: mediated commit refused (fail-closed) — 1 path violation(s):
   - a submodule pointer the base did not have, at vendor/thing
 </code></pre>
-<p>After a successful propose, <code>diff</code>, <code>apply</code> and <code>export</code> behave exactly as they
-do for a local box. There is nothing special about applying work that came from
-a runner, which is the point.</p>
-<h3 id="what-is-not-built-yet">What is not built yet</h3>
-<ul>
-<li><code>box shell</code> on a runner. Interactive means a pty, which means bidirectional
-  streaming and resize; that is the next piece of work.</li>
-<li>Streaming output. <code>box run</code> returns everything when the command finishes, so a
-  long build is silent until it ends. The exit code, timings and evidence are
-  all correct; you just do not see the log as it happens.</li>
-<li>Agents on a runner. An agent profile needs model credentials, and h5i will not
-  send those to another machine. A credential channel that keeps them here is a
-  later milestone, and until then a runner box runs builds, tests and commands
-  rather than Claude or Codex.</li>
-<li><code>clone:</code> and <code>--new</code> sources. Those build their repository inside the box;
-  sending one across belongs with a later milestone.</li>
-</ul>
-<p>The design, including what is deliberately deferred and why, is
-<code>docs/design/design-runner.md</code> sections R1 to R13.</p>
+<p>After a successful propose, <code>diff</code>, <code>apply</code> and <code>export</code> behave exactly as for a
+local box.</p>
+<h3 id="not-on-a-runner-yet">Not on a runner yet</h3>
+<p><code>box shell</code> (needs a pty), streamed output (<code>box run</code> returns when the command
+finishes), agents (h5i will not send model credentials to another machine), and
+<code>clone:</code> / <code>--new</code> sources. See <code>docs/design/design-runner.md</code> R1 to R13.</p>
 <h3 id="unpairing">Unpairing</h3>
 <p><code>h5i runner unpair &lt;name&gt;</code> removes the record, the key and the pin from this
 machine. It does not touch the runner: the <code>authorized_keys</code> line stays until
@@ -2038,18 +1881,15 @@ and <em>digested</em>. Every receipt records the digest that was actually in for
 <p>Runtime scoping is not cosmetic: a Claude box must not get Codex's credentials
 or egress to OpenAI, because a prompt-injected agent could otherwise read the
 <em>other</em> runtime's token and use it against an allowlisted host.</p>
-<p>A note on the one grant nobody would think to write. The built-in read set
-carries the handful of paths <code>/etc/resolv.conf</code> is a symlink <em>to</em>
+<p>The built-in read set carries the paths <code>/etc/resolv.conf</code> is a symlink <em>to</em>
 (<code>/mnt/wsl/resolv.conf</code> on WSL, the systemd-resolved and resolvconf locations
-under <code>/run</code>), one file each. <code>/etc</code> alone is not enough, because Landlock
-follows the link to a path the box was never granted, and what that costs does
-not look like a denied file: <code>getaddrinfo</code> answers "Temporary failure in name
-resolution" and a <code>net.mode = "host"</code> box reads as a machine with no network.
-The entries are the same on every host whether the files exist or not, because a
-grant resolved from the local <code>/etc</code> would give one profile a different policy
-digest on every machine. A custom profile that sets <code>fs.read</code> replaces that
-list, so a box of your own with <code>mode = "host"</code> needs the line for your host,
-which <code>readlink -f /etc/resolv.conf</code> names.</p>
+under <code>/run</code>). <code>/etc</code> alone is not enough: Landlock follows the link to a path
+the box was never granted, and the failure does not look like a denied file.
+<code>getaddrinfo</code> answers "Temporary failure in name resolution" and a
+<code>net.mode = "host"</code> box reads as a machine with no network. The entries are the
+same on every host whether the files exist or not, so one profile does not get a
+different digest per machine. A custom profile that sets <code>fs.read</code> replaces that
+list, so add the line <code>readlink -f /etc/resolv.conf</code> names on your host.</p>
 <p>Custom profiles live in <code>.h5i/env.toml</code>:</p>
 <pre><code class="language-toml">[profile.review]
 isolation = &quot;supervised&quot;
@@ -2190,12 +2030,11 @@ a box that will fail confusingly later.</p>
 <ul>
 <li><code>source = "command:…"</code> runs host-side code outside the sandbox, as you. It
   needs the profile's <code>allow_command_extractors = true</code> <em>and</em>
-  <code>H5I_ALLOW_COMMAND_EXTRACTORS=1</code> in your own environment. The profile flag is
-  what pins the decision in the policy digest; it cannot also be the authority
-  for it, because whoever wrote the repository wrote it.</li>
+  <code>H5I_ALLOW_COMMAND_EXTRACTORS=1</code> in your environment. The profile flag pins
+  the decision in the digest; it cannot also be the authority for it.</li>
 <li><code>source = "file:…"</code> is a host-side read handed to the box, so it may not point
-  inside the profile's <code>fs.deny</code> list. A policy that says <code>~/.ssh</code> is out of the
-  box's reach cannot read <code>~/.ssh/id_ed25519</code> on its behalf.</li>
+  inside the profile's <code>fs.deny</code>. A policy that puts <code>~/.ssh</code> out of the box's
+  reach cannot read <code>~/.ssh/id_ed25519</code> on its behalf.</li>
 </ul>
 <p>An <code>[[auth]]</code> grant is the one place h5i attaches a credential you hold to a
 request it originates. The destination must be a bare hostname, and every run
@@ -2204,41 +2043,31 @@ prints which variable is being attached and where it goes.</p>
 once and never expires it.</p>
 <h3 id="scope-the-engagement-kind">Scope: the engagement kind</h3>
 <p>A profile says what this machine will permit. A <strong>scope</strong> says what the target's
-owner authorised. They are different documents with different authors, so they
-are enforced together and digested apart.</p>
-<p>A scope is one TOML file per project, at
-<code>~/.config/h5i/projects/&lt;name&gt;.toml</code>:</p>
+owner authorised. Enforced together, digested apart.</p>
+<p>One TOML file per project, at <code>~/.config/h5i/projects/&lt;name&gt;.toml</code>:</p>
 <pre><code class="language-toml">allow      = [&quot;*.acme.com&quot;, &quot;api-staging.acme.io&quot;]
 deny       = [&quot;blog.acme.com&quot;]
 deny_paths = [&quot;/admin/*&quot;, &quot;/account/*/delete&quot;]
 </code></pre>
-<p><code>h5i browser open --project acme</code> resolves it. <code>allow</code> joins the origin grant,
-because naming a project is the same act as typing <code>--allow</code>. <code>deny</code> and
-<code>deny_paths</code> are the narrowing half: they are checked before the wire, ahead of
-the loopback exemption and the instrument mode both, and nothing can grant past
-them. An unknown key is an error rather than ignored configuration.</p>
+<p><code>h5i browser open --project acme</code> resolves it. <code>allow</code> joins the origin grant.
+<code>deny</code> and <code>deny_paths</code> are checked before the wire, ahead of the loopback
+exemption and the instrument mode, and nothing can grant past them. An unknown
+key is an error, not ignored configuration.</p>
 <pre><code>$ h5i browser navigate https://blog.acme.com/ --session acme1
 Error: denied by policy: `blog.acme.com` is refused by the deny rule
-`blog.acme.com`. Deny wins over every grant, so this is a carve-out and not a
-missing allowlist entry.
+`blog.acme.com`.
 </code></pre>
-<p>The refusal is a row in <code>requests.jsonl</code> with <code>allowed: false</code> and no bytes
-between it and its response record, like every other refusal. A <code>jq</code> pass over
-the log afterwards could have told you a request was out of scope; by then it
-had been sent.</p>
-<p>Three things follow from where the file lives:</p>
-<ul>
-<li><strong>The box cannot reach it.</strong> <code>~/.config/h5i</code> is in every profile's <code>fs.deny</code>,
-  so an agent cannot widen the scope that confines it.</li>
-<li><strong>The engine never reads it.</strong> The host resolves the file and passes the rules
-  as arguments, which is also the only arrangement that works for a session
-  placed inside a box.</li>
-<li><strong>It works outside a repository.</strong> An engagement is not a checkout.</li>
-</ul>
-<p>The scope's digest goes on the session record as <code>scope_digest</code>, beside
-<code>policy_digest</code>. Both are on the record because they answer different
-questions: one digest moving tells a reviewer which of the two moved. A project
-with no scope file is allowed, and <code>--project</code> is then only a label.</p>
+<p>That is an <code>allowed: false</code> row in <code>requests.jsonl</code> with no bytes behind it. A
+<code>jq</code> pass over the log afterwards could also tell you a request was out of
+scope, but by then it had been sent.</p>
+<p>Where the file lives matters three ways. <code>~/.config/h5i</code> is in every profile's
+<code>fs.deny</code>, so a box cannot widen the scope confining it. The engine never reads
+it: the host resolves it and passes the rules as arguments, which is the only
+arrangement that works for a boxed session. And it works outside a repository,
+because an engagement is not a checkout.</p>
+<p>The digest goes on the session record as <code>scope_digest</code>, beside <code>policy_digest</code>.
+One of them moving tells a reviewer which document changed. A project with no
+scope file is allowed; <code>--project</code> is then only a label.</p>
 <hr />
 <h2 id="receipts">Receipts</h2>
 <p>One append-only JSONL log per box, plus the raw payload of each record. A record
