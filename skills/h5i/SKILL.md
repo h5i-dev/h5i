@@ -12,8 +12,8 @@ you cite it by. Use `h5i <command> --help` before guessing flags.
 
 | Need | Use | Read |
 | --- | --- | --- |
-| Find out what a target exposes | `h5i recon` (a plugin) | [references/recon.md](references/recon.md) |
 | Drive a page, and capture what it fetched | `h5i browser` | [references/browser.md](references/browser.md) |
+| Find out what a target exposes | `h5i recon` (a plugin) | [references/recon.md](references/recon.md) |
 | Inspect, mutate and replay that traffic | `h5i websec` (a plugin) | [references/websec.md](references/websec.md) |
 | Contain the work | `h5i box` | [references/boxes.md](references/boxes.md) |
 
@@ -74,8 +74,33 @@ h5i browser close
 - Exit code 69 means the session ended. Do not loop or replace it silently.
 - If a human holds control, wait. Snapshot again after control returns.
 
-Read [references/browser.md](references/browser.md) for placement, allowlists,
-authentication, takeover and Chromium.
+## Recon
+
+```bash
+h5i plugin install recon         # a plain build has no recon verb
+h5i recon extract                # reads what the session already fetched
+h5i recon endpoints --state confirmed --json
+h5i recon show ep_1af62d68       # sources, evidence, what it answered
+```
+
+- Recon sends nothing of its own. Every request is a `browser resend` through the session's policy, budget and receipts.
+- `extract` spends no requests, so run it before anything that does, and again after each crawl.
+- Without `triage --calibrate` nothing reaches `confirmed`, and a target that answers 200 for every path will mislead you.
+- Runs that spend requests are jobs. `jobs resume` repeats the parameters and skips what the ledger already answered.
+
+## Websec
+
+```bash
+h5i plugin install websec        # reading a capture store is what this adds
+h5i websec show req_42 --raw
+h5i websec replay req_42 --set 'json.role=admin' --set-each query.id=./ids.txt
+```
+
+- A `json.` value is typed the way it reads. Quote to insist on a string: `json.password="0e830400451993494058024219903391"`.
+- Header names go out lower-cased unless `--raw-headers`. A proxy that matches by exact string cares.
+- Walk a list with `--set-each`, not a shell loop: one send per line, one sample per send.
+- A body that is not text comes out with `--body-to PATH`, never through the terminal.
+- For a POST-CSRF test the victim session needs `--permissive-cors`, or the negative result is only h5i declining.
 
 ## Boxes
 
@@ -96,18 +121,16 @@ h5i box diff review
 h5i box export review
 ```
 
-Use `h5i box probe` to learn what the host can enforce and `h5i box capabilities
-<name> --json` for what a box actually received. Never infer the tier. h5i fails
-closed instead of silently weakening a requested policy.
+`h5i box probe` says what the host can enforce and `h5i box capabilities <name>
+--json` what a box received. Never infer the tier: h5i fails closed instead of
+silently weakening a requested policy.
 
-An export is a proposal containing `patch.diff`, `report.md` and `receipt.json`.
+An export is a proposal holding `patch.diff`, `report.md` and `receipt.json`.
 Review the report, denied egress, redactions, browser evidence and patch before
-applying it. Read [references/export.md](references/export.md).
+applying it ([references/export.md](references/export.md)). Sharing admits
+traffic into agent-written code, so run `h5i box share` only when the user asks,
+and say that `--tunnel` lets Cloudflare terminate TLS
+([references/share.md](references/share.md)).
 
-Sharing admits traffic into agent-written code. Run `h5i box share` only when
-the user asks, and explain that `--tunnel` lets Cloudflare terminate TLS. Read
-[references/share.md](references/share.md) before sharing.
-
-Read [references/boxes.md](references/boxes.md) for lifecycle and concurrency,
-and [references/policy.md](references/policy.md) before changing profiles,
+Read [references/policy.md](references/policy.md) before changing profiles,
 filesystem access, egress, or credentials.
