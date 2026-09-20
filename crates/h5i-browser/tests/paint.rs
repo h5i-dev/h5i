@@ -79,8 +79,11 @@ fn decode_png_rgba(png: &[u8]) -> Vec<u8> {
 /// discarding the fill underneath. The mask, which should never be visible,
 /// becomes 256 columns of white.
 ///
-/// Every shipped CSS in this repository avoids `inset` for that reason. When a
-/// dependency bump fixes this, delete the workaround and this test together.
+/// The shipped stylesheets keep `inset` everywhere it cannot reach a whole
+/// wide tile, because there it is pixel-exact and a pseudo-element is not: on a
+/// rounded box the shadow follows the corner and a 2px rectangle does not. Only
+/// the full-width rows swap it out. When a dependency bump fixes this, delete
+/// those two workarounds and this test together.
 #[test]
 fn an_inset_box_shadow_over_a_whole_wide_tile_paints_it_white() {
     let rgba = render(

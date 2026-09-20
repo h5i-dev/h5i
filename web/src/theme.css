@@ -204,25 +204,10 @@ a {
   background: var(--hover);
   color: var(--ink);
 }
-/* The selection bar is a pseudo-element, not `box-shadow: inset`. An inset
-   shadow that covers a whole 256px wide tile paints it white: see
-   crates/h5i-browser/tests/paint.rs for the mechanism. Delete this idiom when
-   that test starts failing. */
-.rail-item {
-  position: relative;
-}
 .rail-item.is-on {
   background: var(--raised);
   color: var(--ink);
-}
-.rail-item.is-on::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .rail-badge {
   font-size: var(--fs-xs);
@@ -444,6 +429,12 @@ a {
 .srow:hover {
   background: var(--hover);
 }
+/* The selection bar on a full-width row is a pseudo-element, not
+   `box-shadow: inset`. An inset shadow that covers a whole 256px wide tile
+   paints it white; crates/h5i-browser/tests/paint.rs holds the mechanism. Only
+   the rows wide enough to cover one need this: the rail, the chips and the
+   grid's first column are narrower than a tile and keep the shadow. These two
+   have no border-radius, so the pseudo-element is the same pixels. */
 .srow.is-on {
   background: var(--raised);
 }
@@ -592,16 +583,7 @@ button.chip:hover {
   background: var(--raised);
   color: var(--ink);
   border-color: var(--line-strong);
-  position: relative;
-}
-.chip.is-on::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 2px;
-  background: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 .chip.mono {
   font-family: var(--font-mono);
@@ -1081,16 +1063,7 @@ table.grid {
   color: var(--ink);
 }
 .grid tbody tr.is-on td:first-child {
-  position: relative;
-}
-.grid tbody tr.is-on td:first-child::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .grid tbody tr.is-refused td {
   color: var(--ink-2);

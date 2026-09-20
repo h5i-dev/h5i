@@ -124,16 +124,7 @@
 .cm-nav.on {
   background: var(--cm-raised);
   color: var(--cm-ink);
-  position: relative;
-}
-.cm-nav.on::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--cm-accent);
+  box-shadow: inset 2px 0 0 var(--cm-accent);
 }
 .cm-nav .b {
   font-size: 11px;
@@ -244,16 +235,7 @@
   background: var(--cm-raised);
   color: var(--cm-ink);
   border-color: var(--cm-line-2);
-  position: relative;
-}
-.cm-chip.on::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 2px;
-  background: var(--cm-accent);
+  box-shadow: inset 0 -2px 0 var(--cm-accent);
 }
 .cm-chip.dim {
   background: transparent;
@@ -535,16 +517,7 @@
   color: var(--cm-ink);
 }
 .cm-grid tr.on td:first-child {
-  position: relative;
-}
-.cm-grid tr.on td:first-child::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--cm-accent);
+  box-shadow: inset 2px 0 0 var(--cm-accent);
 }
 .cm-num {
   text-align: right;

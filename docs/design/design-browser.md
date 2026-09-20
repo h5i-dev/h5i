@@ -899,9 +899,11 @@ ruling stands. What we do instead:
 - `crates/h5i-browser/tests/paint.rs` renders the minimal case and asserts the
   defect is still present. A dependency bump that fixes it turns that test red,
   which is the signal to drop the workarounds.
-- Every stylesheet this repository ships draws a selection bar with an
-  absolutely positioned pseudo-element instead of an inset shadow. That is
-  layout-neutral and paints as an ordinary fill.
+- The two rows wide enough to cover a wide tile draw their selection bar with
+  an absolutely positioned pseudo-element instead. Both are square-cornered, so
+  that is the same pixels. Everything narrower than 256px keeps the shadow,
+  because on a rounded box an inset shadow follows the corner and a rectangle
+  does not: swapping those would trade an invisible bug for a visible one.
 
 The workaround is ours; the defect is a target page's problem too, and h5i will
 render it wrong until the dependency does not.
