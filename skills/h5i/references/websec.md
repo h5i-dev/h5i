@@ -11,7 +11,14 @@ h5i websec show req_42 --raw
 h5i websec replay req_42 --set query.id=456
 h5i websec diff res_42 res_43 --human
 h5i websec match res_43 --status 200 --contains ok
+h5i websec finding create --title '...' --evidence req_42,res_43
 ```
+
+`finding` is where a conclusion goes. `create` takes the title, a free-text
+`--state`, the message ids it rests on and an optional `--repro` file; `list`,
+`show` and `update` read and amend it. h5i refuses evidence this session does
+not hold and reads nothing else, so the claim stays yours and the ids stay
+checkable.
 
 The starting URL may be an API endpoint rather than an HTML page. For example,
 `h5i browser open https://target.example/api/health --capture` is a quick way to
