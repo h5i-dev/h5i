@@ -35,7 +35,9 @@ pub fn sanitize_block(s: &str) -> String {
 }
 
 /// Bidirectional formatting characters, which reorder the text *around* them.
-fn is_bidi_control(c: char) -> bool {
+///
+/// Public so every sanitiser shares one list. `char::is_control` misses them.
+pub fn is_bidi_control(c: char) -> bool {
     matches!(c,
         '\u{200E}' | '\u{200F}'          // LRM, RLM
         | '\u{202A}'..='\u{202E}'        // LRE, RLE, PDF, LRO, RLO

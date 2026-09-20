@@ -1132,6 +1132,9 @@ pub fn scrub_text(text: &str) -> String {
             // in their own right.
             c if (c as u32) < 0x20 || (c as u32) == 0x7f => None,
             c if ((c as u32) >= 0x80 && (c as u32) <= 0x9f) => None,
+            // Not controls, and they reorder the text around them, so a page
+            // can render a URL as a host it is not.
+            c if crate::redact::is_bidi_control(c) => None,
             c => Some(c),
         };
         let Some(ch) = keep else {
@@ -2371,6 +2374,17 @@ mod tests {
         assert!(!clean.contains('\u{0}'), "{clean}");
         assert!(clean.starts_with("ok"), "{clean}");
         assert!(clean.contains("control characters removed"), "{clean}");
+    }
+
+    #[test]
+    fn a_bidi_override_never_survives_the_relay() {
+        // No escape involved: the override reverses what follows it, so a link
+        // renders as a host it is not.
+        let clean = scrub_text("http://evil.example/\u{202E}gro.knab//:sptth");
+        assert!(!clean.contains('\u{202E}'), "{clean}");
+        assert!(clean.starts_with("http://evil.example/"), "{clean}");
+        // The joiners that ordinary text needs are not overrides.
+        assert_eq!(scrub_text("\u{1F469}\u{200D}\u{1F4BB}"), "\u{1F469}\u{200D}\u{1F4BB}");
     }
 
     #[test]

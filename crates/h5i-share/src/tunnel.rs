@@ -262,7 +262,13 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
             if pending.len() > MAX_CLOUDFLARED_LINE {
                 // Not a line. Keep the tail, in case a URL is part-way through
                 // it, and drop what came before unread.
-                pending = pending.split_off(pending.len() - 512);
+                // Forward to a character boundary: `split_off` panics on a byte
+                // offset that lands mid-character, and lossy decoding makes those.
+                let mut cut = pending.len() - 512;
+                while cut < pending.len() && !pending.is_char_boundary(cut) {
+                    cut += 1;
+                }
+                pending = pending.split_off(cut);
             }
         }
     })
