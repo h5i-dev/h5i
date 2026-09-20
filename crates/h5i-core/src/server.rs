@@ -1074,6 +1074,34 @@ fn attention_rank(state: &str) -> u8 {
 }
 
 /// `GET /api/session/:id`: one session's account, in full.
+/// One stored message, masked unless `?reveal=1` asks for the credentials.
+///
+/// A separate route rather than a field on the detail, because the detail is
+/// polled: a body on it would put every captured request through the poll, and
+/// the credentials of whichever one was open into every refresh.
+async fn api_message(
+    Path((id, seq)): Path<(String, u64)>,
+    axum::extract::Query(q): axum::extract::Query<MessageQuery>,
+) -> Result<Json<crate::message_view::MessageView>, StatusCode> {
+    let view = blocking(move || {
+        let h5i_root = bs::root().ok()?;
+        if !bs::id_is_one_component(&id) {
+            return None;
+        }
+        let session = bs::read(&h5i_root, &id).ok()?;
+        let dir = bs::dir(&h5i_root, &session.id);
+        crate::message_view::message(&dir, seq, q.reveal.is_some_and(|v| v == 1))
+    })
+    .await;
+    view.map(Json).ok_or(StatusCode::NOT_FOUND)
+}
+
+#[derive(serde::Deserialize)]
+struct MessageQuery {
+    /// `1` returns the credential headers as they were sent.
+    reveal: Option<u8>,
+}
+
 async fn api_session(Path(id): Path<String>) -> Result<Json<SessionDetail>, StatusCode> {
     let detail = blocking(move || {
         let h5i_root = bs::root().ok()?;
@@ -1409,6 +1437,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/boxes", get(api_boxes))
         .route("/api/sessions", get(api_sessions))
         .route("/api/session/:id", get(api_session))
+        .route("/api/session/:id/message/:seq", get(api_message))
         .route("/api/box/:agent/:slug", get(api_box))
         .route("/api/box/:agent/:slug/receipts/:id", get(api_receipt))
         .route("/api/box/:agent/:slug/browser", get(api_browser))

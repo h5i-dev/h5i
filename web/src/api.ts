@@ -355,7 +355,11 @@ export interface SessionRow {
   confinement: string;
   enclosing_box: string | null;
   permissive_cors: boolean;
+  /** The engagement this session was opened under, when one was named. */
+  project: string | null;
   policy_digest: string;
+  /** Digest of the scope in force. Empty when none was resolved. */
+  scope_digest: string;
   restored_from: string | null;
   expires_at: string | null;
   held_by_human: boolean;
@@ -493,6 +497,40 @@ async function get<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+export interface HeaderRow {
+  name: string;
+  value: string;
+  /** True when `value` is the mask rather than what was sent. */
+  masked: boolean;
+}
+
+export interface BodyView {
+  kind: "utf8" | "cut" | "binary" | "missing";
+  text: string;
+  of_bytes?: number;
+  sha256?: string;
+}
+
+export interface MessageHalf {
+  seq: number;
+  at: string;
+  url: string;
+  method?: string;
+  status?: number | null;
+  headers: HeaderRow[];
+  content_encoding?: string | null;
+  wire_bytes?: number | null;
+  body: BodyView;
+}
+
+export interface MessageView {
+  seq: number;
+  has_secrets: boolean;
+  revealed: boolean;
+  request?: MessageHalf;
+  response?: MessageHalf;
+}
+
 export const api = {
   boxes: () => get<BoxRow[]>("/api/boxes"),
   box: (agent: string, slug: string) =>
@@ -505,6 +543,10 @@ export const api = {
   sessions: () => get<SessionFleet>("/api/sessions"),
   session: (id: string) =>
     get<SessionDetail>(`/api/session/${encodeURIComponent(id)}`),
+  message: (id: string, seq: number, reveal: boolean) =>
+    get<MessageView>(
+      `/api/session/${encodeURIComponent(id)}/message/${seq}${reveal ? "?reveal=1" : ""}`,
+    ),
   browser: (agent: string, slug: string, since: number) =>
     get<BrowserStream>(
       `/api/box/${encodeURIComponent(agent)}/${encodeURIComponent(slug)}/browser?since=${since}`,

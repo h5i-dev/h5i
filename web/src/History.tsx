@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { SessionDetail } from "./api";
 import { KEYS, fold, matches, parse, withTerm, type HistoryRow } from "./filter";
+import { Message } from "./Message";
 import {
   Chip,
   Cmd,
@@ -509,17 +510,12 @@ function Inspector({ row, detail, onClose }: { row: HistoryRow; detail: SessionD
 
         <div>
           <div className="section-head">
-            <h3>Read the bytes</h3>
+            <h3>The bytes</h3>
           </div>
           {kept && row.allowed ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
-              <Cmd text={`h5i websec show req_${row.seq} --session ${name}`} hint="the request as it went out" />
-              {row.answered ? <Cmd text={`h5i websec show res_${row.seq} --session ${name}`} hint="the response as it came back" /> : null}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "stretch" }}>
+              <Message sessionId={detail.id} sessionName={name} seq={row.seq} />
               <Cmd text={`h5i websec replay req_${row.seq} --session ${name}`} hint="send it again, with edits named on the command line" />
-              <p className="count" style={{ marginTop: 4 }}>
-                Headers, cookies and bodies stay on disk, owner-only. The console shows the account of a fetch
-                and teaches the command that reads it.
-              </p>
             </div>
           ) : (
             <p className="count">

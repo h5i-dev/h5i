@@ -38,17 +38,41 @@ The row is what a session's own files say, and nothing inferred:
 Selecting one opens the workspace of C9: the history, the sitemap, the verbs,
 the findings, the recon inventory with its job records, and the record itself.
 
-## C2. What it refuses to show
+## C2. What it shows, and what it masks
 
-The capture store holds bodies, cookies and `Authorization` in full. It is the
-one artifact h5i keeps that is *not* safe to paste, which is why it is 0600, why
-it is never in an export unless named, and why the console does not render it.
+Revised 2026-09-20. This section used to say the console renders no stored body,
+header or cookie, and that reading one stays a command someone types. The reason
+given was that a browser page would become "a second way to reach a credential".
+That reason does not survive contact with the rest of the product: `h5i websec
+show req_42` prints the same bytes into a terminal, which is screenshotted,
+screen-shared and read over a shoulder exactly as a tab is. The console is also
+not an open port. `gate` in `server.rs` requires a loopback `Host`, a session
+token, and an `Origin` and `Sec-Fetch-Site` that match, and refuses a
+DNS-rebinding page by name. It is the same gate, not a second one.
 
-Every request row prints the command that reads it instead:
-`h5i websec show req_42 --session <name>`. Clicking copies it. The same for an
-endpoint's evidence and for resuming a job. The console teaches the next command
-rather than performing it, which keeps a browser page from becoming a second
-way to reach a credential.
+What the old rule did cost was the console's job. A finding says "cross-tenant
+invoice read, evidence req_42,res_43" and a reader who could only see a count
+had to leave the console to check it. For a person running twelve agents that is
+backwards.
+
+So the console renders the message, and masks the credential:
+
+- The inspector reads one fetch at a time from
+  `/api/session/:id/message/:seq`. Never the fleet list, never the overview: one
+  request on screen bounds what a screenshot carries.
+- `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie` and `X-Api-Key`
+  come back as `*** (N bytes)`. The length stays because it is not a secret and
+  it is what a reader checks first: an empty header and a 900-byte JWT are
+  different problems.
+- Revealing is `?reveal=1`, a second request. The masking is done in the server,
+  so a page that nobody asked to reveal never held the secret at all. A
+  client-side toggle over bytes that had already crossed would be theatre.
+- Selecting another fetch starts masked again. One request's decision does not
+  carry to the next.
+
+The store is still 0600, still absent from an export unless named, and every row
+still prints the command that reads it, because the command is what goes in a
+report.
 
 ## C3. Attention: five states
 
@@ -135,11 +159,12 @@ Sitemap, Scope, Findings, Logs); C2 was the constraint. What survives the
 constraint is everything that is *about* a fetch, and the one column no proxy
 can show.
 
-The screen is a rail of four sections and a two-pane body:
+The screen is a rail of five sections and a two-pane body:
 
 | section | left pane | right pane |
 |---|---|---|
 | Overview | the board: who wants a person, what is live, findings, boxes under pressure | |
+| Projects | the engagements, live work first | one project: its scope, its origins, every session under it |
 | Sessions | the registry, loudest first, searchable | one session's workspace |
 | Boxes | the fleet, most pressing first | one box's flight recorder |
 | Host | what this machine can enforce | |

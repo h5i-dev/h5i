@@ -2305,3 +2305,77 @@ pre.render {
   margin-bottom: 0;
 }
 
+
+/* The request and response pane. Credential rows are tinted so a masked value
+   is visible as a decision rather than as an odd string. */
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.msg-reveal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.msg-half {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  padding: 8px 10px;
+}
+
+.msg-headers {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  margin-bottom: 8px;
+}
+
+.msg-headers th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--ink-3);
+  padding: 1px 10px 1px 0;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.msg-headers td {
+  color: var(--ink-2);
+  padding: 1px 0;
+  word-break: break-all;
+}
+
+.msg-headers tr.is-masked th,
+.msg-headers tr.is-masked td {
+  color: var(--amber);
+}
+
+.msg-body {
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 4px;
+  background: var(--ground);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* A project's own session list: rows inside the body, not a column of them. */
+.plist {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.plist .srow:last-child {
+  border-bottom: none;
+}
