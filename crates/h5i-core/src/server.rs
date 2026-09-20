@@ -828,7 +828,11 @@ pub struct SessionRow {
     pub enclosing_box: Option<String>,
     /// Whether pages here may send credentials cross-origin.
     pub permissive_cors: bool,
+    /// The engagement this session was opened under, when one was named.
+    pub project: Option<String>,
     pub policy_digest: String,
+    /// The digest of the scope in force, empty when none was resolved.
+    pub scope_digest: String,
     /// The session whose storage seeded this one, if any.
     pub restored_from: Option<String>,
     pub expires_at: Option<String>,
@@ -847,6 +851,8 @@ pub struct SessionRow {
 pub struct SessionStub {
     pub id: String,
     pub name: Option<String>,
+    /// So a search past the fold can find a whole engagement, not one session.
+    pub project: Option<String>,
     pub state: String,
     pub url: String,
     pub started_at: String,
@@ -941,7 +947,9 @@ fn session_row(h5i_root: &std::path::Path, session: &bs::Session) -> (SessionRow
         confinement: session.confinement.as_str().to_string(),
         enclosing_box: session.enclosing_box.clone(),
         permissive_cors: session.permissive_cors,
+        project: session.project.clone(),
         policy_digest: session.policy_digest.clone(),
+        scope_digest: session.scope_digest.clone(),
         restored_from: session.restored_from.clone(),
         expires_at: session.expires_at.clone(),
         held_by_human,
@@ -997,6 +1005,7 @@ async fn api_sessions(State(state): State<Arc<AppState>>) -> Json<SessionFleet> 
             .map(|s| SessionStub {
                 id: s.id.clone(),
                 name: s.name.clone(),
+                project: s.project.clone(),
                 state: as_word(&s.state),
                 url: s.url.clone(),
                 started_at: s.started_at.clone(),

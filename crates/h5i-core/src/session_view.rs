@@ -665,6 +665,8 @@ mod tests {
         bs::Session {
             id: "br_test".into(),
             name: None,
+            project: None,
+            scope_digest: String::new(),
             engine: bs::Engine::H5iLight,
             lane: bs::Lane::EngineClaimed,
             placement: bs::Placement::Host,

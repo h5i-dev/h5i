@@ -123,6 +123,16 @@ pub enum BrowserCommands {
         #[arg(long)]
         new: bool,
 
+        /// The engagement this session belongs to.
+        ///
+        /// Written on the record, so "every session that touched this target"
+        /// survives the sessions ending and their names being reused. And when
+        /// `~/.config/h5i/projects/<name>.toml` exists it is also the scope:
+        /// its grants join `--allow`, its deny rules are checked before the
+        /// wire, and its digest goes on the record.
+        #[arg(long, value_name = "NAME")]
+        project: Option<String>,
+
         /// Run the session inside this box instead of on this machine.
         #[arg(long = "in", value_name = "BOX")]
         in_box: Option<String>,
@@ -1197,6 +1207,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             url,
             session,
             new,
+            project,
             in_box,
             allow,
             no_loopback,
@@ -1219,6 +1230,8 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             new,
             StartOptions {
                 url,
+                project,
+                scope: None,
                 in_box,
                 allow,
                 no_loopback,
@@ -1845,6 +1858,10 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
 
 struct StartOptions {
     url: String,
+    /// The engagement label, and the name of the scope to resolve.
+    project: Option<String>,
+    /// What `project` resolved to. `None` means no scope file, which is fine.
+    scope: Option<crate::cli::scope::Resolved>,
     in_box: Option<String>,
     allow: Vec<String>,
     no_loopback: bool,
@@ -1870,9 +1887,14 @@ fn open(
     root: &Path,
     selector: Option<String>,
     force_new: bool,
-    opts: StartOptions,
+    mut opts: StartOptions,
     json: bool,
 ) -> anyhow::Result<()> {
+    // Before anything starts: an unreadable scope found later is a session
+    // already running under rules nobody checked.
+    if let Some(name) = opts.project.clone() {
+        opts.scope = crate::cli::scope::resolve(&name)?;
+    }
     if !force_new
         && let Ok(existing) = bs::resolve(root, selector.as_deref())
     {
@@ -1920,6 +1942,11 @@ fn creation_flags(opts: &StartOptions) -> Vec<&'static str> {
     let mut set = Vec::new();
     if !opts.allow.is_empty() {
         set.push("`--allow`");
+    }
+    // Creation-only like the rest: the scope becomes policy in the engine, and
+    // `project` labels the whole request log.
+    if opts.project.is_some() {
+        set.push("`--project`");
     }
     if opts.in_box.is_some() {
         set.push("`--in`");
@@ -2091,6 +2118,7 @@ fn start(
     let session = bs::Session {
         id: id.clone(),
         name: name.clone(),
+        project: opts.project.clone(),
         engine: bs::Engine::H5iLight,
         lane,
         placement,
@@ -2105,6 +2133,11 @@ fn start(
         }),
         storage: bs::Storage::Ephemeral,
         policy_digest: spawned.policy_digest.clone(),
+        scope_digest: opts
+            .scope
+            .as_ref()
+            .map(|s| s.digest.clone())
+            .unwrap_or_default(),
         // Empty in a build without identities, which is what those sessions
         // are: not "presented nothing", but "not recorded". The same thing an
         // older record says, and what `#[serde(default)]` gives it.
@@ -2841,6 +2874,11 @@ fn net_args(opts: &StartOptions) -> Vec<String> {
         argv.push("--allow".to_string());
         argv.push(origin);
     }
+    // The engine never reads the scope file: it lives where no box can reach
+    // it, so the host resolves it and passes the rules.
+    if let Some(scope) = &opts.scope {
+        argv.extend(scope.engine_args());
+    }
     if opts.no_loopback {
         argv.push("--no-loopback".into());
     }
@@ -2880,12 +2918,17 @@ fn host_policy_digest(opts: &StartOptions) -> String {
     use sha2::{Digest, Sha256};
     let mut allow = granted_origins(opts);
     allow.sort();
+    // In here as well as in its own digest: this one answers "allowed the same
+    // things", which a deny rule changes. `scope_digest` answers "under which
+    // document".
+    let scope = opts.scope.as_ref().map(|s| s.digest.as_str()).unwrap_or("none");
     let material = format!(
-        "host\nallow={}\nloopback={}\nscript={}\npermissive_cors={}\n",
+        "host\nallow={}\nloopback={}\nscript={}\npermissive_cors={}\nscope={}\n",
         allow.join(","),
         !opts.no_loopback,
         opts.script,
-        opts.permissive_cors
+        opts.permissive_cors,
+        scope
     );
     format!("sha256:{:x}", Sha256::digest(material.as_bytes()))
 }
@@ -4326,7 +4369,13 @@ fn print_summary(session: &bs::Session) {
             bs::Lane::HostObserved => "also seen at the box's boundary, outside the engine",
         }
     );
+    if let Some(project) = &session.project {
+        println!("  project  : {project}");
+    }
     println!("  policy   : {}", session.policy_digest);
+    if !session.scope_digest.is_empty() {
+        println!("  scope    : {}", session.scope_digest);
+    }
     // Named, not left to the digest: a digest says two sessions differ, and
     // this is the difference that changes what a finding means.
     if session.permissive_cors {

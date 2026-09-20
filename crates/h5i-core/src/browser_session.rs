@@ -299,6 +299,13 @@ pub struct Session {
     /// cannot, which is why the id is what gets written down.
     #[serde(default)]
     pub name: Option<String>,
+    /// The engagement this session belongs to, when one was named.
+    ///
+    /// Not the session's name: a name is 1:1 and is reused once its session
+    /// ends, so it cannot group. This is N:1 and never reused. Nothing here
+    /// reads it; it exists so a reader can group by it.
+    #[serde(default)]
+    pub project: Option<String>,
     pub engine: Engine,
     pub placement: Placement,
     pub lane: Lane,
@@ -316,6 +323,13 @@ pub struct Session {
     /// The policy this session runs under, digested. Two sessions with the same
     /// digest were allowed the same things.
     pub policy_digest: String,
+    /// The digest of the engagement scope in force, when one was resolved.
+    ///
+    /// Separate from `policy_digest`: that says what this machine permitted,
+    /// this says which document the target's owner signed. Empty when no scope
+    /// was resolved, which is not the same as an empty scope.
+    #[serde(default)]
+    pub scope_digest: String,
     /// Who this session presented itself as, and the digest of everything that identity
     /// declared.
     #[serde(default)]
@@ -1807,6 +1821,8 @@ mod tests {
         Session {
             id: id.to_string(),
             name: None,
+            project: None,
+            scope_digest: String::new(),
             engine: Engine::H5iLight,
             lane: Session::lane_for(&placement, true),
             placement,

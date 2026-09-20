@@ -17,6 +17,11 @@ pub mod browser;
 // engine has nothing to read.
 #[cfg(feature = "browser")]
 pub mod websec;
+// The engagement scope `h5i browser open --project` resolves: what the target's
+// owner authorised, as opposed to what this machine permits. Same gate as
+// `browser`, because `open` is the only thing that reads one.
+#[cfg(feature = "browser")]
+pub mod scope;
 // The helper lane behind `h5i browser transcript --via yt-dlp`: an outside program, run
 // deliberately, recorded as one.
 #[cfg(feature = "ytdlp")]

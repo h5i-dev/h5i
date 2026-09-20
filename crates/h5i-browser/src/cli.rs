@@ -837,6 +837,20 @@ struct NetArgs {
     #[arg(long = "allow", value_name = "ORIGIN")]
     allow: Vec<String>,
 
+    /// Refuse a host, whatever else grants it. Repeatable.
+    ///
+    /// Deny wins over every grant and is checked before the loopback exemption
+    /// and `--allow-any-remote` both, so it carries a rule somebody else wrote.
+    /// The scheme and port are not compared: a carve-out that still permits the
+    /// same host on another port is not one.
+    #[arg(long = "deny", value_name = "ORIGIN")]
+    deny: Vec<String>,
+
+    /// Refuse a path on every host. Repeatable. `*` matches any run of
+    /// characters, `/` included.
+    #[arg(long = "deny-path", value_name = "GLOB")]
+    deny_path: Vec<String>,
+
     /// Refuse loopback too (it is reachable by default: it is the dev server).
     #[arg(long)]
     no_loopback: bool,
@@ -2229,6 +2243,8 @@ fn build_policy(net: &NetArgs) -> Policy {
     Policy::new()
         .allow_all_of(&net.allow)
         .allow_all_of(&from_env)
+        .deny_all_of(&net.deny)
+        .deny_paths_of(&net.deny_path)
         .set_allow_loopback(!net.no_loopback)
         .set_any_remote(net.allow_any_remote)
         .set_max_redirects(net.max_redirects)

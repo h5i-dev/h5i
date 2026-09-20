@@ -957,7 +957,7 @@ Open a URL, making a session if there is not one already
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-script\fR] [\fB\-\-permissive\-cors\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-secret\fR] [\fB\-\-identity\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-expires\-in\fR] [\fB\-\-restore\fR] [\fB\-\-cookie\-jar\fR] [\fB\-\-capture\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-project\fR] [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-script\fR] [\fB\-\-permissive\-cors\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-secret\fR] [\fB\-\-identity\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-expires\-in\fR] [\fB\-\-restore\fR] [\fB\-\-cookie\-jar\fR] [\fB\-\-capture\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -971,6 +971,11 @@ A name is not an identity: it can be reused once the session it named has ended.
 Make a new session even if one is already open.
 
 Without this, `open` navigates the session it finds, because that is what opening a URL means when a browser is already up.
+.TP
+\fB\-\-project\fR \fI<NAME>\fR
+The engagement this session belongs to.
+
+Written on the record, so "every session that touched this target" survives the sessions ending and their names being reused. And when `~/.config/h5i/projects/<name>.toml` exists it is also the scope: its grants join `\-\-allow`, its deny rules are checked before the wire, and its digest goes on the record.
 .TP
 \fB\-\-in\fR \fI<BOX>\fR
 Run the session inside this box instead of on this machine

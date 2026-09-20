@@ -137,6 +137,9 @@ libc = "0.2.186"
 # comparable value.
 sha2 = { workspace = true }
 serde = { workspace = true }
+# Reading a project's scope file. Already in the tree through h5i-sandbox,
+# which parses `.h5i/env.toml`, so this adds a name and no build.
+toml = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # Only to drive `h5i-share`'s async transports from a blocking CLI handler.
 # Optional with it, so a `--no-default-features` build pulls in no runtime.

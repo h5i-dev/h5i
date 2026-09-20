@@ -43,6 +43,13 @@ pub struct Policy {
     /// permitted plaintext http on any port while the exact spelling of the same
     /// grant refused it.
     wildcards: BTreeSet<String>,
+    /// Hosts refused whatever else granted them, lowercased. Matched on the
+    /// host alone: a carve-out that still permits another port is not one.
+    denied_hosts: BTreeSet<String>,
+    /// `*.host` suffixes, refused the same way.
+    denied_suffixes: BTreeSet<String>,
+    /// Path globs refused on every host. `*` matches any run of characters.
+    denied_paths: Vec<String>,
     allow_loopback: bool,
     /// Every remote origin is granted.
     any_remote: bool,
@@ -62,6 +69,9 @@ impl Default for Policy {
         Self {
             origins: BTreeSet::new(),
             wildcards: BTreeSet::new(),
+            denied_hosts: BTreeSet::new(),
+            denied_suffixes: BTreeSet::new(),
+            denied_paths: Vec::new(),
             // Loopback is the agent's own dev server. It never appears in an
             // egress allowlist and is the whole point of a dev loop, so it is
             // opt-out rather than opt-in. Matching the sandbox's own handling.
@@ -126,6 +136,108 @@ impl Policy {
             self = self.allow(origin.as_ref());
         }
         self
+    }
+
+    /// Refuse a host, whatever else grants it. Takes the spellings
+    /// [`Self::allow`] takes and reads only the host out of them.
+    ///
+    /// Deny is checked first: a rule a later `--allow` can undo is not a rule.
+    pub fn deny(mut self, origin: &str) -> Self {
+        let trimmed = origin.trim();
+        let authority = trimmed.split_once("://").map_or(trimmed, |(_, rest)| rest);
+        let authority = authority.split(['/', '?', '#']).next().unwrap_or(authority);
+        let (wildcard, host) = match authority
+            .strip_prefix("*.")
+            .or_else(|| authority.strip_prefix('.'))
+        {
+            Some(rest) => (true, rest),
+            None => (false, authority),
+        };
+        // Strip a port, but not the colons inside a bracketed IPv6 literal.
+        let host = match host.rsplit_once(':') {
+            Some((h, p)) if !h.ends_with(']') && p.bytes().all(|b| b.is_ascii_digit()) => h,
+            _ => host,
+        };
+        let host = host.trim().to_ascii_lowercase();
+        if host.is_empty() {
+            return self;
+        }
+        if wildcard {
+            self.denied_suffixes.insert(host);
+        } else {
+            self.denied_hosts.insert(host);
+        }
+        self
+    }
+
+    pub fn deny_all_of<I, S>(mut self, origins: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        for origin in origins {
+            self = self.deny(origin.as_ref());
+        }
+        self
+    }
+
+    /// Refuse a path on every host. `*` matches any run of characters.
+    pub fn deny_path(mut self, glob: &str) -> Self {
+        let glob = glob.trim();
+        if !glob.is_empty() {
+            self.denied_paths.push(glob.to_string());
+        }
+        self
+    }
+
+    pub fn deny_paths_of<I, S>(mut self, globs: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        for glob in globs {
+            self = self.deny_path(glob.as_ref());
+        }
+        self
+    }
+
+    /// Whether anything at all is refused by name, so a caller can say so.
+    pub fn denies_anything(&self) -> bool {
+        !self.denied_hosts.is_empty()
+            || !self.denied_suffixes.is_empty()
+            || !self.denied_paths.is_empty()
+    }
+
+    /// The refusal a deny rule produces for this URL, if one fires. Names the
+    /// rule, so a reader holding the scope can find the line that refused it.
+    fn denied(&self, url: &Url) -> Option<String> {
+        let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+        if self.denied_hosts.contains(&host) {
+            return Some(format!(
+                "`{host}` is refused by the deny rule `{host}`. Deny wins over every grant, \
+                 so this is a carve-out and not a missing allowlist entry."
+            ));
+        }
+        if let Some(suffix) = self
+            .denied_suffixes
+            .iter()
+            .find(|s| host == **s || host.ends_with(&format!(".{s}")))
+        {
+            return Some(format!(
+                "`{host}` is refused by the deny rule `*.{suffix}`. Deny wins over every \
+                 grant, so this is a carve-out and not a missing allowlist entry."
+            ));
+        }
+        let path = url.path();
+        self.denied_paths
+            .iter()
+            .find(|glob| glob_matches(glob, path))
+            .map(|glob| {
+                format!(
+                    "`{path}` is refused by the deny rule `{glob}`. The host is reachable; \
+                     this path is not."
+                )
+            })
     }
 
     pub fn set_allow_loopback(mut self, allow: bool) -> Self {
@@ -255,6 +367,11 @@ impl Policy {
     }
 
     pub fn check(&self, url: &Url) -> Verdict {
+        // Before the loopback exemption and the instrument mode both: a deny
+        // rule anything can reach past is not a rule.
+        if let Some(why) = self.denied(url) {
+            return Verdict::Deny(why);
+        }
         match url.scheme() {
             // `data:` is inline in the document that already passed policy;
             // it reaches no network, so refusing it would only break pages
@@ -340,6 +457,36 @@ impl Policy {
         // Name the origin, not just "denied": this string is what a human
         // reads when a page came back empty, and it is the retry hint.
         Verdict::Deny(format!("origin `{origin}` is not in the allowlist"))
+    }
+}
+
+/// Whether a `*`-glob covers the whole of `text`. `*` spans `/`: a rule
+/// written `/admin/*` that stopped at the next slash would leave
+/// `/admin/users/1` reachable.
+fn glob_matches(glob: &str, text: &str) -> bool {
+    let mut parts = glob.split('*');
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    let Some(mut rest) = text.strip_prefix(first) else {
+        return false;
+    };
+    let mut last: Option<&str> = None;
+    for part in parts {
+        // Held back one round: the final segment has to land on the end.
+        if let Some(pending) = last.replace(part)
+            && !pending.is_empty()
+        {
+            match rest.find(pending) {
+                Some(at) => rest = &rest[at + pending.len()..],
+                None => return false,
+            }
+        }
+    }
+    match last {
+        // No `*` at all: the prefix had to be the whole string.
+        None => rest.is_empty(),
+        Some(tail) => rest.len() >= tail.len() && rest.ends_with(tail),
     }
 }
 
@@ -448,6 +595,64 @@ mod tests {
 
     fn url(s: &str) -> Url {
         Url::parse(s).expect("test url parses")
+    }
+
+    #[test]
+    fn a_deny_rule_beats_the_grant_that_would_have_allowed_it() {
+        let policy = Policy::new()
+            .allow("*.acme.com")
+            .deny("blog.acme.com");
+        assert!(policy.check(&url("https://api.acme.com/v1")).is_allowed());
+        let verdict = policy.check(&url("https://blog.acme.com/"));
+        assert!(!verdict.is_allowed());
+        // The rule that fired is named, so a reader holding the scope digest
+        // can find the line that refused it.
+        assert!(verdict.reason().unwrap().contains("blog.acme.com"), "{verdict:?}");
+    }
+
+    #[test]
+    fn a_denied_host_is_denied_on_every_scheme_and_port() {
+        // A carve-out that still permits the same host on another port is not
+        // one, so deny matches the host alone.
+        let policy = Policy::new().set_any_remote(true).deny("out.acme.com");
+        for target in [
+            "https://out.acme.com/",
+            "http://out.acme.com:8080/x",
+            "wss://out.acme.com/socket",
+        ] {
+            assert!(!policy.check(&url(target)).is_allowed(), "{target}");
+        }
+    }
+
+    #[test]
+    fn a_deny_rule_outranks_loopback_and_the_instrument_mode() {
+        let policy = Policy::new()
+            .set_any_remote(true)
+            .deny("localhost")
+            .deny_path("/admin/*");
+        assert!(!policy.check(&url("http://localhost:3000/")).is_allowed());
+        assert!(!policy.check(&url("https://acme.com/admin/users/1")).is_allowed());
+        assert!(policy.check(&url("https://acme.com/admin-ish")).is_allowed());
+    }
+
+    #[test]
+    fn a_wildcard_deny_covers_the_host_and_everything_under_it() {
+        let policy = Policy::new().set_any_remote(true).deny("*.internal.acme.com");
+        assert!(!policy.check(&url("https://internal.acme.com/")).is_allowed());
+        assert!(!policy.check(&url("https://a.b.internal.acme.com/")).is_allowed());
+        assert!(policy.check(&url("https://acme.com/")).is_allowed());
+    }
+
+    #[test]
+    fn a_path_glob_spans_slashes() {
+        // `/admin/*` that stopped at the next slash would leave the thing the
+        // rule exists to protect reachable one level down.
+        assert!(glob_matches("/admin/*", "/admin/users/1"));
+        assert!(glob_matches("*/delete", "/account/7/delete"));
+        assert!(glob_matches("/a*b*c", "/axxbyyc"));
+        assert!(!glob_matches("/admin", "/admin/x"));
+        assert!(!glob_matches("/a*", "/b"));
+        assert!(glob_matches("/exact", "/exact"));
     }
 
     #[test]
