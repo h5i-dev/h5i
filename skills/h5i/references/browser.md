@@ -66,6 +66,7 @@ h5i browser select @e5 'Express shipping'          # value or visible text; the 
 h5i browser press @e1 Enter                        # keys that *do* something; `type` enters text
 h5i browser submit @e3                             # any @ref inside the form
 h5i browser wait-for --text 'Signed in'            # met | quiescent | budget. Do not poll in a loop
+h5i browser script --save flow.json                # records verified CSS selectors, so it outlives the snapshot
 ```
 
 A `@ref` belongs to the snapshot that minted it. If the page moved, the session
@@ -123,7 +124,10 @@ a widened cookie may not name a public suffix. For a boxed session the jar lands
 in the box's `/tmp`, so the flag is refused where this machine cannot see it.
 
 To send one authenticated request rather than browse, skip the jar:
-`h5i websec replay <id> --set 'header.cookie=…' --create`.
+
+```bash
+h5i websec replay <id> --set 'header.cookie=…' --create
+```
 
 A pasted cookie is a live credential in the transcript, unlike `$H5I_SECRET_`.
 Ask for the narrowest one the target checks, and `h5i browser rm <session>`
@@ -140,20 +144,21 @@ says so in the snapshot's notes; route it to Chromium. `WebSocket` and
 
 ## Chromium, in a box
 
-A box pinned to `--engine chromium` has no h5i session in it; drive
-`agent-browser` inside that box. Route there for script-heavy pages, video and
-WebGL. Running it in a box pinned to `h5i` fails with `Failed to create socket
-directory: Permission denied`, which is the box saying it has no Chromium.
+```bash
+agent-browser snapshot              # inside a chromium box; route here for script-heavy pages, video, WebGL
+agent-browser doctor                # inside the box, when it will not start
+AGENT_BROWSER_DEBUG=1 ...           # the daemon's stderr goes to /dev/null otherwise
+```
 
-Chrome there gets a fresh profile and the box's egress. Its own sandbox is off,
-because h5i's seccomp policy denies the namespace syscalls it needs, so the box
-is the boundary and not Chrome. `agent-browser chat` and the dashboard's AI
-panel are refused: they send page content to an external gateway.
+`Failed to create socket directory: Permission denied` is the box saying it has
+no Chromium. A startup failure reads as "exited during startup with no error
+output" until `AGENT_BROWSER_DEBUG=1` puts it in
+`$AGENT_BROWSER_SOCKET_DIR/<session>.log`.
 
-`agent-browser doctor`, inside the box, is the tool when it will not start. The
-daemon sends its stderr to `/dev/null`, so a failure reads as "exited during
-startup with no error output"; `AGENT_BROWSER_DEBUG=1` writes it to
-`$AGENT_BROWSER_SOCKET_DIR/<session>.log`, the only place the real error lands.
+Chrome there gets a fresh profile and the box's egress, and its own sandbox is
+off, so the box is the boundary and not Chrome. `agent-browser chat` and the
+dashboard's AI panel are refused: they send page content to an external
+gateway.
 
 ## The control lock
 
@@ -177,7 +182,6 @@ The viewer needs the box running and its browser streaming
 h5i box inspect <box> --capture <id>    # includes a `browser :` line
 ```
 
-Console errors, uncaught exceptions and failed requests are collected by h5i
-after each run, so "I clicked Submit and it worked" is not worth writing: the
-export already carries what the page did, under "What the browser saw". If the
-page threw while you were verifying a fix, say so, because it is in the bundle.
+h5i collects console errors, exceptions and failed requests after each run, so
+"I clicked Submit and it worked" is not worth writing. Report what the page
+threw while you were verifying, because the bundle already has it.
