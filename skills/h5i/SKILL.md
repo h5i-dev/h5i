@@ -104,33 +104,8 @@ h5i websec replay req_42 --set 'json.role=admin' --set-each query.id=./ids.txt
 
 ## Boxes
 
-A box is a disposable worktree on its own branch under a pinned policy. Use one
-when the code is untrusted or agent-written, when a build or test run should not
-touch this machine, or when the traffic needs a boundary outside the browser.
-
-First determine where you are:
-
-- Outside a box: create, drive, inspect, and export boxes.
-- Inside a box (`$H5I_ENV_ID` is set): work normally. Do not create another box or pass `--in` to browser commands.
-
-```bash
-h5i box --name review
-h5i box status review
-h5i box run review -- <command>
-h5i box diff review
-h5i box export review
-```
-
-`h5i box probe` says what the host can enforce and `h5i box capabilities <name>
---json` what a box received. Never infer the tier: h5i fails closed instead of
-silently weakening a requested policy.
-
-An export is a proposal holding `patch.diff`, `report.md` and `receipt.json`.
-Review the report, denied egress, redactions, browser evidence and patch before
-applying it ([references/export.md](references/export.md)). Sharing admits
-traffic into agent-written code, so run `h5i box share` only when the user asks,
-and say that `--tunnel` lets Cloudflare terminate TLS
-([references/share.md](references/share.md)).
-
-Read [references/policy.md](references/policy.md) before changing profiles,
-filesystem access, egress, or credentials.
+A box is a disposable worktree on its own branch under a pinned policy. Reach
+for one when the code is untrusted or agent-written, or when the traffic needs a
+boundary outside the browser. Inside a box `$H5I_ENV_ID` is set: work normally,
+and do not create another box or pass `--in` to a browser command. Read
+[references/boxes.md](references/boxes.md) before driving one.

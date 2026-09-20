@@ -1,5 +1,28 @@
 # The box lifecycle
 
+```bash
+h5i box --name review
+h5i box status review
+h5i box run review -- <command>
+h5i box diff review
+h5i box export review
+```
+
+Outside a box you create, drive, inspect and export them. Inside one
+(`$H5I_ENV_ID` is set) you work normally: do not create another box, and do not
+pass `--in` to a browser command.
+
+`h5i box probe` says what this host can enforce and `h5i box capabilities <name>
+--json` what a box actually received. Never infer the tier. h5i fails closed
+instead of silently weakening a requested policy.
+
+An export is a proposal holding `patch.diff`, `report.md` and `receipt.json`.
+Review the report, denied egress, redactions, browser evidence and patch before
+applying it ([export.md](export.md)). Sharing admits traffic into agent-written
+code, so run `h5i box share` only when the user asks, and say that `--tunnel`
+lets Cloudflare terminate TLS ([share.md](share.md)). Read [policy.md](policy.md)
+before changing profiles, filesystem access, egress, or credentials.
+
 ## Sources
 
 | Command | Base |
