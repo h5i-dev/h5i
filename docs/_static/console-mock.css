@@ -124,7 +124,16 @@
 .cm-nav.on {
   background: var(--cm-raised);
   color: var(--cm-ink);
-  box-shadow: inset 2px 0 0 var(--cm-accent);
+  position: relative;
+}
+.cm-nav.on::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--cm-accent);
 }
 .cm-nav .b {
   font-size: 11px;
@@ -235,7 +244,16 @@
   background: var(--cm-raised);
   color: var(--cm-ink);
   border-color: var(--cm-line-2);
-  box-shadow: inset 0 -2px 0 var(--cm-accent);
+  position: relative;
+}
+.cm-chip.on::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--cm-accent);
 }
 .cm-chip.dim {
   background: transparent;
@@ -246,12 +264,22 @@
 }
 
 .cm-srow {
+  position: relative;
   padding: 9px 11px 9px 13px;
   border-bottom: 1px solid var(--cm-line);
 }
 .cm-srow.on {
   background: var(--cm-raised);
-  box-shadow: inset 2px 0 0 var(--cm-accent);
+  position: relative;
+}
+.cm-srow.on::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--cm-accent);
 }
 .cm-srow-top {
   display: flex;
@@ -507,7 +535,16 @@
   color: var(--cm-ink);
 }
 .cm-grid tr.on td:first-child {
-  box-shadow: inset 2px 0 0 var(--cm-accent);
+  position: relative;
+}
+.cm-grid tr.on td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--cm-accent);
 }
 .cm-num {
   text-align: right;
@@ -574,12 +611,22 @@
 /* ── boxes: the flight recorder ────────────────────────────────────────── */
 
 .cm-fleet-row {
+  position: relative;
   padding: 9px 11px 9px 13px;
   border-bottom: 1px solid var(--cm-line);
 }
 .cm-fleet-row.on {
   background: var(--cm-raised);
-  box-shadow: inset 2px 0 0 var(--cm-accent);
+  position: relative;
+}
+.cm-fleet-row.on::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--cm-accent);
 }
 .cm-fleet-top {
   display: flex;

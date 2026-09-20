@@ -204,10 +204,25 @@ a {
   background: var(--hover);
   color: var(--ink);
 }
+/* The selection bar is a pseudo-element, not `box-shadow: inset`. An inset
+   shadow that covers a whole 256px wide tile paints it white: see
+   crates/h5i-browser/tests/paint.rs for the mechanism. Delete this idiom when
+   that test starts failing. */
+.rail-item {
+  position: relative;
+}
 .rail-item.is-on {
   background: var(--raised);
   color: var(--ink);
-  box-shadow: inset 2px 0 0 var(--accent);
+}
+.rail-item.is-on::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
 }
 .rail-badge {
   font-size: var(--fs-xs);
@@ -431,7 +446,15 @@ a {
 }
 .srow.is-on {
   background: var(--raised);
-  box-shadow: inset 2px 0 0 var(--accent);
+}
+.srow.is-on::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
 }
 .srow.is-stub {
   color: var(--ink-2);
@@ -569,7 +592,16 @@ button.chip:hover {
   background: var(--raised);
   color: var(--ink);
   border-color: var(--line-strong);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  position: relative;
+}
+.chip.is-on::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent);
 }
 .chip.mono {
   font-family: var(--font-mono);
@@ -1049,7 +1081,16 @@ table.grid {
   color: var(--ink);
 }
 .grid tbody tr.is-on td:first-child {
-  box-shadow: inset 2px 0 0 var(--accent);
+  position: relative;
+}
+.grid tbody tr.is-on td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
 }
 .grid tbody tr.is-refused td {
   color: var(--ink-2);
@@ -1710,9 +1751,20 @@ tr.is-refused .path-dir {
 .fleet-row:hover {
   background: var(--hover);
 }
+.fleet-row {
+  position: relative;
+}
 .fleet-row.is-on {
   background: var(--raised);
-  box-shadow: inset 2px 0 0 var(--accent);
+}
+.fleet-row.is-on::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
 }
 .fleet-top {
   display: flex;

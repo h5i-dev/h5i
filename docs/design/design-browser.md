@@ -878,6 +878,34 @@ evaluated in the prelude instead (`withHasMarkers`), so `querySelector`,
 
 ---
 
+## B4a. A rasteriser defect we hold rather than fix
+
+Found 2026-09-20. An element with `box-shadow: inset` that fully covers one of
+`vello_common`'s 256-pixel wide tiles paints that tile solid white.
+
+The mechanism, end to end. `blitz-paint` draws an inset shadow by filling the
+padding box with the shadow colour, then punching the border box back out with
+a `Color::WHITE` mask inside a `Compose::DestOut` layer. In `vello_common`
+0.0.9 the coarse rasteriser's overdraw elimination (`WideTile::fill`, the
+`can_override` guard) fires on that opaque full-width mask, clears the commands
+underneath it and promotes the mask to the tile's background. The mask, which
+should never be visible, becomes 256 columns of white. It is deterministic, it
+is aligned to `WideTile::WIDTH`, and a partially covered tile renders correctly,
+which is what made it look like a CSS bug for as long as it did.
+
+We do not fix it here. Patching it means forking a rendering crate, and B4's
+ruling stands. What we do instead:
+
+- `crates/h5i-browser/tests/paint.rs` renders the minimal case and asserts the
+  defect is still present. A dependency bump that fixes it turns that test red,
+  which is the signal to drop the workarounds.
+- Every stylesheet this repository ships draws a selection bar with an
+  absolutely positioned pseudo-element instead of an inset shadow. That is
+  layout-neutral and paints as an ordinary fill.
+
+The workaround is ours; the defect is a target page's problem too, and h5i will
+render it wrong until the dependency does not.
+
 ## B5. The rule that produced all of it
 
 Nothing is built until a page asks for it, and an instrument that cannot name
