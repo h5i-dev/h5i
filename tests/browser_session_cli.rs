@@ -338,6 +338,54 @@ fn a_restore_is_a_new_session_with_the_inheritance_written_down() {
 }
 
 #[test]
+fn a_pasted_cookie_jar_reaches_the_engine_before_it_starts() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let jar = fx.home.path().join("pasted.json");
+    std::fs::write(
+        &jar,
+        r#"{"version": 1, "cookies": [{"name": "sid", "value": "pasted",
+           "host": "127.0.0.1", "host_only": true, "same_site": "lax",
+           "path": "/", "secure": false, "http_only": true}]}"#,
+    )
+    .unwrap();
+
+    let url = fx.site.base.clone();
+    let out = fx.run(&[
+        "browser", "open", &url, "--allow", "127.0.0.1",
+        "--cookie-jar", jar.to_str().unwrap(), "--json",
+    ]);
+    assert!(out.status.success());
+    let record: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let id = record["id"].as_str().unwrap().to_string();
+
+    // The engine says how many rows it believed, which is the only check that
+    // the login carried: a row it refuses is counted, not silently dropped.
+    let log = std::fs::read_to_string(fx.dir(&id).join("engine.log")).unwrap();
+    assert!(log.contains("restored 1 cookie(s)"), "engine.log said: {log}");
+    assert!(record["restored_from"].is_null(), "a file is not a session");
+}
+
+#[test]
+fn a_cookie_jar_that_is_not_one_is_refused_before_a_session_exists() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let jar = fx.home.path().join("export.json");
+    std::fs::write(&jar, r#"[{"name": "sid", "value": "x"}]"#).unwrap();
+
+    let url = fx.site.base.clone();
+    let out = fx.run(&[
+        "browser", "open", &url, "--allow", "127.0.0.1",
+        "--cookie-jar", jar.to_str().unwrap(),
+    ]);
+    assert!(!out.status.success());
+    let why = String::from_utf8_lossy(&out.stderr);
+    assert!(why.contains("not a cookie jar"), "said: {why}");
+}
+
+#[test]
 fn a_host_session_says_which_lane_its_requests_are() {
     let Some(fx) = Fixture::new() else {
         return skip("no h5i binary to drive");

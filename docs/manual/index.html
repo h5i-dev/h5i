@@ -456,7 +456,8 @@ next verb quietly landing somewhere it never asked for.</p>
 <p>Opening a URL in a browser that is already up means <em>go there</em>. So <code>open</code>
 navigates the session it finds, and <code>--new</code> is how you say you meant a second
 one. The flags that only make sense at creation (<code>--allow</code>, <code>--in</code>, <code>--script</code>,
-<code>--no-loopback</code>, <code>--permissive-cors</code>, <code>--expires-in</code>, <code>--restore</code>, <code>--capture</code>) are <em>refused</em>
+<code>--no-loopback</code>, <code>--permissive-cors</code>, <code>--expires-in</code>, <code>--restore</code>, <code>--cookie-jar</code>,
+<code>--capture</code>) are <em>refused</em>
 rather than ignored when a session is reused: a session's policy is fixed when its engine starts, so
 accepting a grant and doing nothing with it would be a grant the caller believes
 it made.</p>
@@ -815,6 +816,14 @@ h5i browser open https://example.com/app --restore br_7k2xqa   # still signed in
 next engine, never to a model. A session that left no jar (one that ran in a box
 whose <code>/tmp</code> this machine cannot read, or one from before this existed) is
 refused by name rather than silently seeding nothing.</p>
+<p><code>--cookie-jar &lt;path&gt;</code> seeds the same jar from a file instead of from a session,
+which is how a login this engine cannot perform itself gets in: a human signs in
+with their own browser and pastes the cookie into
+<code>{"version": 1, "cookies": [...]}</code>. Both flags write the jar before the engine
+starts, because it reads one early in startup. A row no server could have set,
+such as a <code>__Host-</code> name without the flags that name means, is refused on the
+way in and counted on stderr, so the <code>restored N cookie(s)</code> line is the check
+that the login carried.</p>
 <h3 id="everything-a-session-returns-is-untrusted">Everything a session returns is untrusted</h3>
 <p>The page composed the title, the link text, the error message and the URL; the
 engine only carried them. So every answer h5i relays is scrubbed before it

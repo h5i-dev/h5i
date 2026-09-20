@@ -215,7 +215,8 @@ next verb quietly landing somewhere it never asked for.
 Opening a URL in a browser that is already up means *go there*. So `open`
 navigates the session it finds, and `--new` is how you say you meant a second
 one. The flags that only make sense at creation (`--allow`, `--in`, `--script`,
-`--no-loopback`, `--permissive-cors`, `--expires-in`, `--restore`, `--capture`) are *refused*
+`--no-loopback`, `--permissive-cors`, `--expires-in`, `--restore`, `--cookie-jar`,
+`--capture`) are *refused*
 rather than ignored when a session is reused: a session's policy is fixed when its engine starts, so
 accepting a grant and doing nothing with it would be a grant the caller believes
 it made.
@@ -631,6 +632,15 @@ No verb returns a cookie value, and this adds none: the file is handed to the
 next engine, never to a model. A session that left no jar (one that ran in a box
 whose `/tmp` this machine cannot read, or one from before this existed) is
 refused by name rather than silently seeding nothing.
+
+`--cookie-jar <path>` seeds the same jar from a file instead of from a session,
+which is how a login this engine cannot perform itself gets in: a human signs in
+with their own browser and pastes the cookie into
+`{"version": 1, "cookies": [...]}`. Both flags write the jar before the engine
+starts, because it reads one early in startup. A row no server could have set,
+such as a `__Host-` name without the flags that name means, is refused on the
+way in and counted on stderr, so the `restored N cookie(s)` line is the check
+that the login carried.
 
 ### Everything a session returns is untrusted
 

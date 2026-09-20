@@ -32,7 +32,8 @@ h5i browser close
 - Prefer locators for elements that must survive re-rendering: `--role button --name 'Sign in'`.
 - Set controls to a state (`set-checked`, `select`) instead of toggling them.
 - Secrets are named, never read. Use `--secret NAME`. To get past a site's own login, ask
-  the human to paste a session cookie from their normal browser; `browser login` is
+  the human to paste a session cookie from their normal browser into `open --cookie-jar`;
+  `browser login` is
   experimental and usually fails on a real site's fingerprinting.
 - `requests` supports decisions during work; `audit` supports claims afterward. Do not claim a refused request succeeded.
 - Exit code 69 means the session ended. Do not loop or replace it silently.

@@ -198,6 +198,14 @@ pub enum BrowserCommands {
         #[arg(long, value_name = "SESSION_ID")]
         restore: Option<String>,
 
+        /// Seed this session's cookie jar from a file a human pasted a cookie
+        /// into: `{"version": 1, "cookies": [...]}`.
+        ///
+        /// Read once, before the engine starts, and never written back. A row
+        /// no server could have set is refused and counted on stderr.
+        #[arg(long, value_name = "PATH", conflicts_with = "restore")]
+        cookie_jar: Option<PathBuf>,
+
         /// Keep every request and response this session makes: headers and
         /// bodies, both directions.
         ///
@@ -1202,6 +1210,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             height,
             expires_in,
             restore,
+            cookie_jar,
             capture,
             json,
         } => open(
@@ -1223,6 +1232,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 height,
                 expires_in,
                 restore,
+                cookie_jar,
                 capture,
             },
             json,
@@ -1849,6 +1859,8 @@ struct StartOptions {
     height: u32,
     expires_in: Option<u64>,
     restore: Option<String>,
+    /// Seed the jar from a file a human pasted a cookie into. See the flag.
+    cookie_jar: Option<PathBuf>,
     /// Keep the messages themselves, not only the record of them.
     capture: bool,
 }
@@ -1926,6 +1938,9 @@ fn creation_flags(opts: &StartOptions) -> Vec<&'static str> {
     }
     if opts.restore.is_some() {
         set.push("`--restore`");
+    }
+    if opts.cookie_jar.is_some() {
+        set.push("`--cookie-jar`");
     }
     if opts.no_sandbox {
         set.push("`--no-sandbox`");
@@ -2054,18 +2069,24 @@ fn start(
         }
     };
 
+    // Resolved before the spawn, and copied by it: the engine reads its jar
+    // early in startup, so a copy made after the child is running is a race.
+    let seed = match (&restored_from, &opts.cookie_jar) {
+        (Some(from), _) => Some(donor_jar(root, from)?),
+        (None, Some(path)) => Some(pasted_jar(path)?),
+        (None, None) => None,
+    };
+
     let id = bs::new_id(root)?;
     let dir = bs::dir(root, &id);
 
     let mut spawned = match &placement {
-        bs::Placement::Host => spawn_on_host(root, &dir, &opts, enclosing_box.is_some())?,
-        bs::Placement::Box { name } => spawn_in_box(name, &dir, &opts)?,
+        bs::Placement::Host => {
+            spawn_on_host(root, &dir, &opts, enclosing_box.is_some(), seed.as_deref())?
+        }
+        bs::Placement::Box { name } => spawn_in_box(name, &dir, &opts, seed.as_deref())?,
     };
     let lane = bs::Session::lane_for(&placement, spawned.boundary_enforced);
-
-    if let Some(from) = &restored_from {
-        seed_storage(root, from, &dir)?;
-    }
 
     let session = bs::Session {
         id: id.clone(),
@@ -2196,6 +2217,7 @@ fn spawn_on_host(
     dir: &Path,
     opts: &StartOptions,
     in_a_box: bool,
+    seed: Option<&Path>,
 ) -> anyhow::Result<Spawned> {
     // A port on a bare host, a socket inside a box.
     //
@@ -2246,6 +2268,8 @@ fn spawn_on_host(
     if opts.script {
         argv.push("--script".into());
     }
+
+    seed_jar(seed, &dir.join(bs::COOKIES_FILE))?;
 
     let log_path = dir.join("engine.log");
 
@@ -2492,7 +2516,12 @@ fn preflight_box(
     }
 }
 
-fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<Spawned> {
+fn spawn_in_box(
+    name: &str,
+    dir: &Path,
+    opts: &StartOptions,
+    seed: Option<&Path>,
+) -> anyhow::Result<Spawned> {
     let repo = super::discover_repo("h5i browser --in")?;
     let h5i_root = h5i_core::storage::h5i_root_for_repo(&repo)?;
     let manifest = h5i_core::env::find(&h5i_root, name)?;
@@ -2564,6 +2593,20 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
              see whether this session is still up without sending it a verb",
             style("note").yellow()
         );
+    }
+
+    if seed.is_some() {
+        // The jar lives in the box's /tmp, so seeding it needs this machine's
+        // view of that directory, which an image-backed tier does not have.
+        let Some(on_host) = &control_on_host else {
+            anyhow::bail!(
+                "`{name}` keeps its /tmp inside its image, so this machine cannot write the \
+                 cookie jar the engine there would read.\n\n  \
+                 Run the session on this machine (drop `--in`), or make the box at a tier \
+                 whose /tmp this machine can see."
+            );
+        };
+        seed_jar(seed, &on_host.with_extension("cookies.json"))?;
     }
 
     let mut argv: Vec<String> = vec![
@@ -2944,8 +2987,8 @@ fn tail_of(log: &Path) -> String {
         .join("\n")
 }
 
-/// Carry a previous session's cookie jar into a new session's directory.
-fn seed_storage(root: &Path, from: &str, into: &Path) -> anyhow::Result<()> {
+/// The jar `--restore` carries forward, checked before anything is spawned.
+fn donor_jar(root: &Path, from: &str) -> anyhow::Result<PathBuf> {
     let source = bs::dir(root, from).join(bs::COOKIES_FILE);
     if !source.exists() {
         anyhow::bail!(
@@ -2959,7 +3002,49 @@ fn seed_storage(root: &Path, from: &str, into: &Path) -> anyhow::Result<()> {
             source.display()
         );
     }
-    std::fs::copy(&source, into.join(bs::COOKIES_FILE))?;
+    Ok(source)
+}
+
+/// The jar `--cookie-jar` names, refused here rather than inside the engine.
+fn pasted_jar(path: &Path) -> anyhow::Result<PathBuf> {
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        anyhow::anyhow!("`--cookie-jar {}` could not be read: {e}", path.display())
+    })?;
+    let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        anyhow::anyhow!(
+            "`--cookie-jar {}` is not JSON: {e}\n\n  \
+             The file is a jar, not a browser's own export:\n    \
+             {{\"version\": 1, \"cookies\": [{{\"name\": \"sid\", \"value\": \"…\", \
+             \"host\": \"app.example\", \"host_only\": true, \"same_site\": \"lax\", \
+             \"path\": \"/\", \"secure\": true, \"http_only\": true}}]}}",
+            path.display()
+        )
+    })?;
+    if parsed.get("version").and_then(serde_json::Value::as_u64) != Some(1)
+        || !parsed.get("cookies").is_some_and(serde_json::Value::is_array)
+    {
+        anyhow::bail!(
+            "`--cookie-jar {}` is JSON, but not a cookie jar: it needs `\"version\": 1` and a \
+             `cookies` array.",
+            path.display()
+        );
+    }
+    Ok(path.to_path_buf())
+}
+
+/// Put the seed where the engine about to start will read it.
+fn seed_jar(seed: Option<&Path>, into: &Path) -> anyhow::Result<()> {
+    let Some(source) = seed else { return Ok(()) };
+    if let Some(parent) = into.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(source, into).map_err(|e| {
+        anyhow::anyhow!(
+            "the cookie jar {} could not be written to {}: {e}",
+            source.display(),
+            into.display()
+        )
+    })?;
     Ok(())
 }
 
