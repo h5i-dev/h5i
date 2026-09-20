@@ -1,6 +1,6 @@
 ---
 name: h5i
-description: Red-team a web application under authorization: drive pages, capture the HTTP traffic that produced them, inventory what the target exposes, and replay mutated requests with auditable evidence. Also covers ordinary browsing and scraping, and running untrusted or agent-written code inside disposable confined boxes with reviewed export.
+description: Red-team a web application under authorization by driving pages, capturing the HTTP traffic that produced them, inventorying what the target exposes, and replaying mutated requests with auditable evidence. Also covers ordinary browsing and scraping, and running untrusted or agent-written code inside disposable confined boxes with reviewed export.
 ---
 
 # Driving h5i
