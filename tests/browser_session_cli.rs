@@ -79,14 +79,22 @@ impl Site {
             "/login" => "<html><body><form action=\"/in\" method=\"post\">\
                   <input name=\"pass\" type=\"password\"></form></body></html>"
                 .to_string(),
+            // A page that logs the session in, so a donor jar holds a cookie
+            // the engine itself stored rather than one a test wrote.
+            "/set" => "<html><body><h1>logged in</h1></body></html>".to_string(),
             _ => "<html><head><title>t</title></head><body><h1>hello</h1>\
                   <p>a <a href=\"https://example.com/next\">link</a></p></body></html>"
                 .to_string(),
         };
+        let set_cookie = match path.as_str() {
+            "/set" => "Set-Cookie: sid=carried; Path=/\r\n",
+            _ => "",
+        };
         write!(
             stream,
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n{}",
             body.len(),
+            set_cookie,
             body
         )?;
         stream.flush()
@@ -335,6 +343,36 @@ fn a_restore_is_a_new_session_with_the_inheritance_written_down() {
 
     assert_ne!(record["id"].as_str().unwrap(), first, "ids are not recycled");
     assert_eq!(record["restored_from"].as_str().unwrap(), first);
+}
+
+/// The donor's jar has to be in place before the engine starts, because the
+/// engine reads it early and then writes its own over the path. Copying it
+/// afterwards loses the login and says nothing, so the count in the log is the
+/// only thing that catches it.
+#[test]
+fn a_restored_jar_reaches_the_engine_before_it_starts() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let login = format!("{}/set", fx.site.base);
+    let first = {
+        let out = fx.run(&["browser", "open", &login, "--allow", "127.0.0.1", "--json"]);
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let record: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        record["id"].as_str().unwrap().to_string()
+    };
+    let jar = std::fs::read_to_string(fx.dir(&first).join("cookies.json")).unwrap();
+    assert!(jar.contains("carried"), "the donor stored nothing: {jar}");
+    assert!(fx.run(&["browser", "close"]).status.success());
+
+    let url = fx.site.base.clone();
+    let out = fx.run(&["browser", "open", &url, "--allow", "127.0.0.1", "--restore", &first, "--json"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let record: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let id = record["id"].as_str().unwrap().to_string();
+
+    let log = std::fs::read_to_string(fx.dir(&id).join("engine.log")).unwrap();
+    assert!(log.contains("restored 1 cookie(s)"), "engine.log said: {log}");
 }
 
 #[test]
