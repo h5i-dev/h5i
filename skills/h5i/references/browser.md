@@ -18,20 +18,21 @@ h5i browser close
 | request lane | `engine-claimed` | `host-observed`, if the box enforces egress |
 | human takeover | advisory | enforced |
 
-The verbs are identical either way. Read the placement and lane out of
-`h5i browser status` rather than assuming: a box that lets the browser reach the
-whole network does not upgrade the lane.
+The verbs are identical either way. A session reaches the page it opened,
+loopback and whatever `--allow` names; the rest is refused and says so in
+`requests`.
 
-A session may reach the page it opened, loopback, and whatever `--allow` names;
-anything else is refused and says so in `requests`. `--allow` cannot widen a
-box's `net.egress`. It changes what the engine asks for, and what leaves the box
-is decided outside it.
+```bash
+h5i browser status    # the placement and the lane. Read it rather than assume
+```
 
-Cross-site credentials are refused, because nobody can read an opaque response
-to check the server agreed. That is also the POST-CSRF shape, so a negative CSRF
-result means h5i declined and not that the target is safe. `--permissive-cors`
-allows it for one session and is named in `status`, so a finding gathered under
-it stays distinguishable.
+A box that lets the browser reach the whole network does not upgrade the lane,
+and `--allow` cannot widen a box's `net.egress`: it changes what the engine asks
+for, not what leaves the box.
+
+Cross-site credentials are refused, so a negative CSRF result means h5i
+declined, not that the target is safe. `--permissive-cors` allows it for one
+session and shows in `status`.
 
 ## Reading
 
