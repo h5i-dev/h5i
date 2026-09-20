@@ -45,7 +45,7 @@ h5i recon endpoints --state confirmed --json |
 
 ## Keeping the disk honest
 
-A capture store is the heavy part of a session. `h5i browser gc` reclaims the stored messages of sessions that ended over a week ago and keeps their records, request logs and ledgers; `--older-than 0` includes everything ended. `h5i browser rm <session>` erases a session entirely. Reclaimed stores leave a note behind, so a row that says `reclaimed` is not the same as one that never captured.
+A capture store is the heavy part of a session. `h5i browser gc` reclaims the stored messages of sessions that ended over a week ago and keeps their records, request logs and ledgers; `--older-than 0` includes everything ended. `h5i browser rm <session>` erases a session entirely, and without names `rm --ended` / `--older-than DAYS` erase by shape, which is what shortens a registry `close` only ended: `close` keeps every record. Reclaimed stores leave a note behind, so a row that says `reclaimed` is not the same as one that never captured.
 
 ## Reading the output
 

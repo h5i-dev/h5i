@@ -1458,3 +1458,94 @@ fn gc_leaves_a_session_that_ended_inside_the_window() {
         "a bare gc must not take evidence from a session that just ended"
     );
 }
+
+#[test]
+fn rm_ended_clears_the_registry_a_close_only_emptied_of_live_sessions() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no engine built");
+    };
+    let first = fx.open(&["--session", "one", "--capture"]);
+    fx.run(&["browser", "close", "--session", "one"]);
+    let second = fx.open(&["--session", "two", "--capture"]);
+
+    // What `close --all` leaves behind is the reason this verb exists: it ends
+    // the live session and keeps every record, so the console still lists both.
+    let closed = fx.run(&["browser", "close", "--all"]);
+    assert!(closed.status.success());
+    assert!(fx.dir(&first).join("session.json").is_file());
+    assert!(fx.dir(&second).join("session.json").is_file());
+
+    // Saying so changes nothing until it is asked for.
+    let dry = fx.run(&["browser", "rm", "--ended", "--dry-run"]);
+    assert!(dry.status.success());
+    assert!(fx.dir(&first).exists(), "--dry-run removes nothing");
+
+    let out = fx.run(&["browser", "rm", "--ended"]);
+    assert!(
+        out.status.success(),
+        "rm --ended failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!fx.dir(&first).exists());
+    assert!(!fx.dir(&second).exists());
+}
+
+#[test]
+fn rm_older_than_leaves_a_session_that_just_ended() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no engine built");
+    };
+    let id = fx.open(&["--session", "fresh", "--capture"]);
+    fx.run(&["browser", "close", "--session", "fresh"]);
+
+    let out = fx.run(&["browser", "rm", "--older-than", "7"]);
+    assert!(out.status.success());
+    assert!(
+        fx.dir(&id).join("session.json").is_file(),
+        "a record from a moment ago is inside every sane window"
+    );
+
+    // And a window of nothing takes it, without `--ended` having to be said
+    // twice: a live session has no ending to be older than.
+    let out = fx.run(&["browser", "rm", "--older-than", "0"]);
+    assert!(out.status.success());
+    assert!(!fx.dir(&id).exists());
+}
+
+#[test]
+fn rm_leaves_a_live_session_alone_when_the_filter_swept_it_up() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no engine built");
+    };
+    let live = fx.open(&["--session", "running"]);
+
+    // `--all` means every record, and a live one is still refused: the filter
+    // chooses what to look at, `--force` is what decides a running engine.
+    let out = fx.run(&["browser", "rm", "--all"]);
+    assert!(!out.status.success(), "a live session is not removed by a filter");
+    assert!(fx.dir(&live).join("session.json").is_file());
+
+    let forced = fx.run(&["browser", "rm", "--all", "--force"]);
+    assert!(
+        forced.status.success(),
+        "rm --all --force failed: {}",
+        String::from_utf8_lossy(&forced.stderr)
+    );
+    assert!(!fx.dir(&live).exists());
+}
+
+#[test]
+fn close_all_says_what_it_kept_when_nothing_was_live() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no engine built");
+    };
+    let _id = fx.open(&["--session", "done"]);
+    fx.run(&["browser", "close", "--session", "done"]);
+
+    // "no browser session is open" on its own reads as a close that did
+    // nothing, when what it did is keep the record the console goes on listing.
+    let out = fx.run(&["browser", "close", "--all"]);
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(said.contains("1 ended session record"), "said: {said}");
+    assert!(said.contains("rm --ended"), "said: {said}");
+}

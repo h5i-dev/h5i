@@ -1493,6 +1493,8 @@ verbs, named the way boxes name the same two acts:
 
 ```bash
 h5i browser rm <session>...          # erase sessions entirely (--force for a live one)
+h5i browser rm --ended               # every session that has ended, no names needed
+h5i browser rm --older-than 30 --dry-run
 h5i browser gc                       # reclaim stored messages older than a week
 h5i browser gc --older-than 0 --dry-run
 ```
@@ -1502,6 +1504,14 @@ the stored messages of *ended* sessions, and leaves a `capture-reclaimed.json`
 where they were, so "the bytes were kept and later reclaimed" stays a different
 fact from "the bytes were never kept". What each session did and what recon
 found remain readable afterwards.
+
+`close` ends a session and keeps its record, so a console listing hundreds of
+sessions after `close --all` is the registry, not a close that failed: one
+record per `open`, and a benchmark adds one per target. `rm` is the verb that
+shortens that list. Without names it selects by shape instead: `--ended` for
+every session that has ended, `--all` for every record (a live one still needs
+`--force`), `--older-than DAYS` for the ones that ended before a cutoff, which
+on its own means `--ended`. `--dry-run` says what would go and removes nothing.
 
 ### Attention
 

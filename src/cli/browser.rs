@@ -332,10 +332,30 @@ pub enum BrowserCommands {
     /// `close` ends a session and keeps its account. This removes it. Names are
     /// processed in order, and one failure does not abort the rest, the way
     /// `h5i box rm` behaves.
+    ///
+    /// The registry grows by one record per `open` and nothing prunes it, so
+    /// the filters remove by the shape of a run rather than by name: after a
+    /// benchmark there are hundreds of ended sessions and no list of what they
+    /// were called.
     Rm {
         /// One or more session names or ids.
-        #[arg(required = true, num_args = 1..)]
+        #[arg(num_args = 1..)]
         names: Vec<String>,
+        /// Remove every session that has ended, rather than naming them.
+        #[arg(long, conflicts_with = "names")]
+        ended: bool,
+        /// Remove every record on this machine. A live session still needs
+        /// `--force`.
+        #[arg(long, conflicts_with_all = ["names", "ended"])]
+        all: bool,
+        /// Only sessions that ended at least this long ago, in days. On its
+        /// own it means `--ended`, since a live session has no ending to be
+        /// older than.
+        #[arg(long = "older-than", value_name = "DAYS", conflicts_with = "names")]
+        older_than: Option<u64>,
+        /// Say what would be removed, and remove nothing.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
         /// Remove even a session that is still live. Its engine is asked to
         /// stop first.
         #[arg(long)]
@@ -1284,9 +1304,13 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
 
         BrowserCommands::Rm {
             names,
+            ended,
+            all,
+            older_than,
+            dry_run,
             force,
             json,
-        } => rm(&root, &names, force, json),
+        } => rm(&root, &names, ended, all, older_than, dry_run, force, json),
         BrowserCommands::Gc {
             older_than,
             dry_run,
@@ -3276,13 +3300,38 @@ fn moved(was: &str, now: &str) -> anyhow::Result<()> {
 }
 
 /// `h5i browser rm`.
-fn rm(root: &Path, names: &[String], force: bool, json_out: bool) -> anyhow::Result<()> {
+#[allow(clippy::too_many_arguments)]
+fn rm(
+    root: &Path,
+    names: &[String],
+    ended: bool,
+    all: bool,
+    older_than: Option<u64>,
+    dry_run: bool,
+    force: bool,
+    json_out: bool,
+) -> anyhow::Result<()> {
+    let targets = rm_targets(root, names, ended, all, older_than)?;
+    if targets.is_empty() {
+        if json_out {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &json!({"dry_run": dry_run, "removed": [], "refused": [], "freed": 0})
+                )?
+            );
+        } else {
+            println!("  no session matched.");
+        }
+        return Ok(());
+    }
+
     let mut removed: Vec<Value> = Vec::new();
     let mut refused: Vec<Value> = Vec::new();
     let mut freed = 0u64;
 
-    for name in names {
-        let Some(session) = find_any(root, name) else {
+    for (name, session) in targets {
+        let Some(session) = session else {
             refused.push(json!({"name": name, "why": "no session by that name or id"}));
             continue;
         };
@@ -3291,6 +3340,17 @@ fn rm(root: &Path, names: &[String], force: bool, json_out: bool) -> anyhow::Res
                 "name": name,
                 "id": session.id,
                 "why": "it is still live: close it first, or pass --force",
+            }));
+            continue;
+        }
+        if dry_run {
+            let held = bs::held(root, &session.id);
+            freed += held.total();
+            removed.push(json!({
+                "name": session.name,
+                "id": session.id,
+                "freed": held.total(),
+                "store": held.store,
             }));
             continue;
         }
@@ -3322,18 +3382,27 @@ fn rm(root: &Path, names: &[String], force: bool, json_out: bool) -> anyhow::Res
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
+                "dry_run": dry_run,
                 "removed": removed,
                 "refused": refused,
                 "freed": freed,
             }))?
         );
     } else {
-        for row in &removed {
-            println!(
-                "  removed  : {} ({})",
-                row["name"].as_str().unwrap_or_else(|| row["id"].as_str().unwrap_or("?")),
-                human_bytes(row["freed"].as_u64().unwrap_or(0))
-            );
+        let verb = if dry_run { "would rm" } else { "removed" };
+        // A named removal answers for each name. A filtered one can be
+        // hundreds of records nobody chose one by one, so it answers with the
+        // tally rather than scrolling them past.
+        if names.is_empty() {
+            println!("  {verb:<9}: {} session(s)", removed.len());
+        } else {
+            for row in &removed {
+                println!(
+                    "  {verb:<9}: {} ({})",
+                    row["name"].as_str().unwrap_or_else(|| row["id"].as_str().unwrap_or("?")),
+                    human_bytes(row["freed"].as_u64().unwrap_or(0))
+                );
+            }
         }
         for row in &refused {
             println!(
@@ -3343,7 +3412,11 @@ fn rm(root: &Path, names: &[String], force: bool, json_out: bool) -> anyhow::Res
             );
         }
         if !removed.is_empty() {
-            println!("  freed    : {}", human_bytes(freed));
+            println!(
+                "  {:<9}: {}",
+                if dry_run { "would free" } else { "freed" },
+                human_bytes(freed)
+            );
         }
     }
     // One failure among several is reported, not fatal; all of them is.
@@ -3351,6 +3424,52 @@ fn rm(root: &Path, names: &[String], force: bool, json_out: bool) -> anyhow::Res
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// What `rm` was asked to erase, paired with the name to blame if it is not
+/// there. A name that resolves to nothing is a target with no session, because
+/// "no session by that name" is an answer `rm` reports rather than one that
+/// stops it partway through a list.
+fn rm_targets(
+    root: &Path,
+    names: &[String],
+    ended: bool,
+    all: bool,
+    older_than: Option<u64>,
+) -> anyhow::Result<Vec<(String, Option<bs::Session>)>> {
+    if !names.is_empty() {
+        return Ok(names
+            .iter()
+            .map(|name| (name.clone(), find_any(root, name)))
+            .collect());
+    }
+    if !(ended || all || older_than.is_some()) {
+        anyhow::bail!(
+            "name a session, or say which ones: --ended, --all, or --older-than DAYS"
+        );
+    }
+    let cutoff = older_than.map(|days| chrono::Utc::now() - chrono::Duration::days(days as i64));
+    Ok(bs::list(root)?
+        .into_iter()
+        .filter(|s| all || !s.state.is_live())
+        .filter(|s| match cutoff {
+            None => true,
+            // A live session has no ending to be older than, so the cutoff
+            // cannot speak for it; `--force` is what decides those. An ended
+            // one whose record carries no time is left alone, the way `gc`
+            // leaves it, rather than guessed about.
+            Some(_) if s.state.is_live() => true,
+            Some(cutoff) => s
+                .ended_at
+                .as_deref()
+                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+                .is_some_and(|at| at.with_timezone(&chrono::Utc) <= cutoff),
+        })
+        .map(|s| {
+            let label = s.name.clone().unwrap_or_else(|| s.id.clone());
+            (label, Some(s))
+        })
+        .collect())
 }
 
 /// A session by name or id, live or ended.
@@ -4400,11 +4519,11 @@ fn close(
     capture_drop: bool,
     json: bool,
 ) -> anyhow::Result<()> {
+    let mut kept_records = 0usize;
     let targets: Vec<bs::Session> = if all {
-        bs::list(root)?
-            .into_iter()
-            .filter(|s| s.state.is_live())
-            .collect()
+        let records = bs::list(root)?;
+        kept_records = records.iter().filter(|s| !s.state.is_live()).count();
+        records.into_iter().filter(|s| s.state.is_live()).collect()
     } else {
         match bs::resolve(root, selector) {
             Ok(session) => vec![session],
@@ -4420,6 +4539,20 @@ fn close(
             println!("[]");
         } else {
             println!("  no browser session is open.");
+            // Records outlive the sessions they describe, so a console still
+            // listing hundreds of them is not a `close --all` that failed to
+            // run. Name the count and where it goes, or the next reading of
+            // that list is that nothing happened.
+            if kept_records > 0 {
+                println!(
+                    "  kept     : {kept_records} ended session record(s), which is what \
+                     `h5i ui` and `h5i browser list --all` still show."
+                );
+                println!(
+                    "  to erase : `h5i browser rm --ended`, or `h5i browser gc` for just \
+                     their stored messages."
+                );
+            }
         }
         return Ok(());
     }

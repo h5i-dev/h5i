@@ -1161,10 +1161,22 @@ Erase sessions: their records, logs, jars and stored messages
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBrm\fR [\fB\-\-force\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAMES\fR> 
+\fBrm\fR [\fB\-\-ended\fR] [\fB\-\-all\fR] [\fB\-\-older\-than\fR] [\fB\-\-dry\-run\fR] [\fB\-\-force\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fINAMES\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
+.TP
+\fB\-\-ended\fR
+Remove every session that has ended, rather than naming them
+.TP
+\fB\-\-all\fR
+Remove every record on this machine. A live session still needs `\-\-force`
+.TP
+\fB\-\-older\-than\fR \fI<DAYS>\fR
+Only sessions that ended at least this long ago, in days. On its own it means `\-\-ended`, since a live session has no ending to be older than
+.TP
+\fB\-\-dry\-run\fR
+Say what would be removed, and remove nothing
 .TP
 \fB\-\-force\fR
 Remove even a session that is still live. Its engine is asked to stop first
@@ -1175,7 +1187,7 @@ Remove even a session that is still live. Its engine is asked to stop first
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
-<\fINAMES\fR>
+[\fINAMES\fR]
 One or more session names or ids
 .SH "H5I BROWSER GC"
 Reclaim the stored messages of ended sessions, keeping their accounts

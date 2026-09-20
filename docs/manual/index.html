@@ -1761,6 +1761,8 @@ tab with the live in-box browser terminal.</p>
 <p>A session's record, logs and ledger are small; its capture store is not. Two
 verbs, named the way boxes name the same two acts:</p>
 <pre><code class="language-bash">h5i browser rm &lt;session&gt;...          # erase sessions entirely (--force for a live one)
+h5i browser rm --ended               # every session that has ended, no names needed
+h5i browser rm --older-than 30 --dry-run
 h5i browser gc                       # reclaim stored messages older than a week
 h5i browser gc --older-than 0 --dry-run
 </code></pre>
@@ -1769,6 +1771,13 @@ the stored messages of <em>ended</em> sessions, and leaves a <code>capture-recla
 where they were, so "the bytes were kept and later reclaimed" stays a different
 fact from "the bytes were never kept". What each session did and what recon
 found remain readable afterwards.</p>
+<p><code>close</code> ends a session and keeps its record, so a console listing hundreds of
+sessions after <code>close --all</code> is the registry, not a close that failed: one
+record per <code>open</code>, and a benchmark adds one per target. <code>rm</code> is the verb that
+shortens that list. Without names it selects by shape instead: <code>--ended</code> for
+every session that has ended, <code>--all</code> for every record (a live one still needs
+<code>--force</code>), <code>--older-than DAYS</code> for the ones that ended before a cutoff, which
+on its own means <code>--ended</code>. <code>--dry-run</code> says what would go and removes nothing.</p>
 <h3 id="attention">Attention</h3>
 <p>Every session gets one of five states, and each carries the evidence that
 produced it rather than a score:</p>
