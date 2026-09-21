@@ -234,8 +234,7 @@ h5i browser open https://example.com/ --session public --new
 h5i browser snapshot --session auth
 ```
 
-Read media transcripts, choose a coherent browser identity, or watch a running
-browser:
+Read media transcripts, or choose a coherent browser identity:
 
 ```bash
 h5i browser transcript --url https://example.com/talk --lang en
@@ -243,14 +242,7 @@ h5i browser transcript --via yt-dlp --url https://www.youtube.com/watch?v=VIDEO_
 
 h5i browser open https://example.com --identity privacy
 h5i browser open https://example.com --script --identity firefox-143-linux
-
-h5i box view <name>
-h5i box view <name> --term
 ```
-
-<p align="center">
-  <img src="./docs/_static/browser-demo.gif" alt="An agent reading and acting on a page through h5i" width="99%" />
-</p>
 
 ---
 
