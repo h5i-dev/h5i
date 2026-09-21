@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import type { Fleet } from "./App";
 import type { BoxRow, SessionRow } from "./api";
 import { shownState } from "./seen";
+import { Trail } from "./Trail";
 import { ATTENTION_LABEL, AttentionTag, Cmd, Count, ago, hostOf, plural } from "./ui";
 
 /**
@@ -75,6 +76,8 @@ export function Overview({ fleet, go }: { fleet: Fleet; go: (parts: string[]) =>
               <Stat n={pressing.length} label="boxes under pressure" tone={pressing.length > 0 ? "bad" : undefined} />
             </div>
           </div>
+
+          <Trail fleet={fleet} />
 
           <Card title="Waiting on you" aside={waiting.length ? `${waiting.length}` : undefined}>
             {waiting.length === 0 ? (

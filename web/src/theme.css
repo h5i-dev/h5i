@@ -2404,3 +2404,204 @@ pre.render {
 .plist .srow:last-child {
   border-bottom: none;
 }
+
+/* ── the trail ─────────────────────────────────────────────────────────────── */
+
+/* The band under the hero. It reads as ground, not as a card: the numbers it
+   moves are already on the board, and the motion is the only thing it adds.
+   Red stays under the one rule above — the gate is a refused fetch. */
+
+.trail {
+  grid-column: 1 / -1;
+  padding: 2px 4px 0;
+}
+.trail.is-folded {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 4px;
+}
+.trail-svg {
+  display: block;
+  width: 100%;
+  /* Fixed, not `auto`: an intrinsic height off a viewBox is the one SVG
+     sizing rule engines disagree about, and a collapsed band is a bad trade
+     for a few pixels of fit. */
+  height: 68px;
+}
+.trail-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 2px;
+}
+.trail-caption {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+}
+.trail-toggle {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--ink-4);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.trail-toggle:hover {
+  color: var(--ink-2);
+}
+
+.trail-line {
+  stroke: var(--line-strong);
+  stroke-width: 1.2;
+}
+.trail-node circle {
+  fill: var(--surface-2);
+  stroke: var(--ink-4);
+  stroke-width: 1;
+}
+.trail-node text {
+  fill: var(--ink-4);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  text-anchor: middle;
+}
+.trail-flag line {
+  stroke: var(--amber);
+  stroke-width: 1.1;
+}
+.trail-flag path {
+  fill: var(--amber);
+}
+.trail-packet {
+  fill: var(--cyan);
+  /* The static position matters: a packet still waiting out its delay is not
+     animated yet, and would otherwise sit at the origin. */
+  transform: translateX(var(--trail-from));
+  animation: trail-walk var(--trail-dur) linear var(--trail-delay) infinite;
+}
+.trail-gate rect {
+  fill: var(--red-fill);
+}
+.trail-gate text {
+  fill: var(--accent-hi);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  text-anchor: end;
+}
+
+.trail-body {
+  fill: var(--accent);
+}
+.trail-eye {
+  fill: var(--ground);
+}
+.trail-tail {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  opacity: 0;
+}
+.trail-key circle {
+  fill: none;
+  stroke: var(--ink-2);
+  stroke-width: 1.2;
+}
+.trail-key path {
+  stroke: var(--ink-2);
+  stroke-width: 1.2;
+  fill: none;
+}
+
+/* The scout carries the walk; the group inside it carries the gait, so the
+   two compose without either needing to know the other's numbers. */
+.trail-scout {
+  transform: translateX(var(--trail-from));
+}
+.trail-bob {
+  transform-origin: 0 26px;
+}
+
+.is-working .trail-scout {
+  animation: trail-walk var(--trail-dur) ease-in-out infinite alternate;
+}
+.is-working .trail-bob {
+  animation: trail-bob 0.5s ease-in-out infinite alternate;
+}
+.is-working .trail-tail {
+  opacity: 0.35;
+}
+.is-idle .trail-bob,
+.is-quiet .trail-bob {
+  animation: trail-breathe 3.6s ease-in-out infinite alternate;
+}
+.is-waiting .trail-scout,
+.is-held .trail-scout {
+  transform: translateX(var(--trail-park));
+}
+.is-waiting .trail-body {
+  animation: trail-blink 1.6s ease-in-out infinite alternate;
+}
+.is-held .trail-body {
+  fill: var(--ink-3);
+}
+.is-quiet .trail-line {
+  stroke: var(--line);
+}
+.is-quiet .trail-body {
+  fill: var(--ink-4);
+}
+
+.trail-svg.is-paused * {
+  animation-play-state: paused;
+}
+
+@keyframes trail-walk {
+  from {
+    transform: translateX(var(--trail-from));
+  }
+  to {
+    transform: translateX(var(--trail-to));
+  }
+}
+@keyframes trail-bob {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-1.5px);
+  }
+}
+@keyframes trail-breathe {
+  from {
+    transform: scale(0.94);
+  }
+  to {
+    transform: scale(1.06);
+  }
+}
+@keyframes trail-blink {
+  from {
+    opacity: 0.45;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Under the console's breakpoint the drawing would scale down to labels no
+   one can read, so the picture goes and the line of facts stays. */
+@media (max-width: 900px) {
+  .trail-svg {
+    display: none;
+  }
+}
+
+/* The sheet-wide reduce rule collapses durations, which would leave the band
+   flickering rather than still. Here it stops outright. */
+@media (prefers-reduced-motion: reduce) {
+  .trail-svg * {
+    animation: none !important;
+  }
+}
