@@ -5,7 +5,20 @@ set -e
 # truncated `curl … | sh` cannot execute a half-downloaded prefix.
 main() {
   REPO="h5i-dev/h5i"
-  INSTALL_DIR="${H5I_INSTALL_DIR:-/usr/local/bin}"
+
+  # ── where it goes ──────────────────────────────────────────────────────────
+  # /usr/local/bin whenever it can be had, because a root-owned binary is the
+  # one an agent sharing this uid cannot rewrite (see the install step below).
+  # A machine with no sudo — a container, a locked-down shared host, CI as a
+  # non-root user — gets the user directory instead of a failed install.
+  # H5I_INSTALL_DIR always wins: naming a directory is already the decision.
+  if [ -n "${H5I_INSTALL_DIR:-}" ]; then
+    INSTALL_DIR="$H5I_INSTALL_DIR"
+  elif [ -w /usr/local/bin ] || command -v sudo >/dev/null 2>&1; then
+    INSTALL_DIR="/usr/local/bin"
+  else
+    INSTALL_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
+  fi
 
   # ── what to install ────────────────────────────────────────────────────────
   # One binary by default. The rendering engine used to ship as a second file
@@ -55,6 +68,9 @@ main() {
         echo "  curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test"
         echo
         echo "Environment: H5I_INSTALL_DIR, H5I_VERSION, H5I_SKIP_CHECKSUM"
+        echo
+        echo "Installs into /usr/local/bin, or into \${XDG_BIN_HOME:-~/.local/bin}"
+        echo "when that would need root and sudo is not available."
         exit 0
         ;;
       *)
@@ -139,6 +155,15 @@ main() {
     echo "Neither sha256sum nor shasum found; cannot verify the download." >&2
     echo "Install one, or re-run with H5I_SKIP_CHECKSUM=1 to accept the risk." >&2
     exit 1
+  fi
+
+  # A directory that does not exist yet is the common case for the user-area
+  # fallback. Create it as this user where that works, and only reach for sudo
+  # for a path under a root-owned parent.
+  if [ ! -d "$INSTALL_DIR" ]; then
+    mkdir -p "$INSTALL_DIR" 2>/dev/null \
+      || { command -v sudo >/dev/null 2>&1 && sudo mkdir -p "$INSTALL_DIR"; } \
+      || { echo "Could not create ${INSTALL_DIR}." >&2; exit 1; }
   fi
 
   for BINARY in $BINARIES; do
@@ -238,13 +263,36 @@ main() {
       # so rather than leaving it to be discovered.
       echo "!  ${INSTALL_DIR} is writable by this user, so anything running as you can replace" >&2
       echo "   ${INSTALL_DIR}/${BINARY} — including an agent in an isolation=workspace box, which" >&2
-      echo "   shares your uid. For a root-owned install: H5I_INSTALL_DIR=/opt/h5i/bin sh install.sh" >&2
-    else
+      echo "   shares your uid." >&2
+      if command -v sudo >/dev/null 2>&1; then
+        echo "   For a root-owned install: H5I_INSTALL_DIR=/opt/h5i/bin sh install.sh" >&2
+      else
+        echo "   There is no sudo here, so a root-owned install is not available to close it." >&2
+      fi
+    elif command -v sudo >/dev/null 2>&1; then
       sudo install -o root -g 0 -m 755 "${TMP}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
+    else
+      # Only reachable through H5I_INSTALL_DIR: the directory chosen above is
+      # either writable or backed by a sudo this branch has just failed to find.
+      echo "Cannot write to ${INSTALL_DIR}, and sudo is not available." >&2
+      echo "Name a directory you own instead:" >&2
+      echo "  H5I_INSTALL_DIR=\"\$HOME/.local/bin\" sh install.sh" >&2
+      exit 1
     fi
 
     echo "✔  ${BINARY} ${VERSION} installed: run ${BINARY} --help"
   done
+
+  # `h5i --help` is the line printed above, and it is a lie if the shell cannot
+  # find it — which is the normal state of a fresh ~/.local/bin.
+  case ":${PATH}:" in
+    *":${INSTALL_DIR}:"*) ;;
+    *)
+      echo
+      echo "!  ${INSTALL_DIR} is not on your PATH. Add it:" >&2
+      echo "     export PATH=\"${INSTALL_DIR}:\$PATH\"" >&2
+      ;;
+  esac
 }
 
 main "$@"

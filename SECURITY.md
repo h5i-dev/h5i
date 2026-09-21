@@ -114,9 +114,12 @@ belong here rather than there:
   `session login`, which withholds the reads that would put a typed credential
   into a snapshot while the live view keeps streaming.
 - A user-writable install directory is a user-writable h5i. Homebrew on macOS is
-  the common case. An `isolation=workspace` box shares your uid, so it can
-  rewrite the binary that confines every other box, and a later `sudo h5i` runs
-  that binary as root. `H5I_INSTALL_DIR=/opt/h5i/bin` closes it.
+  the common case, and so is a machine with no sudo, where `install.sh` falls
+  back to `~/.local/bin` rather than refusing to install. An
+  `isolation=workspace` box shares your uid, so it can rewrite the binary that
+  confines every other box, and a later `sudo h5i` runs that binary as root.
+  `H5I_INSTALL_DIR=/opt/h5i/bin` closes it where root is available at all; the
+  installer says so at install time either way.
 
 Secret detection and redaction are guards, not guarantees, and h5i does not
 claim a hostile repository cannot exploit your editor, build tools or OS on the
