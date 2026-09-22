@@ -7937,3 +7937,40 @@ fn a_computed_style_is_a_whole_declaration() {
         "true"
     );
 }
+
+/// A name that is not a CSS property is absent from a style, not empty.
+///
+/// Both style proxies answered *any* unknown name with a property value, so
+/// `el.style.whatever` and `getComputedStyle(el).whatever` came back as `""`.
+/// The `has` trap already disagreed — it said the name was not there — and the
+/// cost of the disagreement was that calling one of them was a call on a
+/// string, which is how a page trying to render ended up with
+/// "not a callable function".
+#[test]
+fn a_style_name_that_is_not_a_property_is_undefined() {
+    let (_page, mut script) = page_and_script("<html><body><div id='a'>a</div></body></html>");
+
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { const el = document.querySelector('#a'); \
+                   return [typeof el.style.notACssProp, \
+                     typeof getComputedStyle(el).notACssProp, \
+                     'notACssProp' in el.style].join(','); })()"
+            )
+            .unwrap(),
+        "undefined,undefined,false",
+        "`get` and `has` have to agree"
+    );
+    // And a real property still reads.
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { const el = document.querySelector('#a'); \
+                   el.style.color = 'red'; \
+                   return el.style.color + ',' + ('color' in el.style); })()"
+            )
+            .unwrap(),
+        "red,true"
+    );
+}

@@ -5990,9 +5990,24 @@
   // `el.style.backgroundColor = 'red'` has to reach `background-color`, so the
   // camelCase surface is a proxy over the dashed one rather than a second list
   // that could disagree with it.
+  /// Whether a name on a style declaration is a CSS property at all.
+  ///
+  /// Asked of Stylo with `inherit`, which is valid for every real property.
+  /// The vendor dance maps `WebkitFoo` back to `-webkit-foo`, which
+  /// camel-to-dash alone cannot know.
+  function isStyleName(key) {
+    const dash = camelToDash(key);
+    if (api.supportsCss(dash, "inherit")) return true;
+    return /^(webkit|moz|ms|o)-/.test(dash) && api.supportsCss(`-${dash}`, "inherit");
+  }
+
   const styleHandler = {
     get(target, key) {
       if (typeof key !== "string" || key in target) return Reflect.get(target, key);
+      // A name that is not a property is *absent*, not empty. Answering `""`
+      // for everything made `style.anything()` a call on a string, and the
+      // `has` trap below already disagreed with it.
+      if (!isStyleName(key)) return undefined;
       return target.getPropertyValue(camelToDash(key));
     },
     // `"color" in el.style` is how pages feature-detect a CSS property, and
@@ -6002,9 +6017,7 @@
     // back to `-webkit-foo`, which camel-to-dash alone cannot know.
     has(target, key) {
       if (typeof key !== "string" || key in target) return Reflect.has(target, key);
-      const dash = camelToDash(key);
-      if (api.supportsCss(dash, "inherit")) return true;
-      return /^(webkit|moz|ms|o)-/.test(dash) && api.supportsCss(`-${dash}`, "inherit");
+      return isStyleName(key);
     },
     set(target, key, value) {
       if (typeof key === "string" && !(key in target)) {
@@ -10135,7 +10148,9 @@
         {
           get(target, key) {
             if (typeof key !== "string" || key in target) return Reflect.get(target, key);
-            return read(camelToDash(key));
+            // Absent, not empty — the same rule the `has` trap below applies.
+            const dash = camelToDash(key);
+            return api.isCssProperty(dash) ? read(dash) : undefined;
           },
           // `"color" in getComputedStyle(el)` asks `has`, not `get`, and without this trap it
           // fell through to the bare backing object and answered **false for every property**.
