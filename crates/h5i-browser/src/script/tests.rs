@@ -7556,3 +7556,33 @@ fn a_regexp_source_is_unchanged_by_a_round_trip() {
         r"(?:\/)?"
     );
 }
+
+/// A getter that replaces itself with its value, read twice through one site.
+///
+/// The property cache filed the slot it was *found* in under the shape the
+/// getter left behind, so the second read called the stored value as though it
+/// were still the getter. Every lazily-built field is written this way, and it
+/// took grok.com's whole app down: React's hydration threw, and the page an
+/// agent read was the site's own error boundary. Fixed in the engine fork; this
+/// is here because the page-level symptom is what we would see again.
+#[test]
+fn a_self_replacing_getter_answers_the_same_twice() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    assert_eq!(
+        script
+            .eval_value(
+                "function read(o) { return o.shape; } \
+                 const src = { a: 1, b: 2 }; \
+                 const o = { shape: src }; \
+                 Object.defineProperty(o, 'shape', { configurable: true, get() { \
+                    const v = { ...src }; \
+                    Object.defineProperty(o, 'shape', { value: v, configurable: true }); \
+                    return v; \
+                 } }); \
+                 Object.keys(read(o)).join('') + '|' + Object.keys(read(o)).join('')"
+            )
+            .unwrap(),
+        "ab|ab"
+    );
+}
