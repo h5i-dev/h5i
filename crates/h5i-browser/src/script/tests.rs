@@ -7974,3 +7974,41 @@ fn a_style_name_that_is_not_a_property_is_undefined() {
         "red,true"
     );
 }
+
+/// A declaration reports its `!important` priorities.
+///
+/// `getPropertyPriority` was missing entirely, so calling it was a call on
+/// nothing. Anything that walks a declaration calls it — copying a style
+/// without it silently drops every priority — and it is where grok.com's
+/// session recorder died mid-render.
+#[test]
+fn a_declaration_reports_its_priorities() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='a' style='color: red !important; margin: 2px'>a</div></body></html>",
+    );
+
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { const s = document.querySelector('#a').style; \
+                   return [typeof s.getPropertyPriority, \
+                     s.getPropertyPriority('color'), \
+                     s.getPropertyPriority('margin'), \
+                     s.getPropertyValue('color')].join('|'); })()"
+            )
+            .unwrap(),
+        "function|important||red",
+        "the priority is reported, and is not part of the value"
+    );
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { const s = document.querySelector('#a').style; \
+                   s.setProperty('padding', '3px', 'important'); \
+                   return s.getPropertyPriority('padding') + '/' + s.getPropertyValue('padding'); \
+                 })()"
+            )
+            .unwrap(),
+        "important/3px"
+    );
+}

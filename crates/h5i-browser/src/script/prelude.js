@@ -5910,6 +5910,10 @@
   // a parallel object, so what script sets is what the cascade sees and what a
   // later `getAttribute("style")` returns. One source of truth, same rule the
   // DOM follows.
+  /// The priority suffix, recognised in one place so the reader and the writer
+  /// cannot disagree about what it looks like.
+  const IMPORTANT = /!\s*important\s*$/i;
+
   class StyleDeclaration {
     /// `source` is a get/set pair for the declaration *text*.
     ///
@@ -5946,16 +5950,35 @@
 
     getPropertyValue(name) {
       const property = String(name).toLowerCase();
-      return serializedValue(property, this._read().get(property));
+      const raw = this._read().get(property);
+      // Without its priority: `!important` belongs to the declaration, and a
+      // page comparing this against a plain value must not see it here.
+      return serializedValue(
+        property,
+        raw === undefined ? raw : raw.replace(IMPORTANT, "").trim()
+      );
     }
-    setProperty(name, value) {
+    /// `"important"` or `""`, which is the whole of this method.
+    ///
+    /// It was missing, so `el.style.getPropertyPriority(...)` was a call on
+    /// nothing. Anything walking a declaration calls it — that is how a style
+    /// is copied without losing its priorities.
+    getPropertyPriority(name) {
+      const raw = this._read().get(String(name).toLowerCase());
+      return raw !== undefined && IMPORTANT.test(raw) ? "important" : "";
+    }
+    setProperty(name, value, priority) {
       // A **copy**: `_read()` hands back the shared memo, and mutating it would
       // corrupt the entry every other element with the same `style` text reads.
       const map = new Map(this._read());
       if (value === "" || value === null || value === undefined) {
         map.delete(String(name).toLowerCase());
       } else {
-        map.set(String(name).toLowerCase(), String(value));
+        const important = String(priority ?? "").toLowerCase() === "important";
+        map.set(
+          String(name).toLowerCase(),
+          important ? `${String(value)} !important` : String(value)
+        );
       }
       this._write(map);
     }
