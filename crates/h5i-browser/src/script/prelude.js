@@ -10094,8 +10094,44 @@
       // would, and it would never find out.
       if (!element || element._id === undefined) return { getPropertyValue: () => "" };
       const read = (name) => api.computedStyle(element._id, String(name)) || "";
+      /// The whole interface, not one method of it.
+      ///
+      /// The proxy below answers any name it does not recognise with a
+      /// property *value*, so a backing object carrying only
+      /// `getPropertyValue` turned every other member into `""` — and calling
+      /// one threw "not a callable function" on an empty string. A resolved
+      /// style is read-only, which is what the two mutators say.
+      const refuse = () => {
+        throw new DOMException(
+          "a computed style is read-only",
+          "NoModificationAllowedError"
+        );
+      };
+      const backing = {
+        getPropertyValue: read,
+        // A resolved value never carries `!important`: the cascade is already
+        // over by the time it is read.
+        getPropertyPriority: () => "",
+        setProperty: refuse,
+        removeProperty: refuse,
+        // Enumerating the resolved longhands needs a list this engine does not
+        // keep, so it says so rather than answering an empty style.
+        get length() {
+          api.unsupported("getComputedStyle().length");
+          return 0;
+        },
+        item: () => {
+          api.unsupported("getComputedStyle().item");
+          return "";
+        },
+        // Both are what a browser reports for a *computed* declaration.
+        get cssText() { return ""; },
+        set cssText(value) { void value; refuse(); },
+        parentRule: null,
+      };
+      Object.setPrototypeOf(backing, StyleDeclaration.prototype);
       return new Proxy(
-        { getPropertyValue: read },
+        backing,
         {
           get(target, key) {
             if (typeof key !== "string" || key in target) return Reflect.get(target, key);

@@ -3798,7 +3798,14 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     // decode of what came back, so no binary request or reply survived the
     // round trip and a gRPC-web API called its own frames malformed. `fetch`
     // and `Response` are on every page, so neither half is tierable.
-    const BUDGET_KIB: usize = 290;
+    // 291 to give a computed style the rest of its interface. The proxy
+    // answers an unrecognised name with a property *value*, so a backing
+    // object carrying only `getPropertyValue` turned `item`, `setProperty`
+    // and the rest into `""` — and calling one threw "not a callable
+    // function" on an empty string, which is what stopped grok.com rendering
+    // its main pane. `getComputedStyle` is on every page, so it cannot be a
+    // tier.
+    const BUDGET_KIB: usize = 291;
 
     assert!(
         !super::PRELUDE.contains("/*"),
@@ -7885,4 +7892,48 @@ fn answers_this_engine_has_are_not_reported_as_gaps() {
         "SLOT"
     );
     assert!(script.unsupported().is_empty(), "{:?}", script.unsupported());
+}
+
+/// A computed style carries the whole `CSSStyleDeclaration` interface.
+///
+/// The proxy answers any name it does not recognise with a property value, so
+/// a backing object holding only `getPropertyValue` turned every other member
+/// into `""`. Reading one gave a string where a function belonged, and calling
+/// it threw "not a callable function" on an empty string.
+#[test]
+fn a_computed_style_is_a_whole_declaration() {
+    let (_page, mut script) = page_and_script(
+        "<html><head><style>#a{color:red}</style></head><body><div id='a'>a</div></body></html>",
+    );
+
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { const cs = getComputedStyle(document.querySelector('#a')); \
+                   return [typeof cs.getPropertyValue, typeof cs.getPropertyPriority, \
+                     typeof cs.item, typeof cs.setProperty, typeof cs.length].join(','); })()"
+            )
+            .unwrap(),
+        "function,function,function,function,number"
+    );
+    // A resolved value is never `!important`, and the declaration is read-only.
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { const cs = getComputedStyle(document.querySelector('#a')); \
+                   return cs.getPropertyPriority('color') + '|' + \
+                     (() => { try { cs.setProperty('color', 'blue'); return 'set'; } \
+                              catch (e) { return e.name; } })(); })()"
+            )
+            .unwrap(),
+        "|NoModificationAllowedError"
+    );
+    assert_eq!(
+        script
+            .eval_value(
+                "getComputedStyle(document.querySelector('#a')) instanceof CSSStyleDeclaration"
+            )
+            .unwrap(),
+        "true"
+    );
 }
