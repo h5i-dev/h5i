@@ -352,6 +352,20 @@
     for (const el of found) prepareInsertedScript(el);
   }
 
+  /// Run `code` as `el`'s script, with `document.currentScript` naming `el`.
+  /// The parser-time path on the Rust side already does this; without it here,
+  /// a loader that injects its own tags read null and could not find itself.
+  /// Restored rather than nulled, because a script can insert a script.
+  function evalAsScript(el, code) {
+    const outer = globalThis.__h5iCurrentScript;
+    globalThis.__h5iCurrentScript = el._id;
+    try {
+      (0, eval)(code);
+    } finally {
+      globalThis.__h5iCurrentScript = outer;
+    }
+  }
+
   function prepareInsertedScript(el) {
     if (el.__h5iScriptStarted || !el.isConnected) return;
     const kind = scriptKindOf(el);
@@ -374,7 +388,7 @@
           return response.text();
         })
         .then((code) => {
-          if (kind === "classic") (0, eval)(code);
+          if (kind === "classic") evalAsScript(el, code);
           el.dispatchEvent(new Event("load"));
         })
         .catch(() => el.dispatchEvent(new Event("error")));
@@ -385,7 +399,7 @@
     if (kind !== "classic") return;
     el.__h5iScriptStarted = true;
     try {
-      (0, eval)(code);
+      evalAsScript(el, code);
     } catch (error) {
       console.error(`inserted script threw: ${withStack(error)}`);
     }
@@ -622,7 +636,10 @@
         // `then` is probed by the promise machinery on anything it is handed;
         // recording it would report a missing API every time a node passed
         // through an await.
-        if (property === "then") return undefined;
+        // `toJSON` is the same: `JSON.stringify` asks every object it walks for
+        // one, and a DOM node has none in any browser. Reporting it named a gap
+        // that no engine fills.
+        if (property === "then" || property === "toJSON") return undefined;
 
         // Nor is a page's own bookkeeping. No web platform property begins with
         // an underscore or a dollar; frameworks' private fields routinely do.
@@ -1632,6 +1649,73 @@
     set textContent(v) { this.value = v; }
   }
 
+  /// A **live** `NamedNodeMap`, which is what the DOM says `attributes` is.
+  ///
+  /// Liveness is not a nicety here. React clears an element it is re-hydrating
+  /// with `for (const map = el.attributes; map.length; )
+  /// el.removeAttributeNode(map[0])`, and over the snapshot array this used to
+  /// return, `map.length` never falls and the loop never ends.
+  class NamedNodeMap {
+    constructor(owner) { this._owner = owner; }
+    get length() { return api.attrNames(this._owner._id).length; }
+    item(index) {
+      const name = api.attrNames(this._owner._id)[Number(index)];
+      return name === undefined ? null : this._owner.getAttributeNode(name);
+    }
+    getNamedItem(name) { return this._owner.getAttributeNode(name); }
+    setNamedItem(attr) { return this._owner.setAttributeNode(attr); }
+    removeNamedItem(name) {
+      const attr = this._owner.getAttributeNode(name);
+      if (!attr) {
+        throw new DOMException(`there is no attribute named \`${name}\``, "NotFoundError");
+      }
+      return this._owner.removeAttributeNode(attr);
+    }
+    // Namespaces are not modelled in this tree, so the local name is the whole
+    // name and the NS forms are the plain ones.
+    getNamedItemNS(namespace, localName) { return this.getNamedItem(localName); }
+    setNamedItemNS(attr) { return this.setNamedItem(attr); }
+    removeNamedItemNS(namespace, localName) { return this.removeNamedItem(localName); }
+    [Symbol.iterator]() {
+      const map = this;
+      let at = 0;
+      return {
+        next: () => (at < map.length
+          ? { value: map.item(at++), done: false }
+          : { value: undefined, done: true }),
+      };
+    }
+  }
+
+  const ARRAY_INDEX = /^(0|[1-9][0-9]*)$/;
+
+  /// The index and named access WebIDL gives the map, over that live backing.
+  const namedNodeMapHandler = {
+    get(target, key) {
+      if (typeof key !== "string" || key in target) return Reflect.get(target, key);
+      if (ARRAY_INDEX.test(key)) return target.item(Number(key));
+      return target.getNamedItem(key);
+    },
+    has(target, key) {
+      if (typeof key !== "string" || key in target) return Reflect.has(target, key);
+      if (ARRAY_INDEX.test(key)) return target.item(Number(key)) !== null;
+      return target.getNamedItem(key) !== null;
+    },
+    ownKeys(target) {
+      const names = api.attrNames(target._owner._id);
+      return names.map((_, index) => String(index)).concat(names);
+    },
+    getOwnPropertyDescriptor(target, key) {
+      if (typeof key === "string" && !(key in target)) {
+        const value = ARRAY_INDEX.test(key)
+          ? target.item(Number(key))
+          : target.getNamedItem(key);
+        if (value) return { configurable: true, enumerable: true, writable: false, value };
+      }
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+  };
+
   /// A processing instruction, which this engine's parser never produces —
   /// blitz reads `<?pi?>` as a comment — but pages construct to inspect, and
   /// the demand list counted 195 asks for exactly that.
@@ -1776,6 +1860,45 @@
       }
     }
     hasAttribute(name) { return api.getAttr(this._id, String(name)) !== null; }
+    /// The attribute-node family. The `Attr` handed back is a *view* of the
+    /// element's attribute rather than a copy — its `value` reads through — so
+    /// a node taken from the live map above cannot disagree with the element.
+    ///
+    /// The name is tried as written before it is lowered, because this tree
+    /// holds `viewBox` on an `<svg>` exactly as the parser read it.
+    getAttributeNode(name) {
+      const node = this;
+      const exact = String(name);
+      const make = (as) => internal(() => new Attr(as, api.getAttr(node._id, as), node));
+      if (api.getAttr(node._id, exact) !== null) return make(exact);
+      const lowered = exact.toLowerCase();
+      if (lowered !== exact && api.getAttr(node._id, lowered) !== null) return make(lowered);
+      return null;
+    }
+    getAttributeNodeNS(namespace, localName) { return this.getAttributeNode(localName); }
+    setAttributeNode(attr) {
+      if (!attr || attr.nodeType !== 2) throw new TypeError("setAttributeNode takes an Attr");
+      const previous = this.getAttributeNode(attr.name);
+      this.setAttribute(attr.name, attr.value);
+      attr._owner = this;
+      return previous;
+    }
+    setAttributeNodeNS(attr) { return this.setAttributeNode(attr); }
+    /// Remove the attribute this node stands for and hand the node back
+    /// detached, still holding the value it had: its owner is gone, so it has
+    /// nothing left to read through to.
+    removeAttributeNode(attr) {
+      if (!attr || attr.nodeType !== 2) throw new TypeError("removeAttributeNode takes an Attr");
+      const name = attr.name;
+      if (api.getAttr(this._id, name) === null) {
+        throw new DOMException(`there is no attribute named \`${name}\``, "NotFoundError");
+      }
+      const held = attr.value;
+      this.removeAttribute(name);
+      attr._owner = null;
+      attr._value = held;
+      return attr;
+    }
     toggleAttribute(name, force) {
       const has = this.hasAttribute(name);
       const want = force === undefined ? !has : !!force;
@@ -1915,20 +2038,13 @@
     // name. The last is not a nicety: jQuery 1.x reads
     // `div.attributes["onsubmit"].expando` and threw on the undefined, before
     // it had finished defining `$`.
+    // One map per element, as a browser hands back: the liveness is in the
+    // reads, so there is nothing to rebuild and nothing that goes stale.
     get attributes() {
-      const node = this;
-      const list = api.attrNames(this._id).map((name) => internal(
-        () => new Attr(name, api.getAttr(node._id, name), node),
-      ));
-      list.getNamedItem = (name) =>
-        list.find((a) => a.name === String(name).toLowerCase()) || null;
-      for (const attr of list) {
-        // A named property never shadows something the list already answers
-        // to: `length` is the count, not the attribute of that name.
-        if (attr.name in list) continue;
-        Object.defineProperty(list, attr.name, { configurable: true, value: attr });
+      if (!this.__h5iAttrMap) {
+        this.__h5iAttrMap = new Proxy(new NamedNodeMap(this), namedNodeMapHandler);
       }
-      return list;
+      return this.__h5iAttrMap;
     }
     hasAttributes() { return api.attrNames(this._id).length > 0; }
     getAttributeNames() { return api.attrNames(this._id); }
@@ -5890,6 +6006,11 @@
   StyleDeclaration = function (source) {
     return new Proxy(new RawStyleDeclaration(source), styleHandler);
   };
+  // This wrapper is what pages see as `CSSStyleDeclaration`, so it has to carry
+  // the real prototype: a plain function's own is a fresh empty object, which
+  // left `CSSStyleDeclaration.prototype.setProperty` undefined and every
+  // `style instanceof CSSStyleDeclaration` false.
+  StyleDeclaration.prototype = RawStyleDeclaration.prototype;
 
   // ── events ───────────────────────────────────────────────────────────────
 
@@ -7502,6 +7623,8 @@
     "_tag",
     // The token list a `classList` read memoises on its element.
     "__h5iClassList",
+    // The live attribute map an `attributes` read memoises beside it.
+    "__h5iAttrMap",
     // A form control's dirty overlay: present only once something set it.
     "_checked", "_value", "_selected",
     // The shadow root an element may have been given, and usually was not.
@@ -7867,9 +7990,7 @@
       return collection(out);
     },
     createTextNode(text) { return wrap(api.createText(String(text))); },
-    /// A detached attribute node. **`setAttributeNode` does not exist here**,
-    /// so what comes back is inspectable and not yet installable; saying so is
-    /// better than a comment promising a method the prelude has never had.
+    /// A detached attribute node, which `setAttributeNode` then installs.
     createAttribute(name) {
       const lowered = String(name).toLowerCase();
       validateQualifiedName(lowered);
@@ -8022,6 +8143,37 @@
     // something this engine is missing.
     namespaceURI: undefined,
     ownerDocument: null,
+    // Never prerendered here, but the answer is a boolean either way: read as a
+    // gap, a page waits on a `prerenderingchange` that is not coming.
+    prerendering: false,
+    // IE's, and absent in every browser a page would meet today. Defined so
+    // the feature test that reads it is answered rather than counted a gap.
+    documentMode: undefined,
+    /// The loaded font set, which is what a page waits on before it measures
+    /// text. Already settled: this engine has the fonts it has by the time
+    /// script runs, so `ready` is resolved and `status` promises nothing more.
+    get fonts() {
+      if (!this.__h5iFonts) {
+        const faces = new Set();
+        const set = {
+          status: "loaded",
+          get size() { return faces.size; },
+          add(face) { faces.add(face); return this; },
+          has(face) { return faces.has(face); },
+          delete(face) { return faces.delete(face); },
+          clear() { faces.clear(); },
+          forEach(fn, thisArg) { for (const f of faces) fn.call(thisArg, f, f, set); },
+          check() { return true; },
+          load() { return Promise.resolve([]); },
+          addEventListener() {},
+          removeEventListener() {},
+          [Symbol.iterator]() { return faces[Symbol.iterator](); },
+        };
+        set.ready = Promise.resolve(set);
+        this.__h5iFonts = set;
+      }
+      return this.__h5iFonts;
+    },
     get implementation() { return domImplementation(null); },
 
     /// **"CSS1Compat", and that is a fact about this engine rather than a
@@ -8260,6 +8412,12 @@
 
   // Only *converging* timers count as work outstanding.
   lazyGlobals("sockets", ["WebSocket", "EventSource"]);
+  lazyGlobals("streams", [
+    "ReadableStream", "ReadableStreamDefaultReader", "ReadableStreamDefaultController",
+    "WritableStream", "WritableStreamDefaultWriter", "WritableStreamDefaultController",
+    "TransformStream", "TransformStreamDefaultController",
+    "CountQueuingStrategy", "ByteLengthQueuingStrategy",
+  ]);
 
   /// What the settle loop asks every round. A page that never opened a socket
   /// has no sockets to drain, and answering that without loading the tier is
@@ -9736,6 +9894,21 @@
       appVersion: api.userAgent().replace(/^Mozilla\//, ""),
       appCodeName: "Mozilla",
       product: "Gecko",
+      /// A fire-and-forget POST, sent rather than stubbed: the allowlist still
+      /// decides whether it leaves, and a page told "not queued" falls back to
+      /// a synchronous request that costs it more than the beacon would.
+      sendBeacon(url, data) {
+        try {
+          fetch(String(url), {
+            method: "POST",
+            body: data === undefined ? null : data,
+            keepalive: true,
+          }).catch(() => {});
+          return true;
+        } catch (error) {
+          return false;
+        }
+      },
       // ── The session's identity, from the host ────────────────────────────
       //
       // Literals here were the bug, not the style: the broker wrote the same

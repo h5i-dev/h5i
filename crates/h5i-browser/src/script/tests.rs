@@ -3778,7 +3778,21 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     // properties: the pair jQuery 1.x feature-detects on its way in. Neither is
     // tierable — both are read before any page code runs — and without them the
     // library threw before defining `$`, which is every page written against it.
-    const BUDGET_KIB: usize = 284;
+    //
+    // 288 to make that same NamedNodeMap *live*, and for the attribute-node
+    // family beside it. React clears an element it is re-hydrating with
+    // `for (const map = el.attributes; map.length; ) el.removeAttributeNode(map[0])`,
+    // which over a snapshot never terminates and without the method throws on
+    // the first turn — so an App Router page rendered its error boundary
+    // instead of itself. `attributes` is core DOM and the map has to answer
+    // from the tree on every read, so neither half is tierable. The Streams
+    // standard arrived with this and is a tier, because only a page that names
+    // `ReadableStream` pays for it.
+    //
+    // 289 for `document.fonts` and `navigator.sendBeacon`, both of which this
+    // corpus's pages call and neither of which a tier can hold: they are read
+    // off objects the core already hands out.
+    const BUDGET_KIB: usize = 289;
 
     assert!(
         !super::PRELUDE.contains("/*"),
@@ -5113,12 +5127,17 @@ fn an_unknown_property_on_an_element_names_itself() {
 fn an_unknown_property_on_document_names_itself() {
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
 
-    assert_eq!(script.eval_value("typeof document.fonts").unwrap(), "undefined");
+    // A real API this engine does not have. It was `document.fonts` until that
+    // one arrived; what is under test is the naming, not which API is absent.
+    assert_eq!(
+        script.eval_value("typeof document.startViewTransition").unwrap(),
+        "undefined"
+    );
     assert!(
         script
             .unsupported()
             .iter()
-            .any(|(name, _)| name == "document.fonts"),
+            .any(|(name, _)| name == "document.startViewTransition"),
         "{:?}",
         script.unsupported()
     );
@@ -6465,9 +6484,15 @@ fn the_element_walk_and_attribute_list_answer() {
         "EM"
     );
 
-    // Attributes, in source order, with a name lookup.
+    // Attributes, in source order, with a name lookup. Through `Array.from`
+    // because the map is a `NamedNodeMap` and not an array: a browser has no
+    // `.map` here either, and the loop React clears an element with needs the
+    // live map rather than the snapshot that shape used to imply.
     assert_eq!(
-        script.eval_value("document.querySelector('#d').attributes.map(a => a.name).join(',')")
+        script
+            .eval_value(
+                "Array.from(document.querySelector('#d').attributes).map(a => a.name).join(',')"
+            )
             .unwrap(),
         "id,class,data-x"
     );

@@ -1268,7 +1268,17 @@ impl Page {
             };
 
             script.set_current_script(Some(node));
-            if let Err(error) = script.eval_named(&code, &where_from) {
+            let ran = script.eval_named(&code, &where_from);
+            // Before `currentScript` is cleared, which is where HTML puts it:
+            // the checkpoint is inside "run a classic script", and only the
+            // step *after* that restores the element. So a continuation this
+            // script queued still sees the script it came from — which is how
+            // a chunk loader that awaits before instantiating finds its own
+            // tag. Clearing first read as "no script is running" and every
+            // such loader failed.
+            script.microtask_checkpoint();
+            script.set_current_script(None);
+            if let Err(error) = ran {
                 // Reported, not fatal: a page with one broken script is still a
                 // page, and the agent needs to know which half it is reading.
                 //
@@ -1279,9 +1289,6 @@ impl Page {
                 script.note_error(&format!("{where_from}: {error}"));
             }
         }
-        // Null again once the classic scripts are done, because that is what a
-        // module and a later callback are supposed to see.
-        script.set_current_script(None);
 
         // One budget for the whole phase, not one per stage. The settle used to
         // arm a fresh deadline of its own, so a page that spent the script

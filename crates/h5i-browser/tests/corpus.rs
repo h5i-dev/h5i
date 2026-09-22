@@ -209,7 +209,7 @@ fn the_dom_surface_an_application_walks() {
            document.querySelector('#out').textContent = \
              'first=' + s.firstElementChild.textContent + \
              ' count=' + s.childElementCount + \
-             ' attrs=' + s.attributes.map(a => a.name).join('|') + \
+             ' attrs=' + Array.from(s.attributes).map(a => a.name).join('|') + \
              ' rel=' + link.getAttribute('rel') + \
              ' anims=' + s.getAnimations().length + \
              ' type=' + document.contentType;\

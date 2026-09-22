@@ -1059,7 +1059,7 @@ Read one page, or a batch of them, and leave no session behind
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBread\fR [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-text\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-identity\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGETS\fR> 
+\fBread\fR [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-text\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-identity\fR] [\fB\-\-cookie\-jar\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGETS\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1085,6 +1085,11 @@ Read unconfined
 Who this read says it is: a built\-in name, or a path to a TOML file.
 
 The same identities a session takes, and refused on the same terms: see `h5i browser identity`. It belongs here as much as on a session. A read is a fetch, and a fetch has an agent string.
+.TP
+\fB\-\-cookie\-jar\fR \fI<PATH>\fR
+Seed this read\*(Aqs cookies from a file a human pasted a cookie into: `{"version": 1, "cookies": [...]}`.
+
+The same file `open` takes, and here for the same reason: a page behind a login is a page, and without this `read` could only ever report the signed\-out one. A copy is what the engine gets, so the file is read and never written back.
 .TP
 \fB\-\-json\fR
 

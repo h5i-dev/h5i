@@ -21,6 +21,7 @@ const PRELUDE: &str = include_str!("prelude.js");
 const TIERS: &[(&str, &str)] = &[
     ("conformance", include_str!("prelude/conformance.js")),
     ("sockets", include_str!("prelude/sockets.js")),
+    ("streams", include_str!("prelude/streams.js")),
     ("has", include_str!("prelude/has.js")),
     #[cfg(feature = "identity")]
     ("screen", include_str!("prelude/screen.js")),
@@ -1356,6 +1357,22 @@ impl Script {
             None => "globalThis.__h5iCurrentScript = null;".to_string(),
         };
         let _ = self.context.eval(Source::from_bytes(&code));
+    }
+
+    /// The microtask checkpoint a browser performs when a script finishes.
+    ///
+    /// Boa's queue was otherwise drained first at the settle, so every script's
+    /// promise continuations ran after the *last* script rather than between
+    /// them. A loader that awaits one chunk before instantiating the next then
+    /// saw a whole page's continuations arrive at once, with no script on the
+    /// stack and `document.currentScript` null.
+    ///
+    /// Bounded by the phase the caller is already checking between scripts,
+    /// not by a deadline of its own: a watchdog thread per script would cost
+    /// far more than the checkpoint, and a script that never returns is an
+    /// unbounded wait this phase already takes.
+    pub fn microtask_checkpoint(&mut self) {
+        self.run_queued_jobs();
     }
 
     pub fn console(&self) -> Vec<ConsoleLine> {

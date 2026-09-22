@@ -282,6 +282,16 @@ pub enum BrowserCommands {
         #[arg(long, value_name = "NAME|PATH", default_value = DEFAULT_IDENTITY)]
         identity: String,
 
+        /// Seed this read's cookies from a file a human pasted a cookie into:
+        /// `{"version": 1, "cookies": [...]}`.
+        ///
+        /// The same file `open` takes, and here for the same reason: a page
+        /// behind a login is a page, and without this `read` could only ever
+        /// report the signed-out one. A copy is what the engine gets, so the
+        /// file is read and never written back.
+        #[arg(long, value_name = "PATH")]
+        cookie_jar: Option<PathBuf>,
+
         #[arg(long)]
         json: bool,
     },
@@ -1281,6 +1291,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             no_sandbox,
             #[cfg(feature = "identity")]
             identity,
+            cookie_jar,
             json,
         } => read(
             targets,
@@ -1291,6 +1302,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             no_sandbox,
             #[cfg(feature = "identity")]
             identity,
+            cookie_jar,
             json,
         ),
         BrowserCommands::List { all, json } => list(&root, all, json),
@@ -4122,6 +4134,7 @@ fn read(
     script: bool,
     no_sandbox: bool,
     #[cfg(feature = "identity")] identity: String,
+    cookie_jar: Option<PathBuf>,
     json: bool,
 ) -> anyhow::Result<()> {
     let mut engine_args: Vec<String> = vec![ENGINE_SUBCOMMAND.into(), "open".into()];
@@ -4153,10 +4166,34 @@ fn read(
         engine_args.push(identity);
     }
 
+    // A copy, not the file itself: the engine mirrors its jar back to the path
+    // it is given, and the pasted one is the human's. Held until the read ends,
+    // because dropping it takes the file with it.
+    let seed = match &cookie_jar {
+        Some(path) => {
+            let source = pasted_jar(path)?;
+            let copy = tempfile::Builder::new()
+                .prefix("h5i-read-jar-")
+                .suffix(".json")
+                .tempfile()?;
+            std::fs::copy(&source, copy.path())?;
+            engine_args.push("--cookie-jar".into());
+            engine_args.push(copy.path().display().to_string());
+            Some(copy)
+        }
+        None => None,
+    };
+
     if let Some(name) = &in_box {
+        // The path names a file on this machine, and the box cannot see it.
+        if seed.is_some() {
+            anyhow::bail!("`--cookie-jar` reads a file on this machine, which a box cannot see");
+        }
         return read_in_box(name, &engine_args, json);
     }
-    read_here(&engine_args, no_sandbox, json)
+    let out = read_here(&engine_args, no_sandbox, json);
+    drop(seed);
+    out
 }
 
 /// The origins the caller named, by naming the URLs.
