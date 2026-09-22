@@ -8412,6 +8412,11 @@
 
   // Only *converging* timers count as work outstanding.
   lazyGlobals("sockets", ["WebSocket", "EventSource"]);
+  lazyGlobals("indexeddb", [
+    "indexedDB", "IDBFactory", "IDBDatabase", "IDBObjectStore", "IDBIndex",
+    "IDBTransaction", "IDBRequest", "IDBOpenDBRequest", "IDBCursor",
+    "IDBCursorWithValue", "IDBKeyRange", "IDBVersionChangeEvent",
+  ]);
   lazyGlobals("streams", [
     "ReadableStream", "ReadableStreamDefaultReader", "ReadableStreamDefaultController",
     "WritableStream", "WritableStreamDefaultWriter", "WritableStreamDefaultController",

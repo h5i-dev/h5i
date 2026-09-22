@@ -4499,7 +4499,7 @@ fn an_api_this_engine_lacks_names_itself_instead_of_throwing_anonymously() {
     script
         .eval(
             "globalThis.said = ''; \
-             try { indexedDB.open('db') } catch (e) { said = String(e) } \
+             try { caches.open('v1') } catch (e) { said = String(e) } \
              void navigator.clipboard;",
         )
         .expect("runs");
@@ -4507,7 +4507,7 @@ fn an_api_this_engine_lacks_names_itself_instead_of_throwing_anonymously() {
     // A global this engine lacks throws by its own name, which is what the
     // ReferenceError parser reads back.
     assert!(
-        script.eval_value("said").unwrap().contains("indexedDB"),
+        script.eval_value("said").unwrap().contains("caches"),
         "the message names what was wanted: {}",
         script.eval_value("said").unwrap()
     );
@@ -7614,4 +7614,52 @@ fn intl_formats_dates_and_numbers() {
             .unwrap(),
         "Sep 22, 2026"
     );
+}
+
+/// A database, an index and a cursor, end to end on the settle loop.
+///
+/// `indexedDB` was absent entirely, and for an application that is fatal
+/// rather than degrading: the store is where its state lives, so the page hit
+/// an unhandled rejection before it drew anything. The tier is in memory for
+/// the life of the realm, which is what `localStorage` is here too — what this
+/// pins is that a page which writes and reads back within one run behaves.
+#[test]
+fn indexeddb_stores_reads_and_walks_a_cursor() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    script
+        .eval(
+            "globalThis.out = 'pending'; \
+             const open = indexedDB.open('notes', 1); \
+             open.onupgradeneeded = (e) => { \
+                const store = e.target.result.createObjectStore('items', \
+                    { keyPath: 'id', autoIncrement: true }); \
+                store.createIndex('byTag', 'tag'); \
+             }; \
+             open.onsuccess = () => { \
+                const db = open.result; \
+                const write = db.transaction('items', 'readwrite'); \
+                const items = write.objectStore('items'); \
+                items.add({ tag: 'a', text: 'first' }); \
+                items.add({ tag: 'b', text: 'second' }); \
+                items.add({ tag: 'a', text: 'third' }); \
+                write.oncomplete = () => { \
+                   const read = db.transaction('items'); \
+                   const seen = []; \
+                   const cursor = read.objectStore('items').index('byTag').openCursor(); \
+                   cursor.onsuccess = () => { \
+                      const at = cursor.result; \
+                      if (at) { seen.push(at.key + at.value.id); at.continue(); return; } \
+                      globalThis.out = seen.join(','); \
+                   }; \
+                }; \
+             };",
+        )
+        .expect("runs");
+
+    let settled = script.settle();
+    assert!(!settled.cut_off, "{settled:?}");
+    // In index order: both `a` records by their key, then `b`. The ids are the
+    // ones the store generated, which is the `autoIncrement` half.
+    assert_eq!(script.eval_value("out").unwrap(), "a1,a3,b2");
 }
