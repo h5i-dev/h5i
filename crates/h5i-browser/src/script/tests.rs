@@ -3805,7 +3805,10 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     // function" on an empty string, which is what stopped grok.com rendering
     // its main pane. `getComputedStyle` is on every page, so it cannot be a
     // tier.
-    const BUDGET_KIB: usize = 291;
+    // 292 for `dispatchEvent` on `document` and on an `AbortSignal`. Both
+    // already had `addEventListener`, so both were half an EventTarget: a page
+    // sending itself a custom event called a method that was not there.
+    const BUDGET_KIB: usize = 292;
 
     assert!(
         !super::PRELUDE.contains("/*"),
@@ -8010,5 +8013,38 @@ fn a_declaration_reports_its_priorities() {
             )
             .unwrap(),
         "important/3px"
+    );
+}
+
+/// `document` and an `AbortSignal` can be dispatched to, not only listened on.
+///
+/// Both carried `addEventListener` and neither carried `dispatchEvent`, which
+/// makes them half an EventTarget: registering a handler worked, and the call
+/// that would reach it was a call on nothing.
+#[test]
+fn document_and_abort_signal_can_be_dispatched_to() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { let hits = 0; \
+                   document.addEventListener('mine', () => { hits += 1; }); \
+                   const ok = document.dispatchEvent(new Event('mine')); \
+                   return hits + '/' + ok; })()"
+            )
+            .unwrap(),
+        "1/true"
+    );
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { const c = new AbortController(); let hits = 0; \
+                   c.signal.addEventListener('abort', () => { hits += 1; }); \
+                   c.signal.dispatchEvent(new Event('abort')); \
+                   return String(hits); })()"
+            )
+            .unwrap(),
+        "1"
     );
 }

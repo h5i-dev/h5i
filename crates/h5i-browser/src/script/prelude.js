@@ -6792,6 +6792,21 @@
       const at = this._listeners.indexOf(handler);
       if (at >= 0) this._listeners.splice(at, 1);
     }
+    /// Through the same list `addEventListener` writes to, so a dispatched
+    /// abort and a real one reach exactly the same handlers.
+    dispatchEvent(event) {
+      if (!event || event.type !== "abort") return true;
+      if (event.target === null || event.target === undefined) event.target = this;
+      for (const handler of this._listeners.slice()) {
+        try {
+          handler.call(this, event);
+        } catch (error) {
+          console.error(`abort listener threw: ${withStack(error)}`);
+        }
+      }
+      if (typeof this.onabort === "function") this.onabort(event);
+      return !event.defaultPrevented;
+    }
     throwIfAborted() { if (this.aborted) throw this.reason; }
     /// Deliver the abort: flip the state, then tell every listener.
     ///
@@ -8109,6 +8124,15 @@
     removeEventListener(type, handler) {
       const root = wrap(api.root());
       if (root) root.removeEventListener(type, handler);
+    },
+    /// The third of the three. Listeners already delegated to the root and
+    /// dispatch did not exist at all, so `document.dispatchEvent(...)` — which
+    /// is how a page sends itself a custom event — was a call on nothing.
+    dispatchEvent(event) {
+      const root = wrap(api.root());
+      if (!root) return true;
+      if (event && event.target === null) event.target = document;
+      return root.dispatchEvent(event);
     },
     // Non-HttpOnly cookies only, exactly as a browser exposes them. The
     // withholding is the point: a session credential is almost always HttpOnly,
