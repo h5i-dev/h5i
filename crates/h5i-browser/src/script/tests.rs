@@ -7748,3 +7748,27 @@ fn assigning_location_href_is_refused_without_throwing() {
         script.unsupported()
     );
 }
+
+/// An uninitialized-access throw says which binding it is about.
+///
+/// The message was "access of uninitialized binding" and nothing more, which
+/// is the hardest kind of error for an agent to act on: it names neither the
+/// binding nor anything to search a bundle for. Reading grok.com it was the
+/// only clue to a blocked render, and it took instrumenting the engine to find
+/// out the binding was called `s`.
+#[test]
+fn an_uninitialized_binding_names_itself() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    assert_eq!(
+        script
+            .eval_value(
+                "let said = ''; \
+                 try { (function (a = b, b = 1) { return a; })(); } \
+                 catch (e) { said = e.message; } \
+                 said"
+            )
+            .unwrap(),
+        "access of uninitialized binding `b`"
+    );
+}

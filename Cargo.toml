@@ -160,5 +160,5 @@ debug = false
 # Pinned fork providing `Script::bind_to_realm`; return to crates.io when the
 # upstream change lands. Patch `boa_gc` too to avoid incompatible duplicate types.
 [patch.crates-io]
-boa_engine = { git = "https://github.com/h5i-dev/boa", rev = "213ef7ed" }
-boa_gc = { git = "https://github.com/h5i-dev/boa", rev = "213ef7ed" }
+boa_engine = { git = "https://github.com/h5i-dev/boa", rev = "3b9c395e" }
+boa_gc = { git = "https://github.com/h5i-dev/boa", rev = "3b9c395e" }
