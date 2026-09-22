@@ -957,7 +957,7 @@ Open a URL, making a session if there is not one already
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-project\fR] [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-script\fR] [\fB\-\-permissive\-cors\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-secret\fR] [\fB\-\-identity\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-expires\-in\fR] [\fB\-\-restore\fR] [\fB\-\-cookie\-jar\fR] [\fB\-\-capture\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-project\fR] [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-script\fR] [\fB\-\-permissive\-cors\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-secret\fR] [\fB\-\-identity\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-expires\-in\fR] [\fB\-\-restore\fR] [\fB\-\-cookie\-jar\fR] [\fB\-\-script\-seconds\fR] [\fB\-\-capture\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1026,6 +1026,11 @@ Seed this session\*(Aqs cookie jar from a file a human pasted a cookie into: `{"
 
 Read once, before the engine starts, and never written back. A row no server could have set is refused and counted on stderr.
 .TP
+\fB\-\-script\-seconds\fR \fI<SECONDS>\fR
+How long this session\*(Aqs scripts may run, in seconds.
+
+The default bounds a page that never stops; an app that legitimately takes longer needs the bound raised rather than removed. A page cut off here says so, and what it had not finished is what an agent sees as missing rather than as absent.
+.TP
 \fB\-\-capture\fR
 Keep every request and response this session makes: headers and bodies, both directions.
 
@@ -1059,7 +1064,7 @@ Read one page, or a batch of them, and leave no session behind
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBread\fR [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-text\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-identity\fR] [\fB\-\-cookie\-jar\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGETS\fR> 
+\fBread\fR [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-text\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-identity\fR] [\fB\-\-script\-seconds\fR] [\fB\-\-cookie\-jar\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGETS\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1085,6 +1090,9 @@ Read unconfined
 Who this read says it is: a built\-in name, or a path to a TOML file.
 
 The same identities a session takes, and refused on the same terms: see `h5i browser identity`. It belongs here as much as on a session. A read is a fetch, and a fetch has an agent string.
+.TP
+\fB\-\-script\-seconds\fR \fI<SECONDS>\fR
+How long this read\*(Aqs scripts may run, in seconds. See `open`
 .TP
 \fB\-\-cookie\-jar\fR \fI<PATH>\fR
 Seed this read\*(Aqs cookies from a file a human pasted a cookie into: `{"version": 1, "cookies": [...]}`.

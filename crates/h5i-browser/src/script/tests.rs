@@ -7586,3 +7586,32 @@ fn a_self_replacing_getter_answers_the_same_twice() {
         "ab|ab"
     );
 }
+
+/// `Intl` exists, because a page that formats a date or a number is every page.
+///
+/// It was absent entirely: the engine built Boa with `default-features = false`
+/// and never turned the builtin back on, so `Intl` was a `ReferenceError` and
+/// an app died on its first formatted timestamp. `Intl.RelativeTimeFormat` is
+/// still missing — Boa does not implement it — which is why this pins what we
+/// do have rather than the whole namespace.
+#[test]
+fn intl_formats_dates_and_numbers() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    assert_eq!(script.eval_value("typeof Intl").unwrap(), "object");
+    assert_eq!(
+        script
+            .eval_value("new Intl.NumberFormat('en-US').format(1234567.89)")
+            .unwrap(),
+        "1,234,567.89"
+    );
+    assert_eq!(
+        script
+            .eval_value(
+                "new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', \
+                 day: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(2026, 8, 22)))"
+            )
+            .unwrap(),
+        "Sep 22, 2026"
+    );
+}

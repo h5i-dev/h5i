@@ -216,6 +216,15 @@ pub enum BrowserCommands {
         #[arg(long, value_name = "PATH", conflicts_with = "restore")]
         cookie_jar: Option<PathBuf>,
 
+        /// How long this session's scripts may run, in seconds.
+        ///
+        /// The default bounds a page that never stops; an app that legitimately
+        /// takes longer needs the bound raised rather than removed. A page cut
+        /// off here says so, and what it had not finished is what an agent sees
+        /// as missing rather than as absent.
+        #[arg(long, value_name = "SECONDS")]
+        script_seconds: Option<u64>,
+
         /// Keep every request and response this session makes: headers and
         /// bodies, both directions.
         ///
@@ -281,6 +290,10 @@ pub enum BrowserCommands {
         #[cfg(feature = "identity")]
         #[arg(long, value_name = "NAME|PATH", default_value = DEFAULT_IDENTITY)]
         identity: String,
+
+        /// How long this read's scripts may run, in seconds. See `open`.
+        #[arg(long, value_name = "SECONDS")]
+        script_seconds: Option<u64>,
 
         /// Seed this read's cookies from a file a human pasted a cookie into:
         /// `{"version": 1, "cookies": [...]}`.
@@ -1252,6 +1265,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             expires_in,
             restore,
             cookie_jar,
+            script_seconds,
             capture,
             json,
         } => open(
@@ -1277,6 +1291,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 restore,
                 cookie_jar,
                 capture,
+                script_seconds,
             },
             json,
         ),
@@ -1291,6 +1306,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             no_sandbox,
             #[cfg(feature = "identity")]
             identity,
+            script_seconds,
             cookie_jar,
             json,
         } => read(
@@ -1302,6 +1318,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             no_sandbox,
             #[cfg(feature = "identity")]
             identity,
+            script_seconds,
             cookie_jar,
             json,
         ),
@@ -1916,6 +1933,8 @@ struct StartOptions {
     cookie_jar: Option<PathBuf>,
     /// Keep the messages themselves, not only the record of them.
     capture: bool,
+    /// Raise the script-phase budget. See the flag.
+    script_seconds: Option<u64>,
 }
 
 /// Open a URL: navigate the session that is already there, or make one.
@@ -2327,6 +2346,12 @@ fn spawn_on_host(
         "--height".into(),
         opts.height.to_string(),
     ];
+    // Only when raised: `0` is how the engine says "your own default", and an
+    // in-box engine may be older than the flag.
+    if let Some(seconds) = opts.script_seconds {
+        argv.push("--script-seconds".into());
+        argv.push(seconds.to_string());
+    }
     argv.extend(net_args(opts));
     // h5i names the directory, as it does for every other session artifact, so
     // where a session's evidence lands is not the engine caller's to choose.
@@ -2709,6 +2734,12 @@ fn spawn_in_box(
         "--height".into(),
         opts.height.to_string(),
     ];
+    // Only when raised: `0` is how the engine says "your own default", and an
+    // in-box engine may be older than the flag.
+    if let Some(seconds) = opts.script_seconds {
+        argv.push("--script-seconds".into());
+        argv.push(seconds.to_string());
+    }
     argv.extend(net_args(opts));
     // Inside the box, beside the receipts, for the same reason the jar is: this
     // is the filesystem the engine has.
@@ -4134,6 +4165,7 @@ fn read(
     script: bool,
     no_sandbox: bool,
     #[cfg(feature = "identity")] identity: String,
+    script_seconds: Option<u64>,
     cookie_jar: Option<PathBuf>,
     json: bool,
 ) -> anyhow::Result<()> {
@@ -4151,6 +4183,10 @@ fn read(
     }
     if json {
         engine_args.push("--json".into());
+    }
+    if let Some(seconds) = script_seconds {
+        engine_args.push("--script-seconds".into());
+        engine_args.push(seconds.to_string());
     }
     // The same boundary `open` refuses at, and it belongs here too: this lane
     // builds its own argv, so the fix that only touched `open` left a path

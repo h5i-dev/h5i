@@ -117,7 +117,7 @@ base64 = "0.22"
 # icu requirements clashed with parley's, and `scripts/check_boa_release.sh`
 # failed CI the moment 0.22.0 resolved the clash — which is exactly what it
 # was written to do.
-boa_engine = { version = "0.22.0", default-features = false, features = ["annex-b"] }
+boa_engine = { version = "0.22.0", default-features = false, features = ["annex-b", "intl_bundled", "temporal"] }
 boa_gc = "0.22.0"
 # The public suffix list, compiled in as a static table rather than fetched.
 psl = "2.1.226"
