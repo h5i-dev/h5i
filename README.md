@@ -30,7 +30,7 @@
       <sub>Isolated execution with logs</sub>
     </td>
     <td align="center">
-      <strong>Fast & lightweight</strong><br>
+      <strong>Fast browser</strong><br>
       <sub><a href="./docs/design/design-browser.md">~3× faster, ~86% less memory</a></sub>
     </td>
   </tr>
