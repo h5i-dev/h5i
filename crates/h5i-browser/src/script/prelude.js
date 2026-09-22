@@ -2050,6 +2050,14 @@
       }
       return this.__h5iAttrMap;
     }
+    /// The slot this node was distributed into, or null.
+    ///
+    /// Distribution here is a move rather than a virtual assignment — see the
+    /// shadow-root attach above — so an assigned node's parent *is* its slot.
+    get assignedSlot() {
+      const parent = this.parentNode;
+      return parent && parent.nodeType === 1 && parent.tagName === "SLOT" ? parent : null;
+    }
     hasAttributes() { return api.attrNames(this._id).length > 0; }
     getAttributeNames() { return api.attrNames(this._id); }
 
@@ -6987,6 +6995,9 @@
       case "any-hover": return value === "none";
       case "pointer": return value === "none";
       case "any-pointer": return value === "none";
+      // Not installed and not full screen: a page asking whether it is running
+      // as an app is told no, which is the truth rather than a gap.
+      case "display-mode": return value === "browser";
       default:
         api.unsupported(`matchMedia(${name})`);
         return false;
@@ -9917,6 +9928,8 @@
       appVersion: api.userAgent().replace(/^Mozilla\//, ""),
       appCodeName: "Mozilla",
       product: "Gecko",
+      // Unset. This engine sends no `DNT`, and null is how a browser says so.
+      doNotTrack: null,
       /// A fire-and-forget POST, sent rather than stubbed: the allowlist still
       /// decides whether it leaves, and a page told "not queued" falls back to
       /// a synchronous request that costs it more than the beacon would.

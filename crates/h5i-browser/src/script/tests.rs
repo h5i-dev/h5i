@@ -7839,3 +7839,50 @@ fn computed_overflow_comes_from_its_longhands() {
         script.unsupported()
     );
 }
+
+/// Three answers this engine has and was reporting as gaps instead.
+///
+/// A gap list an agent reads is only useful if what is on it is really
+/// missing. `display-mode` has a true answer here (this is a browser, not an
+/// installed app), `doNotTrack` has one (unset, which a browser reports as
+/// null), and `assignedSlot` has one because distribution here is a move — an
+/// assigned node's parent *is* its slot. rrweb alone asked for these hundreds
+/// of times on one page, burying the gaps that were real.
+#[test]
+fn answers_this_engine_has_are_not_reported_as_gaps() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='host'><span id='light'>x</span></div>\
+         <div id='plain'>p</div></body></html>",
+    );
+
+    assert_eq!(
+        script
+            .eval_value("matchMedia('(display-mode: browser)').matches")
+            .unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script
+            .eval_value("matchMedia('(display-mode: standalone)').matches")
+            .unwrap(),
+        "false"
+    );
+    assert_eq!(script.eval_value("String(navigator.doNotTrack)").unwrap(), "null");
+    assert_eq!(
+        script
+            .eval_value("String(document.querySelector('#plain').assignedSlot)")
+            .unwrap(),
+        "null"
+    );
+    assert_eq!(
+        script
+            .eval_value(
+                "const host = document.querySelector('#host'); \
+                 host.attachShadow({ mode: 'open' }).innerHTML = '<slot></slot>'; \
+                 document.querySelector('#light').assignedSlot.tagName"
+            )
+            .unwrap(),
+        "SLOT"
+    );
+    assert!(script.unsupported().is_empty(), "{:?}", script.unsupported());
+}
