@@ -11,9 +11,9 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-<h1 align="center">The Red-Teaming Browser for AI Agents</h1>
+<h1 align="center">The Agent-Native Red-Teaming Workspace</h1>
 
-**h5i** (pronounced *high-five*) is a lightweight browser built for AI agents to test web applications. It combines page automation with direct control over HTTP traffic, letting agents capture, inspect, modify, replay, and compare requests through one interface. Sandboxing, network policies, credential isolation, and auditable sessions keep autonomous testing contained and within scope.
+**h5i** (pronounced *high-five*) is a lightweight, agent-native workspace for red teaming. For web testing, it combines browser automation with direct control over HTTP traffic, letting agents navigate applications and capture, inspect, modify, replay, and compare requests through one interface. Sandboxing, network policies, credential isolation, and auditable sessions keep autonomous testing contained, reproducible, and within scope.
 
 <table align="center">
   <tr>
