@@ -428,6 +428,44 @@ pub struct Script {
     cost: RealmCost,
 }
 
+
+thread_local! {
+    /// Diagnostic accumulators for one settle, in the order the loop runs them.
+    static SETTLE_COST: std::cell::RefCell<[Duration; 5]> =
+        const { std::cell::RefCell::new([Duration::ZERO; 5]) };
+}
+
+/// Whether to report what a page load spent its time on.
+///
+/// Read once. The check is on the per-script and per-settle-round paths, so a
+/// lookup each time would be a cost paid by every page to answer a question
+/// almost nobody is asking.
+///
+/// The report goes to stderr, which a session on this machine runs the engine
+/// too far from to reach: the sandbox does not carry this variable in, and
+/// widening what it carries for a developer's convenience is not a trade worth
+/// making. Profile with `--no-sandbox`.
+///
+/// What it answers, measured against a large application: the classic script
+/// phase was ten seconds of a sixty-second load, and promise jobs were thirty
+/// — which is where to look, and is not where the guessing had been going.
+pub(crate) fn timing_page() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("H5I_TIME_PAGE").is_some())
+}
+
+/// Run `body`, adding what it cost to slot `slot`.
+fn charged<T>(slot: usize, body: impl FnOnce() -> T) -> T {
+    if !timing_page() {
+        return body();
+    }
+    let at = std::time::Instant::now();
+    let out = body();
+    let spent = at.elapsed();
+    SETTLE_COST.with(|c| c.borrow_mut()[slot] += spent);
+    out
+}
+
 impl Script {
     /// Build a realm over `dom`, install the primitives and run the prelude.
     pub fn new(
@@ -668,9 +706,22 @@ impl Script {
     /// and a promise can set a timer. It stops when a round does nothing, or when
     /// the budget is spent, and the difference is reported rather than hidden.
     pub fn settle(&mut self) -> Settled {
+        if timing_page() {
+            SETTLE_COST.with(|c| *c.borrow_mut() = [Duration::ZERO; 5]);
+        }
         let budget = self.job_budget;
         let (mut settled, cut_short) =
             self.with_job_deadline(budget, |script| script.settle_inner(None).0);
+        if timing_page() {
+            let spent = SETTLE_COST.with(|c| *c.borrow());
+            let name = ["jobs", "layout-observers", "fetches", "timers", "sockets"];
+            let line: Vec<String> = name
+                .iter()
+                .zip(spent.iter())
+                .map(|(n, d)| format!("{n}={:.0}ms", d.as_secs_f64() * 1000.0))
+                .collect();
+            eprintln!("PAGE_TIME settle {}", line.join(" "));
+        }
         if cut_short {
             settled.cut_off = true;
             self.note_error(&format!(
@@ -777,19 +828,19 @@ impl Script {
         }
 
         loop {
-            self.run_queued_jobs();
+            charged(0, || self.run_queued_jobs());
 
             // Layout observers are driven from here rather than from a frame
             // clock, because this engine has no frames at rest: an observer
             // that waited for a repaint would never fire at all.
-            self.run_layout_observers();
+            charged(1, || self.run_layout_observers());
 
             // Requests that have come back resolve their promises here, which
             // is what lets `fetch` be concurrent: the host starts up to six at
             // once and this is where the page learns any of them finished.
-            let outstanding = self.drain_fetches();
+            let outstanding = charged(2, || self.drain_fetches());
 
-            let ran = self.run_due_timers(clock);
+            let ran = charged(3, || self.run_due_timers(clock));
             timers_run += ran;
 
             // Frames that arrived since the last round become events here.
@@ -800,7 +851,7 @@ impl Script {
             // as permanently busy. The interval precedent applies: a perpetual
             // thing that counts as pending makes every page that has one look
             // like it never finished.
-            let delivered = self.drain_sockets();
+            let delivered = charged(4, || self.drain_sockets());
 
             // After the round's work, before deciding whether to wait longer.
             if ready_now!() {

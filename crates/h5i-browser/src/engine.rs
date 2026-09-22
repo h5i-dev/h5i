@@ -1268,7 +1268,16 @@ impl Page {
             };
 
             script.set_current_script(Some(node));
+            let at = std::time::Instant::now();
             let ran = script.eval_named(&code, &where_from);
+            if crate::script::timing_page() {
+                eprintln!(
+                    "PAGE_TIME script {:>8.1}ms {:>8} bytes {}",
+                    at.elapsed().as_secs_f64() * 1000.0,
+                    code.len(),
+                    where_from
+                );
+            }
             // Before `currentScript` is cleared, which is where HTML puts it:
             // the checkpoint is inside "run a classic script", and only the
             // step *after* that restores the element. So a continuation this
@@ -1295,6 +1304,12 @@ impl Page {
         // budget and then the job budget cost the sum of the two. Lit.dev took
         // 46 seconds against a 20-second intent. What is left of the phase is
         // what settling gets.
+        if crate::script::timing_page() {
+            eprintln!(
+                "PAGE_TIME classic-scripts {:.1}ms",
+                phase_started.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         let left = phase_budget.saturating_sub(phase_started.elapsed());
         script.set_job_budget(left.max(std::time::Duration::from_secs(1)));
 
