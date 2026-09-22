@@ -7527,3 +7527,32 @@ fn a_window_carries_the_global_event_handlers_and_a_named_node_map_is_indexable(
         "2"
     );
 }
+
+/// `RegExp.prototype.source` has to be a *fixed point* of `new RegExp(source)`.
+///
+/// Every `/` was escaped without noticing one that was already escaped, so `\/`
+/// came back as `\\/` and each trip through `source` grew another backslash.
+/// Libraries that rewrite patterns do exactly that round trip — core-js does it
+/// to add named-group support — and what they handed back had stopped meaning
+/// what it said: grok.com's router built `^(?:\/)?$`, got `^\(?:\/)?$`, and that
+/// does not parse at all.
+#[test]
+fn a_regexp_source_is_unchanged_by_a_round_trip() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // An escaped `/` stays escaped once, not twice.
+    assert_eq!(script.eval_value(r"/a\/b/.source").unwrap(), r"a\/b");
+    // A bare one still earns its backslash: the source has to be something
+    // `/` and `/` can be wrapped around and re-read.
+    assert_eq!(
+        script.eval_value(r#"new RegExp("a/b").source"#).unwrap(),
+        r"a\/b"
+    );
+    // And the trip is a fixed point rather than a ratchet.
+    assert_eq!(
+        script
+            .eval_value(r"new RegExp(new RegExp(/(?:\/)?/.source).source).source")
+            .unwrap(),
+        r"(?:\/)?"
+    );
+}
