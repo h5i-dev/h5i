@@ -7663,3 +7663,29 @@ fn indexeddb_stores_reads_and_walks_a_cursor() {
     // ones the store generated, which is the `autoIncrement` half.
     assert_eq!(script.eval_value("out").unwrap(), "a1,a3,b2");
 }
+
+/// `arrayBuffer()` hands back the bytes that arrived, not a re-encoding of the
+/// text they decoded to.
+///
+/// `text()` is defined as a UTF-8 decode with replacement characters, so the
+/// lossy string is right there and wrong everywhere else: a byte above 0x7f
+/// that is not part of a valid sequence became U+FFFD, and re-encoding that
+/// gave three bytes where one had arrived. A protobuf frame read back this way
+/// is not the frame that was sent, which is how a Connect API came to report
+/// its own reply as a protocol error.
+#[test]
+fn a_binary_body_survives_arraybuffer() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // The shape of the bug, without a server: a lossy decode is not reversible,
+    // so the engine has to carry the bytes when the decode lost something.
+    assert_eq!(
+        script
+            .eval_value(
+                "const lossy = new TextDecoder().decode(new Uint8Array([0, 0x80, 0xff])); \
+                 new TextEncoder().encode(lossy).length"
+            )
+            .unwrap(),
+        "7"
+    );
+}

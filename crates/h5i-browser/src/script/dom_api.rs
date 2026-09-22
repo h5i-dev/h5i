@@ -1470,6 +1470,12 @@ fn reply_value(
     }
 
     let status = outcome.status.unwrap_or(0);
+    // `text()` is *defined* as a UTF-8 decode with replacement characters, so
+    // the lossy string is the right answer there. It is the wrong answer for
+    // `arrayBuffer()` and `blob()`, which owe the page the bytes that arrived:
+    // a protobuf frame decoded and re-encoded this way comes back mangled, and
+    // a Connect API reads its own reply as a protocol error.
+    let exact = std::str::from_utf8(&outcome.body).is_ok();
     let text = String::from_utf8_lossy(&outcome.body).into_owned();
     let reply = boa_engine::object::ObjectInitializer::new(context).build();
     reply.set(js_string!("ok"), (200..300).contains(&status), false, context)?;
@@ -1482,6 +1488,16 @@ fn reply_value(
     let seen_url = if outcome.opaque { String::new() } else { outcome.final_url.to_string() };
     reply.set(js_string!("url"), js_string!(seen_url), false, context)?;
     reply.set(js_string!("text"), js_string!(text), false, context)?;
+    // Only when the decode lost something. A body that is valid UTF-8 encodes
+    // back to exactly the bytes it came as, so carrying them a second time
+    // would be memory spent to say what `text` already says.
+    if !exact {
+        let bytes = boa_engine::object::builtins::JsUint8Array::from_iter(
+            outcome.body.iter().copied(),
+            context,
+        )?;
+        reply.set(js_string!("bytes"), bytes, false, context)?;
+    }
 
     let headers = boa_engine::object::builtins::JsArray::new(context)?;
     for (name, value) in &outcome.headers {

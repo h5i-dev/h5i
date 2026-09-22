@@ -6677,6 +6677,7 @@
     constructor(body, init) {
       const i = init || {};
       this._body = body == null ? "" : String(body);
+      this._bytes = i.bytes;
       this.status = i.status === undefined ? 200 : Number(i.status);
       this.statusText = i.statusText === undefined ? "" : String(i.statusText);
       this.ok = this.status >= 200 && this.status < 300;
@@ -6698,19 +6699,20 @@
     }
     arrayBuffer() {
       this.bodyUsed = true;
-      const text = this._body;
-      const bytes = new TextEncoder().encode(text);
-      return Promise.resolve(bytes.buffer);
+      if (this._bytes) return Promise.resolve(this._bytes.slice().buffer);
+      return Promise.resolve(new TextEncoder().encode(this._body).buffer);
     }
     blob() {
       this.bodyUsed = true;
       const type = this.headers.get("content-type") || "";
-      return Promise.resolve(new Blob([this._body], { type }));
+      const from = this._bytes ? this._bytes.slice() : this._body;
+      return Promise.resolve(new Blob([from], { type }));
     }
     clone() {
       return new Response(this._body, {
         status: this.status, statusText: this.statusText, headers: this.headers,
         type: this.type, url: this.url, redirected: this.redirected,
+        bytes: this._bytes,
       });
     }
     static json(data, init) {
@@ -10179,6 +10181,10 @@
     // expects. It used to be an object literal with the same fields, which
     // reads identically until something asks what it is.
     return new Response(res.text, {
+      // The bytes as they arrived, when the UTF-8 decode above lost something.
+      // `arrayBuffer()` and `blob()` owe the page these rather than a re-encode
+      // of the replacement characters.
+      bytes: res.bytes,
       status: res.status,
       statusText: res.status === 200 ? "OK" : "",
       headers,
