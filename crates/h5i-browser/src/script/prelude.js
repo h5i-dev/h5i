@@ -356,11 +356,15 @@
   /// The parser-time path on the Rust side already does this; without it here,
   /// a loader that injects its own tags read null and could not find itself.
   /// Restored rather than nulled, because a script can insert a script.
-  function evalAsScript(el, code) {
+  function evalAsScript(el, code, name) {
     const outer = globalThis.__h5iCurrentScript;
     globalThis.__h5iCurrentScript = el._id;
     try {
-      (0, eval)(code);
+      // As a script, not through `eval`: a top-level `let` belongs to the
+      // global scope every later script shares, and an `eval` would keep it to
+      // itself and drop it. A loader that splits declarations across chunks
+      // found the next chunk's names simply gone.
+      api.runScript(code, name || "");
     } finally {
       globalThis.__h5iCurrentScript = outer;
     }
@@ -388,7 +392,7 @@
           return response.text();
         })
         .then((code) => {
-          if (kind === "classic") evalAsScript(el, code);
+          if (kind === "classic") evalAsScript(el, code, el._resolved("src"));
           el.dispatchEvent(new Event("load"));
         })
         .catch(() => el.dispatchEvent(new Event("error")));
@@ -8560,6 +8564,18 @@
   }
   const location = {
     get href() { return currentAddress; },
+    /// Assigning navigates in a browser, and this engine does not let a page
+    /// navigate itself — `assign`, `replace` and `reload` all say so rather
+    /// than move the agent somewhere it did not ask to go.
+    ///
+    /// Recorded rather than *refused*, because a getter with no setter throws
+    /// on assignment, and this is a line pages run constantly. The throw took
+    /// down whatever was running: a React timer callback died mid-render over
+    /// a redirect the page was only attempting.
+    set href(value) {
+      api.unsupported("location.href");
+      void value;
+    },
     get protocol() { return locationParts().protocol ?? ""; },
     get host() { return locationParts().host ?? ""; },
     get hostname() { return locationParts().hostname ?? ""; },

@@ -135,6 +135,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("setValue", 2, set_value),
         ("log", 2, log),
         ("unsupported", 1, unsupported),
+        ("runScript", 2, run_script),
         ("fetchStart", 6, fetch_start),
         ("fetchDrain", 0, fetch_drain),
         ("fetchPending", 0, fetch_pending),
@@ -1235,6 +1236,28 @@ fn identity(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResu
 /// `fetch` calls actually overlap instead of running one after the other. The
 /// old binding did the whole round trip inline, so a page that fanned out ten
 /// requests paid for them in series and every SPA waterfall was our own.
+/// Run a page's script as a *script*, in the realm's global scope.
+///
+/// `eval` was standing in for this, and the two do not scope alike. A
+/// top-level `let`, `const` or `class` inside an indirect `eval` belongs to
+/// that eval and is gone when it returns; the same declaration in a script
+/// joins the global declarative environment every later script reads. A bundle
+/// that splits its lexical declarations across chunks — which is every chunk
+/// loader — lost all of them, and the next read compiled to a bare throw:
+/// "access of uninitialized binding".
+///
+/// The name is the script's URL, so a stack names the file rather than saying
+/// "eval at" and leaving an agent nothing to go on.
+fn run_script(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let code = arg_string(args, 0, context).unwrap_or_default();
+    let name = arg_string(args, 1, context).unwrap_or_default();
+    let source = boa_engine::Source::from_reader(
+        code.as_bytes(),
+        Some(std::path::Path::new(&name)),
+    );
+    context.eval(source)
+}
+
 /// The request body as the bytes it is.
 ///
 /// A page may hand `fetch` a typed array or an `ArrayBuffer` — every protobuf

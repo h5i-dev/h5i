@@ -7695,3 +7695,56 @@ fn a_binary_body_survives_arraybuffer() {
         "7"
     );
 }
+
+/// A script the page inserts shares the global scope with every other script.
+///
+/// It was run through `eval`, and the two do not scope alike: a top-level
+/// `let`, `const` or `class` inside an indirect `eval` belongs to that eval and
+/// is gone when it returns, while the same declaration in a script joins the
+/// global declarative environment the next script reads. `var` survived
+/// because it lands on the global object, which is what made the gap look like
+/// a puzzle rather than a scoping bug — a chunk loader lost every lexical
+/// declaration it had just made, and the next chunk found the names missing.
+#[test]
+fn an_inserted_script_shares_the_global_lexical_scope() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    script
+        .eval(
+            "globalThis.out = ''; \
+             function insert(code) { \
+                const el = document.createElement('script'); \
+                el.textContent = code; \
+                document.head.appendChild(el); \
+             } \
+             insert(\"let shared = 'lex'; const kept = 'const'; class Made { who() { return 'cls'; } } \
+                      var old = 'var';\"); \
+             insert(\"globalThis.out = [shared, kept, new Made().who(), old].join(',');\");",
+        )
+        .expect("runs");
+
+    assert_eq!(script.eval_value("out").unwrap(), "lex,const,cls,var");
+}
+
+/// Assigning `location.href` navigates in a browser, and never throws.
+///
+/// This engine does not let a page navigate itself — `assign`, `replace` and
+/// `reload` all say so. But `href` was a getter with no setter, so the
+/// assignment threw and took the caller with it: a React timer callback died
+/// mid-render over a redirect the page was only attempting.
+#[test]
+fn assigning_location_href_is_refused_without_throwing() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    assert_eq!(
+        script
+            .eval_value("'use strict'; location.href = 'https://example.com/'; 'survived'")
+            .unwrap(),
+        "survived"
+    );
+    assert!(
+        script.unsupported().iter().any(|(name, _)| name == "location.href"),
+        "the attempt is reported rather than silently dropped: {:?}",
+        script.unsupported()
+    );
+}
