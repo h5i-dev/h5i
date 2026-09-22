@@ -7772,3 +7772,31 @@ fn an_uninitialized_binding_names_itself() {
         "access of uninitialized binding `b`"
     );
 }
+
+/// A `switch` discriminant does not declare anything for the case bodies.
+///
+/// The engine collected a `let` from inside a function expression in the
+/// discriminant as a binding *of the switch*, so a case body reading a name of
+/// its own resolved to that phantom binding and compiled to an unconditional
+/// throw. Minified bundles shadow one-letter names across nested functions as
+/// a matter of course, which is why this took grok.com's whole app down with
+/// `access of uninitialized binding` on a name that was plainly in scope.
+#[test]
+fn a_switch_discriminant_does_not_shadow_the_case_body() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    assert_eq!(
+        script
+            .eval_value(
+                "function outer() { \
+                    let shared = 'correct'; \
+                    switch ((function () { let shared; }, 0)) { \
+                        case 0: return shared; \
+                    } \
+                 } \
+                 outer()"
+            )
+            .unwrap(),
+        "correct"
+    );
+}

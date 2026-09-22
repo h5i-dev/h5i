@@ -524,7 +524,7 @@ dependencies = [
 [[package]]
 name = "boa_ast"
 version = "0.22.0"
-source = "git+https://github.com/h5i-dev/boa?rev=3b9c395e#3b9c395e2444ed046bd0e3535e16b5d0d44f134b"
+source = "git+https://github.com/h5i-dev/boa?rev=312810fa#312810fa4ab77d1c59c8b1ddde03e96757226428"
 dependencies = [
  "bitflags 2.13.1",
  "boa_interner",
@@ -539,7 +539,7 @@ dependencies = [
 [[package]]
 name = "boa_engine"
 version = "0.22.0"
-source = "git+https://github.com/h5i-dev/boa?rev=3b9c395e#3b9c395e2444ed046bd0e3535e16b5d0d44f134b"
+source = "git+https://github.com/h5i-dev/boa?rev=312810fa#312810fa4ab77d1c59c8b1ddde03e96757226428"
 dependencies = [
  "aligned-vec",
  "arrayvec",
@@ -609,7 +609,7 @@ dependencies = [
 [[package]]
 name = "boa_gc"
 version = "0.22.0"
-source = "git+https://github.com/h5i-dev/boa?rev=3b9c395e#3b9c395e2444ed046bd0e3535e16b5d0d44f134b"
+source = "git+https://github.com/h5i-dev/boa?rev=312810fa#312810fa4ab77d1c59c8b1ddde03e96757226428"
 dependencies = [
  "arrayvec",
  "boa_macros",
@@ -622,7 +622,7 @@ dependencies = [
 [[package]]
 name = "boa_icu_provider"
 version = "0.22.0"
-source = "git+https://github.com/h5i-dev/boa?rev=3b9c395e#3b9c395e2444ed046bd0e3535e16b5d0d44f134b"
+source = "git+https://github.com/h5i-dev/boa?rev=312810fa#312810fa4ab77d1c59c8b1ddde03e96757226428"
 dependencies = [
  "icu_calendar",
  "icu_casemap",
@@ -646,7 +646,7 @@ dependencies = [
 [[package]]
 name = "boa_interner"
 version = "0.22.0"
-source = "git+https://github.com/h5i-dev/boa?rev=3b9c395e#3b9c395e2444ed046bd0e3535e16b5d0d44f134b"
+source = "git+https://github.com/h5i-dev/boa?rev=312810fa#312810fa4ab77d1c59c8b1ddde03e96757226428"
 dependencies = [
  "boa_gc",
  "boa_macros",
@@ -661,7 +661,7 @@ dependencies = [
 [[package]]
 name = "boa_macros"
 version = "0.22.0"
-source = "git+https://github.com/h5i-dev/boa?rev=3b9c395e#3b9c395e2444ed046bd0e3535e16b5d0d44f134b"
+source = "git+https://github.com/h5i-dev/boa?rev=312810fa#312810fa4ab77d1c59c8b1ddde03e96757226428"
 dependencies = [
  "cfg-if",
  "cow-utils",
@@ -674,7 +674,7 @@ dependencies = [
 [[package]]
 name = "boa_parser"
 version = "0.22.0"
-source = "git+https://github.com/h5i-dev/boa?rev=3b9c395e#3b9c395e2444ed046bd0e3535e16b5d0d44f134b"
+source = "git+https://github.com/h5i-dev/boa?rev=312810fa#312810fa4ab77d1c59c8b1ddde03e96757226428"
 dependencies = [
  "bitflags 2.13.1",
  "boa_ast",
@@ -691,7 +691,7 @@ dependencies = [
 [[package]]
 name = "boa_string"
 version = "0.22.0"
-source = "git+https://github.com/h5i-dev/boa?rev=3b9c395e#3b9c395e2444ed046bd0e3535e16b5d0d44f134b"
+source = "git+https://github.com/h5i-dev/boa?rev=312810fa#312810fa4ab77d1c59c8b1ddde03e96757226428"
 dependencies = [
  "fast-float2",
  "itoa",
@@ -5287,7 +5287,7 @@ dependencies = [
 [[package]]
 name = "small_btree"
 version = "0.1.0"
-source = "git+https://github.com/h5i-dev/boa?rev=3b9c395e#3b9c395e2444ed046bd0e3535e16b5d0d44f134b"
+source = "git+https://github.com/h5i-dev/boa?rev=312810fa#312810fa4ab77d1c59c8b1ddde03e96757226428"
 dependencies = [
  "arrayvec",
 ]
@@ -5678,7 +5678,7 @@ dependencies = [
 [[package]]
 name = "tag_ptr"
 version = "0.1.0"
-source = "git+https://github.com/h5i-dev/boa?rev=3b9c395e#3b9c395e2444ed046bd0e3535e16b5d0d44f134b"
+source = "git+https://github.com/h5i-dev/boa?rev=312810fa#312810fa4ab77d1c59c8b1ddde03e96757226428"
 
 [[package]]
 name = "tagptr"
