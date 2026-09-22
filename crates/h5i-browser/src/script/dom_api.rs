@@ -1235,10 +1235,44 @@ fn identity(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResu
 /// `fetch` calls actually overlap instead of running one after the other. The
 /// old binding did the whole round trip inline, so a page that fanned out ten
 /// requests paid for them in series and every SPA waterfall was our own.
+/// The request body as the bytes it is.
+///
+/// A page may hand `fetch` a typed array or an `ArrayBuffer` — every protobuf
+/// and gRPC-web client does — and coercing one to a string turned a five-byte
+/// frame into `{"0":0,"1":0,...}`. The server read `{` as the frame's
+/// compression flag and refused the request it had just been sent.
+fn arg_body(args: &[JsValue], at: usize, context: &mut Context) -> Vec<u8> {
+    use boa_engine::object::builtins::{JsArrayBuffer, JsTypedArray};
+
+    if let Some(object) = args.get_or_undefined(at).as_object() {
+        // A view carries an offset and a length into a buffer it shares, and
+        // sending the whole buffer would send whatever else is in it.
+        if let Ok(view) = JsTypedArray::from_object(object.clone()) {
+            let offset = view.byte_offset(context).unwrap_or(0);
+            let length = view.byte_length(context).unwrap_or(0);
+            if let Ok(buffer) = view.buffer(context)
+                && let Some(buffer) = buffer.as_object()
+                && let Ok(buffer) = JsArrayBuffer::from_object(buffer.clone())
+                && let Some(data) = buffer.data()
+            {
+                let start = offset.min(data.len());
+                let end = offset.saturating_add(length).min(data.len());
+                return data[start..end].to_vec();
+            }
+        }
+        if let Ok(buffer) = JsArrayBuffer::from_object(object.clone())
+            && let Some(data) = buffer.data()
+        {
+            return data.to_vec();
+        }
+    }
+    arg_string(args, at, context).unwrap_or_default().into_bytes()
+}
+
 fn fetch_start(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let target = arg_string(args, 0, context)?;
     let method = arg_string(args, 1, context).unwrap_or_else(|_| "GET".to_string());
-    let body = arg_string(args, 2, context).unwrap_or_default();
+    let body = arg_body(args, 2, context);
     // The rest of the request's origin story: what the page set, and how it
     // asked to treat the boundary. Defaults match `fetch`'s own (`cors` mode,
     // `same-origin` credentials) so a page that says nothing gets the
@@ -1302,7 +1336,7 @@ fn fetch_start(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
                     (!body.is_empty())
                         .then(|| "application/x-www-form-urlencoded".to_string())
                 }),
-            body: body.into_bytes(),
+            body,
             headers,
             mode,
             credentials,
@@ -2811,4 +2845,32 @@ fn sse_drain(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     }
 
     Ok(out.into())
+}
+
+#[cfg(test)]
+mod body_tests {
+    use super::*;
+    use boa_engine::object::builtins::JsUint8Array;
+
+    /// A body that is bytes reaches the wire as those bytes.
+    ///
+    /// Coercing one to a string turned a five-byte gRPC-web frame into
+    /// `{"0":0,"1":0,...}`, and the server read `{` as the frame's compression
+    /// flag and refused the request it had just been handed.
+    #[test]
+    fn a_typed_array_body_keeps_its_bytes() {
+        let context = &mut Context::default();
+        let frame = [0u8, 0, 0, 0, 5, 0x80, 0xff];
+        let array = JsUint8Array::from_iter(frame.iter().copied(), context).expect("array");
+        let got = arg_body(&[array.into()], 0, context);
+        assert_eq!(got, frame, "the bytes the page passed are the bytes sent");
+    }
+
+    /// Text is still text: the common body is a string and must not change.
+    #[test]
+    fn a_string_body_is_still_its_utf8() {
+        let context = &mut Context::default();
+        let got = arg_body(&[js_string!("hello").into()], 0, context);
+        assert_eq!(got, b"hello");
+    }
 }

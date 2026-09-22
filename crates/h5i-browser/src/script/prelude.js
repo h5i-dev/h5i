@@ -10132,7 +10132,18 @@
 
     let body = request.body ?? "";
     if (body instanceof FormData) body = body.toString();
-    else if (body && typeof body !== "string") {
+    else if (body instanceof Blob) body = new Uint8Array(body._bytes);
+    else if (body instanceof URLSearchParams) body = body.toString();
+    // Bytes reach the host as bytes, and so fall through untouched. A typed
+    // array stringified here became `{"0":0,"1":0,...}`, which is what a
+    // gRPC-web server was reading when it called our frame's compression flag
+    // invalid — it was quoting the `{`.
+    else if (
+      body
+      && typeof body !== "string"
+      && !(body instanceof ArrayBuffer)
+      && !ArrayBuffer.isView(body)
+    ) {
       try { body = JSON.stringify(body); } catch (_) { body = String(body); }
     }
 

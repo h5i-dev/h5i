@@ -3792,7 +3792,13 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     // 289 for `document.fonts` and `navigator.sendBeacon`, both of which this
     // corpus's pages call and neither of which a tier can hold: they are read
     // off objects the core already hands out.
-    const BUDGET_KIB: usize = 289;
+    //
+    // 290 to carry a body as bytes in both directions. `fetch` stringified a
+    // typed array into `{"0":0,...}` and `arrayBuffer()` re-encoded the lossy
+    // decode of what came back, so no binary request or reply survived the
+    // round trip and a gRPC-web API called its own frames malformed. `fetch`
+    // and `Response` are on every page, so neither half is tierable.
+    const BUDGET_KIB: usize = 290;
 
     assert!(
         !super::PRELUDE.contains("/*"),
