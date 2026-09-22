@@ -2037,6 +2037,27 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     // tree* built, not what the cascade computed.
 
     use style::properties::{PropertyDeclarationId, PropertyId};
+    // `overflow` is a shorthand, and the rule below declines shorthands on
+    // purpose. This one earns an exception: everything that hunts for a scroll
+    // container reads it, and unlike `border` its computed value is not a
+    // judgement call — CSSOM says the two longhands, written as one when they
+    // agree. Declining it told a library the element had no overflow at all.
+    if property == "overflow" {
+        let longhand = |name: &str| {
+            PropertyId::parse_enabled_for_all_content(name)
+                .ok()
+                .and_then(|id| match id {
+                    PropertyId::NonCustom(id) => id.as_longhand(),
+                    PropertyId::Custom(_) => None,
+                })
+                .map(|l| styles.computed_value_to_string(PropertyDeclarationId::Longhand(l)))
+        };
+        if let (Some(x), Some(y)) = (longhand("overflow-x"), longhand("overflow-y")) {
+            let value = if x == y { x } else { format!("{x} {y}") };
+            return Ok(js_string!(value).into());
+        }
+    }
+
     let answer = match PropertyId::parse_enabled_for_all_content(&property) {
         // A shorthand resolves to `None` here and so names itself: its computed
         // value is its longhands re-serialised, and getting that subtly wrong is

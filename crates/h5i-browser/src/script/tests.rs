@@ -7800,3 +7800,42 @@ fn a_switch_discriminant_does_not_shadow_the_case_body() {
         "correct"
     );
 }
+
+/// `getComputedStyle(el).overflow` answers, rather than naming itself a gap.
+///
+/// Shorthands are declined here on purpose: `border`'s computed value is its
+/// longhands re-serialised, and getting that subtly wrong would tell a caller
+/// two different borders match. `overflow` is not that case — CSSOM defines it
+/// as the two longhands, written as one when they agree — and it is what every
+/// hunt for a scroll container reads. Declining it said the element had no
+/// overflow at all.
+#[test]
+fn computed_overflow_comes_from_its_longhands() {
+    let (_page, mut script) = page_and_script(
+        "<html><head><style>#a{overflow:hidden}#b{overflow-x:scroll;overflow-y:auto}</style></head>\
+         <body><div id='a'>a</div><div id='b'>b</div></body></html>",
+    );
+
+    assert_eq!(
+        script
+            .eval_value("getComputedStyle(document.querySelector('#a')).overflow")
+            .unwrap(),
+        "hidden",
+        "equal longhands collapse to one value"
+    );
+    assert_eq!(
+        script
+            .eval_value("getComputedStyle(document.querySelector('#b')).overflow")
+            .unwrap(),
+        "scroll auto",
+        "differing longhands are both reported, x then y"
+    );
+    assert!(
+        !script
+            .unsupported()
+            .iter()
+            .any(|(name, _)| name.contains("overflow")),
+        "and it is no longer counted as a gap: {:?}",
+        script.unsupported()
+    );
+}
