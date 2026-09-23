@@ -6400,10 +6400,27 @@
   // Capture down, then bubble up: the order a page's handlers were written
   // against. A listener that throws does not stop the others, because one bad
   // handler taking the page down is worse than one handler not running.
+  /// The node the window's listeners sit on, looked up once.
+  let windowNode = null;
+
   function dispatch(target, event) {
     event.target = target;
     const chain = path(target);
 
+    // A `load` fired at an element reaches the document and stops there: a
+    // Document's parent is null for this one type (DOM 2.9), so the window
+    // never sees a subresource finish. Window and document are the same node
+    // here, so sparing the top of the chain is what implements that. Without
+    // it a capturing `load` listener on the window runs once per subresource,
+    // and a library that installs a fresh one each time it runs — Sentry's
+    // bundled web-vitals does — grows them quadratically: 68 subresources
+    // became 2,336 callbacks on grok.com, which is where that page's load
+    // time was going.
+    if (event.type === "load" && chain.length > 1) {
+      if (windowNode === null) windowNode = api.root();
+      const at = chain.findIndex((n) => n._id === windowNode);
+      if (at > 0) chain.length = at;
+    }
     const fire = (node, capture) => {
       if (event._stopped) return;
       event.currentTarget = node;
