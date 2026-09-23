@@ -640,14 +640,80 @@ fn serialising_markup_keeps_comments_and_escapes_what_it_must() {
     );
 
     reading.assert_clean("serialising markup");
-    // The separator survives...
-    reading.assert_shows("comment=<a href=\"/r\">v<!---->1.0.0</a>");
+    // The separator survives, with what was written in it: an empty `<!---->`
+    // is a different marker to React than the `<!-- -->` this page sent.
+    reading.assert_shows("comment=<a href=\"/r\">v<!-- -->1.0.0</a>");
     // ...void elements do not grow a closing tag...
     reading.assert_shows("void=<img src=\"/x.png\" alt=\"a &amp; b\"><br>");
     // ...text that would reopen markup is escaped...
     reading.assert_shows("text=<p>5 &lt; 6 &amp;&amp; 7</p>");
     // ...and re-parsing the result gives back text, comment, text.
     reading.assert_shows("roundtrip=3,8,3");
+}
+
+/// A comment node keeps what was written in it.
+///
+/// Next.js marks its Suspense boundaries with `<!--$-->` and `<!--/$-->`, and
+/// React matches those against the tree it is hydrating. The parser keeps the
+/// node and drops the text, so every marker read as empty, hydration could
+/// never match, and React rebuilt the whole application on the client.
+#[test]
+fn a_parsed_comment_keeps_its_text() {
+    let reading = read(
+        "<html><body><div id='a'>x<!--$-->y<!--/$-->z</div><output id='out'></output>\
+         <script>\
+           const kids = Array.from(document.querySelector('#a').childNodes);\
+           document.querySelector('#out').textContent = \
+             'data=' + kids.map((n) => n.nodeType + ':' + n.data).join(',');\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("comment text");
+    reading.assert_shows("data=3:x,8:$,3:y,8:/$,3:z");
+}
+
+/// `<!--` inside a `<script>` opens no comment.
+///
+/// The text is found again by reading the source the parser was given, so a
+/// scan that took this for a comment would have one more than the tree does
+/// and put every later comment's text on the wrong node.
+#[test]
+fn markup_inside_a_script_does_not_shift_comment_text() {
+    let reading = read(
+        "<html><body><script>var marker = \"<!--decoy-->\";</script>\
+         <div id='a'><!--real--></div><output id='out'></output>\
+         <script>\
+           document.querySelector('#out').textContent = \
+             'said=' + document.querySelector('#a').firstChild.data;\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("comment beside a script");
+    reading.assert_shows("said=real");
+}
+
+/// A `load` fired at an element reaches the document and stops there.
+///
+/// DOM 2.9 gives a Document no parent for this one type, so the window never
+/// hears a subresource finish. Sentry's bundled web-vitals installs a fresh
+/// capturing `load` listener every time it runs, so delivering these grew them
+/// quadratically: 68 subresources became 2,336 callbacks on grok.com.
+#[test]
+fn a_subresource_load_does_not_reach_the_window() {
+    let reading = read(
+        "<html><body><svg id='s'></svg><output id='out'></output>\
+         <script>\
+           const seen = [];\
+           addEventListener('load', (e) => seen.push('w:' + e.target.tagName), true);\
+           document.querySelector('#s').addEventListener('load', () => seen.push('svg'));\
+           addEventListener('load', () => {\
+             document.querySelector('#out').textContent = 'heard=' + seen.join(',');\
+           });\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("subresource load");
+    reading.assert_shows("heard=svg,w:HTML");
 }
 
 /// The legacy surface every browser implements. Annex B is the standard's own

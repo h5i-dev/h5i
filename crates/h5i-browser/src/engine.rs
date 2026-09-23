@@ -335,6 +335,106 @@ impl blitz_traits::navigation::NavigationProvider for CapturedNavigation {
 pub type Dom = Rc<RefCell<BaseDocument>>;
 
 /// A loaded, resolved document.
+/// Elements whose content the tokenizer reads as raw text, where `<!--` opens
+/// no comment.
+const RAW_TEXT_ELEMENTS: [&str; 8] = [
+    "script", "style", "textarea", "title", "xmp", "noembed", "noframes", "iframe",
+];
+
+/// What each comment node in `doc` said, read back out of `html`.
+///
+/// The parser keeps the node and drops the text (see [`Page::parsed_comments`]),
+/// and it exposes no hook to keep it, so the text is found again by reading the
+/// source the parser was given. The two are paired by position: comments come
+/// out of the tokenizer in source order and the tree keeps them in that order.
+///
+/// Paired only when both sides found the same number, and otherwise nothing is
+/// claimed. A scan is not a parser — a comment this misses, or one it invents
+/// inside markup that turned out to be raw text, would shift every later
+/// pairing and put one comment's text on another comment's node. Counting is
+/// what makes disagreement visible, and an empty map is what this already does
+/// today.
+fn recover_comments(html: &str, doc: &blitz_dom::BaseDocument) -> std::collections::HashMap<usize, String> {
+    let ids = comment_nodes(doc);
+    if ids.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    let texts = comment_texts(html);
+    if texts.len() != ids.len() {
+        return std::collections::HashMap::new();
+    }
+    ids.into_iter().zip(texts).collect()
+}
+
+/// Every comment node under the document, in tree order.
+fn comment_nodes(doc: &blitz_dom::BaseDocument) -> Vec<usize> {
+    let mut found = Vec::new();
+    let mut stack = vec![doc.root_node().id];
+    // Reversed on push, so children are visited left to right.
+    while let Some(id) = stack.pop() {
+        let Some(node) = doc.get_node(id) else {
+            continue;
+        };
+        if matches!(node.data, blitz_dom::NodeData::Comment) {
+            found.push(id);
+        }
+        stack.extend(node.children.iter().rev().copied());
+    }
+    found
+}
+
+/// Every comment in `html`, in source order.
+///
+/// Follows the tokenizer where it matters and not where it does not: raw-text
+/// elements are skipped because `<!--` inside a `<script>` opens no comment,
+/// and a comment ends at `-->`, at `--!>`, or at the end of the input.
+fn comment_texts(html: &str) -> Vec<String> {
+    let bytes = html.as_bytes();
+    let mut found = Vec::new();
+    let mut at = 0usize;
+    while at < bytes.len() {
+        let Some(next) = html[at..].find('<') else {
+            break;
+        };
+        let open = at + next;
+        if html[open..].starts_with("<!--") {
+            let body = open + 4;
+            let end = html[body..]
+                .find("-->")
+                .map(|n| (body + n, body + n + 3))
+                .or_else(|| html[body..].find("--!>").map(|n| (body + n, body + n + 4)))
+                .unwrap_or((bytes.len(), bytes.len()));
+            found.push(html[body..end.0].to_string());
+            at = end.1;
+            continue;
+        }
+        at = open + 1;
+        let rest = &html[open + 1..];
+        for name in RAW_TEXT_ELEMENTS {
+            if !rest.len().checked_sub(name.len()).is_some_and(|_| {
+                rest[..name.len()].eq_ignore_ascii_case(name)
+                    && rest[name.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_whitespace() || c == '>' || c == '/')
+            }) {
+                continue;
+            }
+            let Some(gt) = rest.find('>') else {
+                return found;
+            };
+            let after = open + 1 + gt + 1;
+            let close = format!("</{name}");
+            at = match html[after..].to_ascii_lowercase().find(&close) {
+                Some(n) => after + n + close.len(),
+                None => bytes.len(),
+            };
+            break;
+        }
+    }
+    found
+}
+
 pub struct Page {
     doc: Dom,
     url: Url,
@@ -372,6 +472,17 @@ pub struct Page {
     /// A page with no script elements never gets one, so `script.is_some()`
     /// alone cannot tell "script is off" from "there was nothing to run".
     ran_scripts: bool,
+    /// What each parsed comment node actually said, by node id.
+    ///
+    /// Blitz stores `NodeData::Comment` as a unit variant, so the parser knows
+    /// a comment was there and not what was in it. That is invisible until a
+    /// framework reads it: Next.js marks its Suspense boundaries with
+    /// `<!--$-->` and `<!--/$-->`, and React matches those against the tree it
+    /// is hydrating. With every comment reading as empty the match fails, React
+    /// discards the server's markup and rebuilds the whole application on the
+    /// client, which is most of what a page like that then costs.
+    parsed_comments: std::collections::HashMap<usize, String>,
+
     /// Set when the layout engine panicked while reading this page.
     ///
     /// The outline that follows was produced from whatever state layout reached,
@@ -976,10 +1087,13 @@ impl Page {
             notes.push(SESSION_DROPPED_NOTE.to_string());
         }
 
+        let parsed_comments = recover_comments(html, &doc);
+
         Self {
             // Assumed until `from_bytes` says otherwise: a string handed
             // straight to `from_html` has already been decoded by someone.
             encoding: encoding_rs::UTF_8,
+            parsed_comments,
             doc: Rc::new(RefCell::new(doc)),
             url: base_url.clone(),
             // Armed here rather than at the script phase, so the fetching and
@@ -1138,6 +1252,7 @@ impl Page {
         )
         .map_err(H5iError::Metadata)?;
         script.set_encoding(self.encoding);
+        script.seed_comments(self.parsed_comments.clone());
         // Shared, not copied: the document keeps filling this in as script adds
         // images and frames.
         script.set_resource_log(self.resources.clone());

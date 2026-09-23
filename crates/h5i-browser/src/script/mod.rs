@@ -688,6 +688,14 @@ impl Script {
 
     /// Evaluate and return the completion value, for tests and for a future
     /// `session eval`.
+    /// Tell the realm what the parsed comment nodes said.
+    ///
+    /// `api.getText` answers a comment out of this map, because the tree does
+    /// not keep the text: see [`crate::engine::Page::parsed_comments`].
+    pub fn seed_comments(&self, texts: std::collections::HashMap<usize, String>) {
+        self.host.comments.borrow_mut().extend(texts);
+    }
+
     pub fn eval_value(&mut self, source: &str) -> Result<String, String> {
         match self.context.eval(Source::from_bytes(source)) {
             Ok(value) => Ok(value
