@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use std::time::Duration;
 
-use boa_engine::{js_string, Context, Module, Source};
+use boa_engine::{js_string, Context, JsString, JsValue, Module, Source};
 
 use crate::engine::Dom;
 use host::{ConsoleLine, Host, HostHandle};
@@ -1084,14 +1084,26 @@ impl Script {
         }
     }
 
+    /// Call one of the prelude's settle drivers by name.
+    ///
+    /// The settle loop asks four of these every round, and a page can take
+    /// hundreds of rounds, so evaluating `"__h5iRunTimers(12)"` as source each
+    /// time meant parsing, compiling and scope-analysing the same handful of
+    /// call expressions thousands of times over. Measured on a large
+    /// application: around two thousand parses per load, which was most of
+    /// what the engine spent in its parser.
+    fn call_driver(&mut self, name: &str, args: &[JsValue]) -> Option<JsValue> {
+        let global = self.context.global_object();
+        let f = global.get(JsString::from(name), &mut self.context).ok()?;
+        let f = f.as_callable()?.clone();
+        f.call(&JsValue::undefined(), args, &mut self.context).ok()
+    }
+
     /// Resolve whatever has come back, and report how much is still owed.
     fn drain_fetches(&mut self) -> usize {
-        match self
-            .context
-            .eval(Source::from_bytes("__h5iDrainFetches()"))
-        {
-            Ok(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
-            Err(_) => 0,
+        match self.call_driver("__h5iDrainFetches", &[]) {
+            Some(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
+            None => 0,
         }
     }
 
@@ -1108,30 +1120,21 @@ impl Script {
     }
 
     fn run_layout_observers(&mut self) {
-        let _ = self
-            .context
-            .eval(Source::from_bytes("__h5iRunLayoutObservers()"));
+        let _ = self.call_driver("__h5iRunLayoutObservers", &[]);
     }
 
     fn run_due_timers(&mut self, clock: u64) -> usize {
-        let source = format!("__h5iRunTimers({clock})");
-        match self.context.eval(Source::from_bytes(&source)) {
-            Ok(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
-            Err(_) => 0,
+        match self.call_driver("__h5iRunTimers", &[JsValue::from(clock as f64)]) {
+            Some(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
+            None => 0,
         }
     }
 
     /// When the earliest waiting timer is due, in virtual milliseconds.
     fn next_timer_due(&mut self) -> Option<u64> {
-        match self
-            .context
-            .eval(Source::from_bytes("__h5iNextTimerDue()"))
-        {
-            Ok(value) => match value.as_number() {
-                Some(due) if due >= 0.0 => Some(due as u64),
-                _ => None,
-            },
-            Err(_) => None,
+        match self.call_driver("__h5iNextTimerDue", &[])?.as_number() {
+            Some(due) if due >= 0.0 => Some(due as u64),
+            _ => None,
         }
     }
 
@@ -1146,9 +1149,9 @@ impl Script {
         if self.host.sockets.borrow().is_empty() && self.host.streams.borrow().is_empty() {
             return 0;
         }
-        match self.context.eval(Source::from_bytes("__h5iDrainSockets()")) {
-            Ok(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
-            Err(_) => 0,
+        match self.call_driver("__h5iDrainSockets", &[]) {
+            Some(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
+            None => 0,
         }
     }
 
