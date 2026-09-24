@@ -8812,9 +8812,12 @@
     const root = wrap(api.root());
     if (root) root.addEventListener(type, handler, options);
   }
-  function removeEventListener(type, handler) {
+  // `options` too: capture is part of what identifies a listener, so dropping
+  // it here removed a bubbling listener that was never registered and left the
+  // capturing one the caller meant in place for ever.
+  function removeEventListener(type, handler, options) {
     const root = wrap(api.root());
-    if (root) root.removeEventListener(type, handler);
+    if (root) root.removeEventListener(type, handler, options);
   }
   function dispatchEvent(event) {
     const root = wrap(api.root());
