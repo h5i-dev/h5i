@@ -16,6 +16,7 @@ use std::time::Duration;
 use clap::Parser;
 use h5i_core::browser_session as bs;
 use h5i_wire::message::{Body, StoredRequest, StoredResponse, body_file, message_file};
+use h5i_wire::{Expect, ExpectResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use url::Url;
@@ -64,7 +65,12 @@ struct TestFile {
     actors: BTreeMap<String, Actor>,
     requests: BTreeMap<String, RequestTemplate>,
     flow: Vec<SendStep>,
-    oracle: Oracle,
+    /// The repository-owned verdict (source 3 of design-flow-and-verdict.md).
+    /// Optional: a test may instead carry its verdict as step `expect` clauses
+    /// (source 2), which are data and therefore shareable, where an oracle is
+    /// the repository's own code and is not.
+    #[serde(default)]
+    oracle: Option<Oracle>,
     #[serde(default)]
     cleanup: Vec<SendStep>,
 }
@@ -111,6 +117,10 @@ struct SendStep {
     no_follow: bool,
     #[serde(default)]
     extract: BTreeMap<String, String>,
+    /// A data-only verdict over this step's answer. When a test has no oracle,
+    /// the run passes only if every step `expect` held.
+    #[serde(default)]
+    expect: Option<Expect>,
     #[serde(default)]
     covers: Option<Covers>,
 }
@@ -155,6 +165,12 @@ struct StepResult {
     response: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     status: Option<u16>,
+    /// Whether this step's `expect` held, when it had one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    matched: Option<bool>,
+    /// Why the verdict came out as it did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verdict: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -418,36 +434,61 @@ fn run_file_inner(
 
     let mut oracle = OracleResult::default();
     let mut status = Status::Error;
-    let mut oracle_conclusive = false;
+    let mut conclusive = false;
+    let mut verdict_error = None;
     if flow_error.is_none() {
-        let bundle = OracleBundle {
-            schema: SCHEMA,
-            test: plan.id.clone(),
-            target: target_text.to_string(),
-            responses: std::mem::take(&mut ctx.responses),
-            variables: ctx.variables.clone(),
-        };
-        let oracle_path = test_output.join("oracle-input.json");
-        let prepared = serde_json::to_vec_pretty(&bundle)
-            .map_err(anyhow::Error::from)
-            .and_then(|bytes| fs::write(&oracle_path, bytes).map_err(anyhow::Error::from));
-        match prepared.and_then(|()| run_oracle(&plan.oracle, file, &oracle_path, &test_output)) {
-            Ok(result) => {
-                oracle = result;
-                status = match oracle.exit_code {
-                    Some(0) => {
-                        oracle_conclusive = true;
-                        Status::Pass
-                    }
-                    Some(1) => {
-                        oracle_conclusive = true;
-                        Status::Fail
-                    }
-                    _ => Status::Error,
+        match &plan.oracle {
+            // Source 3: the repository's own program decides.
+            Some(oracle_spec) => {
+                let bundle = OracleBundle {
+                    schema: SCHEMA,
+                    test: plan.id.clone(),
+                    target: target_text.to_string(),
+                    responses: std::mem::take(&mut ctx.responses),
+                    variables: ctx.variables.clone(),
                 };
+                let oracle_path = test_output.join("oracle-input.json");
+                let prepared = serde_json::to_vec_pretty(&bundle)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|bytes| fs::write(&oracle_path, bytes).map_err(anyhow::Error::from));
+                match prepared.and_then(|()| run_oracle(oracle_spec, file, &oracle_path, &test_output))
+                {
+                    Ok(result) => {
+                        oracle = result;
+                        status = match oracle.exit_code {
+                            Some(0) => {
+                                conclusive = true;
+                                Status::Pass
+                            }
+                            Some(1) => {
+                                conclusive = true;
+                                Status::Fail
+                            }
+                            _ => Status::Error,
+                        };
+                    }
+                    Err(error) => {
+                        oracle.stderr = format!("{error:#}");
+                    }
+                }
             }
-            Err(error) => {
-                oracle.stderr = format!("{error:#}");
+            // Source 2: the step verdicts decide. Validation guarantees at least
+            // one flow step carries an `expect` when there is no oracle, so an
+            // empty verdict set here means every such step failed to produce one,
+            // which is an error rather than a silent pass.
+            None => {
+                let verdicts: Vec<bool> = steps.iter().filter_map(|s| s.matched).collect();
+                if verdicts.is_empty() {
+                    verdict_error = Some(
+                        "this test has no oracle and no step produced a verdict".to_string(),
+                    );
+                } else if verdicts.iter().all(|held| *held) {
+                    conclusive = true;
+                    status = Status::Pass;
+                } else {
+                    conclusive = true;
+                    status = Status::Fail;
+                }
             }
         }
     }
@@ -462,9 +503,9 @@ fn run_file_inner(
     if status == Status::Pass && !cleanup_errors.is_empty() {
         status = Status::Error;
     }
-    // Coverage is conclusive for both outcomes an oracle actually decided.
-    // An execution/oracle error is not evidence that the operation was tested.
-    let (covered_operations, mutations) = if oracle_conclusive {
+    // Coverage is conclusive for both outcomes a verdict actually decided.
+    // An execution or verdict error is not evidence that the operation was tested.
+    let (covered_operations, mutations) = if conclusive {
         (
             std::mem::take(&mut ctx.covered),
             std::mem::take(&mut ctx.mutations),
@@ -482,7 +523,7 @@ fn run_file_inner(
         steps,
         oracle,
         cleanup_errors,
-        error: flow_error,
+        error: flow_error.or(verdict_error),
         covered_operations,
         mutations,
     })
@@ -599,6 +640,22 @@ impl TestContext<'_> {
             let value = extract(spec, &response, &body_path)?;
             self.variables.insert(name.clone(), value);
         }
+        // The verdict, when this step carries one. Cleanup steps never judge:
+        // they exist to undo, not to decide. The body is read as lossy text, the
+        // same view an extractor gets.
+        let (matched, verdict) = match (&step.expect, cleanup) {
+            (Some(expect), false) => {
+                let bytes = fs::read(&body_path)?;
+                let body = String::from_utf8_lossy(&bytes);
+                let outcome = expect.evaluate(&ExpectResponse {
+                    status: response.status,
+                    headers: &response.headers,
+                    body: &body,
+                });
+                (Some(outcome.matched), Some(outcome.because))
+            }
+            _ => (None, None),
+        };
         if !cleanup {
             if let Some(covers) = &step.covers {
                 self.covered.insert(covers.operation.clone());
@@ -615,6 +672,8 @@ impl TestContext<'_> {
             ok: true,
             response: (!cleanup).then_some(save),
             status: response.status,
+            matched,
+            verdict,
             error: None,
             covers: step.covers.as_ref().map(|c| CoversResult {
                 operation: c.operation.clone(),
@@ -795,8 +854,20 @@ fn validate(plan: &TestFile, file: &Path) -> anyhow::Result<()> {
     if plan.flow.is_empty() {
         anyhow::bail!("{} has no flow steps", file.display());
     }
-    if plan.oracle.command.is_empty() {
-        anyhow::bail!("{} has an empty oracle command", file.display());
+    // A test needs a verdict source. An oracle (source 3) is the repository's own
+    // program; a step `expect` (source 2) is data. One or the other must decide,
+    // or the run has nothing to conclude.
+    match &plan.oracle {
+        Some(oracle) if oracle.command.is_empty() => {
+            anyhow::bail!("{} has an empty oracle command", file.display());
+        }
+        None if !plan.flow.iter().any(|step| step.expect.is_some()) => {
+            anyhow::bail!(
+                "{} has no oracle and no step `expect`, so nothing decides pass or fail",
+                file.display()
+            );
+        }
+        _ => {}
     }
     let mut saved = BTreeSet::new();
     for (index, step) in plan.flow.iter().enumerate() {
@@ -826,12 +897,14 @@ fn validate(plan: &TestFile, file: &Path) -> anyhow::Result<()> {
             );
         }
     }
-    for input in &plan.oracle.inputs {
-        if !saved.contains(input) {
-            anyhow::bail!(
-                "{} oracle input `{input}` is not a saved flow response",
-                file.display()
-            );
+    if let Some(oracle) = &plan.oracle {
+        for input in &oracle.inputs {
+            if !saved.contains(input) {
+                anyhow::bail!(
+                    "{} oracle input `{input}` is not a saved flow response",
+                    file.display()
+                );
+            }
         }
     }
     for (index, step) in plan.cleanup.iter().enumerate() {
@@ -1305,5 +1378,48 @@ mod tests {
         fs::write(&b, "id: same\n").unwrap();
         let error = refuse_duplicate_ids(&[a, b]).unwrap_err();
         assert!(error.to_string().contains("used by both"), "{error}");
+    }
+
+    fn parse(yaml: &str) -> TestFile {
+        serde_yaml::from_str(yaml).expect("a valid test file")
+    }
+
+    #[test]
+    fn a_test_needs_a_verdict_source() {
+        // No oracle and no expect: nothing decides, so it is refused.
+        let none = parse(
+            "version: h5i.test/v1\nid: t\n\
+             requests:\n  probe: {path: /}\nflow:\n  - send: probe\n",
+        );
+        let error = validate(&none, Path::new("t.yaml")).unwrap_err();
+        assert!(error.to_string().contains("nothing decides"), "{error}");
+    }
+
+    #[test]
+    fn a_step_expect_is_a_verdict_source_without_an_oracle() {
+        let with_expect = parse(
+            "version: h5i.test/v1\nid: t\n\
+             requests:\n  probe: {path: /}\n\
+             flow:\n  - send: probe\n    expect: {status: 200}\n",
+        );
+        assert!(with_expect.oracle.is_none());
+        assert!(validate(&with_expect, Path::new("t.yaml")).is_ok());
+    }
+
+    #[test]
+    fn an_oracle_is_still_accepted_and_still_must_have_a_command() {
+        let ok = parse(
+            "version: h5i.test/v1\nid: t\n\
+             requests:\n  probe: {path: /}\nflow:\n  - send: probe\n\
+             oracle:\n  command: [\"./check.sh\"]\n",
+        );
+        assert!(validate(&ok, Path::new("t.yaml")).is_ok());
+        let empty = parse(
+            "version: h5i.test/v1\nid: t\n\
+             requests:\n  probe: {path: /}\nflow:\n  - send: probe\n\
+             oracle:\n  command: []\n",
+        );
+        let error = validate(&empty, Path::new("t.yaml")).unwrap_err();
+        assert!(error.to_string().contains("empty oracle command"), "{error}");
     }
 }
