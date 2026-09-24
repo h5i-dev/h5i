@@ -424,6 +424,13 @@ pub struct Script {
     /// How long the job queue may run. Overridable so a test can prove the
     /// deadline fires without waiting the real budget out.
     job_budget: Duration,
+    /// What settling has already used of [`Self::job_budget`].
+    ///
+    /// The budget is for the whole load, not for each call. A page's load fires
+    /// its subresource events in bounded passes and settles after every one, so
+    /// a per-call budget multiplied by the number of passes: a page against a
+    /// 45-second intent reached the engine's 105-second watchdog that way.
+    job_spent: Duration,
 
     /// What building this realm cost, by phase. See [`RealmCost`].
     cost: RealmCost,
@@ -589,6 +596,7 @@ impl Script {
             context,
             cancel,
             job_budget: JOB_QUEUE_BUDGET,
+            job_spent: Duration::ZERO,
             cost,
             host,
             pending_modules: Vec::new(),
@@ -718,9 +726,11 @@ impl Script {
         if timing_page() {
             SETTLE_COST.with(|c| *c.borrow_mut() = [Duration::ZERO; 5]);
         }
-        let budget = self.job_budget;
+        let budget = self.job_allowance();
+        let at = std::time::Instant::now();
         let (mut settled, cut_short) =
             self.with_job_deadline(budget, |script| script.settle_inner(None).0);
+        self.job_spent += at.elapsed();
         if timing_page() {
             let spent = SETTLE_COST.with(|c| *c.borrow());
             let name = ["jobs", "layout-observers", "fetches", "timers", "sockets"];
@@ -760,7 +770,8 @@ impl Script {
     }
 
     fn settle_with(&mut self, ready: &mut Ready<'_>) -> Waited {
-        let budget = self.job_budget;
+        let budget = self.job_allowance();
+        let at = std::time::Instant::now();
         // `with_job_deadline` returns (closure result, deadline fired), and the
         // closure itself returns (settled, met). Destructured in one pattern so
         // the two bools cannot be read in the wrong order, which is exactly
@@ -768,6 +779,7 @@ impl Script {
         // met condition as a blown budget.
         let ((settled, met), cut_short) =
             self.with_job_deadline(budget, |script| script.settle_inner(Some(ready)));
+        self.job_spent += at.elapsed();
         let end = if met {
             WaitEnd::Met
         } else if cut_short || settled.cut_off {
@@ -1010,6 +1022,19 @@ impl Script {
     /// it cannot wait the default out.
     pub fn set_job_budget(&mut self, budget: Duration) {
         self.job_budget = budget;
+        self.job_spent = Duration::ZERO;
+    }
+
+    /// What is left of the whole load's allowance.
+    ///
+    /// Never zero: a later pass exists to deliver events the page is owed, and
+    /// one given no time at all would report the page as unfinished without
+    /// having tried. The floor is small enough that the passes cannot add up to
+    /// anything like the old per-call budget.
+    fn job_allowance(&self) -> Duration {
+        self.job_budget
+            .saturating_sub(self.job_spent)
+            .max(Duration::from_millis(100))
     }
 
     /// Run `body` with a wall-clock deadline on the job queue.
