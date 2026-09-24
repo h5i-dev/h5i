@@ -257,14 +257,22 @@ The registry the pitch wants (attack recipes people publish and pull) is exactly
 and only the source-2 layer. A published recipe is a flow with `expect`
 verdicts and no oracle. This is enforceable, not merely encouraged:
 
-- Import and share refuse a flow that carries an oracle field. Oracles are
-  repository-local by definition; there is no such thing as a shared oracle.
+- The import path is data-only by construction. `import-nuclei` never emits an
+  oracle, and it refuses a Nuclei template that carries an executable protocol
+  (`code`, `javascript`, `headless`, `flow`) rather than importing only its
+  http part, because reducing code to data silently would drop the very behavior
+  the template is about. This is built.
 - A pulled recipe runs like any other flow, under the session's policy, scope
   and receipts. It can describe requests; it cannot smuggle execution, because it
   contains none.
 - `audit` already records what ran. A recipe that is data leaves a receipt of the
   requests it made and nothing else, which is the property that lets h5i say a
   downloaded recipe cannot reach outside the box.
+
+The share half (a registry that refuses to publish or pull a flow carrying an
+oracle) is designed and not built, because there is no recipe-publishing surface
+yet. When one is added, the rule it enforces is the one above: an oracle is
+repository-local by definition, and there is no such thing as a shared oracle.
 
 This is the dual-use posture in one rule: recipes are descriptions, oracles are
 your own code, and the box enforces that a description cannot become code. It is
@@ -289,7 +297,9 @@ Changes, in order:
    express rather than lowering it to an oracle.
 4. Let an `expect`-carrying flow be an oracle-less `h5i test` (F8), and let
    `finding --repro` flows graduate into `.h5i-tests/`.
-5. Enforce the share boundary: no oracle crosses it (F9).
+5. Keep the boundary data-only where a crossing exists today: the importer emits
+   no oracle and refuses executable Nuclei protocols (F9). The registry half
+   waits for a registry.
 
 Deliberately not built: a general assertion language (that is the oracle's job,
 and it already exists); response-to-response comparison inside `expect` (oracle);

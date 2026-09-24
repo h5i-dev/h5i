@@ -34,6 +34,20 @@ struct Template {
     http: Vec<HttpRequest>,
     #[serde(default)]
     requests: Vec<HttpRequest>,
+    /// Nuclei's executable protocols. These are not read; their presence is the
+    /// point. A template that runs code (`code`), a browser (`headless`),
+    /// JavaScript (`javascript`, and `flow`, which is a JS orchestration block)
+    /// is code, not data, and importing "just its http part" would quietly drop
+    /// the behavior the template is actually about. F9: a recipe is data or it is
+    /// refused; it is never silently reduced to data.
+    #[serde(default)]
+    code: Option<serde_yaml::Value>,
+    #[serde(default)]
+    javascript: Option<serde_yaml::Value>,
+    #[serde(default)]
+    headless: Option<serde_yaml::Value>,
+    #[serde(default)]
+    flow: Option<serde_yaml::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -138,6 +152,21 @@ pub fn import(file: &Path) -> anyhow::Result<()> {
 }
 
 fn convert(template: Template) -> anyhow::Result<TestOut> {
+    for (name, present) in [
+        ("code", template.code.is_some()),
+        ("javascript", template.javascript.is_some()),
+        ("headless", template.headless.is_some()),
+        ("flow", template.flow.is_some()),
+    ] {
+        if present {
+            anyhow::bail!(
+                "template `{}` has a `{name}` block: it runs code, so it cannot be imported as \
+                 data. Importing only its http part would drop what the template does",
+                template.id
+            );
+        }
+    }
+
     let entries = if !template.http.is_empty() {
         template.http
     } else {
@@ -541,6 +570,44 @@ http:
         )
         .unwrap_err();
         assert!(error.to_string().contains("does not model"), "{error}");
+    }
+
+    #[test]
+    fn an_executable_protocol_is_refused_not_reduced_to_its_http_part() {
+        // A template with both http and a code block must not import as if the
+        // code were not there.
+        let error = convert_yaml(
+            r#"
+id: t
+http:
+  - path: ["{{BaseURL}}/"]
+    matchers:
+      - type: status
+        status: [200]
+code:
+  - engine: [sh]
+    source: "id"
+"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("it runs code"), "{error}");
+    }
+
+    #[test]
+    fn a_flow_block_is_refused() {
+        let error = convert_yaml(
+            r#"
+id: t
+flow: "http(1) && http(2)"
+http:
+  - path: ["{{BaseURL}}/"]
+    matchers:
+      - type: status
+        status: [200]
+"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("cannot be imported as data"), "{error}");
     }
 
     #[test]
