@@ -251,12 +251,15 @@ enum Verb {
 
     /// Run a multi-step flow with bindings between the steps.
     ///
-    /// Steps run in order, bind response values, and stop on failure:
+    /// Steps run in order, bind response values, and stop on failure. A step may
+    /// carry an `expect`: a data-only verdict over its answer. When it does not
+    /// hold the run exits 1 (did not match), distinct from 2 (could not look):
     ///
     /// ```json
     /// {"steps": [
     ///   {"resend": 3, "extract": {"csrf": "regex:value=\"([^\"]+)\""}},
-    ///   {"resend": 5, "set": ["header.X-CSRF-Token=${csrf}", "json.role=admin"]}
+    ///   {"resend": 5, "set": ["header.X-CSRF-Token=${csrf}", "json.role=admin"],
+    ///    "expect": {"all": [{"status": 200}, {"body": "regex:role.*admin"}]}}
     /// ]}
     /// ```
     Sequence {

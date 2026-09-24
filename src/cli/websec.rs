@@ -9,9 +9,10 @@ use h5i_browser::capture::{Body, StoredRequest, StoredResponse, body_file};
 // The store's readers live with the store's types, because the websec plugin
 // reads the same bytes and must not link an engine to do it (W21).
 use h5i_wire::read::{
-    EXIT_CANNOT_LOOK, LOSSY_BODY_BYTES, Text, body_text, json_at, preview_line, read_json,
-    sequences,
+    EXIT_CANNOT_LOOK, EXIT_NO_MATCH, LOSSY_BODY_BYTES, Text, body_text, json_at, preview_line,
+    read_json, sequences,
 };
+use h5i_wire::{Expect, ExpectResponse};
 use h5i_core::browser_session as bs;
 use serde_json::{json, Value};
 
@@ -324,6 +325,14 @@ pub struct Step {
     /// produce is acting somewhere the sequence never described.
     #[serde(default)]
     pub extract: std::collections::BTreeMap<String, String>,
+    /// A data-only verdict over this step's answer (source 2 of
+    /// design-flow-and-verdict.md). When present and it does not hold, the step
+    /// did not match: the chain stops as it does for any failed step, but the
+    /// run exits `EXIT_NO_MATCH` rather than `EXIT_CANNOT_LOOK`, because the
+    /// step looked and the answer was no, which is a different thing from a step
+    /// that could not look at all.
+    #[serde(default)]
+    pub expect: Option<Expect>,
     /// A human-readable name for the step, for the report.
     #[serde(default)]
     pub name: Option<String>,
@@ -350,6 +359,12 @@ pub struct Ran {
     /// What this step bound, for the steps after it.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub bound: std::collections::BTreeMap<String, String>,
+    /// Whether this step's `expect` held, when it had one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched: Option<bool>,
+    /// Why the verdict came out as it did, for a report.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -493,6 +508,10 @@ pub fn sequence(
         vars.iter().cloned().collect();
     let mut ran: Vec<Ran> = Vec::new();
     let mut failed = false;
+    // A send, substitute or extract that could not complete is a different
+    // outcome from an `expect` that looked and said no. The first exits
+    // `EXIT_CANNOT_LOOK`, the second `EXIT_NO_MATCH`; `hard_error` tracks which.
+    let mut hard_error = false;
 
     for (index, step) in plan.steps.iter().enumerate() {
         let mut record = Ran {
@@ -503,6 +522,8 @@ pub fn sequence(
             seq: None,
             status: None,
             bound: Default::default(),
+            matched: None,
+            verdict: None,
             error: None,
         };
 
@@ -522,6 +543,7 @@ pub fn sequence(
             record.error = Some(why);
             ran.push(record);
             failed = true;
+            hard_error = true;
             if !keep_going {
                 break;
             }
@@ -553,16 +575,18 @@ pub fn sequence(
             record.error = Some(why_a_step_failed(&answer));
             ran.push(record);
             failed = true;
+            hard_error = true;
             if !keep_going {
                 break;
             }
             continue;
         }
 
-        // The bindings, read from what this step stored rather than from the
-        // reply: the reply carries the status and the headers, and an extractor
-        // usually wants the body.
-        if !step.extract.is_empty() {
+        // The step's own answer is read once and shared by the extractors and
+        // the verdict: both read the response this step produced, not the reply,
+        // which carries the status and headers but usually not the body an
+        // extractor or a `body` matcher wants.
+        if !step.extract.is_empty() || step.expect.is_some() {
             let target = step.as_session.as_deref().or(selector);
             let (_, dir) = store_dir(root, target)?;
             // The step's own answer, or nothing. Defaulting to zero bound the
@@ -570,10 +594,11 @@ pub fn sequence(
             let Some(seq) = record.seq else {
                 record.error = Some(format!(
                     "step {index} came back without a sequence number, so there is no \
-                     answer of its own to extract from"
+                     answer of its own to read"
                 ));
                 record.ok = false;
                 failed = true;
+                hard_error = true;
                 ran.push(record);
                 if !keep_going {
                     break;
@@ -582,9 +607,10 @@ pub fn sequence(
             };
             let stored: StoredResponse =
                 read_json(&dir.join(format!("{seq}.response.json"))).map_err(|_| {
-                    anyhow::anyhow!("step {index} left no stored response {seq} to extract from")
+                    anyhow::anyhow!("step {index} left no stored response {seq} to read")
                 })?;
             let body = body_text(&dir, &stored.body);
+            let mut extract_failed = false;
             for (name, spec) in &step.extract {
                 match extract_one(spec, &stored, &body) {
                     Ok(value) => {
@@ -595,8 +621,27 @@ pub fn sequence(
                         record.error = Some(e.to_string());
                         record.ok = false;
                         failed = true;
+                        hard_error = true;
+                        extract_failed = true;
                         break;
                     }
+                }
+            }
+            // The verdict runs only when the reads it might depend on succeeded.
+            // A body that could not be extracted is not one to judge, and a
+            // verdict on it would be the wrong kind of failure.
+            if let (false, Some(expect)) = (extract_failed, &step.expect) {
+                let outcome = expect.evaluate(&ExpectResponse {
+                    status: stored.status,
+                    headers: &stored.headers,
+                    body: body.as_str(),
+                });
+                record.matched = Some(outcome.matched);
+                record.verdict = Some(outcome.because);
+                if !outcome.matched {
+                    // Looked, and the answer was no. Not a hard error.
+                    record.ok = false;
+                    failed = true;
                 }
             }
         }
@@ -612,6 +657,10 @@ pub fn sequence(
             "{}",
             serde_json::to_string_pretty(&json!({
                 "ok": !failed,
+                // Why a failed run failed: a step that could not look, or a
+                // verdict that looked and said no. A CI caller reads this
+                // without having to reconstruct it from the exit code.
+                "could_not_look": hard_error,
                 "ran": ran.len(),
                 "of": plan.steps.len(),
                 "steps": ran,
@@ -620,9 +669,15 @@ pub fn sequence(
     } else {
         for step in &ran {
             let label = step.name.clone().unwrap_or_else(|| format!("resend {}", step.resend));
-            match (&step.error, step.status) {
-                (Some(why), _) => println!("  ✘ {label}: {}", preview_line(why)),
-                (None, Some(status)) => {
+            match (&step.error, step.matched, step.status) {
+                (Some(why), _, _) => println!("  ✘ {label}: {}", preview_line(why)),
+                // A verdict that looked and said no: the step sent fine, so the
+                // failure is the answer, not the send.
+                (None, Some(false), _) => println!(
+                    "  ✘ {label}: {}",
+                    step.verdict.as_deref().unwrap_or("did not match")
+                ),
+                (None, _, Some(status)) => {
                     let bound = if step.bound.is_empty() {
                         String::new()
                     } else {
@@ -631,17 +686,24 @@ pub fn sequence(
                             step.bound.keys().cloned().collect::<Vec<_>>().join(", ")
                         )
                     };
-                    println!("  ✔ {label}: {status}{bound}");
+                    let verdict = match (step.matched, &step.verdict) {
+                        (Some(true), Some(why)) => format!(" · {why}"),
+                        _ => String::new(),
+                    };
+                    println!("  ✔ {label}: {status}{bound}{verdict}");
                 }
-                (None, None) => println!("  ✔ {label}"),
+                (None, _, None) => println!("  ✔ {label}"),
             }
         }
         if failed {
             println!("  stopped after {} of {} steps", ran.len(), plan.steps.len());
         }
     }
-    if failed {
+    if hard_error {
         std::process::exit(EXIT_CANNOT_LOOK);
+    }
+    if failed {
+        std::process::exit(EXIT_NO_MATCH);
     }
     Ok(())
 }
@@ -652,6 +714,20 @@ mod tests {
     // Read directly: what these exercise is the shared reader, and the module
     // above no longer names them.
     use h5i_wire::read::{MAX_PREVIEW_LINE, body_bytes, printable};
+
+    /// A step reads its `expect` verdict, and a bare step still parses. The
+    /// verdict grammar itself is exercised in `h5i_wire::expect`; this locks
+    /// that a sequence step carries one and that it stays optional.
+    #[test]
+    fn a_step_may_carry_a_verdict_and_may_omit_one() {
+        let with: Step = serde_json::from_str(
+            r#"{"resend": 5, "expect": {"all": [{"status": 200}, {"body": "admin"}]}}"#,
+        )
+        .expect("a step with a verdict");
+        assert!(with.expect.is_some());
+        let without: Step = serde_json::from_str(r#"{"resend": 5}"#).expect("a bare step");
+        assert!(without.expect.is_none());
+    }
 
     /// A boxed session's store is writable by boxed code, so the hash in a
     /// sidecar is target input: joined unchecked, `../` read a host file.
