@@ -716,6 +716,38 @@ fn a_subresource_load_does_not_reach_the_window() {
     reading.assert_shows("heard=svg,w:HTML");
 }
 
+/// `PerformanceObserver` exists, and says only what it can deliver.
+///
+/// Sentry's tracing integration constructs one during its own `setup` without
+/// checking for it, so the missing global was the first thing grok.com threw.
+/// `supportedEntryTypes` is the honest half: a library reads it to decide what
+/// to watch, and naming a type that never arrives would leave `onLCP` waiting
+/// for a metric that is not coming.
+#[test]
+fn a_performance_observer_reports_only_the_entries_it_can_deliver() {
+    let reading = read(
+        "<html><body><output id='out'></output>\
+         <script>\
+           const seen = [];\
+           const observer = new PerformanceObserver((list) => {\
+             for (const entry of list.getEntries()) seen.push(entry.entryType + ':' + entry.name);\
+           });\
+           observer.observe({ entryTypes: ['mark', 'measure', 'largest-contentful-paint'] });\
+           performance.mark('a');\
+           performance.mark('b');\
+           performance.measure('m', 'a', 'b');\
+           setTimeout(() => {\
+             document.querySelector('#out').textContent = \
+               'supports=' + PerformanceObserver.supportedEntryTypes.join('+') +\
+               ' saw=' + seen.join(',');\
+           }, 0);\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("performance observer");
+    reading.assert_shows("supports=mark+measure saw=mark:a,mark:b,measure:m");
+}
+
 /// The legacy surface every browser implements. Annex B is the standard's own
 /// name for it, and leaving boa's feature off made this engine stricter than
 /// any browser: excalidraw's colour parser calls `substr` and died on "not a

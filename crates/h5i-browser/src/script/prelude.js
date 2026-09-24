@@ -8511,6 +8511,7 @@
     "IDBTransaction", "IDBRequest", "IDBOpenDBRequest", "IDBCursor",
     "IDBCursorWithValue", "IDBKeyRange", "IDBVersionChangeEvent",
   ]);
+  lazyGlobals("perfobserver", ["PerformanceObserver", "PerformanceObserverEntryList"]);
   lazyGlobals("streams", [
     "ReadableStream", "ReadableStreamDefaultReader", "ReadableStreamDefaultController",
     "WritableStream", "WritableStreamDefaultWriter", "WritableStreamDefaultController",
@@ -8762,6 +8763,14 @@
   // this machine was.
   const performanceEntries = [];
   const performanceMarks = new Map();
+  // Set by `prelude/perfobserver.js`, and empty until a page asks for the
+  // interface, so a page that never observes pays nothing for the hook.
+  const performanceObservers = new Set();
+  globalThis.__h5iAddPerfObserver = (o) => performanceObservers.add(o);
+  globalThis.__h5iRemovePerfObserver = (o) => performanceObservers.delete(o);
+  function offerEntry(entry) {
+    for (const observer of performanceObservers) observer.__offer(entry);
+  }
   const performance = {
     now: () => clock,
     timeOrigin: 0,
@@ -8770,6 +8779,7 @@
       performanceMarks.set(String(name), at);
       const entry = { name: String(name), entryType: "mark", startTime: at, duration: 0 };
       performanceEntries.push(entry);
+      offerEntry(entry);
       return entry;
     },
     measure(name, startOrOptions, endMark) {
@@ -8785,6 +8795,7 @@
         duration: Math.max(0, end - start),
       };
       performanceEntries.push(entry);
+      offerEntry(entry);
       return entry;
     },
     getEntries() { return performanceEntries.slice(); },

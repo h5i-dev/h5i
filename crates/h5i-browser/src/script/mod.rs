@@ -22,6 +22,7 @@ const TIERS: &[(&str, &str)] = &[
     ("conformance", include_str!("prelude/conformance.js")),
     ("sockets", include_str!("prelude/sockets.js")),
     ("streams", include_str!("prelude/streams.js")),
+    ("perfobserver", include_str!("prelude/perfobserver.js")),
     ("indexeddb", include_str!("prelude/indexeddb.js")),
     ("has", include_str!("prelude/has.js")),
     #[cfg(feature = "identity")]

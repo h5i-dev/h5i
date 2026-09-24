@@ -3808,7 +3808,12 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     // 292 for `dispatchEvent` on `document` and on an `AbortSignal`. Both
     // already had `addEventListener`, so both were half an EventTarget: a page
     // sending itself a custom event called a method that was not there.
-    const BUDGET_KIB: usize = 292;
+    // 293 for the `PerformanceObserver` hook. The interface itself is a tier;
+    // what is eager is the four lines the `performance` object needs to offer
+    // it an entry. Sentry's tracing integration constructs one during its own
+    // `setup` without checking, so the missing global was the first thing
+    // grok.com threw.
+    const BUDGET_KIB: usize = 293;
 
     assert!(
         !super::PRELUDE.contains("/*"),
