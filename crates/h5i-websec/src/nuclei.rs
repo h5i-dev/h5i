@@ -113,6 +113,12 @@ struct Extractor {
     part: Option<String>,
     #[serde(default)]
     regex: Vec<String>,
+    /// Nuclei's `internal: true`: this value is reused by a later request. Only
+    /// these become bindings. An extractor without it is an output extractor:
+    /// cosmetic, shown in results, and irrelevant to the verdict, so it is
+    /// dropped rather than allowed to block the import.
+    #[serde(default)]
+    internal: bool,
 }
 
 // ── the h5i test this writes ────────────────────────────────────────────────
@@ -540,25 +546,29 @@ fn extractors_to_bindings(
 ) -> anyhow::Result<BTreeMap<String, String>> {
     let mut bindings = BTreeMap::new();
     for extractor in extractors {
+        // An output extractor does not feed a later step and is not part of the
+        // verdict, so it is dropped: it must not block an import or clutter the
+        // test. Only an `internal` extractor becomes a binding.
+        if !extractor.internal {
+            continue;
+        }
         if extractor.kind != "regex" {
             anyhow::bail!(
-                "template `{template}` request {n} has a `{}` extractor; only a `regex` \
-                 extractor imports as a binding",
+                "template `{template}` request {n} has an internal `{}` extractor; only a \
+                 `regex` extractor imports as a binding",
                 extractor.kind
             );
         }
-        // The engines' `regex:` extractor reads the body; a header/response
-        // extractor would need a different extractor kind than what we bind to.
         if !matches!(extractor.part.as_deref(), None | Some("body")) {
             anyhow::bail!(
-                "template `{template}` request {n} has a regex extractor on part `{}`; only \
-                 `body` imports as a binding",
+                "template `{template}` request {n} has an internal regex extractor on part \
+                 `{}`; only `body` imports as a binding",
                 extractor.part.as_deref().unwrap_or("")
             );
         }
         let name = extractor.name.clone().ok_or_else(|| {
             anyhow::anyhow!(
-                "template `{template}` request {n} has a regex extractor with no name to bind to"
+                "template `{template}` request {n} has an internal regex extractor with no name"
             )
         })?;
         let pattern = extractor.regex.first().ok_or_else(|| {
@@ -658,7 +668,7 @@ http:
     }
 
     #[test]
-    fn a_regex_extractor_becomes_a_binding() {
+    fn an_internal_regex_extractor_becomes_a_binding() {
         let out = convert_yaml(
             r#"
 id: t
@@ -670,12 +680,37 @@ http:
     extractors:
       - type: regex
         name: token
+        internal: true
         regex:
           - "tok=([a-f0-9]+)"
 "#,
         )
         .expect("import");
         assert_eq!(out.flow[0].extract.get("token").unwrap(), "regex:tok=([a-f0-9]+)");
+    }
+
+    #[test]
+    fn output_extractors_are_dropped_not_refused() {
+        // An unnamed extractor, and a non-regex one, are output-only: they must
+        // not block the import, and they leave no binding behind.
+        let out = convert_yaml(
+            r#"
+id: t
+http:
+  - path: ["{{BaseURL}}/"]
+    matchers:
+      - type: status
+        status: [200]
+    extractors:
+      - type: regex
+        regex: ["version: ([0-9.]+)"]
+      - type: kval
+        kval: ["server"]
+"#,
+        )
+        .expect("import");
+        assert!(out.flow[0].extract.is_empty());
+        assert_eq!(out.flow[0].expect.as_ref().unwrap(), &json!({"status": 200}));
     }
 
     #[test]
