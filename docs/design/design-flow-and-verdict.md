@@ -215,13 +215,18 @@ resends a message a session already captured. So `h5i websec import-nuclei
   per-response matcher semantics do not reduce to one verdict), as is an
   `unsafe: true` request (its exact malformed bytes are the point, and a request
   template normalises them).
-- `matchers` map onto `expect`: `word` to a `body` substring, `status` to
-  `status`, `regex` to `body: regex:`. `matchers-condition` maps to `all`/`any`
+- `matchers` map onto `expect`: `word` to a substring, `status` to `status`,
+  `regex` to a `regex:` pattern. `matchers-condition` maps to `all`/`any`
   (Nuclei's default is `or`), a matcher's own `condition` over its words or
-  patterns likewise (default `or`), and `negative: true` to `not`. A `word` or
-  `regex` matcher imports only on `part: body`, because Nuclei's other parts
-  match a text block this grammar's name-and-value `header` leaf cannot stand in
-  for.
+  patterns likewise (default `or`), and `negative: true` to `not`. The matcher's
+  `part` selects the leaf: `body` (the default) to `body`, `header` to the
+  header-block `headers` leaf, `all`/`response` to the whole-response `response`
+  leaf, and a specific header name (`content_type` to `Content-Type`) to the
+  named `header` leaf. The block-spanning leaves match case-insensitively,
+  because header names are case-insensitive and the engine stores them
+  lowercased. `interactsh_*` parts (out-of-band) and `_N`-indexed parts (another
+  request's response in a chain) have no single-response equivalent and are
+  refused.
 - `regex` `extractors` map onto the shared `extract`, which is why the extractor
   prefixes must stay aligned (F3): an imported extractor names its target the
   same way a hand-written one does.

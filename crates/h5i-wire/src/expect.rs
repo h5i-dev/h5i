@@ -28,10 +28,25 @@ pub enum Pattern {
 
 impl Pattern {
     fn parse(spec: &str) -> Result<Self, String> {
+        Self::parse_with(spec, false)
+    }
+
+    /// Parse a pattern that will match case-insensitively. Used for the header
+    /// block and whole-response leaves, because HTTP header names are
+    /// case-insensitive and the engine stores them lowercased, so a caller
+    /// writing `Server` must still match a stored `server`.
+    fn parse_ci(spec: &str) -> Result<Self, String> {
+        Self::parse_with(spec, true)
+    }
+
+    fn parse_with(spec: &str, case_insensitive: bool) -> Result<Self, String> {
         match spec.strip_prefix("regex:") {
-            Some(rest) => regex::Regex::new(rest)
+            Some(rest) => regex::RegexBuilder::new(rest)
+                .case_insensitive(case_insensitive)
+                .build()
                 .map(Pattern::Regex)
                 .map_err(|e| format!("`{rest}` is not a regular expression: {e}")),
+            // A word carries no case at parse time; `hits_ci` folds it at match.
             None => Ok(Pattern::Word(spec.to_string())),
         }
     }
@@ -39,6 +54,15 @@ impl Pattern {
     fn hits(&self, text: &str) -> bool {
         match self {
             Pattern::Word(word) => text.contains(word.as_str()),
+            Pattern::Regex(re) => re.is_match(text),
+        }
+    }
+
+    /// Like [`hits`], but a `Word` matches without regard to case. The regex
+    /// variant already carries case-insensitivity from `parse_ci`.
+    fn hits_ci(&self, text: &str) -> bool {
+        match self {
+            Pattern::Word(word) => text.to_ascii_lowercase().contains(&word.to_ascii_lowercase()),
             Pattern::Regex(re) => re.is_match(text),
         }
     }
@@ -79,6 +103,23 @@ pub enum Expect {
     Body(Pattern),
     /// The named header satisfies the test.
     Header { name: String, test: HeaderTest },
+    /// The serialized header block (each `name: value` on its own line)
+    /// satisfies the pattern. This is the whole-header match, distinct from a
+    /// single named header: it is what a caller reaches for when the header a
+    /// string might be in is not known ahead of time.
+    Headers(Pattern),
+    /// The whole response, header block then a blank line then the body,
+    /// satisfies the pattern.
+    Response(Pattern),
+}
+
+/// The header block as one text: `name: value`, one per line.
+fn header_block(headers: &[(String, String)]) -> String {
+    headers
+        .iter()
+        .map(|(name, value)| format!("{name}: {value}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The result of evaluating an `Expect`, with a one-line reason for a report.
@@ -170,6 +211,20 @@ impl Expect {
                 };
                 Outcome { matched, because }
             }
+            Expect::Headers(pattern) => {
+                let block = header_block(response.headers);
+                Outcome {
+                    matched: pattern.hits_ci(&block),
+                    because: format!("headers {}", pattern.describe()),
+                }
+            }
+            Expect::Response(pattern) => {
+                let whole = format!("{}\n\n{}", header_block(response.headers), response.body);
+                Outcome {
+                    matched: pattern.hits_ci(&whole),
+                    because: format!("response {}", pattern.describe()),
+                }
+            }
         }
     }
 }
@@ -192,6 +247,10 @@ struct Raw {
     body: Option<String>,
     #[serde(default)]
     header: Option<String>,
+    #[serde(default)]
+    headers: Option<String>,
+    #[serde(default)]
+    response: Option<String>,
     #[serde(default)]
     contains: Option<String>,
     #[serde(default)]
@@ -229,13 +288,16 @@ impl<'de> Deserialize<'de> for Expect {
             raw.status.is_some(),
             raw.body.is_some(),
             raw.header.is_some(),
+            raw.headers.is_some(),
+            raw.response.is_some(),
         ]
         .into_iter()
         .filter(|present| *present)
         .count();
         if clause_keys != 1 {
             return Err(D::Error::custom(
-                "an expect clause is exactly one of: all, any, not, status, body, header",
+                "an expect clause is exactly one of: all, any, not, status, body, header, \
+                 headers, response",
             ));
         }
 
@@ -254,6 +316,16 @@ impl<'de> Deserialize<'de> for Expect {
         if let Some(spec) = raw.body {
             return Pattern::parse(&spec)
                 .map(Expect::Body)
+                .map_err(D::Error::custom);
+        }
+        if let Some(spec) = raw.headers {
+            return Pattern::parse_ci(&spec)
+                .map(Expect::Headers)
+                .map_err(D::Error::custom);
+        }
+        if let Some(spec) = raw.response {
+            return Pattern::parse_ci(&spec)
+                .map(Expect::Response)
                 .map_err(D::Error::custom);
         }
         let name = raw.header.expect("clause_keys guarantees one clause");
@@ -322,6 +394,32 @@ mod tests {
         assert!(contains.evaluate(&response(None, &headers, "")).matched);
         let re = parse(r#"{"header": "content-type", "regex": "charset=\\w+"}"#);
         assert!(re.evaluate(&response(None, &headers, "")).matched);
+    }
+
+    #[test]
+    fn a_headers_leaf_matches_the_whole_header_block_case_insensitively() {
+        // The engine stores header names lowercased, so a caller's canonical-case
+        // name must still match.
+        let headers = vec![
+            ("server".to_string(), "nginx/1.25".to_string()),
+            ("x-powered-by".to_string(), "PHP/8.1".to_string()),
+        ];
+        let word = parse(r#"{"headers": "X-Powered-By"}"#);
+        assert!(word.evaluate(&response(None, &headers, "")).matched);
+        let re = parse(r#"{"headers": "regex:Server: nginx"}"#);
+        assert!(re.evaluate(&response(None, &headers, "")).matched);
+        let absent = parse(r#"{"headers": "CamelCache"}"#);
+        assert!(!absent.evaluate(&response(None, &headers, "")).matched);
+    }
+
+    #[test]
+    fn a_response_leaf_matches_headers_and_body_together() {
+        let headers = vec![("Content-Type".to_string(), "text/html".to_string())];
+        let expect = parse(r#"{"response": "regex:text/html[\\s\\S]*<title>"}"#);
+        assert!(expect.evaluate(&response(Some(200), &headers, "<title>hi</title>")).matched);
+        // The body alone does not carry the header text.
+        let body_only = parse(r#"{"body": "text/html"}"#);
+        assert!(!body_only.evaluate(&response(Some(200), &headers, "<title>hi</title>")).matched);
     }
 
     #[test]

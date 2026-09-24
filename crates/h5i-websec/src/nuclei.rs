@@ -427,18 +427,20 @@ fn one_matcher(template: &str, n: usize, matcher: &Matcher) -> anyhow::Result<Va
             }
         }
         "word" => {
-            body_part(template, n, "word", &matcher.part)?;
-            let leaves: Vec<Value> = matcher.words.iter().map(|w| json!({ "body": w })).collect();
+            let leaves: Vec<Value> = matcher
+                .words
+                .iter()
+                .map(|w| part_leaf(template, n, "word", &matcher.part, w, false))
+                .collect::<anyhow::Result<_>>()?;
             // Nuclei's default word `condition` is `or`.
             combine_leaves(leaves, matcher.condition.as_deref().unwrap_or("or"), template, n, "word")?
         }
         "regex" => {
-            body_part(template, n, "regex", &matcher.part)?;
             let leaves: Vec<Value> = matcher
                 .regex
                 .iter()
-                .map(|r| json!({ "body": format!("regex:{r}") }))
-                .collect();
+                .map(|r| part_leaf(template, n, "regex", &matcher.part, r, true))
+                .collect::<anyhow::Result<_>>()?;
             combine_leaves(leaves, matcher.condition.as_deref().unwrap_or("or"), template, n, "regex")?
         }
         other => anyhow::bail!(
@@ -453,18 +455,55 @@ fn one_matcher(template: &str, n: usize, matcher: &Matcher) -> anyhow::Result<Va
     }
 }
 
-/// A word or regex matcher only imports when it reads the body. Nuclei's
-/// `header`/`all`/`raw` parts match a text block this grammar has no leaf for
-/// (its `header` leaf takes a name and a value), so they are refused rather than
-/// mis-mapped.
-fn body_part(template: &str, n: usize, kind: &str, part: &Option<String>) -> anyhow::Result<()> {
-    match part.as_deref() {
-        None | Some("body") => Ok(()),
-        Some(other) => anyhow::bail!(
-            "template `{template}` request {n} has a {kind} matcher on part `{other}`; only \
-             `body` imports"
+/// One word/regex leaf, placed on the part Nuclei named.
+///
+/// `body` and the unset default read the body. `header` reads the whole header
+/// block, `all`/`response` the whole response. Any other part is a specific
+/// header name (`content_type` -> `Content-Type`), which maps to the named-header
+/// leaf. The parts that do not map are the ones that are not a response at all:
+/// `interactsh_*` is an out-of-band callback, and a `_N` suffix names another
+/// request's response in a chain this single step does not hold.
+fn part_leaf(
+    template: &str,
+    n: usize,
+    kind: &str,
+    part: &Option<String>,
+    value: &str,
+    is_regex: bool,
+) -> anyhow::Result<Value> {
+    // A word is a literal; a regex leaf carries the `regex:` prefix the grammar
+    // reads.
+    let spec = if is_regex { format!("regex:{value}") } else { value.to_string() };
+    let part = part.as_deref().unwrap_or("body");
+    let clause = match part {
+        "body" => json!({ "body": spec }),
+        "header" => json!({ "headers": spec }),
+        "all" | "response" => json!({ "response": spec }),
+        other if other.starts_with("interactsh") => anyhow::bail!(
+            "template `{template}` request {n} has a {kind} matcher on part `{other}`, an \
+             out-of-band callback with no in-response equivalent"
         ),
-    }
+        other if is_indexed_part(other) => anyhow::bail!(
+            "template `{template}` request {n} has a {kind} matcher on part `{other}`, which \
+             names another request's response in a chain"
+        ),
+        header_name => {
+            let name = header_name.replace('_', "-");
+            if is_regex {
+                json!({ "header": name, "regex": value })
+            } else {
+                json!({ "header": name, "contains": value })
+            }
+        }
+    };
+    Ok(clause)
+}
+
+/// A `_N` suffix (`body_2`, `header_3`) names the Nth response in a multi-request
+/// chain, not a header called `body-2`.
+fn is_indexed_part(part: &str) -> bool {
+    part.rsplit_once('_')
+        .is_some_and(|(_, tail)| !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()))
 }
 
 fn combine_leaves(
@@ -508,7 +547,15 @@ fn extractors_to_bindings(
                 extractor.kind
             );
         }
-        body_part(template, n, "regex extractor", &extractor.part)?;
+        // The engines' `regex:` extractor reads the body; a header/response
+        // extractor would need a different extractor kind than what we bind to.
+        if !matches!(extractor.part.as_deref(), None | Some("body")) {
+            anyhow::bail!(
+                "template `{template}` request {n} has a regex extractor on part `{}`; only \
+                 `body` imports as a binding",
+                extractor.part.as_deref().unwrap_or("")
+            );
+        }
         let name = extractor.name.clone().ok_or_else(|| {
             anyhow::anyhow!(
                 "template `{template}` request {n} has a regex extractor with no name to bind to"
@@ -649,8 +696,8 @@ http:
     }
 
     #[test]
-    fn a_header_part_word_is_refused_rather_than_mismapped() {
-        let error = convert_yaml(
+    fn a_header_part_word_maps_to_the_header_block_leaf() {
+        let out = convert_yaml(
             r#"
 id: t
 http:
@@ -659,11 +706,89 @@ http:
       - type: word
         part: header
         words:
-          - Server
+          - X-Jenkins
+"#,
+        )
+        .expect("import");
+        assert_eq!(out.flow[0].expect.as_ref().unwrap(), &json!({"headers": "X-Jenkins"}));
+    }
+
+    #[test]
+    fn a_named_header_part_maps_to_the_named_header_leaf() {
+        let out = convert_yaml(
+            r#"
+id: t
+http:
+  - path: ["{{BaseURL}}/"]
+    matchers:
+      - type: word
+        part: content_type
+        words:
+          - application/json
+"#,
+        )
+        .expect("import");
+        assert_eq!(
+            out.flow[0].expect.as_ref().unwrap(),
+            &json!({"header": "content-type", "contains": "application/json"})
+        );
+    }
+
+    #[test]
+    fn a_response_part_regex_maps_to_the_response_leaf() {
+        let out = convert_yaml(
+            r#"
+id: t
+http:
+  - path: ["{{BaseURL}}/"]
+    matchers:
+      - type: regex
+        part: response
+        regex:
+          - "Set-Cookie:.*admin"
+"#,
+        )
+        .expect("import");
+        assert_eq!(
+            out.flow[0].expect.as_ref().unwrap(),
+            &json!({"response": "regex:Set-Cookie:.*admin"})
+        );
+    }
+
+    #[test]
+    fn an_interactsh_part_is_refused() {
+        let error = convert_yaml(
+            r#"
+id: t
+http:
+  - path: ["{{BaseURL}}/"]
+    matchers:
+      - type: word
+        part: interactsh_protocol
+        words:
+          - dns
 "#,
         )
         .unwrap_err();
-        assert!(error.to_string().contains("only `body` imports"), "{error}");
+        assert!(error.to_string().contains("out-of-band"), "{error}");
+    }
+
+    #[test]
+    fn an_indexed_part_is_refused_as_a_chain_reference() {
+        let error = convert_yaml(
+            r#"
+id: t
+http:
+  - path: ["{{BaseURL}}/"]
+    matchers:
+      - type: word
+        part: body_2
+        words:
+          - admin
+"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("another request's response"), "{error}");
     }
 
     #[test]
