@@ -674,12 +674,10 @@ fn a_parsed_comment_keeps_its_text() {
 
 /// A `<` before non-ASCII text does not take the engine down.
 ///
-/// Recovering a comment's text means scanning the source for raw-text elements,
-/// and that scan compared `rest[..name.len()]` on a `&str`. Any `<` with
-/// multi-byte text after it put that boundary inside a character, and slicing
-/// there panics: vercel.com killed the engine thread outright. Only pages that
-/// also had a comment reached the scan, which is why it took a real site to
-/// find.
+/// Recovering a comment's text scans the source for raw-text elements, comparing
+/// `rest[..name.len()]` on a `&str`. Any `<` with multi-byte text after it put
+/// that boundary inside a character, and slicing there panics: vercel.com killed
+/// the engine thread. Only pages that also had a comment reached the scan.
 #[test]
 fn a_page_may_put_a_bare_angle_bracket_before_non_ascii() {
     let reading = read(

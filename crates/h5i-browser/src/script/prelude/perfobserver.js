@@ -2,15 +2,10 @@
 //
 // Its own source, parsed only when a page reads the name — see `TIERS` in
 // `mod.rs`. Sentry's tracing integration constructs one during `setup` without
-// checking for it first, so on grok.com the missing global was the first thing
-// the page threw, before any of its own code ran.
+// checking, so the missing global was the first thing grok.com threw.
 //
-// `supportedEntryTypes` lists what this engine can actually deliver, which is
-// what a library reads to decide what to watch. Naming a type here that never
-// arrives would be worse than not having the interface: `onLCP` would install a
-// handler and wait for a metric that is never coming, and the page would report
-// itself as still measuring for ever. `mark` and `measure` are the two the
-// `performance` object really produces.
+// `supportedEntryTypes` lists only what this engine delivers: naming a type that
+// never arrives would leave `onLCP` waiting for a metric that is not coming.
 (function () {
   "use strict";
 

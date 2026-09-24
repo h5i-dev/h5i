@@ -1,16 +1,10 @@
 // The display.
 //
-// A declared identity states its own geometry. Without one, the numbers are the
-// viewport this engine actually laid the page out at, which is a stated fact
-// about this run rather than a guess about somebody's monitor, and is the same
-// number `window.innerWidth` already answers with.
-//
-// Absent was worse. Every browser has `window.screen`, so a page reading
-// `screen.width` got a TypeError no browser produces: on grok.com Mixpanel read
-// it while building its event properties, the throw escaped into React, and the
-// whole application rendered its root error boundary instead of the page. The
-// rule that a name answering wrongly is worse than one that is absent still
-// holds; this answers with something true.
+// A declared identity states its own geometry. Without one the numbers are the
+// viewport this engine laid the page out at: a stated fact about this run rather
+// than a guess, and what `innerWidth` already answers with. Absent was worse —
+// every browser has `window.screen`, so reading `screen.width` threw a TypeError
+// no browser produces.
 (function () {
   "use strict";
 

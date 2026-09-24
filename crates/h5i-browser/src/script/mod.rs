@@ -448,18 +448,9 @@ thread_local! {
 
 /// Whether to report what a page load spent its time on.
 ///
-/// Read once. The check is on the per-script and per-settle-round paths, so a
-/// lookup each time would be a cost paid by every page to answer a question
-/// almost nobody is asking.
-///
-/// The report goes to stderr, which a session on this machine runs the engine
-/// too far from to reach: the sandbox does not carry this variable in, and
-/// widening what it carries for a developer's convenience is not a trade worth
-/// making. Profile with `--no-sandbox`.
-///
-/// What it answers, measured against a large application: the classic script
-/// phase was ten seconds of a sixty-second load, and promise jobs were thirty
-/// — which is where to look, and is not where the guessing had been going.
+/// Read once: the check is on the per-script and per-settle-round paths. The
+/// report goes to stderr, which the sandbox does not carry out, so profile with
+/// `--no-sandbox`.
 pub(crate) fn timing_page() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("H5I_TIME_PAGE").is_some())
@@ -1115,12 +1106,9 @@ impl Script {
 
     /// Call one of the prelude's settle drivers by name.
     ///
-    /// The settle loop asks four of these every round, and a page can take
-    /// hundreds of rounds, so evaluating `"__h5iRunTimers(12)"` as source each
-    /// time meant parsing, compiling and scope-analysing the same handful of
-    /// call expressions thousands of times over. Measured on a large
-    /// application: around two thousand parses per load, which was most of
-    /// what the engine spent in its parser.
+    /// The loop asks four of these a round and a page can take hundreds, so
+    /// evaluating them as source recompiled the same call expressions thousands
+    /// of times: most of what the engine spent in its parser.
     fn call_driver(&mut self, name: &str, args: &[JsValue]) -> Option<JsValue> {
         let global = self.context.global_object();
         let f = global.get(JsString::from(name), &mut self.context).ok()?;
@@ -1453,16 +1441,10 @@ impl Script {
 
     /// The microtask checkpoint a browser performs when a script finishes.
     ///
-    /// Boa's queue was otherwise drained first at the settle, so every script's
-    /// promise continuations ran after the *last* script rather than between
-    /// them. A loader that awaits one chunk before instantiating the next then
-    /// saw a whole page's continuations arrive at once, with no script on the
-    /// stack and `document.currentScript` null.
-    ///
-    /// Bounded by the phase the caller is already checking between scripts,
-    /// not by a deadline of its own: a watchdog thread per script would cost
-    /// far more than the checkpoint, and a script that never returns is an
-    /// unbounded wait this phase already takes.
+    /// Boa's queue was otherwise drained at the settle, so every script's
+    /// continuations ran after the *last* script rather than between them, with
+    /// no script on the stack and `document.currentScript` null. Bounded by the
+    /// phase the caller already checks rather than a deadline of its own.
     pub fn microtask_checkpoint(&mut self) {
         self.run_queued_jobs();
     }

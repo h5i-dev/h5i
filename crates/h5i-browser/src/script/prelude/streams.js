@@ -11,17 +11,13 @@
   const { AbortController } = globalThis;
 
   //
-  // Enough of the Streams standard for what pages actually construct: a source
-  // with `start`/`pull`/`cancel`, one default reader at a time, and the
-  // writable and transform halves that `pipeThrough` needs. React's flight
-  // client feeds a server-rendered payload through one of these, so without it
-  // an App Router page threw `ReadableStream is not defined` and hydrated
-  // nothing — the page an agent read was whatever the server had sent as HTML.
+  // Enough of the Streams standard for what pages construct: a source with
+  // `start`/`pull`/`cancel`, one default reader at a time, and the writable and
+  // transform halves `pipeThrough` needs.
   //
-  // Byte streams are deliberately absent. `type: "bytes"` brings BYOB readers,
-  // an auto-allocating controller and a second queue discipline; a page asking
-  // for one is told it is missing rather than handed a default stream wearing
-  // the name, which would answer a BYOB read with the wrong shape.
+  // Byte streams are deliberately absent. A page asking for `type: "bytes"` is
+  // told it is missing rather than handed a default stream wearing the name,
+  // which would answer a BYOB read with the wrong shape.
 
   class ReadableStreamDefaultController {
     constructor(stream, source, highWaterMark, sizeOf) {

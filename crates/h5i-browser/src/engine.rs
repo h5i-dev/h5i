@@ -343,17 +343,9 @@ const RAW_TEXT_ELEMENTS: [&str; 8] = [
 
 /// What each comment node in `doc` said, read back out of `html`.
 ///
-/// The parser keeps the node and drops the text (see [`Page::parsed_comments`]),
-/// and it exposes no hook to keep it, so the text is found again by reading the
-/// source the parser was given. The two are paired by position: comments come
-/// out of the tokenizer in source order and the tree keeps them in that order.
-///
-/// Paired only when both sides found the same number, and otherwise nothing is
-/// claimed. A scan is not a parser — a comment this misses, or one it invents
-/// inside markup that turned out to be raw text, would shift every later
-/// pairing and put one comment's text on another comment's node. Counting is
-/// what makes disagreement visible, and an empty map is what this already does
-/// today.
+/// Paired by position, and only when both sides found the same number: a scan is
+/// not a parser, and one comment too many would put every later comment's text
+/// on the wrong node.
 fn recover_comments(html: &str, doc: &blitz_dom::BaseDocument) -> std::collections::HashMap<usize, String> {
     let ids = comment_nodes(doc);
     if ids.is_empty() {
@@ -481,13 +473,9 @@ pub struct Page {
     ran_scripts: bool,
     /// What each parsed comment node actually said, by node id.
     ///
-    /// Blitz stores `NodeData::Comment` as a unit variant, so the parser knows
-    /// a comment was there and not what was in it. That is invisible until a
-    /// framework reads it: Next.js marks its Suspense boundaries with
-    /// `<!--$-->` and `<!--/$-->`, and React matches those against the tree it
-    /// is hydrating. With every comment reading as empty the match fails, React
-    /// discards the server's markup and rebuilds the whole application on the
-    /// client, which is most of what a page like that then costs.
+    /// Blitz stores `NodeData::Comment` as a unit variant, so the text is lost at
+    /// parse time. Next.js marks Suspense boundaries with `<!--$-->`, and React
+    /// cannot hydrate against markers that all read as empty.
     parsed_comments: std::collections::HashMap<usize, String>,
 
     /// Set when the layout engine panicked while reading this page.
@@ -1332,18 +1320,11 @@ impl Page {
         // without this it is the one subresource the page never hears about.
         let resources = self.resources.clone();
 
-        // One script's body is asked for while the script before it runs.
-        //
-        // The request still goes out first and in document order, so the
-        // request log a reader sees is the same log; what overlaps is the wait
-        // for the answer, which this thread used to spend idle. Measured on a
-        // large application: 106 script files and 1.8s of round trips, almost
-        // all of it now behind the evaluation of the file before it. Only the
-        // cross-process broker can overlap at all — `Broker::send_while`
-        // defaults to a plain send — so an in-process one runs exactly as it
-        // did.
-        //
-        // `pending` holds the script that has been fetched and not yet run.
+        // One script's body is asked for while the script before it runs, so
+        // `pending` holds one fetched and not yet run. The request still goes out
+        // first and in document order, so the request log is unchanged; what
+        // overlaps is the wait. `Broker::send_while` defaults to a plain send, so
+        // an in-process broker runs exactly as it did.
         let mut pending: Option<(usize, String, String)> = None;
         let run_pending = |script: &mut crate::script::Script,
                                pending: &mut Option<(usize, String, String)>| {

@@ -1570,13 +1570,10 @@ fn element_scoped_queries_do_not_escape_their_element() {
 
 /// Every tier the eager prelude loads by name is a tier that exists.
 ///
-/// `__h5iTier` on a name `TIERS` does not carry fails the whole prelude, so the
-/// page gets no script at all. That is how `screen` broke the
-/// `--no-default-features --features browser` build: the tier was registered
-/// behind the `identity` feature while the prelude had started asking for it
-/// unconditionally, and every page in that build answered "the browser prelude
-/// failed to load". Nothing in the default build could see it, because there the
-/// tier was there.
+/// A name `TIERS` does not carry fails the whole prelude, so the page gets no
+/// script at all. `screen` was registered behind the `identity` feature while the
+/// prelude asked for it unconditionally, which broke every page of the
+/// `--no-default-features` build and nothing in the default one.
 #[test]
 fn the_prelude_only_asks_for_tiers_that_exist() {
     let named: Vec<&str> = super::PRELUDE
@@ -3913,41 +3910,27 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     // tierable — both are read before any page code runs — and without them the
     // library threw before defining `$`, which is every page written against it.
     //
-    // 288 to make that same NamedNodeMap *live*, and for the attribute-node
-    // family beside it. React clears an element it is re-hydrating with
-    // `for (const map = el.attributes; map.length; ) el.removeAttributeNode(map[0])`,
-    // which over a snapshot never terminates and without the method throws on
-    // the first turn — so an App Router page rendered its error boundary
-    // instead of itself. `attributes` is core DOM and the map has to answer
-    // from the tree on every read, so neither half is tierable. The Streams
-    // standard arrived with this and is a tier, because only a page that names
-    // `ReadableStream` pays for it.
+    // 288 to make that NamedNodeMap *live*, with the attribute-node family
+    // beside it: React clears an element it re-hydrates through
+    // `removeAttributeNode`, and over a snapshot that never terminates.
     //
-    // 289 for `document.fonts` and `navigator.sendBeacon`, both of which this
-    // corpus's pages call and neither of which a tier can hold: they are read
-    // off objects the core already hands out.
+    // 289 for `document.fonts` and `navigator.sendBeacon`, read off objects the
+    // core already hands out, so no tier can hold them.
     //
-    // 290 to carry a body as bytes in both directions. `fetch` stringified a
-    // typed array into `{"0":0,...}` and `arrayBuffer()` re-encoded the lossy
-    // decode of what came back, so no binary request or reply survived the
-    // round trip and a gRPC-web API called its own frames malformed. `fetch`
-    // and `Response` are on every page, so neither half is tierable.
-    // 291 to give a computed style the rest of its interface. The proxy
-    // answers an unrecognised name with a property *value*, so a backing
-    // object carrying only `getPropertyValue` turned `item`, `setProperty`
-    // and the rest into `""` — and calling one threw "not a callable
-    // function" on an empty string, which is what stopped grok.com rendering
-    // its main pane. `getComputedStyle` is on every page, so it cannot be a
-    // tier.
-    // 292 for `dispatchEvent` on `document` and on an `AbortSignal`. Both
-    // already had `addEventListener`, so both were half an EventTarget: a page
-    // sending itself a custom event called a method that was not there.
-    // 293 for the `PerformanceObserver` hook and an always-present `screen`.
-    // The observer itself is a tier; what is eager is the four lines the
-    // `performance` object needs to offer it an entry. `screen` had to stop
-    // being conditional: a page reading `screen.width` got a TypeError no
-    // browser produces, which is what made grok.com render its root error
-    // boundary instead of the page.
+    // 290 to carry a body as bytes both ways. A typed array was stringified to
+    // `{"0":0,...}` and `arrayBuffer()` re-encoded a lossy decode, so no binary
+    // round trip survived and a gRPC-web API called its own frames malformed.
+    //
+    // 291 to give a computed style the rest of its interface. The proxy answered
+    // unknown names with a *value*, so `item` and `setProperty` became `""` and
+    // calling one threw "not a callable function".
+    //
+    // 292 for `dispatchEvent` on `document` and on an `AbortSignal`: both had
+    // `addEventListener` already, so both were half an EventTarget.
+    //
+    // 293 for the `PerformanceObserver` hook and an always-present `screen`. The
+    // observer is a tier; eager is the four lines `performance` needs to offer it
+    // an entry. `screen` reading as absent threw a TypeError no browser does.
     const BUDGET_KIB: usize = 293;
 
     assert!(
@@ -6393,14 +6376,10 @@ fn the_default_identity_leaves_the_page_exactly_as_it_was() {
     assert_eq!(script.eval_value("navigator.maxTouchPoints").unwrap(), "0");
     assert_eq!(script.eval_value("navigator.vendor").unwrap(), "");
     assert_eq!(script.eval_value("devicePixelRatio").unwrap(), "1");
-    // No display is declared, so `screen` reports the viewport this page was
-    // laid out at. It used to be absent here, on the rule that a headless
-    // engine's screen size is a guess — but every browser has `window.screen`,
-    // so the absence threw a TypeError no browser produces. grok.com read it
-    // while building an analytics event, the throw reached React, and the
-    // application rendered its root error boundary instead of itself. The
-    // viewport is not a guess: it is the size this engine really used, and it
-    // is the number `innerWidth` already answers with.
+    // No display is declared, so `screen` reports the viewport this page was laid
+    // out at. It used to be absent, on the rule that a headless engine's screen
+    // size is a guess — but the absence threw a TypeError no browser produces,
+    // and the viewport is the size this engine really used.
     assert_eq!(script.eval_value("typeof screen").unwrap(), "object");
     assert_eq!(script.eval_value("typeof Screen").unwrap(), "function");
     assert_eq!(
@@ -7710,12 +7689,10 @@ fn a_window_carries_the_global_event_handlers_and_a_named_node_map_is_indexable(
 
 /// `RegExp.prototype.source` has to be a *fixed point* of `new RegExp(source)`.
 ///
-/// Every `/` was escaped without noticing one that was already escaped, so `\/`
-/// came back as `\\/` and each trip through `source` grew another backslash.
-/// Libraries that rewrite patterns do exactly that round trip — core-js does it
-/// to add named-group support — and what they handed back had stopped meaning
-/// what it said: grok.com's router built `^(?:\/)?$`, got `^\(?:\/)?$`, and that
-/// does not parse at all.
+/// Every `/` was escaped without noticing one already escaped, so each trip grew
+/// another backslash. Libraries that rewrite patterns do that round trip, and
+/// what they handed back stopped meaning what it said: `^(?:\/)?$` became
+/// `^\(?:\/)?$`, which does not parse.
 #[test]
 fn a_regexp_source_is_unchanged_by_a_round_trip() {
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
@@ -7739,11 +7716,9 @@ fn a_regexp_source_is_unchanged_by_a_round_trip() {
 
 /// A getter that replaces itself with its value, read twice through one site.
 ///
-/// The property cache filed the slot it was *found* in under the shape the
-/// getter left behind, so the second read called the stored value as though it
-/// were still the getter. Every lazily-built field is written this way, and it
-/// took grok.com's whole app down: React's hydration threw, and the page an
-/// agent read was the site's own error boundary. Fixed in the engine fork; this
+/// The property cache filed the slot under the shape the getter left behind, so
+/// the second read called the stored value as though it were still the getter.
+/// Every lazily-built field is written this way. Fixed in the engine fork; this
 /// is here because the page-level symptom is what we would see again.
 #[test]
 fn a_self_replacing_getter_answers_the_same_twice() {
@@ -7847,12 +7822,10 @@ fn indexeddb_stores_reads_and_walks_a_cursor() {
 /// `arrayBuffer()` hands back the bytes that arrived, not a re-encoding of the
 /// text they decoded to.
 ///
-/// `text()` is defined as a UTF-8 decode with replacement characters, so the
-/// lossy string is right there and wrong everywhere else: a byte above 0x7f
-/// that is not part of a valid sequence became U+FFFD, and re-encoding that
-/// gave three bytes where one had arrived. A protobuf frame read back this way
-/// is not the frame that was sent, which is how a Connect API came to report
-/// its own reply as a protocol error.
+/// `text()` is a UTF-8 decode with replacement characters, so a byte above 0x7f
+/// outside a valid sequence became U+FFFD and re-encoding gave three bytes where
+/// one arrived. A protobuf frame read back that way is not the frame that was
+/// sent, which is how a Connect API reported its own reply as a protocol error.
 #[test]
 fn a_binary_body_survives_arraybuffer() {
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
@@ -7872,13 +7845,10 @@ fn a_binary_body_survives_arraybuffer() {
 
 /// A script the page inserts shares the global scope with every other script.
 ///
-/// It was run through `eval`, and the two do not scope alike: a top-level
-/// `let`, `const` or `class` inside an indirect `eval` belongs to that eval and
-/// is gone when it returns, while the same declaration in a script joins the
-/// global declarative environment the next script reads. `var` survived
-/// because it lands on the global object, which is what made the gap look like
-/// a puzzle rather than a scoping bug — a chunk loader lost every lexical
-/// declaration it had just made, and the next chunk found the names missing.
+/// It was run through `eval`, which does not scope alike: a top-level `let` or
+/// `class` inside an indirect `eval` is gone when it returns. `var` survived
+/// because it lands on the global object, which made the gap look like a puzzle
+/// rather than a scoping bug — a chunk loader lost every lexical declaration.
 #[test]
 fn an_inserted_script_shares_the_global_lexical_scope() {
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
@@ -7949,12 +7919,10 @@ fn an_uninitialized_binding_names_itself() {
 
 /// A `switch` discriminant does not declare anything for the case bodies.
 ///
-/// The engine collected a `let` from inside a function expression in the
-/// discriminant as a binding *of the switch*, so a case body reading a name of
-/// its own resolved to that phantom binding and compiled to an unconditional
-/// throw. Minified bundles shadow one-letter names across nested functions as
-/// a matter of course, which is why this took grok.com's whole app down with
-/// `access of uninitialized binding` on a name that was plainly in scope.
+/// The engine collected a `let` from a function expression in the discriminant as
+/// a binding *of the switch*, so a case body reading its own name resolved to the
+/// phantom and compiled to an unconditional throw. Minified bundles shadow
+/// one-letter names constantly, so this read as a name plainly in scope.
 #[test]
 fn a_switch_discriminant_does_not_shadow_the_case_body() {
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
@@ -7977,12 +7945,10 @@ fn a_switch_discriminant_does_not_shadow_the_case_body() {
 
 /// `getComputedStyle(el).overflow` answers, rather than naming itself a gap.
 ///
-/// Shorthands are declined here on purpose: `border`'s computed value is its
-/// longhands re-serialised, and getting that subtly wrong would tell a caller
-/// two different borders match. `overflow` is not that case — CSSOM defines it
-/// as the two longhands, written as one when they agree — and it is what every
-/// hunt for a scroll container reads. Declining it said the element had no
-/// overflow at all.
+/// Shorthands are declined on purpose: getting `border`'s re-serialisation subtly
+/// wrong would tell a caller two different borders match. `overflow` is not that
+/// case — CSSOM defines it as the two longhands — and declining it told every
+/// hunt for a scroll container that the element had no overflow at all.
 #[test]
 fn computed_overflow_comes_from_its_longhands() {
     let (_page, mut script) = page_and_script(
@@ -8016,12 +7982,10 @@ fn computed_overflow_comes_from_its_longhands() {
 
 /// Three answers this engine has and was reporting as gaps instead.
 ///
-/// A gap list an agent reads is only useful if what is on it is really
-/// missing. `display-mode` has a true answer here (this is a browser, not an
-/// installed app), `doNotTrack` has one (unset, which a browser reports as
-/// null), and `assignedSlot` has one because distribution here is a move — an
-/// assigned node's parent *is* its slot. rrweb alone asked for these hundreds
-/// of times on one page, burying the gaps that were real.
+/// A gap list is only useful if what is on it is really missing. `display-mode`
+/// has a true answer (a browser, not an installed app), `doNotTrack` has one
+/// (unset reports null), and `assignedSlot` has one because distribution here is
+/// a move. rrweb asked for these hundreds of times, burying the real gaps.
 #[test]
 fn answers_this_engine_has_are_not_reported_as_gaps() {
     let (_page, mut script) = page_and_script(
@@ -8108,11 +8072,8 @@ fn a_computed_style_is_a_whole_declaration() {
 /// A name that is not a CSS property is absent from a style, not empty.
 ///
 /// Both style proxies answered *any* unknown name with a property value, so
-/// `el.style.whatever` and `getComputedStyle(el).whatever` came back as `""`.
-/// The `has` trap already disagreed — it said the name was not there — and the
-/// cost of the disagreement was that calling one of them was a call on a
-/// string, which is how a page trying to render ended up with
-/// "not a callable function".
+/// `el.style.whatever` came back as `""` while the `has` trap said it was not
+/// there. Calling one was then a call on a string: "not a callable function".
 #[test]
 fn a_style_name_that_is_not_a_property_is_undefined() {
     let (_page, mut script) = page_and_script("<html><body><div id='a'>a</div></body></html>");

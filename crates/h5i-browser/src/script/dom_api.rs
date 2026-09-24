@@ -1310,16 +1310,11 @@ fn identity(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResu
 /// requests paid for them in series and every SPA waterfall was our own.
 /// Run a page's script as a *script*, in the realm's global scope.
 ///
-/// `eval` was standing in for this, and the two do not scope alike. A
-/// top-level `let`, `const` or `class` inside an indirect `eval` belongs to
-/// that eval and is gone when it returns; the same declaration in a script
-/// joins the global declarative environment every later script reads. A bundle
-/// that splits its lexical declarations across chunks — which is every chunk
-/// loader — lost all of them, and the next read compiled to a bare throw:
-/// "access of uninitialized binding".
-///
-/// The name is the script's URL, so a stack names the file rather than saying
-/// "eval at" and leaving an agent nothing to go on.
+/// `eval` does not scope alike: a top-level `let` or `class` inside an indirect
+/// `eval` is gone when it returns, where in a script it joins the global
+/// environment every later script reads. Every chunk loader splits declarations
+/// across files, and lost all of them to "access of uninitialized binding". The
+/// name is the script's URL, so a stack names the file.
 fn run_script(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let code = arg_string(args, 0, context).unwrap_or_default();
     let name = arg_string(args, 1, context).unwrap_or_default();

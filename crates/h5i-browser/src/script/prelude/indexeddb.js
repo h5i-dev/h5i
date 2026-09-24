@@ -1,14 +1,9 @@
 // IndexedDB: `indexedDB`, its databases, stores, indexes and cursors.
 //
-// Its own source, parsed only when a page reads one of those names — see
-// `TIERS` in `mod.rs`. Most pages never open a database; the ones that do are
-// applications, and for them the name being absent is fatal rather than
-// degrading: the store is where their state lives.
-//
-// In memory, for the life of the realm, which is what `localStorage` is here
-// too. Nothing is written to disk and nothing survives the session, so a page
-// that stores and reads back within one run behaves; one that expects to find
-// last week's data finds an empty database, exactly as a first visit would.
+// Its own source, parsed only when a page reads one of those names — see `TIERS`
+// in `mod.rs`. In memory for the life of the realm, like `localStorage` here: a
+// page that stores and reads back within one run behaves, and one expecting last
+// week's data finds an empty database, exactly as a first visit would.
 (function () {
   "use strict";
 

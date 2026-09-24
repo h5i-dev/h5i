@@ -6414,15 +6414,11 @@
     event.target = target;
     const chain = path(target);
 
-    // A `load` fired at an element reaches the document and stops there: a
-    // Document's parent is null for this one type (DOM 2.9), so the window
-    // never sees a subresource finish. Window and document are the same node
-    // here, so sparing the top of the chain is what implements that. Without
-    // it a capturing `load` listener on the window runs once per subresource,
-    // and a library that installs a fresh one each time it runs — Sentry's
-    // bundled web-vitals does — grows them quadratically: 68 subresources
-    // became 2,336 callbacks on grok.com, which is where that page's load
-    // time was going.
+    // A `load` at an element reaches the document and stops: a Document's parent
+    // is null for this one type (DOM 2.9). Window and document are the same node
+    // here, so sparing the top of the chain is what implements it. Without it a
+    // capturing window listener runs once per subresource, and a library that
+    // installs a fresh one each time grows them quadratically.
     if (event.type === "load" && chain.length > 1) {
       if (windowNode === null) windowNode = api.root();
       const at = chain.findIndex((n) => n._id === windowNode);
@@ -8674,13 +8670,9 @@
   const location = {
     get href() { return currentAddress; },
     /// Assigning navigates in a browser, and this engine does not let a page
-    /// navigate itself — `assign`, `replace` and `reload` all say so rather
-    /// than move the agent somewhere it did not ask to go.
-    ///
-    /// Recorded rather than *refused*, because a getter with no setter throws
-    /// on assignment, and this is a line pages run constantly. The throw took
-    /// down whatever was running: a React timer callback died mid-render over
-    /// a redirect the page was only attempting.
+    /// navigate itself. Recorded rather than *refused*: a getter with no setter
+    /// throws, and the throw took down whatever was running — a React timer
+    /// callback died mid-render over a redirect the page only attempted.
     set href(value) {
       api.unsupported("location.href");
       void value;
