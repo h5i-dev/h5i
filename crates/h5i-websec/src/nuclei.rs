@@ -66,10 +66,17 @@ struct HttpRequest {
     headers: BTreeMap<String, String>,
     #[serde(default)]
     body: Option<String>,
-    /// A raw HTTP request. Not modelled: it carries its own request line and
-    /// header block, which is not a request template.
+    /// A raw HTTP request: request line, headers, blank line, body. A single one
+    /// is parsed into a request template; more than one in a block is a
+    /// multi-request chain whose per-response matcher semantics do not map to one
+    /// verdict, so it is refused.
     #[serde(default)]
     raw: Vec<String>,
+    /// Nuclei's `unsafe: true`: send the bytes exactly, malformed on purpose (CRLF
+    /// injection, smuggling). A request template cannot preserve that, so a raw
+    /// request marked unsafe is refused rather than silently normalised.
+    #[serde(default, rename = "unsafe")]
+    unsafe_request: bool,
     #[serde(default, rename = "matchers-condition")]
     matchers_condition: Option<String>,
     #[serde(default)]
@@ -184,23 +191,50 @@ fn convert(template: Template) -> anyhow::Result<TestOut> {
     for (index, entry) in entries.into_iter().enumerate() {
         let n = index + 1;
         let id = format!("req_{n}");
-        if !entry.raw.is_empty() {
-            anyhow::bail!(
-                "template `{}` request {n} is a raw request, which is not a request template",
-                template.id
-            );
-        }
-        let path_spec = entry.path.first().ok_or_else(|| {
-            anyhow::anyhow!("template `{}` request {n} has no path", template.id)
-        })?;
-        let path = relative_path(path_spec).ok_or_else(|| {
+
+        // A request's method, path, headers and body come from either a raw
+        // request or the structured fields; from there on the two are identical.
+        let (method, path_spec, headers, body) = if !entry.raw.is_empty() {
+            if entry.unsafe_request {
+                anyhow::bail!(
+                    "template `{}` request {n} is an unsafe raw request, whose exact malformed \
+                     bytes a request template cannot preserve",
+                    template.id
+                );
+            }
+            if entry.raw.len() != 1 {
+                anyhow::bail!(
+                    "template `{}` request {n} is a multi-request raw block; its per-response \
+                     matcher semantics do not map to a single verdict",
+                    template.id
+                );
+            }
+            let parsed = parse_raw(&entry.raw[0]).map_err(|e| {
+                anyhow::anyhow!("template `{}` request {n} raw request {e}", template.id)
+            })?;
+            (parsed.method, parsed.path, parsed.headers, parsed.body)
+        } else {
+            let path = entry
+                .path
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("template `{}` request {n} has no path", template.id))?
+                .clone();
+            (
+                entry.method.clone().unwrap_or_else(|| "GET".to_string()),
+                path,
+                entry.headers,
+                entry.body,
+            )
+        };
+
+        let path = relative_path(&path_spec).ok_or_else(|| {
             anyhow::anyhow!(
-                "template `{}` request {n} path `{path_spec}` uses a Nuclei variable this \
-                 importer does not model; only a `{{{{BaseURL}}}}`-relative path imports",
+                "template `{}` request {n} path `{path_spec}` uses a Nuclei variable or absolute \
+                 URL this importer does not model; only a `{{{{BaseURL}}}}`-relative path imports",
                 template.id
             )
         })?;
-        for (name, value) in &entry.headers {
+        for (name, value) in &headers {
             if has_interpolation(value) {
                 anyhow::bail!(
                     "template `{}` request {n} header `{name}` uses a Nuclei variable this \
@@ -209,7 +243,7 @@ fn convert(template: Template) -> anyhow::Result<TestOut> {
                 );
             }
         }
-        if let Some(body) = &entry.body
+        if let Some(body) = &body
             && has_interpolation(body)
         {
             anyhow::bail!(
@@ -222,10 +256,10 @@ fn convert(template: Template) -> anyhow::Result<TestOut> {
         requests.insert(
             id.clone(),
             RequestOut {
-                method: entry.method.clone().unwrap_or_else(|| "GET".to_string()),
+                method,
                 path,
-                headers: entry.headers,
-                body: entry.body,
+                headers,
+                body,
             },
         );
 
@@ -255,6 +289,77 @@ fn convert(template: Template) -> anyhow::Result<TestOut> {
     })
 }
 
+/// What a single raw HTTP request parses into.
+struct RawParsed {
+    method: String,
+    path: String,
+    headers: BTreeMap<String, String>,
+    body: Option<String>,
+}
+
+/// Parse one Nuclei raw request: an optional run of `@directive` lines, a request
+/// line, headers, a blank line, then a body.
+///
+/// The `Host` header is dropped because the engine sets it from the target, and
+/// `Content-Length` because the engine recomputes it; carrying either literally
+/// would send a request that describes a different host or a wrong length.
+fn parse_raw(raw: &str) -> anyhow::Result<RawParsed> {
+    let mut lines = raw.lines().map(|l| l.strip_suffix('\r').unwrap_or(l));
+
+    // The request line is the first line that is neither blank nor an @directive.
+    let request_line = loop {
+        match lines.next() {
+            Some(line) if line.trim().is_empty() => continue,
+            Some(line) if line.trim_start().starts_with('@') => continue,
+            Some(line) => break line,
+            None => anyhow::bail!("is empty"),
+        }
+    };
+    let mut fields = request_line.split_whitespace();
+    let method = fields
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("has no method"))?
+        .to_string();
+    let rest: Vec<&str> = fields.collect();
+    // Drop a trailing `HTTP/x.y`; whatever is between method and version is the
+    // path (joined, so a stray space in a malformed path survives rather than
+    // being silently cut).
+    let path = if rest.last().is_some_and(|t| t.starts_with("HTTP/")) {
+        rest[..rest.len() - 1].join(" ")
+    } else {
+        rest.join(" ")
+    };
+    if path.is_empty() {
+        anyhow::bail!("has no path");
+    }
+
+    let mut headers = BTreeMap::new();
+    for line in lines.by_ref() {
+        if line.trim().is_empty() {
+            break; // end of headers; the body follows
+        }
+        let (name, value) = line
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("has a header line without a colon: `{line}`"))?;
+        let name = name.trim();
+        if name.eq_ignore_ascii_case("host") || name.eq_ignore_ascii_case("content-length") {
+            continue;
+        }
+        headers.insert(name.to_string(), value.trim().to_string());
+    }
+
+    let body: String = lines.collect::<Vec<_>>().join("\n");
+    let body = body.trim_end_matches('\n').to_string();
+    let body = if body.is_empty() { None } else { Some(body) };
+
+    Ok(RawParsed {
+        method,
+        path,
+        headers,
+        body,
+    })
+}
+
 /// A `{{BaseURL}}`/`{{RootURL}}`-relative path, or `None` if the path carries any
 /// other Nuclei variable this importer does not resolve.
 fn relative_path(spec: &str) -> Option<String> {
@@ -264,6 +369,11 @@ fn relative_path(spec: &str) -> Option<String> {
         .or_else(|| spec.trim().strip_prefix("{{RootURL}}"))
         .unwrap_or_else(|| spec.trim());
     if has_interpolation(trimmed) {
+        return None;
+    }
+    // An absolute URL in the request line names its own host, which a
+    // target-relative request template cannot honour.
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
         return None;
     }
     if trimmed.is_empty() {
@@ -608,6 +718,122 @@ http:
         )
         .unwrap_err();
         assert!(error.to_string().contains("cannot be imported as data"), "{error}");
+    }
+
+    #[test]
+    fn a_single_raw_request_becomes_a_request_template() {
+        let out = convert_yaml(
+            r#"
+id: odoo-detect
+info:
+  name: Odoo
+http:
+  - raw:
+      - |
+        POST /web/webclient/version_info HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+        Content-Length: 2
+
+        {}
+    matchers:
+      - type: word
+        words:
+          - server_version
+"#,
+        )
+        .expect("import");
+        let req = out.requests.get("req_1").expect("a request");
+        assert_eq!(req.method, "POST");
+        assert_eq!(req.path, "/web/webclient/version_info");
+        // Host and Content-Length are dropped; the engine sets them.
+        assert_eq!(req.headers.get("Content-Type").map(String::as_str), Some("application/json"));
+        assert!(!req.headers.contains_key("Host"));
+        assert!(!req.headers.contains_key("Content-Length"));
+        assert_eq!(req.body.as_deref(), Some("{}"));
+        assert_eq!(out.flow[0].expect.as_ref().unwrap(), &json!({"body": "server_version"}));
+    }
+
+    #[test]
+    fn a_raw_request_skips_leading_directives() {
+        let out = convert_yaml(
+            r#"
+id: t
+http:
+  - raw:
+      - |
+        @timeout: 20s
+        GET /status HTTP/1.1
+        Host: {{Hostname}}
+    matchers:
+      - type: status
+        status: [200]
+"#,
+        )
+        .expect("import");
+        assert_eq!(out.requests.get("req_1").unwrap().method, "GET");
+        assert_eq!(out.requests.get("req_1").unwrap().path, "/status");
+    }
+
+    #[test]
+    fn a_multi_request_raw_block_is_refused() {
+        let error = convert_yaml(
+            r#"
+id: t
+http:
+  - raw:
+      - |
+        GET /a HTTP/1.1
+        Host: {{Hostname}}
+      - |
+        GET /b HTTP/1.1
+        Host: {{Hostname}}
+    matchers:
+      - type: status
+        status: [200]
+"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("multi-request raw block"), "{error}");
+    }
+
+    #[test]
+    fn an_unsafe_raw_request_is_refused() {
+        let error = convert_yaml(
+            r#"
+id: t
+http:
+  - unsafe: true
+    raw:
+      - |
+        GET /../../etc/passwd HTTP/1.1
+        Host: {{Hostname}}
+    matchers:
+      - type: status
+        status: [200]
+"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unsafe raw request"), "{error}");
+    }
+
+    #[test]
+    fn a_raw_request_with_a_payload_variable_in_the_path_is_refused() {
+        let error = convert_yaml(
+            r#"
+id: t
+http:
+  - raw:
+      - |
+        GET /search?q={{payload}} HTTP/1.1
+        Host: {{Hostname}}
+    matchers:
+      - type: status
+        status: [200]
+"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("does not model"), "{error}");
     }
 
     #[test]

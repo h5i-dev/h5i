@@ -207,6 +207,14 @@ resends a message a session already captured. So `h5i websec import-nuclei
   and one flow step per entry. `{{BaseURL}}` and `{{RootURL}}` are stripped to a
   relative path; any other Nuclei variable in a path, header or body is refused,
   because h5i does not resolve it.
+- A single `raw:` request is parsed into the same request template: leading
+  `@directive` lines are skipped, the request line gives the method and path, the
+  header block is carried (dropping `Host`, which the engine sets from the target,
+  and `Content-Length`, which it recomputes), and the body after the blank line is
+  carried whole. A `raw:` block with more than one request is refused (its
+  per-response matcher semantics do not reduce to one verdict), as is an
+  `unsafe: true` request (its exact malformed bytes are the point, and a request
+  template normalises them).
 - `matchers` map onto `expect`: `word` to a `body` substring, `status` to
   `status`, `regex` to `body: regex:`. `matchers-condition` maps to `all`/`any`
   (Nuclei's default is `or`), a matcher's own `condition` over its words or
@@ -221,10 +229,18 @@ resends a message a session already captured. So `h5i websec import-nuclei
   expresses awkwardly and a flow expresses naturally.
 
 What the importer never emits is an oracle. A construct that cannot be expressed
-as `expect` (a `dsl` or `binary` matcher, a `raw` request, an unmodelled
-variable, a non-`regex` extractor) is refused with a reason, not lowered into a
-bash script, because a skipped template is a gap and a smuggled oracle is a
-shared executable. Every `expect` it builds is verified against the shared
+as `expect` (a `dsl` or `binary` matcher, a multi-request or `unsafe` raw block,
+an unmodelled variable, a non-`regex` extractor) is refused with a reason, not
+lowered into a bash script, because a skipped template is a gap and a smuggled
+oracle is a shared executable.
+
+Measured against the public `nuclei-templates` corpus (2026-09, 11,640 http
+templates), the importer produces a clean data-only test for about 28% of them.
+The ceiling is not a defect in the importer: the bulk of the rest is `dsl`
+matchers, `flow` blocks and payload variables, which are code or unresolved
+input by construction, not data. The design's point is exactly that this line
+is where it is, so the number is a description of how much of Nuclei is already
+data, not a coverage target to chase by weakening the boundary. Every `expect` it builds is verified against the shared
 grammar (F6) before it is written, so an import never emits a verdict the engines
 would reject. The output is data: committable into `.h5i-tests/` as an
 oracle-less test, and shareable.
