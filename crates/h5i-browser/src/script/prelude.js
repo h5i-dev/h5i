@@ -6980,10 +6980,23 @@
     forEach(fn, thisArg) {
       for (const [k, v] of this._entries.slice()) fn.call(thisArg, v, k, this);
     }
-    append(k, v) { this._entries.push([String(k), String(v)]); }
-    set(k, v) {
+    // A `Blob` stays a `Blob`: only a non-Blob value is converted to a string.
+    // `String(v)` on every value turned React's server-action payload into the
+    // eight characters `[object Object]`, and the reply it pointed at was the
+    // request grok.com's server answered with a 500.
+    append(k, v, filename) {
+      if (v instanceof Blob) {
+        const part = filename === undefined ? v : v.slice(0, v.size, v.type);
+        if (filename !== undefined) part.name = String(filename);
+        else if (part.name === undefined && v instanceof File) part.name = v.name;
+        this._entries.push([String(k), part]);
+        return;
+      }
+      this._entries.push([String(k), String(v)]);
+    }
+    set(k, v, filename) {
       this.delete(k);
-      this.append(k, v);
+      this.append(k, v, filename);
     }
     get(k) { const hit = this._entries.find(([n]) => n === String(k)); return hit ? hit[1] : null; }
     getAll(k) { return this._entries.filter(([n]) => n === String(k)).map(([, v]) => v); }
@@ -10295,9 +10308,22 @@
     }
 
     let body = request.body ?? "";
-    if (body instanceof FormData) body = body.toString();
-    else if (body instanceof Blob) body = new Uint8Array(body._bytes);
-    else if (body instanceof URLSearchParams) body = body.toString();
+    // What `fetch` sets when the page did not: the body's own type decides it,
+    // and only this side knows what the body was before it became bytes.
+    let bodyType = null;
+    if (body instanceof FormData) {
+      // Its own tier: only a page that posts a form pays to parse it.
+      __h5iTier("multipart");
+      const wire = globalThis.__h5iMultipartBody(body);
+      body = wire.bytes;
+      bodyType = wire.type;
+    } else if (body instanceof Blob) {
+      bodyType = body.type || null;
+      body = new Uint8Array(body._bytes);
+    } else if (body instanceof URLSearchParams) {
+      body = body.toString();
+      bodyType = "application/x-www-form-urlencoded;charset=UTF-8";
+    }
     // Bytes reach the host as bytes, and so fall through untouched. A typed
     // array stringified here became `{"0":0,"1":0,...}`, which is what a
     // gRPC-web server was reading when it called our frame's compression flag
@@ -10321,6 +10347,11 @@
     // questions would not be subject to a policy at all.
     const headerPairs = [];
     for (const [name, value] of request.headers) headerPairs.push([name, value]);
+    // The page's own header wins: setting one is how a page overrides what the
+    // body would imply, and a boundary the page chose is one its server expects.
+    if (bodyType !== null && !request.headers.has("content-type")) {
+      headerPairs.push(["content-type", bodyType]);
+    }
     const id = api.fetchStart(
       request.url, request.method, body,
       request.mode, request.credentials, headerPairs,

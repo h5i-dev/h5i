@@ -1568,6 +1568,108 @@ fn element_scoped_queries_do_not_escape_their_element() {
 
 // ── the vertical slice: a page that fetches and re-renders ─────────────────
 
+/// A server that reports back the request line, content type and body it saw.
+fn echoing_server() -> (u16, std::thread::JoinHandle<()>) {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = std::thread::spawn(move || {
+        for _ in 0..1 {
+            let Ok((stream, _)) = listener.accept() else { return };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line);
+            let mut content_type = String::new();
+            let mut length = 0usize;
+            loop {
+                let mut header = String::new();
+                if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+                    break;
+                }
+                // The name is matched without case, the value kept with it: a
+                // multipart boundary is case-sensitive and has to match the body.
+                let name = header.split(':').next().unwrap_or("").to_ascii_lowercase();
+                let value = header.split_once(':').map(|(_, v)| v.trim().to_string());
+                match (name.as_str(), value) {
+                    ("content-type", Some(v)) => content_type = v,
+                    ("content-length", Some(v)) => length = v.parse().unwrap_or(0),
+                    _ => {}
+                }
+            }
+            let mut raw = vec![0u8; length];
+            let _ = reader.read_exact(&mut raw);
+            // The boundary is random, so the reply names what the test can
+            // assert on rather than the bytes themselves.
+            let seen = String::from_utf8_lossy(&raw);
+            let multipart = content_type.starts_with("multipart/form-data; boundary=");
+            let boundary = content_type
+                .rsplit("boundary=")
+                .next()
+                .unwrap_or("")
+                .to_string();
+            let body = format!(
+                "{{\"multipart\":{multipart},\"opens\":{},\"blobBytes\":{},\"named\":{},\"plain\":{}}}",
+                !boundary.is_empty() && seen.starts_with(&format!("--{boundary}")),
+                seen.contains("hi"),
+                seen.contains("filename=\"b.txt\""),
+                seen.contains("name=\"a\"")
+            );
+            let mut stream = stream;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.flush();
+        }
+    });
+    (port, handle)
+}
+
+/// A `FormData` body goes out as `multipart/form-data`, carrying its bytes.
+///
+/// It used to go as `application/x-www-form-urlencoded`, which no browser sends
+/// for one and which cannot carry a `Blob` at all: `FormData.append` stringified
+/// every value, so React's server-action payload reached grok.com as the eight
+/// characters `[object Object]` and its server answered 500. The page then
+/// retried its session init and rendered an error toast instead of itself.
+#[test]
+fn a_form_data_body_is_sent_as_multipart() {
+    let (port, server) = echoing_server();
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+        .expect("broker");
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let options = PageOptions { script: true, ..Default::default() };
+    let factory = PageFactory::new(broker, fonts.sources.clone(), options);
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+
+    let page = factory.from_html(
+        "<html><body><output id='out'></output>\
+         <script>\
+           const form = new FormData();\
+           form.append('a', 'plain');\
+           form.append('b', new Blob([new Uint8Array([104, 105])], { type: 'text/plain' }), 'b.txt');\
+           fetch('/echo', { method: 'POST', body: form })\
+             .then((r) => r.text())\
+             .then((t) => { document.querySelector('#out').textContent = t; });\
+         </script></body></html>",
+        &base,
+    );
+
+    let shown = page.snapshot().render();
+    assert!(
+        shown.contains("\"multipart\":true")
+            && shown.contains("\"opens\":true")
+            && shown.contains("\"blobBytes\":true")
+            && shown.contains("\"named\":true")
+            && shown.contains("\"plain\":true"),
+        "the form should reach the wire as multipart with its blob intact:\n{shown}"
+    );
+    let _ = server.join();
+}
+
 /// A server with an API the page's script calls.
 fn api_server() -> (u16, std::thread::JoinHandle<()>) {
     use std::io::{BufRead, BufReader, Write};
