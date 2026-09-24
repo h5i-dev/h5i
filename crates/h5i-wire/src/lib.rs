@@ -6,12 +6,14 @@
 //! Separate from the engine so the plugins can read both without linking one
 //! (design-websec.md W21). The writers stay in `h5i-browser`.
 
+pub mod expect;
 pub mod ledger;
 pub mod message;
 pub mod read;
 pub mod record;
 pub mod triage;
 
+pub use expect::{Expect, Outcome, Response as ExpectResponse};
 pub use message::{
     Body, Health, MAX_BODY_BYTES, MAX_STORE_BYTES, Skip, StoredRequest, StoredResponse, body_file, message_file,
 };

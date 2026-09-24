@@ -70,24 +70,25 @@ later steps. `h5i test` says so in as many words: a flow step "may apply the
 existing websec edit language". This is the shared core, and it is real, not
 aspirational.
 
-They have drifted in one place that will bite: the extractor prefixes.
+The extractors are already aligned in code, which is worth stating because the
+prose disagrees. `design-websec.md` W11 advertises `jsonpath:`, `regex:`, `css:`,
+`header:` and `cookie:`, but that list was aspirational: the shipped
+implementations match each other exactly.
 
-- `sequence` (design-websec.md, W11): `jsonpath:`, `regex:`, `css:`, `header:`,
-  `cookie:`.
+- `sequence` (`src/cli/websec.rs`, `fn extract_one`): `regex:`, `json:`,
+  `header:`, `status`.
 - `test` (`crates/h5i-test/src/main.rs`, `fn extract`): `regex:`, `json:`,
   `header:`, `status`.
 
-`jsonpath:` versus `json:` name the same idea with different words, `test` has a
-`status` extractor `sequence` does not, and `sequence` has `css:` and `cookie:`
-`test` does not. This is the kind of divergence that turns "one flow language"
-into a slogan. F7 makes converging these prefixes a precondition of the importer,
-because a recipe written once must extract the same way in both engines or it is
-two recipes.
+So the only work here is to keep the doc honest and to keep the two functions
+from drifting later, not to reconcile them now. F7's importer relies on this: a
+recipe written once must extract the same way in both engines, and today it does.
 
 The rule going forward: the step language (send, edit, extract, save, actor,
-`no_follow`) is one grammar with one implementation seam, and neither engine gets
-a private extractor the other cannot honor. Where they differ is above the step,
-at the verdict, which is F4.
+`no_follow`) is one grammar, and neither engine gets a private extractor the
+other cannot honor. Where they differ is above the step, at the verdict, which is
+F4. The `css:` and `cookie:` extractors W11 imagined are unbuilt in both; when one
+is added it is added to both, or it is not added.
 
 ## F4. Three verdict sources
 
@@ -270,8 +271,8 @@ untouched. `finding` is untouched.
 
 Changes, in order:
 
-1. Converge the extractor prefixes across `sequence` and `test` (F3). Small,
-   and a precondition for everything below.
+1. Keep the extractor prefixes honest (F3). They are already identical in code;
+   this is a doc correction plus a shared implementation so they cannot drift.
 2. Add the source-2 `expect` matcher to the shared step grammar (F6), evaluated
    by both engines. Bounded to the Nuclei matcher surface plus `all`/`any`/`not`
    and gated-step branching.

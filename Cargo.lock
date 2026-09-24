@@ -2245,6 +2245,7 @@ name = "h5i-wire"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "regex",
  "serde",
  "serde_json",
  "sha2 0.10.9",
