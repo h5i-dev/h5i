@@ -3808,11 +3808,12 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     // 292 for `dispatchEvent` on `document` and on an `AbortSignal`. Both
     // already had `addEventListener`, so both were half an EventTarget: a page
     // sending itself a custom event called a method that was not there.
-    // 293 for the `PerformanceObserver` hook. The interface itself is a tier;
-    // what is eager is the four lines the `performance` object needs to offer
-    // it an entry. Sentry's tracing integration constructs one during its own
-    // `setup` without checking, so the missing global was the first thing
-    // grok.com threw.
+    // 293 for the `PerformanceObserver` hook and an always-present `screen`.
+    // The observer itself is a tier; what is eager is the four lines the
+    // `performance` object needs to offer it an entry. `screen` had to stop
+    // being conditional: a page reading `screen.width` got a TypeError no
+    // browser produces, which is what made grok.com render its root error
+    // boundary instead of the page.
     const BUDGET_KIB: usize = 293;
 
     assert!(
@@ -6237,7 +6238,10 @@ fn the_bare_build_answers_what_native_declares() {
     assert_eq!(reported(&mut script, "navigator.hardwareConcurrency"), "1");
     assert_eq!(reported(&mut script, "navigator.maxTouchPoints"), "0");
     assert_eq!(reported(&mut script, "navigator.languages.join(',')"), "en-US,en");
-    assert_eq!(reported(&mut script, "typeof screen"), "undefined");
+    // `screen` is not part of the fallback literal: it answers from the
+    // viewport rather than from the identity when nothing is declared. See
+    // `the_default_identity_leaves_the_page_exactly_as_it_was`.
+    assert_eq!(reported(&mut script, "typeof screen"), "object");
 }
 
 #[test]
@@ -6255,12 +6259,33 @@ fn the_default_identity_leaves_the_page_exactly_as_it_was() {
     assert_eq!(script.eval_value("navigator.maxTouchPoints").unwrap(), "0");
     assert_eq!(script.eval_value("navigator.vendor").unwrap(), "");
     assert_eq!(script.eval_value("devicePixelRatio").unwrap(), "1");
-    // No display is declared, so there is none to report, which is what this
-    // engine did before an identity existed, and for the same reason: a
-    // headless engine's honest screen size is a guess.
-    assert_eq!(script.eval_value("typeof screen").unwrap(), "undefined");
-    assert_eq!(script.eval_value("'screen' in globalThis").unwrap(), "false");
-    assert_eq!(script.eval_value("typeof Screen").unwrap(), "undefined");
+    // No display is declared, so `screen` reports the viewport this page was
+    // laid out at. It used to be absent here, on the rule that a headless
+    // engine's screen size is a guess — but every browser has `window.screen`,
+    // so the absence threw a TypeError no browser produces. grok.com read it
+    // while building an analytics event, the throw reached React, and the
+    // application rendered its root error boundary instead of itself. The
+    // viewport is not a guess: it is the size this engine really used, and it
+    // is the number `innerWidth` already answers with.
+    assert_eq!(script.eval_value("typeof screen").unwrap(), "object");
+    assert_eq!(script.eval_value("typeof Screen").unwrap(), "function");
+    assert_eq!(
+        script.eval_value("screen.width === innerWidth").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script.eval_value("screen.height === innerHeight").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script.eval_value("screen.availWidth === screen.width").unwrap(),
+        "true"
+    );
+    assert_eq!(script.eval_value("screen.colorDepth").unwrap(), "24");
+    assert_eq!(
+        script.eval_value("screen.pixelDepth === screen.colorDepth").unwrap(),
+        "true"
+    );
 }
 
 #[cfg(feature = "identity")]

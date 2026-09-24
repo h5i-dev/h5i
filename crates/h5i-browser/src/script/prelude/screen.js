@@ -1,9 +1,22 @@
-// The display, for a session whose identity declares one.
+// The display.
+//
+// A declared identity states its own geometry. Without one, the numbers are the
+// viewport this engine actually laid the page out at, which is a stated fact
+// about this run rather than a guess about somebody's monitor, and is the same
+// number `window.innerWidth` already answers with.
+//
+// Absent was worse. Every browser has `window.screen`, so a page reading
+// `screen.width` got a TypeError no browser produces: on grok.com Mixpanel read
+// it while building its event properties, the throw escaped into React, and the
+// whole application rendered its root error boundary instead of the page. The
+// rule that a name answering wrongly is worse than one that is absent still
+// holds; this answers with something true.
 (function () {
   "use strict";
 
   const identity = globalThis.__h5i.identity();
-  if (!identity.screen) return;
+  const viewport = globalThis.__h5i.viewport();
+  const declared = identity.screen;
 
   // Accessors rather than data properties, because that is what the interface
   // is: every member of `Screen` is a `readonly attribute`, so a page that
@@ -13,15 +26,20 @@
     constructor() { throw new TypeError("Illegal constructor"); }
   }
 
+  // 24 for an undeclared display, because that is the only depth any browser
+  // in use reports; it is a constant rather than a measurement.
+  const depth = declared ? declared.colorDepth : 24;
   const values = Object.freeze({
-    width: identity.screen.width,
-    height: identity.screen.height,
-    availWidth: identity.screen.availWidth,
-    availHeight: identity.screen.availHeight,
-    colorDepth: identity.screen.colorDepth,
+    width: declared ? declared.width : viewport.width,
+    height: declared ? declared.height : viewport.height,
+    // No system chrome to subtract when nothing was declared, so the work area
+    // is the whole of it.
+    availWidth: declared ? declared.availWidth : viewport.width,
+    availHeight: declared ? declared.availHeight : viewport.height,
+    colorDepth: depth,
     // The same number as the colour depth, on every browser that ships. A
     // `pixelDepth` that disagreed with it would be a pairing nothing reports.
-    pixelDepth: identity.screen.colorDepth,
+    pixelDepth: depth,
     // 0 and 0: the identity states a work area by *size*, and an origin would
     // be a second, unstated fact about where the system chrome sits.
     availLeft: 0,

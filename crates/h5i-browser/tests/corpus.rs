@@ -748,6 +748,28 @@ fn a_performance_observer_reports_only_the_entries_it_can_deliver() {
     reading.assert_shows("supports=mark+measure saw=mark:a,mark:b,measure:m");
 }
 
+/// `screen` answers rather than being absent.
+///
+/// Mixpanel reads `screen.height` while building an event's properties. With no
+/// `screen` at all that was a TypeError no browser produces, it escaped into
+/// React, and grok.com rendered its root error boundary instead of the page.
+#[test]
+fn a_page_can_read_the_display_size() {
+    let reading = read(
+        "<html><body><output id='out'></output>\
+         <script>\
+           document.querySelector('#out').textContent =\
+             'wh=' + (screen.width === innerWidth) + (screen.height === innerHeight) +\
+             ' avail=' + (screen.availWidth === screen.width) +\
+             ' depth=' + screen.colorDepth +\
+             ' tag=' + Object.prototype.toString.call(screen);\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("display size");
+    reading.assert_shows("wh=truetrue avail=true depth=24 tag=[object Screen]");
+}
+
 /// The legacy surface every browser implements. Annex B is the standard's own
 /// name for it, and leaving boa's feature off made this engine stricter than
 /// any browser: excalidraw's colour parser calls `substr` and died on "not a

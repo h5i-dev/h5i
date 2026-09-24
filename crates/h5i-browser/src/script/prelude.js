@@ -10248,11 +10248,10 @@
     IntersectionObserver, ResizeObserver,
   });
 
-  // The display, when the identity declares one: its own tier, loaded here
-  // rather than on a property read. `screen` behind an accessor would be the
-  // tell this feature exists to avoid — a page reads descriptors first. See
-  // `prelude/screen.js`.
-  if (identity.screen) __h5iTier("screen");
+  // The display: its own tier, loaded here rather than on a property read.
+  // `screen` behind an accessor would be the tell this feature exists to avoid
+  // — a page reads descriptors first. See `prelude/screen.js`.
+  __h5iTier("screen");
 
   // Interface objects are **not enumerable** on the global, and every one of ours was.
   for (const name of Object.getOwnPropertyNames(globalThis)) {
