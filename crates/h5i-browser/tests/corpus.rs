@@ -672,6 +672,30 @@ fn a_parsed_comment_keeps_its_text() {
     reading.assert_shows("data=3:x,8:$,3:y,8:/$,3:z");
 }
 
+/// A `<` before non-ASCII text does not take the engine down.
+///
+/// Recovering a comment's text means scanning the source for raw-text elements,
+/// and that scan compared `rest[..name.len()]` on a `&str`. Any `<` with
+/// multi-byte text after it put that boundary inside a character, and slicing
+/// there panics: vercel.com killed the engine thread outright. Only pages that
+/// also had a comment reached the scan, which is why it took a real site to
+/// find.
+#[test]
+fn a_page_may_put_a_bare_angle_bracket_before_non_ascii() {
+    let reading = read(
+        "<html><body><!--m--><p id='a'>x &lt; \u{65e5}\u{672c}\u{8a9e}</p>\
+         <div id='b'><!--$-->y</div><output id='out'></output>\
+         <script>\
+           document.querySelector('#out').textContent =\
+             'said=' + document.querySelector('#b').firstChild.data;\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("a bare angle bracket");
+    // The comment after it still gets its text, so the scan did not just bail.
+    reading.assert_shows("said=$");
+}
+
 /// `<!--` inside a `<script>` opens no comment.
 ///
 /// The text is found again by reading the source the parser was given, so a

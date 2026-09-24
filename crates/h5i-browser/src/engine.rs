@@ -411,13 +411,20 @@ fn comment_texts(html: &str) -> Vec<String> {
         at = open + 1;
         let rest = &html[open + 1..];
         for name in RAW_TEXT_ELEMENTS {
-            if !rest.len().checked_sub(name.len()).is_some_and(|_| {
-                rest[..name.len()].eq_ignore_ascii_case(name)
-                    && rest[name.len()..]
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_ascii_whitespace() || c == '>' || c == '/')
-            }) {
+            // Compared as bytes. `rest` can begin mid-character — any `<` with
+            // non-ASCII after it — and slicing a `str` by a byte length that
+            // lands inside one panics, which took the engine down on any page
+            // that had both a comment and a `<` before non-ASCII text. A
+            // successful ASCII compare is also what proves `name.len()` is a
+            // character boundary, so the slice below it is safe.
+            let head = rest.as_bytes();
+            if head.len() < name.len()
+                || !head[..name.len()].eq_ignore_ascii_case(name.as_bytes())
+                || !rest[name.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_whitespace() || c == '>' || c == '/')
+            {
                 continue;
             }
             let Some(gt) = rest.find('>') else {
