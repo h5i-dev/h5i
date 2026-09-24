@@ -26,7 +26,9 @@ const TIERS: &[(&str, &str)] = &[
     ("multipart", include_str!("prelude/multipart.js")),
     ("indexeddb", include_str!("prelude/indexeddb.js")),
     ("has", include_str!("prelude/has.js")),
-    #[cfg(feature = "identity")]
+    // Not behind `identity` any more: the display answers from the viewport when
+    // nothing is declared, so every build has one. Gated, a build without the
+    // feature had no tier to load and the prelude refused to start at all.
     ("screen", include_str!("prelude/screen.js")),
 ];
 

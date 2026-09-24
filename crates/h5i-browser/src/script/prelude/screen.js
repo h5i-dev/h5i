@@ -14,9 +14,15 @@
 (function () {
   "use strict";
 
-  const identity = globalThis.__h5i.identity();
-  const viewport = globalThis.__h5i.viewport();
-  const declared = identity.screen;
+  // Guarded the way the core prelude guards it: `api.identity` is behind the
+  // `identity` feature, and the build the smoke lane uses turns it off
+  // (`--no-default-features --features browser`). This tier used to load only
+  // when an identity declared a display, so it never ran in that build; loading
+  // it always meant an absent `identity()` threw here and took the whole prelude
+  // down with it, on every page.
+  const api = globalThis.__h5i;
+  const declared = api.identity ? api.identity().screen : undefined;
+  const viewport = api.viewport();
 
   // Accessors rather than data properties, because that is what the interface
   // is: every member of `Screen` is a `readonly attribute`, so a page that

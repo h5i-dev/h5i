@@ -1568,6 +1568,38 @@ fn element_scoped_queries_do_not_escape_their_element() {
 
 // ── the vertical slice: a page that fetches and re-renders ─────────────────
 
+/// Every tier the eager prelude loads by name is a tier that exists.
+///
+/// `__h5iTier` on a name `TIERS` does not carry fails the whole prelude, so the
+/// page gets no script at all. That is how `screen` broke the
+/// `--no-default-features --features browser` build: the tier was registered
+/// behind the `identity` feature while the prelude had started asking for it
+/// unconditionally, and every page in that build answered "the browser prelude
+/// failed to load". Nothing in the default build could see it, because there the
+/// tier was there.
+#[test]
+fn the_prelude_only_asks_for_tiers_that_exist() {
+    let named: Vec<&str> = super::PRELUDE
+        .match_indices("__h5iTier(\"")
+        .filter_map(|(at, pat)| {
+            let rest = &super::PRELUDE[at + pat.len()..];
+            rest.find('"').map(|end| &rest[..end])
+        })
+        .collect();
+
+    assert!(
+        !named.is_empty(),
+        "the scan found no `__h5iTier(\"…\")` call, so it is no longer checking anything"
+    );
+    for name in named {
+        assert!(
+            super::TIERS.iter().any(|(tier, _)| *tier == name),
+            "the prelude loads a `{name}` tier that `TIERS` does not carry in this \
+             feature configuration, so the prelude will refuse to start"
+        );
+    }
+}
+
 /// A server that reports back the request line, content type and body it saw.
 fn echoing_server() -> (u16, std::thread::JoinHandle<()>) {
     use std::io::{BufRead, BufReader, Read, Write};
