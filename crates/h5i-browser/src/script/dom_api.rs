@@ -126,6 +126,9 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("removeAttr", 2, remove_attr),
         ("tagName", 1, tag_name),
         ("children", 1, children),
+        ("childCount", 1, child_count),
+        ("childAt", 2, child_at),
+        ("siblingOf", 2, sibling_of),
         ("parent", 1, parent),
         ("isElement", 1, is_element),
         ("root", 0, root),
@@ -388,11 +391,80 @@ fn children(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
         let doc = host.dom.borrow();
         doc.get_node(id).map(|n| n.children.clone()).unwrap_or_default()
     };
-    let array = boa_engine::object::builtins::JsArray::new(context)?;
-    for child in ids {
-        array.push(JsValue::from(child as f64), context)?;
+    // Built in one step rather than pushed element by element: `push` runs the
+    // whole of `Array.prototype.push` per child, reading and writing `length`
+    // each time, and this is the most-called primitive on the list.
+    Ok(boa_engine::object::builtins::JsArray::from_iter(
+        ids.into_iter().map(|child| JsValue::from(child as f64)),
+        context,
+    )
+    .into())
+}
+
+/// How many children a node has.
+///
+/// One number instead of the array `hasChildNodes` used to build and throw away.
+fn child_count(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+    let count = doc.get_node(id).map_or(0, |n| n.children.len());
+    Ok(JsValue::from(count as f64))
+}
+
+/// The child at `index`, or null. Negative counts back from the end, so `-1` is
+/// the last child.
+///
+/// `firstChild` and `lastChild` used to read the whole child list, wrap every
+/// node in it and take one: a node with a hundred children cost a hundred
+/// wrappers to answer a question about one of them.
+fn child_at(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let index = args
+        .get(1)
+        .and_then(boa_engine::JsValue::as_number)
+        .unwrap_or(0.0) as i64;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+    let Some(node) = doc.get_node(id) else {
+        return Ok(JsValue::null());
+    };
+    let len = node.children.len() as i64;
+    let at = if index < 0 { len + index } else { index };
+    if at < 0 || at >= len {
+        return Ok(JsValue::null());
     }
-    Ok(array.into())
+    Ok(id_value(Some(node.children[at as usize])))
+}
+
+/// The sibling `offset` places from this node, or null.
+///
+/// The position is found here rather than in the page, where finding it meant
+/// building the parent's whole child list and searching it for this node: a
+/// walk along N siblings was N array allocations and N² wrappers, and React's
+/// reconciler walks sibling chains constantly.
+fn sibling_of(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let offset = args
+        .get(1)
+        .and_then(boa_engine::JsValue::as_number)
+        .unwrap_or(0.0) as i64;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+    let Some(parent) = doc.get_node(id).and_then(|n| n.parent) else {
+        return Ok(JsValue::null());
+    };
+    let Some(siblings) = doc.get_node(parent).map(|n| &n.children) else {
+        return Ok(JsValue::null());
+    };
+    let Some(at) = siblings.iter().position(|child| *child == id) else {
+        return Ok(JsValue::null());
+    };
+    let want = at as i64 + offset;
+    if want < 0 || want >= siblings.len() as i64 {
+        return Ok(JsValue::null());
+    }
+    Ok(id_value(Some(siblings[want as usize])))
 }
 
 fn parent(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {

@@ -1062,7 +1062,10 @@
     /// four hand-picked corpora used it and everything in the DOM test suite
     /// does — which is the argument for running a conformance suite in one
     /// sentence.
-    hasChildNodes() { return api.children(this._id).length > 0; }
+    hasChildNodes() {
+      if (this.tagName === "TEMPLATE") return false;
+      return api.childCount(this._id) > 0;
+    }
 
     /// Same type, same name, same attributes, same children — not the same node.
     isEqualNode(other) {
@@ -1121,8 +1124,17 @@
       }
       return seenA < seenB ? FOLLOWING : PRECEDING;
     }
-    get firstChild() { return this.childNodes[0] || null; }
-    get lastChild() { const c = this.childNodes; return c[c.length - 1] || null; }
+    // One child, asked for by position: reading `childNodes` here wrapped every
+    // sibling to return one of them. The `<template>` rule still applies, so
+    // both go through the same guard the list does.
+    get firstChild() {
+      if (this.tagName === "TEMPLATE") return null;
+      return wrap(api.childAt(this._id, 0));
+    }
+    get lastChild() {
+      if (this.tagName === "TEMPLATE") return null;
+      return wrap(api.childAt(this._id, -1));
+    }
 
     // Text for a text node, null for an element — the distinction is the whole
     // reason the property exists, and code that walks a tree branches on it.
@@ -1336,16 +1348,11 @@
       return this.lookupNamespaceURI(null) === ns;
     }
 
-    get nextSibling() {
-      const kids = this.parentNode ? this.parentNode.childNodes : [];
-      const at = kids.findIndex((n) => n._id === this._id);
-      return at >= 0 ? kids[at + 1] || null : null;
-    }
-    get previousSibling() {
-      const kids = this.parentNode ? this.parentNode.childNodes : [];
-      const at = kids.findIndex((n) => n._id === this._id);
-      return at > 0 ? kids[at - 1] : null;
-    }
+    // The position is found in the host, not here. Reading `childNodes` to find
+    // this node in it meant building the parent's whole list and wrapping every
+    // node in it per step, so walking N siblings cost N arrays and N² wrappers.
+    get nextSibling() { return wrap(api.siblingOf(this._id, 1)); }
+    get previousSibling() { return wrap(api.siblingOf(this._id, -1)); }
     replaceChild(fresh, stale) {
       // Core DOM, and its absence is not a small gap: a hydrator that cannot
       // replace a node creates a new one beside it, which is how a page ends up
