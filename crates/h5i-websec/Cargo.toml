@@ -28,6 +28,8 @@ serde = { workspace = true }
 # `websec match --regex`: the matcher's patterns.
 regex = "1"
 serde_json = { workspace = true }
+# `import-nuclei`: templates are YAML, and the h5i test it emits is YAML too.
+serde_yaml = "0.9"
 url = "2.5"
 
 [dev-dependencies]

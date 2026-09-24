@@ -196,30 +196,38 @@ a request, a set of matchers, a boolean. They are also stateless by design, one
 request and its matchers, which is the layer h5i is weakest at owning by hand and
 strongest at absorbing.
 
-The importer converts a Nuclei template into a flow whose verdict is a source-2
-`expect`, never a bash oracle. Concretely:
+The importer's target is an `h5i test` file, not a `websec sequence` file, and
+the reason is structural: a Nuclei template describes a request from scratch
+(a method and a `{{BaseURL}}`-relative path), which is what an `h5i test` request
+template expresses and what `websec sequence` cannot, since a sequence step only
+resends a message a session already captured. So `h5i websec import-nuclei
+<template>` prints an `h5i.test/v1` file whose verdict is `expect`. Concretely:
 
-- A template's `requests`/`http` block becomes one flow step per request, with
-  path and method mapped onto a request template, and Nuclei's variables mapped
-  onto the shared edit language.
-- `matchers` map onto `expect`: `word` to `body`/`contains`, `status` to
-  `status`, `regex` to `body: regex:`, `dsl` to the closest supported leaf and
-  otherwise refused rather than half-imported. `matchers-condition: and|or` maps
-  to `all`/`any`.
-- `extractors` map onto the shared `extract`, which is exactly why F3's prefix
-  convergence is a precondition: an imported extractor must name its target the
+- A template's `http` (or legacy `requests`) block becomes one request template
+  and one flow step per entry. `{{BaseURL}}` and `{{RootURL}}` are stripped to a
+  relative path; any other Nuclei variable in a path, header or body is refused,
+  because h5i does not resolve it.
+- `matchers` map onto `expect`: `word` to a `body` substring, `status` to
+  `status`, `regex` to `body: regex:`. `matchers-condition` maps to `all`/`any`
+  (Nuclei's default is `or`), a matcher's own `condition` over its words or
+  patterns likewise (default `or`), and `negative: true` to `not`. A `word` or
+  `regex` matcher imports only on `part: body`, because Nuclei's other parts
+  match a text block this grammar's name-and-value `header` leaf cannot stand in
+  for.
+- `regex` `extractors` map onto the shared `extract`, which is why the extractor
+  prefixes must stay aligned (F3): an imported extractor names its target the
   same way a hand-written one does.
-- Multi-request templates (Nuclei's stateful `req-condition`) become a
-  multi-step flow with bindings, which is the case Nuclei expresses awkwardly and
-  `sequence` expresses natively. This is where the import stops being a
-  translation and starts being an upgrade.
+- Multi-request templates become a multi-step flow, which is the case Nuclei
+  expresses awkwardly and a flow expresses naturally.
 
-What the importer never emits is an oracle. A template that cannot be expressed
-as `expect` (an unsupported `dsl` matcher, a payload mode h5i does not model) is
-reported and skipped, not lowered into a bash script, because a skipped template
-is a gap and a smuggled oracle is a shared executable. The output is data,
-runnable by `websec sequence` in a live session and committable into a test
-without its oracle field.
+What the importer never emits is an oracle. A construct that cannot be expressed
+as `expect` (a `dsl` or `binary` matcher, a `raw` request, an unmodelled
+variable, a non-`regex` extractor) is refused with a reason, not lowered into a
+bash script, because a skipped template is a gap and a smuggled oracle is a
+shared executable. Every `expect` it builds is verified against the shared
+grammar (F6) before it is written, so an import never emits a verdict the engines
+would reject. The output is data: committable into `.h5i-tests/` as an
+oracle-less test, and shareable.
 
 ## F8. The regression seam, and how the two engines connect
 
@@ -276,7 +284,8 @@ Changes, in order:
 2. Add the source-2 `expect` matcher to the shared step grammar (F6), evaluated
    by both engines. Bounded to the Nuclei matcher surface plus `all`/`any`/`not`
    and gated-step branching.
-3. Add the Nuclei importer targeting `expect` (F7), skipping what it cannot
+3. Add the Nuclei importer (`h5i websec import-nuclei`), which emits an
+   oracle-less `h5i test` whose verdict is `expect` (F7), refusing what it cannot
    express rather than lowering it to an oracle.
 4. Let an `expect`-carrying flow be an oracle-less `h5i test` (F8), and let
    `finding --repro` flows graduate into `.h5i-tests/`.

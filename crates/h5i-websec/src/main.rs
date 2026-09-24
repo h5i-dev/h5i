@@ -19,6 +19,7 @@
 
 mod experiment;
 mod finding;
+mod nuclei;
 mod read;
 
 use std::ffi::OsString;
@@ -273,6 +274,24 @@ enum Verb {
         #[arg(long)]
         keep_going: bool,
     },
+
+    /// Convert a Nuclei template into an h5i test, printed to stdout.
+    ///
+    /// The template's request becomes a request template, its matchers become an
+    /// `expect` verdict, and its regex extractors become bindings. It never emits
+    /// an oracle: an imported recipe is data, not code (design-flow-and-verdict.md
+    /// F7, F9). A construct with no data-only equivalent is refused rather than
+    /// lowered into a script.
+    ///
+    /// ```text
+    /// h5i websec import-nuclei cve-2021-1234.yaml > .h5i-tests/tests/cve.yaml
+    /// ```
+    #[command(name = "import-nuclei")]
+    ImportNuclei {
+        /// The Nuclei template file (YAML).
+        #[arg(value_name = "FILE")]
+        file: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -456,6 +475,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Verb::Finding { what } => {
             return findings(&root, session.as_deref(), what, json_out);
         }
+        Verb::ImportNuclei { file } => {
+            return nuclei::import(std::path::Path::new(file));
+        }
         _ => {}
     }
 
@@ -496,7 +518,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         | Verb::Match { .. }
         | Verb::Sitemap
         | Verb::Experiment { .. }
-        | Verb::Finding { .. } => {
+        | Verb::Finding { .. }
+        | Verb::ImportNuclei { .. } => {
             unreachable!("the verbs this process handles return before this")
         }
         Verb::Replay {
