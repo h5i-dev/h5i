@@ -49,6 +49,13 @@ pub fn store_dir(root: &Path, selector: Option<&str>) -> anyhow::Result<(bs::Ses
     Ok((session, dir))
 }
 
+/// The highest stored message sequence, or None if the store holds nothing.
+/// `replay --body` uses it to name the message a send just produced.
+pub fn latest_seq(root: &Path, selector: Option<&str>) -> anyhow::Result<Option<u64>> {
+    let (_session, dir) = store_dir(root, selector)?;
+    Ok(sequences(&dir).into_iter().max())
+}
+
 /// The session a selector names, live or ended: a store outlives its engine.
 pub fn resolve_for_reading(root: &Path, selector: Option<&str>) -> anyhow::Result<bs::Session> {
     match bs::resolve(root, selector) {

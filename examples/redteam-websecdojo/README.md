@@ -30,8 +30,13 @@ The agent drives the target with h5i's own tools:
 ```bash
 h5i browser open https://websecdojo.com/vault/ --capture
 h5i websec requests
-h5i websec replay req_0 --set method=HEAD --set header.user-agent=Agent33
+# --body prints the decoded response body straight to stdout, like curl:
+h5i websec replay req_0 --set method=HEAD --set header.user-agent=Agent33 --body
 ```
+
+`--set` targets are `method=`, `path=`, `query.KEY=`, `header.NAME=`,
+`cookie.NAME=`, `json.PATH=`. Drop `--body` to get the JSON envelope (ids,
+applied edits, status) for scripting.
 
 Two agents, one target each, works too: create `vault` and `pebble` boxes and
 open one in each `tmux` window.

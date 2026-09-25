@@ -109,9 +109,11 @@ enum Verb {
         /// `req_42`, or just `42`.
         #[arg(value_name = "ID")]
         id: String,
-        /// Set a request field; repeatable and ordered. JSON values are typed,
-        /// nested by dots, and arrays use numeric segments. Preserve numeric
-        /// strings with shell-safe quotes: `--set 'json.jsonrpc="2.0"'`.
+        /// Set a request field; repeatable and ordered. Common TARGETs:
+        /// `method=POST`, `path=/other/url`, `query.KEY=v`, `header.NAME=v`,
+        /// `cookie.NAME=v`, `json.PATH=v`. JSON values are typed, nested by dots,
+        /// and arrays use numeric segments. Preserve numeric strings with
+        /// shell-safe quotes: `--set 'json.jsonrpc="2.0"'`.
         #[arg(long = "set", value_name = "TARGET=VALUE")]
         set: Vec<String>,
         /// `multipart.userfile=./payload.jpg`: the value is the file's bytes.
@@ -168,6 +170,12 @@ enum Verb {
         /// input. Use it when `--set` cannot express the body.
         #[arg(long = "raw-request", value_name = "PATH")]
         raw_request: Option<String>,
+        /// After sending, print the response body (decoded, untruncated) to
+        /// stdout and nothing else — the `curl` view, without re-parsing a JSON
+        /// envelope. Equivalent to `show res_<new> --body-to -` on the message
+        /// the send produced.
+        #[arg(long)]
+        body: bool,
     },
 
     /// How two of this session's responses differ.
@@ -482,6 +490,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     }
 
     let mut argv: Vec<String> = vec!["browser".to_string()];
+    // `replay --body` sends via `browser resend` (below) and then prints the
+    // stored response body instead of the JSON envelope.
+    let mut replay_body = false;
     fn push(argv: &mut Vec<String>, args: &[&str]) {
         argv.extend(args.iter().map(|arg| (*arg).to_string()));
     }
@@ -538,7 +549,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             raw_request,
             raw_headers,
             set_each,
+            body,
         } => {
+            replay_body = body;
             let seq = sequence_of(&id)?;
             push(&mut argv, &["resend"]);
             argv.push(seq);
@@ -620,10 +633,36 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         argv.push("--json".into());
     }
 
-    let status = Command::new(h5i())
-        .args(&argv)
+    let mut cmd = Command::new(h5i());
+    cmd.args(&argv);
+    // With `--body` the send's JSON envelope is noise: swallow its stdout so the
+    // only thing on stdout is the response body we print next. Stderr (errors,
+    // egress denials) stays visible.
+    if replay_body {
+        cmd.stdout(std::process::Stdio::null());
+    }
+    let status = cmd
         .status()
         .map_err(|e| anyhow::anyhow!("could not run h5i: {e}"))?;
+    // `replay --body`: the send stored a new message; write that response body
+    // (full, decoded) to stdout, the way `curl` would show it.
+    if replay_body {
+        if !status.success() {
+            std::process::exit(status.code().unwrap_or(2));
+        }
+        if let Some(seq) = read::latest_seq(&root, session.as_deref())? {
+            read::show(
+                &root,
+                session.as_deref(),
+                seq,
+                read::Part::Response,
+                false,
+                Some(std::path::Path::new("-")),
+                false,
+            )?;
+        }
+        std::process::exit(status.code().unwrap_or(0));
+    }
     // The underlying verb's code, unchanged. `match` exits 1 for "did not
     // match" and 2 for "could not look", and flattening those here would break
     // every script built on them.
