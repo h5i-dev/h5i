@@ -754,15 +754,21 @@ again, and compare the answers. Design: `docs/design/design-websec.md`.
 h5i browser open https://target.example --capture
 h5i websec requests                              # captured messages
 h5i websec show req_42 --raw                     # one message, exactly
-h5i websec replay req_42 --set query.id=456      # edit and resend
+h5i websec replay req_42 --set query.id=456      # edit and resend (JSON envelope)
+h5i websec replay req_42 --set query.id=456 --body   # print the response body
+h5i websec replay req_42 --set-each query.id=./ids.txt --body   # sweep, each body
 h5i websec diff res_42 res_43                    # compare two answers
 h5i websec match res_43 --status 200 --contains ok
 h5i websec experiment ./plan.json                # many sends, folded to clusters
 h5i websec finding create --title … --evidence req_42
 ```
 
-Capture is opt-in (`--capture`) because the message store holds bodies and
-credentials in full. It is never included in an export unless it is named.
+`--body` prints the decoded, untruncated response body to stdout (the `curl`
+view); `--raw` prints the status line, headers, and body (the `curl -i` view,
+for when the answer is in a header). Both also work with `--set-each`/`--repeat`,
+printing each send's response. Capture is opt-in (`--capture`) because the
+message store holds bodies and credentials in full. It is never included in an
+export unless it is named.
 
 ### Experiments
 

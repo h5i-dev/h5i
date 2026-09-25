@@ -1062,14 +1062,20 @@ again, and compare the answers. Design: <code>docs/design/design-websec.md</code
 <pre><code class="language-bash">h5i browser open https://target.example --capture
 h5i websec requests                              # captured messages
 h5i websec show req_42 --raw                     # one message, exactly
-h5i websec replay req_42 --set query.id=456      # edit and resend
+h5i websec replay req_42 --set query.id=456      # edit and resend (JSON envelope)
+h5i websec replay req_42 --set query.id=456 --body   # print the response body
+h5i websec replay req_42 --set-each query.id=./ids.txt --body   # sweep, each body
 h5i websec diff res_42 res_43                    # compare two answers
 h5i websec match res_43 --status 200 --contains ok
 h5i websec experiment ./plan.json                # many sends, folded to clusters
 h5i websec finding create --title … --evidence req_42
 </code></pre>
-<p>Capture is opt-in (<code>--capture</code>) because the message store holds bodies and
-credentials in full. It is never included in an export unless it is named.</p>
+<p><code>--body</code> prints the decoded, untruncated response body to stdout (the <code>curl</code>
+view); <code>--raw</code> prints the status line, headers, and body (the <code>curl -i</code> view,
+for when the answer is in a header). Both also work with <code>--set-each</code>/<code>--repeat</code>,
+printing each send's response. Capture is opt-in (<code>--capture</code>) because the
+message store holds bodies and credentials in full. It is never included in an
+export unless it is named.</p>
 <h3 id="experiments">Experiments</h3>
 <p>One request sent many ways, with the answers folded into clusters. The plan
 names what varies; the values are yours, and nothing here generates one.</p>
