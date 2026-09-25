@@ -11,6 +11,8 @@ h5i project finding promote --all -p acme --session <name>
 
 `promote` copies each session finding and the messages it cites into the project as evidence, with `Authorization`, `Cookie`, secret-looking query parameters and JSON or form fields replaced by `[removed]`. The raw capture is never copied. Promoting the same finding again updates it rather than duplicating. `h5i browser rm` refuses to remove a session whose findings are not saved to a project yet, and names the promote command, so a cleanup does not lose work.
 
+Tie the work to the project as you go, or the link is never recorded and the console shows the project with no sessions. Two ways create the link: open the session with `--project <name>` (above), and build the project's findings from the session — `h5i project finding promote --session S` or `h5i project evidence add req_N --session S` — rather than hand-writing them with `finding create` / `evidence add-text`. A hand-written finding has no session behind it. When you did capture the work in a session, promote it; keep `finding create` for a conclusion that has no single session (a design note, a cross-cutting observation).
+
 ## Findings
 
 Before a finding enters a report, rule out a false positive. Assume the first result is one: re-run it, try the same request unauthenticated, and check it is the target's doing, not a cache, a redirect, an error page, or state you carried in. Report a vulnerability only with a complete proof of concept: the requests that reproduce it and the response that shows impact. No complete PoC, no confirmed vulnerability. Rate it `info` at most and say what is missing. An honest `info` beats a high that is disproved in a minute.
