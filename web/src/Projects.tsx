@@ -434,9 +434,11 @@ function FindingsTab({ detail }: { detail: ProjectDetail }) {
   }
   return (
     <div className="scroll pad">
-      {detail.findings.map((f) => (
-        <FindingCard key={f.id} f={f} name={name} evidenceCaptions={captionsFor(detail)} />
-      ))}
+      <div className="finding-list">
+        {detail.findings.map((f) => (
+          <FindingCard key={f.id} f={f} name={name} evidenceCaptions={captionsFor(detail)} />
+        ))}
+      </div>
     </div>
   );
 }

@@ -2436,6 +2436,11 @@ pre.render {
   margin: 4px 0;
 }
 
+.finding-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
 .finding-summary {
   margin: 6px 0 4px;
   color: var(--ink-2);
