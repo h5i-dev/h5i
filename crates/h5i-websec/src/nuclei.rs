@@ -603,7 +603,8 @@ fn handle_multi_raw(
     // A chain whose matchers read another request's response (`req-condition`, or
     // an indexed part or dsl variable) is one verdict over the whole flow; a
     // block that does not is a list of variants, matched if any one holds.
-    let verdict = if entry.req_condition || references_other_response(entry) {
+    let is_chain = entry.req_condition || references_other_response(entry);
+    let verdict = if is_chain {
         matchers_to_dsl(template, n, &entry.matchers, &entry.matchers_condition)?
     } else {
         matchers_to_expect(template, n, &entry.matchers, &entry.matchers_condition)?
@@ -613,7 +614,7 @@ fn handle_multi_raw(
         anyhow::anyhow!("template `{template}` request {n} produced an invalid verdict: {e}")
     })?;
 
-    if entry.req_condition || references_other_response(entry) {
+    if is_chain {
         // Send each request as its own step; the last carries the verdict, which
         // reads `body_1`, `body_2`, … across the responses.
         let last = ids.len() - 1;
@@ -715,12 +716,17 @@ fn matcher_to_dsl(template: &str, n: usize, matcher: &Matcher) -> anyhow::Result
                 .collect::<Vec<_>>()
                 .join(joiner)
         }
-        "dsl" => matcher
-            .dsl
-            .iter()
-            .map(|e| format!("({e})"))
-            .collect::<Vec<_>>()
-            .join(joiner),
+        "dsl" => {
+            for expr in &matcher.dsl {
+                refuse_byte_exact_dsl(template, n, expr)?;
+            }
+            matcher
+                .dsl
+                .iter()
+                .map(|e| format!("({e})"))
+                .collect::<Vec<_>>()
+                .join(joiner)
+        }
         other => anyhow::bail!(
             "template `{template}` request {n} uses a `{other}` matcher in a chain, which has no \
              data-only equivalent"
@@ -797,6 +803,24 @@ fn matchers_to_expect(
     Ok(Some(combined))
 }
 
+/// Refuse a dsl expression that hashes binary content. `mmh3` and `base64_py`
+/// are the favicon-hash idiom, taken over the raw response bytes; the test
+/// runtime reads a body as text (lossy for binary), so the hash would be wrong.
+/// Refusing is honest where a silent misjudgement would not be. Text hashes
+/// (`md5`, `sha256`) stay: a text body survives the round trip exactly.
+fn refuse_byte_exact_dsl(template: &str, n: usize, expr: &str) -> anyhow::Result<()> {
+    for func in ["mmh3", "base64_py"] {
+        if expr.contains(func) {
+            anyhow::bail!(
+                "template `{template}` request {n} hashes the response bytes with `{func}` \
+                 (a favicon hash); the test runtime reads a body as text, so the hash would \
+                 not match"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn one_matcher(template: &str, n: usize, matcher: &Matcher) -> anyhow::Result<Value> {
     let clause = match matcher.kind.as_str() {
         "status" => {
@@ -829,6 +853,9 @@ fn one_matcher(template: &str, n: usize, matcher: &Matcher) -> anyhow::Result<Va
             // grammar's own parse) refuses an expression that uses a function or
             // variable the bounded evaluator does not implement, so the whole
             // template is refused rather than half-imported.
+            for expr in &matcher.dsl {
+                refuse_byte_exact_dsl(template, n, expr)?;
+            }
             let leaves: Vec<Value> = matcher.dsl.iter().map(|e| json!({ "dsl": e })).collect();
             // Nuclei's default matcher `condition` is `or`, dsl included.
             combine_leaves(leaves, matcher.condition.as_deref().unwrap_or("or"), template, n, "dsl")?
