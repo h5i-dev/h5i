@@ -128,6 +128,11 @@ struct SendStep {
     /// therefore needs an `expect`.
     #[serde(default)]
     sweep: Option<Sweep>,
+    /// Further requests to try in place of `send`, in order, stopping at the
+    /// first whose `expect` holds. This is the "try these variants, one may
+    /// trip it" shape: the step matches if `send` or any variant matches.
+    #[serde(default)]
+    variants: Vec<String>,
     #[serde(default)]
     covers: Option<Covers>,
 }
@@ -388,6 +393,26 @@ struct TestContext<'a> {
     responses: BTreeMap<String, ResponseArtifact>,
     covered: BTreeSet<String>,
     mutations: BTreeSet<String>,
+    /// Each flow step's response, in order, so a later step's `dsl` verdict can
+    /// read `body_1`, `status_code_2` across the requests the flow sent.
+    history: Vec<OwnedResponse>,
+}
+
+/// One flow response, owned, for the cross-request history.
+struct OwnedResponse {
+    status: Option<u16>,
+    headers: Vec<(String, String)>,
+    body: String,
+}
+
+impl OwnedResponse {
+    fn view(&self) -> h5i_wire::dsl::View<'_> {
+        h5i_wire::dsl::View {
+            status: self.status,
+            headers: &self.headers,
+            body: &self.body,
+        }
+    }
 }
 
 fn main() {
@@ -532,6 +557,7 @@ fn run_file_inner(
         sessions: BTreeMap::new(),
         variables: BTreeMap::new(),
         responses: BTreeMap::new(),
+        history: Vec::new(),
         covered: BTreeSet::new(),
         mutations: BTreeSet::new(),
     };
@@ -671,16 +697,27 @@ impl TestContext<'_> {
         let response_dir = self.output.join("responses");
         let body_path = response_dir.join(format!("{save}.body"));
 
-        // A swept step sends once per payload combination; an ordinary step has
-        // one empty combination and behaves exactly as before.
-        let combos = match &step.sweep {
-            Some(sweep) => sweep.combinations()?,
-            None => vec![BTreeMap::new()],
+        // The sends this step makes, each a (request name, variable bindings)
+        // pair. An ordinary step is one send; a sweep varies the payloads over
+        // one request; variants try several requests. The step's verdict is "the
+        // `expect` held for at least one send", so the first match wins.
+        let attempts: Vec<(&str, BTreeMap<String, String>)> = if let Some(sweep) = &step.sweep {
+            sweep
+                .combinations()?
+                .into_iter()
+                .map(|combo| (step.send.as_str(), combo))
+                .collect()
+        } else {
+            std::iter::once(step.send.as_str())
+                .chain(step.variants.iter().map(String::as_str))
+                .map(|name| (name, BTreeMap::new()))
+                .collect()
         };
 
         struct Attempt {
             request: StoredRequest,
             response: StoredResponse,
+            body: String,
             matched: Option<bool>,
             verdict: Option<String>,
             payload: Option<String>,
@@ -689,38 +726,51 @@ impl TestContext<'_> {
         // combination", so the first match wins and the rest are not sent. With
         // no match the last send stands, so the report shows what was tried.
         let mut chosen: Option<Attempt> = None;
-        for combo in &combos {
+        for (request_name, combo) in &attempts {
             let mut vars = self.variables.clone();
             for (name, value) in combo {
                 vars.insert(name.clone(), value.clone());
             }
             let (_seq, request, response) =
-                self.dispatch(step, index, &session_name, &store, &vars)?;
+                self.dispatch(request_name, step, index, &session_name, &store, &vars)?;
             copy_body(&store, &response.body, &body_path)?;
+            let body = String::from_utf8_lossy(&fs::read(&body_path)?).into_owned();
             let (matched, verdict) = match (&step.expect, cleanup) {
                 (Some(expect), false) => {
-                    let bytes = fs::read(&body_path)?;
-                    let body = String::from_utf8_lossy(&bytes);
+                    // The verdict reads this response as the current one, and the
+                    // flow's earlier responses plus this one as the history, so a
+                    // `dsl` clause can name `body_1`, `status_code_2` and so on.
+                    let mut views: Vec<h5i_wire::dsl::View> =
+                        self.history.iter().map(OwnedResponse::view).collect();
+                    views.push(h5i_wire::dsl::View {
+                        status: response.status,
+                        headers: &response.headers,
+                        body: &body,
+                    });
                     let outcome = expect.evaluate(&ExpectResponse {
                         status: response.status,
                         headers: &response.headers,
                         body: &body,
+                        history: &views,
                     });
                     (Some(outcome.matched), Some(outcome.because))
                 }
                 _ => (None, None),
             };
-            let payload = (!combo.is_empty()).then(|| {
-                combo
-                    .iter()
-                    .map(|(k, v)| format!("{k}={v}"))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            });
+            // Name what distinguished this send: the payload for a sweep, or the
+            // request for a variant.
+            let payload = if !combo.is_empty() {
+                Some(combo.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "))
+            } else if *request_name != step.send {
+                Some(format!("request {request_name}"))
+            } else {
+                None
+            };
             let hit = matched == Some(true);
             chosen = Some(Attempt {
                 request,
                 response,
+                body,
                 matched,
                 verdict,
                 payload,
@@ -761,6 +811,12 @@ impl TestContext<'_> {
                 }
             }
             self.responses.insert(save.clone(), artifact);
+            // This step becomes `body_<n>` for the steps after it.
+            self.history.push(OwnedResponse {
+                status: attempt.response.status,
+                headers: attempt.response.headers.clone(),
+                body: attempt.body.clone(),
+            });
         }
         // A swept step names the payload that decided it, so a pass or fail points
         // at the exact value.
@@ -790,6 +846,7 @@ impl TestContext<'_> {
     /// call it per combination.
     fn dispatch(
         &self,
+        request_name: &str,
         step: &SendStep,
         index: usize,
         session_name: &str,
@@ -798,20 +855,20 @@ impl TestContext<'_> {
     ) -> anyhow::Result<(u64, StoredRequest, StoredResponse)> {
         let template = self
             .requests
-            .get(&step.send)
-            .ok_or_else(|| anyhow::anyhow!("step {} names no request `{}`", index + 1, step.send))?;
+            .get(request_name)
+            .ok_or_else(|| anyhow::anyhow!("step {} names no request `{request_name}`", index + 1))?;
         let method = substitute(&template.method, vars)?;
         let path = substitute(&template.path, vars)?;
         let url = self
             .target
             .join(&path)
-            .map_err(|e| anyhow::anyhow!("request `{}` path `{path}` is not a URL: {e}", step.send))?;
+            .map_err(|e| anyhow::anyhow!("request `{request_name}` path `{path}` is not a URL: {e}"))?;
         let mut headers = Vec::new();
         for (name, value) in &template.headers {
             headers.push((name.clone(), substitute(value, vars)?));
         }
         let body = match (&template.body, &template.json) {
-            (Some(_), Some(_)) => anyhow::bail!("request `{}` gives both body and json", step.send),
+            (Some(_), Some(_)) => anyhow::bail!("request `{request_name}` gives both body and json"),
             (Some(body), None) => substitute(body, vars)?.into_bytes(),
             (None, Some(value)) => {
                 if !headers
@@ -834,10 +891,16 @@ impl TestContext<'_> {
             .iter()
             .map(|s| substitute(s, vars))
             .collect::<anyhow::Result<Vec<_>>>()?;
+        // The composed request carries its body base64 over this control channel;
+        // a plain `body` byte array is not the field the engine reads.
+        let body_base64 = {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD.encode(&body)
+        };
         let request = json!({
             "id": index,
             "verb": "resend",
-            "request": {"method": method, "url": url.as_str(), "headers": headers, "body": body},
+            "request": {"method": method, "url": url.as_str(), "headers": headers, "body_base64": body_base64},
             "set": sets,
             "unset": unsets,
             "create": step.create,
@@ -846,10 +909,10 @@ impl TestContext<'_> {
         let answer = rpc(self.h5i, session_name, &request)?;
         if answer.get("ok").and_then(Value::as_bool) == Some(false) || answer.get("error").is_some()
         {
-            anyhow::bail!("step {} `{}`: {}", index + 1, step.send, answer);
+            anyhow::bail!("step {} `{request_name}`: {}", index + 1, answer);
         }
         let seq = answer.get("seq").and_then(Value::as_u64).ok_or_else(|| {
-            anyhow::anyhow!("step {} `{}` returned no message sequence", index + 1, step.send)
+            anyhow::anyhow!("step {} `{request_name}` returned no message sequence", index + 1)
         })?;
         let stored_request: StoredRequest = read_json(&message_file(store, seq, "request"))?;
         let response: StoredResponse = read_json(&message_file(store, seq, "response"))?;
@@ -1076,6 +1139,29 @@ fn validate(plan: &TestFile, file: &Path) -> anyhow::Result<()> {
             anyhow::bail!(
                 "{} step {} has a sweep but no `expect`; a sweep needs a verdict to hold for \
                  some payload",
+                file.display(),
+                index + 1
+            );
+        }
+        if step.sweep.is_some() && !step.variants.is_empty() {
+            anyhow::bail!(
+                "{} step {} has both a sweep and variants; a step varies one axis",
+                file.display(),
+                index + 1
+            );
+        }
+        for variant in &step.variants {
+            if !plan.requests.contains_key(variant) {
+                anyhow::bail!(
+                    "{} step {} variant names no request `{variant}`",
+                    file.display(),
+                    index + 1
+                );
+            }
+        }
+        if !step.variants.is_empty() && step.expect.is_none() {
+            anyhow::bail!(
+                "{} step {} has variants but no `expect`; variants need a verdict to hold for one",
                 file.display(),
                 index + 1
             );

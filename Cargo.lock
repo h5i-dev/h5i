@@ -2209,6 +2209,7 @@ name = "h5i-test"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "clap",
  "h5i-core",
  "h5i-wire",

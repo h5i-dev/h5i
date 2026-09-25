@@ -174,7 +174,10 @@ The `dsl` leaf is the one that looks like it should be code and is not. Nuclei's
 matcher DSL (`!contains(tolower(body), '<html') && status_code == 200`) is a
 *pure* expression language: it reads only the response and calls only pure
 functions (string tests, `regex`, `len`, `compare_versions`, `base64`, the
-hashes, `mmh3`), with no I/O, no exec, no network. So `h5i-wire`'s `dsl` module
+hashes, `mmh3`), with no I/O, no exec, no network. It reads the current response
+through unindexed variables (`body`, `status_code`) and any earlier response in
+the flow through indexed ones (`body_1`, `status_code_2`), which is what lets a
+multi-request chain's verdict read across the responses it produced. So `h5i-wire`'s `dsl` module
 evaluates it in-engine, and it stays in the shareable layer. The line that keeps
 it there is the evaluator's refusal: an expression that names a variable or calls
 a function the evaluator does not implement is rejected at parse, so an accepted
@@ -242,8 +245,15 @@ resends a message a session already captured. So `h5i websec import-nuclei
 - `regex` `extractors` map onto the shared `extract`, which is why the extractor
   prefixes must stay aligned (F3): an imported extractor names its target the
   same way a hand-written one does.
-- Multi-request templates become a multi-step flow, which is the case Nuclei
-  expresses awkwardly and a flow expresses naturally.
+- A multi-request `raw` block becomes one of two shapes. When its matchers do
+  not read across the responses, it is a list of variants: one step that tries
+  each request and holds if any one matches (the `variants` field, verdict ORed
+  over the sends, the same machinery a payload sweep uses). When its matchers do
+  read across the responses (`req-condition`, or an indexed part or dsl variable),
+  it is a chain: one step per request, and a single verdict on the last step that
+  reads `body_1`, `status_code_2` and so on through the flow's response history.
+  The matchers of a chain are lowered to one `dsl` clause so those indexed
+  variables resolve through the shared evaluator.
 - A template with `payloads` becomes a flow step with a `sweep`: the payload
   lists, the attack type (`batteringram`, `pitchfork`, `clusterbomb`), and the
   `{{name}}`/`§name§` markers rewritten to the engine's `${name}`. The step runs

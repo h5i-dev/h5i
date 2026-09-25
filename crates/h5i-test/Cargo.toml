@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 clap = { version = "4.5.60", features = ["derive"] }
 h5i-core = { path = "../h5i-core", default-features = false }
 h5i-wire = { path = "../h5i-wire" }

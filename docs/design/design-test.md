@@ -37,6 +37,18 @@ its answer (`status`, `body`, `header`, and the combinators `all`, `any`, `not`)
 the same grammar `websec sequence` uses. Cleanup steps run after the verdict even
 when it fails, and never carry a verdict of their own.
 
+## Variants and cross-request verdicts
+
+A step may list `variants`: further requests to try in place of `send`, stopping
+at the first whose `expect` holds. The step matches if `send` or any variant
+matches, which is the "try these, one may trip it" shape.
+
+A flow also carries a response history: each step's response is available to a
+later step's `dsl` verdict as `body_1`, `status_code_2`, and so on, so a
+multi-request chain can conclude from what it read across several requests. A
+reference to a request the flow did not send is an evaluation error, not a false
+match.
+
 ## Payload sweeps
 
 A flow step may carry a `sweep`: named payload lists and an attack type

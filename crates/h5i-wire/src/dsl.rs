@@ -53,11 +53,26 @@ enum BinOp {
     Rem,
 }
 
-/// The response an expression may read.
+/// One response, as an expression sees it. The current response and every prior
+/// one in a flow share this shape.
+#[derive(Clone, Copy)]
+pub struct View<'a> {
+    pub status: Option<u16>,
+    pub headers: &'a [(String, String)],
+    pub body: &'a str,
+}
+
+/// The response an expression may read: the current one directly (`body`,
+/// `status_code`), and any earlier response in the flow by index (`body_1`,
+/// `status_code_2`), so a multi-request template's verdict can read across the
+/// responses it produced.
 pub struct Env<'a> {
     pub status: Option<u16>,
     pub headers: &'a [(String, String)],
     pub body: &'a str,
+    /// The flow's responses in order, 1-indexed as `_1`, `_2`, …. Empty for a
+    /// single-request verdict, which reads only the current response.
+    pub history: &'a [View<'a>],
 }
 
 /// A runtime value.
@@ -186,8 +201,12 @@ fn known_function(name: &str) -> bool {
 /// side values like `host`, and `_N`-suffixed variables that name another
 /// request's response in a chain this single step does not hold.
 fn known_variable(name: &str) -> bool {
+    split_index(name).is_some_and(|(base, _)| known_base(base))
+}
+
+fn known_base(base: &str) -> bool {
     matches!(
-        name,
+        base,
         "body"
             | "all_headers"
             | "header"
@@ -198,6 +217,21 @@ fn known_variable(name: &str) -> bool {
             | "server"
             | "set_cookie"
     )
+}
+
+/// Split a variable into its base and an optional 1-based request index:
+/// `body` -> (`body`, None), `body_2` -> (`body`, Some(2)). A base that itself
+/// ends in a number, like `status_code`, is preserved because its known form has
+/// no trailing `_<digits>` beyond the name.
+fn split_index(name: &str) -> Option<(&str, Option<usize>)> {
+    if let Some((base, tail)) = name.rsplit_once('_')
+        && !tail.is_empty()
+        && tail.chars().all(|c| c.is_ascii_digit())
+        && known_base(base)
+    {
+        return tail.parse().ok().map(|n| (base, Some(n)));
+    }
+    Some((name, None))
 }
 
 fn validate(expr: &Expr) -> Result<(), String> {
@@ -235,7 +269,7 @@ fn eval(expr: &Expr, env: &Env) -> Result<Value, String> {
         Expr::Int(n) => Ok(Value::Int(*n)),
         Expr::Float(f) => Ok(Value::Float(*f)),
         Expr::Bool(b) => Ok(Value::Bool(*b)),
-        Expr::Var(name) => Ok(variable(name, env)),
+        Expr::Var(name) => variable(name, env),
         Expr::Not(inner) => Ok(Value::Bool(!eval(inner, env)?.as_bool()?)),
         Expr::Neg(inner) => match eval(inner, env)? {
             Value::Int(n) => Ok(Value::Int(-n)),
@@ -247,19 +281,36 @@ fn eval(expr: &Expr, env: &Env) -> Result<Value, String> {
     }
 }
 
-fn variable(name: &str, env: &Env) -> Value {
-    match name {
-        "body" => Value::Str(env.body.to_string()),
-        "all_headers" | "header" => Value::Str(header_block(env.headers)),
-        "status_code" => Value::Int(env.status.map(i64::from).unwrap_or(0)),
-        "content_length" => Value::Int(env.body.len() as i64),
+fn variable(name: &str, env: &Env) -> Result<Value, String> {
+    // validate() guarantees the split and base are known.
+    let (base, index) = split_index(name).unwrap_or((name, None));
+    let view = match index {
+        None => View {
+            status: env.status,
+            headers: env.headers,
+            body: env.body,
+        },
+        Some(n) => *env
+            .history
+            .get(n.wrapping_sub(1))
+            .ok_or_else(|| format!("`{name}` names request {n}, which this flow did not send"))?,
+    };
+    Ok(view_variable(base, &view))
+}
+
+fn view_variable(base: &str, view: &View) -> Value {
+    match base {
+        "body" => Value::Str(view.body.to_string()),
+        "all_headers" | "header" => Value::Str(header_block(view.headers)),
+        "status_code" => Value::Int(view.status.map(i64::from).unwrap_or(0)),
+        "content_length" => Value::Int(view.body.len() as i64),
         // A named response header, `content_type` -> `Content-Type`. Absent
         // headers read as empty, which is how Nuclei treats them.
-        "content_type" => Value::Str(header_value(env.headers, "content-type")),
-        "location" => Value::Str(header_value(env.headers, "location")),
-        "server" => Value::Str(header_value(env.headers, "server")),
-        "set_cookie" => Value::Str(header_value(env.headers, "set-cookie")),
-        // validate() guarantees the name is known.
+        "content_type" => Value::Str(header_value(view.headers, "content-type")),
+        "location" => Value::Str(header_value(view.headers, "location")),
+        "server" => Value::Str(header_value(view.headers, "server")),
+        "set_cookie" => Value::Str(header_value(view.headers, "set-cookie")),
+        // known_base() guarantees the base is one of the above.
         _ => Value::Str(String::new()),
     }
 }
@@ -964,6 +1015,7 @@ mod tests {
             status,
             headers,
             body,
+            history: &[],
         }
     }
 
@@ -1068,6 +1120,35 @@ mod tests {
         assert!(!run("compare_versions('2.5.0', '<2.0.0')", None, &[], ""));
         assert!(run("compare_versions('1.2.3', '==1.2.3')", None, &[], ""));
         assert!(run("compare_versions('1.2', '<1.10')", None, &[], ""));
+    }
+
+    #[test]
+    fn indexed_variables_read_prior_responses() {
+        let h1 = View {
+            status: Some(200),
+            headers: &[],
+            body: "first response",
+        };
+        let h2 = View {
+            status: Some(500),
+            headers: &[],
+            body: "CONFIGURATION created",
+        };
+        let history = [h1, h2];
+        let env = Env {
+            status: Some(500),
+            headers: &[],
+            body: "CONFIGURATION created",
+            history: &history,
+        };
+        // body_1 is the first request, body_2 the second; unindexed body is current.
+        let p = Program::parse("contains(body_2, 'CONFIGURATION') && status_code_1 == 200").unwrap();
+        assert!(p.eval(&env).unwrap());
+        let p = Program::parse("status_code_2 == 200").unwrap();
+        assert!(!p.eval(&env).unwrap());
+        // A reference past the end is an evaluation error, not a false match.
+        let p = Program::parse("contains(body_3, 'x')").unwrap();
+        assert!(p.eval(&env).unwrap_err().contains("which this flow did not send"));
     }
 
     #[test]

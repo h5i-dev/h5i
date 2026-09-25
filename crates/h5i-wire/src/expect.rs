@@ -142,6 +142,11 @@ pub struct Response<'a> {
     pub status: Option<u16>,
     pub headers: &'a [(String, String)],
     pub body: &'a str,
+    /// The flow's earlier responses, for a `dsl` clause that reads across the
+    /// requests it sent (`body_1`, `status_code_2`). Empty for a single-request
+    /// verdict. The leaves other than `dsl` ignore it; they read the current
+    /// response only.
+    pub history: &'a [crate::dsl::View<'a>],
 }
 
 impl Expect {
@@ -235,6 +240,7 @@ impl Expect {
                     status: response.status,
                     headers: response.headers,
                     body: response.body,
+                    history: response.history,
                 };
                 match program.eval(&env) {
                     Ok(matched) => Outcome {
@@ -393,6 +399,7 @@ mod tests {
             status,
             headers,
             body,
+            history: &[],
         }
     }
 

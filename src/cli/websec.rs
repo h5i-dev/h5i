@@ -635,6 +635,10 @@ pub fn sequence(
                     status: stored.status,
                     headers: &stored.headers,
                     body: body.as_str(),
+                    // A sequence verdict reads its own step's response. Reading
+                    // across a flow's responses (`body_1`) is an `h5i test`
+                    // feature, where the importer lowers multi-request templates.
+                    history: &[],
                 });
                 record.matched = Some(outcome.matched);
                 record.verdict = Some(outcome.because);

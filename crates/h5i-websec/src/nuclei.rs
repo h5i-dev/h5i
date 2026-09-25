@@ -77,6 +77,11 @@ struct HttpRequest {
     /// request marked unsafe is refused rather than silently normalised.
     #[serde(default, rename = "unsafe")]
     unsafe_request: bool,
+    /// Nuclei's `req-condition: true`: the matchers read across the requests'
+    /// responses (`body_1`, `status_code_2`). This makes a multi-request block a
+    /// stateful chain rather than a list of variants.
+    #[serde(default, rename = "req-condition")]
+    req_condition: bool,
     #[serde(default, rename = "matchers-condition")]
     matchers_condition: Option<String>,
     #[serde(default)]
@@ -155,12 +160,26 @@ struct RequestOut {
 #[derive(Debug, Serialize)]
 struct StepOut {
     send: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    variants: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     extract: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     expect: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sweep: Option<SweepOut>,
+}
+
+impl StepOut {
+    fn send(id: String) -> Self {
+        StepOut {
+            send: id,
+            variants: Vec::new(),
+            extract: BTreeMap::new(),
+            expect: None,
+            sweep: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -215,23 +234,24 @@ fn convert(template: Template) -> anyhow::Result<TestOut> {
         let n = index + 1;
         let id = format!("req_{n}");
 
+        if entry.unsafe_request {
+            anyhow::bail!(
+                "template `{}` request {n} is an unsafe raw request, whose exact malformed \
+                 bytes a request template cannot preserve",
+                template.id
+            );
+        }
+        // A raw block with several requests is a chain: emit each as a request,
+        // then either "match if any" (a variant list) or a verdict that reads
+        // across them (`req-condition`).
+        if entry.raw.len() > 1 {
+            handle_multi_raw(&template.id, n, &entry, &mut requests, &mut flow)?;
+            continue;
+        }
+
         // A request's method, path, headers and body come from either a raw
         // request or the structured fields; from there on the two are identical.
         let (method, path_spec, headers, body) = if !entry.raw.is_empty() {
-            if entry.unsafe_request {
-                anyhow::bail!(
-                    "template `{}` request {n} is an unsafe raw request, whose exact malformed \
-                     bytes a request template cannot preserve",
-                    template.id
-                );
-            }
-            if entry.raw.len() != 1 {
-                anyhow::bail!(
-                    "template `{}` request {n} is a multi-request raw block; its per-response \
-                     matcher semantics do not map to a single verdict",
-                    template.id
-                );
-            }
             let parsed = parse_raw(&entry.raw[0]).map_err(|e| {
                 anyhow::anyhow!("template `{}` request {n} raw request {e}", template.id)
             })?;
@@ -324,6 +344,7 @@ fn convert(template: Template) -> anyhow::Result<TestOut> {
         }
         flow.push(StepOut {
             send: id,
+            variants: Vec::new(),
             extract,
             expect,
             sweep,
@@ -514,6 +535,248 @@ fn sanitise_id(id: &str) -> String {
         .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '-' })
         .collect();
     if safe.is_empty() { "imported".to_string() } else { safe }
+}
+
+/// Import a raw block that holds several requests: each becomes a request, and
+/// the block becomes either a variant list (match if any) or, when it reads
+/// across the responses, a chain with one cross-request verdict on the last step.
+fn handle_multi_raw(
+    template: &str,
+    n: usize,
+    entry: &HttpRequest,
+    requests: &mut BTreeMap<String, RequestOut>,
+    flow: &mut Vec<StepOut>,
+) -> anyhow::Result<()> {
+    if !entry.payloads.is_empty() {
+        anyhow::bail!(
+            "template `{template}` request {n} combines a payload sweep with a multi-request \
+             raw block, which this importer does not model"
+        );
+    }
+    let mut ids = Vec::new();
+    for (k, raw) in entry.raw.iter().enumerate() {
+        let id = format!("req_{n}_{}", k + 1);
+        let parsed = parse_raw(raw)
+            .map_err(|e| anyhow::anyhow!("template `{template}` request {n}.{} raw {e}", k + 1))?;
+        let path = relative_path(&parsed.path).ok_or_else(|| {
+            anyhow::anyhow!(
+                "template `{template}` request {n}.{} path `{}` uses a Nuclei variable this \
+                 importer does not model",
+                k + 1,
+                parsed.path
+            )
+        })?;
+        for value in parsed.headers.values() {
+            if has_interpolation(value) {
+                anyhow::bail!(
+                    "template `{template}` request {n}.{} header uses a Nuclei variable",
+                    k + 1
+                );
+            }
+        }
+        if let Some(body) = &parsed.body
+            && has_interpolation(body)
+        {
+            anyhow::bail!(
+                "template `{template}` request {n}.{} body uses a Nuclei variable",
+                k + 1
+            );
+        }
+        requests.insert(
+            id.clone(),
+            RequestOut {
+                method: parsed.method,
+                path,
+                headers: parsed.headers,
+                body: parsed.body,
+            },
+        );
+        ids.push(id);
+    }
+
+    if entry.matchers.is_empty() {
+        anyhow::bail!(
+            "template `{template}` request {n} is a multi-request block with no matcher"
+        );
+    }
+
+    // A chain whose matchers read another request's response (`req-condition`, or
+    // an indexed part or dsl variable) is one verdict over the whole flow; a
+    // block that does not is a list of variants, matched if any one holds.
+    let verdict = if entry.req_condition || references_other_response(entry) {
+        matchers_to_dsl(template, n, &entry.matchers, &entry.matchers_condition)?
+    } else {
+        matchers_to_expect(template, n, &entry.matchers, &entry.matchers_condition)?
+            .ok_or_else(|| anyhow::anyhow!("template `{template}` request {n} has no verdict"))?
+    };
+    serde_json::from_value::<h5i_wire::Expect>(verdict.clone()).map_err(|e| {
+        anyhow::anyhow!("template `{template}` request {n} produced an invalid verdict: {e}")
+    })?;
+
+    if entry.req_condition || references_other_response(entry) {
+        // Send each request as its own step; the last carries the verdict, which
+        // reads `body_1`, `body_2`, … across the responses.
+        let last = ids.len() - 1;
+        for (k, id) in ids.into_iter().enumerate() {
+            let mut step = StepOut::send(id);
+            if k == last {
+                step.expect = Some(verdict.clone());
+            }
+            flow.push(step);
+        }
+    } else {
+        // One step that tries each request; the verdict holds if any one matches.
+        let mut ids = ids.into_iter();
+        let mut step = StepOut::send(ids.next().expect("at least two requests"));
+        step.variants = ids.collect();
+        step.expect = Some(verdict);
+        flow.push(step);
+    }
+    Ok(())
+}
+
+/// Whether any matcher reads another request's response: an indexed `part`
+/// (`body_2`) or a dsl expression naming an indexed variable.
+fn references_other_response(entry: &HttpRequest) -> bool {
+    entry.matchers.iter().any(|m| {
+        m.part.as_deref().is_some_and(is_indexed_part)
+            || m.dsl.iter().any(|expr| dsl_names_index(expr))
+    })
+}
+
+/// A rough check for a `<name>_<digits>` token in a dsl expression, enough to
+/// tell a cross-request matcher from a single-response one.
+fn dsl_names_index(expr: &str) -> bool {
+    let bytes = expr.as_bytes();
+    for (i, w) in bytes.windows(2).enumerate() {
+        if w[0] == b'_' && w[1].is_ascii_digit() {
+            // Preceded by a letter, so it is `body_2`, not a bare `_2`.
+            if i > 0 && (bytes[i - 1].is_ascii_alphanumeric()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Lower a set of matchers to one `dsl` leaf, so a cross-request verdict can name
+/// `body_1`, `status_code_2` and so on through the shared evaluator.
+fn matchers_to_dsl(
+    template: &str,
+    n: usize,
+    matchers: &[Matcher],
+    condition: &Option<String>,
+) -> anyhow::Result<Value> {
+    let mut parts = Vec::new();
+    for matcher in matchers {
+        parts.push(matcher_to_dsl(template, n, matcher)?);
+    }
+    let joiner = match condition.as_deref().unwrap_or("or") {
+        "and" => " && ",
+        "or" => " || ",
+        other => anyhow::bail!("template `{template}` request {n} uses condition `{other}`"),
+    };
+    let expr = parts
+        .iter()
+        .map(|p| format!("({p})"))
+        .collect::<Vec<_>>()
+        .join(joiner);
+    Ok(json!({ "dsl": expr }))
+}
+
+fn matcher_to_dsl(template: &str, n: usize, matcher: &Matcher) -> anyhow::Result<String> {
+    let joiner = match matcher.condition.as_deref().unwrap_or("or") {
+        "and" => " && ",
+        "or" => " || ",
+        other => anyhow::bail!("template `{template}` request {n} uses condition `{other}`"),
+    };
+    let expr = match matcher.kind.as_str() {
+        "status" => matcher
+            .status
+            .iter()
+            .map(|s| format!("status_code == {s}"))
+            .collect::<Vec<_>>()
+            .join(" || "),
+        "word" => {
+            let var = part_to_var(template, n, &matcher.part)?;
+            matcher
+                .words
+                .iter()
+                .map(|w| format!("contains({var}, '{}')", esc(w)))
+                .collect::<Vec<_>>()
+                .join(joiner)
+        }
+        "regex" => {
+            let var = part_to_var(template, n, &matcher.part)?;
+            matcher
+                .regex
+                .iter()
+                .map(|r| format!("regex('{}', {var})", esc(r)))
+                .collect::<Vec<_>>()
+                .join(joiner)
+        }
+        "dsl" => matcher
+            .dsl
+            .iter()
+            .map(|e| format!("({e})"))
+            .collect::<Vec<_>>()
+            .join(joiner),
+        other => anyhow::bail!(
+            "template `{template}` request {n} uses a `{other}` matcher in a chain, which has no \
+             data-only equivalent"
+        ),
+    };
+    if expr.is_empty() {
+        anyhow::bail!("template `{template}` request {n} has an empty matcher");
+    }
+    let wrapped = format!("({expr})");
+    Ok(if matcher.negative {
+        format!("!{wrapped}")
+    } else {
+        wrapped
+    })
+}
+
+/// Map a Nuclei matcher `part` to a dsl variable, carrying a `_N` request index.
+fn part_to_var(template: &str, n: usize, part: &Option<String>) -> anyhow::Result<String> {
+    let part = part.as_deref().unwrap_or("body");
+    let (base, index) = match part.rsplit_once('_') {
+        Some((base, tail)) if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) => {
+            (base, Some(tail))
+        }
+        _ => (part, None),
+    };
+    let var_base = match base {
+        "body" => "body",
+        "header" | "all" | "response" => "all_headers",
+        "content_type" => "content_type",
+        "location" => "location",
+        "server" => "server",
+        "set_cookie" => "set_cookie",
+        other => anyhow::bail!(
+            "template `{template}` request {n} matches part `{other}`, which has no dsl variable"
+        ),
+    };
+    Ok(match index {
+        Some(i) => format!("{var_base}_{i}"),
+        None => var_base.to_string(),
+    })
+}
+
+/// Escape a literal for embedding in a dsl single-quoted string.
+fn esc(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 fn matchers_to_expect(
@@ -1082,25 +1345,77 @@ http:
     }
 
     #[test]
-    fn a_multi_request_raw_block_is_refused() {
-        let error = convert_yaml(
+    fn a_variant_multi_raw_becomes_one_step_with_variants() {
+        // No cross-response reference: try both, match if either holds.
+        let out = convert_yaml(
             r#"
 id: t
 http:
   - raw:
       - |
-        GET /a HTTP/1.1
+        POST /x HTTP/1.1
         Host: {{Hostname}}
+
+        file:///etc/passwd
       - |
-        GET /b HTTP/1.1
+        POST /x HTTP/1.1
         Host: {{Hostname}}
+
+        file:///c:/windows/win.ini
+    stop-at-first-match: true
+    matchers-condition: and
     matchers:
+      - type: regex
+        regex: ["root:.*:0:0:", "for 16-bit app support"]
+        condition: or
       - type: status
         status: [200]
 "#,
         )
-        .unwrap_err();
-        assert!(error.to_string().contains("multi-request raw block"), "{error}");
+        .expect("import");
+        assert_eq!(out.requests.len(), 2);
+        assert!(out.requests.contains_key("req_1_1"));
+        assert_eq!(out.flow.len(), 1);
+        assert_eq!(out.flow[0].send, "req_1_1");
+        assert_eq!(out.flow[0].variants, vec!["req_1_2".to_string()]);
+        assert!(out.flow[0].expect.is_some());
+    }
+
+    #[test]
+    fn a_req_condition_multi_raw_becomes_a_chain_with_a_cross_request_verdict() {
+        let out = convert_yaml(
+            r#"
+id: t
+http:
+  - raw:
+      - |
+        GET /?lang=../../../etc/passwd HTTP/1.1
+        Host: {{Hostname}}
+      - |
+        GET / HTTP/1.1
+        Host: {{Hostname}}
+      - |
+        GET /?config-create HTTP/1.1
+        Host: {{Hostname}}
+    matchers-condition: or
+    matchers:
+      - type: word
+        part: body_3
+        words: ["CONFIGURATION", "Successfully created"]
+        condition: and
+"#,
+        )
+        .expect("import");
+        assert_eq!(out.flow.len(), 3);
+        // Only the last step carries the verdict.
+        assert!(out.flow[0].expect.is_none());
+        assert!(out.flow[1].expect.is_none());
+        let verdict = out.flow[2].expect.as_ref().unwrap();
+        let dsl = verdict.get("dsl").and_then(|v| v.as_str()).expect("a dsl verdict");
+        assert!(dsl.contains("contains(body_3, 'CONFIGURATION')"), "{dsl}");
+        assert!(dsl.contains("&&"), "{dsl}");
+        // The emitted dsl must parse under the shared grammar.
+        serde_json::from_value::<h5i_wire::Expect>(verdict.clone()).expect("valid verdict");
     }
 
     #[test]
