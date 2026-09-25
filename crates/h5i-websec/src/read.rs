@@ -50,10 +50,24 @@ pub fn store_dir(root: &Path, selector: Option<&str>) -> anyhow::Result<(bs::Ses
 }
 
 /// The highest stored message sequence, or None if the store holds nothing.
-/// `replay --body` uses it to name the message a send just produced.
+/// `replay --body`/`--raw` snapshot it before a send to know which messages the
+/// send then produced.
 pub fn latest_seq(root: &Path, selector: Option<&str>) -> anyhow::Result<Option<u64>> {
     let (_session, dir) = store_dir(root, selector)?;
     Ok(sequences(&dir).into_iter().max())
+}
+
+/// Stored sequences greater than `after` (all of them when `after` is None),
+/// ascending. `replay --body`/`--raw` use it to print every response a send
+/// produced — one for a plain replay, N for `--set-each` or `--repeat`.
+pub fn seqs_after(root: &Path, selector: Option<&str>, after: Option<u64>) -> anyhow::Result<Vec<u64>> {
+    let (_session, dir) = store_dir(root, selector)?;
+    let mut v: Vec<u64> = sequences(&dir)
+        .into_iter()
+        .filter(|s| after.is_none_or(|a| *s > a))
+        .collect();
+    v.sort_unstable();
+    Ok(v)
 }
 
 /// The session a selector names, live or ended: a store outlives its engine.

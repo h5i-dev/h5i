@@ -35,8 +35,16 @@ h5i websec replay req_0 --set method=HEAD --set header.user-agent=Agent33 --body
 ```
 
 `--set` targets are `method=`, `path=`, `query.KEY=`, `header.NAME=`,
-`cookie.NAME=`, `json.PATH=`. Drop `--body` to get the JSON envelope (ids,
-applied edits, status) for scripting.
+`cookie.NAME=`, `json.PATH=` (a query/cookie/form/json target the request lacks
+needs `--create`, a guard against typos; headers upsert freely). Drop `--body`
+to get the JSON envelope (ids, applied edits, status) for scripting.
+
+```bash
+# --raw prints status line + headers + body (curl -i) — for a flag in a header:
+h5i websec replay req_0 --set method=POST --raw
+# --set-each sweeps a list; with --body each response prints under a --- res_N --- line:
+h5i websec replay req_0 --set-each query.user_id=./ids.txt --body
+```
 
 Two agents, one target each, works too: create `vault` and `pebble` boxes and
 open one in each `tmux` window.
