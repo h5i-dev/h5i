@@ -37,36 +37,22 @@ its answer (`status`, `body`, `header`, and the combinators `all`, `any`, `not`)
 the same grammar `websec sequence` uses. Cleanup steps run after the verdict even
 when it fails, and never carry a verdict of their own.
 
-## Variants and cross-request verdicts
-
-A step may list `variants`: further requests to try in place of `send`, stopping
-at the first whose `expect` holds. The step matches if `send` or any variant
-matches, which is the "try these, one may trip it" shape.
-
-A flow also carries a response history: each step's response is available to a
-later step's `dsl` verdict as `body_1`, `status_code_2`, and so on, so a
-multi-request chain can conclude from what it read across several requests. A
-reference to a request the flow did not send is an evaluation error, not a false
-match.
-
-## Payload sweeps
-
-A flow step may carry a `sweep`: named payload lists and an attack type
-(`batteringram`, `pitchfork`, `clusterbomb`, the last being every combination).
-The step then sends once per combination, binding each payload value as `${name}`
-in the request template, and its verdict is "the `expect` held for at least one
-combination", with the deciding payload named in the step result. A swept step
-therefore needs an `expect`, never appears in cleanup, and is bounded to 1024
-sends so one template cannot become an unbounded run. This is the portable form
-of the Intruder workflow: active testing from a committed file.
-
 ## Verdict from expect
 
-When a test has no oracle, it passes only if every step `expect` held and the
-flow completed; a step whose `expect` did not hold makes the run fail; a flow
-error or a test with no verdict at all is an error, not a pass. The step results
-carry `matched` and a one-line `verdict` either way, so a report reads the same
-whether an oracle or an `expect` decided.
+With no oracle, a test passes only if every step `expect` held and the flow
+completed; a step whose `expect` failed makes the run fail; a flow error or a test
+with no verdict is an error, not a pass. Steps carry `matched` and a one-line
+`verdict` either way, so a report reads the same however it was decided.
+
+A step may also carry `variants` (further requests tried in place of `send`,
+stopping at the first whose `expect` holds: the "try these, one may trip it"
+shape) or a `sweep` (named payload lists and an attack type, `batteringram`,
+`pitchfork` or `clusterbomb`, each value bound as `${name}` and the verdict "held
+for at least one", with the deciding payload named; bounded to 1024 sends, never
+in cleanup: the Intruder workflow, portable). The flow also keeps a response
+history, so a later step's `dsl` verdict reads `body_1`, `status_code_2` across
+the requests it sent; a reference to a request the flow did not send is an
+evaluation error, not a false match.
 
 ## Oracle contract
 

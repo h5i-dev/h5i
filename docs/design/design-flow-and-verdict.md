@@ -1,10 +1,9 @@
 # Design: flows and verdicts, one replay core with two owners
 
-Status: proposed, 2026-09-24. This design does not add a third engine. It names
-the line between the two multi-step engines h5i already ships, `websec sequence`
-and `h5i test`, so they stop drifting apart, and it opens one seam between them:
-a declarative verdict that is data, sits below the bash oracle, and is the only
-form a shared or imported recipe is allowed to carry.
+Status: proposed, 2026-09-24. This does not add a third engine. It names the line
+between the two multi-step engines h5i ships (`websec sequence` and `h5i test`)
+and adds one seam: a declarative verdict that is data, sits below the bash oracle,
+and is the only form a shared or imported recipe may carry.
 
 ```text
 one flow language  ->  three verdict sources  ->  two owners
@@ -12,364 +11,207 @@ one flow language  ->  three verdict sources  ->  two owners
    extract, shared)      (data)  oracle (code)      repository (CI)
 ```
 
-## F1. What is being claimed
+## F1. What is claimed
 
-h5i has two ways to run an ordered, stateful HTTP flow, and they arrived from
-opposite ends:
+h5i has two ways to run an ordered, stateful HTTP flow:
 
-- `websec sequence` (design-websec.md, W11) runs steps in a live session, binds
-  a value out of one response into the next, and stops on a failed binding. The
-  verdict is nobody's job here: the agent reads the result and writes a
-  `finding` if it concludes something. It is interactive, session-local, and its
-  artifacts are the session's own message store.
-- `h5i test` (design-test.md) replays a repository-owned flow and hands the
-  evidence bundle to an external oracle, which returns pass, fail or error by
-  exit code. It deliberately has no assertion language, because the repository
-  owns the property being tested and h5i owns only execution and evidence.
+- `websec sequence` (design-websec.md W11): live session, binds a value from one
+  response into the next, stops on a failed binding. No built-in verdict; the
+  agent reads the result and writes a `finding`.
+- `h5i test` (design-test.md): replays a repository-owned flow and hands the
+  evidence to an external oracle, which returns pass/fail/error by exit code. It
+  has no assertion language on purpose.
 
-Two questions kept coming back. Should there be a stateful assertion DSL on top
-of `sequence`. And should a shared or imported attack recipe (the Nuclei case)
-carry bash to decide its own verdict. This design answers both by refusing to
-answer them as one. The flow language is one thing and should be shared. The
-verdict has three sources with different trust models, and which source a flow
-may use is the whole decision.
+The recurring questions were: should `sequence` get a stateful assertion DSL, and
+should a shared recipe carry bash to decide its own verdict. The answer is to
+separate the flow language (one thing, shared) from the verdict (three sources
+with different trust models). Which source a flow may use is the whole decision.
 
-## F2. The distinction that matters: who owns the verdict
+## F2. Who owns the verdict
 
-The two engines are not redundant and neither reduces to the other. The dividing
-line is not "interactive versus CI". It is who is allowed to say pass or fail,
-and what that makes the artifact.
+The dividing line is not "interactive vs CI"; it is who may say pass or fail, and
+what that makes the artifact.
 
 | | `websec sequence` | `h5i test` |
 |---|---|---|
 | verdict owner | the agent, after the fact | the repository, via oracle |
-| verdict form | a `finding` the agent writes | oracle exit code |
-| artifact is | data (the flow), read live | code (the oracle) plus data |
-| trust model | runs in this session only | runs the repo's own program |
-| shareable | yes, it is data | no, it carries executable code |
-| home | live engagement, exploration | committed CI regression |
+| verdict form | a `finding` | oracle exit code |
+| artifact is | data (the flow) | code (the oracle) plus data |
+| trust model | this session only | runs the repo's own program |
+| shareable | yes | no, it carries executable code |
+| home | live exploration | committed CI regression |
 
-Read the last two rows together. A `sequence` file is inert data: a list of
-sends, edits and extractors. Handing it to someone else is handing them a
-description of requests, which the receiver's own session, policy and receipts
-still gate. An `h5i test` is that same data plus an oracle command, and the
-oracle is an arbitrary program the runner executes. The oracle is exactly the
-kind of thing an h5i box exists to contain. So a test is safe to run because you
-wrote its oracle and committed it next to your code. It is not safe to download.
+A `sequence` file is inert data (sends, edits, extractors), gated by the
+receiver's own session, policy and receipts. An `h5i test` is that data plus an
+oracle command, which the runner executes: safe to run because you wrote and
+committed it, not safe to download. The verdict, not the flow, is where the trust
+boundary lives.
 
-That asymmetry is the design. It is why the two engines coexist rather than
-merge, and it is why the verdict, not the flow, is where the trust boundary
-lives.
+## F3. What they share
 
-## F3. What they already share, and where they have drifted
-
-Both engines describe a step the same way in spirit: send a named request as an
-actor, apply the websec edit language (`set`, `unset` over `query.`, `json.`,
-`header.`), save the response under a stable name, and extract bindings for
-later steps. `h5i test` says so in as many words: a flow step "may apply the
-existing websec edit language". This is the shared core, and it is real, not
-aspirational.
-
-The extractors are already aligned in code, which is worth stating because the
-prose disagrees. `design-websec.md` W11 advertises `jsonpath:`, `regex:`, `css:`,
-`header:` and `cookie:`, but that list was aspirational: the shipped
-implementations match each other exactly.
-
-- `sequence` (`src/cli/websec.rs`, `fn extract_one`): `regex:`, `json:`,
-  `header:`, `status`.
-- `test` (`crates/h5i-test/src/main.rs`, `fn extract`): `regex:`, `json:`,
-  `header:`, `status`.
-
-So the only work here is to keep the doc honest and to keep the two functions
-from drifting later, not to reconcile them now. F7's importer relies on this: a
-recipe written once must extract the same way in both engines, and today it does.
-
-The rule going forward: the step language (send, edit, extract, save, actor,
-`no_follow`) is one grammar, and neither engine gets a private extractor the
-other cannot honor. Where they differ is above the step, at the verdict, which is
-F4. The `css:` and `cookie:` extractors W11 imagined are unbuilt in both; when one
-is added it is added to both, or it is not added.
+Both describe a step the same way: send a named request as an actor, apply the
+websec edit language (`set`/`unset` over `query.`, `json.`, `header.`), save the
+response, and extract bindings. The extractors are already identical in code
+(`regex:`, `json:`, `header:`, `status` in both `src/cli/websec.rs` `extract_one`
+and `crates/h5i-test/src/main.rs` `extract`), though `design-websec.md` W11's
+`jsonpath:`/`css:`/`cookie:` list is aspirational. The rule: the step language is
+one grammar; a new extractor is added to both engines or neither.
 
 ## F4. Three verdict sources
 
-A flow produces evidence. Turning evidence into pass or fail can happen in three
-places, and the choice is not a convenience, it is the trust model of the whole
-artifact.
+Turning evidence into pass/fail happens in one of three places, a ladder of
+expressiveness bought with trust:
 
-1. **No verdict (the agent decides).** The flow runs, bindings resolve, the
-   agent reads the responses and writes a `finding` if it concludes something.
-   This is `sequence` today. Right for live exploration and for the logic and
-   authorization holes that resist being written down (a negative coupon, a
-   swapped order id): those stay the agent's call, made in a finding it signs.
-
-2. **Declarative matcher (data decides).** A small, closed matcher language runs
-   against a step's response and yields a boolean: status equals, word present,
-   regex hits, and the boolean combinators over them. This is the Nuclei shape.
-   It is data, so a flow that carries only this kind of verdict stays shareable
-   and sandbox-safe: running it executes no code the recipe author chose, only
-   requests the receiver's policy still gates. This source does not exist in h5i
-   yet. F6 adds it, deliberately bounded.
-
+1. **No verdict (agent decides).** The agent reads the responses and writes a
+   `finding`. This is `sequence`. Right for logic and authorization holes that
+   resist being written down.
+2. **Declarative matcher (data decides).** A small closed language over one
+   response yields a boolean. This is the Nuclei shape and it is data, so a flow
+   carrying only this stays shareable and sandbox-safe. F6 adds it, bounded.
 3. **External oracle (code decides).** An arbitrary program reads the evidence
-   bundle and returns an exit code. This is `h5i test` today. It is unboundedly
-   expressive (`jq`, a diff, the application's own test client) and therefore
-   unshareable: it is the repository's own code, committed beside the flow, run
-   because its owner trusts it.
+   and returns an exit code. This is `h5i test`: unbounded, and therefore
+   repository-local, never shared.
 
-The three are a ladder of expressiveness bought with trust. Source 2 is the new
-rung, and it exists precisely because sources 1 and 3 leave a gap: 1 needs a
-human or agent in the loop, 3 needs you to own and trust a program, and neither
-can be the verdict of a recipe a stranger publishes. Source 2 can, because it
-decides nothing the receiver has not already agreed a matcher may decide.
+Source 2 is the new rung. Sources 1 and 3 both need someone in the loop (an agent,
+or an author you trust), so neither can be the verdict of a recipe a stranger
+publishes. Source 2 can.
 
-## F5. Why not just put bash everywhere
+## F5. Why not bash everywhere
 
-The tempting simplification is: `h5i test` already avoids an assertion DSL by
-shelling out to bash, so let every flow, including shared and imported ones,
-carry a bash oracle and be done. This design rejects that, for one reason that is
-central to what h5i sells.
+Tempting: `h5i test` already avoids an assertion language by shelling to bash, so
+let every flow carry a bash oracle. Rejected. h5i's guarantee is containment with
+evidence; a shared recipe carrying bash is executable code crossing the trust
+boundary at download time, turning the recipe library into a channel for the exact
+thing the box exists to contain. So bash-as-oracle stays for a repo testing its
+own code, and is not extended to the shared or imported layer. "Recipes are data;
+only your own repo's oracles are code; the box enforces the line" is the dual-use
+answer the pitch needs.
 
-h5i's guarantee is containment with evidence: a box that fails closed, an audit
-that shows what ran. A shared recipe that carries bash is executable code that
-crosses the trust boundary at download time. Making every recipe an oracle turns
-the recipe library into a channel for arbitrary code, which is the exact threat
-the box exists to contain. The product would be shipping the payload it promises
-to fence.
+## F6. The declarative matcher, bounded
 
-So bash-as-oracle is kept, unchanged, for the case it was built for: a
-repository testing its own code with a program it wrote and committed. It is not
-extended to the shared or imported layer. That layer gets source 2, which is
-data. This is not a limitation to apologize for. "Recipes are data; only your own
-repo's oracles are code; the box enforces the line" is a sentence only h5i can
-say, and it is the dual-use answer the pitch needs.
-
-## F6. The declarative matcher, bounded on purpose
-
-Source 2 is the one new language, and the failure mode is growing it into a
-general one nobody can read or sandbox. It is bounded by construction.
-
-A matcher is attached to a step and evaluates against that step's response:
+Source 2 is one new language; the failure mode is growing it unbounded. A matcher
+attaches to a step and evaluates against its response:
 
 ```json
-{
-  "send": "req_probe",
-  "expect": {
-    "all": [
-      {"status": 200},
-      {"body": "regex:SQL syntax error near '(\\w+)'"},
-      {"header": "content-type", "contains": "text/html"}
-    ]
-  }
-}
+{"send": "req_probe",
+ "expect": {"all": [
+   {"status": 200},
+   {"body": "regex:SQL syntax error near '(\\w+)'"},
+   {"header": "content-type", "contains": "text/html"}]}}
 ```
 
-The grammar is: leaf matchers (`status` equals; `body`, `headers` block or whole
-`response` word or `regex`; `header` name plus `contains` or `regex`; and `dsl`,
-below) and the combinators `all`, `any`, `not`. A step with an `expect` that
-fails is a failed step, and a flow's verdict is that every `expect` held (source
-2's pass) unless a step has none, in which case that step contributes no verdict
-and the flow falls back to source 1 or 3.
+The grammar is leaf matchers (`status` equals; `body`, `headers` block, or whole
+`response` word/`regex`; named `header` with `contains`/`regex`; and `dsl`) plus
+`all`/`any`/`not`. A flow passes when every step's `expect` held; a step with none
+falls back to source 1 or 3.
 
-The `dsl` leaf is the one that looks like it should be code and is not. Nuclei's
-matcher DSL (`!contains(tolower(body), '<html') && status_code == 200`) is a
-*pure* expression language: it reads only the response and calls only pure
-functions (string tests, `regex`, `len`, `compare_versions`, `base64`, the
-hashes, `mmh3`), with no I/O, no exec, no network. It reads the current response
-through unindexed variables (`body`, `status_code`) and any earlier response in
-the flow through indexed ones (`body_1`, `status_code_2`), which is what lets a
-multi-request chain's verdict read across the responses it produced. So `h5i-wire`'s `dsl` module
-evaluates it in-engine, and it stays in the shareable layer. The line that keeps
-it there is the evaluator's refusal: an expression that names a variable or calls
-a function the evaluator does not implement is rejected at parse, so an accepted
-expression is one that is both pure and evaluated faithfully. Timing (`duration`),
-request-side values (`host`) and another request's response (`body_1`) are
-deliberately not bound, because a shared verdict must be a deterministic function
-of the one response in front of it.
+The `dsl` leaf looks like code and is not. Nuclei's matcher DSL
+(`!contains(tolower(body), '<html') && status_code == 200`) is a *pure*
+expression language: it reads only the response and calls only pure functions
+(string tests, `regex`, `len`, `compare_versions`, `base64`, the hashes, `mmh3`),
+with no I/O, exec or network. `h5i-wire`'s `dsl` module evaluates it in-engine, so
+it stays shareable. What keeps it there is the evaluator's refusal: an expression
+naming a variable or function it does not implement is rejected at parse, so an
+accepted expression is pure and faithfully evaluated. It reads the current
+response through `body`/`status_code` and earlier ones through `body_1`/
+`status_code_2`. Timing (`duration`) and request-side values (`host`) are not
+bound: a shared verdict must be a deterministic function of the responses in hand.
 
-The hard line, and the rule to hold in review: anything a matcher cannot say does
-not go into the matcher. It goes to an oracle (if the flow is repository-owned)
-or to the agent (if the flow is live). The moment `expect` grows a way to
-compare two responses, or to compute, it has become an assertion language and
-has left the shareable, sandbox-safe rung it was created to occupy. `h5i test`
-already proves the escape hatch exists and works: complex verdicts have a home,
-and it is not here.
+The rule to hold in review: anything the matcher cannot say goes to an oracle (if
+repository-owned) or the agent (if live), never into `expect`. The moment `expect`
+can compute or compare arbitrary responses it has become an assertion language and
+left its rung. Branching is the same trap from the flow side: a step may be gated
+on a prior step's `expect` (still data), but a general conditional is exploration,
+which is the agent's job as a prompt.
 
-Branching between steps (feature "if role is admin, do X") is the same trap seen
-from the flow side. A bounded form is allowed: a step may be gated on a prior
-step's `expect` (run this step only if that one matched), because that is still
-data and still decidable without running anything the author chose. A general
-conditional with expressions is not. When a flow needs real branching, it is an
-exploration, and exploration is the agent's job expressed as a prompt, not the
-recipe's job expressed as code. This keeps source 2 a description of a known
-attack, which is what makes it a durable, replayable regression asset rather than
-a script.
+## F7. The Nuclei importer
 
-## F7. The Nuclei importer, and what it targets
+Nuclei templates are the largest free corpus of source-2 verdicts: a request, a
+set of matchers, a boolean. The importer's target is an `h5i test` file, not
+`sequence`: a template describes a request from scratch (method + `{{BaseURL}}`
+path), which a test request template expresses and a sequence step (which only
+resends captured messages) cannot. `h5i websec import-nuclei <template>` prints an
+`h5i.test/v1` whose verdict is `expect`:
 
-Nuclei templates are the largest free corpus of source-2 verdicts in existence:
-a request, a set of matchers, a boolean. They are also stateless by design, one
-request and its matchers, which is the layer h5i is weakest at owning by hand and
-strongest at absorbing.
+- Each `http`/`requests` entry becomes a request template and a flow step.
+  `{{BaseURL}}`/`{{RootURL}}` strip to a relative path; any other variable in a
+  path, header or body is refused.
+- A single `raw:` request is parsed into the same template (skip `@directive`
+  lines; drop `Host` and `Content-Length`, which the engine sets; carry the body).
+  An `unsafe: true` request is refused.
+- `matchers` map onto `expect`: `word`→substring, `status`→`status`,
+  `regex`→`regex:`. `matchers-condition` and a matcher's own `condition` map to
+  `all`/`any` (Nuclei default `or`), `negative`→`not`. `part` picks the leaf:
+  `body`→`body`, `header`→`headers` (case-insensitive, since the engine lowercases
+  header names), `all`/`response`→`response`, a named header (`content_type`→
+  `Content-Type`)→`header`. `interactsh_*` (out-of-band) is refused.
+- `regex` `extractors` map onto the shared `extract`.
+- A multi-request `raw` block becomes either a **variant list** (matchers do not
+  read across responses: one step trying each request, verdict ORed, like a sweep)
+  or a **chain** (`req-condition`, or an indexed part/dsl variable: one step per
+  request, a single verdict on the last step reading `body_1`, `status_code_2`
+  through the flow's response history, its matchers lowered to one `dsl` clause).
+- A `payloads` template becomes a step with a `sweep`: the lists, the attack type
+  (`batteringram`/`pitchfork`/`clusterbomb`), and `{{name}}`/`§name§` markers
+  rewritten to `${name}`. It runs once per combination and passes if `expect` held
+  for any — the Intruder workflow, portable. A file-backed list is refused.
 
-The importer's target is an `h5i test` file, not a `websec sequence` file, and
-the reason is structural: a Nuclei template describes a request from scratch
-(a method and a `{{BaseURL}}`-relative path), which is what an `h5i test` request
-template expresses and what `websec sequence` cannot, since a sequence step only
-resends a message a session already captured. So `h5i websec import-nuclei
-<template>` prints an `h5i.test/v1` file whose verdict is `expect`. Concretely:
+Every `expect` built is verified against the shared grammar before it is written.
+The importer never emits an oracle: what it cannot express as `expect` (a `dsl`
+function it lacks, a `binary` matcher, an unmodelled variable) is refused, because
+a skipped template is a gap and a smuggled oracle is a shared executable.
 
-- A template's `http` (or legacy `requests`) block becomes one request template
-  and one flow step per entry. `{{BaseURL}}` and `{{RootURL}}` are stripped to a
-  relative path; any other Nuclei variable in a path, header or body is refused,
-  because h5i does not resolve it.
-- A single `raw:` request is parsed into the same request template: leading
-  `@directive` lines are skipped, the request line gives the method and path, the
-  header block is carried (dropping `Host`, which the engine sets from the target,
-  and `Content-Length`, which it recomputes), and the body after the blank line is
-  carried whole. A `raw:` block with more than one request is refused (its
-  per-response matcher semantics do not reduce to one verdict), as is an
-  `unsafe: true` request (its exact malformed bytes are the point, and a request
-  template normalises them).
-- `matchers` map onto `expect`: `word` to a substring, `status` to `status`,
-  `regex` to a `regex:` pattern. `matchers-condition` maps to `all`/`any`
-  (Nuclei's default is `or`), a matcher's own `condition` over its words or
-  patterns likewise (default `or`), and `negative: true` to `not`. The matcher's
-  `part` selects the leaf: `body` (the default) to `body`, `header` to the
-  header-block `headers` leaf, `all`/`response` to the whole-response `response`
-  leaf, and a specific header name (`content_type` to `Content-Type`) to the
-  named `header` leaf. The block-spanning leaves match case-insensitively,
-  because header names are case-insensitive and the engine stores them
-  lowercased. `interactsh_*` parts (out-of-band) and `_N`-indexed parts (another
-  request's response in a chain) have no single-response equivalent and are
-  refused.
-- `regex` `extractors` map onto the shared `extract`, which is why the extractor
-  prefixes must stay aligned (F3): an imported extractor names its target the
-  same way a hand-written one does.
-- A multi-request `raw` block becomes one of two shapes. When its matchers do
-  not read across the responses, it is a list of variants: one step that tries
-  each request and holds if any one matches (the `variants` field, verdict ORed
-  over the sends, the same machinery a payload sweep uses). When its matchers do
-  read across the responses (`req-condition`, or an indexed part or dsl variable),
-  it is a chain: one step per request, and a single verdict on the last step that
-  reads `body_1`, `status_code_2` and so on through the flow's response history.
-  The matchers of a chain are lowered to one `dsl` clause so those indexed
-  variables resolve through the shared evaluator.
-- A template with `payloads` becomes a flow step with a `sweep`: the payload
-  lists, the attack type (`batteringram`, `pitchfork`, `clusterbomb`), and the
-  `{{name}}`/`§name§` markers rewritten to the engine's `${name}`. The step runs
-  once per payload combination and its verdict is "the `expect` held for at least
-  one", which is how a fuzz probe concludes. This is the one importer output that
-  is not a static test: it is the active-testing (Intruder) workflow, made
-  portable. A file-backed payload list, or several lists with no declared attack,
-  is refused rather than guessed.
+Measured against `nuclei-templates` (2026-09, 11,640 http templates), the importer
+produces a runnable test for ~58%. The `dsl` evaluator did most of the lift: the
+"unsupported matcher" refusal fell from ~2,000 to under a dozen. The remaining
+~42% is the boundary working: ~1,200 have an unresolvable path variable; ~1,100
+are `flow`/`javascript`/`headless`/`code` (code, F9); ~1,000 are cross-request raw
+that reads another request's response outside the single-response model; ~1,000
+use a non-deterministic dsl variable (`duration`, `host`); a few hundred use a
+file-backed payload list. Each has a home (a sweep, an oracle, a multi-step flow)
+that is not the single-response shareable verdict.
 
-What the importer never emits is an oracle. A construct that cannot be expressed
-as `expect` (a `dsl` or `binary` matcher, a multi-request or `unsafe` raw block,
-an unmodelled variable, a non-`regex` extractor) is refused with a reason, not
-lowered into a bash script, because a skipped template is a gap and a smuggled
-oracle is a shared executable.
+## F8. The regression seam
 
-Measured against the public `nuclei-templates` corpus (2026-09, 11,640 http
-templates), the importer produces a runnable test for about 58% of them (raw
-single and multi requests, header/response and `dsl` matchers, output-extractor
-dropping, payload sweeps, variant lists and cross-request chains included). The
-`dsl` evaluator did most of the recent lift: the "unsupported matcher" refusal
-fell from ~2,000 to under a dozen. The remaining ~42% is not a defect in the
-importer, it is the boundary doing its job:
-
-- ~1,200 carry a template variable in the path the importer cannot resolve
-  (an out-of-band URL, a value computed elsewhere): unresolved input, not data.
-- ~1,100 are `flow`/`javascript`/`headless`/`code`: code, refused by F9.
-- ~1,000 are multi-request raw blocks, whose cross-response `dsl` reads another
-  request's response (`body_1`) and so leaves the single-response model.
-- ~1,000 use a `dsl` variable that is timing (`duration`), request-side (`host`)
-  or another request's response, which a deterministic shared verdict cannot bind.
-- a few hundred reference a file-backed payload list, which does not travel.
-
-So the number is a description of how much of Nuclei is already expressible as
-data plus a bounded sweep, not a target to chase by weakening the boundary. The
-remaining buckets are unresolved input, genuine code, and cross-request state,
-each of which has a home (a sweep, an oracle, a multi-step flow) that is not the
-single-response shareable verdict. Every `expect` it builds is verified against the shared
-grammar (F6) before it is written, so an import never emits a verdict the engines
-would reject. The output is data: committable into `.h5i-tests/` as an
-oracle-less test, and shareable.
-
-## F8. The regression seam, and how the two engines connect
-
-The one place the engines touch is regression, and the wiring already half
-exists. `finding create --repro` accepts a sequence or an experiment file: the
-agent's live conclusion can already point at the flow that reproduces it. The
-seam is to let that flow graduate into `h5i test` without a rewrite.
-
-- A `sequence` flow is a valid `h5i test` `flow` (same step grammar, F3). What a
-  test adds is a verdict field.
-- If the flow carries source-2 `expect` matchers, it becomes a test with no
-  oracle: a shareable regression that any repo can run and any registry can
-  distribute, because its verdict is data. This is the common case for imported
-  and for straightforward attacks.
-- If the property needs source 3, the repository writes an oracle and commits it.
-  This is the case that stays local and is never shared.
-
-So the lifecycle is: explore with `sequence` (verdict source 1), the agent
-concludes and files a `finding` with a `--repro` flow, and that flow graduates
-into `.h5i-tests/` with either an `expect` (shareable) or an oracle (local). The
-"world where every piece of software is attacked before it ships" is this loop
-run in CI, and it is built from parts that already exist plus F6's matcher.
+The engines touch at regression. `finding create --repro` already accepts a
+sequence or experiment file, so an agent's live conclusion points at the flow that
+reproduces it. The seam lets that flow graduate into `h5i test` without a rewrite:
+a `sequence` flow is a valid test `flow` (same grammar), and a test only adds a
+verdict field. With source-2 `expect` it is a shareable oracle-less test; with a
+property that needs source 3 the repo writes an oracle and it stays local. The
+lifecycle: explore with `sequence`, file a `finding` with a `--repro` flow, and
+graduate it into `.h5i-tests/`. Run in CI, that is "attacked before it ships."
 
 ## F9. Sharing and the audit boundary
 
-The registry the pitch wants (attack recipes people publish and pull) is exactly
-and only the source-2 layer. A published recipe is a flow with `expect`
-verdicts and no oracle. This is enforceable, not merely encouraged:
+The registry the pitch wants is exactly the source-2 layer: a published recipe is
+a flow with `expect` verdicts and no oracle. Enforceable, not merely encouraged:
 
-- The import path is data-only by construction. `import-nuclei` never emits an
-  oracle, and it refuses a Nuclei template that carries an executable protocol
-  (`code`, `javascript`, `headless`, `flow`) rather than importing only its
-  http part, because reducing code to data silently would drop the very behavior
-  the template is about. This is built.
-- A pulled recipe runs like any other flow, under the session's policy, scope
-  and receipts. It can describe requests; it cannot smuggle execution, because it
-  contains none.
-- `audit` already records what ran. A recipe that is data leaves a receipt of the
-  requests it made and nothing else, which is the property that lets h5i say a
-  downloaded recipe cannot reach outside the box.
+- The import path is data-only. `import-nuclei` never emits an oracle and refuses
+  a template carrying an executable protocol (`code`, `javascript`, `headless`,
+  `flow`) rather than importing only its http part. Built.
+- A pulled recipe runs like any flow, under the session's policy and receipts. It
+  describes requests; it cannot smuggle execution because it contains none.
+- `audit` records what ran; a data recipe leaves a receipt of its requests and
+  nothing else.
 
-The share half (a registry that refuses to publish or pull a flow carrying an
-oracle) is designed and not built, because there is no recipe-publishing surface
-yet. When one is added, the rule it enforces is the one above: an oracle is
-repository-local by definition, and there is no such thing as a shared oracle.
+The share half (a registry refusing a flow with an oracle) is designed, not built,
+because there is no publishing surface yet. The rule it will enforce: an oracle is
+repository-local by definition; there is no shared oracle.
 
-This is the dual-use posture in one rule: recipes are descriptions, oracles are
-your own code, and the box enforces that a description cannot become code. It is
-the reason h5i can run a stranger's red-team recipe safely when a bash-carrying
-alternative cannot.
+## F10. What this changes
 
-## F10. What this changes, and what it does not
+Unchanged: `h5i test`'s oracle contract, `websec sequence`'s live behavior,
+`finding`. Changes, in order:
 
-Does not change: `h5i test`'s oracle contract (design-test.md) is untouched.
-Source 3 is exactly as it is, bash and all. `websec sequence`'s live behavior is
-untouched. `finding` is untouched.
+1. Keep the extractor prefixes identical across engines (F3).
+2. Add the source-2 `expect` matcher to the shared grammar (F6), bounded to the
+   Nuclei surface plus `all`/`any`/`not` and gated-step branching.
+3. Add `h5i websec import-nuclei` (F7), refusing what it cannot express.
+4. Let an `expect`-carrying flow be an oracle-less `h5i test` (F8).
+5. Keep the crossing that exists data-only (F9); the registry half waits.
 
-Changes, in order:
-
-1. Keep the extractor prefixes honest (F3). They are already identical in code;
-   this is a doc correction plus a shared implementation so they cannot drift.
-2. Add the source-2 `expect` matcher to the shared step grammar (F6), evaluated
-   by both engines. Bounded to the Nuclei matcher surface plus `all`/`any`/`not`
-   and gated-step branching.
-3. Add the Nuclei importer (`h5i websec import-nuclei`), which emits an
-   oracle-less `h5i test` whose verdict is `expect` (F7), refusing what it cannot
-   express rather than lowering it to an oracle.
-4. Let an `expect`-carrying flow be an oracle-less `h5i test` (F8), and let
-   `finding --repro` flows graduate into `.h5i-tests/`.
-5. Keep the boundary data-only where a crossing exists today: the importer emits
-   no oracle and refuses executable Nuclei protocols (F9). The registry half
-   waits for a registry.
-
-Deliberately not built: a general assertion language (that is the oracle's job,
-and it already exists); response-to-response comparison inside `expect` (oracle);
-general conditionals and loops in a flow (that is exploration, which is the
-agent's job as a prompt); a shared oracle (a contradiction in terms). The point
-of writing this down is that each of these will be asked for, and the answer to
-each is a rung on F4's ladder that already has an owner.
+Deliberately not built: a general assertion language (that is the oracle); a
+shared oracle (a contradiction); general conditionals and loops in a flow (that is
+exploration, the agent's job). Each will be asked for, and each has an owner on
+F4's ladder.
