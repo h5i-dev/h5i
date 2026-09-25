@@ -333,12 +333,9 @@ pub fn is_agent_profile(name: &str) -> bool {
     matches!(name, "agent" | "agent-claude" | "agent-codex" | "browser")
 }
 
-/// Does this profile actually let an agent CLI (claude/codex) run inside the
-/// box? Either it is a built-in agent profile by name, or a custom profile that
-/// grants the agent's HOME state (`~/.claude*` / `~/.codex`) — which is exactly
-/// what a hand-rolled red-teaming profile does. Name-only matching missed those,
-/// so a working custom profile got the "won't run here" note and no
-/// `IS_SANDBOX=1` (leaving `--dangerously-skip-permissions` refused as uid 0).
+/// Can an agent CLI (claude/codex) run in this box? True for a built-in agent
+/// profile, or any custom one that grants the agent's HOME state
+/// (`~/.claude*`/`~/.codex`) — the shape a hand-rolled red-teaming profile uses.
 pub fn profile_runs_agent(p: &Profile) -> bool {
     is_agent_profile(&p.name) || grants_agent_home(p)
 }
@@ -2273,9 +2270,8 @@ fn apply_env_allowlist(
 /// `CAP_NET_ADMIN` to survive `execve` for `nft`), and Claude's guard refuses
 /// the flag on a bare `getuid()==0`. `IS_SANDBOX=1` skips only that root check
 /// and grants *no* new capability: the box already pins the agent to our real
-/// unprivileged host uid. Scoped to profiles that actually run an agent (built-in
-/// agent profiles, or a custom one that grants `~/.claude*`/`~/.codex`), and a
-/// caller-supplied or brokered `IS_SANDBOX` wins; we only set the default.
+/// unprivileged host uid. Scoped to agent-capable profiles; a caller-supplied or
+/// brokered `IS_SANDBOX` wins.
 fn augment_injected_env(
     policy: &ResolvedPolicy,
     injected_env: &[(String, String)],
@@ -4100,9 +4096,8 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
 
     #[test]
     fn custom_profile_granting_claude_home_injects_is_sandbox() {
-        // A hand-rolled red-teaming profile is not named `agent`, but if it
-        // copies in ~/.claude it runs an agent all the same, so it must get
-        // IS_SANDBOX=1 (name-only matching used to leave it refused as uid 0).
+        // A custom profile that grants ~/.claude runs an agent, so it gets
+        // IS_SANDBOX=1 even though its name is not `agent`.
         let mut p = Profile::builtin("default", IsolationClaim::Supervised);
         p.name = "redteam".to_string();
         p.fs_write.push("~/.claude".to_string());

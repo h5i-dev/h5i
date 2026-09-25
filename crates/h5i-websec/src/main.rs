@@ -126,10 +126,8 @@ enum Verb {
         /// Remove a target.
         #[arg(long = "unset", value_name = "TARGET")]
         unset: Vec<String>,
-        /// Add a target (query/cookie/form field, or a json path) the request
-        /// does not already have. Off by default so a mistyped name is caught
-        /// instead of silently sent — headers are always upserted and never
-        /// need this.
+        /// Add a query/cookie/form/json target the request lacks. Off by default
+        /// so a typo is caught, not sent (headers always upsert).
         #[arg(long)]
         create: bool,
         /// Send it from another session, with that session's credentials.
@@ -173,10 +171,9 @@ enum Verb {
         /// input. Use it when `--set` cannot express the body.
         #[arg(long = "raw-request", value_name = "PATH")]
         raw_request: Option<String>,
-        /// After sending, print the response body (decoded, untruncated) to
-        /// stdout and nothing else — the `curl` view, without re-parsing a JSON
-        /// envelope. With `--set-each` or `--repeat`, prints each send's body,
-        /// separated by a `--- res_<n> ---` line.
+        /// After sending, print the decoded, untruncated response body to stdout
+        /// (the `curl` view). With `--set-each`/`--repeat`, each body under a
+        /// `--- res_<n> ---` line.
         #[arg(long)]
         body: bool,
         /// Like `--body`, but print the whole response — status line, headers,
@@ -498,9 +495,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     }
 
     let mut argv: Vec<String> = vec!["browser".to_string()];
-    // `replay --body`/`--raw` send via `browser resend` (below) and then print
-    // the stored response(s) instead of the JSON envelope: body only for
-    // `--body`, whole response (status/headers/body) for `--raw`.
+    // `replay --body`/`--raw`: print the stored response(s) instead of the JSON
+    // envelope (body only, or whole response for `--raw`).
     let mut replay_body = false;
     let mut replay_raw = false;
     fn push(argv: &mut Vec<String>, args: &[&str]) {
@@ -645,11 +641,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         argv.push("--json".into());
     }
 
-    // `--body`/`--raw` print the response(s) the send produced instead of the
-    // JSON envelope. Snapshot the store first so we know which messages are new
-    // (one for a plain replay, N for `--set-each`/`--repeat`), then swallow the
-    // send's stdout and print them ourselves. Stderr (errors, egress denials)
-    // stays visible.
+    // Snapshot the store so we know which messages the send adds (N for
+    // `--set-each`/`--repeat`), then swallow its stdout and print them ourselves.
     let pre_seq = if replay_body {
         read::latest_seq(&root, session.as_deref()).unwrap_or(None)
     } else {

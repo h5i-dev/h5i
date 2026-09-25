@@ -1067,10 +1067,8 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                             String::new()
                         }
                     );
-                    // Whether an agent can run is a property of the resolved
-                    // grants, not the profile name: a custom red-teaming profile
-                    // that copies in ~/.claude runs claude fine. Fall back to the
-                    // name check if the policy can't be loaded.
+                    // Judge by resolved grants, not the profile name (a custom
+                    // profile granting ~/.claude runs claude fine).
                     let runs_agent = h5i_core::env::load_policy(&h5i_root, &m)
                         .map(|p| h5i_core::sandbox::profile_runs_agent(&p.profile))
                         .unwrap_or_else(|_| h5i_core::sandbox::is_agent_profile(&m.profile));
@@ -1331,8 +1329,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     name: Some(name),
                     json,
                 } => {
-                    // Per-box view: what THIS box actually received, read from
-                    // the enforced policy (not the profile as written).
+                    // Per-box view: what this box received, from enforced policy.
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     let pol = h5i_core::env::load_policy(&h5i_root, &m)?;
                     if json {
