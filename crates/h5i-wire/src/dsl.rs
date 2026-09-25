@@ -148,6 +148,22 @@ impl Program {
     pub fn source(&self) -> &str {
         &self.src
     }
+
+    /// Whether the expression reads another request's response, i.e. names an
+    /// indexed variable (`body_2`). Precise, unlike a substring scan: a `body_2`
+    /// inside a string literal is not a variable and does not count.
+    pub fn references_indexed(&self) -> bool {
+        fn walk(expr: &Expr) -> bool {
+            match expr {
+                Expr::Var(name) => split_index(name).is_some_and(|(_, i)| i.is_some()),
+                Expr::Call(_, args) => args.iter().any(walk),
+                Expr::Not(inner) | Expr::Neg(inner) => walk(inner),
+                Expr::Bin(_, a, b) => walk(a) || walk(b),
+                _ => false,
+            }
+        }
+        walk(&self.root)
+    }
 }
 
 // ── the functions and variables this evaluator knows ────────────────────────
@@ -210,6 +226,7 @@ fn known_base(base: &str) -> bool {
         "body"
             | "all_headers"
             | "header"
+            | "response"
             | "status_code"
             | "content_length"
             | "content_type"
@@ -302,6 +319,9 @@ fn view_variable(base: &str, view: &View) -> Value {
     match base {
         "body" => Value::Str(view.body.to_string()),
         "all_headers" | "header" => Value::Str(header_block(view.headers)),
+        // The whole response, header block then a blank line then the body: the
+        // same text the `response` expect leaf matches.
+        "response" => Value::Str(format!("{}\n\n{}", header_block(view.headers), view.body)),
         "status_code" => Value::Int(view.status.map(i64::from).unwrap_or(0)),
         "content_length" => Value::Int(view.body.len() as i64),
         // A named response header, `content_type` -> `Content-Type`. Absent
@@ -1057,6 +1077,20 @@ mod tests {
         assert!(run("contains_all(body, 'a', 'b')", None, &[], "a and b"));
         assert!(!run("contains_all(body, 'a', 'z')", None, &[], "a and b"));
         assert!(run("contains_any(body, 'z', 'b')", None, &[], "a and b"));
+    }
+
+    #[test]
+    fn response_variable_spans_headers_and_body() {
+        let headers = vec![("Server".to_string(), "nginx".to_string())];
+        // `response` is the header block, a blank line, then the body.
+        assert!(run("contains(response, 'nginx')", None, &headers, "hi"));
+        assert!(run("contains(response, 'hi')", None, &headers, "hi"));
+    }
+
+    #[test]
+    fn references_indexed_ignores_string_literals() {
+        assert!(!Program::parse("contains(body, 'id_2')").unwrap().references_indexed());
+        assert!(Program::parse("contains(body_2, 'x')").unwrap().references_indexed());
     }
 
     #[test]

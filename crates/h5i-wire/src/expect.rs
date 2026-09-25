@@ -230,8 +230,12 @@ impl Expect {
             }
             Expect::Response(pattern) => {
                 let whole = format!("{}\n\n{}", header_block(response.headers), response.body);
+                // Case-sensitive: the whole response is dominated by the body,
+                // which is stored verbatim, unlike header names. A caller who
+                // wants a header name, which the engine lowercases, uses the
+                // `headers` leaf.
                 Outcome {
-                    matched: pattern.hits_ci(&whole),
+                    matched: pattern.hits(&whole),
                     because: format!("response {}", pattern.describe()),
                 }
             }
@@ -357,7 +361,7 @@ impl<'de> Deserialize<'de> for Expect {
                 .map_err(D::Error::custom);
         }
         if let Some(spec) = raw.response {
-            return Pattern::parse_ci(&spec)
+            return Pattern::parse(&spec)
                 .map(Expect::Response)
                 .map_err(D::Error::custom);
         }

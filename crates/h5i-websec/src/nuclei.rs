@@ -645,19 +645,13 @@ fn references_other_response(entry: &HttpRequest) -> bool {
     })
 }
 
-/// A rough check for a `<name>_<digits>` token in a dsl expression, enough to
-/// tell a cross-request matcher from a single-response one.
+/// Whether a dsl expression reads another request's response, by parsing it and
+/// looking for an indexed *variable* (`body_2`). Parsing is what keeps a `body_2`
+/// inside a string literal from counting: a literal is not a variable. An
+/// expression that does not parse is not a valid indexed reference, and is
+/// refused later when the verdict is built.
 fn dsl_names_index(expr: &str) -> bool {
-    let bytes = expr.as_bytes();
-    for (i, w) in bytes.windows(2).enumerate() {
-        if w[0] == b'_' && w[1].is_ascii_digit() {
-            // Preceded by a letter, so it is `body_2`, not a bare `_2`.
-            if i > 0 && (bytes[i - 1].is_ascii_alphanumeric()) {
-                return true;
-            }
-        }
-    }
-    false
+    h5i_wire::dsl::Program::parse(expr).is_ok_and(|p| p.references_indexed())
 }
 
 /// Lower a set of matchers to one `dsl` leaf, so a cross-request verdict can name
@@ -692,27 +686,36 @@ fn matcher_to_dsl(template: &str, n: usize, matcher: &Matcher) -> anyhow::Result
         other => anyhow::bail!("template `{template}` request {n} uses condition `{other}`"),
     };
     let expr = match matcher.kind.as_str() {
-        "status" => matcher
-            .status
-            .iter()
-            .map(|s| format!("status_code == {s}"))
-            .collect::<Vec<_>>()
-            .join(" || "),
+        "status" => {
+            // A bare status matcher in a chain does not say which request's status
+            // it means, and guessing (last? any?) would risk a wrong verdict, so
+            // it is refused. An indexed status belongs in a `dsl` matcher.
+            anyhow::bail!(
+                "template `{template}` request {n} has a bare `status` matcher in a multi-request \
+                 chain, whose target response is ambiguous; use `dsl` with `status_code_N`"
+            )
+        }
         "word" => {
-            let var = part_to_var(template, n, &matcher.part)?;
+            let (var, header_block) = part_to_var(template, n, &matcher.part)?;
+            // A header-block match is case-insensitive, matching the single-request
+            // `headers` leaf, because the engine stores header names lowercased.
+            let func = if header_block { "icontains" } else { "contains" };
             matcher
                 .words
                 .iter()
-                .map(|w| format!("contains({var}, '{}')", esc(w)))
+                .map(|w| format!("{func}({var}, '{}')", esc(w)))
                 .collect::<Vec<_>>()
                 .join(joiner)
         }
         "regex" => {
-            let var = part_to_var(template, n, &matcher.part)?;
+            let (var, header_block) = part_to_var(template, n, &matcher.part)?;
+            // `(?i)` makes a header-block regex case-insensitive, as the
+            // single-request `headers` leaf is.
+            let flag = if header_block { "(?i)" } else { "" };
             matcher
                 .regex
                 .iter()
-                .map(|r| format!("regex('{}', {var})", esc(r)))
+                .map(|r| format!("regex('{flag}{}', {var})", esc(r)))
                 .collect::<Vec<_>>()
                 .join(joiner)
         }
@@ -743,8 +746,11 @@ fn matcher_to_dsl(template: &str, n: usize, matcher: &Matcher) -> anyhow::Result
     })
 }
 
-/// Map a Nuclei matcher `part` to a dsl variable, carrying a `_N` request index.
-fn part_to_var(template: &str, n: usize, part: &Option<String>) -> anyhow::Result<String> {
+/// Map a Nuclei matcher `part` to a dsl variable (carrying a `_N` request index),
+/// and whether that variable is the header block (so the caller matches it
+/// case-insensitively). `all`/`response` map to the whole response, headers and
+/// body, so the body is not dropped.
+fn part_to_var(template: &str, n: usize, part: &Option<String>) -> anyhow::Result<(String, bool)> {
     let part = part.as_deref().unwrap_or("body");
     let (base, index) = match part.rsplit_once('_') {
         Some((base, tail)) if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) => {
@@ -752,21 +758,23 @@ fn part_to_var(template: &str, n: usize, part: &Option<String>) -> anyhow::Resul
         }
         _ => (part, None),
     };
-    let var_base = match base {
-        "body" => "body",
-        "header" | "all" | "response" => "all_headers",
-        "content_type" => "content_type",
-        "location" => "location",
-        "server" => "server",
-        "set_cookie" => "set_cookie",
+    let (var_base, header_block) = match base {
+        "body" => ("body", false),
+        "header" => ("all_headers", true),
+        "all" | "response" => ("response", false),
+        "content_type" => ("content_type", false),
+        "location" => ("location", false),
+        "server" => ("server", false),
+        "set_cookie" => ("set_cookie", false),
         other => anyhow::bail!(
             "template `{template}` request {n} matches part `{other}`, which has no dsl variable"
         ),
     };
-    Ok(match index {
+    let var = match index {
         Some(i) => format!("{var_base}_{i}"),
         None => var_base.to_string(),
-    })
+    };
+    Ok((var, header_block))
 }
 
 /// Escape a literal for embedding in a dsl single-quoted string.
@@ -1406,6 +1414,73 @@ http:
         assert_eq!(out.flow[0].send, "req_1_1");
         assert_eq!(out.flow[0].variants, vec!["req_1_2".to_string()]);
         assert!(out.flow[0].expect.is_some());
+    }
+
+    #[test]
+    fn a_chain_response_part_keeps_the_body_and_a_header_part_is_case_insensitive() {
+        let out = convert_yaml(
+            r#"
+id: t
+http:
+  - raw:
+      - "GET /a HTTP/1.1\nHost: {{Hostname}}"
+      - "GET /b HTTP/1.1\nHost: {{Hostname}}"
+    req-condition: true
+    matchers:
+      - type: word
+        part: response
+        words: ["root:x:0:0"]
+      - type: word
+        part: header
+        words: ["X-Powered-By"]
+"#,
+        )
+        .expect("import");
+        let dsl = out.flow[1].expect.as_ref().unwrap().get("dsl").unwrap().as_str().unwrap();
+        // response part keeps the body (uses the `response` var, not `all_headers`)
+        assert!(dsl.contains("contains(response, 'root:x:0:0')"), "{dsl}");
+        // header part is case-insensitive
+        assert!(dsl.contains("icontains(all_headers, 'X-Powered-By')"), "{dsl}");
+    }
+
+    #[test]
+    fn a_bare_status_matcher_in_a_chain_is_refused() {
+        let error = convert_yaml(
+            r#"
+id: t
+http:
+  - raw:
+      - "GET /a HTTP/1.1\nHost: {{Hostname}}"
+      - "GET /b HTTP/1.1\nHost: {{Hostname}}"
+    req-condition: true
+    matchers:
+      - type: status
+        status: [200]
+"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("ambiguous"), "{error}");
+    }
+
+    #[test]
+    fn a_variant_block_with_an_index_in_a_literal_stays_a_variant() {
+        // `id_2` is a string literal, not a cross-request reference, so this is a
+        // variant list (one step + variants), not a chain (several steps).
+        let out = convert_yaml(
+            r#"
+id: t
+http:
+  - raw:
+      - "GET /a HTTP/1.1\nHost: {{Hostname}}"
+      - "GET /b HTTP/1.1\nHost: {{Hostname}}"
+    matchers:
+      - type: dsl
+        dsl: ["contains(body, 'id_2')"]
+"#,
+        )
+        .expect("import");
+        assert_eq!(out.flow.len(), 1);
+        assert_eq!(out.flow[0].variants, vec!["req_1_2".to_string()]);
     }
 
     #[test]
