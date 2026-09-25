@@ -2685,6 +2685,14 @@ pre.render {
   color: var(--bp-red);
   font-style: italic;
 }
+.report-html .findings-table .ft-title {
+  font-weight: 600;
+}
+.report-html .findings-table .ft-sum {
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+  margin-top: 2px;
+}
 .report-html figure.evidence img {
   max-width: 100%;
   border: 1px solid var(--line);

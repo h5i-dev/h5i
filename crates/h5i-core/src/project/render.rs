@@ -316,8 +316,22 @@ fn findings_table(findings: &[finding::Finding]) -> String {
         "<table class=\"findings-table\"><thead><tr><th>ID</th><th>Finding</th><th>Severity</th><th>Status</th></tr></thead><tbody>",
     );
     for f in findings {
+        // The plain-language summary rides in the table too, so a finding that
+        // was not expanded into its own block is still described rather than
+        // reduced to a title. Falls back to the impact when there is no summary.
+        let blurb = if !f.summary.trim().is_empty() {
+            &f.summary
+        } else {
+            &f.impact
+        };
+        let sum = if blurb.trim().is_empty() {
+            String::new()
+        } else {
+            format!("<div class=\"ft-sum\">{}</div>", escape(blurb))
+        };
         out.push_str(&format!(
-            "<tr><td><a href=\"#{id}\">{id}</a></td><td>{title}</td><td>{sev}</td><td>{status}</td></tr>",
+            "<tr><td><a href=\"#{id}\">{id}</a></td>\
+             <td><div class=\"ft-title\">{title}</div>{sum}</td><td>{sev}</td><td>{status}</td></tr>",
             id = escape(&f.id),
             title = escape(&f.title),
             sev = severity_chip(&f.severity),
@@ -502,6 +516,8 @@ caption { text-align: left; font-weight: 600; margin-bottom: .3rem; }
 .evidence { margin: 1rem 0; } .evidence img { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; } figcaption { font-size: .85rem; color: var(--ink); margin-top: .3rem; }
 .term { border-bottom: 1px dotted var(--accent); cursor: help; }
 .muted, .missing { color: var(--muted); } .missing { font-style: italic; }
+.findings-table .ft-title { font-weight: 600; }
+.findings-table .ft-sum { color: var(--muted); font-size: .88em; margin-top: 2px; }
 .glossary dt { font-weight: 600; margin-top: .6rem; } .glossary dd { margin: 0 0 .2rem; color: #33363d; }
 @media print {
   body { max-width: none; padding: 0; font-size: 11pt; }
@@ -551,6 +567,10 @@ mod tests {
         assert!(r.body.contains("cross-tenant read"));
         assert!(r.body.contains("sev-high"));
         assert!(r.body.contains("findings-table"));
+        // The table carries the plain-language summary, so a finding that was
+        // not expanded into its own block is still described.
+        assert!(r.body.contains("ft-sum"), "the findings table should show a summary");
+        assert!(r.body.contains("another customer&#39;s invoice was readable"), "{}", r.body);
         assert!(r.toc.iter().any(|e| e.title == "Detail" && e.id == "detail"));
     }
 
