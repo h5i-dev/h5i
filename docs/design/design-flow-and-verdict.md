@@ -270,11 +270,12 @@ lowered into a bash script, because a skipped template is a gap and a smuggled
 oracle is a shared executable.
 
 Measured against the public `nuclei-templates` corpus (2026-09, 11,640 http
-templates), the importer produces a runnable test for about 57% of them (raw
-single requests, header/response and `dsl` matchers, output-extractor dropping,
-and payload sweeps included). The `dsl` evaluator did most of the recent lift:
-the "unsupported matcher" refusal fell from ~2,000 to under a dozen. The
-remaining ~43% is not a defect in the importer, it is the boundary doing its job:
+templates), the importer produces a runnable test for about 58% of them (raw
+single and multi requests, header/response and `dsl` matchers, output-extractor
+dropping, payload sweeps, variant lists and cross-request chains included). The
+`dsl` evaluator did most of the recent lift: the "unsupported matcher" refusal
+fell from ~2,000 to under a dozen. The remaining ~42% is not a defect in the
+importer, it is the boundary doing its job:
 
 - ~1,200 carry a template variable in the path the importer cannot resolve
   (an out-of-band URL, a value computed elsewhere): unresolved input, not data.
