@@ -60,6 +60,10 @@ pub const H5I_ENV_ID_VAR: &str = "H5I_ENV_ID";
 pub const H5I_ENV_POLICY_DIGEST_VAR: &str = "H5I_ENV_POLICY_DIGEST";
 pub const H5I_ENV_CAPTURE_SPOOL_VAR: &str = "H5I_ENV_CAPTURE_SPOOL";
 pub const H5I_ENV_AUDIT_CAPTURE_VAR: &str = "H5I_ENV_AUDIT_CAPTURE";
+/// In-box override for the h5i plugin directory. Set by the box launcher to the
+/// host's installed-plugin dir (read-only) so `h5i websec`/`recon` resolve there
+/// instead of the empty in-box `/tmp/h5i/plugins`. Read by `src/cli/plugin.rs`.
+pub const H5I_PLUGIN_DIR_VAR: &str = "H5I_PLUGIN_DIR";
 pub const H5I_TEAM_VAR: &str = "H5I_TEAM";
 /// In-box path to the per-env read-only inbound mailbox (host fans messages in;
 /// the box reads via `h5i team agent inbox`/`--wait`/the team Stop hook).
@@ -4825,7 +4829,7 @@ fn prepare_box_reach(
     // An observer session captures nothing (it changes nothing), so it gets no
     // spool. Every other difference between callers would be a different guest,
     // which is why this is a parameter rather than a second copy of the block.
-    let capture_env = if capture_spool {
+    let mut capture_env = if capture_spool {
         prepare_env_capture_spool(h5i_root, m, policy)?
     } else {
         Vec::new()
@@ -4848,7 +4852,32 @@ fn prepare_box_reach(
     // of the guest's identity. A box whose allowlist widened must not be
     // served the guest that was enforcing the narrower one.
     apply_user_egress(policy);
+    // Point an agent/red-teaming box at the host's installed h5i plugins
+    // (websec/recon/...) read-only, so `h5i websec` works in-box without a
+    // manual `plugin install`. In-box, plugin resolution redirects to
+    // `/tmp/h5i/plugins` (empty), so host-installed plugins are otherwise
+    // invisible. Runtime grant like the spool/cache above, not part of the
+    // pinned digest. Scoped to agent-capable profiles so plain build/test boxes
+    // are unchanged, and to the kernel tiers where a host fs_read grant is what
+    // enforcement uses (image-backed tiers would need a bind mount instead).
+    let plugins = host_plugin_dir()
+        .filter(|_| sandbox::profile_runs_agent(&policy.profile) && !policy.claim.image_backed())
+        .filter(|p| p.is_dir());
+    if let Some(plugins) = plugins {
+        let p = plugins.display().to_string();
+        policy.profile.fs_read.push(p.clone());
+        capture_env.push((H5I_PLUGIN_DIR_VAR.to_string(), p));
+    }
     Ok((capture_env, inbox_env))
+}
+
+/// The host's installed-plugin directory (`<state>/plugins`), mirroring
+/// `src/cli/plugin.rs::dir()`. The box launcher always runs on the host, so
+/// `browser_session::root()` resolves the host state dir here (not the in-box
+/// `/tmp/h5i` redirect).
+fn host_plugin_dir() -> Option<PathBuf> {
+    let root = crate::browser_session::root().ok()?;
+    Some(root.parent().unwrap_or(&root).join("plugins"))
 }
 
 fn apply_user_egress(policy: &mut sandbox::ResolvedPolicy) {

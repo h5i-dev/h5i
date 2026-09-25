@@ -83,6 +83,13 @@ pub enum PluginCommands {
 /// is a thing h5i did and can undo, and so `h5i plugin list` is the whole truth
 /// rather than a guess about a search path.
 pub fn dir() -> anyhow::Result<PathBuf> {
+    // Inside a box the launcher points us at the host's installed plugin dir
+    // (read-only): the box's own state dir redirects to an empty `/tmp/h5i`, so
+    // without this a host-installed plugin looks "available" but never
+    // "installed". See `h5i_core::env::H5I_PLUGIN_DIR_VAR`.
+    if let Some(dir) = std::env::var_os(h5i_core::env::H5I_PLUGIN_DIR_VAR) {
+        return Ok(PathBuf::from(dir));
+    }
     let root = h5i_core::browser_session::root()?;
     let dir = root
         .parent()

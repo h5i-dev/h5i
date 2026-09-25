@@ -168,6 +168,9 @@ pub enum BoxCommands {
     /// yes/no, resource-limit support, and per-claim satisfiable/runnable, so a
     /// product can adapt to the real host without scraping `env probe` text.
     Capabilities {
+        /// Optional box name: report what THAT box actually received (its
+        /// enforced policy), instead of the host-wide capability probe.
+        name: Option<String>,
         /// Emit the structured report as JSON instead of the human view.
         #[arg(long)]
         json: bool,
@@ -1064,10 +1067,19 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                             String::new()
                         }
                     );
-                    if !h5i_core::sandbox::is_agent_profile(&m.profile) {
+                    // Whether an agent can run is a property of the resolved
+                    // grants, not the profile name: a custom red-teaming profile
+                    // that copies in ~/.claude runs claude fine. Fall back to the
+                    // name check if the policy can't be loaded.
+                    let runs_agent = h5i_core::env::load_policy(&h5i_root, &m)
+                        .map(|p| h5i_core::sandbox::profile_runs_agent(&p.profile))
+                        .unwrap_or_else(|_| h5i_core::sandbox::is_agent_profile(&m.profile));
+                    if !runs_agent {
                         eprintln!(
-                            "   note: this profile has no agent grants — claude/codex won't run \
-                             here (envs default to --profile agent where the host supports it)"
+                            "   note: `{}` grants no agent HOME state — claude/codex won't run \
+                             here (use --profile agent, or grant ~/.claude*/~/.codex in the \
+                             profile)",
+                            m.profile
                         );
                     }
                     let code = h5i_core::env::shell(git, &h5i_root, &mut m, &command, readonly)?;
@@ -1315,7 +1327,32 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                BoxCommands::Capabilities { json } => {
+                BoxCommands::Capabilities {
+                    name: Some(name),
+                    json,
+                } => {
+                    // Per-box view: what THIS box actually received, read from
+                    // the enforced policy (not the profile as written).
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    let pol = h5i_core::env::load_policy(&h5i_root, &m)?;
+                    if json {
+                        let v = serde_json::json!({
+                            "id": m.id,
+                            "profile": m.profile,
+                            "isolation": m.isolation_claim,
+                            "policy_digest": m.policy_digest,
+                            "net_mode": format!("{:?}", pol.profile.net_mode),
+                            "egress": pol.profile.net_egress,
+                            "fs_read": pol.profile.fs_read,
+                            "fs_write": pol.profile.fs_write,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&v)?);
+                    } else {
+                        print!("{}", h5i_core::env::status_report(git, &h5i_root, &m));
+                    }
+                }
+
+                BoxCommands::Capabilities { name: None, json } => {
                     // Same as Probe: a capability report is a diagnostic.
                     // Never serve it from the probe cache.
                     let report = h5i_core::sandbox::capabilities_report_fresh();

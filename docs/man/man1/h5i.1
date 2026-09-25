@@ -291,7 +291,7 @@ Machine-readable host enforcement report: isolation tier, egress-enforced yes/no
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBcapabilities\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBcapabilities\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fINAME\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -301,6 +301,9 @@ Emit the structured report as JSON instead of the human view
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.TP
+[\fINAME\fR]
+Optional box name: report what THAT box actually received (its enforced policy), instead of the host\-wide capability probe
 .SH "H5I BOX LIST"
 List environments on this clone (the fleet view)
 .ie \n(.g .ds Aq \(aq

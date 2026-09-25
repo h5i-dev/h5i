@@ -333,6 +333,25 @@ pub fn is_agent_profile(name: &str) -> bool {
     matches!(name, "agent" | "agent-claude" | "agent-codex" | "browser")
 }
 
+/// Does this profile actually let an agent CLI (claude/codex) run inside the
+/// box? Either it is a built-in agent profile by name, or a custom profile that
+/// grants the agent's HOME state (`~/.claude*` / `~/.codex`) — which is exactly
+/// what a hand-rolled red-teaming profile does. Name-only matching missed those,
+/// so a working custom profile got the "won't run here" note and no
+/// `IS_SANDBOX=1` (leaving `--dangerously-skip-permissions` refused as uid 0).
+pub fn profile_runs_agent(p: &Profile) -> bool {
+    is_agent_profile(&p.name) || grants_agent_home(p)
+}
+
+fn grants_agent_home(p: &Profile) -> bool {
+    p.fs_write.iter().any(|w| {
+        matches!(
+            w.trim_end_matches('/').rsplit('/').next().unwrap_or(w),
+            ".claude" | ".claude.json" | ".codex"
+        )
+    })
+}
+
 /// Load profile `name` from `<repo>/.h5i/env.toml`, falling back to the
 /// built-in when the file (or the profile entry) is absent and `name` is a
 /// built-in one (`default`, `agent`).
@@ -2254,14 +2273,15 @@ fn apply_env_allowlist(
 /// `CAP_NET_ADMIN` to survive `execve` for `nft`), and Claude's guard refuses
 /// the flag on a bare `getuid()==0`. `IS_SANDBOX=1` skips only that root check
 /// and grants *no* new capability: the box already pins the agent to our real
-/// unprivileged host uid. Scoped to agent profiles, and a caller-supplied or
-/// brokered `IS_SANDBOX` wins; we only set the default.
+/// unprivileged host uid. Scoped to profiles that actually run an agent (built-in
+/// agent profiles, or a custom one that grants `~/.claude*`/`~/.codex`), and a
+/// caller-supplied or brokered `IS_SANDBOX` wins; we only set the default.
 fn augment_injected_env(
     policy: &ResolvedPolicy,
     injected_env: &[(String, String)],
 ) -> Vec<(String, String)> {
     let mut env = injected_env.to_vec();
-    if is_agent_profile(&policy.profile.name)
+    if profile_runs_agent(&policy.profile)
         && !env.iter().any(|(k, _)| k == "IS_SANDBOX")
         && !policy.profile.env_pass.iter().any(|k| k == "IS_SANDBOX")
     {
@@ -4075,6 +4095,23 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         assert!(
             !env.iter().any(|(k, _)| k == "IS_SANDBOX"),
             "default profile must not inject IS_SANDBOX"
+        );
+    }
+
+    #[test]
+    fn custom_profile_granting_claude_home_injects_is_sandbox() {
+        // A hand-rolled red-teaming profile is not named `agent`, but if it
+        // copies in ~/.claude it runs an agent all the same, so it must get
+        // IS_SANDBOX=1 (name-only matching used to leave it refused as uid 0).
+        let mut p = Profile::builtin("default", IsolationClaim::Supervised);
+        p.name = "redteam".to_string();
+        p.fs_write.push("~/.claude".to_string());
+        assert!(profile_runs_agent(&p));
+        let policy = ResolvedPolicy::new(p.isolation, p);
+        let env = augment_injected_env(&policy, &[]);
+        assert!(
+            env.iter().any(|(k, v)| k == "IS_SANDBOX" && v == "1"),
+            "custom profile granting ~/.claude must inject IS_SANDBOX"
         );
     }
 
