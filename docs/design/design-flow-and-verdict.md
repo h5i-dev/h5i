@@ -248,24 +248,25 @@ lowered into a bash script, because a skipped template is a gap and a smuggled
 oracle is a shared executable.
 
 Measured against the public `nuclei-templates` corpus (2026-09, 11,640 http
-templates), the importer produces a clean data-only test for about 46% of them
-(raw single requests, header/response matchers and output-extractor dropping
-included). The remaining ~54% is not a defect in the importer, it is the
-boundary doing its job:
+templates), the importer produces a runnable test for about 48% of them (raw
+single requests, header/response matchers, output-extractor dropping, and
+payload sweeps included). The remaining ~52% is not a defect in the importer, it
+is the boundary doing its job:
 
 - ~2,000 use a `dsl` matcher: that is code, and its home is an oracle (source 3),
   not the shareable layer.
-- ~2,000 carry a payload variable in the path, body or a header: that is not a
-  test, it is a parameterized sweep, whose home is `h5i websec experiment`
-  (Intruder), not a single verdict.
+- ~1,600 carry a payload or template variable the importer cannot resolve to a
+  sweep (a value computed by another step, an out-of-band token): unresolved
+  input, not data.
 - ~1,100 are `flow`/`javascript`/`headless`/`code`: code, refused by F9.
 - ~1,000 are multi-request raw blocks whose cross-response matchers are almost
   always `dsl` anyway.
 
-So the data-only number is a description of how much of Nuclei is already data,
-not a target to chase by weakening the boundary. The payload-variable bucket is
-the one that names a real missing capability rather than a correct refusal:
-portable fuzzing, which `experiment` does today only over a captured request. Every `expect` it builds is verified against the shared
+So the number is a description of how much of Nuclei is already expressible as
+data plus a bounded sweep, not a target to chase by weakening the boundary. The
+one workflow the payload work added is the genuine miss the corpus surfaced:
+active fuzzing from a portable file, which `experiment` did before only over a
+captured request. Every `expect` it builds is verified against the shared
 grammar (F6) before it is written, so an import never emits a verdict the engines
 would reject. The output is data: committable into `.h5i-tests/` as an
 oracle-less test, and shareable.
