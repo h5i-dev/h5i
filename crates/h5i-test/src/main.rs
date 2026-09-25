@@ -121,8 +121,123 @@ struct SendStep {
     /// the run passes only if every step `expect` held.
     #[serde(default)]
     expect: Option<Expect>,
+    /// A payload sweep: send this request once per payload combination, with the
+    /// values bound as `${name}` in the template. The step's verdict is then "the
+    /// `expect` held for at least one combination", which is how a fuzz probe
+    /// concludes: any payload that trips the marker is the finding. A swept step
+    /// therefore needs an `expect`.
+    #[serde(default)]
+    sweep: Option<Sweep>,
     #[serde(default)]
     covers: Option<Covers>,
+}
+
+/// A payload sweep over one step.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Sweep {
+    /// Named payload lists. `${name}` in the request template takes each value.
+    payloads: BTreeMap<String, Vec<String>>,
+    /// How the lists combine.
+    #[serde(default)]
+    attack: Attack,
+}
+
+/// The Intruder attack types, by their Nuclei names.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Attack {
+    /// Every combination of every list (the default): two lists of ten are a
+    /// hundred sends.
+    #[default]
+    Clusterbomb,
+    /// The lists walked in lockstep: the i-th value of each, together. Every list
+    /// must be the same length.
+    Pitchfork,
+    /// One list, the same value in every position each send.
+    Batteringram,
+}
+
+/// The most requests one sweep may make, so a large template cannot turn one
+/// test into an unbounded run.
+const MAX_SWEEP: usize = 1024;
+
+impl Sweep {
+    /// The variable bindings for each send, in order.
+    fn combinations(&self) -> anyhow::Result<Vec<BTreeMap<String, String>>> {
+        let lists: Vec<(&String, &Vec<String>)> = self.payloads.iter().collect();
+        if lists.is_empty() {
+            anyhow::bail!("a sweep has no payloads");
+        }
+        if lists.iter().any(|(_, values)| values.is_empty()) {
+            anyhow::bail!("a sweep payload list is empty");
+        }
+        let combos: Vec<BTreeMap<String, String>> = match self.attack {
+            Attack::Clusterbomb => {
+                let total: usize = lists.iter().try_fold(1usize, |acc, (_, v)| {
+                    acc.checked_mul(v.len())
+                        .filter(|n| *n <= MAX_SWEEP)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("a clusterbomb sweep exceeds {MAX_SWEEP} sends")
+                        })
+                })?;
+                let mut out = Vec::with_capacity(total);
+                let mut indices = vec![0usize; lists.len()];
+                loop {
+                    let combo = lists
+                        .iter()
+                        .zip(&indices)
+                        .map(|((name, values), i)| ((*name).clone(), values[*i].clone()))
+                        .collect();
+                    out.push(combo);
+                    // Odometer increment over the list lengths.
+                    let mut pos = lists.len();
+                    loop {
+                        if pos == 0 {
+                            return Ok(out);
+                        }
+                        pos -= 1;
+                        indices[pos] += 1;
+                        if indices[pos] < lists[pos].1.len() {
+                            break;
+                        }
+                        indices[pos] = 0;
+                    }
+                }
+            }
+            Attack::Pitchfork => {
+                let len = lists[0].1.len();
+                if lists.iter().any(|(_, v)| v.len() != len) {
+                    anyhow::bail!("a pitchfork sweep needs every payload list the same length");
+                }
+                if len > MAX_SWEEP {
+                    anyhow::bail!("a pitchfork sweep exceeds {MAX_SWEEP} sends");
+                }
+                (0..len)
+                    .map(|i| {
+                        lists
+                            .iter()
+                            .map(|(name, values)| ((*name).clone(), values[i].clone()))
+                            .collect()
+                    })
+                    .collect()
+            }
+            Attack::Batteringram => {
+                if lists.len() != 1 {
+                    anyhow::bail!("a batteringram sweep takes exactly one payload list");
+                }
+                let (name, values) = lists[0];
+                if values.len() > MAX_SWEEP {
+                    anyhow::bail!("a batteringram sweep exceeds {MAX_SWEEP} sends");
+                }
+                values
+                    .iter()
+                    .map(|value| BTreeMap::from([(name.clone(), value.clone())]))
+                    .collect()
+            }
+        };
+        Ok(combos)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -536,21 +651,168 @@ impl TestContext<'_> {
             anyhow::bail!("step {} uses undeclared actor `{actor}`", index + 1);
         }
         self.ensure_session(actor)?;
-        let template = self.requests.get(&step.send).ok_or_else(|| {
-            anyhow::anyhow!("step {} names no request `{}`", index + 1, step.send)
-        })?;
-        let method = substitute(&template.method, &self.variables)?;
-        let path = substitute(&template.path, &self.variables)?;
-        let url = self.target.join(&path).map_err(|e| {
-            anyhow::anyhow!("request `{}` path `{path}` is not a URL: {e}", step.send)
-        })?;
+        if !self.requests.contains_key(&step.send) {
+            anyhow::bail!("step {} names no request `{}`", index + 1, step.send);
+        }
+        let session = self.sessions.get(actor).expect("session was made");
+        let session_name = session.name.clone();
+        let session_id = session.id.clone();
+        let store = bs::dir(&bs::root()?, &session_id).join(bs::MESSAGES_DIR);
+
+        let save = match (&step.save, cleanup) {
+            (Some(name), true) => format!("cleanup_{name}"),
+            (None, true) => format!("cleanup_{}", index + 1),
+            (Some(name), false) => name.clone(),
+            (None, false) => format!("step_{}", index + 1),
+        };
+        if !cleanup && self.responses.contains_key(&save) {
+            anyhow::bail!("response name `{save}` is used more than once");
+        }
+        let response_dir = self.output.join("responses");
+        let body_path = response_dir.join(format!("{save}.body"));
+
+        // A swept step sends once per payload combination; an ordinary step has
+        // one empty combination and behaves exactly as before.
+        let combos = match &step.sweep {
+            Some(sweep) => sweep.combinations()?,
+            None => vec![BTreeMap::new()],
+        };
+
+        struct Attempt {
+            request: StoredRequest,
+            response: StoredResponse,
+            matched: Option<bool>,
+            verdict: Option<String>,
+            payload: Option<String>,
+        }
+        // The verdict of a swept step is "the expect held for at least one
+        // combination", so the first match wins and the rest are not sent. With
+        // no match the last send stands, so the report shows what was tried.
+        let mut chosen: Option<Attempt> = None;
+        for combo in &combos {
+            let mut vars = self.variables.clone();
+            for (name, value) in combo {
+                vars.insert(name.clone(), value.clone());
+            }
+            let (_seq, request, response) =
+                self.dispatch(step, index, &session_name, &store, &vars)?;
+            copy_body(&store, &response.body, &body_path)?;
+            let (matched, verdict) = match (&step.expect, cleanup) {
+                (Some(expect), false) => {
+                    let bytes = fs::read(&body_path)?;
+                    let body = String::from_utf8_lossy(&bytes);
+                    let outcome = expect.evaluate(&ExpectResponse {
+                        status: response.status,
+                        headers: &response.headers,
+                        body: &body,
+                    });
+                    (Some(outcome.matched), Some(outcome.because))
+                }
+                _ => (None, None),
+            };
+            let payload = (!combo.is_empty()).then(|| {
+                combo
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            });
+            let hit = matched == Some(true);
+            chosen = Some(Attempt {
+                request,
+                response,
+                matched,
+                verdict,
+                payload,
+            });
+            if hit {
+                break;
+            }
+        }
+        // `body_path` now holds the chosen attempt's body: it was the last one
+        // copied, whether the loop broke on a match or ran to the end.
+        let attempt = chosen.expect("at least one combination is always sent");
+
+        let request_body_path = response_dir.join(format!("{save}.request.body"));
+        copy_body(&store, &attempt.request.body, &request_body_path)?;
+        let request_path = response_dir.join(format!("{save}.request.json"));
+        fs::write(
+            &request_path,
+            serde_json::to_vec_pretty(&public_request(
+                &attempt.request,
+                &relative_to(self.output, &request_body_path),
+            ))?,
+        )?;
+        let artifact = ResponseArtifact {
+            status: attempt.response.status,
+            headers: attempt.response.headers.clone(),
+            body: relative_to(self.output, &body_path),
+            request: relative_to(self.output, &request_path),
+        };
+        for (name, spec) in &step.extract {
+            let value = extract(spec, &attempt.response, &body_path)?;
+            self.variables.insert(name.clone(), value);
+        }
+        if !cleanup {
+            if let Some(covers) = &step.covers {
+                self.covered.insert(covers.operation.clone());
+                if let Some(mutation) = &covers.mutation {
+                    self.mutations.insert(mutation.clone());
+                }
+            }
+            self.responses.insert(save.clone(), artifact);
+        }
+        // A swept step names the payload that decided it, so a pass or fail points
+        // at the exact value.
+        let verdict = match (&attempt.payload, attempt.verdict) {
+            (Some(payload), Some(why)) => Some(format!("{why} [payload {payload}]")),
+            (_, why) => why,
+        };
+        Ok(StepResult {
+            name: step.name.clone().unwrap_or_else(|| step.send.clone()),
+            actor: actor.to_string(),
+            request: step.send.clone(),
+            ok: true,
+            response: (!cleanup).then_some(save),
+            status: attempt.response.status,
+            matched: attempt.matched,
+            verdict,
+            error: None,
+            covers: step.covers.as_ref().map(|c| CoversResult {
+                operation: c.operation.clone(),
+                mutation: c.mutation.clone(),
+            }),
+        })
+    }
+
+    /// Build and send this step's request with a given set of variables, and read
+    /// back the stored request and response. Immutable in `self`, so a sweep can
+    /// call it per combination.
+    fn dispatch(
+        &self,
+        step: &SendStep,
+        index: usize,
+        session_name: &str,
+        store: &Path,
+        vars: &BTreeMap<String, String>,
+    ) -> anyhow::Result<(u64, StoredRequest, StoredResponse)> {
+        let template = self
+            .requests
+            .get(&step.send)
+            .ok_or_else(|| anyhow::anyhow!("step {} names no request `{}`", index + 1, step.send))?;
+        let method = substitute(&template.method, vars)?;
+        let path = substitute(&template.path, vars)?;
+        let url = self
+            .target
+            .join(&path)
+            .map_err(|e| anyhow::anyhow!("request `{}` path `{path}` is not a URL: {e}", step.send))?;
         let mut headers = Vec::new();
         for (name, value) in &template.headers {
-            headers.push((name.clone(), substitute(value, &self.variables)?));
+            headers.push((name.clone(), substitute(value, vars)?));
         }
         let body = match (&template.body, &template.json) {
             (Some(_), Some(_)) => anyhow::bail!("request `{}` gives both body and json", step.send),
-            (Some(body), None) => substitute(body, &self.variables)?.into_bytes(),
+            (Some(body), None) => substitute(body, vars)?.into_bytes(),
             (None, Some(value)) => {
                 if !headers
                     .iter()
@@ -558,19 +820,19 @@ impl TestContext<'_> {
                 {
                     headers.push(("content-type".to_string(), "application/json".to_string()));
                 }
-                serde_json::to_vec(&substitute_json(value, &self.variables)?)?
+                serde_json::to_vec(&substitute_json(value, vars)?)?
             }
             (None, None) => Vec::new(),
         };
         let sets = step
             .set
             .iter()
-            .map(|s| substitute(s, &self.variables))
+            .map(|s| substitute(s, vars))
             .collect::<anyhow::Result<Vec<_>>>()?;
         let unsets = step
             .unset
             .iter()
-            .map(|s| substitute(s, &self.variables))
+            .map(|s| substitute(s, vars))
             .collect::<anyhow::Result<Vec<_>>>()?;
         let request = json!({
             "id": index,
@@ -581,105 +843,17 @@ impl TestContext<'_> {
             "create": step.create,
             "no_follow": step.no_follow,
         });
-        let session_name = self
-            .sessions
-            .get(actor)
-            .expect("session was made")
-            .name
-            .clone();
-        let answer = rpc(self.h5i, &session_name, &request)?;
+        let answer = rpc(self.h5i, session_name, &request)?;
         if answer.get("ok").and_then(Value::as_bool) == Some(false) || answer.get("error").is_some()
         {
             anyhow::bail!("step {} `{}`: {}", index + 1, step.send, answer);
         }
         let seq = answer.get("seq").and_then(Value::as_u64).ok_or_else(|| {
-            anyhow::anyhow!(
-                "step {} `{}` returned no message sequence",
-                index + 1,
-                step.send
-            )
+            anyhow::anyhow!("step {} `{}` returned no message sequence", index + 1, step.send)
         })?;
-        let session_id = self
-            .sessions
-            .get(actor)
-            .expect("session was made")
-            .id
-            .clone();
-        let store = bs::dir(&bs::root()?, &session_id).join(bs::MESSAGES_DIR);
-        let stored_request: StoredRequest = read_json(&message_file(&store, seq, "request"))?;
-        let response: StoredResponse = read_json(&message_file(&store, seq, "response"))?;
-        let save = match (&step.save, cleanup) {
-            (Some(name), true) => format!("cleanup_{name}"),
-            (None, true) => format!("cleanup_{}", index + 1),
-            (Some(name), false) => name.clone(),
-            (None, false) => format!("step_{}", index + 1),
-        };
-        if self.responses.contains_key(&save) {
-            anyhow::bail!("response name `{save}` is used more than once");
-        }
-        let response_dir = self.output.join("responses");
-        let body_path = response_dir.join(format!("{save}.body"));
-        copy_body(&store, &response.body, &body_path)?;
-        let request_body_path = response_dir.join(format!("{save}.request.body"));
-        copy_body(&store, &stored_request.body, &request_body_path)?;
-        let request_path = response_dir.join(format!("{save}.request.json"));
-        fs::write(
-            &request_path,
-            serde_json::to_vec_pretty(&public_request(
-                &stored_request,
-                &relative_to(self.output, &request_body_path),
-            ))?,
-        )?;
-        let artifact = ResponseArtifact {
-            status: response.status,
-            headers: response.headers.clone(),
-            body: relative_to(self.output, &body_path),
-            request: relative_to(self.output, &request_path),
-        };
-        for (name, spec) in &step.extract {
-            let value = extract(spec, &response, &body_path)?;
-            self.variables.insert(name.clone(), value);
-        }
-        // The verdict, when this step carries one. Cleanup steps never judge:
-        // they exist to undo, not to decide. The body is read as lossy text, the
-        // same view an extractor gets.
-        let (matched, verdict) = match (&step.expect, cleanup) {
-            (Some(expect), false) => {
-                let bytes = fs::read(&body_path)?;
-                let body = String::from_utf8_lossy(&bytes);
-                let outcome = expect.evaluate(&ExpectResponse {
-                    status: response.status,
-                    headers: &response.headers,
-                    body: &body,
-                });
-                (Some(outcome.matched), Some(outcome.because))
-            }
-            _ => (None, None),
-        };
-        if !cleanup {
-            if let Some(covers) = &step.covers {
-                self.covered.insert(covers.operation.clone());
-                if let Some(mutation) = &covers.mutation {
-                    self.mutations.insert(mutation.clone());
-                }
-            }
-            self.responses.insert(save.clone(), artifact);
-        }
-        Ok(StepResult {
-            name: step.name.clone().unwrap_or_else(|| step.send.clone()),
-            actor: actor.to_string(),
-            request: step.send.clone(),
-            ok: true,
-            response: (!cleanup).then_some(save),
-            status: response.status,
-            matched,
-            verdict,
-            error: None,
-            covers: step.covers.as_ref().map(|c| CoversResult {
-                operation: c.operation.clone(),
-                mutation: c.mutation.clone(),
-            }),
-        })
+        let stored_request: StoredRequest = read_json(&message_file(store, seq, "request"))?;
+        let response: StoredResponse = read_json(&message_file(store, seq, "response"))?;
+        Ok((seq, stored_request, response))
     }
 
     fn ensure_session(&mut self, actor: &str) -> anyhow::Result<()> {
@@ -896,6 +1070,16 @@ fn validate(plan: &TestFile, file: &Path) -> anyhow::Result<()> {
                 file.display()
             );
         }
+        // A swept step's verdict is "the expect held for some payload", so
+        // without an expect it would send a burst and conclude nothing.
+        if step.sweep.is_some() && step.expect.is_none() {
+            anyhow::bail!(
+                "{} step {} has a sweep but no `expect`; a sweep needs a verdict to hold for \
+                 some payload",
+                file.display(),
+                index + 1
+            );
+        }
     }
     if let Some(oracle) = &plan.oracle {
         for input in &oracle.inputs {
@@ -914,6 +1098,13 @@ fn validate(plan: &TestFile, file: &Path) -> anyhow::Result<()> {
                 file.display(),
                 index + 1,
                 step.send
+            );
+        }
+        if step.sweep.is_some() {
+            anyhow::bail!(
+                "{} cleanup step {} has a sweep; cleanup undoes, it does not fuzz",
+                file.display(),
+                index + 1
             );
         }
         if let Some(save) = &step.save
@@ -1382,6 +1573,54 @@ mod tests {
 
     fn parse(yaml: &str) -> TestFile {
         serde_yaml::from_str(yaml).expect("a valid test file")
+    }
+
+    fn sweep(payloads: &[(&str, &[&str])], attack: Attack) -> Sweep {
+        Sweep {
+            payloads: payloads
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.iter().map(|s| s.to_string()).collect()))
+                .collect(),
+            attack,
+        }
+    }
+
+    #[test]
+    fn clusterbomb_is_the_product_of_the_lists() {
+        let s = sweep(&[("a", &["1", "2"]), ("b", &["x", "y"])], Attack::Clusterbomb);
+        let combos = s.combinations().unwrap();
+        assert_eq!(combos.len(), 4);
+        assert_eq!(combos[0].get("a").unwrap(), "1");
+        assert_eq!(combos[0].get("b").unwrap(), "x");
+        assert_eq!(combos[3].get("a").unwrap(), "2");
+        assert_eq!(combos[3].get("b").unwrap(), "y");
+    }
+
+    #[test]
+    fn pitchfork_walks_the_lists_in_lockstep() {
+        let s = sweep(&[("a", &["1", "2"]), ("b", &["x", "y"])], Attack::Pitchfork);
+        let combos = s.combinations().unwrap();
+        assert_eq!(combos.len(), 2);
+        assert_eq!((combos[0].get("a").unwrap(), combos[0].get("b").unwrap()), (&"1".to_string(), &"x".to_string()));
+        assert_eq!((combos[1].get("a").unwrap(), combos[1].get("b").unwrap()), (&"2".to_string(), &"y".to_string()));
+        let ragged = sweep(&[("a", &["1", "2"]), ("b", &["x"])], Attack::Pitchfork);
+        assert!(ragged.combinations().is_err());
+    }
+
+    #[test]
+    fn batteringram_takes_one_list() {
+        let s = sweep(&[("p", &["1", "2", "3"])], Attack::Batteringram);
+        assert_eq!(s.combinations().unwrap().len(), 3);
+        let two = sweep(&[("a", &["1"]), ("b", &["2"])], Attack::Batteringram);
+        assert!(two.combinations().is_err());
+    }
+
+    #[test]
+    fn a_sweep_that_would_exceed_the_cap_is_refused() {
+        let big: Vec<String> = (0..40).map(|n| n.to_string()).collect();
+        let refs: Vec<&str> = big.iter().map(String::as_str).collect();
+        let s = sweep(&[("a", &refs), ("b", &refs)], Attack::Clusterbomb);
+        assert!(s.combinations().unwrap_err().to_string().contains("exceeds"));
     }
 
     #[test]

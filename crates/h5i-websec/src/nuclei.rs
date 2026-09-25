@@ -83,6 +83,13 @@ struct HttpRequest {
     matchers: Vec<Matcher>,
     #[serde(default)]
     extractors: Vec<Extractor>,
+    /// Named payload lists for a fuzzing sweep. A value may be an inline list;
+    /// a file reference is not portable and is refused.
+    #[serde(default)]
+    payloads: BTreeMap<String, serde_yaml::Value>,
+    /// `batteringram` | `pitchfork` | `clusterbomb`.
+    #[serde(default)]
+    attack: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,6 +157,14 @@ struct StepOut {
     extract: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     expect: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sweep: Option<SweepOut>,
+}
+
+#[derive(Debug, Serialize)]
+struct SweepOut {
+    payloads: BTreeMap<String, Vec<String>>,
+    attack: String,
 }
 
 /// `h5i websec import-nuclei <file>`: read a template, print an h5i test.
@@ -233,6 +248,24 @@ fn convert(template: Template) -> anyhow::Result<TestOut> {
             )
         };
 
+        // A fuzzing sweep: turn Nuclei's `{{name}}`/`§name§` payload markers into
+        // the engine's `${name}`, so the request template takes each value. Only
+        // the payload names are rewritten; any other `{{var}}` is left to be
+        // refused below, because the importer cannot resolve it.
+        let sweep = build_sweep(&template.id, n, &entry.payloads, &entry.attack)?;
+        let (path_spec, headers, body) = if let Some(sweep) = &sweep {
+            let names: Vec<&str> = sweep.payloads.keys().map(String::as_str).collect();
+            let path_spec = rewrite_markers(&path_spec, &names);
+            let headers = headers
+                .into_iter()
+                .map(|(k, v)| (k, rewrite_markers(&v, &names)))
+                .collect::<BTreeMap<_, _>>();
+            let body = body.map(|b| rewrite_markers(&b, &names));
+            (path_spec, headers, body)
+        } else {
+            (path_spec, headers, body)
+        };
+
         let path = relative_path(&path_spec).ok_or_else(|| {
             anyhow::anyhow!(
                 "template `{}` request {n} path `{path_spec}` uses a Nuclei variable or absolute \
@@ -279,10 +312,19 @@ fn convert(template: Template) -> anyhow::Result<TestOut> {
         }
         let extract = extractors_to_bindings(&template.id, n, &entry.extractors)?;
 
+        // A sweep needs a verdict to hold for at least one payload.
+        if sweep.is_some() && expect.is_none() {
+            anyhow::bail!(
+                "template `{}` request {n} has payloads but no matcher, so a fuzz sweep would \
+                 conclude nothing",
+                template.id
+            );
+        }
         flow.push(StepOut {
             send: id,
             extract,
             expect,
+            sweep,
         });
     }
 
@@ -293,6 +335,74 @@ fn convert(template: Template) -> anyhow::Result<TestOut> {
         requests,
         flow,
     })
+}
+
+/// Build a sweep from a template's payloads, or `None` when there are none.
+fn build_sweep(
+    template: &str,
+    n: usize,
+    payloads: &BTreeMap<String, serde_yaml::Value>,
+    attack: &Option<String>,
+) -> anyhow::Result<Option<SweepOut>> {
+    if payloads.is_empty() {
+        return Ok(None);
+    }
+    let mut lists = BTreeMap::new();
+    for (name, value) in payloads {
+        let list = match value {
+            serde_yaml::Value::Sequence(items) => items
+                .iter()
+                .map(|item| match item {
+                    serde_yaml::Value::String(s) => Ok(s.clone()),
+                    serde_yaml::Value::Number(num) => Ok(num.to_string()),
+                    serde_yaml::Value::Bool(b) => Ok(b.to_string()),
+                    _ => Err(anyhow::anyhow!(
+                        "template `{template}` request {n} payload `{name}` has a non-scalar value"
+                    )),
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?,
+            // A string payload is a wordlist file path, which is not portable.
+            serde_yaml::Value::String(_) => anyhow::bail!(
+                "template `{template}` request {n} payload `{name}` is a file reference, which \
+                 does not travel with the template"
+            ),
+            _ => anyhow::bail!(
+                "template `{template}` request {n} payload `{name}` is not a list of values"
+            ),
+        };
+        lists.insert(name.clone(), list);
+    }
+    // Nuclei's default attack is batteringram, which takes one list. With more
+    // than one list and no declared attack the intent is ambiguous, so it is
+    // refused rather than guessed.
+    let attack = match attack.as_deref() {
+        Some("batteringram") | Some("pitchfork") | Some("clusterbomb") => {
+            attack.clone().unwrap()
+        }
+        Some(other) => anyhow::bail!(
+            "template `{template}` request {n} uses attack `{other}`, which has no equivalent"
+        ),
+        None if lists.len() == 1 => "batteringram".to_string(),
+        None => anyhow::bail!(
+            "template `{template}` request {n} has several payloads and no `attack`, so how they \
+             combine is ambiguous"
+        ),
+    };
+    Ok(Some(SweepOut {
+        payloads: lists,
+        attack,
+    }))
+}
+
+/// Rewrite `{{name}}` and `§name§` payload markers to the engine's `${name}`,
+/// for the given payload names only.
+fn rewrite_markers(text: &str, names: &[&str]) -> String {
+    let mut out = text.to_string();
+    for name in names {
+        out = out.replace(&format!("{{{{{name}}}}}"), &format!("${{{name}}}"));
+        out = out.replace(&format!("\u{a7}{name}\u{a7}"), &format!("${{{name}}}"));
+    }
+    out
 }
 
 /// What a single raw HTTP request parses into.
@@ -994,6 +1104,82 @@ http:
         )
         .unwrap_err();
         assert!(error.to_string().contains("does not model"), "{error}");
+    }
+
+    #[test]
+    fn payloads_become_a_sweep_and_markers_become_bindings() {
+        let out = convert_yaml(
+            r#"
+id: t
+http:
+  - method: GET
+    path: ["{{BaseURL}}/item?id={{inj}}"]
+    payloads:
+      inj:
+        - "1'"
+        - "1 OR 1=1"
+    attack: pitchfork
+    matchers:
+      - type: word
+        words: ["SQL syntax"]
+"#,
+        )
+        .expect("import");
+        assert_eq!(out.requests.get("req_1").unwrap().path, "/item?id=${inj}");
+        let sweep = out.flow[0].sweep.as_ref().expect("a sweep");
+        assert_eq!(sweep.attack, "pitchfork");
+        assert_eq!(sweep.payloads.get("inj").unwrap(), &vec!["1'".to_string(), "1 OR 1=1".to_string()]);
+    }
+
+    #[test]
+    fn a_single_payload_defaults_to_batteringram() {
+        let out = convert_yaml(
+            r#"
+id: t
+http:
+  - path: ["{{BaseURL}}/?q={{p}}"]
+    payloads:
+      p: ["a", "b"]
+    matchers:
+      - type: status
+        status: [500]
+"#,
+        )
+        .expect("import");
+        assert_eq!(out.flow[0].sweep.as_ref().unwrap().attack, "batteringram");
+    }
+
+    #[test]
+    fn a_file_payload_is_refused_as_unportable() {
+        let error = convert_yaml(
+            r#"
+id: t
+http:
+  - path: ["{{BaseURL}}/?q={{p}}"]
+    payloads:
+      p: "helpers/wordlists/sqli.txt"
+    matchers:
+      - type: status
+        status: [500]
+"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("does not travel"), "{error}");
+    }
+
+    #[test]
+    fn payloads_without_a_matcher_are_refused() {
+        let error = convert_yaml(
+            r#"
+id: t
+http:
+  - path: ["{{BaseURL}}/?q={{p}}"]
+    payloads:
+      p: ["a"]
+"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("conclude nothing"), "{error}");
     }
 
     #[test]

@@ -232,6 +232,14 @@ resends a message a session already captured. So `h5i websec import-nuclei
   same way a hand-written one does.
 - Multi-request templates become a multi-step flow, which is the case Nuclei
   expresses awkwardly and a flow expresses naturally.
+- A template with `payloads` becomes a flow step with a `sweep`: the payload
+  lists, the attack type (`batteringram`, `pitchfork`, `clusterbomb`), and the
+  `{{name}}`/`§name§` markers rewritten to the engine's `${name}`. The step runs
+  once per payload combination and its verdict is "the `expect` held for at least
+  one", which is how a fuzz probe concludes. This is the one importer output that
+  is not a static test: it is the active-testing (Intruder) workflow, made
+  portable. A file-backed payload list, or several lists with no declared attack,
+  is refused rather than guessed.
 
 What the importer never emits is an oracle. A construct that cannot be expressed
 as `expect` (a `dsl` or `binary` matcher, a multi-request or `unsafe` raw block,

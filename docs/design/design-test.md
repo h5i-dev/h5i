@@ -37,6 +37,17 @@ its answer (`status`, `body`, `header`, and the combinators `all`, `any`, `not`)
 the same grammar `websec sequence` uses. Cleanup steps run after the verdict even
 when it fails, and never carry a verdict of their own.
 
+## Payload sweeps
+
+A flow step may carry a `sweep`: named payload lists and an attack type
+(`batteringram`, `pitchfork`, `clusterbomb`, the last being every combination).
+The step then sends once per combination, binding each payload value as `${name}`
+in the request template, and its verdict is "the `expect` held for at least one
+combination", with the deciding payload named in the step result. A swept step
+therefore needs an `expect`, never appears in cleanup, and is bounded to 1024
+sends so one template cannot become an unbounded run. This is the portable form
+of the Intruder workflow: active testing from a committed file.
+
 ## Verdict from expect
 
 When a test has no oracle, it passes only if every step `expect` held and the
