@@ -179,11 +179,24 @@ fn known_function(name: &str) -> bool {
     )
 }
 
-/// Every variable the evaluator binds from a response.
+/// Every variable the evaluator binds from a response. Besides the whole-body
+/// and whole-header views, a handful of common response headers are exposed by
+/// name, the way Nuclei does. Deliberately absent: `duration` (timing is not a
+/// pure function of the response and would make a shared verdict flaky), request
+/// side values like `host`, and `_N`-suffixed variables that name another
+/// request's response in a chain this single step does not hold.
 fn known_variable(name: &str) -> bool {
     matches!(
         name,
-        "body" | "all_headers" | "header" | "status_code" | "content_length"
+        "body"
+            | "all_headers"
+            | "header"
+            | "status_code"
+            | "content_length"
+            | "content_type"
+            | "location"
+            | "server"
+            | "set_cookie"
     )
 }
 
@@ -240,9 +253,23 @@ fn variable(name: &str, env: &Env) -> Value {
         "all_headers" | "header" => Value::Str(header_block(env.headers)),
         "status_code" => Value::Int(env.status.map(i64::from).unwrap_or(0)),
         "content_length" => Value::Int(env.body.len() as i64),
+        // A named response header, `content_type` -> `Content-Type`. Absent
+        // headers read as empty, which is how Nuclei treats them.
+        "content_type" => Value::Str(header_value(env.headers, "content-type")),
+        "location" => Value::Str(header_value(env.headers, "location")),
+        "server" => Value::Str(header_value(env.headers, "server")),
+        "set_cookie" => Value::Str(header_value(env.headers, "set-cookie")),
         // validate() guarantees the name is known.
         _ => Value::Str(String::new()),
     }
+}
+
+fn header_value(headers: &[(String, String)], name: &str) -> String {
+    headers
+        .iter()
+        .find(|(header, _)| header.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.clone())
+        .unwrap_or_default()
 }
 
 fn header_block(headers: &[(String, String)]) -> String {
@@ -982,8 +1009,15 @@ mod tests {
 
     #[test]
     fn headers_are_readable() {
-        let headers = vec![("Server".to_string(), "nginx".to_string())];
+        let headers = vec![
+            ("Server".to_string(), "nginx".to_string()),
+            ("Content-Type".to_string(), "text/html".to_string()),
+        ];
         assert!(run("contains(all_headers, 'Server: nginx')", None, &headers, ""));
+        // A named response header, absent headers read as empty.
+        assert!(run("content_type == 'text/html'", None, &headers, ""));
+        assert!(run("server == 'nginx'", None, &headers, ""));
+        assert!(run("location == ''", None, &headers, ""));
     }
 
     #[test]
