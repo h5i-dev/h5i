@@ -253,13 +253,31 @@ function ProjectView({
   }
 
   const s = detail.summary;
+
+  // Which sessions this project is tied to. Two ways it knows: the `--project`
+  // label a session carries (`sessions`, passed in), and the provenance the
+  // project itself recorded — the session a finding was promoted from, or the
+  // one an evidence copy came from. The second works even for a session opened
+  // without the label, or one already removed from the registry.
+  const fleetSessions = fleet.sessions?.sessions ?? [];
+  const refIds = new Set<string>();
+  for (const f of detail.findings) for (const src of f.sources) refIds.add(src.session);
+  for (const e of detail.evidence) if (e.session) refIds.add(e.session);
+  const linked: SessionRow[] = [...sessions];
+  for (const id of refIds) {
+    if (linked.some((x) => x.id === id)) continue;
+    const found = fleetSessions.find((x) => x.id === id);
+    if (found) linked.push(found);
+  }
+  const removedRefs = [...refIds].filter((id) => !fleetSessions.some((x) => x.id === id));
+
   const counts: Record<Tab, number | null> = {
     overview: null,
     findings: detail.findings.length,
     coverage: detail.checklists.length,
     notes: detail.notes.length,
     report: detail.reports.length,
-    sessions: sessions.length,
+    sessions: linked.length + removedRefs.length,
   };
 
   return (
@@ -298,7 +316,7 @@ function ProjectView({
       </div>
       <div className="work-body">
         {tab === "overview" ? (
-          <OverviewTab detail={detail} sessions={sessions} setTab={setTab} />
+          <OverviewTab detail={detail} sessions={linked} setTab={setTab} />
         ) : tab === "findings" ? (
           <FindingsTab detail={detail} />
         ) : tab === "coverage" ? (
@@ -309,7 +327,7 @@ function ProjectView({
           <ReportTab name={name} detail={detail} />
         ) : (
           <div className="scroll pad">
-            <SessionList sessions={sessions} go={go} />
+            <SessionList sessions={linked} removed={removedRefs} projectName={name} go={go} />
           </div>
         )}
       </div>
@@ -756,9 +774,26 @@ function TermPanel({ term, onClose }: { term: GlossaryTerm; onClose: () => void 
   );
 }
 
-function SessionList({ sessions, go }: { sessions: SessionRow[]; go: (parts: string[]) => void }) {
-  if (sessions.length === 0) {
-    return <Note>No session carries this project label.</Note>;
+function SessionList({
+  sessions,
+  removed = [],
+  projectName,
+  go,
+}: {
+  sessions: SessionRow[];
+  removed?: string[];
+  projectName?: string;
+  go: (parts: string[]) => void;
+}) {
+  if (sessions.length === 0 && removed.length === 0) {
+    return (
+      <Note>
+        No session is tied to this project. A session is linked when it is opened with{" "}
+        <code>--project {projectName ?? "&lt;name&gt;"}</code>, or when a finding is promoted from it, or an evidence
+        copy is taken from it.
+        {projectName ? <Cmd text={`h5i browser open <url> --project ${projectName} --capture`} /> : null}
+      </Note>
+    );
   }
   return (
     <div className="plist">
@@ -778,6 +813,13 @@ function SessionList({ sessions, go }: { sessions: SessionRow[]; go: (parts: str
           </div>
         </button>
       ))}
+      {removed.length > 0 ? (
+        <Note>
+          {removed.length} {plural(removed.length, "session")} this project drew evidence from{" "}
+          {removed.length === 1 ? "is" : "are"} no longer in the registry (removed after the evidence was saved):{" "}
+          <span className="mono">{removed.join(", ")}</span>. The findings and evidence stay.
+        </Note>
+      ) : null}
     </div>
   );
 }
