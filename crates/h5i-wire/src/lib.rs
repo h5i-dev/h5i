@@ -6,6 +6,7 @@
 //! Separate from the engine so the plugins can read both without linking one
 //! (design-websec.md W21). The writers stay in `h5i-browser`.
 
+pub mod dsl;
 pub mod expect;
 pub mod ledger;
 pub mod message;

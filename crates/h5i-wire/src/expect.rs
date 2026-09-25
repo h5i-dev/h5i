@@ -111,6 +111,11 @@ pub enum Expect {
     /// The whole response, header block then a blank line then the body,
     /// satisfies the pattern.
     Response(Pattern),
+    /// A Nuclei-style DSL expression over the response evaluates true. This is a
+    /// bounded, pure expression language (see [`crate::dsl`]), not code: it reads
+    /// only the response and calls only known pure functions, so it stays in the
+    /// shareable layer.
+    Dsl(crate::dsl::Program),
 }
 
 /// The header block as one text: `name: value`, one per line.
@@ -225,6 +230,25 @@ impl Expect {
                     because: format!("response {}", pattern.describe()),
                 }
             }
+            Expect::Dsl(program) => {
+                let env = crate::dsl::Env {
+                    status: response.status,
+                    headers: response.headers,
+                    body: response.body,
+                };
+                match program.eval(&env) {
+                    Ok(matched) => Outcome {
+                        matched,
+                        because: format!("dsl `{}`", program.source()),
+                    },
+                    // An expression that cannot be evaluated is not a match; it is
+                    // a verdict that could not be reached, reported as such.
+                    Err(why) => Outcome {
+                        matched: false,
+                        because: format!("dsl `{}` could not evaluate: {why}", program.source()),
+                    },
+                }
+            }
         }
     }
 }
@@ -251,6 +275,8 @@ struct Raw {
     headers: Option<String>,
     #[serde(default)]
     response: Option<String>,
+    #[serde(default)]
+    dsl: Option<String>,
     #[serde(default)]
     contains: Option<String>,
     #[serde(default)]
@@ -290,6 +316,7 @@ impl<'de> Deserialize<'de> for Expect {
             raw.header.is_some(),
             raw.headers.is_some(),
             raw.response.is_some(),
+            raw.dsl.is_some(),
         ]
         .into_iter()
         .filter(|present| *present)
@@ -297,7 +324,7 @@ impl<'de> Deserialize<'de> for Expect {
         if clause_keys != 1 {
             return Err(D::Error::custom(
                 "an expect clause is exactly one of: all, any, not, status, body, header, \
-                 headers, response",
+                 headers, response, dsl",
             ));
         }
 
@@ -326,6 +353,11 @@ impl<'de> Deserialize<'de> for Expect {
         if let Some(spec) = raw.response {
             return Pattern::parse_ci(&spec)
                 .map(Expect::Response)
+                .map_err(D::Error::custom);
+        }
+        if let Some(spec) = raw.dsl {
+            return crate::dsl::Program::parse(&spec)
+                .map(Expect::Dsl)
                 .map_err(D::Error::custom);
         }
         let name = raw.header.expect("clause_keys guarantees one clause");
@@ -434,6 +466,24 @@ mod tests {
         assert!(expect.evaluate(&response(Some(200), &[], "welcome root")).matched);
         assert!(!expect.evaluate(&response(Some(200), &[], "root but denied")).matched);
         assert!(!expect.evaluate(&response(Some(403), &[], "root")).matched);
+    }
+
+    #[test]
+    fn a_dsl_leaf_evaluates_an_expression_over_the_response() {
+        let expect = parse(
+            r#"{"dsl": "status_code == 200 && !contains(tolower(body), '<html')"}"#,
+        );
+        assert!(expect.evaluate(&response(Some(200), &[], "[core]")).matched);
+        assert!(!expect.evaluate(&response(Some(200), &[], "<HTML>")).matched);
+        // A dsl leaf composes with the combinators like any other.
+        let combined = parse(r#"{"all": [{"status": 200}, {"dsl": "len(body) > 2"}]}"#);
+        assert!(combined.evaluate(&response(Some(200), &[], "abcd")).matched);
+    }
+
+    #[test]
+    fn an_unsupported_dsl_is_refused_at_parse() {
+        let err = serde_json::from_str::<Expect>(r#"{"dsl": "rand_int(1,9) == 5"}"#).unwrap_err();
+        assert!(err.to_string().contains("unsupported DSL function"), "{err}");
     }
 
     #[test]

@@ -105,6 +105,8 @@ struct Matcher {
     #[serde(default)]
     status: Vec<u16>,
     #[serde(default)]
+    dsl: Vec<String>,
+    #[serde(default)]
     condition: Option<String>,
     #[serde(default)]
     negative: bool,
@@ -559,6 +561,15 @@ fn one_matcher(template: &str, n: usize, matcher: &Matcher) -> anyhow::Result<Va
                 .collect::<anyhow::Result<_>>()?;
             combine_leaves(leaves, matcher.condition.as_deref().unwrap_or("or"), template, n, "regex")?
         }
+        "dsl" => {
+            // Each expression becomes a `dsl` leaf. Validation (below, and the
+            // grammar's own parse) refuses an expression that uses a function or
+            // variable the bounded evaluator does not implement, so the whole
+            // template is refused rather than half-imported.
+            let leaves: Vec<Value> = matcher.dsl.iter().map(|e| json!({ "dsl": e })).collect();
+            // Nuclei's default matcher `condition` is `or`, dsl included.
+            combine_leaves(leaves, matcher.condition.as_deref().unwrap_or("or"), template, n, "dsl")?
+        }
         other => anyhow::bail!(
             "template `{template}` request {n} uses a `{other}` matcher, which has no data-only \
              equivalent; a repository-owned test can express it with an oracle instead"
@@ -824,7 +835,32 @@ http:
     }
 
     #[test]
-    fn a_dsl_matcher_is_refused_not_lowered_to_a_script() {
+    fn a_supported_dsl_matcher_becomes_a_dsl_leaf() {
+        let out = convert_yaml(
+            r#"
+id: git-config
+http:
+  - path: ["{{BaseURL}}/.git/config"]
+    matchers:
+      - type: dsl
+        condition: and
+        dsl:
+          - "!contains(tolower(body), '<html')"
+          - "status_code == 200"
+"#,
+        )
+        .expect("import");
+        assert_eq!(
+            out.flow[0].expect.as_ref().unwrap(),
+            &json!({"all": [
+                {"dsl": "!contains(tolower(body), '<html')"},
+                {"dsl": "status_code == 200"},
+            ]})
+        );
+    }
+
+    #[test]
+    fn a_dsl_matcher_using_an_unsupported_function_is_refused() {
         let error = convert_yaml(
             r#"
 id: t
@@ -833,11 +869,11 @@ http:
     matchers:
       - type: dsl
         dsl:
-          - "len(body) > 10"
+          - "unix_time() > 100"
 "#,
         )
         .unwrap_err();
-        assert!(error.to_string().contains("no data-only equivalent"), "{error}");
+        assert!(error.to_string().contains("unsupported DSL function"), "{error}");
     }
 
     #[test]
