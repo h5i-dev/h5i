@@ -1133,6 +1133,153 @@ async fn api_session(Path(id): Path<String>) -> Result<Json<SessionDetail>, Stat
     detail.map(Json).ok_or(StatusCode::NOT_FOUND)
 }
 
+// ── projects ─────────────────────────────────────────────────────────────────
+// The durable engagement. These read the project store (the user's data
+// directory), never the repository, and never write: the console shows a
+// project the way it shows a session.
+
+use crate::project;
+
+#[derive(Serialize)]
+struct ProjectDetail {
+    meta: project::Meta,
+    summary: project::Summary,
+    findings: Vec<project::finding::Finding>,
+    notes: Vec<project::note::Note>,
+    evidence: Vec<project::evidence::Record>,
+    checklists: Vec<ProjectChecklist>,
+    reports: Vec<project::report::Issued>,
+    has_draft: bool,
+}
+
+#[derive(Serialize)]
+struct ProjectChecklist {
+    checklist: project::checklist::Checklist,
+    outcomes: Vec<project::checklist::Outcome>,
+    coverage: project::checklist::Coverage,
+}
+
+/// `GET /api/projects`: every project, with the counts a list needs.
+async fn api_projects() -> Json<Vec<project::Summary>> {
+    let rows = blocking(|| {
+        let root = project::root().ok()?;
+        Some(project::list(&root).iter().map(project::summary).collect::<Vec<_>>())
+    })
+    .await
+    .unwrap_or_default();
+    Json(rows)
+}
+
+/// `GET /api/project/:name`: findings, notes, evidence, checklists, reports.
+async fn api_project(Path(name): Path<String>) -> Result<Json<ProjectDetail>, StatusCode> {
+    let detail = blocking(move || {
+        let root = project::root().ok()?;
+        let p = project::Project::open(&root, &name).ok()?;
+        let checklists = project::checklist::list(&p)
+            .into_iter()
+            .filter_map(|c| {
+                let outcomes = project::checklist::outcomes(&p, &c).ok()?;
+                let coverage = project::checklist::coverage(&c, &outcomes);
+                Some(ProjectChecklist { checklist: c, outcomes, coverage })
+            })
+            .collect();
+        Some(ProjectDetail {
+            summary: project::summary(&p),
+            findings: project::finding::sorted(project::finding::read(&p).ok()?),
+            notes: project::note::read(&p).unwrap_or_default().into_iter().filter(|n| !n.archived).collect(),
+            evidence: project::evidence::list(&p),
+            checklists,
+            reports: project::report::issued(&p),
+            has_draft: project::report::has_draft(&p),
+            meta: p.meta,
+        })
+    })
+    .await;
+    detail.map(Json).ok_or(StatusCode::NOT_FOUND)
+}
+
+#[derive(Serialize)]
+struct ReportView {
+    html: String,
+    toc: Vec<crate::project::render::TocEntry>,
+    terms: Vec<crate::project::glossary::Term>,
+    version: Option<u32>,
+}
+
+#[derive(serde::Deserialize)]
+struct ReportQuery {
+    version: Option<u32>,
+}
+
+/// `GET /api/project/:name/report`: the report as HTML. A `?version=N` serves
+/// that frozen issue; without it, the working draft rendered live. Evidence
+/// image sources are rewritten to the asset route so the page can load them.
+async fn api_project_report(
+    Path(name): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<ReportQuery>,
+) -> Result<Json<ReportView>, StatusCode> {
+    let view = blocking(move || {
+        let root = project::root().ok()?;
+        let p = project::Project::open(&root, &name).ok()?;
+        let asset_base = format!("src=\"/api/project/{name}/asset/");
+        match q.version {
+            Some(v) => {
+                let html = std::fs::read_to_string(p.path(&format!("{}/v{v}/report.html", project::report::DIR))).ok()?;
+                Some(ReportView {
+                    html: html.replace("src=\"evidence/", &asset_base),
+                    toc: Vec::new(),
+                    terms: Vec::new(),
+                    version: Some(v),
+                })
+            }
+            None => {
+                let source = project::report::draft(&p).ok()?;
+                let ctx = project::report::Context::load(&p).ok()?;
+                let rendered = project::render::render(&p, &source, &ctx, &project::render::Meta::default());
+                Some(ReportView {
+                    html: rendered.body.replace("src=\"evidence/", &asset_base),
+                    toc: rendered.toc,
+                    terms: rendered.terms,
+                    version: None,
+                })
+            }
+        }
+    })
+    .await;
+    view.map(Json).ok_or(StatusCode::NOT_FOUND)
+}
+
+/// `GET /api/project/:name/asset/:file`: one evidence image, by its stored file
+/// name. Only files an evidence record names are served.
+async fn api_project_asset(Path((name, file)): Path<(String, String)>) -> Response {
+    let served = blocking(move || {
+        let root = project::root().ok()?;
+        let p = project::Project::open(&root, &name).ok()?;
+        project::evidence::list(&p)
+            .into_iter()
+            .find(|e| e.file.as_deref() == Some(file.as_str()))
+            .and_then(|e| project::evidence::file_bytes(&p, &e))
+    })
+    .await;
+    match served {
+        Some((bytes, media)) => (
+            [
+                (header::CONTENT_TYPE, media),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+                (header::CACHE_CONTROL, "no-store".to_string()),
+            ],
+            bytes,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// `GET /api/glossary`: the built-in glossary, for the term definition panel.
+async fn api_glossary() -> Json<Vec<project::glossary::Term>> {
+    Json(project::glossary::Glossary::builtin().terms)
+}
+
 /// `GET /api/boxes`: the fleet, most pressing first.
 async fn api_boxes(State(state): State<Arc<AppState>>) -> Json<Vec<BoxRow>> {
     let path = state.repo_path.clone();
@@ -1438,6 +1585,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/sessions", get(api_sessions))
         .route("/api/session/:id", get(api_session))
         .route("/api/session/:id/message/:seq", get(api_message))
+        .route("/api/projects", get(api_projects))
+        .route("/api/project/:name", get(api_project))
+        .route("/api/project/:name/report", get(api_project_report))
+        .route("/api/project/:name/asset/:file", get(api_project_asset))
+        .route("/api/glossary", get(api_glossary))
         .route("/api/box/:agent/:slug", get(api_box))
         .route("/api/box/:agent/:slug/receipts/:id", get(api_receipt))
         .route("/api/box/:agent/:slug/browser", get(api_browser))

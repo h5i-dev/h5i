@@ -18,6 +18,9 @@ struct Repo {
     /// not the repository's, so a test that did not pin this would read (and
     /// show) the developer's own registry.
     browser_home: PathBuf,
+    /// Where projects live for this test, pinned for the same reason as
+    /// `browser_home`: the project store is the machine's, not the repo's.
+    project_home: PathBuf,
     _root: TempDir,
 }
 
@@ -33,9 +36,12 @@ impl Repo {
         git(&dir, &["commit", "-m", "seed"]);
         let browser_home = root.path().join("browser-home");
         std::fs::create_dir_all(&browser_home).expect("browser home");
+        let project_home = root.path().join("project-home");
+        std::fs::create_dir_all(&project_home).expect("project home");
         Repo {
             dir,
             browser_home,
+            project_home,
             _root: root,
         }
     }
@@ -60,7 +66,7 @@ impl Repo {
     /// Hermetic: a fixed agent identity, and the workspace tier pinned so box
     /// creation never probes the host. These tests are about the HTTP surface,
     /// not about confinement. The kernel tiers are `env_integration.rs`'s job.
-    fn env(&self) -> [(&'static str, String); 3] {
+    fn env(&self) -> [(&'static str, String); 4] {
         [
             ("H5I_AGENT", "tester".to_string()),
             ("H5I_DEFAULT_ISOLATION", "workspace".to_string()),
@@ -68,6 +74,7 @@ impl Repo {
                 "H5I_BROWSER_HOME",
                 self.browser_home.display().to_string(),
             ),
+            ("H5I_PROJECT_HOME", self.project_home.display().to_string()),
         ]
     }
 
@@ -682,4 +689,71 @@ fn a_session_id_that_is_not_one_component_reads_nothing() {
             reply.status
         );
     }
+}
+
+// ─── projects ────────────────────────────────────────────────────────────────
+
+#[test]
+fn the_console_serves_a_project_its_findings_and_a_rendered_report() {
+    let repo = Repo::new();
+    // Build a project entirely through the CLI, the way a person would.
+    repo.h5i_ok(&["project", "init", "acme", "--title", "ACME web"]);
+    repo.h5i_ok(&[
+        "project", "evidence", "add-text", "-p", "acme", "GET /admin returned 200", "--caption", "admin open",
+    ]);
+    repo.h5i_ok(&[
+        "project", "finding", "create", "-p", "acme", "--title", "Admin panel is open",
+        "--severity", "high", "--summary", "Any account reaches the admin panel.", "--evidence", "E-1",
+    ]);
+    repo.h5i_ok(&["project", "report", "set", "-p", "acme"]); // draft from stdin (empty) — replace below
+    // A report body that exercises directives and a glossary term.
+    let body = "# Report\n\n{{findings}}\n\n{{finding F-1}}\n\nThis is an {{term authorization}} gap.\n\n{{glossary}}\n";
+    let out = Command::new(H5I)
+        .args(["project", "report", "set", "-p", "acme"])
+        .envs(repo.env())
+        .current_dir(&repo.dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut c| {
+            use std::io::Write as _;
+            c.stdin.take().unwrap().write_all(body.as_bytes())?;
+            c.wait_with_output()
+        })
+        .expect("set report");
+    assert!(out.status.success(), "set report: {}", String::from_utf8_lossy(&out.stderr));
+
+    let ui = Console::start(&repo);
+
+    // The project appears in the list, with its counts.
+    let projects = ui.get_authed("/api/projects").json();
+    let rows = projects.as_array().expect("an array");
+    let acme = rows.iter().find(|p| p["name"] == "acme").expect("acme in list");
+    assert_eq!(acme["findings"], 1);
+    assert_eq!(acme["open_findings"], 1);
+
+    // Its detail carries the finding and the evidence copy.
+    let detail = ui.get_authed("/api/project/acme").json();
+    assert_eq!(detail["findings"][0]["id"], "F-1");
+    assert_eq!(detail["findings"][0]["severity"], "high");
+    assert_eq!(detail["evidence"][0]["id"], "E-1");
+    assert!(detail["has_draft"].as_bool().unwrap_or(false));
+
+    // The report renders: directives resolved, the term marked, the glossary
+    // appendix present with its external reference.
+    let report = ui.get_authed("/api/project/acme/report").json();
+    let html = report["html"].as_str().expect("html");
+    assert!(html.contains("findings-table"), "findings table: {html}");
+    assert!(html.contains("Admin panel is open"));
+    assert!(html.contains("data-term=\"authorization\""), "term marked: {html}");
+    assert!(html.contains("id=\"term-authorization\""), "glossary appendix");
+    assert!(report["terms"].as_array().map(|t| !t.is_empty()).unwrap_or(false));
+
+    // A project that does not exist is a 404, not a 500.
+    assert_eq!(ui.get_authed("/api/project/nope").status, 404);
+
+    // The glossary is served for the definition panel.
+    let glossary = ui.get_authed("/api/glossary").json();
+    assert!(glossary.as_array().map(|t| t.len() > 20).unwrap_or(false));
 }

@@ -2404,3 +2404,287 @@ pre.render {
 .plist .srow:last-child {
   border-bottom: none;
 }
+
+/* ── projects: the durable engagement ──────────────────────────────────────── */
+
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+}
+.linklike:hover {
+  text-decoration: underline;
+}
+
+.finding-summary {
+  margin: 6px 0 4px;
+  color: var(--ink-2);
+}
+.finding-detail {
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+.finding-part {
+  margin: 8px 0;
+}
+.finding-part h4 {
+  margin: 0 0 2px;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
+.finding-part p {
+  margin: 0;
+}
+.finding-body {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-sm);
+}
+
+.checklist-block {
+  margin-bottom: 18px;
+}
+.ptable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+.ptable td {
+  border-top: 1px solid var(--line);
+  padding: 4px 8px;
+  vertical-align: top;
+}
+.ptable .mono {
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.note-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.note-list li {
+  border-bottom: 1px solid var(--line);
+  padding: 8px 0;
+}
+.note-list li p {
+  margin: 4px 0 0;
+}
+.note-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+}
+.note-meta code {
+  font-family: var(--font-mono);
+}
+.note-meta time {
+  margin-left: auto;
+}
+
+/* Report tab: a bar of versions, an optional contents rail, the rendered page,
+   and a term panel that slides in beside it. */
+.report-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.report-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.report-versions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.report-actions {
+  margin-left: auto;
+}
+.report-frame {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  position: relative;
+}
+.report-toc {
+  width: 190px;
+  flex: none;
+  border-right: 1px solid var(--line);
+  padding: 12px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--fs-sm);
+}
+.report-toc a {
+  color: var(--ink-2);
+  text-decoration: none;
+}
+.report-toc a:hover {
+  color: var(--accent);
+}
+.report-toc .toc-l3 {
+  padding-left: 12px;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+.report-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 20px 28px;
+  min-width: 0;
+}
+/* The rendered report reuses the print stylesheet's class names, restated here
+   against the console's own tokens so it reads on a dark rail too. */
+.report-html {
+  max-width: 44rem;
+}
+.report-html h1 {
+  font-size: 1.6rem;
+}
+.report-html h2 {
+  font-size: 1.25rem;
+  margin-top: 1.6rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 4px;
+}
+.report-html h3 {
+  font-size: 1.05rem;
+}
+.report-html h4 {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  margin: 10px 0 2px;
+}
+.report-html pre {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-sm);
+}
+.report-html table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+  font-size: var(--fs-sm);
+}
+.report-html th,
+.report-html td {
+  border: 1px solid var(--line);
+  padding: 5px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.report-html .finding {
+  border-left: 3px solid var(--accent);
+  margin: 14px 0;
+}
+.report-html .finding-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 1px 12px;
+  font-size: var(--fs-sm);
+  margin: 6px 0;
+}
+.report-html .finding-meta dt {
+  color: var(--ink-3);
+}
+.report-html .finding-meta dd {
+  margin: 0;
+}
+.report-html .sev {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.report-html .sev-critical,
+.report-html .sev-high {
+  background: var(--bp-red);
+}
+.report-html .sev-medium {
+  background: var(--orange);
+}
+.report-html .sev-low {
+  background: var(--green);
+}
+.report-html .sev-info,
+.report-html .sev-unrated {
+  background: var(--ink-3);
+}
+.report-html .term {
+  border-bottom: 1px dotted var(--accent);
+  cursor: pointer;
+}
+.report-html .missing {
+  color: var(--bp-red);
+  font-style: italic;
+}
+.report-html figure.evidence img {
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.report-html .glossary dt {
+  font-weight: 600;
+  margin-top: 8px;
+}
+.report-html .glossary dd {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.term-panel {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  width: 300px;
+  max-width: calc(100% - 28px);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.28);
+}
+.term-panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.term-panel-head h4 {
+  margin: 0;
+  flex: 1;
+}
+.term-panel p {
+  margin: 6px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}

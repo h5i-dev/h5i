@@ -27,6 +27,20 @@ pub mod scope;
 #[cfg(feature = "ytdlp")]
 pub mod helper;
 pub mod completion;
+// `h5i project`: the durable engagement — notes, findings, evidence, checklists
+// and reports that outlive a session. Not feature-gated: it reads the shapes
+// h5i-core always writes, and promoting a session finding is the whole point of
+// keeping findings when a session is removed.
+pub mod project;
+
+/// A `req_42`, `res_42` or `42` as its sequence number. Shared by `project`,
+/// which copies a session's stored messages into project evidence by the same
+/// ids the websec workbench prints.
+pub fn websec_seq(id: &str) -> anyhow::Result<u64> {
+    let bare = id.strip_prefix("req_").or_else(|| id.strip_prefix("res_")).unwrap_or(id);
+    bare.parse::<u64>()
+        .map_err(|_| anyhow::anyhow!("`{id}` is not a message id: try `req_42`, `res_42` or `42`"))
+}
 // `h5i plugin`: capabilities installed rather than shipped. Not feature-gated,
 // because the verbs are how a user finds out a capability exists at all.
 pub mod plugin;

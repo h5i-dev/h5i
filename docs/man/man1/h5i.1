@@ -34,6 +34,9 @@ Run boxes on another Linux machine you own
 h5i\-plugin(1)
 Install, list or remove a plugin
 .TP
+h5i\-project(1)
+The engagement that outlives its sessions: notes, findings, evidence, checklists and reports
+.TP
 h5i\-skill(1)
 Write or print the agent skill this binary carries
 .TP
@@ -2325,6 +2328,819 @@ Print help
 .TP
 <\fINAME\fR>
 
+.SH "H5I PROJECT"
+The engagement that outlives its sessions: notes, findings, evidence, checklists and reports
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBproject\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I PROJECT INIT"
+Start a project. Findings and reports hang off it from here on
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBinit\fR [\fB\-\-title\fR] [\fB\-\-describe\fR] [\fB\-\-target\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-title\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-describe\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-target\fR \fI<TEXT>\fR
+What is being assessed; repeatable
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I PROJECT LIST"
+Every project on this machine
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT SHOW"
+A project's state: findings by severity, coverage, reports
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshow\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT NOTE"
+Free notes: hypotheses, what the owner said, what is missing
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBnote\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT NOTE ADD"
+Write one down
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBadd\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-tag\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEXT\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-tag\fR \fI<TAG>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEXT\fR]
+The note. Read from stdin when omitted
+.SH "H5I PROJECT NOTE LIST"
+Every note, oldest first
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-archived\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-archived\fR
+Include archived notes
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT NOTE EDIT"
+Change a note, tag it, or archive it
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBedit\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-text\fR] [\fB\-\-tag\fR] [\fB\-\-archive\fR] [\fB\-\-unarchive\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIID\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-text\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-tag\fR \fI<TAG>\fR
+
+.TP
+\fB\-\-archive\fR
+
+.TP
+\fB\-\-unarchive\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIID\fR>
+
+.SH "H5I PROJECT FINDING"
+What was concluded, and how it stands
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBfinding\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT FINDING CREATE"
+Write a finding
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcreate\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-title\fR] [\fB\-\-summary\fR] [\fB\-\-state\fR] [\fB\-\-severity\fR] [\fB\-\-severity\-reason\fR] [\fB\-\-impact\fR] [\fB\-\-affected\fR] [\fB\-\-remediation\fR] [\fB\-\-status\fR] [\fB\-\-owner\fR] [\fB\-\-due\fR] [\fB\-\-body\fR] [\fB\-\-note\fR] [\fB\-\-evidence\fR] [\fB\-\-repro\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-title\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-summary\fR \fI<TEXT>\fR
+A plain\-language explanation for a non\-specialist reader
+.TP
+\fB\-\-state\fR \fI<TEXT>\fR
+How sure you are. Free text: nothing here reads it
+.TP
+\fB\-\-severity\fR \fI<LEVEL>\fR
+critical, high, medium, low or info
+.TP
+\fB\-\-severity\-reason\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-impact\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-affected\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-remediation\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-status\fR \fI<STATE>\fR
+open, in\-progress, fix\-claimed, fixed\-verified or risk\-accepted
+.TP
+\fB\-\-owner\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-due\fR \fI<DATE>\fR
+
+.TP
+\fB\-\-body\fR \fI<TEXT>\fR
+Free Markdown, for whatever else the finding needs said
+.TP
+\fB\-\-note\fR \fI<TEXT>\fR
+Add a note; repeatable over the finding\*(Aqs life
+.TP
+\fB\-\-evidence\fR \fI<IDS>\fR
+Project evidence ids it rests on, as `E\-1,E\-2`
+.TP
+\fB\-\-repro\fR \fI<PATH>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT FINDING UPDATE"
+Change one. Title, severity, status and the prose fields replace; notes and evidence add
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBupdate\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-title\fR] [\fB\-\-summary\fR] [\fB\-\-state\fR] [\fB\-\-severity\fR] [\fB\-\-severity\-reason\fR] [\fB\-\-impact\fR] [\fB\-\-affected\fR] [\fB\-\-remediation\fR] [\fB\-\-status\fR] [\fB\-\-owner\fR] [\fB\-\-due\fR] [\fB\-\-body\fR] [\fB\-\-note\fR] [\fB\-\-evidence\fR] [\fB\-\-repro\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIID\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-title\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-summary\fR \fI<TEXT>\fR
+A plain\-language explanation for a non\-specialist reader
+.TP
+\fB\-\-state\fR \fI<TEXT>\fR
+How sure you are. Free text: nothing here reads it
+.TP
+\fB\-\-severity\fR \fI<LEVEL>\fR
+critical, high, medium, low or info
+.TP
+\fB\-\-severity\-reason\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-impact\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-affected\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-remediation\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-status\fR \fI<STATE>\fR
+open, in\-progress, fix\-claimed, fixed\-verified or risk\-accepted
+.TP
+\fB\-\-owner\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-due\fR \fI<DATE>\fR
+
+.TP
+\fB\-\-body\fR \fI<TEXT>\fR
+Free Markdown, for whatever else the finding needs said
+.TP
+\fB\-\-note\fR \fI<TEXT>\fR
+Add a note; repeatable over the finding\*(Aqs life
+.TP
+\fB\-\-evidence\fR \fI<IDS>\fR
+Project evidence ids it rests on, as `E\-1,E\-2`
+.TP
+\fB\-\-repro\fR \fI<PATH>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIID\fR>
+
+.SH "H5I PROJECT FINDING LIST"
+Every finding, worst first
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT FINDING SHOW"
+One finding in full
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshow\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIID\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIID\fR>
+
+.SH "H5I PROJECT FINDING PROMOTE"
+Copy a session finding into the project, with its evidence
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpromote\fR [\fB\-p\fR|\fB\-\-project\fR] <\fB\-s\fR|\fB\-\-session\fR> [\fB\-\-all\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIID\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session holds the finding(s)
+.TP
+\fB\-\-all\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fIID\fR]
+A session finding id (`finding_3` or `3`). With `\-\-all`, every one
+.SH "H5I PROJECT EVIDENCE"
+Copies of the requests, responses and screenshots findings rest on
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBevidence\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT EVIDENCE ADD"
+Copy one captured message into the project, secrets removed
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBadd\fR [\fB\-p\fR|\fB\-\-project\fR] <\fB\-s\fR|\fB\-\-session\fR> [\fB\-\-caption\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIID\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-caption\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIID\fR>
+`req_42`, `res_42` or `42`
+.SH "H5I PROJECT EVIDENCE ADD-TEXT"
+Keep a log excerpt or note as evidence. Text from stdin when omitted
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBadd\-text\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-caption\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEXT\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-caption\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEXT\fR]
+
+.SH "H5I PROJECT EVIDENCE ADD-FILE"
+Keep a screenshot (png, jpeg, gif or webp) as evidence
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBadd\-file\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-caption\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-caption\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPATH\fR>
+
+.SH "H5I PROJECT EVIDENCE LIST"
+Every evidence copy
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT EVIDENCE SHOW"
+One evidence copy, as an HTTP message or text
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshow\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIID\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIID\fR>
+
+.SH "H5I PROJECT CHECKLIST"
+Checks to cover, imported from Markdown
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBchecklist\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT CHECKLIST IMPORT"
+Import a Markdown checklist. Its list items become tracked items
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBimport\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-name\fR] [\fB\-\-required\fR] [\fB\-\-replace\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIFILE\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-name\fR \fI<SLUG>\fR
+The short name to file it under. Derived from the title otherwise
+.TP
+\fB\-\-required\fR
+Each item must end with a recorded outcome, rather than being advice
+.TP
+\fB\-\-replace\fR
+Revise an existing checklist, keeping ids and recording what dropped
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIFILE\fR>
+The Markdown file, or `\-` for stdin
+.SH "H5I PROJECT CHECKLIST LIST"
+Every checklist and its coverage
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT CHECKLIST SHOW"
+One checklist, its items and their outcomes
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshow\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLUG\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLUG\fR>
+
+.SH "H5I PROJECT CHECKLIST MARK"
+Record an outcome against an item
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBmark\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-status\fR] [\fB\-\-note\fR] [\fB\-\-link\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLUG\fR> <\fIITEM\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-status\fR \fI<STATE>\fR
+open, in\-progress, recorded, blocked or not\-applicable
+.TP
+\fB\-\-note\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-link\fR \fI<ID>\fR
+Link the outcome to a finding, note or evidence id; repeatable
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLUG\fR>
+
+.TP
+<\fIITEM\fR>
+`C3` or `3`
+.SH "H5I PROJECT CHECKLIST COVERAGE"
+Coverage counts, for one checklist or all of them
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcoverage\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fISLUG\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fISLUG\fR]
+
+.SH "H5I PROJECT REPORT"
+The report: a free document with `{{finding F-1}}`-style references
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBreport\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT REPORT NEW"
+Start the report draft from a template
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBnew\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-template\fR] [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-template\fR \fI<FILE>\fR
+A Markdown template to start from, instead of the built\-in one
+.TP
+\fB\-\-force\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT REPORT PATH"
+Print where the draft is, for an editor to open
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpath\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT REPORT SHOW"
+Print the draft, directives unresolved
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshow\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT REPORT SET"
+Replace the draft with this file (or stdin). How the report gets written
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBset\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIFILE\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIFILE\fR] [default: \-]
+The Markdown file, or `\-` for stdin
+.SH "H5I PROJECT REPORT CHECK"
+Lint the draft: dangling ids and missing outcomes are errors, gaps advice
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcheck\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT REPORT ISSUE"
+Freeze the draft as an issued version, with its evidence snapshot
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBissue\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-force\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-force\fR
+Issue even while `check` reports errors
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT REPORT LIST"
+Every issued version
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT REPORT EXPORT"
+Write the report as HTML or PDF
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBexport\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-version\fR] [\fB\-\-format\fR] [\fB\-\-out\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-version\fR \fI<N>\fR
+A version number, or the working draft when omitted
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR [default: html]
+`html` or `pdf`. PDF needs a local Chromium
+.TP
+\fB\-\-out\fR \fI<PATH>\fR
+Where to write it. Defaults beside the report
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT GLOSSARY"
+Look up a security term in plain language
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBglossary\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITERM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITERM\fR]
+The term, or nothing to list them all
 .SH "H5I SKILL"
 Write or print the agent skill this binary carries
 .ie \n(.g .ds Aq \(aq

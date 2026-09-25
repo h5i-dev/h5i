@@ -151,6 +151,18 @@ pub enum Commands {
     #[command(external_subcommand)]
     Plugged(Vec<OsString>),
 
+    /// The engagement that outlives its sessions: notes, findings, evidence,
+    /// checklists and reports.
+    ///
+    /// A browser session is disposable and its findings used to go with it.
+    /// A project keeps them, keeps the evidence they rest on with the secrets
+    /// removed, and turns them into a report you can read in `h5i ui` or export
+    /// to PDF. `h5i project --help` has the verb table.
+    Project {
+        #[command(subcommand)]
+        action: cli::project::ProjectCommands,
+    },
+
     /// Write or print the agent skill this binary carries.
     Skill {
         #[command(subcommand)]
@@ -350,6 +362,7 @@ pub fn run() -> anyhow::Result<()> {
                 ),
             }
         }
+        Commands::Project { action } => cli::project::run(action)?,
         Commands::Skill { action } => cli::skill::run(action)?,
         Commands::Completion { shell } => cli::completion::run(shell)?,
     }

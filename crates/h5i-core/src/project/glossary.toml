@@ -1,0 +1,304 @@
+# The built-in glossary. Versioned with h5i: a report records the version it
+# was rendered with. A project's own glossary.toml adds or overrides terms.
+#
+# `short` is one line, shown on first use in a PDF. `explain` is two or three
+# sentences for someone who does not work in security.
+
+version = 1
+
+[[term]]
+id = "authentication"
+term = "Authentication"
+aliases = ["authn", "login"]
+short = "How a system checks who you are."
+explain = "Authentication is the step where a system confirms who is using it, usually with a password, a one-time code or a single sign-on provider. A weakness here can let someone act as another user without knowing their password."
+link = "https://owasp.org/www-community/Broken_Authentication"
+link_label = "OWASP"
+
+[[term]]
+id = "authorization"
+term = "Authorization"
+aliases = ["authz", "access control"]
+short = "How a system decides what a signed-in person may see or do."
+explain = "Authorization decides, for each request, whether the signed-in person is allowed to read that data or perform that action. Most serious web findings are authorization gaps: the login works, but the check on a particular page or API is missing."
+link = "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+link_label = "OWASP"
+
+[[term]]
+id = "idor"
+term = "IDOR"
+aliases = ["insecure direct object reference", "broken object level authorization", "bola"]
+short = "Changing an ID in a request reaches someone else's data."
+explain = "An IDOR is an authorization gap where the application trusts an identifier in the request, such as an invoice number, without checking that it belongs to the person asking. The fix is a server-side ownership check on every lookup."
+link = "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+link_label = "OWASP"
+
+[[term]]
+id = "xss"
+term = "Cross-site scripting (XSS)"
+aliases = ["xss", "cross-site scripting"]
+short = "Untrusted text is treated as code in another user's browser."
+explain = "Cross-site scripting happens when a page includes text from users or other sources without encoding it, so a browser runs it as script. The script then acts with the victim's session. Output encoding and a strict Content Security Policy are the usual fixes."
+link = "https://owasp.org/www-community/attacks/xss/"
+link_label = "OWASP"
+
+[[term]]
+id = "csrf"
+term = "Cross-site request forgery (CSRF)"
+aliases = ["csrf", "xsrf"]
+short = "Another site makes your browser send a request you did not intend."
+explain = "CSRF abuses the fact that browsers attach cookies automatically. If a state-changing request has no unpredictable token or same-site protection, a different website can trigger it on the user's behalf."
+link = "https://owasp.org/www-community/attacks/csrf"
+link_label = "OWASP"
+
+[[term]]
+id = "sqli"
+term = "SQL injection"
+aliases = ["sqli", "sql injection"]
+short = "Input changes the meaning of a database query."
+explain = "SQL injection occurs when input is pasted into a database query as text instead of being passed as a parameter. It can expose or change data the application never meant to reveal. Parameterised queries prevent it."
+link = "https://owasp.org/www-community/attacks/SQL_Injection"
+link_label = "OWASP"
+
+[[term]]
+id = "ssrf"
+term = "Server-side request forgery (SSRF)"
+aliases = ["ssrf"]
+short = "The server can be made to fetch addresses it should not."
+explain = "SSRF is when an application fetches a URL supplied by a user and does not restrict where it goes. The server may then reach internal services that are not exposed to the internet. Allowlists of destinations are the usual control."
+link = "https://owasp.org/www-community/attacks/Server_Side_Request_Forgery"
+link_label = "OWASP"
+
+[[term]]
+id = "open-redirect"
+term = "Open redirect"
+aliases = ["open redirect"]
+short = "A trusted link can forward users to any other site."
+explain = "An open redirect is a page on a trusted domain that sends visitors onward to an address taken from the link itself. Attackers use it to make phishing links look legitimate. Redirect targets should be restricted to known destinations."
+link = "https://owasp.org/www-community/attacks/Unvalidated_Redirects_and_Forwards_Cheat_Sheet"
+link_label = "OWASP"
+
+[[term]]
+id = "session"
+term = "Session"
+aliases = ["session token", "session cookie"]
+short = "The token that keeps you signed in between requests."
+explain = "After login, the application gives the browser a session token, usually in a cookie. Anyone holding that token is treated as the user, so it must be random, protected in transit and invalidated on logout."
+link = "https://owasp.org/www-community/attacks/Session_hijacking_attack"
+link_label = "OWASP"
+
+[[term]]
+id = "cookie"
+term = "Cookie"
+aliases = ["cookies"]
+short = "A small value the browser stores and sends back to a site."
+explain = "Cookies are how most sites remember a signed-in user. Flags such as Secure, HttpOnly and SameSite control when the browser sends them and whether page scripts can read them."
+link = "https://developer.mozilla.org/en-US/docs/Web/HTTP/Cookies"
+link_label = "MDN"
+
+[[term]]
+id = "cors"
+term = "CORS"
+aliases = ["cross-origin resource sharing"]
+short = "Rules for which other websites may read a site's responses."
+explain = "Cross-Origin Resource Sharing lets a server say which other origins may read its responses from a browser. An overly broad policy, especially one that also allows credentials, can let another site read a user's data."
+link = "https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS"
+link_label = "MDN"
+
+[[term]]
+id = "origin"
+term = "Origin"
+aliases = ["same-origin policy"]
+short = "The scheme, host and port that together identify a website."
+explain = "Browsers keep websites apart by origin: https://shop.example and https://admin.example are different origins. Many protections, including cookies and CORS, are defined in terms of it."
+link = "https://developer.mozilla.org/en-US/docs/Web/Security/Same-origin_policy"
+link_label = "MDN"
+
+[[term]]
+id = "csp"
+term = "Content Security Policy (CSP)"
+aliases = ["csp", "content security policy"]
+short = "A header that limits what scripts and resources a page may load."
+explain = "A Content Security Policy tells the browser which sources of script, style and other content a page may use. A strict policy reduces the damage when some untrusted text slips into a page."
+link = "https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP"
+link_label = "MDN"
+
+[[term]]
+id = "tls"
+term = "TLS"
+aliases = ["https", "ssl"]
+short = "The encryption that protects traffic between browser and server."
+explain = "TLS is what the padlock in the address bar represents. It prevents others on the network from reading or changing traffic. Weak configuration or plain HTTP pages undo that protection."
+link = "https://en.wikipedia.org/wiki/Transport_Layer_Security"
+link_label = "Wikipedia"
+
+[[term]]
+id = "hsts"
+term = "HSTS"
+aliases = ["strict-transport-security"]
+short = "A header telling browsers to always use HTTPS for a site."
+explain = "HTTP Strict Transport Security makes browsers refuse to talk to a site over plain HTTP for a set period. It closes the gap where a first visit could be intercepted before the redirect to HTTPS."
+link = "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security"
+link_label = "MDN"
+
+[[term]]
+id = "jwt"
+term = "JWT"
+aliases = ["json web token"]
+short = "A signed token carrying claims about a user."
+explain = "A JSON Web Token carries information such as the user's ID and role, with a signature so the server can detect tampering. Problems arise when the signature is not verified, the algorithm is negotiable, or tokens never expire."
+link = "https://en.wikipedia.org/wiki/JSON_Web_Token"
+link_label = "Wikipedia"
+
+[[term]]
+id = "mfa"
+term = "Multi-factor authentication (MFA)"
+aliases = ["mfa", "2fa", "two-factor"]
+short = "Login that needs something besides a password."
+explain = "Multi-factor authentication asks for a second proof, such as a code from an app or a hardware key. It stops most attacks that rely on a stolen password alone."
+link = "https://en.wikipedia.org/wiki/Multi-factor_authentication"
+link_label = "Wikipedia"
+
+[[term]]
+id = "rate-limiting"
+term = "Rate limiting"
+aliases = ["rate limit", "throttling", "brute force"]
+short = "A cap on how many attempts can be made in a period."
+explain = "Rate limiting slows down repeated requests, such as password guesses or one-time code attempts. Without it, guessing becomes a matter of time."
+link = "https://owasp.org/www-community/controls/Blocking_Brute_Force_Attacks"
+link_label = "OWASP"
+
+[[term]]
+id = "privilege-escalation"
+term = "Privilege escalation"
+aliases = ["privesc", "vertical privilege escalation"]
+short = "Gaining permissions beyond the ones you were given."
+explain = "Privilege escalation is when an ordinary user can reach administrator functions, or one role can act as a more powerful one. It is usually an authorization gap on a specific action."
+link = "https://owasp.org/www-community/attacks/Privilege_escalation"
+link_label = "OWASP"
+
+[[term]]
+id = "mass-assignment"
+term = "Mass assignment"
+aliases = ["mass assignment", "over-posting"]
+short = "A request sets fields the user should not control."
+explain = "Mass assignment happens when an API copies every field in a request into a stored record, including fields such as role or price that the user was never meant to set. An explicit list of accepted fields prevents it."
+link = "https://cheatsheetseries.owasp.org/cheatsheets/Mass_Assignment_Cheat_Sheet.html"
+link_label = "OWASP"
+
+[[term]]
+id = "path-traversal"
+term = "Path traversal"
+aliases = ["directory traversal", "path traversal"]
+short = "A file name in a request reaches files outside the intended folder."
+explain = "Path traversal occurs when a file name from a request is used to build a path on the server without checks. Sequences like ../ can then point outside the intended directory. Resolving and checking the final path fixes it."
+link = "https://owasp.org/www-community/attacks/Path_Traversal"
+link_label = "OWASP"
+
+[[term]]
+id = "information-disclosure"
+term = "Information disclosure"
+aliases = ["data exposure", "information leak"]
+short = "The application reveals data it did not need to."
+explain = "Information disclosure covers error messages with internals, API responses with extra fields, or files left readable. On its own it may be low risk, but it often helps other attacks."
+link = "https://owasp.org/www-project-web-security-testing-guide/"
+link_label = "OWASP"
+
+[[term]]
+id = "business-logic"
+term = "Business logic flaw"
+aliases = ["logic flaw", "business logic"]
+short = "The rules of the application can be used in an unintended order or way."
+explain = "A business logic flaw is not a coding mistake in one place but a gap in how the workflow is enforced, such as applying a discount twice or skipping a payment step. You find it by working out what the application is meant to allow."
+link = "https://owasp.org/www-community/vulnerabilities/Business_logic_vulnerability"
+link_label = "OWASP"
+
+[[term]]
+id = "race-condition"
+term = "Race condition"
+aliases = ["race", "toctou"]
+short = "Two requests at the same moment get a result one alone could not."
+explain = "A race condition appears when the application checks something and then acts on it, and a second request slips in between. Redeeming a voucher twice is the classic example. Database constraints or locks remove the window."
+link = "https://en.wikipedia.org/wiki/Race_condition#In_software"
+link_label = "Wikipedia"
+
+[[term]]
+id = "severity"
+term = "Severity"
+aliases = ["risk rating"]
+short = "How bad the outcome would be if the issue were exploited."
+explain = "Severity combines what an attacker could achieve with how hard it is to do. This report uses critical, high, medium, low and informational, and each finding states the reason for its rating."
+
+[[term]]
+id = "scope"
+term = "Scope"
+aliases = ["in scope", "out of scope"]
+short = "What the owner authorised to be tested."
+explain = "The scope lists the systems, addresses and activities the owner agreed could be assessed. Anything outside it was not tested, so a clean result says nothing about it."
+link = "https://owasp.org/www-project-web-security-testing-guide/"
+link_label = "OWASP"
+
+[[term]]
+id = "evidence"
+term = "Evidence"
+aliases = []
+short = "The recorded requests, responses or screenshots a finding rests on."
+explain = "Evidence is the observed data behind a finding: the request sent, the response received, a screenshot. h5i removes credentials and tokens from evidence before it is stored, so this report shows what was seen without exposing a live secret."
+
+[[term]]
+id = "remediation"
+term = "Remediation"
+aliases = ["fix", "mitigation"]
+short = "What should be changed to resolve a finding."
+explain = "Remediation is the recommended change, written so a developer can act on it. A mitigation reduces risk without removing the cause; a remediation removes the cause."
+
+[[term]]
+id = "false-positive"
+term = "False positive"
+aliases = []
+short = "Something that looked like a problem but is not."
+explain = "A false positive is a suspected issue that turns out, on closer checking, not to be exploitable. Findings in this report record how sure the assessor was, separately from how severe the issue would be."
+
+[[term]]
+id = "retest"
+term = "Retest"
+aliases = ["fix verification", "re-test"]
+short = "Checking again that a reported fix works."
+explain = "A retest repeats the original check after the owner reports a fix. Until it is done a finding is marked fix-claimed rather than fixed-verified."
+
+[[term]]
+id = "api"
+term = "API"
+aliases = ["endpoint", "rest api"]
+short = "An address the application's front end or other programs call for data."
+explain = "An API is the part of an application that other software talks to. Web front ends call APIs for almost everything, so every API endpoint needs its own authentication and authorization checks."
+link = "https://owasp.org/www-project-api-security/"
+link_label = "OWASP"
+
+[[term]]
+id = "header"
+term = "HTTP header"
+aliases = ["headers", "response header", "request header"]
+short = "A named value sent alongside a request or response."
+explain = "Headers carry metadata such as content type, cookies and security policies. Several protections, including HSTS, CSP and cookie flags, are delivered as headers."
+link = "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers"
+link_label = "MDN"
+
+[[term]]
+id = "input-validation"
+term = "Input validation"
+aliases = ["validation", "sanitisation", "sanitization"]
+short = "Checking that data from users has the expected form."
+explain = "Input validation rejects data that does not match what is expected, such as a number where a number belongs. It narrows what can go wrong but does not replace encoding output or parameterising queries."
+link = "https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html"
+link_label = "OWASP"
+
+[[term]]
+id = "default-credentials"
+term = "Default credentials"
+aliases = ["default password"]
+short = "A login that still uses the password it shipped with."
+explain = "Many products ship with a known username and password. If they are not changed, anyone who knows the product can sign in."
+link = "https://owasp.org/www-community/vulnerabilities/Use_of_hard-coded_password"
+link_label = "OWASP"
+

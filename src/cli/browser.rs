@@ -3342,6 +3342,42 @@ fn moved(was: &str, now: &str) -> anyhow::Result<()> {
     )
 }
 
+/// The session's findings that no project holds a copy of. Empty when the
+/// session has none, or when every one was promoted into its project.
+///
+/// Reads the project store, not the repository: a session belongs to an
+/// engagement, and that is where its findings become permanent.
+fn unpromoted_findings(root: &Path, session: &bs::Session) -> Vec<String> {
+    use h5i_core::project;
+    let sdir = bs::dir(root, &session.id);
+    let findings = h5i_core::session_view::findings(&sdir);
+    if findings.is_empty() {
+        return Vec::new();
+    }
+    // With no project named, none of them can have been promoted.
+    let Some(name) = &session.project else {
+        return findings.into_iter().map(|f| f.id).collect();
+    };
+    let Ok(project_root) = project::root() else {
+        return findings.into_iter().map(|f| f.id).collect();
+    };
+    let Ok(p) = project::Project::open(&project_root, name) else {
+        return findings.into_iter().map(|f| f.id).collect();
+    };
+    let promoted = project::finding::read(&p).unwrap_or_default();
+    findings
+        .into_iter()
+        .filter(|f| project::finding::promoted_from(&promoted, &session.id, &f.id).is_none())
+        .map(|f| f.id)
+        .collect()
+}
+
+/// The selector to hand back in a hint: the friendly name if it has one, else
+/// the id.
+fn label_selector(session: &bs::Session) -> String {
+    session.name.clone().unwrap_or_else(|| session.id.clone())
+}
+
 /// `h5i browser rm`.
 #[allow(clippy::too_many_arguments)]
 fn rm(
@@ -3385,6 +3421,28 @@ fn rm(
                 "why": "it is still live: close it first, or pass --force",
             }));
             continue;
+        }
+        // Findings die with the session unless they were promoted into a
+        // project. Refuse rather than lose them, and name what would go.
+        if !force {
+            let unsaved = unpromoted_findings(root, &session);
+            if !unsaved.is_empty() {
+                let hint = match &session.project {
+                    Some(p) => format!("h5i project finding promote --all -p {p} --session {}", label_selector(&session)),
+                    None => "open the session under a project (--project) and promote them, or pass --force".to_string(),
+                };
+                refused.push(json!({
+                    "name": name,
+                    "id": session.id,
+                    "why": format!(
+                        "{} finding(s) here are not saved to a project and would be lost: {}. \
+                         Save them first ({hint}), or pass --force",
+                        unsaved.len(),
+                        unsaved.join(", ")
+                    ),
+                }));
+                continue;
+            }
         }
         if dry_run {
             let held = bs::held(root, &session.id);

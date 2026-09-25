@@ -531,8 +531,178 @@ export interface MessageView {
   response?: MessageHalf;
 }
 
+// ── projects: the durable engagement ─────────────────────────────────────────
+
+export interface ProjectSummary {
+  name: string;
+  title: string;
+  created: string;
+  findings: number;
+  open_findings: number;
+  by_severity: [string, number][];
+  notes: number;
+  evidence: number;
+  checklists: number;
+  reports: number;
+  updated?: string | null;
+}
+
+export interface ProjectMeta {
+  name: string;
+  title: string;
+  description: string;
+  targets: string[];
+  created: string;
+}
+
+export interface FindingSource {
+  session: string;
+  session_name?: string;
+  finding: string;
+}
+
+export interface FindingRemark {
+  at: string;
+  text: string;
+}
+
+export interface ProjectFinding {
+  id: string;
+  title: string;
+  summary: string;
+  state: string;
+  severity: string;
+  severity_reason: string;
+  impact: string;
+  affected: string;
+  remediation: string;
+  status: string;
+  owner: string;
+  due: string;
+  body: string;
+  notes: FindingRemark[];
+  evidence: string[];
+  repro?: string | null;
+  sources: FindingSource[];
+  from_note?: string | null;
+  created: string;
+  updated: string;
+}
+
+export interface ProjectNote {
+  id: string;
+  text: string;
+  tags: string[];
+  archived: boolean;
+  created: string;
+  updated: string;
+}
+
+export interface EvidenceRecord {
+  id: string;
+  kind: "http" | "text" | "file";
+  added: string;
+  caption: string;
+  session?: string;
+  session_name?: string;
+  seq?: number;
+  method?: string;
+  url?: string;
+  status?: number;
+  removed: number;
+  file?: string;
+  media_type?: string;
+}
+
+export interface ChecklistItem {
+  id: string;
+  group: string;
+  text: string;
+}
+
+export interface ChecklistOutcome {
+  item: ChecklistItem;
+  status: string;
+  notes: [string, string][];
+  links: string[];
+  updated?: string | null;
+}
+
+export interface Coverage {
+  slug: string;
+  title: string;
+  mode: string;
+  version: number;
+  total: number;
+  by_status: [string, number][];
+  closed: number;
+  dropped: number;
+}
+
+export interface ProjectChecklist {
+  checklist: {
+    slug: string;
+    title: string;
+    mode: string;
+    version: number;
+    items: ChecklistItem[];
+  };
+  outcomes: ChecklistOutcome[];
+  coverage: Coverage;
+}
+
+export interface IssuedReport {
+  version: number;
+  issued: string;
+  title: string;
+  findings: number;
+  glossary_version: number;
+}
+
+export interface ProjectDetail {
+  meta: ProjectMeta;
+  summary: ProjectSummary;
+  findings: ProjectFinding[];
+  notes: ProjectNote[];
+  evidence: EvidenceRecord[];
+  checklists: ProjectChecklist[];
+  reports: IssuedReport[];
+  has_draft: boolean;
+}
+
+export interface TocEntry {
+  level: number;
+  id: string;
+  title: string;
+}
+
+export interface GlossaryTerm {
+  id: string;
+  term: string;
+  aliases: string[];
+  short: string;
+  explain: string;
+  link?: string;
+  link_label?: string;
+  origin: string;
+}
+
+export interface ReportView {
+  html: string;
+  toc: TocEntry[];
+  terms: GlossaryTerm[];
+  version?: number | null;
+}
+
 export const api = {
   boxes: () => get<BoxRow[]>("/api/boxes"),
+  projects: () => get<ProjectSummary[]>("/api/projects"),
+  project: (name: string) => get<ProjectDetail>(`/api/project/${encodeURIComponent(name)}`),
+  report: (name: string, version?: number) =>
+    get<ReportView>(
+      `/api/project/${encodeURIComponent(name)}/report${version != null ? `?version=${version}` : ""}`,
+    ),
+  glossary: () => get<GlossaryTerm[]>("/api/glossary"),
   box: (agent: string, slug: string) =>
     get<BoxDetail>(`/api/box/${encodeURIComponent(agent)}/${encodeURIComponent(slug)}`),
   receipt: (agent: string, slug: string, id: string) =>

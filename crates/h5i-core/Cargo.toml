@@ -37,6 +37,10 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 sha2 = "0.10"
+# Rendering a report's Markdown to HTML for the console and the PDF. `html`
+# escapes text; raw HTML in the source is passed through the block filter here,
+# not by the parser, so a report cannot inject script.
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 # The quarantine a runner export is unpacked into: a throwaway repository with
 # its own object database, gone when the import returns.
 tempfile = "3.8"

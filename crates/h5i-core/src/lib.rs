@@ -29,6 +29,11 @@ pub mod server;
 // What the console shows about browser sessions, and which of them wants a
 // human. Not feature-gated: `h5i box watch` and the TUI want the same answer.
 pub mod message_view;
+// The durable half of an engagement: notes, findings, evidence, checklists and
+// reports that outlive the sessions they came from (docs/design/design-project.md).
+// Not feature-gated: it reads the shapes `message_view` and `browser_session`
+// write, both of which every build has.
+pub mod project;
 pub mod session_view;
 // Reading `share.json` for everything below `h5i-share`. See the module note:
 // there were three hand-rolled probes here and they did not agree with the

@@ -48,6 +48,10 @@ pub const PAGES: &[Page] = &[
         path: "references/recon.md",
         text: include_str!("../../../skills/h5i/references/recon.md"),
     },
+    Page {
+        path: "references/project.md",
+        text: include_str!("../../../skills/h5i/references/project.md"),
+    },
 ];
 
 /// The name the skill installs under.

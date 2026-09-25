@@ -185,6 +185,11 @@
 <a class="t3" href="#findings">Findings</a>
 <a class="t3" href="#what-is-safe-to-paste-and-what-is-not">What is safe to paste, and what is not</a>
 </div>
+<a class="t2" href="#h5i-project">h5i project</a>
+<div class="t3group">
+<a class="t3" href="#checklists">Checklists</a>
+<a class="t3" href="#the-report">The report</a>
+</div>
 <a class="t2" href="#h5i-test">h5i test</a>
 <div class="t3group">
 <a class="t3" href="#where-tests-live">Where tests live</a>
@@ -460,6 +465,10 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 <td>Replay portable attack flows and check them with your own oracles. A plugin.</td>
 </tr>
 <tr>
+<td><a href="#h5i-project"><code>h5i project</code></a></td>
+<td>The durable engagement: notes, findings, evidence, checklists and reports.</td>
+</tr>
+<tr>
 <td><a href="#boxes"><code>h5i box</code></a></td>
 <td>Create, run, inspect and export boxes. Optional containment.</td>
 </tr>
@@ -540,6 +549,8 @@ directories in <a href="#a-browser-sessions-directory">Files</a> rather than som
 has to ship a verb for.</p>
 <p>When <code>~/.config/h5i/projects/&lt;name&gt;.toml</code> exists, <code>--project</code> also resolves it
 as the session's engagement scope. See <a href="#scope-the-engagement-kind">Scope</a>.</p>
+<p>The name is also the durable project <a href="#h5i-project"><code>h5i project</code></a> keeps: the
+findings, evidence and reports that outlive any one session under it.</p>
 <h3 id="browser-identities">Browser identities</h3>
 <p>A session uses one identity for HTTP headers, JavaScript, screen geometry, locale,
 and time zone. The identity is fixed when the session opens and recorded in its
@@ -1125,6 +1136,102 @@ is the one artifact h5i keeps that is <em>not</em> safe to paste: owner-only, ne
 an export unless named, never rendered by the console. The request log is the
 part you can paste. See <a href="#receipts">Receipts</a> for which lane observed what, and
 <a href="#a-browser-sessions-directory">Files</a> for what is on disk.</p>
+<p>A session finding lives beside that session and goes when the session does. To
+keep it, promote it into a project (below), which copies both the finding and
+the messages it cites, with credentials removed.</p>
+<hr />
+<h2 id="h5i-project">h5i project</h2>
+<p>A browser session is disposable. What you concluded from it should not be. A
+project is the durable side of an engagement: notes, findings, the evidence
+they rest on, the checklists you were asked to cover, and the reports issued
+from them. It lives under <code>~/.local/share/h5i/projects</code>, owner-only, and nothing
+under <code>h5i browser rm</code> touches it.</p>
+<pre><code class="language-bash">h5i project init acme --title &quot;ACME web&quot; --target https://acme.test
+h5i browser open https://acme.test --project acme --capture
+# ... find something, write a session finding, then keep it:
+h5i project finding promote --all -p acme --session &lt;name&gt;
+</code></pre>
+<p>Promoting copies each cited request and response into the project as evidence,
+with <code>Authorization</code>, <code>Cookie</code>, secret-looking query parameters and JSON or form
+fields replaced by <code>[removed]</code>. The copy is the display version; the raw capture
+is never copied. <code>h5i browser rm</code> refuses to remove a session whose findings are
+not saved to a project yet, and names the promote command, so work is not lost
+by a cleanup.</p>
+<p>A finding keeps severity, the assessor's confidence, and the fix status as three
+separate fields: "high but unconfirmed" and "low but confirmed" are different
+facts, and so are "fix claimed" and "fix verified".</p>
+<pre><code class="language-bash">h5i project finding create -p acme --title &quot;Users list readable by any account&quot; \
+    --severity high --severity-reason &quot;any authenticated user reads all users&quot; \
+    --summary &quot;A normal login can read the full user list.&quot; \
+    --remediation &quot;Add a role check on /admin/users.&quot; --evidence E-1
+h5i project note add -p acme &quot;admin panel is at /admin, owner confirmed&quot;
+</code></pre>
+<h3 id="checklists">Checklists</h3>
+<p>A checklist is any Markdown list you import: an internal standard, a client's
+list, last round's notes. Its items become tracked, and a <code>--required</code> list has
+to end each item with an outcome (<code>recorded</code>, <code>blocked</code>, <code>not-applicable</code>) and a
+reason. Coverage is reported as counts, never a score: "18 of 24 items have an
+outcome; 4 open; 2 blocked" says what was looked at, not that the rest is safe.</p>
+<pre><code class="language-bash">h5i project checklist import -p acme checks.md --required
+h5i project checklist mark -p acme C1 --status recorded --note &quot;role check present&quot; --link F-2
+h5i project checklist coverage -p acme
+</code></pre>
+<h3 id="the-report">The report</h3>
+<p>The report is a free Markdown document you write. h5i fills the counts, ids and
+evidence through directives it resolves against the project, so the prose cannot
+drift from the data:</p>
+<table>
+<thead>
+<tr>
+<th>directive</th>
+<th>renders</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>{{finding F-3}}</code></td>
+<td>the finding in full: severity, status, impact, remediation, evidence</td>
+</tr>
+<tr>
+<td><code>{{findings}}</code></td>
+<td>a table of every finding</td>
+</tr>
+<tr>
+<td><code>{{evidence E-2}}</code></td>
+<td>the redacted request and response</td>
+</tr>
+<tr>
+<td><code>{{coverage}}</code></td>
+<td>coverage counts for every checklist</td>
+</tr>
+<tr>
+<td><code>{{term IDOR}}</code></td>
+<td>mark a term for the glossary and a definition panel</td>
+</tr>
+<tr>
+<td><code>{{glossary}}</code></td>
+<td>define every term the report used</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">h5i project report new -p acme          # a starting template, not a form
+h5i project report set -p acme report.md   # or write the draft yourself
+h5i project report check -p acme        # dangling ids and missing outcomes are errors
+h5i project report issue -p acme        # freeze it as a versioned snapshot
+h5i project report export -p acme --version 1 --format pdf
+</code></pre>
+<p><code>check</code> is deterministic: an unknown directive, an id that names nothing, and a
+required item with no outcome are errors; a finding with no evidence or no
+remediation is advice. <code>issue</code> freezes the draft with a snapshot of everything
+it referenced, so a later change to a finding never rewrites a report already
+handed over. PDF export uses a local Chromium when one is found (<code>$H5I_CHROME</code>
+to name it); otherwise export HTML and print from a browser.</p>
+<p>The same report renders in <code>h5i ui</code> under the project's Report tab, where a
+marked term is a button that opens its plain-language definition, with a link to
+OWASP, MDN or Wikipedia to read more.</p>
+<p>Every term has a plain-language definition; <code>h5i project glossary &lt;term&gt;</code> prints
+one on the command line, and a project's own <code>glossary.toml</code> adds or overrides
+terms.</p>
 <hr />
 <h2 id="h5i-test">h5i test</h2>
 <p>A finding that is fixed and never tested again comes back. <code>h5i test</code> replays a

@@ -154,6 +154,7 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 | [`h5i websec`](#h5i-websec) | Read, edit, resend and compare what a session sent. A plugin. |
 | [`h5i recon`](#h5i-recon) | What a target exposes, and how h5i knows. A plugin. |
 | [`h5i test`](#h5i-test) | Replay portable attack flows and check them with your own oracles. A plugin. |
+| [`h5i project`](#h5i-project) | The durable engagement: notes, findings, evidence, checklists and reports. |
 | [`h5i box`](#boxes) | Create, run, inspect and export boxes. Optional containment. |
 | [`h5i box share`](#h5i-box-share) | Open one box's dev server to one other person. The only inbound path. |
 | [`h5i join`](#h5i-box-share) | Open a box someone else is sharing, from their ticket. |
@@ -200,6 +201,9 @@ has to ship a verb for.
 
 When `~/.config/h5i/projects/<name>.toml` exists, `--project` also resolves it
 as the session's engagement scope. See [Scope](#scope-the-engagement-kind).
+
+The name is also the durable project [`h5i project`](#h5i-project) keeps: the
+findings, evidence and reports that outlive any one session under it.
 
 ### Browser identities
 
@@ -835,6 +839,98 @@ is the one artifact h5i keeps that is *not* safe to paste: owner-only, never in
 an export unless named, never rendered by the console. The request log is the
 part you can paste. See [Receipts](#receipts) for which lane observed what, and
 [Files](#a-browser-sessions-directory) for what is on disk.
+
+A session finding lives beside that session and goes when the session does. To
+keep it, promote it into a project (below), which copies both the finding and
+the messages it cites, with credentials removed.
+
+---
+
+## h5i project
+
+A browser session is disposable. What you concluded from it should not be. A
+project is the durable side of an engagement: notes, findings, the evidence
+they rest on, the checklists you were asked to cover, and the reports issued
+from them. It lives under `~/.local/share/h5i/projects`, owner-only, and nothing
+under `h5i browser rm` touches it.
+
+```bash
+h5i project init acme --title "ACME web" --target https://acme.test
+h5i browser open https://acme.test --project acme --capture
+# ... find something, write a session finding, then keep it:
+h5i project finding promote --all -p acme --session <name>
+```
+
+Promoting copies each cited request and response into the project as evidence,
+with `Authorization`, `Cookie`, secret-looking query parameters and JSON or form
+fields replaced by `[removed]`. The copy is the display version; the raw capture
+is never copied. `h5i browser rm` refuses to remove a session whose findings are
+not saved to a project yet, and names the promote command, so work is not lost
+by a cleanup.
+
+A finding keeps severity, the assessor's confidence, and the fix status as three
+separate fields: "high but unconfirmed" and "low but confirmed" are different
+facts, and so are "fix claimed" and "fix verified".
+
+```bash
+h5i project finding create -p acme --title "Users list readable by any account" \
+    --severity high --severity-reason "any authenticated user reads all users" \
+    --summary "A normal login can read the full user list." \
+    --remediation "Add a role check on /admin/users." --evidence E-1
+h5i project note add -p acme "admin panel is at /admin, owner confirmed"
+```
+
+### Checklists
+
+A checklist is any Markdown list you import: an internal standard, a client's
+list, last round's notes. Its items become tracked, and a `--required` list has
+to end each item with an outcome (`recorded`, `blocked`, `not-applicable`) and a
+reason. Coverage is reported as counts, never a score: "18 of 24 items have an
+outcome; 4 open; 2 blocked" says what was looked at, not that the rest is safe.
+
+```bash
+h5i project checklist import -p acme checks.md --required
+h5i project checklist mark -p acme C1 --status recorded --note "role check present" --link F-2
+h5i project checklist coverage -p acme
+```
+
+### The report
+
+The report is a free Markdown document you write. h5i fills the counts, ids and
+evidence through directives it resolves against the project, so the prose cannot
+drift from the data:
+
+| directive | renders |
+|---|---|
+| `{{finding F-3}}` | the finding in full: severity, status, impact, remediation, evidence |
+| `{{findings}}` | a table of every finding |
+| `{{evidence E-2}}` | the redacted request and response |
+| `{{coverage}}` | coverage counts for every checklist |
+| `{{term IDOR}}` | mark a term for the glossary and a definition panel |
+| `{{glossary}}` | define every term the report used |
+
+```bash
+h5i project report new -p acme          # a starting template, not a form
+h5i project report set -p acme report.md   # or write the draft yourself
+h5i project report check -p acme        # dangling ids and missing outcomes are errors
+h5i project report issue -p acme        # freeze it as a versioned snapshot
+h5i project report export -p acme --version 1 --format pdf
+```
+
+`check` is deterministic: an unknown directive, an id that names nothing, and a
+required item with no outcome are errors; a finding with no evidence or no
+remediation is advice. `issue` freezes the draft with a snapshot of everything
+it referenced, so a later change to a finding never rewrites a report already
+handed over. PDF export uses a local Chromium when one is found (`$H5I_CHROME`
+to name it); otherwise export HTML and print from a browser.
+
+The same report renders in `h5i ui` under the project's Report tab, where a
+marked term is a button that opens its plain-language definition, with a link to
+OWASP, MDN or Wikipedia to read more.
+
+Every term has a plain-language definition; `h5i project glossary <term>` prints
+one on the command line, and a project's own `glossary.toml` adds or overrides
+terms.
 
 ---
 
