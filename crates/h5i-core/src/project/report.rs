@@ -149,9 +149,17 @@ result on something not tested is not a clean result.>
 
 ## Findings
 
+> Rule for this section: a finding rated low, medium, high or critical MUST
+> carry a complete proof of concept, the exact requests that reproduce it and
+> the response that shows impact, cited as evidence. No complete PoC means it is
+> not a confirmed vulnerability: rate it `info`, and say what is still needed to
+> confirm it. Look twice for a false positive before you write any finding down.
+
 {{{{findings}}}}
 
-<Then a section per finding you want to expand, writing the narrative around it.>
+<Then a section per finding you want to expand, writing the narrative around it.
+For a rated finding, include the PoC (the request that reproduces it and the
+response that shows impact); for an `info` item, say what would confirm it.>
 
 ## Remediation plan
 
@@ -238,9 +246,22 @@ pub fn check(project: &Project) -> Result<Vec<Problem>> {
         .map(|d| super::normalise_id("F", &d.arg).unwrap_or(d.arg))
         .collect();
     let renders_table = directives(&source).iter().any(|d| d.kind == "findings");
+    // A rated severity is a claim of a real, reproducible issue, so it must
+    // rest on a PoC. Without one it is not a confirmed vulnerability, and the
+    // honest rating is `info`.
+    const RATED: [&str; 4] = ["critical", "high", "medium", "low"];
     for f in &ctx.findings {
-        if f.evidence.is_empty() && f.repro.is_none() {
-            problems.push(Problem::advice(format!("{} ({}) cites no evidence and has no repro", f.id, f.title)));
+        let has_poc = !f.evidence.is_empty() || f.repro.is_some();
+        if !has_poc {
+            if RATED.contains(&f.severity.as_str()) {
+                problems.push(Problem::error(format!(
+                    "{} ({}) is rated {} but cites no evidence and has no repro. A rated finding needs a \
+                     complete PoC; without one, rate it `info` and say what would confirm it",
+                    f.id, f.title, f.severity
+                )));
+            } else {
+                problems.push(Problem::advice(format!("{} ({}) cites no evidence and has no repro", f.id, f.title)));
+            }
         }
         if f.severity.is_empty() {
             problems.push(Problem::advice(format!("{} ({}) has no severity", f.id, f.title)));
@@ -397,7 +418,8 @@ mod tests {
     #[test]
     fn issue_refuses_on_error_then_freezes_and_versions() {
         let (_t, p) = project();
-        finding::create(&p, Change { title: Some("x".into()), severity: Some("low".into()), ..Change::default() }).unwrap();
+        // `info` needs no PoC; a rated finding would (tested below).
+        finding::create(&p, Change { title: Some("x".into()), severity: Some("info".into()), ..Change::default() }).unwrap();
         save_draft(&p, "{{finding F-9}}").unwrap();
         assert!(issue(&p, false).is_err());
         save_draft(&p, "# Report\n{{finding F-1}}").unwrap();
@@ -411,5 +433,21 @@ mod tests {
         let (v2, _) = issue(&p, false).unwrap();
         assert_eq!(v2, 2);
         assert_eq!(issued(&p).len(), 2);
+    }
+
+    #[test]
+    fn a_rated_finding_without_a_poc_is_an_error() {
+        let (_t, p) = project();
+        finding::create(&p, Change { title: Some("no poc".into()), severity: Some("low".into()), ..Change::default() }).unwrap();
+        save_draft(&p, "# Report\n{{finding F-1}}").unwrap();
+        let problems = check(&p).unwrap();
+        assert!(
+            problems.iter().any(|pr| pr.severity == "error" && pr.message.contains("rated low") && pr.message.contains("PoC")),
+            "{problems:?}"
+        );
+        assert!(issue(&p, false).is_err(), "a rated, PoC-less finding must block issue");
+        // Rated info needs no PoC.
+        finding::update(&p, "F-1", Change { severity: Some("info".into()), ..Change::default() }).unwrap();
+        assert!(!check(&p).unwrap().iter().any(|pr| pr.severity == "error"));
     }
 }
