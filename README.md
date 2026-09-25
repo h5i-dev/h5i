@@ -69,7 +69,7 @@ h5i recon endpoints --state confirmed                     # the inventory, with 
 ## 1. Install
 
 ```bash
-curl -fsSL https://h5i.dev/install.sh | sh
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec
 # curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh  # if you would rather not add a domain to the chain:
 # cargo install --path .                                                         # build from source
 ```
