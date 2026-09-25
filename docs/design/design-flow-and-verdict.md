@@ -163,13 +163,25 @@ A matcher is attached to a step and evaluates against that step's response:
 }
 ```
 
-The whole grammar is: leaf matchers (`status` equals, `body` word or `regex`,
-`header` name plus `contains` or `regex`) and the combinators `all`, `any`,
-`not`. That is the Nuclei matcher surface and nothing past it. There are no
-variables the matcher writes, no control flow, no arithmetic, no calls out. A
-step with an `expect` that fails is a failed step, and a flow's verdict is that
-every `expect` held (source 2's pass) unless a step has none, in which case that
-step contributes no verdict and the flow falls back to source 1 or 3.
+The grammar is: leaf matchers (`status` equals; `body`, `headers` block or whole
+`response` word or `regex`; `header` name plus `contains` or `regex`; and `dsl`,
+below) and the combinators `all`, `any`, `not`. A step with an `expect` that
+fails is a failed step, and a flow's verdict is that every `expect` held (source
+2's pass) unless a step has none, in which case that step contributes no verdict
+and the flow falls back to source 1 or 3.
+
+The `dsl` leaf is the one that looks like it should be code and is not. Nuclei's
+matcher DSL (`!contains(tolower(body), '<html') && status_code == 200`) is a
+*pure* expression language: it reads only the response and calls only pure
+functions (string tests, `regex`, `len`, `compare_versions`, `base64`, the
+hashes, `mmh3`), with no I/O, no exec, no network. So `h5i-wire`'s `dsl` module
+evaluates it in-engine, and it stays in the shareable layer. The line that keeps
+it there is the evaluator's refusal: an expression that names a variable or calls
+a function the evaluator does not implement is rejected at parse, so an accepted
+expression is one that is both pure and evaluated faithfully. Timing (`duration`),
+request-side values (`host`) and another request's response (`body_1`) are
+deliberately not bound, because a shared verdict must be a deterministic function
+of the one response in front of it.
 
 The hard line, and the rule to hold in review: anything a matcher cannot say does
 not go into the matcher. It goes to an oracle (if the flow is repository-owned)
@@ -248,25 +260,26 @@ lowered into a bash script, because a skipped template is a gap and a smuggled
 oracle is a shared executable.
 
 Measured against the public `nuclei-templates` corpus (2026-09, 11,640 http
-templates), the importer produces a runnable test for about 48% of them (raw
-single requests, header/response matchers, output-extractor dropping, and
-payload sweeps included). The remaining ~52% is not a defect in the importer, it
-is the boundary doing its job:
+templates), the importer produces a runnable test for about 57% of them (raw
+single requests, header/response and `dsl` matchers, output-extractor dropping,
+and payload sweeps included). The `dsl` evaluator did most of the recent lift:
+the "unsupported matcher" refusal fell from ~2,000 to under a dozen. The
+remaining ~43% is not a defect in the importer, it is the boundary doing its job:
 
-- ~2,000 use a `dsl` matcher: that is code, and its home is an oracle (source 3),
-  not the shareable layer.
-- ~1,600 carry a payload or template variable the importer cannot resolve to a
-  sweep (a value computed by another step, an out-of-band token): unresolved
-  input, not data.
+- ~1,200 carry a template variable in the path the importer cannot resolve
+  (an out-of-band URL, a value computed elsewhere): unresolved input, not data.
 - ~1,100 are `flow`/`javascript`/`headless`/`code`: code, refused by F9.
-- ~1,000 are multi-request raw blocks whose cross-response matchers are almost
-  always `dsl` anyway.
+- ~1,000 are multi-request raw blocks, whose cross-response `dsl` reads another
+  request's response (`body_1`) and so leaves the single-response model.
+- ~1,000 use a `dsl` variable that is timing (`duration`), request-side (`host`)
+  or another request's response, which a deterministic shared verdict cannot bind.
+- a few hundred reference a file-backed payload list, which does not travel.
 
 So the number is a description of how much of Nuclei is already expressible as
 data plus a bounded sweep, not a target to chase by weakening the boundary. The
-one workflow the payload work added is the genuine miss the corpus surfaced:
-active fuzzing from a portable file, which `experiment` did before only over a
-captured request. Every `expect` it builds is verified against the shared
+remaining buckets are unresolved input, genuine code, and cross-request state,
+each of which has a home (a sweep, an oracle, a multi-step flow) that is not the
+single-response shareable verdict. Every `expect` it builds is verified against the shared
 grammar (F6) before it is written, so an import never emits a verdict the engines
 would reject. The output is data: committable into `.h5i-tests/` as an
 oracle-less test, and shareable.
