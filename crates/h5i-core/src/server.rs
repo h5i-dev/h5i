@@ -1224,9 +1224,14 @@ async fn api_project_report(
         let asset_base = format!("src=\"/api/project/{name}/asset/");
         match q.version {
             Some(v) => {
+                // The stored `report.html` is a whole standalone page — its own
+                // `<head>`, `<style>` and cover, for `report export` and the
+                // PDF. Injected into the console it would leak that stylesheet
+                // over the whole app, so only the `<main>` body goes to the
+                // page; the console draws its own chrome around it.
                 let html = std::fs::read_to_string(p.path(&format!("{}/v{v}/report.html", project::report::DIR))).ok()?;
                 Some(ReportView {
-                    html: html.replace("src=\"evidence/", &asset_base),
+                    html: report_body(&html).replace("src=\"evidence/", &asset_base),
                     toc: Vec::new(),
                     terms: Vec::new(),
                     version: Some(v),
@@ -1247,6 +1252,19 @@ async fn api_project_report(
     })
     .await;
     view.map(Json).ok_or(StatusCode::NOT_FOUND)
+}
+
+/// The `<main class="report">…</main>` inner HTML of a standalone report page,
+/// so the console renders the body without the page's own `<head>`/`<style>`.
+fn report_body(full: &str) -> String {
+    const OPEN: &str = "<main class=\"report\">";
+    if let Some(start) = full.find(OPEN) {
+        let after = &full[start + OPEN.len()..];
+        if let Some(end) = after.rfind("</main>") {
+            return after[..end].to_string();
+        }
+    }
+    full.to_string()
 }
 
 /// `GET /api/project/:name/asset/:file`: one evidence image, by its stored file
