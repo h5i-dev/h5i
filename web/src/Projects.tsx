@@ -631,16 +631,36 @@ function ReportTab({ name, detail }: { name: string; detail: ProjectDetail }) {
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, [name, version]);
 
-  // A term in the report is a button: click it, and its plain-language
-  // definition opens beside the page. Keyboard reaches it too.
+  // Scroll to an element by id within the report, rather than letting the
+  // browser touch `location.hash` — the console is a hash-routed app, so a real
+  // `#F-1` jump would be read as a route change and navigate away.
+  const scrollToAnchor = useCallback((id: string) => {
+    const root = bodyRef.current;
+    if (!root) return;
+    let target: HTMLElement | null = null;
+    try {
+      target = root.querySelector(`#${CSS.escape(id)}`);
+    } catch {
+      target = null;
+    }
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  // Clicks inside the rendered report. An in-page link (`#F-1`, a TOC entry)
+  // scrolls; a term opens its plain-language definition beside the page.
   const onBodyClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
+      const anchor = (e.target as HTMLElement).closest("a[href^='#']") as HTMLAnchorElement | null;
+      if (anchor) {
+        e.preventDefault();
+        scrollToAnchor(decodeURIComponent(anchor.getAttribute("href")!.slice(1)));
+        return;
+      }
       const el = (e.target as HTMLElement).closest(".term") as HTMLElement | null;
-      if (!el) return;
-      const id = el.dataset.term;
+      const id = el?.dataset.term;
       if (id && glossary[id]) setPanel(glossary[id]);
     },
-    [glossary],
+    [glossary, scrollToAnchor],
   );
 
   if (!detail.has_draft && versions.length === 0) {
@@ -677,7 +697,15 @@ function ReportTab({ name, detail }: { name: string; detail: ProjectDetail }) {
         {view && view.toc.length > 0 ? (
           <nav className="report-toc">
             {view.toc.map((t) => (
-              <a key={t.id} href={`#${t.id}`} className={`toc-l${t.level}`}>
+              <a
+                key={t.id}
+                href={`#${t.id}`}
+                className={`toc-l${t.level}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  scrollToAnchor(t.id);
+                }}
+              >
                 {t.title}
               </a>
             ))}

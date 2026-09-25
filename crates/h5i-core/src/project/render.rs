@@ -76,7 +76,18 @@ pub fn render(_project: &Project, source: &str, ctx: &Context, _meta: &Meta) -> 
         {
             used_terms.push(t.id.clone());
         }
-        prepared = prepared.replacen(&d.raw, &token(i), 1);
+        // A block directive becomes its own paragraph, so it can never be left
+        // inside a `<p>`, a `<strong>` or a list marker the author wrapped it
+        // in: injecting a `<section>` or a `<table>` there would style the whole
+        // block by the surrounding inline tag (an author's `**{{finding F-1}}**`
+        // rendered the entire finding bold). `term` is the one inline directive
+        // and stays where it is.
+        let replacement = if d.kind == "term" {
+            token(i)
+        } else {
+            format!("\n\n{}\n\n", token(i))
+        };
+        prepared = prepared.replacen(&d.raw, &replacement, 1);
     }
 
     let mut options = Options::empty();
@@ -541,6 +552,17 @@ mod tests {
         assert!(r.body.contains("sev-high"));
         assert!(r.body.contains("findings-table"));
         assert!(r.toc.iter().any(|e| e.title == "Detail" && e.id == "detail"));
+    }
+
+    #[test]
+    fn a_block_directive_wrapped_in_emphasis_is_not_left_inside_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = Project::init(tmp.path(), "p", "", "", vec![]).unwrap();
+        finding::create(&p, Change { title: Some("wrapped".into()), severity: Some("high".into()), ..Change::default() }).unwrap();
+        // An author who bolded the whole directive used to bold the finding.
+        let r = render(&p, "## Detail\n\n**{{finding F-1}}**", &ctx(&p), &Meta::default());
+        assert!(!r.body.contains("<strong><section"), "the section must not be inside <strong>: {}", r.body);
+        assert!(r.body.contains("<section class=\"finding\" id=\"F-1\""));
     }
 
     #[test]
