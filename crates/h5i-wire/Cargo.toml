@@ -19,6 +19,11 @@ serde_json = { workspace = true }
 url = "2.5"
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
+# The DSL's hashing and encoding functions (mmh3 is implemented inline; sha2 is
+# already a dependency below).
+base64 = "0.22"
+md-5 = "0.10"
+sha1 = "0.10"
 # The ledger names an endpoint by hashing its key.
 sha2 = { workspace = true }
 

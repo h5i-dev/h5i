@@ -166,6 +166,16 @@ fn known_function(name: &str) -> bool {
             | "concat"
             | "tostring"
             | "to_string"
+            | "hex_encode"
+            | "base64"
+            | "base64_encode"
+            | "base64_py"
+            | "base64_decode"
+            | "md5"
+            | "sha1"
+            | "sha256"
+            | "mmh3"
+            | "compare_versions"
     )
 }
 
@@ -411,9 +421,168 @@ fn call(name: &str, args: &[Expr], env: &Env) -> Result<Value, String> {
             arity(1)?;
             Ok(Value::Str(s(0)))
         }
+        "hex_encode" => {
+            arity(1)?;
+            Ok(Value::Str(hex(s(0).as_bytes())))
+        }
+        "base64" | "base64_encode" => {
+            arity(1)?;
+            use base64::Engine as _;
+            Ok(Value::Str(base64::engine::general_purpose::STANDARD.encode(s(0).as_bytes())))
+        }
+        "base64_py" => {
+            arity(1)?;
+            use base64::Engine as _;
+            // Python's base64.encodebytes: standard base64 wrapped at 76 columns
+            // with a trailing newline. This is the exact input a favicon `mmh3`
+            // hash is taken over, so the variant matters.
+            let raw = base64::engine::general_purpose::STANDARD.encode(s(0).as_bytes());
+            let mut out = String::new();
+            for chunk in raw.as_bytes().chunks(76) {
+                out.push_str(std::str::from_utf8(chunk).unwrap());
+                out.push('\n');
+            }
+            Ok(Value::Str(out))
+        }
+        "base64_decode" => {
+            arity(1)?;
+            use base64::Engine as _;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(s(0).as_bytes())
+                .map_err(|e| format!("`base64_decode` got invalid base64: {e}"))?;
+            Ok(Value::Str(String::from_utf8_lossy(&bytes).into_owned()))
+        }
+        "md5" => {
+            arity(1)?;
+            use md5::Digest as _;
+            Ok(Value::Str(hex(&md5::Md5::digest(s(0).as_bytes()))))
+        }
+        "sha1" => {
+            arity(1)?;
+            use sha1::Digest as _;
+            Ok(Value::Str(hex(&sha1::Sha1::digest(s(0).as_bytes()))))
+        }
+        "sha256" => {
+            arity(1)?;
+            use sha2::Digest as _;
+            Ok(Value::Str(hex(&sha2::Sha256::digest(s(0).as_bytes()))))
+        }
+        "mmh3" => {
+            arity(1)?;
+            // Nuclei returns the 32-bit MurmurHash3 as a signed integer string,
+            // which is what a favicon-hash matcher compares against.
+            Ok(Value::Str((murmur3_32(s(0).as_bytes()) as i32).to_string()))
+        }
+        "compare_versions" => {
+            arity(2)?;
+            let version = s(0);
+            let ok = values[1..]
+                .iter()
+                .map(|c| constraint_holds(&version, &c.as_string()))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .all(|held| held);
+            Ok(Value::Bool(ok))
+        }
         // validate() guarantees the name is known.
         _ => Err(format!("unsupported DSL function `{name}`")),
     }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+/// MurmurHash3 x86 32-bit, seed 0: the variant Nuclei's `mmh3` uses.
+fn murmur3_32(data: &[u8]) -> u32 {
+    const C1: u32 = 0xcc9e_2d51;
+    const C2: u32 = 0x1b87_3593;
+    let mut h: u32 = 0;
+    let blocks = data.len() / 4;
+    for i in 0..blocks {
+        let mut k = u32::from_le_bytes([data[i * 4], data[i * 4 + 1], data[i * 4 + 2], data[i * 4 + 3]]);
+        k = k.wrapping_mul(C1).rotate_left(15).wrapping_mul(C2);
+        h ^= k;
+        h = h.rotate_left(13).wrapping_mul(5).wrapping_add(0xe654_6b64);
+    }
+    let tail = &data[blocks * 4..];
+    let mut k1: u32 = 0;
+    if tail.len() >= 3 {
+        k1 ^= u32::from(tail[2]) << 16;
+    }
+    if tail.len() >= 2 {
+        k1 ^= u32::from(tail[1]) << 8;
+    }
+    if !tail.is_empty() {
+        k1 ^= u32::from(tail[0]);
+        k1 = k1.wrapping_mul(C1).rotate_left(15).wrapping_mul(C2);
+        h ^= k1;
+    }
+    h ^= data.len() as u32;
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0xc2b2_ae35);
+    h ^= h >> 16;
+    h
+}
+
+/// Whether a version satisfies one constraint such as `>=1.2.0` or `<2.0`.
+fn constraint_holds(version: &str, constraint: &str) -> Result<bool, String> {
+    let constraint = constraint.trim();
+    let (op, want) = if let Some(rest) = constraint.strip_prefix(">=") {
+        (">=", rest)
+    } else if let Some(rest) = constraint.strip_prefix("<=") {
+        ("<=", rest)
+    } else if let Some(rest) = constraint.strip_prefix("!=") {
+        ("!=", rest)
+    } else if let Some(rest) = constraint.strip_prefix("==") {
+        ("==", rest)
+    } else if let Some(rest) = constraint.strip_prefix('>') {
+        (">", rest)
+    } else if let Some(rest) = constraint.strip_prefix('<') {
+        ("<", rest)
+    } else if let Some(rest) = constraint.strip_prefix('=') {
+        ("==", rest)
+    } else {
+        ("==", constraint)
+    };
+    let ordering = compare_version_strings(version, want.trim());
+    Ok(match op {
+        ">=" => ordering.is_ge(),
+        "<=" => ordering.is_le(),
+        ">" => ordering.is_gt(),
+        "<" => ordering.is_lt(),
+        "==" => ordering.is_eq(),
+        "!=" => ordering.is_ne(),
+        _ => return Err(format!("unknown version constraint `{constraint}`")),
+    })
+}
+
+/// Compare two dotted versions field by field, numerically, padding the shorter
+/// with zeros. Non-numeric fields compare as zero, which is enough for the
+/// numeric version constraints Nuclei templates use.
+fn compare_version_strings(a: &str, b: &str) -> std::cmp::Ordering {
+    fn parts(v: &str) -> Vec<u64> {
+        v.split(|c: char| !c.is_ascii_digit())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse().unwrap_or(0))
+            .collect()
+    }
+    let (pa, pb) = (parts(a), parts(b));
+    for i in 0..pa.len().max(pb.len()) {
+        let x = pa.get(i).copied().unwrap_or(0);
+        let y = pb.get(i).copied().unwrap_or(0);
+        match x.cmp(&y) {
+            std::cmp::Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    std::cmp::Ordering::Equal
 }
 
 // ── lexer ────────────────────────────────────────────────────────────────────
@@ -836,6 +1005,35 @@ mod tests {
             .eval(&env(None, &[], "abc"))
             .unwrap_err();
         assert!(err.contains("expected a boolean"), "{err}");
+    }
+
+    #[test]
+    fn hashing_and_encoding_functions() {
+        // Known vectors.
+        assert!(run("md5('abc') == '900150983cd24fb0d6963f7d28e17f72'", None, &[], ""));
+        assert!(run(
+            "sha256('abc') == 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'",
+            None,
+            &[],
+            "",
+        ));
+        assert!(run("hex_encode('AB') == '4142'", None, &[], ""));
+        assert!(run("base64('hi') == 'aGk='", None, &[], ""));
+        assert!(run("base64_decode('aGk=') == 'hi'", None, &[], ""));
+    }
+
+    #[test]
+    fn mmh3_matches_the_known_hello_vector() {
+        // MurmurHash3 x86 32-bit, seed 0, of "hello" is 613153351.
+        assert!(run("mmh3('hello') == '613153351'", None, &[], ""));
+    }
+
+    #[test]
+    fn compare_versions_understands_constraints() {
+        assert!(run("compare_versions('1.2.3', '>=1.0.0', '<2.0.0')", None, &[], ""));
+        assert!(!run("compare_versions('2.5.0', '<2.0.0')", None, &[], ""));
+        assert!(run("compare_versions('1.2.3', '==1.2.3')", None, &[], ""));
+        assert!(run("compare_versions('1.2', '<1.10')", None, &[], ""));
     }
 
     #[test]
