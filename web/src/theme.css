@@ -2419,6 +2419,23 @@ pre.render {
   text-decoration: underline;
 }
 
+/* Overview tab: give each block room so "what needs attention", coverage and
+   report read as separate sections rather than one dense list. */
+.ov-section {
+  margin-top: 30px;
+}
+.ov-section:first-child {
+  margin-top: 4px;
+}
+.ov-section > h3 {
+  margin: 0 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.ov-section .count {
+  margin: 4px 0;
+}
+
 .finding-summary {
   margin: 6px 0 4px;
   color: var(--ink-2);
@@ -2573,11 +2590,15 @@ pre.render {
   font-size: 1.05rem;
 }
 .report-html h4 {
-  font-size: var(--fs-xs);
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   color: var(--ink-3);
-  margin: 10px 0 2px;
+  margin: 0 0 3px;
+}
+.report-html p {
+  line-height: 1.6;
 }
 .report-html pre {
   background: var(--surface-2);
@@ -2602,15 +2623,31 @@ pre.render {
   vertical-align: top;
 }
 .report-html .finding {
+  border: 1px solid var(--line);
   border-left: 3px solid var(--accent);
-  margin: 14px 0;
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin: 22px 0;
+}
+.report-html .finding-head {
+  margin-bottom: 10px;
+}
+/* Each labelled part (What it means, Impact, Remediation) is a quiet caption
+   over a normal-weight paragraph, with air between parts, so a finding reads as
+   prose rather than a stack of bold headers. */
+.report-html .finding-part {
+  margin-top: 14px;
+}
+.report-html .finding-part p {
+  margin: 0;
+  color: var(--ink);
 }
 .report-html .finding-meta {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 1px 12px;
+  gap: 4px 14px;
   font-size: var(--fs-sm);
-  margin: 6px 0;
+  margin: 10px 0 4px;
 }
 .report-html .finding-meta dt {
   color: var(--ink-3);

@@ -179,16 +179,27 @@ function ProjectView({
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  // Blank the pane only when the project itself changes. A poll (`fleet.tick`)
+  // refetches quietly below and swaps the data in place, so the tab — the
+  // report especially — is never torn down and refetched under the reader.
   useEffect(() => {
     setDetail(null);
+  }, [name]);
+
+  useEffect(() => {
     if (!hasStore) return;
+    let live = true;
     api
       .project(name)
       .then((d) => {
+        if (!live) return;
         setDetail(d);
         setErr(null);
       })
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+      .catch((e) => live && setErr(e instanceof Error ? e.message : String(e)));
+    return () => {
+      live = false;
+    };
   }, [name, hasStore, fleet.tick]);
 
   const tab = (TABS.find((t) => t.key === route[0])?.key ?? "overview") as Tab;
@@ -320,69 +331,77 @@ function OverviewTab({
   const cov = detail.checklists;
   const latest = detail.reports.length ? detail.reports[detail.reports.length - 1] : null;
   return (
-    <div className="scroll pad">
-      <h3>What needs attention</h3>
-      {top.length === 0 ? (
-        <Note tone="good">No open findings. {detail.findings.length > 0 ? "Every finding is resolved or accepted." : "Nothing recorded yet."}</Note>
-      ) : (
-        <div className="plist">
-          {top.map((f) => (
-            <button key={f.id} type="button" className="srow" onClick={() => setTab("findings")}>
-              <div className="srow-top">
-                <span className="srow-name">
-                  <code>{f.id}</code> {f.title}
-                </span>
-                <Chip tone={sevTone(f.severity)}>{f.severity || "unrated"}</Chip>
-              </div>
-              {f.summary ? <div className="srow-target">{f.summary}</div> : null}
+    <div className="scroll pad ov">
+      <section className="ov-section">
+        <h3>What needs attention</h3>
+        {top.length === 0 ? (
+          <Note tone="good">No open findings. {detail.findings.length > 0 ? "Every finding is resolved or accepted." : "Nothing recorded yet."}</Note>
+        ) : (
+          <div className="plist">
+            {top.map((f) => (
+              <button key={f.id} type="button" className="srow" onClick={() => setTab("findings")}>
+                <div className="srow-top">
+                  <span className="srow-name">
+                    <code>{f.id}</code> {f.title}
+                  </span>
+                  <Chip tone={sevTone(f.severity)}>{f.severity || "unrated"}</Chip>
+                </div>
+                {f.summary ? <div className="srow-target">{f.summary}</div> : null}
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="ov-section">
+        <h3>Coverage</h3>
+        {cov.length === 0 ? (
+          <Note>
+            No checklist imported, so what was looked at is the findings, not a plan. Import one to track it:
+            <Cmd text={`h5i project checklist import -p ${detail.meta.name} checks.md --required`} />
+          </Note>
+        ) : (
+          cov.map((c) => (
+            <p key={c.checklist.slug} className="count">
+              <b>{c.checklist.title}</b>: {coverageSentence(c)}
+            </p>
+          ))
+        )}
+      </section>
+
+      <section className="ov-section">
+        <h3>Report</h3>
+        {latest ? (
+          <p className="count">
+            Latest issued: <b>v{latest.version}</b>, {ago(latest.issued)}, {latest.findings} {plural(latest.findings, "finding")}.{" "}
+            <button type="button" className="linklike" onClick={() => setTab("report")}>
+              open
             </button>
-          ))}
-        </div>
-      )}
-
-      <h3>Coverage</h3>
-      {cov.length === 0 ? (
-        <Note>
-          No checklist imported, so what was looked at is the findings, not a plan. Import one to track it:
-          <Cmd text={`h5i project checklist import -p ${detail.meta.name} checks.md --required`} />
-        </Note>
-      ) : (
-        cov.map((c) => (
-          <p key={c.checklist.slug} className="count">
-            <b>{c.checklist.title}</b>: {coverageSentence(c)}
           </p>
-        ))
-      )}
-
-      <h3>Report</h3>
-      {latest ? (
-        <p className="count">
-          Latest issued: <b>v{latest.version}</b>, {ago(latest.issued)} — {latest.findings} {plural(latest.findings, "finding")}.{" "}
-          <button type="button" className="linklike" onClick={() => setTab("report")}>
-            open
-          </button>
-        </p>
-      ) : detail.has_draft ? (
-        <p className="count">
-          A draft exists but nothing is issued yet.{" "}
-          <button type="button" className="linklike" onClick={() => setTab("report")}>
-            open the draft
-          </button>
-        </p>
-      ) : (
-        <Note>
-          No report yet.
-          <Cmd text={`h5i project report new -p ${detail.meta.name}`} />
-        </Note>
-      )}
+        ) : detail.has_draft ? (
+          <p className="count">
+            A draft exists but nothing is issued yet.{" "}
+            <button type="button" className="linklike" onClick={() => setTab("report")}>
+              open the draft
+            </button>
+          </p>
+        ) : (
+          <Note>
+            No report yet.
+            <Cmd text={`h5i project report new -p ${detail.meta.name}`} />
+          </Note>
+        )}
+      </section>
 
       {sessions.length > 0 ? (
-        <p className="count">
-          {sessions.length} {plural(sessions.length, "session")} under this project.{" "}
-          <button type="button" className="linklike" onClick={() => setTab("sessions")}>
-            list
-          </button>
-        </p>
+        <section className="ov-section">
+          <p className="count">
+            {sessions.length} {plural(sessions.length, "session")} under this project.{" "}
+            <button type="button" className="linklike" onClick={() => setTab("sessions")}>
+              list
+            </button>
+          </p>
+        </section>
       ) : null}
     </div>
   );

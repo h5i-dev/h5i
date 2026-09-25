@@ -44,6 +44,12 @@ so is staying in bounds.
 - Never report a `candidate` as an endpoint that exists. Only `confirmed` means that.
 - Do not claim a refused request succeeded. `requests` supports decisions during work, `audit` supports claims afterwards.
 - Base findings on repeatable differences, and preserve the message ids.
+- Look twice for a false positive before a finding enters a report. Assume the
+  first result is one: re-run it, try the same request unauthenticated, and rule
+  out a cache, a redirect, an error page, or state you carried in.
+- Report a vulnerability only with a complete PoC: the requests that reproduce
+  it and the response that shows impact. No complete PoC, no vulnerability.
+  Record it as `info` at most, and say what is missing to confirm it.
 - Record every conclusion with `h5i websec finding create`, citing the ids it
   rests on. A finding kept only in your reply is lost when the session ends.
 - To keep findings past the session, promote them into a project:

@@ -13,6 +13,8 @@ h5i project finding promote --all -p acme --session <name>
 
 ## Findings
 
+Before a finding enters a report, rule out a false positive. Assume the first result is one: re-run it, try the same request unauthenticated, and check it is the target's doing, not a cache, a redirect, an error page, or state you carried in. Report a vulnerability only with a complete proof of concept: the requests that reproduce it and the response that shows impact. No complete PoC, no confirmed vulnerability. Rate it `info` at most and say what is missing. An honest `info` beats a high that is disproved in a minute.
+
 A project finding keeps severity, your confidence, and the fix status as three separate fields, because they answer different questions. Severity and status are small fixed sets; `--state` (confidence) is free text you own.
 
 ```bash
