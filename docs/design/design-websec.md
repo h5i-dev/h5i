@@ -1014,6 +1014,16 @@ mitmproxy 6.0.2, HAProxy 2.0.5, and Apache stack still needs a working desync
 payload. The front proxy reparses requests and rewrites `Host`; this is now a
 payload problem, not a missing h5i capability.
 
+**2026-09-26.** Text became the default output. The JSON envelope for one
+replay was about 70 lines for a 31-byte answer: the body appeared twice,
+each header took four lines as a pretty-printed pair, and the ids were
+repeated inside `samples`. A model reads an HTTP message more easily than
+the same message escaped into JSON strings, so `show` and `replay` now print
+the message under one line of ids, status, size and time, with the body cut at
+4 KiB and control characters made inert. `--repeat` and `--set-each` print one
+row per send. `--json` returns the envelope on every verb, `--human` is still
+accepted and does nothing, and the exit codes did not change.
+
 ## Open questions
 
 1. **Capture default.** Off is the safe default and also the one that makes a

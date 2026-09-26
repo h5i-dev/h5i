@@ -38,12 +38,12 @@ PUBLISHED = "2026-08-21"
 PAGE_HISTORY = {
     "": ("2026-09-24", "7079c92325de630d"),
     "features/": ("2026-09-12", "7a387af144ced01b"),
-    "manual/": ("2026-09-25", "29d87f899f99d820"),
+    "manual/": ("2026-09-26", "c6e7f54ec45d699c"),
     "pitch/": ("2026-09-26", "22c43879198a0d54"),
     "demo/": ("2026-09-12", "729de49b887b5c3f"),
     "guides/": ("2026-09-16", "f37b211cacc1bcb3"),
     "blog/": ("2026-09-15", "e6bef559cb5cc1b6"),
-    "guides/recon-and-idor/": ("2026-09-16", "031b47866b537028"),
+    "guides/recon-and-idor/": ("2026-09-26", "aa9fd18b188268a1"),
     "guides/broken-access-control/": ("2026-09-16", "0f090fab2a2d88f9"),
     "guides/jwt-attacks/": ("2026-09-15", "0b3fc4ae463e60f9"),
     "guides/sql-injection/": ("2026-09-15", "1347ab6ad9b35263"),
@@ -52,8 +52,8 @@ PAGE_HISTORY = {
     "guides/ssrf-and-file-attacks/": ("2026-09-15", "0408e264337bea37"),
     "guides/http-protocol-attacks/": ("2026-09-15", "84bfef80b24ab2b0"),
     "guides/logic-time-and-crypto/": ("2026-09-15", "6011aec60de33ecb"),
-    "guides/exploit-chains/": ("2026-09-15", "e6c14587b663e935"),
-    "guides/cheatsheet/": ("2026-09-15", "52500b0fb9da625d"),
+    "guides/exploit-chains/": ("2026-09-26", "01dfe7c1939a9cf3"),
+    "guides/cheatsheet/": ("2026-09-26", "4097d2ca91e5d8bf"),
     "guides/drive-a-browser-session/": ("2026-09-15", "1e924e7680870af5"),
     "guides/first-box/": ("2026-09-15", "42cb89a3f707dc02"),
     "guides/review-a-pull-request/": ("2026-09-15", "b25f2bd2fa8efe3c"),
@@ -1273,8 +1273,8 @@ def employee_v0(req, emp_id):
 <p>Calling an API “deprecated” does not disable it. The old route must be removed, or it must pass through the same centralized authentication and authorization controls as the new route.</p>
 <h3 id="keep-the-map">Keep the map</h3>
 <p>h5i can summarize everything reached during the session:</p>
-<pre><code class="language-bash">$ h5i websec sitemap --session lab05 --human
-$ h5i websec requests --session lab05 --human
+<pre><code class="language-bash">$ h5i websec sitemap --session lab05
+$ h5i websec requests --session lab05
 </code></pre>
 <p>The sitemap is useful because it turns recon into a reproducible artifact instead of a list you try to remember.</p>
 <h2 id="authentication-is-not-authorization">Authentication is not authorization</h2>
@@ -3374,7 +3374,7 @@ $ h5i browser open 'http://127.0.0.1:9410/' \
 <pre><code class="language-bash">$ ./run.sh 42
 $ h5i browser open 'http://127.0.0.1:9420/robots.txt' \
   --session lab42 --new --capture
-$ h5i websec sitemap --session lab42 --human
+$ h5i websec sitemap --session lab42
 </code></pre>
 <p>Keep every probe inside this session. The request history will become the reproduction.</p>
 <h3 id="step-1-recon-reveals-the-map">Step 1: recon reveals the map</h3>
@@ -3515,16 +3515,17 @@ in <a href="https://github.com/h5i-dev/h5i-tutorial">h5i-dev/h5i-tutorial</a>.
 Use h5i only against systems you own or are explicitly authorized to test.</div>
 <h2 id="the-loop">The loop</h2>
 <pre><code class="language-bash">h5i browser open URL --session s --new --capture     # 1. capture
-h5i websec requests --session s --human              # 2. read the record
+h5i websec requests --session s                      # 2. read the record
 h5i websec show res_0 --session s --raw              #    read one message
 h5i websec replay req_0 --session s --set TARGET=V   # 3. change one thing
-h5i websec diff res_0 res_1 --session s --human      # 4. compare
+h5i websec diff res_0 res_1 --session s              # 4. compare
 h5i websec match res_1 --session s --contains X      #    assert (exit 0/1/2)
 h5i browser close --session s
 </code></pre>
-<p>Body of a replay's answer, in two calls:</p>
-<pre><code class="language-bash">SEQ=$(h5i websec replay req_0 --session s --set … | jq -r .seq)
-h5i websec show &quot;res_$SEQ&quot; --session s --raw
+<p>A replay prints its answer: one line of ids, status, size and time, then the
+response with the body cut at 4 KiB. For all of it, or for a script:</p>
+<pre><code class="language-bash">h5i websec replay req_0 --session s --set … --raw           # the whole response, uncut
+h5i websec replay req_0 --session s --set … --json | jq .seq  # the JSON envelope
 </code></pre>
 <hr />
 <h2 id="-set-targets"><code>--set</code> targets</h2>

@@ -6,13 +6,17 @@ Test only authorized targets. Keep requests within the granted origin, identity,
 
 ```bash
 h5i browser open https://target.example --capture
-h5i websec requests --human
+h5i websec requests
 h5i websec show req_42 --raw
 h5i websec replay req_42 --set query.id=456
-h5i websec diff res_42 res_43 --human
+h5i websec diff res_42 res_43
 h5i websec match res_43 --status 200 --contains ok
 h5i websec finding create --title '...' --evidence req_42,res_43
 ```
+
+Output is text by default: the HTTP message under one line of ids, with the
+body cut at 4 KiB (`show <id> --raw` for all of it). Add `--json` only when a
+script has to parse the answer.
 
 `finding` is where a conclusion goes. `create` takes the title, a free-text
 `--state`, the message ids it rests on and an optional `--repro` file; `list`,

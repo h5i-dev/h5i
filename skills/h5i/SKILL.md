@@ -106,9 +106,12 @@ h5i recon show ep_1af62d68       # sources, evidence, what it answered
 
 ```bash
 h5i plugin install websec        # reading a capture store is what this adds
-h5i websec show req_42 --raw
+h5i websec show req_42           # the message, body cut at 4 KiB
+h5i websec show req_42 --raw     # the exact bytes, uncut
 h5i websec replay req_42 --set 'json.role=admin' --set-each query.id=./ids.txt
 ```
+
+- Output is text: the HTTP message under one line of ids, status, size and time. Add `--json` only when a script parses it.
 
 - A `json.` value is typed the way it reads. Quote to insist on a string: `json.password="0e830400451993494058024219903391"`.
 - Header names go out lower-cased unless `--raw-headers`. A proxy that matches by exact string cares.

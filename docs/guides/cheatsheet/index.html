@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-15",
-      "dateModified": "2026-09-15",
+      "dateModified": "2026-09-26",
       "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -102,16 +102,17 @@ in <a href="https://github.com/h5i-dev/h5i-tutorial">h5i-dev/h5i-tutorial</a>.
 Use h5i only against systems you own or are explicitly authorized to test.</div>
 <h2 id="the-loop">The loop</h2>
 <pre><code class="language-bash">h5i browser open URL --session s --new --capture     # 1. capture
-h5i websec requests --session s --human              # 2. read the record
+h5i websec requests --session s                      # 2. read the record
 h5i websec show res_0 --session s --raw              #    read one message
 h5i websec replay req_0 --session s --set TARGET=V   # 3. change one thing
-h5i websec diff res_0 res_1 --session s --human      # 4. compare
+h5i websec diff res_0 res_1 --session s              # 4. compare
 h5i websec match res_1 --session s --contains X      #    assert (exit 0/1/2)
 h5i browser close --session s
 </code></pre>
-<p>Body of a replay's answer, in two calls:</p>
-<pre><code class="language-bash">SEQ=$(h5i websec replay req_0 --session s --set … | jq -r .seq)
-h5i websec show &quot;res_$SEQ&quot; --session s --raw
+<p>A replay prints its answer: one line of ids, status, size and time, then the
+response with the body cut at 4 KiB. For all of it, or for a script:</p>
+<pre><code class="language-bash">h5i websec replay req_0 --session s --set … --raw           # the whole response, uncut
+h5i websec replay req_0 --session s --set … --json | jq .seq  # the JSON envelope
 </code></pre>
 <hr />
 <h2 id="-set-targets"><code>--set</code> targets</h2>

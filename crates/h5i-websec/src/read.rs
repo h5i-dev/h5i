@@ -16,6 +16,8 @@ use h5i_wire::read::{
 };
 use serde_json::{Value, json};
 
+use crate::view;
+
 /// Where a session's messages are, or why they cannot be read. The binary
 /// keeps its own copy for `resend --as` and `sequence`.
 pub fn store_dir(root: &Path, selector: Option<&str>) -> anyhow::Result<(bs::Session, PathBuf)> {
@@ -253,23 +255,14 @@ pub fn show(
         return Ok(());
     }
 
-    if let (Some(request), Some(body)) = (&request, &request_body) {
-        if raw {
+    if raw {
+        if let (Some(request), Some(body)) = (&request, &request_body) {
             print!("{}", raw_request(request, body));
-        } else {
-            println!("  request  : {} {}", request.method, request.url);
-            println!("  at       : {}", request.at);
-            for (name, value) in &request.headers {
-                println!("    {}: {}", preview_line(name), preview_line(value));
+            if matches!(part, Part::Both) {
+                println!();
             }
-            summarise_body(body);
         }
-        if matches!(part, Part::Both) {
-            println!();
-        }
-    }
-    if let (Some(response), Some(body)) = (&response, &response_body) {
-        if raw {
+        if let (Some(response), Some(body)) = (&response, &response_body) {
             print!("{}", raw_response(response, body));
             // Printed after the response and not inside it, because that is
             // where it arrived: a second message on the same connection,
@@ -279,61 +272,37 @@ pub fn show(
                 push_body(&mut after, trailing);
                 print!("{after}");
             }
-        } else {
-            match response.status {
-                Some(status) => println!("  response : {status}"),
-                None => println!("  response : (none: the request did not complete)"),
-            }
-            for (name, value) in &response.headers {
-                println!("    {}: {}", preview_line(name), preview_line(value));
-            }
-            summarise_body(body);
-            if let Some(trailing) = &trailing {
-                println!("  after    : the connection carried more once this response ended");
-                summarise_body(trailing);
-            }
+        } else if matches!(part, Part::Response) {
+            println!("  response : not stored. The request half is at `--part request`.");
         }
-    } else if matches!(part, Part::Response) {
-        println!("  response : not stored. The request half is at `--part request`.");
+        return Ok(());
     }
-    Ok(())
-}
 
-fn summarise_body(body: &Text) {
-    match body {
-        Text::Utf8(text) if text.is_empty() => println!("  body     : empty"),
-        Text::Utf8(text) => {
-            println!("  body     : {} bytes", text.len());
-            let lines = text.lines().count();
-            for line in text.lines().take(20) {
-                println!("    {}", preview_line(line));
-            }
-            if lines > 20 {
-                println!("    … {} more lines", lines - 20);
-            }
+    // The message as it went on the wire, under a line naming it, with the
+    // body bounded and every line made inert.
+    let empty = Text::Utf8(String::new());
+    let mut out = String::new();
+    if let (Some(request), Some(body)) = (&request, &request_body) {
+        out.push_str(&format!("req_{seq} · {}\n", request.at));
+        view::push_head(&mut out, &raw_request(request, &empty));
+        view::push_body(&mut out, body, &format!("req_{seq}"));
+        if matches!(part, Part::Both) && !out.ends_with("\n\n") {
+            out.push('\n');
         }
-        Text::Cut { text, of_bytes } => {
-            println!(
-                "  body     : {of_bytes} bytes, of which the store kept {}",
-                text.len()
-            );
-            for line in text.lines().take(20) {
-                println!("    {}", preview_line(line));
-            }
-            println!("    … the rest of this body is not in the store");
-        }
-        Text::Binary {
-            bytes,
-            sha256,
-            text,
-        } => {
-            println!("  body     : {bytes} bytes, not text (sha256 {sha256})");
-            for line in text.lines().take(20) {
-                println!("    {}", preview_line(line));
-            }
-        }
-        Text::Missing(why) => println!("  body     : not stored ({why})"),
     }
+    if let (Some(response), Some(body)) = (&response, &response_body) {
+        out.push_str(&format!("res_{seq} · {}\n", response.at));
+        view::push_head(&mut out, &raw_response(response, &empty));
+        view::push_body(&mut out, body, &format!("res_{seq}"));
+        if let Some(trailing) = &trailing {
+            out.push_str("\n[the connection carried more once this response ended]\n");
+            view::push_body(&mut out, trailing, &format!("res_{seq}"));
+        }
+    } else if !matches!(part, Part::Request) {
+        out.push_str(&format!("res_{seq} · not stored: the request did not complete\n"));
+    }
+    print!("{out}");
+    Ok(())
 }
 
 /// How two responses differ, in the layers an agent branches on.

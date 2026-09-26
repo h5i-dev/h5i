@@ -279,7 +279,7 @@ if [ -x "$PLUGIN" ]; then
     is "the plugin reports itself installed" \
        "$("$H5I" plugin list --json 2>/dev/null | jqp 'd[0]["installed"]')" "True"
     is "and drives a session" \
-       "$("$H5I" websec replay req_0 --set 'query.user_id=2' --session ws-smoke-a 2>/dev/null | jqp 'd["response"]["status"]')" "200"
+       "$("$H5I" websec replay req_0 --set 'query.user_id=2' --session ws-smoke-a --json 2>/dev/null | jqp 'd["response"]["status"]')" "200"
     # The codes have to survive two hops: h5i -> plugin -> h5i browser.
     "$H5I" websec match res_1 --json-path role=admin --session ws-smoke-a >/dev/null 2>&1
     is "a hit still exits 0 through the plugin" "$?" "0"

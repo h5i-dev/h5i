@@ -22,6 +22,7 @@ mod finding;
 mod matrix;
 mod nuclei;
 mod read;
+mod view;
 
 use std::ffi::OsString;
 use std::process::Command;
@@ -51,18 +52,16 @@ struct Cli {
     #[arg(long, short = 's', global = true, value_name = "NAME")]
     session: Option<String>,
 
-    /// Emit the human-readable view instead of JSON.
-    #[arg(long, global = true)]
-    human: bool,
-
-    /// Accepted and redundant: JSON is already the default.
+    /// Emit the JSON envelope instead of the text view.
     ///
-    /// Here because `h5i browser` takes `--json` and anybody moving between the
-    /// two surfaces types it out of habit. Refusing it would be technically
-    /// correct and would cost a person a round trip to find out the flag they
-    /// typed was the one thing they did not need.
-    #[arg(long, global = true, conflicts_with = "human")]
+    /// The text view is the message itself under one line of ids, which is
+    /// what a model reads best; the envelope is for a caller that parses.
+    #[arg(long, global = true)]
     json: bool,
+
+    /// Accepted and redundant: the text view is already the default.
+    #[arg(long, global = true, hide = true, conflicts_with = "json")]
+    human: bool,
 }
 
 #[derive(Subcommand)]
@@ -94,10 +93,10 @@ enum Verb {
         /// `req_42`, `res_42`, or just `42`.
         #[arg(value_name = "ID")]
         id: String,
-        /// Print it as an HTTP message.
+        /// Print the exact message, body unbounded and unescaped.
         ///
-        /// The one verb here whose output is not JSON, because a wire message
-        /// is bytes and bytes inside a JSON string are no longer the message.
+        /// The default view is the same message with its body cut at 4 KiB and
+        /// control characters made inert; this is the bytes as they were.
         #[arg(long)]
         raw: bool,
         /// Write the exact body to a file, or to stdout with `-`.
@@ -439,7 +438,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     // Everything that sends is still `h5i browser`, below.
     let root = h5i_core::browser_session::root()?;
     let session = cli.session.clone();
-    let json_out = !cli.human;
+    let json_out = cli.json;
     match &cli.command {
         Verb::Show { id, raw, body_to } => {
             let seq = sequence_of(id)?.parse::<u64>()?;
@@ -558,6 +557,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     let mut argv: Vec<String> = vec!["browser".to_string()];
     // `replay --body`/`--raw`: print the stored response(s) instead of the JSON
     // envelope (body only, or whole response for `--raw`).
+    let mut replaying = false;
     let mut replay_body = false;
     let mut replay_raw = false;
     fn push(argv: &mut Vec<String>, args: &[&str]) {
@@ -620,6 +620,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             body,
             raw,
         } => {
+            replaying = true;
             replay_body = body || raw;
             replay_raw = raw;
             let seq = sequence_of(&id)?;
@@ -695,32 +696,54 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         argv.push("--session".into());
         argv.push(session);
     }
-    // JSON unless asked otherwise. The caller here is usually a loop, and a
-    // workbench whose default output has to be re-parsed out of prose is a
-    // workbench nobody scripts. `--json` says the same thing out loud.
-    let _ = cli.json;
-    if !cli.human {
+    // `replay` always asks for the envelope: its text view is drawn here, from
+    // the answer, because the engine has none of its own.
+    if cli.json || replaying {
         argv.push("--json".into());
     }
 
+    if !replaying {
+        let status = Command::new(h5i())
+            .args(&argv)
+            .status()
+            .map_err(|e| anyhow::anyhow!("could not run h5i: {e}"))?;
+        // The underlying verb's code, unchanged. `match` exits 1 for "did not
+        // match" and 2 for "could not look", and flattening those here would
+        // break every script built on them.
+        std::process::exit(status.code().unwrap_or(2));
+    }
+
     // Snapshot the store so we know which messages the send adds (N for
-    // `--set-each`/`--repeat`), then swallow its stdout and print them ourselves.
+    // `--set-each`/`--repeat`).
     let pre_seq = if replay_body {
         read::latest_seq(&root, session.as_deref()).unwrap_or(None)
     } else {
         None
     };
-    let mut cmd = Command::new(h5i());
-    cmd.args(&argv);
-    if replay_body {
-        cmd.stdout(std::process::Stdio::null());
-    }
-    let status = cmd
-        .status()
+    let out = Command::new(h5i())
+        .args(&argv)
+        .stderr(std::process::Stdio::inherit())
+        .output()
         .map_err(|e| anyhow::anyhow!("could not run h5i: {e}"))?;
+    let code = out.status.code().unwrap_or(2);
+    if cli.json && !replay_body {
+        use std::io::Write;
+        std::io::stdout().write_all(&out.stdout)?;
+        std::process::exit(code);
+    }
+    let answer: Option<serde_json::Value> = serde_json::from_slice(&out.stdout).ok();
+    let Some(answer) = answer else {
+        // Not an envelope: whatever it is, it is the only account there is.
+        use std::io::Write;
+        std::io::stdout().write_all(&out.stdout)?;
+        std::process::exit(code);
+    };
     if replay_body {
-        if !status.success() {
-            std::process::exit(status.code().unwrap_or(2));
+        if !out.status.success() {
+            if let Err(why) = view::replay(&answer) {
+                eprintln!("{why}");
+            }
+            std::process::exit(code);
         }
         let seqs = read::seqs_after(&root, session.as_deref(), pre_seq).unwrap_or_default();
         if seqs.is_empty() {
@@ -750,12 +773,13 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 false,
             )?;
         }
-        std::process::exit(status.code().unwrap_or(0));
+        std::process::exit(code);
     }
-    // The underlying verb's code, unchanged. `match` exits 1 for "did not
-    // match" and 2 for "could not look", and flattening those here would break
-    // every script built on them.
-    std::process::exit(status.code().unwrap_or(2));
+    match view::replay(&answer) {
+        Ok(text) => print!("{text}"),
+        Err(why) => eprintln!("{why}"),
+    }
+    std::process::exit(code);
 }
 
 /// `h5i websec finding`, all four of it.

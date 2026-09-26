@@ -9,7 +9,7 @@ use h5i_browser::capture::{Body, StoredRequest, StoredResponse, body_file};
 // The store's readers live with the store's types, because the websec plugin
 // reads the same bytes and must not link an engine to do it (W21).
 use h5i_wire::read::{
-    EXIT_CANNOT_LOOK, EXIT_NO_MATCH, LOSSY_BODY_BYTES, Text, body_text, json_at, preview_line,
+    EXIT_CANNOT_LOOK, EXIT_NO_MATCH, LOSSY_BODY_BYTES, Text, body_text, json_at, preview_line, printable,
     read_json, sequences,
 };
 use h5i_wire::{Expect, ExpectResponse};
@@ -682,19 +682,28 @@ pub fn sequence(
                     step.verdict.as_deref().unwrap_or("did not match")
                 ),
                 (None, _, Some(status)) => {
+                    // The id, so the next verb can cite the answer without a
+                    // `requests` round trip.
+                    let id = step.seq.map(|seq| format!(" res_{seq}")).unwrap_or_default();
                     let bound = if step.bound.is_empty() {
                         String::new()
                     } else {
-                        format!(
-                            " · bound {}",
-                            step.bound.keys().cloned().collect::<Vec<_>>().join(", ")
-                        )
+                        let pairs: Vec<String> = step
+                            .bound
+                            .iter()
+                            .map(|(name, value)| {
+                                let shown: String = value.chars().take(60).collect();
+                                let cut = if shown.len() < value.len() { "…" } else { "" };
+                                format!("{name}={}{cut}", printable(&shown))
+                            })
+                            .collect();
+                        format!(" · bound {}", pairs.join(", "))
                     };
                     let verdict = match (step.matched, &step.verdict) {
                         (Some(true), Some(why)) => format!(" · {why}"),
                         _ => String::new(),
                     };
-                    println!("  ✔ {label}: {status}{bound}{verdict}");
+                    println!("  ✔ {label}: {status}{id}{bound}{verdict}");
                 }
                 (None, _, None) => println!("  ✔ {label}"),
             }
