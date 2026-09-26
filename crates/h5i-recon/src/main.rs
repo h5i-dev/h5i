@@ -110,7 +110,11 @@ enum ReconCommands {
         /// store holds.
         #[arg(long, value_name = "REQ")]
         from: Option<String>,
-        /// Which readers to run: any of `html`, `js`, `json`, `headers`.
+        /// Which readers to run: any of `html`, `js`, `json`, `headers`,
+        /// `secrets`. `secrets` reports disclosed credentials, keys and
+        /// sourcemaps beside the ledger rather than into it, and is off by
+        /// default because it reads every body rather than only the ones a
+        /// content type points it at.
         #[arg(long, value_name = "LIST", default_value = "html,js,json,headers")]
         kind: String,
     },
@@ -2103,8 +2107,10 @@ fn extract(
     }
     let wanted: Vec<&str> = kinds.split(',').map(str::trim).filter(|k| !k.is_empty()).collect();
     for kind in &wanted {
-        if !matches!(*kind, "html" | "js" | "json" | "headers") {
-            anyhow::bail!("`{kind}` is not a reader. The four are html, js, json and headers");
+        if !matches!(*kind, "html" | "js" | "json" | "headers" | "secrets") {
+            anyhow::bail!(
+                "`{kind}` is not a reader. The five are html, js, json, headers and secrets"
+            );
         }
     }
     let only = from
@@ -2118,6 +2124,7 @@ fn extract(
     let identity = identity_of(&session).to_string();
     let mut observations = Vec::new();
     let mut partial: Vec<Value> = Vec::new();
+    let mut disclosures: Vec<Value> = Vec::new();
     let mut scanned = 0u64;
 
     for seq in h5i_recon::store::sequences(&store) {
@@ -2146,6 +2153,23 @@ fn extract(
         let Some(body) = h5i_recon::store::body_text(&store, &message.response.body) else {
             continue;
         };
+        // Independent of content type: a leaked key sits in an HTML inline
+        // script, a JSON config or a JS bundle alike, and a disclosure reader
+        // that guessed the type first would miss the one that was mislabelled.
+        // Reported beside the ledger, never into it: a secret is not a place a
+        // request can go, and the store already holds the exact bytes (N8).
+        if wanted.contains(&"secrets") {
+            for d in h5i_recon::secrets::scan(&base, &body) {
+                disclosures.push(json!({
+                    "req": req,
+                    "kind": d.kind,
+                    "rule": d.rule,
+                    "preview": d.preview,
+                    "at": d.at,
+                    "url": d.url.as_ref().map(url::Url::as_str),
+                }));
+            }
+        }
         if content_type.contains("html") && wanted.contains(&"html") {
             let found = h5i_recon::extract::from_html(&base, &body);
             observations.extend(h5i_recon::extract::candidates(
@@ -2187,6 +2211,7 @@ fn extract(
                 "disclosed": observations.len(),
                 "written": written,
                 "partial": partial,
+                "secrets": disclosures,
                 "cursor": inventory.cursor,
             }))?
         );
@@ -2205,6 +2230,15 @@ fn extract(
         println!(
             "  partial  : {} built at runtime ({})",
             preview(item["prefix"].as_str().unwrap_or_default()),
+            item["req"].as_str().unwrap_or_default()
+        );
+    }
+    for item in &disclosures {
+        println!(
+            "  secret   : {} [{}] {} ({})",
+            item["kind"].as_str().unwrap_or_default(),
+            item["rule"].as_str().unwrap_or_default(),
+            item["preview"].as_str().unwrap_or_default(),
             item["req"].as_str().unwrap_or_default()
         );
     }

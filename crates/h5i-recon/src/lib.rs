@@ -13,11 +13,13 @@ pub mod js;
 pub mod known;
 pub mod ledger;
 pub mod paths;
+pub mod secrets;
 pub mod store;
 pub mod triage;
 
 pub use extract::{Found, from_headers, from_html, from_json};
 pub use ingest::{Ingested, from_receipts};
+pub use secrets::Disclosure;
 pub use ledger::{
     Endpoint, Inventory, Ledger, Observation, Param, Progress, Source, State, Where,
 };

@@ -2308,22 +2308,22 @@ impl LocalBroker {
         &self,
         fetch: &crate::broker::Fetch,
     ) -> (crate::broker::Timing, FetchOutcome) {
+        // Both clocks come from the receipt, off the one `started` the fetch
+        // measured, so bookkeeping outside the wire (the record flush, the
+        // capture write, the locks) stays out of the timing a `--repeat` oracle
+        // reads. The wall clock stands in only for a fetch that never recorded
+        // one.
         let started = std::time::Instant::now();
         let outcome = crate::broker::Broker::send(self, fetch);
-        let total_ms = started.elapsed().as_millis() as u64;
-        // The engine's own reading of the hop, which knows where the headers
-        // stopped and the body began. Falls back to the wall clock around the
-        // call for a fetch that never got that far.
-        let ttfb_ms = outcome
-            .seq
-            .and_then(|seq| {
-                self.log
-                    .records()
-                    .into_iter()
-                    .find(|r| r.seq == seq && r.phase == crate::receipt::Phase::Response)
-                    .and_then(|r| r.ttfb_ms)
-            })
-            .unwrap_or(total_ms);
+        let wall_ms = started.elapsed().as_millis() as u64;
+        let recorded = outcome.seq.and_then(|seq| {
+            self.log
+                .records()
+                .into_iter()
+                .find(|r| r.seq == seq && r.phase == crate::receipt::Phase::Response)
+        });
+        let total_ms = recorded.as_ref().and_then(|r| r.duration_ms).unwrap_or(wall_ms);
+        let ttfb_ms = recorded.as_ref().and_then(|r| r.ttfb_ms).unwrap_or(total_ms);
         (
             crate::broker::Timing {
                 seq: outcome.seq,
@@ -4262,6 +4262,94 @@ mod cookie_wire_tests {
             }
         });
         port
+    }
+
+    /// Sends the status line and headers at once, then waits `delay_ms` before
+    /// the body: the shape a time-based test needs, where time to the headers
+    /// (the decision) and time to the body (the transfer) are two different
+    /// numbers.
+    fn answers_after(hits: usize, delay_ms: u64) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for _ in 0..hits {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0
+                        || header.trim().is_empty()
+                    {
+                        break;
+                    }
+                }
+                let body = "ok";
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.flush();
+                std::thread::sleep(Duration::from_millis(delay_ms));
+                let _ = write!(stream, "{body}");
+                let _ = stream.flush();
+            }
+        });
+        port
+    }
+
+    /// A repeat's clocks come from the receipt the fetch wrote, not a wall clock
+    /// around the whole call: bookkeeping outside the wire once inflated
+    /// `total_ms` and corrupted a timing oracle. Total off that clock cannot
+    /// read below its own ttfb.
+    #[test]
+    fn a_repeat_reports_the_wire_clock_from_the_receipt() {
+        let port = answers_after(3, 60);
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::new(Policy::new(), sink.clone(), None).expect("broker");
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+
+        let sent = crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "GET".to_string(),
+                url,
+                headers: Vec::new(),
+                body: Vec::new(),
+            },
+            &[],
+            false,
+            crate::broker::Sends { count: 3, ..Default::default() },
+        )
+        .expect("sent");
+
+        assert_eq!(sent.samples.len(), 3, "one sample per send");
+        let records = sink.records();
+        for sample in &sent.samples {
+            assert!(
+                sample.total_ms >= sample.ttfb_ms,
+                "a total off the same clock as its ttfb cannot read below it: {sample:?}"
+            );
+            let seq = sample.seq.expect("an answered send carries its seq");
+            let recorded = records
+                .iter()
+                .find(|r| r.seq == seq && r.phase == crate::receipt::Phase::Response)
+                .expect("the send wrote a response receipt");
+            assert_eq!(
+                Some(sample.total_ms),
+                recorded.duration_ms,
+                "the reported total is the receipt's wire duration, not a wall clock around \
+                 the call: {sample:?}"
+            );
+            assert_eq!(
+                Some(sample.ttfb_ms),
+                recorded.ttfb_ms,
+                "and the reported ttfb is the receipt's: {sample:?}"
+            );
+        }
     }
 
     /// A server that redirects once, to wherever it is told.

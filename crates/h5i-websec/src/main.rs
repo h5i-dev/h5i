@@ -19,6 +19,7 @@
 
 mod experiment;
 mod finding;
+mod matrix;
 mod nuclei;
 mod read;
 
@@ -253,6 +254,43 @@ enum Verb {
         file: String,
     },
 
+    /// Send one request under several identities and fold the answers.
+    ///
+    /// The boundary bug an agent misses is the one it cannot see: the same
+    /// request under user A and under user B, side by side. This sends it under
+    /// each identity you name and groups the answers, so two identities that saw
+    /// the same thing land in one class. The identities are sessions you already
+    /// hold; h5i adds none, the way it ships no wordlist. Whether a shared class
+    /// is a boundary that should have held is yours to conclude in a finding.
+    ///
+    /// ```text
+    /// h5i websec matrix req_42 --as anon,userB,admin
+    /// ```
+    Matrix {
+        /// The stored request to send, as `req_42` or `42`.
+        #[arg(value_name = "REQ")]
+        id: String,
+        /// The identities to send it under: session names, comma-separated.
+        /// Each is a session you already hold.
+        #[arg(long = "as", value_name = "SESSIONS", value_delimiter = ',')]
+        identities: Vec<String>,
+        /// An edit every send shares, as `--set` takes it; repeatable.
+        #[arg(long, value_name = "TARGET=VALUE")]
+        set: Vec<String>,
+        /// Sends per second, at most.
+        #[arg(long, value_name = "R")]
+        rate: Option<f64>,
+        /// Add a target that is not already there.
+        #[arg(long)]
+        create: bool,
+        /// Keep credentials that cross an origin boundary.
+        #[arg(long)]
+        keep_credentials: bool,
+        /// Start each identity's page allowance again before sending.
+        #[arg(long)]
+        reset_budget: bool,
+    },
+
     /// What the agent concluded, and the evidence it stands on.
     ///
     /// h5i keeps the record and checks that the evidence exists. Whether the
@@ -485,6 +523,29 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Verb::Experiment { file } => {
             return experiment::run(&root, session.as_deref(), file, json_out, &h5i());
         }
+        Verb::Matrix {
+            id,
+            identities,
+            set,
+            rate,
+            create,
+            keep_credentials,
+            reset_budget,
+        } => {
+            return matrix::run(
+                &root,
+                session.as_deref(),
+                id,
+                identities,
+                set,
+                *rate,
+                *create,
+                *keep_credentials,
+                *reset_budget,
+                json_out,
+                &h5i(),
+            );
+        }
         Verb::Finding { what } => {
             return findings(&root, session.as_deref(), what, json_out);
         }
@@ -535,6 +596,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         | Verb::Match { .. }
         | Verb::Sitemap
         | Verb::Experiment { .. }
+        | Verb::Matrix { .. }
         | Verb::Finding { .. }
         | Verb::ImportNuclei { .. } => {
             unreachable!("the verbs this process handles return before this")

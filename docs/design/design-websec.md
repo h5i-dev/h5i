@@ -799,6 +799,18 @@ first time in this engine — the property `h5i browser`'s own comments call the
 reason its client is serial. A race already has `--race`, which is honest about
 being a burst; a walk that wants to be faster can raise `--rate`.
 
+### The identity axis, as its own verb
+
+Built 2026-09-25. Identity is a position an experiment can vary, but IDOR, BOLA
+and BFLA are identity-against-identity and read better with their own shape.
+`h5i websec matrix req_42 --as anon,userB,admin` sends the one request under each
+named session, folds with the experiment's `By::ShapeAndWords`, and reports in
+identity order: a row per identity with its class, and the classes with the
+identities in each. Two identities in one class saw the same answer — the missing
+boundary made observable; the verdict stays the agent's. Identities are sessions
+the operator already holds (h5i ships none), each read from its own store, and a
+refused identity is a row with its reason, not a gap.
+
 ## W23. Findings
 
 Built 2026-09-10. Feature 22, and the first thing here with no Burp analogue
@@ -914,12 +926,11 @@ solved. The same exercise, and six more changes:
   whose commands travel over a socket was one this workbench could watch
   connect and never speak to. `websec socket` is `resend` for that protocol.
 
-And one defect characterised but not yet fixed: roughly one send in fifteen
-that takes around two seconds costs about three seconds more than the request
-did, and on one target `total_ms` came back as 587 for a request the server
-cannot answer in under two thousand. A timing oracle is a first-class use of
-this workbench and that corrupts one. The reproducer is a server that sleeps
-two seconds and a loop of forty replays.
+And one defect characterised, then fixed 2026-09-25: about one send in fifteen
+cost seconds more than the request did, and one `total_ms` read 587 for a
+two-second server. Cause: `send_once` timed `Broker::send` from the outside, so
+the record flush and the locks fell inside `total_ms`. Both numbers now come from
+the receipt the fetch wrote, off the same `started` as `ttfb_ms`.
 
 **2026-09-08.** A third corpus, the eight web tasks in Cybench — competition CTF
 tasks rather than benchmarks, which is a different pressure: a WAF whose

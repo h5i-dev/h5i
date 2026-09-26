@@ -2142,6 +2142,7 @@ dependencies = [
  "h5i-core",
  "h5i-error",
  "h5i-wire",
+ "regex",
  "serde",
  "serde_json",
  "sha2 0.10.9",

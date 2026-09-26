@@ -34,6 +34,11 @@ h5i-wire = { path = "../h5i-wire" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+# The secret reader is the one place a regex earns its keep. The endpoint
+# scanner (`js.rs`) is hand-written precisely so it can tell code from a string
+# from a comment; a leaked key does not care which of the three it sits in, so
+# the disclosure reader wants a pattern that matches anywhere and says why.
+regex = "1"
 # Parsing a URL is not a place to be inventive: origin, path and query are the
 # ledger's key, and h5i already resolves them with this crate everywhere else.
 url = "2.5"

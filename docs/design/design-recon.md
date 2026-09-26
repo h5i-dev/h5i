@@ -264,6 +264,15 @@ inside a string is not a comment, and that a template literal with `${` is a
 prefix. A concatenated path is reported as a *partial* and never written to the
 ledger, because half a URL is not a place a request can go.
 
+Built 2026-09-25: `secrets.rs`, a fifth reader `extract --kind secrets` for
+disclosed credentials, keys, connection strings and sourcemaps. A regex pass,
+unlike `js.rs`: a key in a comment is still a key, so syntactic position is what
+to ignore here. It runs on every body and reports *beside* the ledger (a
+`secrets` array), never into it — a secret is not a place. Each match names its
+rule and redacts the value; prefix rules (AWS, Google, Slack, GitHub, Stripe,
+JWT, PEM) are trusted on shape, the one label rule is gated on entropy. Calling a
+disclosure a vulnerability stays the agent's (N21).
+
 ## N9. Authenticated crawl
 
 The crawl is a frontier walk over ledger candidates, and it is the verb that
