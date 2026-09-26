@@ -147,9 +147,18 @@ fn lines(format: Format, base: &Url, text: &str) -> Imported {
 /// converting it is one `yq` away.
 fn openapi(base: &Url, text: &str) -> Imported {
     let mut out = Imported::default();
-    let Ok(document) = serde_json::from_str::<serde_json::Value>(text) else {
-        out.unreadable += 1;
-        return out;
+    // OpenAPI ships as YAML at least as often as JSON, and a spec pulled from a
+    // docs site is usually YAML. JSON is a subset of YAML, so parse as JSON
+    // first (faster, and the common machine-emitted case) and fall back to YAML.
+    let document = match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(document) => document,
+        Err(_) => match serde_yaml::from_str::<serde_json::Value>(text) {
+            Ok(document) => document,
+            Err(_) => {
+                out.unreadable += 1;
+                return out;
+            }
+        },
     };
     // `servers[0].url` when it is absolute, so an imported path lands on the
     // origin the document names rather than the one this session happens to be
@@ -382,5 +391,25 @@ mod tests {
     fn a_document_that_is_not_openapi_is_counted_rather_than_guessed_at() {
         assert_eq!(read(Format::Openapi, &base(), "swagger: 2.0\npaths:\n").unreadable, 1);
         assert_eq!(read(Format::Openapi, &base(), "{}").unreadable, 1);
+    }
+
+    #[test]
+    fn an_openapi_document_can_be_yaml() {
+        // The format most real specs ship in, and the one a docs site serves.
+        let text = "servers:\n  - url: https://api.target.test/v2\n\
+                    paths:\n  /users:\n    get: {}\n    post: {}\n";
+        let mut seen: Vec<(String, String)> = read(Format::Openapi, &base(), text)
+            .found
+            .iter()
+            .map(|f| (f.url.path().to_string(), f.method.clone()))
+            .collect();
+        seen.sort();
+        assert_eq!(
+            seen,
+            vec![
+                ("/v2/users".to_string(), "GET".to_string()),
+                ("/v2/users".to_string(), "POST".to_string()),
+            ]
+        );
     }
 }

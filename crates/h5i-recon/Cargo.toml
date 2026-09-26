@@ -33,6 +33,8 @@ h5i-error = { path = "../h5i-error" }
 h5i-wire = { path = "../h5i-wire" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# OpenAPI specs are as often YAML as JSON; the importer parses both.
+serde_yaml = "0.9"
 sha2 = { workspace = true }
 # The secret reader is the one place a regex earns its keep. The endpoint
 # scanner (`js.rs`) is hand-written precisely so it can tell code from a string
