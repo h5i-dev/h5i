@@ -923,13 +923,12 @@
   <div style="width:100%;max-width:1000px;">
     <div class="hero-badge">Explore · Attack · Contain · Report</div>
     <h1 style="font-size:clamp(2.6rem,5.4vw,4.4rem);">The Agent-Native<br><span class="shine-text">Red-Teaming Workspace</span></h1>
-    <p class="lede" style="max-width:none;margin-top:22px;font-size:clamp(1.5rem,2.8vw,2.2rem);color:var(--ink);font-weight:500;">Professional red-teaming for everyone.</p>
     <ul class="lede" style="list-style:none;max-width:1040px;margin:22px 0 0;padding:0;font-size:clamp(1.25rem,2.3vw,1.75rem);line-height:1.4;display:flex;flex-direction:column;gap:16px;">
       <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Explore like a hacker.</span> Your agent maps the app through its own browser.</li>
       <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Attack the traffic.</span> It edits, replays, and compares real requests.</li>
       <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Stay in bounds.</span> Sandbox limits you set, and a record of what it did.</li>
     </ul>
-    <p class="mono" style="margin-top:28px;font-size:clamp(1rem,1.8vw,1.3rem);color:var(--text-dim);">Pure Rust &#183; No Chromium or V8 &#183; Apache 2.0 &#183; <span class="cyan">local-first</span></p>
+    <p class="mono" style="margin-top:28px;font-size:clamp(1rem,1.8vw,1.3rem);color:var(--text-dim);">Professional red-teaming for everyone.</p>
   </div>
 </div>
 
@@ -940,7 +939,7 @@
   <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:20px;margin-top:28px;"><div class="feat-card"><div class="mono" style="color:var(--red-text);font-size:0.88rem;margin-bottom:12px;">01 · Expertise</div><h3 style="font-size:1.4rem;line-height:1.25;">Security expertise is hard to find</h3><p class="feat-desc" style="margin-top:12px;font-size:1.08rem;line-height:1.5;">Red teaming means understanding an app, forming attack hypotheses, and verifying them. Few teams have someone who does that regularly.</p></div>
 <div class="feat-card"><div class="mono" style="color:var(--red-text);font-size:0.88rem;margin-bottom:12px;">02 · Cost</div><h3 style="font-size:1.4rem;line-height:1.25;">Outside assessments are expensive</h3><p class="feat-desc" style="margin-top:12px;font-size:1.08rem;line-height:1.5;">A professional pentest is valuable, but paying for one on every release is out of reach for many teams.</p></div>
 <div class="feat-card"><div class="mono" style="color:var(--red-text);font-size:0.88rem;margin-bottom:12px;">03 · Tooling</div><h3 style="font-size:1.4rem;line-height:1.25;">Existing tools were built for people</h3><p class="feat-desc" style="margin-top:12px;font-size:1.08rem;line-height:1.5;">GUIs, proxies, and CA setup leave an agent reading screens and juggling tools instead of testing the app.</p></div>
-<div class="feat-card"><div class="mono" style="color:var(--red-text);font-size:0.88rem;margin-bottom:12px;">04 · Control</div><h3 style="font-size:1.4rem;line-height:1.25;">AI agents can run out of control</h3><p class="feat-desc" style="margin-top:12px;font-size:1.08rem;line-height:1.5;">A mistake or a prompt injection can aim testing at the wrong systems. Teams need enforced limits and a record of what happened.</p></div></div>
+<div class="feat-card"><div class="mono" style="color:var(--red-text);font-size:0.88rem;margin-bottom:12px;">04 · Control</div><h3 style="font-size:1.4rem;line-height:1.25;">AI agents can run out of control</h3><p class="feat-desc" style="margin-top:12px;font-size:1.08rem;line-height:1.5;">A mistake or a prompt injection can aim testing at the wrong systems. We need to sandbox agents.</p></div></div>
 </div></div>
 
 
@@ -950,8 +949,8 @@
   <p class="lede" style="max-width:980px;">No security expertise needed. Your own AI agent does the testing with h5i, and you review what it found.</p>
   <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:20px;margin-top:24px;"><div class="feat-card"><div class="mono" style="color:var(--red-text);font-size:0.88rem;margin-bottom:12px;">h5i browser</div><h3 style="font-size:1.4rem;line-height:1.25;">Agent-led exploration</h3><p class="feat-desc" style="margin-top:12px;font-size:1.08rem;line-height:1.5;">Your agent reads pages, logs in, clicks, and fills forms to map the app and its endpoints.</p></div>
 <div class="feat-card"><div class="mono" style="color:var(--red-text);font-size:0.88rem;margin-bottom:12px;">h5i websec</div><h3 style="font-size:1.4rem;line-height:1.25;">Direct HTTP attacks</h3><p class="feat-desc" style="margin-top:12px;font-size:1.08rem;line-height:1.5;">It edits, replays, and compares the requests the browser sent, like a professional pentester.</p></div>
-<div class="feat-card"><div class="mono" style="color:var(--red-text);font-size:0.88rem;margin-bottom:12px;">h5i box · .h5i/env.toml</div><h3 style="font-size:1.4rem;line-height:1.25;">Safe execution</h3><p class="feat-desc" style="margin-top:12px;font-size:1.08rem;line-height:1.5;">The agent works inside network and filesystem limits you set, and refused actions are recorded.</p></div>
-<div class="feat-card"><div class="mono" style="color:var(--red-text);font-size:0.88rem;margin-bottom:12px;">h5i ui · h5i project</div><h3 style="font-size:1.4rem;line-height:1.25;">Results you can read</h3><p class="feat-desc" style="margin-top:12px;font-size:1.08rem;line-height:1.5;">Review findings with their evidence, then share a report written for non-specialists.</p></div></div>
+<div class="feat-card"><div class="mono" style="color:var(--red-text);font-size:0.88rem;margin-bottom:12px;">h5i box · .h5i/env.toml</div><h3 style="font-size:1.4rem;line-height:1.25;">Sandoboxed execution</h3><p class="feat-desc" style="margin-top:12px;font-size:1.08rem;line-height:1.5;">The agent works inside network and filesystem limits you set, and refused actions are recorded.</p></div>
+<div class="feat-card"><div class="mono" style="color:var(--red-text);font-size:0.88rem;margin-bottom:12px;">h5i ui · h5i project</div><h3 style="font-size:1.4rem;line-height:1.25;">Intuitive report</h3><p class="feat-desc" style="margin-top:12px;font-size:1.08rem;line-height:1.5;">Review findings with their evidence, then share a report written for non-specialists.</p></div></div>
 </div></div>
 
 
@@ -995,7 +994,7 @@
         <div class="rt-ar"><span class="ac">&#9656;&#9656;&#9656;</span><span class="al">page bytes</span></div>
         <div class="bnode core" style="margin:8px 0;">
           <span class="bt">captures every request</span>
-          <span class="bn">h5i browser</span>
+          <span class="bn">h5i</span>
         </div>
         <div class="rt-ar"><span class="ac">&#9656;&#9656;&#9656;</span><span class="al">outline, not pixels</span></div>
       </div>
@@ -1040,12 +1039,12 @@
   <div style="width:100%;max-width:1120px;">
     <div class="section-tag">Web security testing</div>
     <h2>Let your agent<br><span class="red">red-team the web app</span>.</h2>
-    <p class="lede" style="max-width:960px;">The agent takes a request the app really sent, changes one field, resends it, and compares the answers. That is how it confirms what an attacker could actually do. No separate proxy, CA setup, or repeater.</p>
+    <p class="lede" style="max-width:960px;">The agent takes a request the app really sent, changes one field, resends it, and compares the answers, like professional hackers.</p>
 
     <div class="sbx" role="img" aria-label="Requests from logged-in browser flows feed an inspect, edit, replay, and compare loop, producing response differences, assertions, and findings backed by evidence.">
     <div class="sbx-side">
       <span class="sbx-h no">browser traffic</span>
-      <div class="sbx-item no">Requests from logged-in flows</div>
+      <div class="sbx-item no">Requests and headers</div>
       <div class="sbx-item no">Responses and bodies</div>
       <div class="sbx-item no">Session cookies and tokens</div>
     </div>
