@@ -18,8 +18,10 @@ pub const MAX_PER_DOCUMENT: usize = 200;
 /// One value a document disclosed, before the caller decides what it means.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Disclosure {
-    /// The family: `credential`, `private-key`, `connection-string` or
-    /// `sourcemap`. Coarse on purpose; `rule` is the specific claim.
+    /// The family: `credential`, `publishable`, `private-key`,
+    /// `connection-string` or `sourcemap`. Coarse on purpose; `rule` is the
+    /// specific claim. `publishable` is a token meant to ship to the client
+    /// (a Mapbox `pk.` or a Stripe `pk_`), surfaced but not alarmed over.
     pub kind: &'static str,
     /// Which pattern matched, e.g. `aws-access-key-id` or `sourcemap`.
     pub rule: &'static str,
@@ -28,6 +30,9 @@ pub struct Disclosure {
     /// Byte offset of the disclosed value in the source, for the reader who
     /// wants to see it in the stored body.
     pub at: usize,
+    /// How many like it were folded here. A config that embeds a token array
+    /// is one disclosure with a count, not a screenful of near-identical rows.
+    pub count: usize,
     /// A place this disclosure points at, when it is one: the resolved sourcemap
     /// URL, or the host a connection string names. `None` for a bare secret.
     pub url: Option<Url>,
@@ -55,18 +60,23 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
         r("credential", "slack-token", r"\bxox[baprs]-[0-9A-Za-z-]{10,48}\b"),
         r("credential", "github-token", r"\bgh[pousr]_[0-9A-Za-z]{36,}\b"),
         r("credential", "stripe-secret-key", r"\b(?:sk|rk)_live_[0-9A-Za-z]{16,}\b"),
-        // Three base64url segments; the first two start `eyJ`, i.e. `{"`.
-        r(
-            "credential",
-            "json-web-token",
-            r"\beyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b",
-        ),
+        // Meant to ship to the client, so surfaced under `publishable` and never
+        // alarmed over: the reader learns it is there, not that it is a leak.
+        r("publishable", "stripe-publishable-key", r"\bpk_(?:live|test)_[0-9A-Za-z]{16,}\b"),
+        r("publishable", "mapbox-public-token", r"\bpk\.eyJ[A-Za-z0-9_\-]{20,}\b"),
         r(
             "private-key",
             "pem-private-key",
             r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----",
         ),
     ]
+});
+
+/// A JWT: three base64url segments, the first two starting `eyJ` (i.e. `{"`).
+/// Kept apart from [`RULES`] so an array of them folds by header (§ [`scan`]).
+static JWT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\beyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b")
+        .expect("a static pattern compiles")
 });
 
 /// `scheme://user:password@host…`, captured so the host can be surfaced and the
@@ -107,8 +117,31 @@ pub fn scan(base: &Url, source: &str) -> Vec<Disclosure> {
                 rule: rule.rule,
                 preview: redact(m.as_str()),
                 at: m.start(),
+                count: 1,
                 url: None,
             });
+        }
+    }
+
+    // JWTs fold by header segment (the part before the first `.`, identical for
+    // every token with the same `alg`): a config that embeds fifty context
+    // tokens is one row with a count, not fifty. The first is kept whole.
+    let mut jwt_first: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for m in JWT.find_iter(source) {
+        let header = m.as_str().split('.').next().unwrap_or_default();
+        match jwt_first.get(header) {
+            Some(&idx) => out[idx].count += 1,
+            None => {
+                jwt_first.insert(header, out.len());
+                out.push(Disclosure {
+                    kind: "credential",
+                    rule: "json-web-token",
+                    preview: redact(m.as_str()),
+                    at: m.start(),
+                    count: 1,
+                    url: None,
+                });
+            }
         }
     }
 
@@ -131,6 +164,7 @@ pub fn scan(base: &Url, source: &str) -> Vec<Disclosure> {
             rule: "connection-string",
             preview,
             at: m.start(),
+            count: 1,
             url,
         });
     }
@@ -150,6 +184,7 @@ pub fn scan(base: &Url, source: &str) -> Vec<Disclosure> {
             rule: if token.starts_with("data:") { "sourcemap-inline" } else { "sourcemap" },
             preview: url.as_ref().map(Url::to_string).unwrap_or_else(|| preview_place(token)),
             at: whole.start(),
+            count: 1,
             url,
         });
     }
@@ -165,6 +200,7 @@ pub fn scan(base: &Url, source: &str) -> Vec<Disclosure> {
             rule: "labelled-secret",
             preview: redact(v),
             at: value.start(),
+            count: 1,
             url: None,
         });
     }
@@ -272,7 +308,36 @@ mod tests {
     #[test]
     fn a_jwt_is_recognised_by_shape() {
         let src = "auth=eyJhbGciOiJub25lIn0.eyJ1cG4iOiJhZG1pbiJ9.signaturehere123";
-        assert_eq!(rules(&scan(&base(), src)), vec!["json-web-token"]);
+        let found = scan(&base(), src);
+        assert_eq!(rules(&found), vec!["json-web-token"]);
+        assert_eq!(found[0].count, 1);
+    }
+
+    #[test]
+    fn an_array_of_jwts_folds_to_one_row_with_a_count() {
+        // A config embedding many tokens that share one header is one
+        // disclosure, not a screenful (the travel.crypto.com case).
+        let h = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9";
+        let mut src = String::new();
+        for i in 0..40 {
+            src.push_str(&format!("\"T{i}\":\"{h}.eyJzdWIiOiJLTEEiLCJuIjp{i}9.sig{i}abcdefgh\","));
+        }
+        let found = scan(&base(), &src);
+        let jwts: Vec<&Disclosure> = found.iter().filter(|d| d.rule == "json-web-token").collect();
+        assert_eq!(jwts.len(), 1, "one row for the whole array");
+        assert_eq!(jwts[0].count, 40, "and it counts every token it folded");
+    }
+
+    #[test]
+    fn publishable_tokens_are_surfaced_but_not_alarmed() {
+        for (src, rule) in [
+            (r#"mapboxgl.accessToken = "pk.eyJ1Ijoib25lIiwiYSI6ImNrMTIzNDU2Nzg5In0.abcDEF";"#, "mapbox-public-token"),
+            (r#"const stripe = Stripe("pk_live_51H8xYz0123456789abcdef");"#, "stripe-publishable-key"),
+        ] {
+            let found = scan(&base(), src);
+            assert_eq!(rules(&found), vec![rule], "{src}");
+            assert_eq!(found[0].kind, "publishable", "not a credential to alarm over: {src}");
+        }
     }
 
     #[test]

@@ -270,7 +270,10 @@ unlike `js.rs`: a key in a comment is still a key, so syntactic position is what
 to ignore here. It runs on every body and reports *beside* the ledger (a
 `secrets` array), never into it — a secret is not a place. Each match names its
 rule and redacts the value; prefix rules (AWS, Google, Slack, GitHub, Stripe,
-JWT, PEM) are trusted on shape, the one label rule is gated on entropy. Calling a
+JWT, PEM) are trusted on shape, the one label rule is gated on entropy. A JWT
+array folds by header to one row with a count, so a config embedding fifty
+context tokens is not fifty rows, and publishable tokens (Mapbox `pk.`, Stripe
+`pk_`) are surfaced under `publishable` rather than alarmed over. Calling a
 disclosure a vulnerability stays the agent's (N21).
 
 ## N9. Authenticated crawl

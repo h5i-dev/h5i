@@ -2166,6 +2166,7 @@ fn extract(
                     "rule": d.rule,
                     "preview": d.preview,
                     "at": d.at,
+                    "count": d.count,
                     "url": d.url.as_ref().map(url::Url::as_str),
                 }));
             }
@@ -2234,8 +2235,10 @@ fn extract(
         );
     }
     for item in &disclosures {
+        let count = item["count"].as_u64().unwrap_or(1);
+        let times = if count > 1 { format!(" x{count}") } else { String::new() };
         println!(
-            "  secret   : {} [{}] {} ({})",
+            "  secret   : {} [{}]{times} {} ({})",
             item["kind"].as_str().unwrap_or_default(),
             item["rule"].as_str().unwrap_or_default(),
             item["preview"].as_str().unwrap_or_default(),
