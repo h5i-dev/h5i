@@ -28,7 +28,7 @@ pub const MAX_FINDINGS_BYTES: u64 = 4 * 1024 * 1024;
 /// How much of an action log the console reads on one poll.
 pub const MAX_ACTIONS_BYTES: u64 = 8 * 1024 * 1024;
 
-/// The most endpoints one detail view returns.
+/// The most endpoints one detail view returns. `h5i recon endpoints` has them all.
 pub const MAX_ENDPOINTS_SHOWN: usize = 500;
 
 /// Anything newer than this counts as "now" for the working/idle line.
@@ -275,6 +275,13 @@ pub fn ledger_endpoints(session_dir: &Path) -> Vec<h5i_wire::ledger::Endpoint> {
     let head = &bytes[..bytes.len().min(MAX_LEDGER_BYTES as usize)];
     let text = String::from_utf8_lossy(head);
     let mut endpoints = h5i_wire::ledger::fold(text.lines()).endpoints;
+    // Past the cap, keep what answered before the 404s, newest first in each.
+    endpoints.sort_by(|a, b| {
+        (a.status == Some(404))
+            .cmp(&(b.status == Some(404)))
+            .then_with(|| b.last_seen.cmp(&a.last_seen))
+            .then_with(|| b.line.cmp(&a.line))
+    });
     endpoints.truncate(MAX_ENDPOINTS_SHOWN);
     endpoints
 }
@@ -876,5 +883,26 @@ mod tests {
         assert_eq!(cdn.hits, 0);
         assert_eq!(cdn.refused, 1);
         assert_eq!(cdn.endpoints[0].refused, 1);
+    }
+
+    #[test]
+    fn capped_endpoints_keep_answers_before_404s_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("recon")).unwrap();
+        let line = |path: &str, at: &str, status: u16| {
+            let id = h5i_wire::ledger::endpoint_id("https://a.test", path, "GET", "native");
+            format!(
+                r#"{{"id":"{id}","origin":"https://a.test","path":"{path}","method":"GET","identity":"native","state":"observed","source":{{"from":"receipt","req":"req_0"}},"at":"{at}","req":"req_0","status":{status}}}"#
+            )
+        };
+        let lines = [
+            line("/a", "2026-09-27T00:00:01Z", 200),
+            line("/b", "2026-09-27T00:00:04Z", 404),
+            line("/c", "2026-09-27T00:00:03Z", 302),
+            line("/d", "2026-09-27T00:00:02Z", 404),
+        ];
+        std::fs::write(ledger_path(dir.path()), lines.join("\n")).unwrap();
+        let paths: Vec<String> = ledger_endpoints(dir.path()).into_iter().map(|e| e.path).collect();
+        assert_eq!(paths, ["/c", "/a", "/b", "/d"]);
     }
 }

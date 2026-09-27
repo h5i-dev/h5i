@@ -26,6 +26,8 @@ export function Recon({ detail }: { detail: SessionDetail }) {
     return out;
   }, [all]);
   const nProbes = all.filter(isCalibration).length;
+  const l = detail.ledger;
+  const total = l ? l.candidate + l.observed + l.confirmed + l.refused + l.gone : all.length;
   const needle = q.trim().toLowerCase();
   const shown = all.filter(
     (e) =>
@@ -78,6 +80,15 @@ export function Recon({ detail }: { detail: SessionDetail }) {
               <input type="search" placeholder="path" value={q} onChange={(e) => setQ(e.target.value)} />
             </label>
           </div>
+          {total > all.length ? (
+            <Note>
+              <div style={{ marginBottom: 6 }}>
+                Showing {all.length.toLocaleString()} of {total.toLocaleString()} endpoints: the ones that answered
+                something other than 404 first, then the 404s, newest first in each.
+              </div>
+              <Cmd text={`h5i recon endpoints --session ${name}`} hint="every endpoint in the ledger" />
+            </Note>
+          ) : null}
           <div className="table-wrap" style={{ flex: "none", maxHeight: "55vh", border: "1px solid var(--line)", borderRadius: 4 }}>
             <table className="grid">
               <thead>
