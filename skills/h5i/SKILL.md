@@ -15,6 +15,7 @@ you cite it by. Use `h5i <command> --help` before guessing flags.
 | Drive a page, and capture what it fetched | `h5i browser` | [references/browser.md](references/browser.md) |
 | Find out what a target exposes | `h5i recon` (a plugin) | [references/recon.md](references/recon.md) |
 | Inspect, mutate and replay that traffic | `h5i websec` (a plugin) | [references/websec.md](references/websec.md) |
+| Hunt for high-impact bug-bounty findings | impact-first research loop | [references/impactful-bug-bounty.md](references/impactful-bug-bounty.md) |
 | Contain the work | `h5i box` | [references/boxes.md](references/boxes.md) |
 
 ## The loop
