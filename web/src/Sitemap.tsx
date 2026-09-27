@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 
-import type { SessionDetail, SiteEndpoint } from "./api";
+import type { SessionDetail, SiteEndpoint, SiteOrigin } from "./api";
 import { Chip, Cmd, Empty, Facts, Method, Note, Split, plural } from "./ui";
 
 // What this session reached, as a tree: origin, then path segments, with the
 // counts folded upward. Refusals sit apart from hits at every level, because
 // "recon wanted to reach this and was not allowed" is a fact a reviewer wants.
+// Paths that only ever answered 404 are left off: a sweep's misses bury the
+// few paths that exist. `h5i websec sitemap` still carries them.
 
 interface Node {
   key: string;
@@ -20,8 +22,27 @@ interface Node {
   children: Map<string, Node>;
 }
 
-function build(detail: SessionDetail): Node[] {
-  return detail.sitemap.map((o) => {
+function onlyMissed(e: SiteEndpoint): boolean {
+  return e.refused === 0 && e.statuses.length > 0 && e.statuses.every((s) => s === 404);
+}
+
+/** The sitemap with 404-only paths dropped, and origins left empty by that. */
+export function visibleSitemap(detail: SessionDetail): { origins: SiteOrigin[]; hidden: number } {
+  let hidden = 0;
+  const origins: SiteOrigin[] = [];
+  for (const o of detail.sitemap) {
+    const endpoints = o.endpoints.filter((e) => !onlyMissed(e));
+    const dropped = o.endpoints.length - endpoints.length;
+    hidden += dropped;
+    if (dropped > 0 && endpoints.length === 0) continue;
+    const lost = o.endpoints.filter(onlyMissed).reduce((n, e) => n + e.hits, 0);
+    origins.push({ ...o, hits: o.hits - lost, endpoints });
+  }
+  return { origins, hidden };
+}
+
+function build(sitemap: SiteOrigin[]): Node[] {
+  return sitemap.map((o) => {
     const root: Node = {
       key: o.origin,
       label: o.origin,
@@ -79,14 +100,18 @@ function build(detail: SessionDetail): Node[] {
 }
 
 export function Sitemap({ detail }: { detail: SessionDetail }) {
-  const roots = useMemo(() => build(detail), [detail]);
+  const { origins, hidden } = useMemo(() => visibleSitemap(detail), [detail]);
+  const roots = useMemo(() => build(origins), [origins]);
   const [open, setOpen] = useState<Set<string>>(() => new Set(roots.slice(0, 3).map((r) => r.key)));
   const [selected, setSelected] = useState<Node | null>(null);
 
   if (roots.length === 0) {
     return (
-      <Empty title="Nothing reached yet">
+      <Empty title={hidden > 0 ? "Nothing but 404s" : "Nothing reached yet"}>
         <p>The map is folded from the request log, so it fills in as the session fetches.</p>
+        {hidden > 0 ? <p>
+            {hidden} {plural(hidden, "path")} that answered only 404 {hidden === 1 ? "is" : "are"} left off.
+          </p> : null}
       </Empty>
     );
   }
@@ -122,6 +147,11 @@ export function Sitemap({ detail }: { detail: SessionDetail }) {
               Counts fold upward: a directory shows every fetch beneath it. A red count is fetches policy refused
               before the wire.
             </p>
+            {hidden > 0 ? (
+              <p>
+                {hidden} {plural(hidden, "path")} that answered only 404 {hidden === 1 ? "is" : "are"} left off.
+              </p>
+            ) : null}
             <Cmd text={`h5i websec sitemap --session ${detail.name ?? detail.id}`} hint="the same fold, as JSON" />
           </Empty>
         )

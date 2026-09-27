@@ -6,7 +6,7 @@ import { Actions } from "./Actions";
 import { Findings } from "./Findings";
 import { History } from "./History";
 import { Recon } from "./Recon";
-import { Sitemap } from "./Sitemap";
+import { Sitemap, visibleSitemap } from "./Sitemap";
 import { shownState } from "./seen";
 import {
   ATTENTION_LABEL,
@@ -376,7 +376,7 @@ function Workspace({
   const state = row ? shownState(row, seen) : detail.attention.state;
   const counts: Record<Tab, number | null> = {
     history: detail.requests_total,
-    sitemap: detail.sitemap.length,
+    sitemap: visibleSitemap(detail).origins.length,
     actions: detail.actions.length,
     findings: detail.findings_list.length,
     recon: detail.endpoints.length + detail.jobs.length,
