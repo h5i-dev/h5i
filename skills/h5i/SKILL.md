@@ -100,6 +100,7 @@ h5i recon show ep_1af62d68       # sources, evidence, what it answered
 - Recon sends nothing of its own. Every request is a `browser resend` through the session's policy, budget and receipts.
 - `extract` spends no requests, so run it before anything that does, and again after each crawl.
 - Without `triage --calibrate` nothing reaches `confirmed`, and a target that answers 200 for every path will mislead you.
+- `paths` needs a list you bring: reach for [SecLists](https://github.com/danielmiessler/SecLists) (`Discovery/Web-Content/`), narrowest first, and keep it inside the granted rate and budget. See [references/recon.md](references/recon.md).
 - Runs that spend requests are jobs. `jobs resume` repeats the parameters and skips what the ledger already answered.
 
 ## Websec

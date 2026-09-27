@@ -17,6 +17,14 @@ h5i recon show ep_1af62d68                   # sources, evidence, what it answer
 
 `paths` takes a list you bring: h5i ships none, and `--reuse-words` adds the words this session has already seen. `--extensions php,bak` and `--backups` are the mechanical shapes; `--under /admin` narrows where it asks.
 
+The list is where most of the yield is, so reach for [SecLists](https://github.com/danielmiessler/SecLists) rather than a thin hand-written file. Clone it once (`git clone --depth 1 https://github.com/danielmiessler/SecLists`) and point `--wordlist` at the file that fits the target, narrowest first so you spend the fewest requests:
+
+- `Discovery/Web-Content/common.txt` for a first pass, `raft-*-directories.txt` / `raft-*-files.txt` when you want more.
+- A stack-specific list once you know what you are looking at: `Discovery/Web-Content/apache.txt`, `IIS.txt`, `tomcat.txt`, `CMS/wordpress.fuzz.txt`, and so on.
+- `Discovery/Web-Content/api/` and `SwaggerAPI/` for JSON APIs; `Discovery/Web-Content/Common-DB-Backups.txt` pairs with `--backups`.
+
+Start with `common.txt`, run `triage --calibrate`, then bring a larger or more specific list only where the calibrated result says it is worth the requests. `--reuse-words` still beats a generic list on a target that has disclosed its own vocabulary, so combine the two. Keep every run inside the granted rate and budget; a large SecLists file is thousands of requests, so set `--max-requests` deliberately and say so.
+
 Runs that spend requests are jobs. `h5i recon jobs list`, `jobs show`, and `jobs resume`, which repeats the recorded parameters and skips whatever the ledger already answered. The ledger is written as a run goes, so stopping one keeps what it found. `--reset-budget` starts the page's network allowance again when a long run needs it; say it out loud rather than assuming it.
 
 `h5i recon import --format urls|katana|subfinder|httpx|openapi <file>` reads what another tool produced. Those rows are candidates and stay candidates: h5i does not run the tools, and never records what one of them saw as an answer. `h5i recon export` writes the inventory as JSONL, and `h5i recon merge --from <session>` folds another session's ledger in, keeping each identity's observations apart.
