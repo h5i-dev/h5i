@@ -913,6 +913,9 @@ fn evidence(site: &Site) -> String {
              its environment and **not** its network — that box's tier enforces no egress \
              boundary, so nothing outside `{NAME}` itself saw these fetches. {common}"
         ),
+        (_, bs::Lane::ProxyObserved) => {
+            "through an h5i capture proxy; the external browser was not confined".to_string()
+        }
         (bs::Placement::Host, _) => format!(
             "helper-observed. `{NAME}` ran on this machine, outside the engine and outside any \
              boundary h5i enforces: nothing here checked its fetches against this session's \

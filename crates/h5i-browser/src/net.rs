@@ -379,6 +379,72 @@ pub struct LocalBroker {
 }
 
 impl LocalBroker {
+    /// Record a request observed by an intercepting proxy and allocate its id
+    /// from this broker's sequence.  Proxy traffic and workbench replays share
+    /// this broker, so their ids cannot collide and both land in one timeline.
+    pub fn observe_proxy_request(
+        &self,
+        method: &str,
+        url: &str,
+        headers: Vec<(String, String)>,
+        body: &[u8],
+    ) -> Result<RequestRecord, H5iError> {
+        let parsed = Url::parse(url).map_err(|e| {
+            H5iError::Metadata(format!("the proxy received an unusable URL {url:?}: {e}"))
+        })?;
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+        let mut record = RequestRecord::request(seq, Initiator::Subresource, method, url);
+        if let Some(reason) = self.policy.check(&parsed).reason() {
+            record = record.denied(reason);
+        }
+        self.append(&record)?;
+        if record.allowed {
+            if let Some(capture) = &self.capture {
+                let content_type = headers
+                    .iter()
+                    .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+                    .map(|(_, value)| value.clone());
+                capture.request(seq, method, url, headers, body, content_type.as_deref());
+            }
+        } else {
+            self.append(&record.response())?;
+        }
+        Ok(record)
+    }
+
+    /// Finish a proxy-observed request in the same receipt and capture shapes
+    /// the direct engine writes.
+    pub fn observe_proxy_response(
+        &self,
+        request: &RequestRecord,
+        status: Option<u16>,
+        headers: Vec<(String, String)>,
+        body: crate::capture::Received<'_>,
+        bytes: u64,
+        duration: Duration,
+        error: Option<String>,
+    ) -> Result<(), H5iError> {
+        let mut outcome = request.response();
+        outcome.status = status;
+        outcome.bytes = Some(bytes);
+        outcome.duration_ms = Some(duration.as_millis() as u64);
+        outcome.error = error;
+        self.append(&outcome)?;
+        if let Some(capture) = &self.capture {
+            capture.response(crate::capture::Response {
+                seq: request.seq,
+                url: &request.url,
+                status,
+                headers,
+                content_encoding: None,
+                wire_bytes: None,
+                body,
+                trailing: &[],
+            });
+        }
+        Ok(())
+    }
+
     /// Build a broker.
     ///
     /// `proxy` is h5i's egress proxy (`H5I_EGRESS_PROXY`). It is not required,
@@ -2827,6 +2893,7 @@ impl NetProvider for BrokerNet {
 mod tests {
     use super::*;
     use crate::broker::Broker;
+    use crate::capture::{Body, Capture};
     use crate::receipt::{MemorySink, Phase};
     use std::sync::atomic::AtomicBool;
 
@@ -2836,6 +2903,83 @@ mod tests {
 
     fn url(s: &str) -> Url {
         Url::parse(s).expect("test url")
+    }
+
+    #[test]
+    fn proxy_observations_share_receipts_and_the_message_store() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::with_limits(
+            Policy::new().allow("example.test"),
+            sink.clone(),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture.clone()),
+        )
+        .expect("broker");
+
+        let request = broker
+            .observe_proxy_request(
+                "POST",
+                "https://example.test/api",
+                vec![("content-type".into(), "application/json".into())],
+                br#"{"probe":true}"#,
+            )
+            .expect("request is recorded");
+        assert!(request.allowed);
+        broker
+            .observe_proxy_response(
+                &request,
+                Some(201),
+                vec![("content-type".into(), "application/json".into())],
+                crate::capture::Received::Bytes(br#"{"ok":true}"#),
+                11,
+                Duration::from_millis(7),
+                None,
+            )
+            .expect("response is recorded");
+
+        let records = sink.records();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].phase, Phase::Request);
+        assert_eq!(records[1].phase, Phase::Response);
+        assert_eq!(records[0].seq, records[1].seq);
+        assert_eq!(records[1].status, Some(201));
+        let stored_request = capture.read_request(request.seq).unwrap();
+        let Body::Stored { sha256, .. } = &stored_request.body else {
+            panic!("proxy request body was not stored: {:?}", stored_request.body);
+        };
+        assert_eq!(capture.read_body(sha256).unwrap(), br#"{"probe":true}"#);
+        let stored_response = capture.read_response(request.seq).unwrap();
+        let Body::Stored { sha256, .. } = &stored_response.body else {
+            panic!("proxy response body was not stored: {:?}", stored_response.body);
+        };
+        assert_eq!(capture.read_body(sha256).unwrap(), br#"{"ok":true}"#);
+    }
+
+    #[test]
+    fn a_proxy_observation_is_denied_before_it_reaches_the_store() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::with_limits(
+            Policy::new().allow("example.test"),
+            sink.clone(),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture.clone()),
+        )
+        .expect("broker");
+
+        let request = broker
+            .observe_proxy_request("GET", "https://outside.test/", Vec::new(), &[])
+            .expect("denial is recorded");
+        assert!(!request.allowed);
+        let records = sink.records();
+        assert_eq!(records.len(), 2, "a denial has request and response phases");
+        assert!(!records[0].allowed);
+        assert!(capture.read_request(request.seq).is_err());
     }
 
     /// A sink that refuses everything, to prove the fail-closed path.

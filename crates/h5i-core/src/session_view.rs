@@ -723,6 +723,7 @@ mod tests {
             control: bs::Control::default(),
             logs: bs::Logs::default(),
             permissive_cors: false,
+            proxy: None,
         }
     }
 

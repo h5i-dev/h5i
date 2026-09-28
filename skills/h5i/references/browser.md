@@ -10,6 +10,24 @@ h5i browser <verb> br_7k2xqa ...       # or omit the id and get the last session
 h5i browser close
 ```
 
+For a page that needs real Chromium, Linux also has a proxy-observed session:
+
+```bash
+h5i browser proxy https://app.example --session chrome
+# Run the printed: agent-browser --proxy ... --ca-cert ... open ...
+agent-browser dashboard start                    # human login/takeover
+h5i websec requests --session chrome
+h5i recon extract --session chrome
+```
+
+The proxy writes Chromium's decrypted HTTP/S messages into the same receipt and
+message store as the native browser, so `websec`, `recon`, `requests`, `resend`
+and `audit` do not need a separate mode. The lane is `proxy-observed`: h5i saw
+traffic routed through its loopback proxy, but the external Chromium process is
+not confined. `agent-browser --ca-cert` currently makes this Linux-only. If
+agent-browser or `certutil` is missing, `proxy` refuses before creating a
+session and prints the install command.
+
 ## Where the session runs
 
 | | on this machine (default) | `--in <box>` |
@@ -79,7 +97,7 @@ returns a `refs` array pairing each `@ref` with a durable CSS selector.
 change it; `budget` means it was still working.
 
 Every refusal carries a code: `stale-ref`, `no-such-ref`, `no-snapshot`,
-`wrong-role`, `no-match`, `bad-request`, `refused`, `login-mode`, `no-script`.
+`wrong-role`, `no-match`, `bad-request`, `refused`, `no-script`.
 `retryable: false` means retrying cannot help, so change approach.
 
 With `--script`, a form the page submits itself reports `page_submitted` and the
@@ -102,11 +120,9 @@ No verb returns a cookie value, and a password field reports a mask.
 
 ### Pasting a session cookie from a real browser
 
-`h5i browser login` hands the page to a human at the live view. It is
-experimental and usually fails on a real site: the login flow fingerprints the
-engine or needs script h5i does not run. Ask the human to sign in with their own
-browser and copy the session cookie out of devtools (Application in Chrome,
-Storage in Firefox, under Cookies), then open with it:
+Prefer `h5i browser proxy` and `agent-browser dashboard start`: the human signs
+in directly in Chromium and its authenticated traffic is already available to
+websec and recon. Cookie import remains a fallback for a native session:
 
 ```bash
 cat > jar.json <<'EOF'
@@ -133,6 +149,10 @@ h5i websec replay <id> --set 'header.cookie=…' --create
 A pasted cookie is a live credential in the transcript, unlike `$H5I_SECRET_`.
 Ask for the narrowest one the target checks, and `h5i browser rm <session>`
 afterwards.
+
+When Chromium compatibility is the reason for using a real browser, prefer the
+proxy-observed session above. Logging in through `agent-browser dashboard start`
+keeps its cookies in Chromium and removes the devtools copy/paste step.
 
 ## What this engine does not do
 

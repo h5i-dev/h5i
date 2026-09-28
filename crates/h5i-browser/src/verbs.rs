@@ -8,20 +8,6 @@
 //! One enum now, with every per-verb property an exhaustive `match`, so a new
 //! verb is a compile error until each question has been answered for it.
 //!
-//! One of those questions is a security question, which is why this is a type
-//! rather than a tidier `match`. LOGIN mode refuses every verb that reads the
-//! page, and used to do it with a string allowlist:
-//!
-//! ```ignore
-//! if session.login && !matches!(verb, "status" | "login") { ... }
-//! ```
-//!
-//! The default was refusal, so the failure direction was safe. But the allowlist
-//! was two string literals: one typo widened it, and no test that did not
-//! already know about the typo would have caught it.
-//! [`Verb::readable_during_login`] is the same rule as a predicate, where a typo
-//! does not resolve and a new verb does not compile until it has answered.
-
 use serde_json::{json, Value};
 
 /// Everything the resident session can be asked to do.
@@ -35,8 +21,6 @@ pub enum Verb {
     Status,
     /// The page as a model should read it.
     Snapshot,
-    /// Hand the page to the human at the live view.
-    Login,
     /// Go to a URL.
     Navigate,
     /// Scroll the page.
@@ -111,7 +95,6 @@ impl Verb {
     pub const ALL: &'static [Verb] = &[
         Verb::Status,
         Verb::Snapshot,
-        Verb::Login,
         Verb::Navigate,
         Verb::Scroll,
         Verb::Type,
@@ -141,7 +124,6 @@ impl Verb {
         match self {
             Verb::Status => "status",
             Verb::Snapshot => "snapshot",
-            Verb::Login => "login",
             Verb::Navigate => "navigate",
             Verb::Scroll => "scroll",
             Verb::Type => "type",
@@ -172,66 +154,6 @@ impl Verb {
         Verb::ALL.iter().copied().find(|v| v.name() == name)
     }
 
-    /// Whether this verb may run while LOGIN mode is on.
-    ///
-    /// LOGIN mode exists so a credential typed by a human at the live view is
-    /// not in a snapshot the agent asked for. So the rule is: anything that
-    /// reads the page is refused, and the only exceptions are the two verbs
-    /// that would make the mode impossible to leave. One reports that it is
-    /// on, the other turns it off.
-    pub fn readable_during_login(self) -> bool {
-        match self {
-            Verb::Status | Verb::Login => true,
-
-            Verb::Snapshot
-            | Verb::Navigate
-            | Verb::Scroll
-            | Verb::Type
-            | Verb::Submit
-            | Verb::Click
-            // The request log names URLs a login flow visited. Engine-written,
-            // but still a reading of where the page went, and a human typing a
-            // password should not have that read out from under them.
-            | Verb::Requests
-            | Verb::Resend
-            | Verb::WaitFor
-            | Verb::WaitForScript
-            | Verb::Extract
-            | Verb::Markdown
-            // Asked during a human's login, this is a question about
-            // credentials at exactly the wrong moment.
-            | Verb::Env
-            // The recording names the fields a login flow used and the URLs it
-            // visited. Engine-written, like the request log, and refused for
-            // the same reason: it is still a reading of what the human at the
-            // viewer is doing.
-            | Verb::Script
-            | Verb::Structured
-            // A read of the page, and one that spends requests doing it. A
-            // human at a login form is not a reason to go fetching the
-            // subresources of whatever page they landed on.
-            | Verb::Transcript
-            | Verb::SetChecked
-            | Verb::Select
-            | Verb::Press
-            | Verb::Find
-            // The most literal page read there is. A password is *pixels*
-            // before it is anything else, and the live view is already showing
-            // them to the human who typed them; a PNG hands the same pixels to
-            // the agent, which is exactly the transfer this mode exists to
-            // stop. Refused before any of the text verbs would have been.
-            | Verb::Screenshot
-            // Not a read, and refused anyway: reloading the page a human is
-            // halfway through typing a credential into destroys the form they
-            // are filling. LOGIN mode means the human has the wheel.
-            | Verb::Reload
-            // Not a page read, and refused all the same: it spends the
-            // session's budget talking to a server while a human is typing a
-            // password into it.
-            | Verb::Socket => false,
-        }
-    }
-
     /// Whether this verb acts on a `@ref` from a snapshot.
     ///
     /// This is what drives the staleness check in [`crate::stream`]: a verb
@@ -250,7 +172,6 @@ impl Verb {
 
             Verb::Status
             | Verb::Snapshot
-            | Verb::Login
             | Verb::Navigate
             | Verb::Scroll
             | Verb::Requests
@@ -285,7 +206,6 @@ impl Verb {
 
             Verb::Status
             | Verb::Snapshot
-            | Verb::Login
             | Verb::Navigate
             | Verb::Scroll
             | Verb::Submit
@@ -326,7 +246,6 @@ impl Verb {
 
             Verb::Status
             | Verb::Snapshot
-            | Verb::Login
             | Verb::Navigate
             | Verb::Scroll
             | Verb::Type
@@ -408,7 +327,6 @@ impl Verb {
             | Verb::Find
             // Handing the page to a human is the one step a replay must never
             // reproduce: there is nobody there to take it.
-            | Verb::Login
             // Like `resend`: a message the agent composed, not a step in the
             // page-level story a replay retells.
             | Verb::Socket => false,
@@ -445,7 +363,6 @@ impl Verb {
             // Reads the session rather than the page, so there would be
             // nothing for a navigation to change.
             | Verb::Status
-            | Verb::Login
             | Verb::Requests
             | Verb::Resend
             | Verb::Env
@@ -498,8 +415,6 @@ pub enum Code {
     WrongRole,
     /// The policy refused it.
     Refused,
-    /// LOGIN mode is on and this verb reads the page.
-    LoginMode,
     /// The verb needs a script realm and this session has none.
     NoScript,
     /// A wait ran out of budget.
@@ -520,7 +435,6 @@ impl Code {
             Code::StaleRef => "stale-ref",
             Code::WrongRole => "wrong-role",
             Code::Refused => "refused",
-            Code::LoginMode => "login-mode",
             Code::NoScript => "no-script",
             Code::Timeout => "timeout",
             Code::NoMatch => "no-match",
@@ -547,7 +461,6 @@ impl Code {
             | Code::UnknownVerb => true,
 
             Code::Refused
-            | Code::LoginMode
             | Code::NoScript
             | Code::Timeout
             | Code::Internal => false,
@@ -724,21 +637,6 @@ mod tests {
     }
 
     #[test]
-    fn login_mode_admits_only_the_two_verbs_that_let_it_end() {
-        // The rule this type exists for. Every other verb reads the page in
-        // some form, and a credential typed into a page the agent can read has
-        // been handed to the agent. `status` reports the mode; `login` ends it.
-        // Anything else being readable here is a bug, and this assertion is
-        // what makes it one rather than a typo nobody notices.
-        let readable: Vec<&str> = Verb::ALL
-            .iter()
-            .filter(|v| v.readable_during_login())
-            .map(|v| v.name())
-            .collect();
-        assert_eq!(readable, vec!["status", "login"]);
-    }
-
-    #[test]
     fn only_verbs_that_name_a_ref_ask_for_one() {
         let refs: Vec<&str> = Verb::ALL
             .iter()
@@ -781,7 +679,6 @@ mod tests {
         // The split that keeps a self-correction loop from spinning: a model
         // can fix a selector, and cannot fix an allowlist.
         assert!(!Code::Refused.caller_can_fix());
-        assert!(!Code::LoginMode.caller_can_fix());
         assert!(Code::NoMatch.caller_can_fix());
         assert!(Code::StaleRef.caller_can_fix());
     }
@@ -796,7 +693,6 @@ mod tests {
             Code::StaleRef,
             Code::WrongRole,
             Code::Refused,
-            Code::LoginMode,
             Code::NoScript,
             Code::Timeout,
             Code::NoMatch,

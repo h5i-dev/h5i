@@ -46,7 +46,7 @@ web = ["h5i-core/web"]
 # `url` with it: the workbench's readers parse a stored URL, and they are
 # gated with `browser` rather than with `ytdlp`, which is where the dependency
 # used to arrive by accident.
-browser = ["dep:h5i-browser", "dep:url"]
+browser = ["dep:h5i-browser", "dep:url", "dep:hudsucker", "dep:http-body-util", "dep:tokio"]
 # `identity` adds `--identity` and `h5i browser identity`: one coherent browser
 # identity, read by the header layer and the script realm from the same object.
 # See `crates/h5i-browser/src/identity.rs`.
@@ -144,6 +144,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # Only to drive `h5i-share`'s async transports from a blocking CLI handler.
 # Optional with it, so a `--no-default-features` build pulls in no runtime.
 tokio = { version = "1.0", features = ["rt-multi-thread"], optional = true }
+# The Chromium capture lane is a real intercepting HTTP/S proxy.  Hudsucker
+# supplies the protocol machinery (CONNECT, TLS, HTTP/2 and WebSockets); h5i's
+# handler supplies policy, receipts and the existing message-store format.
+hudsucker = { version = "0.25", default-features = false, features = ["rcgen-ca", "rustls-client", "http2"], optional = true }
+http-body-util = { version = "0.1", optional = true }
 
 [dev-dependencies]
 # Renders docs/man/man1/h5i.1 in examples/gen_man.rs. A dev-dependency because the

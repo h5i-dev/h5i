@@ -12,6 +12,8 @@ pub mod boxes;
 // `runner` follow.
 #[cfg(feature = "browser")]
 pub mod browser;
+#[cfg(feature = "browser")]
+pub mod capture_proxy;
 // Reading a captured session's stored messages, and comparing two of them. Same
 // gate as `browser`: it reads the shapes the engine writes, so a build with no
 // engine has nothing to read.

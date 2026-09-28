@@ -266,17 +266,6 @@ enum SessionVerb {
         #[command(flatten)]
         at: SessionArgs,
     },
-    /// Hand the page to the human at the live view for as long as a login takes.
-    Login {
-        /// End login mode and make the page readable again.
-        #[arg(long, conflicts_with = "on")]
-        off: bool,
-        /// Begin login mode. The default.
-        #[arg(long)]
-        on: bool,
-        #[command(flatten)]
-        at: SessionArgs,
-    },
     /// Go to a URL, resolved against the current page like a click would be.
     Navigate {
         url: String,
@@ -1654,10 +1643,6 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         SessionVerb::Snapshot { delta, url, at } => (
             at,
             serde_json::json!({"verb": Verb::Snapshot.name(), "delta": delta, "url": url}),
-        ),
-        SessionVerb::Login { off, on: _, at } => (
-            at,
-            serde_json::json!({"verb": Verb::Login.name(), "on": !off}),
         ),
         SessionVerb::Navigate { url, at } => (
             at,

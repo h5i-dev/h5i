@@ -926,10 +926,8 @@ page and the record of how it lost it.</p>
 <p><code>--restore</code> is an inheritance, not a resurrection. It produces a new id, writes
 <code>restored_from</code> into the new record, and carries the <em>cookie jar</em> and nothing
 else. The jar is mirrored into the session directory whenever it changes, so a
-login a human performed once at the live view survives:</p>
-<pre><code class="language-bash">h5i browser open https://example.com/login --session auth
-h5i browser login --session auth        # the human types the password
-h5i browser login --session auth --off
+jar seeded at startup survives:</p>
+<pre><code class="language-bash">h5i browser open https://example.com/login --session auth --cookie-jar ./jar.json
 h5i browser close --session auth
 
 h5i browser open https://example.com/app --restore br_7k2xqa   # still signed in
@@ -937,9 +935,9 @@ h5i browser open https://example.com/app --restore br_7k2xqa   # still signed in
 <p>No verb returns a cookie value: the file is handed to the next engine, never to
 a model. A session that left no jar is refused by name rather than silently
 seeding nothing.</p>
-<p><code>--cookie-jar &lt;path&gt;</code> seeds the same jar from a file, which is how a login this
-engine cannot perform gets in: a human signs in with their own browser and
-pastes the cookie into <code>{"version": 1, "cookies": [...]}</code>. Both flags write
+<p><code>--cookie-jar &lt;path&gt;</code> seeds the same jar from a file. Prefer a Chromium proxy
+session and <code>agent-browser dashboard start</code> for interactive login; cookie import
+remains available for native sessions as <code>{"version": 1, "cookies": [...]}</code>. Both flags write
 before the engine starts. A row no server could have set, such as a <code>__Host-</code>
 name without the flags that name means, is refused and counted on stderr, so the
 <code>restored N cookie(s)</code> line is the check that the login carried.</p>

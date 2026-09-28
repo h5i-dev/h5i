@@ -309,11 +309,9 @@ whether it is the caller's to fix.
 | `stale-ref` | the ref is on the page and means something else now |
 | `wrong-role` | the ref is the wrong kind of thing for this verb |
 | `refused` | the policy said no |
-| `login-mode` | LOGIN mode is on and this verb reads the page |
 | `timeout` / `no-match` / `internal` | as named |
 
-Every per-verb property is an exhaustive match on one table (`src/verbs.rs`),
-including which verbs LOGIN mode admits.
+Every per-verb property is an exhaustive match on one table (`src/verbs.rs`).
 
 ### The resident session
 

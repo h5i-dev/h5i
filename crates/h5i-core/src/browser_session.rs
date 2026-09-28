@@ -156,6 +156,10 @@ pub enum Lane {
     EngineClaimed,
     /// h5i saw it from outside the box as well.
     HostObserved,
+    /// An h5i-owned loopback proxy observed and stored the HTTP exchange.
+    /// This is complete for traffic routed through the proxy, but it is not a
+    /// claim that the external browser process could not use another route.
+    ProxyObserved,
 }
 
 impl Lane {
@@ -163,8 +167,18 @@ impl Lane {
         match self {
             Lane::EngineClaimed => "engine-claimed",
             Lane::HostObserved => "host-observed",
+            Lane::ProxyObserved => "proxy-observed",
         }
     }
+}
+
+/// How an external Chromium session reaches an h5i capture proxy.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Proxy {
+    /// Loopback HTTP proxy URL, suitable for `agent-browser --proxy`.
+    pub url: String,
+    /// Public CA certificate, suitable for `agent-browser --ca-cert`.
+    pub ca_cert: PathBuf,
 }
 
 /// What survives the session.
@@ -364,6 +378,9 @@ pub struct Session {
     /// without saying how: a result gathered under this means something else.
     #[serde(default)]
     pub permissive_cors: bool,
+    /// Present when Chromium is external and this session is its capture proxy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<Proxy>,
 }
 
 /// The engine's two logs, as this machine sees them.
@@ -1845,6 +1862,7 @@ mod tests {
             control: Control::default(),
             logs: Logs::default(),
             permissive_cors: false,
+            proxy: None,
         }
     }
 

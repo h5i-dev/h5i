@@ -115,14 +115,17 @@ h5i browser read https://docs.rs/           # for a single page without a persis
 
 ### 2.2. Test web applications
 
-Because h5i owns the browser’s network layer, agents can capture, inspect, edit,
-replay, and compare HTTP traffic without a MITM proxy, CA certificate, or
-separate repeater.
+The native browser owns its network layer, so agents can capture, inspect, edit,
+replay, and compare HTTP traffic without a separate repeater. On Linux, sites
+that need full Chromium can use the same workbench through h5i's agent-browser
+capture proxy.
 
 Use these capabilities only on systems you own or are authorized to test:
 
 ```bash
 h5i browser open https://target.example --capture --allow target.example
+# Or: h5i browser proxy https://target.example --session chrome
+# Then run the printed `agent-browser --proxy ... --ca-cert ... open ...` command.
 
 h5i websec requests                                  # list messages and IDs
 h5i websec show req_42 --raw                         # inspect a request
@@ -164,12 +167,9 @@ h5i browser audit       # actions, fetches, handovers, and session ending
 h5i browser status      # isolation, policy digest, and network placement
 ```
 
-For sensitive interactions, a human can take control without returning
-credentials to the agent:
-
-```bash
-h5i browser login
-```
+For authenticated Chromium testing, use `agent-browser dashboard start`. The
+human signs in directly in Chromium while `h5i websec` and `h5i recon` consume
+the captured traffic through the same session interface.
 
 For stronger isolation, define network and filesystem limits in
 `.h5i/env.toml`:
@@ -307,7 +307,8 @@ browser and agent.
 
 Not for every use case. h5i is useful when an AI agent needs to browse an
 application and capture, edit, replay, and compare its HTTP traffic through one
-interface, without a separate proxy or CA setup. Burp Suite remains better
+interface. Its native browser needs no proxy; the optional agent-browser lane
+creates and configures a per-session proxy and CA. Burp Suite remains better
 suited to mature manual workflows, automated scanning, extensions, and
 low-level protocol testing.
 
@@ -316,9 +317,10 @@ low-level protocol testing.
 <details>
 <summary>Does h5i work on every website?</summary>
 
-No. h5i works best for content-heavy websites and common browser interactions,
-but some browser APIs are not yet supported. For incompatible websites, you can
-run Chromium inside an h5i sandbox.
+No. h5i works best for content-heavy websites and common browser interactions.
+For sites that need Chromium, Linux users can run `h5i browser proxy <url>` and
+open the printed command with agent-browser, or run Chromium inside an h5i
+sandbox.
 
 </details>
 

@@ -83,6 +83,11 @@ pub enum Commands {
         args: Vec<std::ffi::OsString>,
     },
 
+    /// The Chromium interception proxy's resident process.
+    #[command(name = "__capture-proxy", hide = true)]
+    #[cfg(feature = "browser")]
+    CaptureProxy(cli::capture_proxy::Args),
+
     /// Browser sessions: open one, drive it, close it.
     #[cfg(feature = "browser")]
     Browser {
@@ -332,6 +337,8 @@ pub fn run() -> anyhow::Result<()> {
             let argv = std::iter::once(std::ffi::OsString::from("h5i __engine")).chain(args);
             h5i_browser::cli::main(argv);
         }
+        #[cfg(feature = "browser")]
+        Commands::CaptureProxy(args) => cli::capture_proxy::run(args)?,
         #[cfg(feature = "browser")]
         Commands::Browser { action } => cli::browser::run(action)?,
         #[cfg(feature = "share")]

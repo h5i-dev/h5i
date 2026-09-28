@@ -188,11 +188,8 @@ struct Session {
     /// Verb names callers asked for that this session does not have, counted.
     unknown_verbs: std::collections::BTreeMap<String, u64>,
     /// What this session has done, in a form that can be run again.
-    ///
-    /// In memory, like the cookie jar and for the same reason: it names the
-    /// fields a login used, and a file is exactly where that should not
-    /// accumulate on its own. `session script` hands it over when asked, and
-    /// the caller decides whether to keep it.
+    /// `session script` hands it over when asked, and the caller decides
+    /// whether to keep it.
     recording: crate::replay::Recording,
 
     /// The page moved and no viewer has been shown it.
@@ -203,16 +200,6 @@ struct Session {
     /// which also makes what they get more current.
     frame_owed: bool,
 
-    /// Whether a human is typing a credential right now.
-    ///
-    /// While this is set every control verb that reads the page is refused (see
-    /// [`Session::login_refusal`]). The viewer keeps streaming, because the
-    /// human doing the typing has to see what they are typing, and that is the
-    /// limit of the mode: the viewer socket is inside the box, where there is no
-    /// privilege boundary, so an agent that goes looking can watch the same
-    /// frames. roadmap-history.md §5.10 specified withholding frames *and*
-    /// snapshots; only the snapshot half is built, and the refusal text says so.
-    login: bool,
 }
 
 /// Where this session has been, and where forward is.
@@ -271,26 +258,6 @@ impl History {
 }
 
 impl Session {
-    /// Why a read was refused while a human is logging in.
-    fn login_refusal(verb: crate::verbs::Verb) -> Value {
-        json!({
-            "ok": false,
-            "code": crate::verbs::Code::LoginMode.as_str(),
-            "retryable": false,
-            "error": format!(
-                "`{}` is refused while this session is in login mode: a credential typed \
-                 into a page the agent can read has been given to the agent. The live view \
-                 still streams — the person typing has to see the page — so this refuses the \
-                 control path and not an agent that attaches to the viewer socket itself. End \
-                 login mode with `session login --off` and reads resume, with whatever session \
-                 the login established still in the jar.",
-                verb.name()
-            ),
-            "login": true,
-            "frames_withheld": false,
-        })
-    }
-
     fn viewport(&self) -> (u32, u32) {
         let options = self.factory.options();
         (options.width, options.height)
@@ -526,7 +493,6 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         history: History::seeded(page_url),
         unknown_verbs: std::collections::BTreeMap::new(),
         recording: crate::replay::Recording::default(),
-        login: false,
     };
     run_session(session, rx, options.once);
 
@@ -1336,14 +1302,6 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         return (VerbError::unknown_verb(name).reply(), false);
     };
 
-    // Reads are refused while a human is typing a credential, and which verbs
-    // those are is a property of the verb rather than a list kept here. See
-    // `Verb::readable_during_login`: the allowlist used to be two string
-    // literals, where a typo widened it silently.
-    if session.login && !verb.readable_during_login() {
-        return (Session::login_refusal(verb), false);
-    }
-
     // A read verb given a `url` goes there first, so "look at this page" is one
     // round trip rather than a `navigate` whose reply an agent reads only to
     // send the next request. Which verbs may do this is a property of the verb
@@ -1554,25 +1512,13 @@ fn control_verb_inner(
         Verb::Status => (
             json!({
                 "ok": true,
-                // Where the session is, and only *which origin*, while a human
-                // is logging in. `requests` is refused during LOGIN because it
-                // "names URLs a login flow visited", and this named the one the
-                // flow is on right now: an OAuth callback carries its `code` in
-                // the query, a magic link and a password reset carry their token
-                // in the path. The origin is what an agent needs to know it is
-                // still on the right site; the rest is the credential.
-                "url": if session.login {
-                    login_safe_url(session.page.url())
-                } else {
-                    session.page.url().to_string()
-                },
+                "url": session.page.url().to_string(),
                 "engine": "h5i-browser",
                 // How many, never which. An agent can see that it is logged in
                 // without being able to read the credential that makes it so,
                 // which is what keeps a stolen snapshot worth less than a
                 // stolen jar.
                 "cookies": session.factory.broker().cookie_count(),
-                "login": session.login,
                 "open_sockets": session.page.open_sockets(),
                 // What was asked for and does not exist. Empty on almost every
                 // session, and when it is not it is the most useful line here:
@@ -1963,43 +1909,6 @@ fn control_verb_inner(
                     )
                 }
             }
-        }
-
-        // Hand the page to the human for as long as it takes to log in.
-        //
-        // §B10 of roadmap-history.md listed this as overdue rather than pending: it
-        // was supposed to arrive with the cookie jar, because a jar is what
-        // makes logging in worth doing and a readable page is what makes it
-        // unsafe.
-        Verb::Login => {
-            let on = request.get("on").and_then(Value::as_bool).unwrap_or(true);
-            session.login = on;
-            // The baseline is dropped either way. A delta across a login would
-            // describe the page a human just used, which is the one thing this mode
-            // exists to keep out of the agent's hands.
-            //
-            // And the served refs with it: they carry the id, role and *name* of every
-            // actionable element from the pre-login reading, so leaving them would let
-            // a ref minted before the login be honoured after it, and let a
-            // `stale-ref` message quote page state the agent never read.
-            session.last_snapshot = None;
-            session.served_refs = None;
-            (
-                json!({
-                    "ok": true,
-                    "login": on,
-                    "cookies": session.factory.broker().cookie_count(),
-                    "message": if on {
-                        "login mode is on: the page is no longer readable by the agent, and the \
-                         live view is yours. Type the credential there, then end this mode."
-                    } else {
-                        "login mode is off: the page is readable again, and whatever session \
-                         the login established is in the jar. The count is all that is \
-                         reported; no cookie value is readable through this engine."
-                    },
-                }),
-                false,
-            )
         }
 
         Verb::Snapshot => {
@@ -3509,20 +3418,6 @@ fn name_is_the_controls_own_value(role: &str) -> bool {
     matches!(role, "textbox" | "combobox")
 }
 
-/// A URL reduced to what it is safe to report while a human is logging in.
-///
-/// The origin, and nothing under it. A `file:` or otherwise origin-less URL has
-/// no origin to fall back to and is reported as the scheme alone, because the
-/// path is the part that carries the token.
-fn login_safe_url(url: &Url) -> String {
-    let origin = url.origin();
-    if origin.is_tuple() {
-        format!("{} (path withheld while login is on)", origin.ascii_serialization())
-    } else {
-        format!("{}: (withheld while login is on)", url.scheme())
-    }
-}
-
 /// Read one key off the wire, in the shape `input_keyboard` already uses.
 fn key_of(value: &Value) -> crate::keys::Key {
     crate::keys::Key {
@@ -4032,7 +3927,6 @@ mod tests {
             history: History::seeded(page_url),
             unknown_verbs: std::collections::BTreeMap::new(),
             recording: crate::replay::Recording::default(),
-            login: false,
         }
     }
 
@@ -4132,7 +4026,6 @@ mod tests {
             history: History::seeded(page_url),
             unknown_verbs: std::collections::BTreeMap::new(),
             recording: crate::replay::Recording::default(),
-            login: false,
         };
         (session, broker)
     }
@@ -4453,22 +4346,6 @@ mod tests {
     }
 
     #[test]
-    fn a_screenshot_is_refused_while_a_human_is_typing_a_credential() {
-        // The strongest case for LOGIN mode there is: a password is *pixels*
-        // before it is anything else, and this hands them to the agent.
-        let mut session = session_with(tall_page());
-        session.login = true;
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("shot.png");
-        let (reply, _) = control_verb(
-            &mut session,
-            &json!({"verb": "screenshot", "path": path.display().to_string()}),
-        );
-        assert_eq!(reply["code"], "login-mode", "{reply:?}");
-        assert!(!path.exists(), "nothing may be written during login mode");
-    }
-
-    #[test]
     fn a_reload_refetches_where_the_session_actually_is() {
         // Three fetches: the navigation that gets there, the reload, and one
         // spare so a retry does not make this flaky.
@@ -4522,16 +4399,6 @@ mod tests {
             "a refusal must name why: {reply:?}"
         );
         assert!(!moved, "a refused reload leaves the page where it was");
-    }
-
-    #[test]
-    fn a_reload_is_refused_while_a_human_is_typing_a_credential() {
-        // Not a read; refused anyway. Reloading the page somebody is halfway
-        // through a login form on destroys what they have typed.
-        let mut session = session_with(tall_page());
-        session.login = true;
-        let (reply, _) = control_verb(&mut session, &json!({"verb": "reload"}));
-        assert_eq!(reply["code"], "login-mode", "{reply:?}");
     }
 
     /// Which verbs may fuse a navigation is a property of the verb, and the
@@ -5221,7 +5088,6 @@ mod tests {
             history: History::seeded(page_url),
             unknown_verbs: std::collections::BTreeMap::new(),
             recording: crate::replay::Recording::default(),
-            login: false,
         }
     }
 
@@ -6334,14 +6200,6 @@ mod tests {
     }
 
     #[test]
-    fn env_is_refused_while_a_human_is_logging_in() {
-        let mut session = session_with("<html><body><p>hi</p></body></html>");
-        session.login = true;
-        let (reply, _) = control_verb(&mut session, &json!({"verb": "env"}));
-        assert_eq!(reply["code"], "login-mode", "{reply:?}");
-    }
-
-    #[test]
     fn a_placeholder_that_names_nothing_is_reported_rather_than_emptied() {
         let mut session = session_with(
             "<html><body><input name='u'></body></html>",
@@ -6629,17 +6487,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_request_log_is_refused_while_a_human_is_logging_in() {
-        // It names URLs a login flow visited. Engine-written, but still a
-        // reading of where the page went.
-        let mut session = session_with("<html><body><p>hi</p></body></html>");
-        session.login = true;
-        let (reply, _) = control_verb(&mut session, &json!({"verb": "requests"}));
-        assert_eq!(reply["ok"], false, "{reply:?}");
-        assert_eq!(reply["code"], "login-mode", "{reply:?}");
-    }
-
     /// The other way a handle goes stale without renumbering: the page keeps
     /// the node and rewrites the label. Same node id, same role, no href, so
     /// the identity check passed and `click @e1` acted on a button the agent
@@ -6713,31 +6560,6 @@ mod tests {
             );
             assert_eq!(reply["ok"], true, "selecting `{value}` was refused: {reply:?}");
         }
-    }
-
-    /// LOGIN mode refuses `requests` because it "names URLs a login flow
-    /// visited". `status` named the one the flow is on right now, and an OAuth
-    /// callback carries its `code` in the query, a magic link and a password
-    /// reset carry their token in the path.
-    #[test]
-    fn status_withholds_the_path_while_a_human_is_logging_in() {
-        let mut session = session_with("<html><body><p>x</p></body></html>");
-        let _ = control_verb(
-            &mut session,
-            &json!({"verb": "navigate", "url": "https://site.example/callback?code=s3cr3t"}),
-        );
-        let (reply, _) = control_verb(&mut session, &json!({"verb": "login", "on": true}));
-        assert_eq!(reply["ok"], true, "{reply:?}");
-
-        let (reply, _) = control_verb(&mut session, &json!({"verb": "status"}));
-        let url = reply["url"].as_str().unwrap_or_default();
-        assert!(!url.contains("s3cr3t"), "the token is in the status reply: {url}");
-        assert!(!url.contains("/callback"), "the path is in the status reply: {url}");
-
-        // And it comes back when the human hands the page over.
-        let _ = control_verb(&mut session, &json!({"verb": "login", "on": false}));
-        let (reply, _) = control_verb(&mut session, &json!({"verb": "status"}));
-        assert!(reply["url"].as_str().unwrap_or_default().starts_with("http"));
     }
 
     #[test]
@@ -7637,7 +7459,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod delta_and_login_tests {
+mod delta_tests {
     use super::*;
 
     fn page_session(html: &str) -> Session {
@@ -7669,7 +7491,6 @@ mod delta_and_login_tests {
             history: History::seeded(page_url),
             unknown_verbs: std::collections::BTreeMap::new(),
             recording: crate::replay::Recording::default(),
-            login: false,
         }
     }
 
@@ -7747,72 +7568,4 @@ mod delta_and_login_tests {
         assert!(reply["text"].as_str().unwrap().contains("wholly"));
     }
 
-    /// The refusal is what a person reads to decide whether typing a password
-    /// here is safe, so it has to name the half that is not enforced. Frames
-    /// keep streaming by design, and the viewer socket is inside the box.
-    #[test]
-    fn the_login_refusal_does_not_claim_the_frames_are_withheld() {
-        let refusal = Session::login_refusal(Verb::Snapshot);
-        assert_eq!(refusal["login"], true);
-        assert_eq!(
-            refusal["frames_withheld"], false,
-            "the mode must not imply it hides the live view"
-        );
-        let text = refusal["error"].as_str().expect("a reason");
-        assert!(text.contains("live view still streams"), "{text}");
-        assert!(text.contains("viewer socket"), "{text}");
-    }
-
-    #[test]
-    fn login_mode_closes_the_page_to_the_agent_and_opens_again_on_request() {
-        let mut session = page_session("<html><body><p>secret form</p></body></html>");
-
-        let (on, _) = control_verb(&mut session, &json!({"verb": "login", "on": true}));
-        assert_eq!(on["login"], true);
-
-        // The page is not readable, and every way of reading it is refused,
-        // not only the one an honest client would use.
-        for verb in ["snapshot", "scroll", "click", "type", "submit", "navigate"] {
-            let (reply, _) = control_verb(&mut session, &json!({"verb": verb}));
-            assert_eq!(reply["ok"], false, "`{verb}` should be refused");
-            assert_eq!(reply["login"], true, "and should say why: {reply:?}");
-        }
-
-        // Status still answers, or the mode could not be observed...
-        let (status, _) = control_verb(&mut session, &json!({"verb": "status"}));
-        assert_eq!(status["ok"], true);
-        assert_eq!(status["login"], true);
-
-        // ...and login still answers, or the mode could not be left.
-        let (off, _) = control_verb(&mut session, &json!({"verb": "login", "on": false}));
-        assert_eq!(off["login"], false);
-        let (reply, _) = control_verb(&mut session, &json!({"verb": "snapshot"}));
-        assert_eq!(reply["ok"], true);
-        assert!(reply["text"].as_str().unwrap().contains("secret form"));
-    }
-
-    #[test]
-    fn login_mode_reports_the_session_it_established_without_revealing_it() {
-        let mut session = page_session("<html><body><p>x</p></body></html>");
-        control_verb(&mut session, &json!({"verb": "login", "on": true}));
-        let (off, _) = control_verb(&mut session, &json!({"verb": "login", "on": false}));
-
-        // How many, never which. The same rule `status` follows.
-        assert!(off["cookies"].is_number(), "{off:?}");
-        let rendered = off.to_string();
-        assert!(!rendered.contains("Set-Cookie"), "{rendered}");
-    }
-
-    #[test]
-    fn a_delta_across_a_login_is_not_offered() {
-        let mut session = page_session("<html><body><p>before</p></body></html>");
-        control_verb(&mut session, &json!({"verb": "snapshot", "delta": true}));
-        control_verb(&mut session, &json!({"verb": "login", "on": true}));
-        control_verb(&mut session, &json!({"verb": "login", "on": false}));
-
-        // The baseline is dropped, because a difference across a login would
-        // describe the page the human just used.
-        let (reply, _) = control_verb(&mut session, &json!({"verb": "snapshot", "delta": true}));
-        assert_eq!(reply["kind"], "full");
-    }
 }
