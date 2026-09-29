@@ -1362,6 +1362,45 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fIURL\fR>
 The `ws://` or `wss://` endpoint to open
+.SH "H5I BROWSER GRPC"
+Make one gRPC call over HTTP/2, reported through the same policy, budget and receipts as `resend`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBgrpc\fR <\fB\-\-path\fR> [\fB\-\-request\-frame\fR] [\fB\-\-metadata\fR] [\fB\-\-insecure\fR] [\fB\-\-timeout\-ms\fR] [\fB\-\-authority\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-path\fR \fI<PATH>\fR
+The `:path`, `/package.Service/Method`
+.TP
+\fB\-\-request\-frame\fR \fI<BASE64>\fR
+The base64 of the already\-framed request body
+.TP
+\fB\-\-metadata\fR \fI<NAME:VALUE>\fR
+`name:value` gRPC metadata. Repeatable
+.TP
+\fB\-\-insecure\fR
+Skip TLS certificate verification, for a target under test
+.TP
+\fB\-\-timeout\-ms\fR \fI<MS>\fR
+Give up after this many milliseconds
+.TP
+\fB\-\-authority\fR \fI<HOST>\fR
+Override the `:authority` header
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIURL\fR>
+The http(s) endpoint, e.g. `http://host:50051`
 .SH "H5I BROWSER RELOAD"
 Fetch the current URL again
 .ie \n(.g .ds Aq \(aq

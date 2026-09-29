@@ -135,18 +135,21 @@ struct JarFile {
 /// The only version this build writes and the only one it reads.
 const JAR_VERSION: u32 = 1;
 
-/// What a jar file yielded.
-///
-/// Two numbers rather than one, because "restored nothing" and "refused
-/// everything" mean opposite things to whoever is looking at a session that is
-/// not logged in, and a count that folded them together would say neither.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// What a jar file yielded. The counts are kept apart because "restored
+/// nothing", "refused everything" and "loaded an expired login" mean opposite
+/// things to someone staring at a logged-out session.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Restored {
     /// Cookies this jar now holds because the file had them.
     pub loaded: usize,
-    /// Rows the file had that no server could have set, and that were
-    /// therefore not believed. See [`is_storable`].
+    /// Rows no server could have set, so not believed. See [`storable_reason`].
     pub refused: usize,
+    /// Rows whose `expires` was already past: the trap where a stale login
+    /// loads as `cookies_sent: 0` and looks like it worked.
+    pub expired: usize,
+    /// One line per dropped row (and one when a foreign format was converted),
+    /// for the operator. Empty when every row loaded cleanly.
+    pub warnings: Vec<String>,
 }
 
 /// Whether a cookie is one the wire could have produced.
@@ -156,27 +159,34 @@ pub struct Restored {
 /// as a check over a finished [`Cookie`] rather than duplicated inside
 /// `parse_set_cookie`, so the two cannot drift into disagreeing about what a
 /// cookie is.
-fn is_storable(cookie: &Cookie) -> bool {
-    if cookie.host.is_empty() || !is_wire_safe(&cookie.name, &cookie.value) {
-        return false;
+/// Why the wire could not have produced this cookie, or `None` if it could.
+///
+/// The load path uses the reason to *say* why a row was refused: "not restored"
+/// with no reason is the fail-as-success this validation exists to remove.
+fn storable_reason(cookie: &Cookie) -> Option<&'static str> {
+    if cookie.host.is_empty() {
+        return Some("it names no host");
+    }
+    if !is_wire_safe(&cookie.name, &cookie.value) {
+        return Some("its name or value holds bytes a header cannot carry");
     }
     if !cookie.path.starts_with('/') {
-        return false;
+        return Some("its path does not start with `/`");
     }
     // The prefixes, which exist purely so a weaker channel cannot overwrite a
     // stronger one's cookie. A file is the weakest channel there is.
     if cookie.name.starts_with("__Secure-") && !cookie.secure {
-        return false;
+        return Some("a `__Secure-` name requires `secure: true`");
     }
     if cookie.name.starts_with("__Host-")
         && (!cookie.secure || cookie.path != "/" || !cookie.host_only)
     {
-        return false;
+        return Some("a `__Host-` name requires `secure: true`, `path: \"/\"` and `host_only: true`");
     }
     // A cookie asking to travel cross-site has to be `Secure`, on the wire and
     // here.
     if cookie.same_site == SameSite::None && !cookie.secure {
-        return false;
+        return Some("`same_site: \"none\"` requires `secure: true`");
     }
     // A host-only cookie names one host and widens to nothing, so the suffix
     // list has no say. A widened one is scoped to a *domain*, and a domain that
@@ -187,9 +197,125 @@ fn is_storable(cookie: &Cookie) -> bool {
         && cookie.host.parse::<std::net::IpAddr>().is_err()
         && is_public_suffix(&cookie.host)
     {
-        return false;
+        return Some("it is not `host_only` and its host is a public suffix, so it would widen to every host under it");
     }
-    true
+    None
+}
+
+/// A cookie as a browser's own export writes it: camelCase, `domain` not `host`.
+#[derive(serde::Deserialize)]
+struct ForeignCookie {
+    name: String,
+    value: String,
+    #[serde(default)]
+    domain: String,
+    #[serde(default)]
+    host: String,
+    #[serde(default)]
+    path: String,
+    #[serde(default, alias = "hostOnly")]
+    host_only: Option<bool>,
+    #[serde(default)]
+    secure: bool,
+    #[serde(default, alias = "httpOnly")]
+    http_only: bool,
+    #[serde(default, alias = "sameSite")]
+    same_site: Option<String>,
+    #[serde(default, alias = "expirationDate", alias = "expires")]
+    expiration: Option<f64>,
+    #[serde(default)]
+    session: bool,
+}
+
+impl ForeignCookie {
+    fn into_stored(self) -> StoredCookie {
+        let host = if self.host.is_empty() {
+            self.domain.trim_start_matches('.').to_string()
+        } else {
+            self.host.clone()
+        };
+        // A leading dot, or an absent `hostOnly`, is a domain cookie.
+        let host_only = self
+            .host_only
+            .unwrap_or(!self.domain.starts_with('.') && !self.host.is_empty());
+        let expires = match self.expiration {
+            Some(secs) if !self.session && secs > 0.0 => Some(secs as u64),
+            _ => None,
+        };
+        StoredCookie {
+            name: self.name,
+            value: self.value,
+            host,
+            host_only,
+            same_site: normalize_same_site(self.same_site.as_deref().unwrap_or("")).to_string(),
+            path: if self.path.is_empty() { "/".to_string() } else { self.path },
+            expires,
+            secure: self.secure,
+            http_only: self.http_only,
+        }
+    }
+}
+
+fn normalize_same_site(raw: &str) -> &'static str {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "strict" => "strict",
+        "none" | "no_restriction" => "none",
+        _ => "lax",
+    }
+}
+
+/// Convert a browser's own cookie export into jar rows, if the text is one.
+///
+/// Two shapes: a Cookie-Editor / EditThisCookie JSON array, and a Netscape
+/// `cookies.txt`. Returns the rows and a name for the format, or `None`.
+fn import_foreign(text: &str) -> Option<(Vec<StoredCookie>, &'static str)> {
+    let trimmed = text.trim_start();
+    if trimmed.starts_with('[') {
+        let foreign: Vec<ForeignCookie> = serde_json::from_str(text).ok()?;
+        if foreign.is_empty() {
+            return None;
+        }
+        return Some((
+            foreign.into_iter().map(ForeignCookie::into_stored).collect(),
+            "browser cookie export (JSON array)",
+        ));
+    }
+    import_netscape(text)
+}
+
+/// Netscape `cookies.txt`: tab-separated `domain flag path secure expires name value`.
+fn import_netscape(text: &str) -> Option<(Vec<StoredCookie>, &'static str)> {
+    let mut rows = Vec::new();
+    for line in text.lines() {
+        let line = line.trim_end();
+        if line.is_empty() {
+            continue;
+        }
+        // `#HttpOnly_` is the one meaningful comment; the rest are skipped.
+        let (line, http_only) = match line.strip_prefix("#HttpOnly_") {
+            Some(rest) => (rest, true),
+            None if line.starts_with('#') => continue,
+            None => (line, false),
+        };
+        let f: Vec<&str> = line.split('\t').collect();
+        if f.len() != 7 {
+            continue;
+        }
+        let host_only = !f[1].eq_ignore_ascii_case("TRUE") && !f[0].starts_with('.');
+        let expires = f[4].parse::<u64>().ok().filter(|&s| s > 0);
+        rows.push(StoredCookie {
+            name: f[5].to_string(),
+            value: f[6].to_string(),
+            host: f[0].trim_start_matches('.').to_string(),
+            host_only,
+            same_site: "lax".to_string(),
+            path: if f[2].is_empty() { "/".to_string() } else { f[2].to_string() },
+            expires,
+            secure: f[3].eq_ignore_ascii_case("TRUE"),
+            http_only,
+        });
+    }
+    (!rows.is_empty()).then_some((rows, "Netscape cookies.txt"))
 }
 
 impl Jar {
@@ -222,27 +348,52 @@ impl Jar {
         Ok(loaded)
     }
 
-    /// Merge a jar file's contents into this jar, dropping what has expired, and what no server
-    /// could have set.
+    /// Merge a jar file into this jar, dropping what expired or what no server
+    /// could have set, and explaining each drop in [`Restored::warnings`]. A
+    /// browser's own export (Cookie-Editor JSON array, Netscape `cookies.txt`)
+    /// is converted rather than refused.
     fn load_json(&self, text: &str) -> Result<Restored, String> {
         if text.trim().is_empty() {
             return Ok(Restored::default());
         }
-        let parsed: JarFile =
-            serde_json::from_str(text).map_err(|e| format!("this is not a jar file: {e}"))?;
-        if parsed.version != JAR_VERSION {
-            return Err(format!(
-                "jar file version {} was written by a different build of this engine; \
-                 this one reads version {JAR_VERSION}",
-                parsed.version
-            ));
-        }
+        let mut out = Restored::default();
+        let cookies = match serde_json::from_str::<JarFile>(text) {
+            Ok(parsed) => {
+                if parsed.version != JAR_VERSION {
+                    return Err(format!(
+                        "jar file version {} was written by a different build of this engine; \
+                         this one reads version {JAR_VERSION}",
+                        parsed.version
+                    ));
+                }
+                parsed.cookies
+            }
+            Err(native_err) => match import_foreign(text) {
+                Some((rows, source)) => {
+                    out.warnings.push(format!(
+                        "this is a {source}, not an h5i jar, so it was converted: {} row(s) read. \
+                         An h5i jar uses `host` (not `domain`), `host_only`, snake_case keys and \
+                         `expires` in Unix seconds; write one with `browser --cookie-jar`.",
+                        rows.len()
+                    ));
+                    rows
+                }
+                None => {
+                    return Err(format!(
+                        "this is not a jar file: {native_err}. It is not a browser cookie export \
+                         this build recognises either (a Cookie-Editor JSON array, or a Netscape \
+                         cookies.txt)."
+                    ));
+                }
+            },
+        };
         let now = SystemTime::now();
         let Ok(mut jar) = self.cookies.lock() else {
             return Err("the cookie jar is poisoned".to_string());
         };
-        let mut out = Restored::default();
-        for stored in parsed.cookies {
+        for (i, stored) in cookies.into_iter().enumerate() {
+            let row = i + 1;
+            let named = format!("row {row} (`{}` for `{}`)", stored.name, stored.host);
             // An expiry the clock cannot represent. `SystemTime + Duration`
             // *panics* on overflow and this addend is a number off a file, so
             // a jar carrying `18446744073709551615` took the engine down before
@@ -255,6 +406,10 @@ impl Jar {
                     Some(at) => Some(at),
                     None => {
                         out.refused += 1;
+                        out.warnings.push(format!(
+                            "{named}: its `expires` ({secs}) is past the year this build can \
+                             represent, so it was refused."
+                        ));
                         continue;
                     }
                 },
@@ -277,11 +432,26 @@ impl Jar {
                 secure: stored.secure,
                 http_only: stored.http_only,
             };
-            if !is_storable(&cookie) {
+            if let Some(reason) = storable_reason(&cookie) {
                 out.refused += 1;
+                out.warnings.push(format!("{named}: {reason}, so it was not restored."));
                 continue;
             }
             if cookie.is_expired(now) {
+                // Dropped here, but counted and explained rather than silent.
+                out.expired += 1;
+                let when = cookie
+                    .expires
+                    .and_then(|at| at.duration_since(SystemTime::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs());
+                out.warnings.push(match when {
+                    Some(secs) => format!(
+                        "{named}: its `expires` ({secs}) is already in the past, so it will not \
+                         be sent. Session cookies omit `expires` entirely; a stale value here is \
+                         the usual reason a restored login sends zero cookies."
+                    ),
+                    None => format!("{named}: it has already expired, so it will not be sent."),
+                });
                 continue;
             }
             // Same identity rule the store path uses, so a reload does not
@@ -1618,6 +1788,63 @@ mod persistence_tests {
         assert_eq!(got.loaded, 0);
         assert_eq!(got.refused, 1);
         assert!(jar.is_empty());
+    }
+
+    /// The headline trap: a cookie whose `expires` is already past loads as zero
+    /// and used to do so in silence. Now it is counted and explained.
+    #[test]
+    fn an_already_expired_cookie_is_counted_and_explained_not_silent() {
+        let jar = Jar::new();
+        let file = r#"{"version":1,"cookies":[
+            {"name":"sid","value":"x","host":"app.example","host_only":true,
+             "same_site":"lax","path":"/","expires":100,"secure":false,"http_only":false}
+        ]}"#;
+        let got = jar.load_json(file).expect("the file parses");
+        assert_eq!(got.loaded, 0);
+        assert_eq!(got.expired, 1);
+        assert_eq!(got.refused, 0, "expired is not the same as refused");
+        assert!(got.warnings.iter().any(|w| w.contains("in the past")), "{:?}", got.warnings);
+        assert!(jar.is_empty());
+    }
+
+    /// A refused row says why, in its own terms, rather than adding to a count.
+    #[test]
+    fn a_refused_row_carries_its_reason() {
+        let jar = Jar::new();
+        let file = r#"{"version":1,"cookies":[
+            {"name":"wide","value":"x","host":"com","host_only":false,
+             "same_site":"lax","path":"/","secure":false,"http_only":false}
+        ]}"#;
+        let got = jar.load_json(file).expect("the file parses");
+        assert_eq!(got.refused, 1);
+        assert!(got.warnings.iter().any(|w| w.contains("public suffix")), "{:?}", got.warnings);
+    }
+
+    /// A Cookie-Editor / EditThisCookie JSON array is converted, not refused.
+    #[test]
+    fn a_browser_json_export_is_imported_with_a_warning() {
+        let jar = Jar::new();
+        let file = r#"[
+            {"name":"sid","value":"s3cr3t","domain":".app.example","hostOnly":false,
+             "path":"/","secure":true,"httpOnly":true,"sameSite":"lax","session":true}
+        ]"#;
+        let got = jar.load_json(file).expect("the export imports");
+        assert_eq!(got.loaded, 1);
+        assert!(got.warnings.iter().any(|w| w.contains("browser cookie export")), "{:?}", got.warnings);
+        let (header, _) = jar.header_for(&url("https://sub.app.example/")).expect("domain cookie");
+        assert!(header.contains("sid=s3cr3t"));
+    }
+
+    /// A Netscape cookies.txt, `#HttpOnly_` prefix and all, is converted.
+    #[test]
+    fn a_netscape_cookies_txt_is_imported() {
+        let jar = Jar::new();
+        let file = "# Netscape HTTP Cookie File\n\
+            #HttpOnly_app.example\tFALSE\t/\tTRUE\t0\tsid\ts3cr3t\n";
+        let got = jar.load_json(file).expect("the file imports");
+        assert_eq!(got.loaded, 1);
+        let (header, _) = jar.header_for(&url("https://app.example/")).expect("host cookie");
+        assert!(header.contains("sid=s3cr3t"));
     }
 
     #[test]

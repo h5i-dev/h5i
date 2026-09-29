@@ -612,6 +612,34 @@ enum SessionVerb {
         at: SessionArgs,
     },
 
+    /// Make one gRPC call over HTTP/2. The plugin frames the body; this carries
+    /// it. `h5i websec grpc` is the front door — it does the JSON<->protobuf.
+    Grpc {
+        /// The http(s) endpoint, e.g. `http://host:50051`.
+        #[arg(value_name = "URL")]
+        url: String,
+        /// The `:path`, `/package.Service/Method`.
+        #[arg(long, value_name = "PATH")]
+        path: String,
+        /// The base64 of the already-framed request body.
+        #[arg(long = "request-frame", value_name = "BASE64")]
+        request_frame: Option<String>,
+        /// `name:value` gRPC metadata. Repeatable.
+        #[arg(long = "metadata", value_name = "NAME:VALUE")]
+        metadata: Vec<String>,
+        /// Skip TLS certificate verification, for a target under test.
+        #[arg(long)]
+        insecure: bool,
+        /// Give up after this many milliseconds.
+        #[arg(long = "timeout-ms", value_name = "MS")]
+        timeout_ms: Option<u64>,
+        /// Override the `:authority` header.
+        #[arg(long, value_name = "HOST")]
+        authority: Option<String>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
     /// What the page publishes about itself: JSON-LD, OpenGraph, `<meta>`.
     ///
     /// The cheapest read there is. An outline is the page's content and costs
@@ -702,7 +730,8 @@ enum SessionVerb {
         /// somewhere else. One or the other, never both.
         #[arg(long, value_name = "SEQ", required_unless_present = "request")]
         from: Option<u64>,
-        /// `target=value`, repeatable, applied in order.
+        /// `target=value`, repeatable, applied in order. A leading `+` on the
+        /// target adds it if missing (`+query.debug=1`), the per-edit `--create`.
         #[arg(long = "set", value_name = "TARGET=VALUE")]
         set: Vec<String>,
         /// `target=path`: the value is the file's bytes, whatever they are.
@@ -715,7 +744,8 @@ enum SessionVerb {
         /// A target to remove.
         #[arg(long = "unset", value_name = "TARGET")]
         unset: Vec<String>,
-        /// Add a target that is not there rather than refusing.
+        /// Add every target that is not there rather than refusing. For one
+        /// target only, prefix it with `+` instead of setting this.
         #[arg(long)]
         create: bool,
         /// Send it this many times, and report each send's clock.
@@ -1320,6 +1350,18 @@ fn local_broker(net: &NetArgs) -> Result<Arc<crate::net::LocalBroker>, H5iError>
                 path.display()
             );
         }
+        // Per-row detail: why each dropped cookie dropped, so a stale `expires`
+        // or a `domain`-not-`host` typo is a warning, not a silent zero.
+        for warning in &loaded.warnings {
+            eprintln!("h5i-browser: cookie jar: {warning}");
+        }
+        if loaded.expired > 0 {
+            eprintln!(
+                "h5i-browser: {} cookie(s) in {} were already expired and will not be sent",
+                loaded.expired,
+                path.display()
+            );
+        }
         // Said, not swallowed. A row the jar refused is one no server could
         // have set (a cookie widened to a public suffix, a `__Host-` name
         // without the flags that name means) and a login that is missing
@@ -1909,6 +1951,38 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                 "wait_ms": wait_ms,
             }),
         ),
+        SessionVerb::Grpc {
+            url,
+            path,
+            request_frame,
+            metadata,
+            insecure,
+            timeout_ms,
+            authority,
+            at,
+        } => {
+            // `name:value` metadata, split once so a value may hold a colon.
+            let metadata: Vec<[String; 2]> = metadata
+                .iter()
+                .filter_map(|pair| {
+                    pair.split_once(':')
+                        .map(|(name, value)| [name.trim().to_string(), value.trim().to_string()])
+                })
+                .collect();
+            (
+                at,
+                serde_json::json!({
+                    "verb": Verb::Grpc.name(),
+                    "url": url,
+                    "path": path,
+                    "request_frame_b64": request_frame,
+                    "metadata": metadata,
+                    "insecure": insecure,
+                    "timeout_ms": timeout_ms,
+                    "authority": authority,
+                }),
+            )
+        }
         SessionVerb::Structured { url, at } => (
             at,
             serde_json::json!({"verb": Verb::Structured.name(), "url": url}),

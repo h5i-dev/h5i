@@ -123,6 +123,8 @@ enum Ask {
         url: Url,
         document: Option<Url>,
     },
+    /// The framed request body travels in the blob, not in this.
+    GrpcCall(Box<crate::net::GrpcAsk>),
     ChannelSend {
         channel: u64,
         text: String,
@@ -160,6 +162,8 @@ struct Question {
 enum Said {
     /// The response body travels in the blob.
     Outcome(FetchOutcome),
+    /// A gRPC call's result. The framed response body travels in the blob.
+    Grpc(Box<crate::net::GrpcCallOutcome>),
     Records(Vec<RequestRecord>),
     Summary(LogSummary),
     Seqs(Vec<u64>),
@@ -668,6 +672,25 @@ impl Broker for BrokerClient {
         })
     }
 
+    fn grpc_call(&self, mut ask: crate::net::GrpcAsk) -> crate::net::GrpcCallOutcome {
+        // The framed body travels in the blob, like a `send`'s.
+        let body = std::mem::take(&mut ask.body);
+        let gone = || crate::net::GrpcCallOutcome {
+            error: Some("the broker is no longer running, so nothing was sent".to_string()),
+            ..Default::default()
+        };
+        let Some(pending) = self.begin(Ask::GrpcCall(Box::new(ask)), &body) else {
+            return gone();
+        };
+        match pending.recv().ok() {
+            Some((Said::Grpc(mut outcome), body)) => {
+                outcome.body = body;
+                *outcome
+            }
+            _ => gone(),
+        }
+    }
+
     fn secret_names(&self) -> Vec<String> {
         match self.said(Ask::SecretNames) {
             Some(Said::Texts(names)) => names,
@@ -858,6 +881,7 @@ fn slow(ask: &Ask) -> bool {
         Ask::Send(_)
             | Ask::SendEdited { .. }
             | Ask::SendGiven { .. }
+            | Ask::GrpcCall(_)
             | Ask::OpenSocket { .. }
             | Ask::OpenEventStream { .. }
             | Ask::ChannelSend { .. }
@@ -888,6 +912,12 @@ fn answer(
             let mut outcome = broker.send(&fetch);
             body = std::mem::take(&mut outcome.body);
             Said::Outcome(outcome)
+        }
+        Ask::GrpcCall(mut ask) => {
+            ask.body = blob;
+            let mut outcome = broker.grpc_call(*ask);
+            body = std::mem::take(&mut outcome.body);
+            Said::Grpc(Box::new(outcome))
         }
         Ask::Records => Said::Records(broker.records()),
         Ask::RecordsSince { mark } => Said::Records(broker.records_since(mark)),

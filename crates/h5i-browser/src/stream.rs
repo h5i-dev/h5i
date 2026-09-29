@@ -2211,6 +2211,103 @@ fn control_verb_inner(
             (reply, false)
         }
 
+        // One gRPC call. The plugin frames the request and reads the reply; the
+        // engine only carries the bytes, under the session's policy.
+        Verb::Grpc => {
+            let Some(url) = request.get("url").and_then(Value::as_str) else {
+                return (
+                    VerbError::bad_request(
+                        "`grpc` needs a `url`: the http(s) endpoint, e.g. http://host:50051",
+                    )
+                    .reply(),
+                    false,
+                );
+            };
+            let Some(path) = request.get("path").and_then(Value::as_str) else {
+                return (
+                    VerbError::bad_request("`grpc` needs a `path`: `/package.Service/Method`")
+                        .reply(),
+                    false,
+                );
+            };
+            let body = match request.get("request_frame_b64").and_then(Value::as_str) {
+                Some(b64) => {
+                    use base64::Engine as _;
+                    match base64::engine::general_purpose::STANDARD.decode(b64) {
+                        Ok(bytes) => bytes,
+                        Err(e) => {
+                            return (
+                                VerbError::bad_request(format!(
+                                    "`request_frame_b64` is not base64: {e}"
+                                ))
+                                .reply(),
+                                false,
+                            );
+                        }
+                    }
+                }
+                None => Vec::new(),
+            };
+            let metadata: Vec<(String, String)> = request
+                .get("metadata")
+                .and_then(Value::as_array)
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(|row| {
+                            let pair = row.as_array()?;
+                            Some((
+                                pair.first()?.as_str()?.to_string(),
+                                pair.get(1)?.as_str()?.to_string(),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let insecure = request.get("insecure").and_then(Value::as_bool).unwrap_or(false);
+            let timeout = request
+                .get("timeout_ms")
+                .and_then(Value::as_u64)
+                .map(std::time::Duration::from_millis);
+            let authority = request.get("authority").and_then(Value::as_str).map(str::to_string);
+
+            let outcome = session.factory.broker().grpc_call(crate::net::GrpcAsk {
+                url: url.to_string(),
+                path: path.to_string(),
+                authority,
+                body,
+                metadata,
+                insecure,
+                timeout,
+            });
+
+            if let Some(reason) = outcome.denied {
+                return (VerbError::refused(reason).reply(), false);
+            }
+            if let Some(error) = outcome.error {
+                return (
+                    VerbError::new(crate::verbs::Code::Internal, error).reply(),
+                    false,
+                );
+            }
+            use base64::Engine as _;
+            let body_b64 = base64::engine::general_purpose::STANDARD.encode(&outcome.body);
+            let mut reply = json!({
+                "ok": true,
+                "url": url,
+                "path": path,
+                "http_status": outcome.http_status,
+                "grpc_status": outcome.grpc_status,
+                "grpc_message": outcome.grpc_message,
+                "response_frame_b64": body_b64,
+                "request_id": outcome.seq.map(|seq| format!("req_{seq}")),
+                "response_id": outcome.seq.map(|seq| format!("res_{seq}")),
+            });
+            if let Some(seq) = outcome.seq {
+                reply["seq"] = json!(seq);
+            }
+            (reply, false)
+        }
+
         // A picture of the page, written where the *caller* said.
         Verb::Screenshot => {
             let Some(path) = request.get("path").and_then(Value::as_str) else {

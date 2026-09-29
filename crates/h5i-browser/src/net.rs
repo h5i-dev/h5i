@@ -388,6 +388,44 @@ pub struct ProxyResponse<'a> {
     pub error: Option<String>,
 }
 
+/// One gRPC call for [`LocalBroker::grpc_call`]. The body arrives framed.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GrpcAsk {
+    pub url: String,
+    pub path: String,
+    pub authority: Option<String>,
+    pub body: Vec<u8>,
+    pub metadata: Vec<(String, String)>,
+    pub insecure: bool,
+    pub timeout: Option<Duration>,
+}
+
+/// What a gRPC call yielded, whether it was refused, failed, or answered.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct GrpcCallOutcome {
+    /// The receipt id it was recorded under, when it reached the recording gate.
+    pub seq: Option<u64>,
+    /// The policy's reason, when the call was refused before it went out.
+    pub denied: Option<String>,
+    pub http_status: Option<u16>,
+    pub grpc_status: Option<i32>,
+    pub grpc_message: Option<String>,
+    /// The framed response body.
+    pub body: Vec<u8>,
+    /// A transport error, when the call went out but did not complete.
+    pub error: Option<String>,
+}
+
+impl GrpcCallOutcome {
+    /// A failure before a receipt was minted (a bad URL, an unwritable log).
+    fn error(message: String) -> Self {
+        GrpcCallOutcome {
+            error: Some(message),
+            ..GrpcCallOutcome::default()
+        }
+    }
+}
+
 impl LocalBroker {
     /// Record a request observed by an intercepting proxy and allocate its id
     /// from this broker's sequence.  Proxy traffic and workbench replays share
@@ -448,6 +486,127 @@ impl LocalBroker {
             });
         }
         Ok(())
+    }
+
+    /// Make one gRPC call and record it under one receipt id, so `req_<seq>` /
+    /// `res_<seq>` name it for `h5i websec`. The framing is opaque here: the
+    /// bytes come framed and go back framed. The same egress gate `send_raw`
+    /// uses applies, because a gRPC socket is a direct dial like a raw one.
+    ///
+    /// The `Broker::grpc_call` trait method delegates here.
+    pub fn grpc_exchange(&self, ask: GrpcAsk) -> GrpcCallOutcome {
+        let parsed = match Url::parse(&ask.url) {
+            Ok(url) => url,
+            Err(e) => return GrpcCallOutcome::error(format!("`{}` is not a URL: {e}", ask.url)),
+        };
+        let display = format!("{}{}", scheme_authority(&parsed), ask.path);
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+
+        let denied = |broker: &Self, reason: &str| -> GrpcCallOutcome {
+            let record =
+                RequestRecord::request(seq, Initiator::Replay, "POST", &display).denied(reason);
+            let _ = broker.record_pair(&record);
+            GrpcCallOutcome {
+                seq: Some(seq),
+                denied: Some(reason.to_string()),
+                ..GrpcCallOutcome::default()
+            }
+        };
+
+        if let Some(reason) = self.policy.check_from(&parsed, None).reason() {
+            return denied(self, reason);
+        }
+        if self.proxied && !crate::rawsock::is_loopback(&parsed) {
+            return denied(
+                self,
+                "a gRPC call opens a socket this session's egress proxy does not carry, so it is \
+                 refused off loopback rather than dialed around the allowlist the proxy enforces",
+            );
+        }
+        if let Err(reason) = self.pin_addresses(&parsed) {
+            return denied(self, &reason);
+        }
+        if let Err(over) = self.budget.claim_request(Spender::Agent) {
+            return denied(self, &over.0);
+        }
+
+        // Record the request before it goes, fail-closed like every send.
+        let record = RequestRecord::request(seq, Initiator::Replay, "POST", &display);
+        if let Err(e) = self.append(&record) {
+            return GrpcCallOutcome::error(format!(
+                "refusing to send: the receipt could not be written: {e}"
+            ));
+        }
+        let mut headers = vec![("content-type".to_string(), "application/grpc".to_string())];
+        headers.extend(ask.metadata.iter().cloned());
+        if let Some(capture) = &self.capture {
+            capture.request(seq, "POST", &display, headers, &ask.body, Some("application/grpc"));
+        }
+
+        let addrs = parsed
+            .host_str()
+            .and_then(|host| self.approved_addresses(host))
+            .unwrap_or_default();
+        let started = Instant::now();
+        let reply = crate::grpc::call_blocking(crate::grpc::GrpcRequest {
+            url: ask.url.clone(),
+            path: ask.path.clone(),
+            authority: ask.authority.clone(),
+            body: ask.body.clone(),
+            metadata: ask.metadata.clone(),
+            addrs,
+            insecure: ask.insecure,
+            timeout: ask.timeout,
+        });
+        let elapsed = started.elapsed().as_millis() as u64;
+
+        match reply {
+            Ok(reply) => {
+                let mut outcome = record.response();
+                outcome.status = Some(reply.http_status);
+                outcome.bytes = Some(reply.body.len() as u64);
+                outcome.duration_ms = Some(elapsed);
+                let _ = self.append(&outcome);
+                if let Some(capture) = &self.capture {
+                    let mut resp_headers = Vec::new();
+                    if let Some(status) = reply.grpc_status {
+                        resp_headers.push(("grpc-status".to_string(), status.to_string()));
+                    }
+                    if let Some(message) = &reply.grpc_message {
+                        resp_headers.push(("grpc-message".to_string(), message.clone()));
+                    }
+                    capture.response(crate::capture::Response {
+                        seq,
+                        url: &display,
+                        status: Some(reply.http_status),
+                        headers: resp_headers,
+                        content_encoding: None,
+                        wire_bytes: None,
+                        body: crate::capture::Received::Bytes(&reply.body),
+                        trailing: &[],
+                    });
+                }
+                GrpcCallOutcome {
+                    seq: Some(seq),
+                    http_status: Some(reply.http_status),
+                    grpc_status: reply.grpc_status,
+                    grpc_message: reply.grpc_message,
+                    body: reply.body,
+                    ..GrpcCallOutcome::default()
+                }
+            }
+            Err(e) => {
+                let mut outcome = record.response();
+                outcome.duration_ms = Some(elapsed);
+                outcome.error = Some(e.clone());
+                let _ = self.append(&outcome);
+                GrpcCallOutcome {
+                    seq: Some(seq),
+                    error: Some(e),
+                    ..GrpcCallOutcome::default()
+                }
+            }
+        }
     }
 
     /// Build a broker.
@@ -2292,6 +2451,10 @@ impl crate::broker::Broker for LocalBroker {
     ) -> Result<Arc<dyn crate::broker::Channel>, String> {
         let me = self.me.upgrade().ok_or("the broker is no longer running")?;
         Ok(Arc::new(crate::wsclient::Socket::open(me, url, document)?))
+    }
+
+    fn grpc_call(&self, ask: GrpcAsk) -> GrpcCallOutcome {
+        self.grpc_exchange(ask)
     }
 
     fn open_event_stream(

@@ -1,0 +1,27 @@
+[package]
+name = "h5i-grpc"
+version = "0.1.0"
+edition = "2024"
+description = "gRPC for h5i websec: descriptors, describe, JSON<->protobuf and framing. No network, no engine."
+
+# A library only, and network-free on purpose. It turns descriptors and JSON
+# into the bytes a gRPC call sends, and the bytes back into JSON. The socket
+# that carries them is the engine's, reached through `h5i browser grpc`, so this
+# crate never opens one and the containment invariant holds (design-websec.md).
+[lib]
+name = "h5i_grpc"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+bytes = "1"
+prost = "0.13"
+prost-types = "0.13"
+prost-reflect = { version = "0.14", features = ["serde"] }
+# Compiles `.proto` to a descriptor set in pure Rust, so no `protoc` is needed.
+protox = "0.7"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.8"

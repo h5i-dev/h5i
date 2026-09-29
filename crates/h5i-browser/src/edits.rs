@@ -15,6 +15,14 @@
 //! Invalid edits fail instead of silently coercing or doing nothing. [`Applied`]
 //! records effective changes. JSON values are parsed when valid and otherwise
 //! treated as strings; quote a value to force a JSON string.
+//!
+//! A target the request lacks is refused, so a typo cannot pass for a change.
+//! To add one on purpose, either pass the run-wide `--create`, or mark the one
+//! edit with a leading `+`:
+//!
+//! ```text
+//! +query.debug=1                  add this parameter; a typo elsewhere still fails
+//! ```
 
 use std::fmt;
 
@@ -88,6 +96,10 @@ pub struct Edit {
     pub target: Target,
     /// `None` removes targets that support removal.
     pub value: Option<Vec<u8>>,
+    /// This one edit may add a missing target, whatever the run-wide `--create`
+    /// says. Set by a `+` before the target (`--set +query.debug=1`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub create: bool,
 }
 
 /// What went wrong, in the terms the caller used.
@@ -202,10 +214,22 @@ pub fn parse_set(spec: &str) -> Result<Edit, EditError> {
     let (target, value) = spec
         .split_once('=')
         .ok_or_else(|| EditError::new(spec, "an edit is `target=value`, and this has no `=`"))?;
+    let (create, target) = split_create_sigil(target);
     Ok(Edit {
         target: parse_target(target)?,
         value: Some(value.as_bytes().to_vec()),
+        create,
     })
+}
+
+/// A leading `+` means "add if missing", the per-edit `--create`. Returns
+/// whether it was there and the target without it.
+fn split_create_sigil(target: &str) -> (bool, &str) {
+    let target = target.trim();
+    match target.strip_prefix('+') {
+        Some(rest) => (true, rest),
+        None => (false, target),
+    }
 }
 
 /// The same edit, with a value that is bytes rather than text.
@@ -216,17 +240,23 @@ pub fn parse_set(spec: &str) -> Result<Edit, EditError> {
 /// two bytes — `ff d8` is not text in any encoding. A magic-number check is a
 /// filter worth testing, so the bytes have to arrive intact.
 pub fn parse_set_bytes(target: &str, value: Vec<u8>) -> Result<Edit, EditError> {
+    let (create, target) = split_create_sigil(target);
     Ok(Edit {
         target: parse_target(target)?,
         value: Some(value),
+        create,
     })
 }
 
 /// Parse a bare target, for a removal.
 pub fn parse_unset(spec: &str) -> Result<Edit, EditError> {
+    // A `+` on an unset is meaningless (there is nothing to create), so it is
+    // stripped rather than folded into the name and left to fail as "no such".
+    let (_, spec) = split_create_sigil(spec);
     Ok(Edit {
         target: parse_target(spec)?,
         value: None,
+        create: false,
     })
 }
 
@@ -436,6 +466,9 @@ fn refuse_a_resolved_traversal(
 /// because a query parameter that does not exist is usually a typo, and a typo
 /// that silently succeeds costs an agent a whole turn spent reading a response
 /// that was never going to differ.
+///
+/// `create` is the run-wide `--create`; it is OR-ed with each edit's own `+`
+/// ([`Edit::create`]).
 pub fn apply(
     request: &mut Editable,
     edits: &[Edit],
@@ -443,7 +476,7 @@ pub fn apply(
 ) -> Result<Vec<Applied>, EditError> {
     let mut applied = Vec::with_capacity(edits.len());
     for edit in edits {
-        applied.push(apply_one(request, edit, create)?);
+        applied.push(apply_one(request, edit, create || edit.create)?);
     }
     Ok(applied)
 }
@@ -1002,7 +1035,10 @@ fn missing(target: &str, kind: &str, have: &[(String, String)]) -> EditError {
     };
     EditError::new(
         target,
-        format!("no such {kind}, so nothing would change. {known}. Pass --create to add it"),
+        format!(
+            "no such {kind}, so nothing would change. {known}. Add it with `+{target}=…`, \
+             or pass --create to let every edit add what it names"
+        ),
     )
 }
 
@@ -1195,6 +1231,34 @@ mod tests {
         let applied = apply(&mut created, &[set("query.userid=456")], true).expect("created");
         assert!(applied[0].created);
         assert!(created.url.as_str().contains("userid=456"));
+    }
+
+    /// A `+` on one target adds that one without turning creation on for the
+    /// batch: the sigilled edit is added, a plain typo beside it is still caught.
+    #[test]
+    fn a_plus_sigil_creates_only_the_edit_it_marks() {
+        let plus = set("+query.debug=1");
+        assert!(plus.create, "the `+` sets the per-edit flag");
+        assert!(
+            matches!(&plus.target, Target::Query(name) if name == "debug"),
+            "the `+` is not part of the name",
+        );
+
+        let mut created = request();
+        let applied = apply(&mut created, &[set("+query.debug=1")], false).expect("created");
+        assert!(applied[0].created);
+        assert!(created.url.as_str().contains("debug=1"));
+
+        // The sigil is local: a plain edit in the same batch is still strict.
+        let mut refused = request();
+        let error = apply(
+            &mut refused,
+            &[set("+query.debug=1"), set("query.userid=456")],
+            false,
+        )
+        .expect_err("the un-sigilled typo is refused");
+        assert!(error.message.contains("user_id"), "{}", error.message);
+        assert!(error.message.contains("+query.userid"), "{}", error.message);
     }
 
     #[test]
@@ -1567,6 +1631,7 @@ mod tests {
                 Edit {
                     target: Target::BodyRaw,
                     value: Some(br#"{"role":"user"}"#.to_vec()),
+                    create: false,
                 },
                 set("json.role=admin"),
             ],

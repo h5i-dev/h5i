@@ -124,6 +124,13 @@ psl = "2.1.226"
 # TLS for `wss://`, and only for that.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 webpki-roots = "1.0"
+# The `h5i browser grpc` transport: an HTTP/2 client for gRPC. All already in
+# the tree via reqwest, so these add no package.
+h2 = "0.4"
+http = "1"
+bytes = "1"
+tokio = { version = "1", features = ["rt", "net", "io-util", "time"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 # Compression, decoded here rather than by the HTTP client.
 flate2 = "1.1.9"
 brotli = { version = "8.0.4", default-features = false, features = ["std"] }

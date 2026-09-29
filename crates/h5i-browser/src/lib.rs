@@ -11,6 +11,7 @@ pub mod budget;
 pub mod cookies;
 pub mod engine;
 pub mod extract;
+pub mod grpc;
 #[cfg(feature = "identity")]
 pub mod identity;
 pub mod hints;

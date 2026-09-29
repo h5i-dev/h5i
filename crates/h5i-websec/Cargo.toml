@@ -24,6 +24,10 @@ clap = { version = "4.5.60", features = ["derive"] }
 # Lean (no axum, no Node), and not the engine.
 h5i-core = { path = "../h5i-core", default-features = false }
 h5i-wire = { path = "../h5i-wire" }
+# gRPC: descriptors, describe, JSON<->protobuf and framing. The socket that
+# carries the bytes is the engine's (`h5i browser grpc`), not this crate's.
+h5i-grpc = { path = "../h5i-grpc" }
+base64 = "0.22"
 serde = { workspace = true }
 # `websec match --regex`: the matcher's patterns.
 regex = "1"

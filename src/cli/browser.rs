@@ -536,6 +536,41 @@ pub enum BrowserCommands {
         json: bool,
     },
 
+    /// Make one gRPC call over HTTP/2, reported through the same policy, budget
+    /// and receipts as `resend`.
+    ///
+    /// The transport only: the request body is already framed and the reply
+    /// comes back framed. `h5i websec grpc` is the front door that turns JSON
+    /// and a descriptor into these bytes and back.
+    Grpc {
+        /// The http(s) endpoint, e.g. `http://host:50051`.
+        #[arg(value_name = "URL")]
+        url: String,
+        /// The `:path`, `/package.Service/Method`.
+        #[arg(long, value_name = "PATH")]
+        path: String,
+        /// The base64 of the already-framed request body.
+        #[arg(long = "request-frame", value_name = "BASE64")]
+        request_frame: Option<String>,
+        /// `name:value` gRPC metadata. Repeatable.
+        #[arg(long = "metadata", value_name = "NAME:VALUE")]
+        metadata: Vec<String>,
+        /// Skip TLS certificate verification, for a target under test.
+        #[arg(long)]
+        insecure: bool,
+        /// Give up after this many milliseconds.
+        #[arg(long = "timeout-ms", value_name = "MS")]
+        timeout_ms: Option<u64>,
+        /// Override the `:authority` header.
+        #[arg(long, value_name = "HOST")]
+        authority: Option<String>,
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Fetch the current URL again.
     ///
     /// Takes no URL. After a redirect it re-fetches where the session actually
@@ -1425,6 +1460,40 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             argv.push(wait_ms.to_string());
             verb(&root, session.as_deref(), argv, false, json)
         }
+        BrowserCommands::Grpc {
+            url,
+            path,
+            request_frame,
+            metadata,
+            insecure,
+            timeout_ms,
+            authority,
+            session,
+            json,
+        } => {
+            let mut argv = vec!["grpc".to_string(), url, "--path".into(), path];
+            if let Some(frame) = request_frame {
+                argv.push("--request-frame".into());
+                argv.push(frame);
+            }
+            for pair in metadata {
+                argv.push("--metadata".into());
+                argv.push(pair);
+            }
+            if insecure {
+                argv.push("--insecure".into());
+            }
+            if let Some(ms) = timeout_ms {
+                argv.push("--timeout-ms".into());
+                argv.push(ms.to_string());
+            }
+            if let Some(host) = authority {
+                argv.push("--authority".into());
+                argv.push(host);
+            }
+            // Mutating: it puts bytes on the wire under the session's identity.
+            verb(&root, session.as_deref(), argv, true, json)
+        }
         BrowserCommands::Click {
             session,
             reference,
@@ -2262,6 +2331,15 @@ fn start(
         let mut dead = session.clone();
         bs::end(root, &mut dead, bs::State::Died, &e);
         anyhow::bail!("{e}\n\n  The session is recorded as `{}`, died.", dead.id);
+    }
+
+    // Surface what the jar load said. The engine writes it to `engine.log`; a
+    // stale `expires` or a converted browser export is exactly the "looks like a
+    // success" case a reader should see without opening a log.
+    if opts.cookie_jar.is_some() {
+        for line in cookie_jar_notes(&dir) {
+            eprintln!("{line}");
+        }
     }
 
     if json {
@@ -3401,6 +3479,15 @@ fn stalled_message(logged: u64, waited: Duration, since: Duration, dir: &Path) -
 /// engine not on its `PATH`) and telling someone to go and read a file is one
 /// step more than they need. Scrubbed like any other answer: this text came
 /// from a process that was rendering a page.
+/// The engine's own lines about the cookie jar it just loaded, for the terminal.
+fn cookie_jar_notes(dir: &Path) -> Vec<String> {
+    let body = std::fs::read_to_string(dir.join("engine.log")).unwrap_or_default();
+    body.lines()
+        .filter(|line| line.contains("cookie jar:") || line.contains("cookie(s)"))
+        .map(bs::scrub_text)
+        .collect()
+}
+
 fn tail_of(log: &Path) -> String {
     let body = std::fs::read_to_string(log).unwrap_or_default();
     let tail: Vec<&str> = body
@@ -3435,14 +3522,28 @@ fn donor_jar(root: &Path, from: &str) -> anyhow::Result<PathBuf> {
 }
 
 /// The jar `--cookie-jar` names, refused here rather than inside the engine.
+///
+/// A light shape check only. An h5i jar (`version` + `cookies`), a browser's
+/// JSON array export and a Netscape `cookies.txt` all pass; the engine does the
+/// real per-row validation and any format conversion, with warnings.
 fn pasted_jar(path: &Path) -> anyhow::Result<PathBuf> {
     let text = std::fs::read_to_string(path).map_err(|e| {
         anyhow::anyhow!("`--cookie-jar {}` could not be read: {e}", path.display())
     })?;
+    let trimmed = text.trim_start();
+    // A JSON array is a browser export; a Netscape file starts with `#` or has
+    // tab-separated rows. Both are handed to the engine to convert.
+    if trimmed.starts_with('[')
+        || trimmed.starts_with('#')
+        || text.lines().any(|l| l.split('\t').count() == 7)
+    {
+        return Ok(path.to_path_buf());
+    }
     let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
         anyhow::anyhow!(
-            "`--cookie-jar {}` is not JSON: {e}\n\n  \
-             The file is a jar, not a browser's own export:\n    \
+            "`--cookie-jar {}` is not a jar this build reads: {e}\n\n  \
+             It takes an h5i jar, a browser's JSON export, or a Netscape cookies.txt. \
+             An h5i jar looks like:\n    \
              {{\"version\": 1, \"cookies\": [{{\"name\": \"sid\", \"value\": \"…\", \
              \"host\": \"app.example\", \"host_only\": true, \"same_site\": \"lax\", \
              \"path\": \"/\", \"secure\": true, \"http_only\": true}}]}}",
@@ -3454,7 +3555,7 @@ fn pasted_jar(path: &Path) -> anyhow::Result<PathBuf> {
     {
         anyhow::bail!(
             "`--cookie-jar {}` is JSON, but not a cookie jar: it needs `\"version\": 1` and a \
-             `cookies` array.",
+             `cookies` array, or use a browser export / Netscape cookies.txt.",
             path.display()
         );
     }

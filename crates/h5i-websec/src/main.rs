@@ -19,6 +19,7 @@
 
 mod experiment;
 mod finding;
+mod grpc;
 mod matrix;
 mod nuclei;
 mod read;
@@ -113,7 +114,9 @@ enum Verb {
         /// `method=POST`, `path=/other/url`, `query.KEY=v`, `header.NAME=v`,
         /// `cookie.NAME=v`, `json.PATH=v`. JSON values are typed, nested by dots,
         /// and arrays use numeric segments. Preserve numeric strings with
-        /// shell-safe quotes: `--set 'json.jsonrpc="2.0"'`.
+        /// shell-safe quotes: `--set 'json.jsonrpc="2.0"'`. A leading `+` on one
+        /// target adds it if missing (`--set +query.debug=1`), the per-edit form
+        /// of `--create`.
         #[arg(long = "set", value_name = "TARGET=VALUE")]
         set: Vec<String>,
         /// `multipart.userfile=./payload.jpg`: the value is the file's bytes.
@@ -126,8 +129,9 @@ enum Verb {
         /// Remove a target.
         #[arg(long = "unset", value_name = "TARGET")]
         unset: Vec<String>,
-        /// Add a query/cookie/form/json target the request lacks. Off by default
-        /// so a typo is caught, not sent (headers always upsert).
+        /// Add every query/cookie/form/json target the request lacks. Off by
+        /// default so a typo is caught, not sent (headers always upsert). To add
+        /// just one, prefix that `--set` target with `+` instead.
         #[arg(long)]
         create: bool,
         /// Send it from another session, with that session's credentials.
@@ -342,6 +346,69 @@ enum Verb {
         #[arg(value_name = "FILE")]
         file: String,
     },
+
+    /// Speak gRPC to a service: describe it, or call a method with JSON.
+    ///
+    /// The engine (`h5i browser grpc`) carries the bytes under this session's
+    /// policy and records each call, so a finding can cite it by message id.
+    Grpc {
+        #[command(subcommand)]
+        command: GrpcVerb,
+    },
+}
+
+/// Where a call's descriptors come from: a `.proto`, a protoset, or the server.
+#[derive(clap::Args)]
+struct DescriptorSource {
+    /// The gRPC endpoint, `http://host:50051` or `https://host`. Required for
+    /// `call`, and for `--reflect`.
+    #[arg(long, value_name = "URL")]
+    url: Option<String>,
+    /// A `.proto` file to compile. Repeatable.
+    #[arg(long = "proto", value_name = "FILE")]
+    proto: Vec<String>,
+    /// An import root for `--proto`. Repeatable.
+    #[arg(long = "import-path", value_name = "DIR")]
+    import_path: Vec<String>,
+    /// A protoset: a serialized FileDescriptorSet (`protoc -o`, or `buf build`).
+    #[arg(long = "protoset", value_name = "FILE")]
+    protoset: Option<String>,
+    /// Ask the server for its descriptors over the reflection API.
+    #[arg(long)]
+    reflect: bool,
+    /// Skip TLS certificate verification, for a target under test.
+    #[arg(long)]
+    insecure: bool,
+}
+
+#[derive(Subcommand)]
+enum GrpcVerb {
+    /// List services, or describe one symbol: a service, message, or method.
+    Describe {
+        /// A `pkg.Service`, `pkg.Message`, or `pkg.Service/Method`. Omitted
+        /// lists every service.
+        #[arg(value_name = "SYMBOL")]
+        symbol: Option<String>,
+        #[command(flatten)]
+        src: DescriptorSource,
+    },
+    /// Call one method with a JSON request and print the JSON reply.
+    Call {
+        /// `pkg.Service/Method`.
+        #[arg(value_name = "METHOD")]
+        method: String,
+        /// The request message as JSON.
+        #[arg(long = "data", short = 'd', value_name = "JSON")]
+        data: String,
+        /// Read several response messages, for a server-streaming method.
+        #[arg(long = "server-streaming")]
+        server_streaming: bool,
+        /// `name:value` gRPC metadata, e.g. `authorization:Bearer x`. Repeatable.
+        #[arg(long = "metadata", value_name = "NAME:VALUE")]
+        metadata: Vec<String>,
+        #[command(flatten)]
+        src: DescriptorSource,
+    },
 }
 
 #[derive(Subcommand)]
@@ -551,6 +618,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Verb::ImportNuclei { file } => {
             return nuclei::import(std::path::Path::new(file));
         }
+        Verb::Grpc { command } => {
+            return grpc::run(session.as_deref(), command, json_out);
+        }
         _ => {}
     }
 
@@ -598,7 +668,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         | Verb::Experiment { .. }
         | Verb::Matrix { .. }
         | Verb::Finding { .. }
-        | Verb::ImportNuclei { .. } => {
+        | Verb::ImportNuclei { .. }
+        | Verb::Grpc { .. } => {
             unreachable!("the verbs this process handles return before this")
         }
         Verb::Replay {

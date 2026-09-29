@@ -80,6 +80,13 @@ pub enum Verb {
     /// one this workbench could read the handshake of and never say anything
     /// to. `resend` is the same idea for HTTP.
     Socket,
+    /// Make one gRPC call over HTTP/2 and report its frames and status.
+    ///
+    /// The engine speaks HTTP for `resend` and WebSocket for `socket`; a gRPC
+    /// service was one this workbench could see the framing of and never speak
+    /// to. The plugin frames the bytes; this puts them on the wire under the
+    /// session's policy and records the exchange.
+    Grpc,
 }
 
 impl Verb {
@@ -117,6 +124,7 @@ impl Verb {
         Verb::Screenshot,
         Verb::Reload,
         Verb::Socket,
+        Verb::Grpc,
     ];
 
     /// The name on the wire.
@@ -146,6 +154,7 @@ impl Verb {
             Verb::Screenshot => "screenshot",
             Verb::Reload => "reload",
             Verb::Socket => "socket",
+            Verb::Grpc => "grpc",
         }
     }
 
@@ -188,7 +197,8 @@ impl Verb {
             | Verb::Find
             | Verb::Screenshot
             | Verb::Reload
-            | Verb::Socket => false,
+            | Verb::Socket
+            | Verb::Grpc => false,
         }
     }
 
@@ -230,7 +240,8 @@ impl Verb {
             // could reasonably be substituted into one. Not yet: the reply is
             // returned verbatim, and a credential that goes out in a frame and
             // comes back in the echo is a credential in the message store.
-            | Verb::Socket => false,
+            | Verb::Socket
+            | Verb::Grpc => false,
         }
     }
 
@@ -282,7 +293,8 @@ impl Verb {
             // The socket is the engine's, not a realm's. That is the point:
             // it works on a session opened without `--script`, where a page
             // that speaks over one cannot be driven at all.
-            | Verb::Socket => false,
+            | Verb::Socket
+            | Verb::Grpc => false,
         }
     }
 
@@ -329,7 +341,8 @@ impl Verb {
             // reproduce: there is nobody there to take it.
             // Like `resend`: a message the agent composed, not a step in the
             // page-level story a replay retells.
-            | Verb::Socket => false,
+            | Verb::Socket
+            | Verb::Grpc => false,
         }
     }
 
@@ -377,7 +390,8 @@ impl Verb {
             | Verb::WaitForScript
             // It takes a URL of its own, and that URL is a socket rather than
             // a page: navigating to `ws://` is not a thing a session does.
-            | Verb::Socket => false,
+            | Verb::Socket
+            | Verb::Grpc => false,
         }
     }
 

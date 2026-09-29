@@ -567,6 +567,11 @@ pub trait Broker: Send + Sync {
     /// Authorise, record, and dial a WebSocket.
     fn open_socket(&self, url: &Url, document: Option<&Url>) -> Result<Arc<dyn Channel>, String>;
 
+    /// Authorise, record, and make one gRPC call over HTTP/2. The request body
+    /// arrives framed and the response comes back framed; the protobuf meaning
+    /// is the plugin's, out of the engine.
+    fn grpc_call(&self, ask: crate::net::GrpcAsk) -> crate::net::GrpcCallOutcome;
+
     /// The same, for an event stream.
     fn open_event_stream(
         &self,
