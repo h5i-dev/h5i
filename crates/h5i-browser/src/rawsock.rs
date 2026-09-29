@@ -145,6 +145,11 @@ impl Read for Wire {
 }
 
 /// Return the cached TLS configuration with bundled Mozilla roots.
+///
+/// The provider is named. rustls installs a process default only when exactly
+/// one of `ring` and `aws-lc-rs` is enabled, and this crate asks for `ring`.
+/// The capture proxy, built in the same workspace, asks for `aws-lc-rs`. With
+/// both on, `ClientConfig::builder` panics before a handshake starts.
 pub(crate) fn tls_config() -> Arc<rustls::ClientConfig> {
     use std::sync::OnceLock;
     static CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
@@ -153,8 +158,11 @@ pub(crate) fn tls_config() -> Arc<rustls::ClientConfig> {
             let roots = rustls::RootCertStore {
                 roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
             };
+            let provider = Arc::new(rustls::crypto::ring::default_provider());
             Arc::new(
-                rustls::ClientConfig::builder()
+                rustls::ClientConfig::builder_with_provider(provider)
+                    .with_safe_default_protocol_versions()
+                    .expect("ring supports the default TLS versions")
                     .with_root_certificates(roots)
                     .with_no_client_auth(),
             )
