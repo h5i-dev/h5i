@@ -303,8 +303,9 @@ mod tests {
     }
 
     /// A cleartext HTTP/2 server that answers one unary call with `reply` framed
-    /// and a `grpc-status: 0` trailer, the way a real gRPC server does.
-    fn one_shot_server(reply: Vec<u8>) -> std::net::SocketAddr {
+    /// and a `grpc-status: 0` trailer, the way a real gRPC server does. Signals
+    /// on `ready` once it is accepting, so the client never races its startup.
+    fn one_shot_server(reply: Vec<u8>, ready: std::sync::mpsc::Sender<()>) -> std::net::SocketAddr {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr");
         listener.set_nonblocking(true).expect("nonblocking");
@@ -315,6 +316,7 @@ mod tests {
                 .expect("runtime");
             rt.block_on(async move {
                 let listener = tokio::net::TcpListener::from_std(listener).expect("from_std");
+                let _ = ready.send(());
                 let (tcp, _) = listener.accept().await.expect("accept");
                 let mut conn = h2::server::handshake(tcp).await.expect("h2 handshake");
                 // The accept loop drives the connection: it keeps polling after
@@ -345,7 +347,11 @@ mod tests {
 
     #[test]
     fn a_unary_call_reads_its_frame_and_the_grpc_status_trailer() {
-        let addr = one_shot_server(frame(b"pong"));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let addr = one_shot_server(frame(b"pong"), tx);
+        // Wait for the server to be accepting; a generous timeout so a loaded CI
+        // runner cannot turn a slow start into a flake.
+        rx.recv_timeout(Duration::from_secs(30)).expect("server came up");
         let reply = call_blocking(GrpcRequest {
             url: format!("http://{addr}"),
             path: "/echo.Echo/Say".to_string(),
@@ -354,7 +360,7 @@ mod tests {
             metadata: vec![],
             addrs: vec![],
             insecure: false,
-            timeout: Some(Duration::from_secs(5)),
+            timeout: Some(Duration::from_secs(30)),
         })
         .expect("the call completes");
 
