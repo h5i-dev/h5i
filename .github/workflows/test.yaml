@@ -9,6 +9,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # The CLI tree is large, and clap builds and validates it recursively. Debug
+  # test threads default to 2 MiB and that is now too small, so give them room.
+  RUST_MIN_STACK: "16777216"
 
 # One in-flight run per branch. Pushing a fix ten seconds after a typo should
 # not leave the first run burning a macOS runner for twenty minutes; `main` is
