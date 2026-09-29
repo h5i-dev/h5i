@@ -10,9 +10,9 @@
 //!
 //! The model names a credential, the engine resolves it on the way to the field,
 //! and the reply echoes the *placeholder*. The value never enters the model's
-//! context, so it cannot be repeated back, logged, or carried onward. LOGIN mode
-//! is the other answer and has a hole this does not: it withholds the agent's
-//! reads but not the *frames*, and the viewer socket is inside the box.
+//! context, so it cannot be repeated back, logged, or carried onward. A human
+//! signing in through Chromium uses `h5i browser proxy` and the agent-browser
+//! dashboard, which keeps the typed password in that browser.
 //!
 //! Only `H5I_SECRET_*` is reachable. The whole `H5I_*` namespace would also carry
 //! engine configuration (`H5I_EGRESS_PROXY`, `H5I_BROWSER_RECEIPTS`), and a

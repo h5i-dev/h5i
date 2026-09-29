@@ -172,13 +172,39 @@ impl Lane {
     }
 }
 
+/// How Chromium is told to accept the proxy's interception certificate.
+///
+/// The proxy always mints a per-session CA and decrypts with it. What differs
+/// is the browser. Linux can import that CA into an isolated NSS store, so
+/// hostname checks stay on. macOS cannot, so the printed command passes
+/// `--ignore-https-errors` and Chromium accepts every certificate error for
+/// that launch.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChromiumTls {
+    /// `agent-browser --ca-cert` trusts this session's CA and nothing else.
+    #[default]
+    SessionCa,
+    /// `agent-browser --ignore-https-errors` accepts every certificate error.
+    IgnoreHttpsErrors,
+}
+
 /// How an external Chromium session reaches an h5i capture proxy.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Proxy {
     /// Loopback HTTP proxy URL, suitable for `agent-browser --proxy`.
     pub url: String,
-    /// Public CA certificate, suitable for `agent-browser --ca-cert`.
+    /// Public CA certificate the proxy uses to decrypt HTTPS.
+    ///
+    /// On Linux this path is also what `agent-browser --ca-cert` installs.
+    /// On macOS the proxy still needs it, and Chromium does not pin to it.
     pub ca_cert: PathBuf,
+    /// Which acceptance mode the printed agent-browser command uses.
+    ///
+    /// Absent on a record written before the field existed, which could only
+    /// have been a Linux session that installed the CA.
+    #[serde(default)]
+    pub chromium_tls: ChromiumTls,
 }
 
 /// What survives the session.

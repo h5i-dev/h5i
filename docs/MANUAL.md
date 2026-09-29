@@ -27,8 +27,10 @@ interception, a proxy setting and usually a CA certificate, and it cannot say
 *why* a request happened. h5i writes the decision before the bytes move, so a
 request that is not in the log did not happen.
 
-One Rust binary, engine included. No proxy, no certificate, no server, no
-daemon, no SaaS.
+One Rust binary, engine included. A native session needs no proxy, certificate,
+server, daemon, or SaaS. On Linux and macOS, `h5i browser proxy` adds a
+per-session capture proxy so full Chromium can use the same session; see
+[Chromium through a proxy](#chromium-through-a-proxy).
 
 ### The division of labour
 
@@ -56,7 +58,9 @@ and checks that the ids it cites exist.
 
 The two are never merged. Every row also says which lane saw it:
 `engine-claimed` is the engine's account of itself, `host-observed` is something
-outside the engine seeing it too. A lane is never upgraded.
+outside the engine seeing it too, and `proxy-observed` is an h5i loopback proxy
+that stored the HTTP exchange an external Chromium sent through it. A lane is
+never upgraded.
 
 ### What it is not
 
@@ -309,9 +313,44 @@ h5i browser close
 ```
 
 `screenshot` writes into the session's own artifacts directory under a name *h5i
-chooses*; the engine picks only the bytes. `--out` names a file instead. Like
-every other verb that reads the page, it is refused while `login` is on: a
-password is pixels before it is anything else.
+chooses*; the engine picks only the bytes. `--out` names a file instead.
+
+### Chromium through a proxy
+
+`h5i browser open` drives h5i's own engine. A page that needs Chromium, or a
+human signing in, uses a proxy session on Linux and macOS.
+
+```bash
+h5i browser proxy https://app.example --session chrome
+# Linux prints: agent-browser --proxy ... --ca-cert ... open ...
+# macOS prints: agent-browser --proxy ... --ignore-https-errors open ...
+agent-browser dashboard start
+h5i websec requests --session chrome
+h5i recon extract --session chrome
+```
+
+`proxy` checks that `agent-browser` runs before it creates a session. On Linux
+it also requires `certutil`. A missing tool stops there, prints the install
+command, and leaves no session behind. The command then starts a loopback
+proxy and writes a per-session CA (`0600`). The proxy uses that CA to decrypt
+HTTPS. Run the printed line. Chromium stays agent-browser's process. h5i
+stores what the proxy decrypted, in the same receipt and message store a
+native session uses.
+
+Linux prints `--ca-cert` and agent-browser installs that CA into an isolated
+store, so hostname checks stay on. macOS cannot install the CA, so the printed
+command passes `--ignore-https-errors`. Chromium then accepts every certificate
+error for that launch. `status` repeats that line, and `session.json` records
+it as `proxy.chromium_tls`: `session-ca` or `ignore-https-errors`.
+
+The lane is `proxy-observed`. `websec`, `recon`, `requests`, `resend` and
+`audit` take the session the same way they take a native one. agent-browser
+and Chromium run as ordinary host processes, so this lane records traffic that
+went through the proxy. `--allow` grants further origins, the same way it does
+on `open`.
+
+A human signs in with `agent-browser dashboard start`. `--cookie-jar` remains
+the way to seed a native session from a jar you already exported.
 
 ### Which session a verb acts on
 
@@ -701,7 +740,9 @@ rather than silently approximated.
 Use `--script` only when the page needs JavaScript. For maximum compatibility,
 choose Chromium. Chromium runs with an isolated profile and the box's policy,
 but its internal requests are not the built-in engine's broker receipts; inspect
-the box-level network evidence instead.
+the box-level network evidence instead. `h5i browser proxy` is the separate
+Linux and macOS path that stores Chromium's HTTP exchanges in the session
+itself; see [Chromium through a proxy](#chromium-through-a-proxy).
 
 ### `audit`: the whole session, in one timeline
 
@@ -2036,6 +2077,13 @@ h5i states these limits explicitly because its claims are security-sensitive.
   or the desktop.
 - Chrome consumes substantial memory and CPU. Browser support is opt-in per box.
 - Chromium driving depends on the pinned external `agent-browser` tool.
+- `h5i browser proxy` records what an external Chromium sends through its
+  loopback proxy. agent-browser and Chromium run as ordinary host processes.
+  On Linux the printed command trusts only the session CA. On macOS it passes
+  `--ignore-https-errors`, so Chromium accepts every certificate error for
+  that launch. A missing `agent-browser` refuses before a session exists; on
+  Linux a missing `certutil` does too.
+
 ## Files
 
 | Path | What it is |
@@ -2069,12 +2117,16 @@ requests.
 | `sessions/<id>/recon/jobs/` | One record per recon run that spent requests. |
 | `sessions/<id>/artifacts/` | Files the session produced. |
 | `sessions/<id>/control`, `control.jsonl` | Where the engine listens, and the handover journal. |
+| `sessions/<id>/proxy` | Loopback proxy URL for a Chromium capture session. |
+| `sessions/<id>/proxy-ca.pem`, `proxy-ca-key.pem` | That session's interception CA and its private key, both `0600`. |
+| `sessions/<id>/proxy.log` | The proxy process's stdout and stderr. |
 | `default` | The id every verb acts on when nobody says which. |
 
 Two rules for anything reading these. The capture store holds `Authorization`
 and session cookies in full, so a script that copies out of `messages/` is
-copying credentials. And a session's name can be reused once that session has
-ended, so group by `project` or `id`, never by name.
+copying credentials. `proxy-ca-key.pem` is the same kind of material: it signs
+the certificates the capture proxy presents. A session's name can be reused
+once that session has ended, so group by `project` or `id`, never by name.
 
 ---
 

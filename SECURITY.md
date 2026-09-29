@@ -110,9 +110,12 @@ belong here rather than there:
   exploit. `isolation=microvm` is where the boundary is a hypervisor.
 - Mediation is not containment against an evasive agent. The browser daemon runs
   inside the box, and a box has no internal privilege boundary, so a socket the
-  daemon can bind the agent can reach directly. The same limit applies to
-  `session login`, which withholds the reads that would put a typed credential
-  into a snapshot while the live view keeps streaming.
+  daemon can bind the agent can reach directly. `h5i browser proxy` has the same
+  shape on the host: it records what Chromium sends through the loopback proxy,
+  and agent-browser and Chromium run as ordinary host processes. On Linux that
+  Chromium trusts only the session CA. On macOS the printed command passes
+  `--ignore-https-errors`, so Chromium accepts every certificate error for the
+  launch.
 - A user-writable install directory is a user-writable h5i. Homebrew on macOS is
   the common case, and so is a machine with no sudo, where `install.sh` falls
   back to `~/.local/bin` rather than refusing to install. An

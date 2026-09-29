@@ -164,6 +164,7 @@
 <a class="t2" href="#h5i-recon">h5i recon</a>
 <a class="t2" href="#h5i-browser">h5i browser</a>
 <div class="t3group">
+<a class="t3" href="#chromium-through-a-proxy">Chromium through a proxy</a>
 <a class="t3" href="#which-session-a-verb-acts-on">Which session a verb acts on</a>
 <a class="t3" href="#open-navigates-a-session-that-is-already-there">open navigates a session that is already there</a>
 <a class="t3" href="#defaults">Defaults</a>
@@ -292,8 +293,10 @@ say what it reached. Burp owns the traffic and not the browser, so it needs
 interception, a proxy setting and usually a CA certificate, and it cannot say
 <em>why</em> a request happened. h5i writes the decision before the bytes move, so a
 request that is not in the log did not happen.</p>
-<p>One Rust binary, engine included. No proxy, no certificate, no server, no
-daemon, no SaaS.</p>
+<p>One Rust binary, engine included. A native session needs no proxy, certificate,
+server, daemon, or SaaS. On Linux and macOS, <code>h5i browser proxy</code> adds a
+per-session capture proxy so full Chromium can use the same session; see
+<a href="#chromium-through-a-proxy">Chromium through a proxy</a>.</p>
 <h3 id="the-division-of-labour">The division of labour</h3>
 <p>h5i does the deterministic work; the agent does the judging.</p>
 <table>
@@ -339,7 +342,9 @@ and checks that the ids it cites exist.</p>
 </ul>
 <p>The two are never merged. Every row also says which lane saw it:
 <code>engine-claimed</code> is the engine's account of itself, <code>host-observed</code> is something
-outside the engine seeing it too. A lane is never upgraded.</p>
+outside the engine seeing it too, and <code>proxy-observed</code> is an h5i loopback proxy
+that stored the HTTP exchange an external Chromium sent through it. A lane is
+never upgraded.</p>
 <h3 id="what-it-is-not">What it is not</h3>
 <ul>
 <li><strong>Not a scanner.</strong> No crawl-and-flag mode, no payload generation, no severity
@@ -669,9 +674,36 @@ h5i browser requests            # what it asked for, and what was refused
 h5i browser close
 </code></pre>
 <p><code>screenshot</code> writes into the session's own artifacts directory under a name <em>h5i
-chooses</em>; the engine picks only the bytes. <code>--out</code> names a file instead. Like
-every other verb that reads the page, it is refused while <code>login</code> is on: a
-password is pixels before it is anything else.</p>
+chooses</em>; the engine picks only the bytes. <code>--out</code> names a file instead.</p>
+<h3 id="chromium-through-a-proxy">Chromium through a proxy</h3>
+<p><code>h5i browser open</code> drives h5i's own engine. A page that needs Chromium, or a
+human signing in, uses a proxy session on Linux and macOS.</p>
+<pre><code class="language-bash">h5i browser proxy https://app.example --session chrome
+# Linux prints: agent-browser --proxy ... --ca-cert ... open ...
+# macOS prints: agent-browser --proxy ... --ignore-https-errors open ...
+agent-browser dashboard start
+h5i websec requests --session chrome
+h5i recon extract --session chrome
+</code></pre>
+<p><code>proxy</code> checks that <code>agent-browser</code> runs before it creates a session. On Linux
+it also requires <code>certutil</code>. A missing tool stops there, prints the install
+command, and leaves no session behind. The command then starts a loopback
+proxy and writes a per-session CA (<code>0600</code>). The proxy uses that CA to decrypt
+HTTPS. Run the printed line. Chromium stays agent-browser's process. h5i
+stores what the proxy decrypted, in the same receipt and message store a
+native session uses.</p>
+<p>Linux prints <code>--ca-cert</code> and agent-browser installs that CA into an isolated
+store, so hostname checks stay on. macOS cannot install the CA, so the printed
+command passes <code>--ignore-https-errors</code>. Chromium then accepts every certificate
+error for that launch. <code>status</code> repeats that line, and <code>session.json</code> records
+it as <code>proxy.chromium_tls</code>: <code>session-ca</code> or <code>ignore-https-errors</code>.</p>
+<p>The lane is <code>proxy-observed</code>. <code>websec</code>, <code>recon</code>, <code>requests</code>, <code>resend</code> and
+<code>audit</code> take the session the same way they take a native one. agent-browser
+and Chromium run as ordinary host processes, so this lane records traffic that
+went through the proxy. <code>--allow</code> grants further origins, the same way it does
+on <code>open</code>.</p>
+<p>A human signs in with <code>agent-browser dashboard start</code>. <code>--cookie-jar</code> remains
+the way to seed a native session from a jar you already exported.</p>
 <h3 id="which-session-a-verb-acts-on">Which session a verb acts on</h3>
 <p>Every session has an opaque id (<code>br_7k2xqa</code>), and it is in the record, in
 <code>--json</code> and in the receipts, because a durable reference has to be something no
@@ -1026,7 +1058,9 @@ rather than silently approximated.</p>
 <p>Use <code>--script</code> only when the page needs JavaScript. For maximum compatibility,
 choose Chromium. Chromium runs with an isolated profile and the box's policy,
 but its internal requests are not the built-in engine's broker receipts; inspect
-the box-level network evidence instead.</p>
+the box-level network evidence instead. <code>h5i browser proxy</code> is the separate
+Linux and macOS path that stores Chromium's HTTP exchanges in the session
+itself; see <a href="#chromium-through-a-proxy">Chromium through a proxy</a>.</p>
 <h3 id="audit-the-whole-session-in-one-timeline"><code>audit</code>: the whole session, in one timeline</h3>
 <p><code>requests</code> is the network layer on its own, and it is the verb to reach for in a
 loop. <code>h5i browser audit</code> is the one to read afterwards: what the agent asked
@@ -2322,6 +2356,12 @@ signature models.</p>
   or the desktop.</li>
 <li>Chrome consumes substantial memory and CPU. Browser support is opt-in per box.</li>
 <li>Chromium driving depends on the pinned external <code>agent-browser</code> tool.</li>
+<li><code>h5i browser proxy</code> records what an external Chromium sends through its
+  loopback proxy. agent-browser and Chromium run as ordinary host processes.
+  On Linux the printed command trusts only the session CA. On macOS it passes
+  <code>--ignore-https-errors</code>, so Chromium accepts every certificate error for
+  that launch. A missing <code>agent-browser</code> refuses before a session exists; on
+  Linux a missing <code>certutil</code> does too.</li>
 </ul>
 <h2 id="files">Files</h2>
 <table>
@@ -2421,6 +2461,18 @@ requests.</p>
 <td>Where the engine listens, and the handover journal.</td>
 </tr>
 <tr>
+<td><code>sessions/&lt;id&gt;/proxy</code></td>
+<td>Loopback proxy URL for a Chromium capture session.</td>
+</tr>
+<tr>
+<td><code>sessions/&lt;id&gt;/proxy-ca.pem</code>, <code>proxy-ca-key.pem</code></td>
+<td>That session's interception CA and its private key, both <code>0600</code>.</td>
+</tr>
+<tr>
+<td><code>sessions/&lt;id&gt;/proxy.log</code></td>
+<td>The proxy process's stdout and stderr.</td>
+</tr>
+<tr>
 <td><code>default</code></td>
 <td>The id every verb acts on when nobody says which.</td>
 </tr>
@@ -2428,8 +2480,9 @@ requests.</p>
 </table>
 <p>Two rules for anything reading these. The capture store holds <code>Authorization</code>
 and session cookies in full, so a script that copies out of <code>messages/</code> is
-copying credentials. And a session's name can be reused once that session has
-ended, so group by <code>project</code> or <code>id</code>, never by name.</p>
+copying credentials. <code>proxy-ca-key.pem</code> is the same kind of material: it signs
+the certificates the capture proxy presents. A session's name can be reused
+once that session has ended, so group by <code>project</code> or <code>id</code>, never by name.</p>
 <hr />
 <h2 id="environment-variables">Environment variables</h2>
 <p>All optional; h5i ships with working defaults.</p>

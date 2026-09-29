@@ -958,6 +958,39 @@ Browser sessions: open one, drive it, close it
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.SH "H5I BROWSER PROXY"
+Capture an external Chromium session through an h5i HTTP/S proxy
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBproxy\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-project\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-expires\-in\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Name this session
+.TP
+\fB\-\-project\fR \fI<NAME>\fR
+The engagement whose scope supplies additional grants and denies
+.TP
+\fB\-\-allow\fR \fI<ORIGIN>\fR
+Grant another origin. Repeatable
+.TP
+\fB\-\-no\-loopback\fR
+Refuse loopback too
+.TP
+\fB\-\-expires\-in\fR \fI<SECONDS>\fR
+End the proxy automatically after this many seconds
+.TP
+\fB\-\-json\fR
+Print the session record as JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIURL\fR>
+The first target, used to seed the origin allowlist
 .SH "H5I BROWSER OPEN"
 Open a URL, making a session if there is not one already
 .ie \n(.g .ds Aq \(aq
@@ -1985,27 +2018,6 @@ Which credentials this session can use, by name. Never their values
 .TP
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
-.SH "H5I BROWSER LOGIN"
-Hand the page to the human at the live view for as long as a login takes
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBlogin\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-off\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-off\fR
-End login mode and make the page readable again
 .TP
 \fB\-\-json\fR
 

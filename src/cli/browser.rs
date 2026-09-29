@@ -101,8 +101,11 @@ pub enum BrowserCommands {
     /// Capture an external Chromium session through an h5i HTTP/S proxy.
     ///
     /// The command starts a resident session and prints the exact
-    /// `agent-browser` flags for it. Chromium remains agent-browser's; h5i
-    /// owns policy, capture, replay and evidence.
+    /// `agent-browser` flags for it. On Linux those flags trust this session's
+    /// CA. On macOS they pass `--ignore-https-errors`, because agent-browser
+    /// cannot install a CA there and Chromium then accepts every certificate
+    /// error for that launch. Chromium remains agent-browser's; h5i owns
+    /// policy, capture, replay and evidence.
     Proxy {
         /// The first target, used to seed the origin allowlist.
         url: String,
@@ -2328,6 +2331,47 @@ fn shell_word(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+/// Which Chromium acceptance mode this machine can actually use.
+///
+/// agent-browser's `--ca-cert` imports into an isolated NSS database, and that
+/// path exists only on Linux. macOS still gets a capture proxy; the printed
+/// command passes `--ignore-https-errors` instead of a CA.
+fn host_proxy_chromium_tls() -> anyhow::Result<bs::ChromiumTls> {
+    if cfg!(target_os = "linux") {
+        Ok(bs::ChromiumTls::SessionCa)
+    } else if cfg!(target_os = "macos") {
+        Ok(bs::ChromiumTls::IgnoreHttpsErrors)
+    } else {
+        anyhow::bail!(
+            "`h5i browser proxy` trusts its interception CA on Linux, and on macOS it prints an \
+             agent-browser command with `--ignore-https-errors`. This platform has neither, so \
+             nothing was started. Use `h5i browser open` here instead."
+        )
+    }
+}
+
+/// The shell line a person copies to point agent-browser at this proxy.
+fn agent_browser_open_line(
+    agent_browser: &str,
+    proxy_url: &str,
+    trust: bs::ChromiumTls,
+    ca_cert: &Path,
+    url: &str,
+) -> String {
+    let browser = shell_word(agent_browser);
+    let proxy = shell_word(proxy_url);
+    let target = shell_word(url);
+    match trust {
+        bs::ChromiumTls::SessionCa => format!(
+            "{browser} --proxy {proxy} --ca-cert {} open {target}",
+            shell_word(&ca_cert.to_string_lossy())
+        ),
+        bs::ChromiumTls::IgnoreHttpsErrors => {
+            format!("{browser} --proxy {proxy} --ignore-https-errors open {target}")
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn start_proxy(
     root: &Path,
@@ -2339,20 +2383,14 @@ fn start_proxy(
     expires_in: Option<u64>,
     json_out: bool,
 ) -> anyhow::Result<()> {
-    #[cfg(not(target_os = "linux"))]
-    anyhow::bail!(
-        "agent-browser can install a per-session interception CA only on Linux. Its `--ca-cert` \
-         option is not supported on this platform, so h5i will not start a proxy Chromium \
-         cannot authenticate. Use `h5i browser open` here instead."
-    );
-
+    let trust = host_proxy_chromium_tls()?;
     if !is_web_url(&url) {
         anyhow::bail!("`browser proxy` needs an http:// or https:// target, not {url:?}");
     }
     // Do every external-tool check before allocating a session id, creating a
     // CA, or spawning the proxy. A missing browser must leave no half-session.
     let agent_browser = proxy_agent_browser()?;
-    if executable_on_path("certutil").is_none() {
+    if trust == bs::ChromiumTls::SessionCa && executable_on_path("certutil").is_none() {
         anyhow::bail!(
             "`h5i browser proxy` needs `certutil` so agent-browser can trust the per-session \
              interception CA, but it was not found on PATH.\n\n  Install the browser dependencies, \
@@ -2498,7 +2536,11 @@ fn start_proxy(
             requests: Some(dir.join(bs::RECEIPTS_FILE)),
         },
         permissive_cors: false,
-        proxy: Some(bs::Proxy { url: proxy_url.clone(), ca_cert: ca_cert.clone() }),
+        proxy: Some(bs::Proxy {
+            url: proxy_url.clone(),
+            ca_cert: ca_cert.clone(),
+            chromium_tls: trust,
+        }),
     };
     bs::write(root, &session)?;
     bs::set_default(root, &id)?;
@@ -2509,14 +2551,28 @@ fn start_proxy(
         println!("{} Chromium capture session {}", SUCCESS, label(&session));
         print_summary(&session);
         println!("  proxy    : {proxy_url}");
-        println!("  CA       : {}", ca_cert.display());
+        match trust {
+            bs::ChromiumTls::SessionCa => {
+                println!("  CA       : {}", ca_cert.display());
+            }
+            bs::ChromiumTls::IgnoreHttpsErrors => {
+                println!(
+                    "  tls      : {} — macOS cannot install the session CA, so the printed \
+                     command tells Chromium to accept every certificate error for that launch",
+                    style("ignore-https-errors").yellow()
+                );
+            }
+        }
         println!();
         println!(
-            "  start    : {} --proxy {} --ca-cert {} open {}",
-            shell_word(&agent_browser.to_string_lossy()),
-            shell_word(&proxy_url),
-            shell_word(&ca_cert.to_string_lossy()),
-            shell_word(&url)
+            "  start    : {}",
+            agent_browser_open_line(
+                &agent_browser.to_string_lossy(),
+                &proxy_url,
+                trust,
+                &ca_cert,
+                &url
+            )
         );
         println!("  login    : agent-browser dashboard start");
         println!("  inspect  : h5i websec requests");
@@ -4886,6 +4942,16 @@ fn print_summary(session: &bs::Session) {
             }
         }
     );
+    if session
+        .proxy
+        .as_ref()
+        .is_some_and(|proxy| proxy.chromium_tls == bs::ChromiumTls::IgnoreHttpsErrors)
+    {
+        println!(
+            "  tls      : {} — Chromium accepts every certificate error for this session",
+            style("ignore-https-errors").yellow()
+        );
+    }
     if let Some(project) = &session.project {
         println!("  project  : {project}");
     }
@@ -5578,6 +5644,68 @@ mod tests {
             loading.contains("h5i browser read"),
             "and what to do instead: {loading}"
         );
+    }
+
+    #[test]
+    fn the_printed_agent_browser_line_trusts_only_the_session_ca_on_linux() {
+        let line = agent_browser_open_line(
+            "/usr/bin/agent-browser",
+            "http://127.0.0.1:9",
+            bs::ChromiumTls::SessionCa,
+            Path::new("/tmp/proxy-ca.pem"),
+            "https://app.example/a b",
+        );
+        assert_eq!(
+            line,
+            "'/usr/bin/agent-browser' --proxy 'http://127.0.0.1:9' --ca-cert '/tmp/proxy-ca.pem' open 'https://app.example/a b'"
+        );
+    }
+
+    #[test]
+    fn the_printed_agent_browser_line_ignores_https_errors_on_macos() {
+        let line = agent_browser_open_line(
+            "agent-browser",
+            "http://127.0.0.1:9",
+            bs::ChromiumTls::IgnoreHttpsErrors,
+            Path::new("/tmp/proxy-ca.pem"),
+            "https://app.example",
+        );
+        assert_eq!(
+            line,
+            "'agent-browser' --proxy 'http://127.0.0.1:9' --ignore-https-errors open 'https://app.example'"
+        );
+        assert!(
+            !line.contains("ca-cert"),
+            "macOS must not be handed a CA flag agent-browser rejects: {line}"
+        );
+    }
+
+    #[test]
+    fn an_older_proxy_record_without_chromium_tls_means_the_session_ca() {
+        let proxy: bs::Proxy =
+            serde_json::from_str(r#"{"url":"http://127.0.0.1:9","ca_cert":"/tmp/ca.pem"}"#)
+                .expect("old record");
+        assert_eq!(proxy.chromium_tls, bs::ChromiumTls::SessionCa);
+    }
+
+    #[test]
+    fn this_host_selects_the_chromium_trust_it_can_install() {
+        match host_proxy_chromium_tls() {
+            Ok(trust) if cfg!(target_os = "linux") => {
+                assert_eq!(trust, bs::ChromiumTls::SessionCa);
+            }
+            Ok(trust) if cfg!(target_os = "macos") => {
+                assert_eq!(trust, bs::ChromiumTls::IgnoreHttpsErrors);
+            }
+            Ok(trust) => panic!("unexpected chromium trust {trust:?}"),
+            Err(error) => {
+                assert!(
+                    !cfg!(any(target_os = "linux", target_os = "macos")),
+                    "{error}"
+                );
+                assert!(error.to_string().contains("nothing was started"), "{error}");
+            }
+        }
     }
 
     #[test]

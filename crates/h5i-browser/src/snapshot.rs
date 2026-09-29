@@ -1475,9 +1475,8 @@ mod tests {
 
     #[test]
     fn a_password_field_never_reports_what_it_holds() {
-        // Not only about the credential-substitution path. LOGIN mode exists so
-        // a human can type a password the agent cannot see; without this the
-        // agent reads it out of the next snapshot the moment the mode ends.
+        // A password field reports a fixed mask. The value and its length stay
+        // out of the snapshot, including after a human typed into the field.
         let masked = Snapshot {
             url: "https://app.example/".to_string(),
             title: String::new(),

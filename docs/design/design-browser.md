@@ -464,19 +464,13 @@ configuration, and a prefix allowlist fails closed where a denylist would not.
 Substitution happens for `type` and nothing else, as a predicate on the verb
 table.
 
-`input[type=password]` reports a fixed-width mask rather than its value, so a
-credential a *human* typed during LOGIN mode is not readable by the agent once
-the mode ends. Whether the field is filled stays visible.
+`input[type=password]` reports a fixed-width mask rather than its value.
+Whether the field is filled stays visible.
 
-LOGIN mode (5.10) is half built. `session login` refuses every control verb that
-reads the page, so a credential typed during it is not in a snapshot the agent
-asked for. It does *not* withhold frames: the person typing has to see the page,
-and the viewer socket is inside the box, where there is no privilege boundary.
-
-Two verbs pass through, `status` and `login` itself. `requests` is refused
-during a login because it names URLs a login flow visited, and `status` reports
-an origin rather than a URL: an OAuth callback carries its `code` in the query,
-a magic link and a password reset carry their token in the path.
+Interactive login goes through Chromium. `h5i browser proxy` starts a
+per-session capture proxy, and `agent-browser dashboard start` is where a human
+signs in. The native engine has no `login` verb and no login mode. An old
+client that still sends `login` gets an unknown verb.
 
 ### JavaScript, as a limited preview
 
@@ -635,8 +629,8 @@ Tiers 1 and 2 of roadmap-history.md M10: static render, snapshot,
 screenshot, receipts, a live view h5i's viewers attach to, the resident session
 and its verbs (§12.1), and JavaScript behind `--script`. Tier 3, policy-gated
 script, is deliberately unbuilt; roadmap-history.md §12 is the plan and
-§12.5 is what it costs. Not yet done: the frame half of LOGIN mode, and file
-uploads, which are dropped rather than read.
+§12.5 is what it costs. File uploads are dropped rather than read. Interactive
+login is the Chromium proxy lane.
 
 Pin a box to this engine with
 `h5i box create --profile browser --engine h5i-light`, or

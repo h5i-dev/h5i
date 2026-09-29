@@ -116,16 +116,17 @@ h5i browser read https://docs.rs/           # for a single page without a persis
 ### 2.2. Test web applications
 
 The native browser owns its network layer, so agents can capture, inspect, edit,
-replay, and compare HTTP traffic without a separate repeater. On Linux, sites
-that need full Chromium can use the same workbench through h5i's agent-browser
-capture proxy.
+replay, and compare HTTP traffic without a separate repeater. On Linux and
+macOS, sites that need full Chromium can use the same workbench through h5i's
+agent-browser capture proxy.
 
 Use these capabilities only on systems you own or are authorized to test:
 
 ```bash
 h5i browser open https://target.example --capture --allow target.example
 # Or: h5i browser proxy https://target.example --session chrome
-# Then run the printed `agent-browser --proxy ... --ca-cert ... open ...` command.
+# Then run the printed agent-browser command.
+# Linux trusts the session CA. macOS passes --ignore-https-errors.
 
 h5i websec requests                                  # list messages and IDs
 h5i websec show req_42 --raw                         # inspect a request
@@ -318,9 +319,9 @@ low-level protocol testing.
 <summary>Does h5i work on every website?</summary>
 
 No. h5i works best for content-heavy websites and common browser interactions.
-For sites that need Chromium, Linux users can run `h5i browser proxy <url>` and
-open the printed command with agent-browser, or run Chromium inside an h5i
-sandbox.
+For sites that need Chromium, run `h5i browser proxy <url>` and open the
+printed command with agent-browser, or run Chromium inside an h5i sandbox.
+Linux trusts the session CA. macOS passes `--ignore-https-errors`.
 
 </details>
 

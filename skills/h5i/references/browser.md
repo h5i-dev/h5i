@@ -10,11 +10,12 @@ h5i browser <verb> br_7k2xqa ...       # or omit the id and get the last session
 h5i browser close
 ```
 
-For a page that needs real Chromium, Linux also has a proxy-observed session:
+For a page that needs real Chromium, Linux and macOS have a proxy-observed session:
 
 ```bash
 h5i browser proxy https://app.example --session chrome
-# Run the printed: agent-browser --proxy ... --ca-cert ... open ...
+# Linux prints: agent-browser --proxy ... --ca-cert ... open ...
+# macOS prints: agent-browser --proxy ... --ignore-https-errors open ...
 agent-browser dashboard start                    # human login/takeover
 h5i websec requests --session chrome
 h5i recon extract --session chrome
@@ -24,9 +25,11 @@ The proxy writes Chromium's decrypted HTTP/S messages into the same receipt and
 message store as the native browser, so `websec`, `recon`, `requests`, `resend`
 and `audit` do not need a separate mode. The lane is `proxy-observed`: h5i saw
 traffic routed through its loopback proxy, but the external Chromium process is
-not confined. `agent-browser --ca-cert` currently makes this Linux-only. If
-agent-browser or `certutil` is missing, `proxy` refuses before creating a
-session and prints the install command.
+not confined. Linux trusts only the session CA (`certutil` must be on `PATH`).
+macOS cannot install that CA, so the printed command passes
+`--ignore-https-errors` and Chromium accepts every certificate error for that
+launch. If agent-browser is missing, or `certutil` is missing on Linux, `proxy`
+refuses before creating a session and prints the install command.
 
 ## Where the session runs
 
