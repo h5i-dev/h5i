@@ -410,8 +410,11 @@ fn a_cookie_jar_that_is_not_one_is_refused_before_a_session_exists() {
     let Some(fx) = Fixture::new() else {
         return skip("no h5i binary to drive");
     };
+    // A JSON object that is neither an h5i jar nor a browser export. A JSON
+    // array is now accepted as a browser export, so this is the case that is
+    // still refused: recognisable as nothing.
     let jar = fx.home.path().join("export.json");
-    std::fs::write(&jar, r#"[{"name": "sid", "value": "x"}]"#).unwrap();
+    std::fs::write(&jar, r#"{"nope": true}"#).unwrap();
 
     let url = fx.site.base.clone();
     let out = fx.run(&[
