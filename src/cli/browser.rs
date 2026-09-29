@@ -5690,21 +5690,20 @@ mod tests {
 
     #[test]
     fn this_host_selects_the_chromium_trust_it_can_install() {
-        match host_proxy_chromium_tls() {
-            Ok(trust) if cfg!(target_os = "linux") => {
-                assert_eq!(trust, bs::ChromiumTls::SessionCa);
-            }
-            Ok(trust) if cfg!(target_os = "macos") => {
-                assert_eq!(trust, bs::ChromiumTls::IgnoreHttpsErrors);
-            }
-            Ok(trust) => panic!("unexpected chromium trust {trust:?}"),
-            Err(error) => {
-                assert!(
-                    !cfg!(any(target_os = "linux", target_os = "macos")),
-                    "{error}"
-                );
-                assert!(error.to_string().contains("nothing was started"), "{error}");
-            }
+        let trust = host_proxy_chromium_tls();
+        if cfg!(target_os = "linux") {
+            assert_eq!(
+                trust.expect("linux installs the session CA"),
+                bs::ChromiumTls::SessionCa
+            );
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(
+                trust.expect("macOS prints --ignore-https-errors"),
+                bs::ChromiumTls::IgnoreHttpsErrors
+            );
+        } else {
+            let error = trust.expect_err("other platforms refuse before a session exists");
+            assert!(error.to_string().contains("nothing was started"), "{error}");
         }
     }
 

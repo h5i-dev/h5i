@@ -37,8 +37,8 @@ PUBLISHED = "2026-08-21"
 # build error, not a silent regression.
 PAGE_HISTORY = {
     "": ("2026-09-24", "7079c92325de630d"),
-    "features/": ("2026-09-12", "7a387af144ced01b"),
-    "manual/": ("2026-09-26", "c6e7f54ec45d699c"),
+    "features/": ("2026-09-29", "0ecece2bcbc4cf75"),
+    "manual/": ("2026-09-29", "2589d892b05af2d4"),
     "pitch/": ("2026-09-26", "22c43879198a0d54"),
     "demo/": ("2026-09-12", "729de49b887b5c3f"),
     "guides/": ("2026-09-16", "f37b211cacc1bcb3"),

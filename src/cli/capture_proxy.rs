@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use clap::Parser;
 use h5i_browser::capture::{Capture, Received};
-use h5i_browser::net::LocalBroker;
+use h5i_browser::net::{LocalBroker, ProxyResponse};
 use h5i_browser::receipt::JsonlSink;
 use http_body_util::BodyExt as _;
 use hudsucker::certificate_authority::RcgenAuthority;
@@ -156,12 +156,14 @@ impl HttpHandler for Handler {
                 if let Some(request) = &self.request {
                     let _ = self.broker.observe_proxy_response(
                         request,
-                        None,
-                        kept_headers,
-                        Received::NotRead,
-                        0,
-                        self.started.map(|at| at.elapsed()).unwrap_or_default(),
-                        Some(error.to_string()),
+                        ProxyResponse {
+                            status: None,
+                            headers: kept_headers,
+                            body: Received::NotRead,
+                            bytes: 0,
+                            duration: self.started.map(|at| at.elapsed()).unwrap_or_default(),
+                            error: Some(error.to_string()),
+                        },
                     );
                 }
                 return Response::builder()
@@ -175,12 +177,14 @@ impl HttpHandler for Handler {
         if let Some(request) = &self.request {
             let _ = self.broker.observe_proxy_response(
                 request,
-                Some(status),
-                kept_headers,
-                Received::Bytes(&body),
-                body.len() as u64,
-                self.started.map(|at| at.elapsed()).unwrap_or_default(),
-                None,
+                ProxyResponse {
+                    status: Some(status),
+                    headers: kept_headers,
+                    body: Received::Bytes(&body),
+                    bytes: body.len() as u64,
+                    duration: self.started.map(|at| at.elapsed()).unwrap_or_default(),
+                    error: None,
+                },
             );
         }
         Response::from_parts(parts, Body::from(body))
@@ -194,12 +198,14 @@ impl HttpHandler for Handler {
         if let Some(request) = &self.request {
             let _ = self.broker.observe_proxy_response(
                 request,
-                None,
-                Vec::new(),
-                Received::NotRead,
-                0,
-                self.started.map(|at| at.elapsed()).unwrap_or_default(),
-                Some(error.to_string()),
+                ProxyResponse {
+                    status: None,
+                    headers: Vec::new(),
+                    body: Received::NotRead,
+                    bytes: 0,
+                    duration: self.started.map(|at| at.elapsed()).unwrap_or_default(),
+                    error: Some(error.to_string()),
+                },
             );
         }
         Response::builder()

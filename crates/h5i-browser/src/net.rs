@@ -378,6 +378,16 @@ pub struct LocalBroker {
     capture: Option<Arc<crate::capture::Capture>>,
 }
 
+/// What an intercepting proxy saw come back for one recorded request.
+pub struct ProxyResponse<'a> {
+    pub status: Option<u16>,
+    pub headers: Vec<(String, String)>,
+    pub body: crate::capture::Received<'a>,
+    pub bytes: u64,
+    pub duration: Duration,
+    pub error: Option<String>,
+}
+
 impl LocalBroker {
     /// Record a request observed by an intercepting proxy and allocate its id
     /// from this broker's sequence.  Proxy traffic and workbench replays share
@@ -417,28 +427,23 @@ impl LocalBroker {
     pub fn observe_proxy_response(
         &self,
         request: &RequestRecord,
-        status: Option<u16>,
-        headers: Vec<(String, String)>,
-        body: crate::capture::Received<'_>,
-        bytes: u64,
-        duration: Duration,
-        error: Option<String>,
+        response: ProxyResponse<'_>,
     ) -> Result<(), H5iError> {
         let mut outcome = request.response();
-        outcome.status = status;
-        outcome.bytes = Some(bytes);
-        outcome.duration_ms = Some(duration.as_millis() as u64);
-        outcome.error = error;
+        outcome.status = response.status;
+        outcome.bytes = Some(response.bytes);
+        outcome.duration_ms = Some(response.duration.as_millis() as u64);
+        outcome.error = response.error;
         self.append(&outcome)?;
         if let Some(capture) = &self.capture {
             capture.response(crate::capture::Response {
                 seq: request.seq,
                 url: &request.url,
-                status,
-                headers,
+                status: response.status,
+                headers: response.headers,
                 content_encoding: None,
                 wire_bytes: None,
-                body,
+                body: response.body,
                 trailing: &[],
             });
         }
@@ -2931,12 +2936,14 @@ mod tests {
         broker
             .observe_proxy_response(
                 &request,
-                Some(201),
-                vec![("content-type".into(), "application/json".into())],
-                crate::capture::Received::Bytes(br#"{"ok":true}"#),
-                11,
-                Duration::from_millis(7),
-                None,
+                ProxyResponse {
+                    status: Some(201),
+                    headers: vec![("content-type".into(), "application/json".into())],
+                    body: crate::capture::Received::Bytes(br#"{"ok":true}"#),
+                    bytes: 11,
+                    duration: Duration::from_millis(7),
+                    error: None,
+                },
             )
             .expect("response is recorded");
 
