@@ -13,7 +13,7 @@
 
 <h1 align="center">Agent-Native Workspace for Secure Web Development</h1>
 
-**h5i** (pronounced *high-five*) is an agent-native workspace for **building**, **attacking**, and **verifying** web applications. Give your coding agent tools to test running applications, preserve security checks in CI, and prove critical properties of Rust application logic in Lean 4.
+**h5i** (pronounced *high-five*) is an agent-native workspace for **building**, **formally verifying**, and **red-teaming** web applications in one cycle. Give your coding agent tools to test running applications, preserve security checks in CI, and prove critical properties of Rust application logic in Lean 4.
 
 Use the red-teaming tools with your existing stack: browser automation and direct control over HTTP traffic let agents navigate applications and capture, inspect, modify, replay, and compare requests through one interface. Or adopt [h5i-app](#4-build-verifiable-apps-h5i-app), h5i's Axum-based framework, for application logic you can formally verify. Sandboxing, network policies, credential isolation, and auditable sessions keep agent workflows contained, reproducible, and reviewable.
 
