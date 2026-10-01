@@ -29,7 +29,7 @@
     </td>
     <td align="center">
       <strong>Formal verification</strong><br>
-      <sub><a href="#4-build-verifiable-apps-h5i-app">Rust application logic + Lean 4</a></sub>
+      <sub><a href="#4-build-verifiable-apps-h5i-app">Rust + Lean 4</a></sub>
     </td>
     <td align="center">
       <strong>CI/CD</strong><br>
