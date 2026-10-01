@@ -367,9 +367,9 @@ pub fn append_with_secrets(
         &exact_holder[..]
     };
     let exact = |text: String| crate::secrets::scrub_exact_str(&text, secrets);
-    input.cmd = input.cmd.map(&exact);
-    input.cwd = input.cwd.map(&exact);
-    input.files = input.files.into_iter().map(&exact).collect();
+    input.cmd = input.cmd.map(exact);
+    input.cwd = input.cwd.map(exact);
+    input.files = input.files.into_iter().map(exact).collect();
     input.browser = input.browser.map(|mut b| {
         for v in [&mut b.console, &mut b.errors, &mut b.failed_requests] {
             for s in v.iter_mut() {
