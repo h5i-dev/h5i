@@ -2436,6 +2436,21 @@ fn shell_word(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+/// Quote a word for a copy-paste shell line only when it needs it, so plain
+/// flags like `--proxy` stay readable and only args with shell metacharacters
+/// (spaces, `<`, `>`, …) are quoted.
+fn shell_word_if_needed(value: &str) -> String {
+    let safe = !value.is_empty()
+        && value.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'/' | b':' | b'=' | b'-' | b'+' | b'@' | b'%' | b',')
+        });
+    if safe {
+        value.to_string()
+    } else {
+        shell_word(value)
+    }
+}
+
 /// Whether this machine can drive a proxied Chromium at all.
 ///
 /// Both Linux and macOS point agent-browser at the proxy and tell Chromium to
@@ -2473,13 +2488,13 @@ fn agent_browser_proxy_args(proxy_url: &str) -> Vec<String> {
 fn agent_browser_open_line(agent_browser: &str, proxy_url: &str, url: &str) -> String {
     let flags = agent_browser_proxy_args(proxy_url)
         .iter()
-        .map(|a| shell_word(a))
+        .map(|a| shell_word_if_needed(a))
         .collect::<Vec<_>>()
         .join(" ");
     format!(
         "{} {flags} open {}",
-        shell_word(agent_browser),
-        shell_word(url)
+        shell_word_if_needed(agent_browser),
+        shell_word_if_needed(url)
     )
 }
 
@@ -5844,7 +5859,7 @@ mod tests {
         );
         assert_eq!(
             line,
-            "'/usr/bin/agent-browser' --proxy 'http://127.0.0.1:9' --ignore-https-errors --args '--proxy-bypass-list=<-loopback>' open 'https://app.example/a b'"
+            "/usr/bin/agent-browser --proxy http://127.0.0.1:9 --ignore-https-errors --args '--proxy-bypass-list=<-loopback>' open 'https://app.example/a b'"
         );
         // agent-browser 0.27 has no CA-trust flag; it must never be handed one.
         assert!(!line.contains("ca-cert"), "{line}");
