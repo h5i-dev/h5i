@@ -15,9 +15,9 @@
 
 **h5i** (pronounced *high-five*) is an agent-native workspace for both **offensive and verifiable web security**.
 
-**Attack**: *Professional red-teaming with AI agent.* Give your agent browser automation and HTTP traffic control to explore applications, inspect requests, and investigate bugs. Perfect for bug bounty, penetration testing, and security regression test in CI. Configurable sandboxing and network policies keep agent activity within the boundaries you set.
+**Attack**: Give your agent browser automation and HTTP traffic control to explore applications, inspect requests, and investigate bugs. Perfect for bug bounty, penetration testing, and security regression test in CI. Configurable sandboxing and network policies keep agent activity within the boundaries you set.
 
-**Defense**: *Application logic you can formally verify.* Build on [h5i-app](#4-build-verifiable-apps-h5i-app), h5i’s Axum-based Rust framework, and prove properties of your application logic in Lean 4, from authorization and tenant isolation to business rules and state invariants.
+**Defense**: Build on [h5i-app](#4-build-verifiable-apps-h5i-app), h5i’s Axum-based Rust framework, and prove properties of your application logic in Lean 4, from authorization and tenant isolation to business rules and state invariants.
 
 <table align="center">
   <tr>
