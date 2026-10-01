@@ -194,26 +194,6 @@ h5i ui
   <img src="./docs/_static/sandbox-ui-demo.png" alt="Watching a sandboxed browser session from the host" width="99%" />
 </p>
 
-### 2.6. More browser capabilities
-
-Name sessions to run several browsers independently:
-
-```bash
-h5i browser open https://example.com/login --session auth --new
-h5i browser open https://example.com/ --session public --new
-h5i browser snapshot --session auth
-```
-
-Read media transcripts, or choose a coherent browser identity:
-
-```bash
-h5i browser transcript --url https://example.com/talk --lang en
-h5i browser transcript --via yt-dlp --url https://www.youtube.com/watch?v=VIDEO_ID
-
-h5i browser open https://example.com --identity privacy
-h5i browser open https://example.com --script --identity firefox-143-linux
-```
-
 ---
 
 ## 3. Sandbox and isolation levels
