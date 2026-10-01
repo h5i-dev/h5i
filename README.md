@@ -196,26 +196,7 @@ h5i ui
 
 ---
 
-## 3. Sandbox and isolation levels
-
-h5i provides four sandbox levels, plus an unconstrained workspace mode.
-Run `h5i box probe` to see which levels your host supports. h5i never silently downgrades: an unsatisfiable request fails closed.
-
-| Tier | What enforces it |
-| --- | --- |
-| `workspace` | a separate git worktree, no confinement |
-| `process` | Landlock filesystem allowlist, seccomp deny-list, namespaces, rlimits |
-| `supervised` | all of the above, plus a private network namespace with an **nftables egress allowlist pinned to resolved IPs**, DNS pinned by hosts file, and a seccomp-notify socket gate |
-| `container` | rootless Podman, dropped capabilities, a portable image, and an HTTP/HTTPS proxy allowlist |
-| `microvm` | a hardware-isolated guest with **its own kernel**, booted by [microsandbox](https://microsandbox.dev) (`msb`) from the same OCI images, with the egress allowlist evaluated **by the VM's network stack** |
-
-Host credentials do not enter a box. A runtime-scoped proxy authenticates model
-API requests outside the boundary, preventing cross-runtime access. Each box
-receives a private, one-time copy of approved HOME state.
-
----
-
-## 4. Build verifiable apps: h5i-app
+## 3. Build verifiable apps: h5i-app
 
 [h5i-app](crates/h5i-app) is an Axum-based Rust web framework for proving
 properties of application logic in Lean 4. Red-teaming finds the problems you
