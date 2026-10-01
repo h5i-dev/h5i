@@ -86,9 +86,8 @@ h5i browser read https://docs.rs/           # one page, no persistent session
 ### 2.2. Capture, replay, and compare traffic
 
 The native browser owns its network layer, so agents capture, inspect, edit,
-replay, and compare HTTP traffic without a separate repeater. Sites that need
-full Chromium go through the same workbench via `h5i browser proxy`. Use these
-capabilities only on systems you own or are authorized to test:
+replay, and compare HTTP traffic directly. Sites that need
+full Chromium go through the same workbench via `h5i browser proxy`.
 
 ```bash
 h5i browser open https://target.example --capture --allow target.example
