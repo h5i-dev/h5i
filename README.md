@@ -13,7 +13,12 @@
 
 <h1 align="center">The Agent-Native Web Security Workspace</h1>
 
-**h5i** (pronounced *high-five*) helps you find vulnerabilities in web applications and prove security properties of their code. It brings agent-driven red-teaming and formally verifiable application development into one workspace. It gives your agent browser automation and HTTP traffic control to explore applications, inspect requests, and investigate bugs in a configurable sandbox, perfect for bug bounty, penetration testing, and regression test in CI. Build on h5i-app, h5i’s Axum-based Rust framework, and prove properties of your application logic in Lean 4, from authorization and tenant isolation to business rules and state invariants.
+
+**h5i** (pronounced *high-five*) is a unified workspace for building secure web applications through two complementary approaches: finding bugs and proving correctness.
+
+- **Find it:** Automate red-teaming with AI agents. `h5i` provides browser control and HTTP interception in a configurable sandbox for seamless bug hunting and CI testing.
+- **Prove it:** Build on `h5i-app` (our Axum-based Rust framework) and use Lean 4 to formally verify your application's state invariants, tenant isolation, and authorization logic.
+
 
 <table align="center">
   <tr>
