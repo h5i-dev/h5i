@@ -11,7 +11,7 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-<h1 align="center">Agent-Native Workspace for Offensive and Defensive Web Security</h1>
+<h1 align="center">Agent-Native Workspace for Offensive and Defensive Security</h1>
 
 **h5i** (pronounced *high-five*) is an agent-native workspace for both **offensive and defensive web security**. Use it to find vulnerabilities in running applications, build Rust applications with formally verified properties, or bring both into your development workflow.
 
