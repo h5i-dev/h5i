@@ -1,0 +1,9 @@
+[package]
+name = "h5i-app-xtask"
+description = "Repository checks: `cargo app-verify`"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+publish = false
+
+[dependencies]

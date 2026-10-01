@@ -1,0 +1,25 @@
+[package]
+name = "booking-server"
+description = "Tutorial 5: the booking service's HTTP server, PostgreSQL store and outbox dispatcher"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+publish = false
+
+[dependencies]
+h5i-app-core = { path = "../../../../../crates/h5i-app-core" }
+h5i-app-pg = { path = "../../../../../crates/h5i-app-pg" }
+h5i-app-http = { path = "../../../../../crates/h5i-app-http" }
+h5i-app-json = { path = "../../../../../crates/h5i-app-json" }
+booking-kernel = { path = "../kernel" }
+axum = "0.8"
+# `net` and `io-util` for the notifier's HTTP POST.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "net", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+# The outbox test creates its own database and reads outbox rows.
+tokio-postgres = "0.7"

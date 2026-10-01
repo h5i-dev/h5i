@@ -1080,9 +1080,7 @@ pub fn expire_due(root: &Path) -> Result<usize, H5iError> {
 /// The host names the file. The engine, and anything the page persuaded it
 /// to do, chooses only the bytes. `name` is reduced to a single path component
 /// of a known-safe alphabet before it is joined, so a session cannot write
-/// through `..`, through a symlink it planted, or onto a dotfile. The same
-/// rule the runner import applies to a tree that came home from a machine we
-/// assume is broken ([`crate::quarantine`]).
+/// through `..`, through a symlink it planted, or onto a dotfile.
 pub fn artifact_path(root: &Path, id: &str, name: &str) -> PathBuf {
     dir(root, id).join(ARTIFACTS_DIR).join(safe_name(name))
 }

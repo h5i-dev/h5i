@@ -1,0 +1,10 @@
+[package]
+name = "keys-kernel"
+description = "API keys, sessions and revocation as an h5i-app kernel, with a check-then-use race before the fix"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+publish = false
+
+# No dependencies: this crate is extracted to Lean by Charon + Aeneas.
+[dependencies]

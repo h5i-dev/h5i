@@ -48,9 +48,8 @@ logs unless a maintainer asks for a redacted sample.
 - Everything a session relays. Page text is attacker-composed, so escape
   sequences, control characters and unbounded structures are stripped or capped
   before any of it reaches a terminal, a model or the console.
-- Evidence labeling. `engine-claimed`, `host-observed`, `box-claimed` and
-  `kernel-observed` are separate lanes and must never be merged or averaged into
-  a score.
+- Evidence labeling. `engine-claimed`, `host-observed` and `box-claimed` are
+  separate lanes and must never be merged or averaged into a score.
 - Isolation enforcement and tier resolution: Landlock, seccomp, namespaces, the
   seccomp-notify supervisor, cgroups, Seatbelt, the Podman and microVM backends,
   and the code that decides what this host can actually run.
@@ -67,7 +66,7 @@ logs unless a maintainer asks for a redacted sample.
   allowlist, nested `.git` rejection, symlink escape rejection, gitlink round
   trip.
 - Browser control mediation (`crates/h5i-core/src/browser_proxy.rs`), the
-  control lock, the viewer socket, and `h5i box share` tickets.
+  control lock, and the viewer socket.
 - Plugin resolution and installation, console request handling and its
   per-session token, shell quoting and generated in-box configuration, and
   release packaging and install scripts.
@@ -89,11 +88,6 @@ box's own manifest and resolved policy read back from disk.
   at box creation, and every receipt names the digest in force.
 - The provider token stays in the host proxy's memory. The box sees a base URL
   and a dummy, and a Claude box never gets Codex's credentials or egress.
-- Runtime detection observes and never denies. The eBPF collector carries no
-  `bpf_send_signal`, no `bpf_override_return` and no LSM program, by
-  construction. A `runtime` block in a receipt is not evidence that anything was
-  stopped, and an empty detection list means the catalogue modeled nothing that
-  happened, not that nothing happened.
 
 ## Where it stops
 
@@ -244,11 +238,7 @@ cargo build  --locked --workspace --all-targets
 cargo test   --locked --workspace
 ```
 
-Console or release-path changes also need the Node build path. Detection-lane
-changes need the probe compiled, which the default build leaves out, so run the
-`bpf` feature with `H5I_BPF_REQUIRE=1` and, on a host with the capability, the
-live attach under `H5I_BPF_LIVE=1`. That attach is the one path CI cannot
-exercise.
+Console or release-path changes also need the Node build path.
 
 ## Disclosure
 

@@ -1,16 +1,15 @@
 # Reaching a dev server inside a microVM guest
 
-`h5i box share` refuses the `microvm` tier: the shared port lives in the
-guest's network stack, and h5i finds a box's dev server by identifying the host
-process holding the port — a VM has no such process. This measures whether the
-obvious fix is viable, finds that it is not, and measures the alternative,
-which is.
+Reaching a dev server inside a `microvm` box from the host is not like the
+other tiers: the port lives in the guest's network stack, and there is no host
+process holding it to find. This measures whether the obvious fix is viable,
+finds that it is not, and measures the alternative, which is.
 
 **Result: an `msb exec --stream` tunnel reaches a guest dev server in 20.5 ms
 per connection and moves 34–59 MiB/s, and it works on a box with no network at
 all.** That last property is the reason to prefer it: the data path is h5i's
-own exec channel rather than the guest's netstack, so sharing a box opens no
-ingress hole in the boundary the tier exists to provide.
+own exec channel rather than the guest's netstack, so reaching the server opens
+no ingress hole in the boundary the tier exists to provide.
 
 These are one Apple Silicon host and `msb` 0.6.8. Nothing here is implemented;
 this is the measurement that decides a design.
@@ -18,13 +17,13 @@ this is the measurement that decides a design.
 ## Why not publish a port
 
 `msb` has `-p, --port <BIND_ADDR:HOST:GUEST>`, which is exactly the mechanism a
-port share wants, and it is **create-time only** — `msb modify` has no `--port`.
+port forward wants, and it is **create-time only** — `msb modify` has no `--port`.
 
 That collides with how warm guests are named. A guest's name is a SHA-256 of
 its create argv (M13 step 2), so adding a forward changes the name, which
 creates a *new* guest and reaps the old one — killing the dev server that was
-to be shared. Sharing would destroy its own subject. The alternative, opening a
-port on every box at creation against the possibility of a later share, costs
+to be reached. Forwarding would destroy its own subject. The alternative, opening a
+port on every box at creation against the possibility of a later forward, costs
 every box an ingress hole for a feature most will never use, and requires
 knowing the port before the service that binds it exists.
 
@@ -89,7 +88,7 @@ On a guest created with `--no-net`:
 - A dev server on the guest's loopback still works — `200`.
 - **The exec tunnel still reaches it** — `HTTP/1.0 200 OK`.
 
-So a box with *no network access whatsoever* can still be shared. Loopback is
+So a box with *no network access whatsoever* can still be reached. Loopback is
 not the network, and the tunnel is not either: it rides h5i's exec channel.
 Port publishing cannot make this claim, because it works by opening the
 netstack.
@@ -113,10 +112,9 @@ the command that started it, so there was never a dev server to share.
 - **One exec per connection is not pooled.** At 8.6 ms it does not need to be
   yet; it would become worth doing before anything latency-sensitive.
 - **`box service` does not exist at this tier**, so the dev server above was
-  started by hand with `setsid`. Sharing has nothing to share until that lands.
-- **`share.rs`'s discovery path assumes a host process holds the port** and
-  must be replaced rather than adapted. The port has to come from h5i's own
-  records: a joiner must never influence what the exec runs.
+  started by hand with `setsid`. A forward has nothing to reach until that lands.
+- **The port has to come from h5i's own records**, not from discovering a
+  host process: whoever connects must never influence what the exec runs.
 
 ## How to reproduce
 

@@ -618,9 +618,6 @@
   gap: 9px;
   flex-wrap: wrap;
 }
-.cm-fleet-sub .shared {
-  color: var(--cm-cyan);
-}
 .cm-fleet-bottom {
   margin-top: 6px;
   display: flex;
@@ -691,7 +688,7 @@
 }
 .cm-lane {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) repeat(6, 1fr);
+  grid-template-columns: minmax(0, 1.6fr) repeat(5, 1fr);
   border-bottom: 1px solid var(--cm-line);
 }
 .cm-lane:last-child {

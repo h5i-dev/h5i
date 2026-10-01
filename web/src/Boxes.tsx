@@ -9,11 +9,7 @@ import {
   type EnvEvent,
   type ExecRecord,
   type ServiceStatus,
-  type ShareEvidence,
-  type SharedNow,
   type Signals,
-  runtimeObserved,
-  thirdPartyCanRead,
 } from "./api";
 import { BrowserTerminal } from "./BrowserTerminal";
 import {
@@ -29,7 +25,6 @@ import {
   fmtBytes,
   fmtKb,
   fmtMs,
-  fmtSecs,
   plural,
 } from "./ui";
 
@@ -43,10 +38,9 @@ const LANES: { key: LaneKey; label: string; hint: string }[] = [
   { key: "proc", label: "exit", hint: "process exit status" },
   { key: "res", label: "limits", hint: "resource limits" },
   { key: "browser", label: "page", hint: "what the in-box browser saw" },
-  { key: "kernel", label: "kernel", hint: "what an eBPF collector saw from the kernel; the one lane a box cannot write" },
 ];
 
-type LaneKey = "fs" | "net" | "proc" | "res" | "browser" | "kernel";
+type LaneKey = "fs" | "net" | "proc" | "res" | "browser";
 
 const FILTERS = ["all", "running", "proposed", "pressure", "drifted", "container", "supervised", "process", "workspace"];
 
@@ -184,7 +178,6 @@ function FleetRow({ b, on, onClick }: { b: BoxRow; on: boolean; onClick: () => v
             {b.drift}
           </span>
         ) : null}
-        {b.shared_now ? <SharedNowChip shared={b.shared_now} /> : null}
         {b.stale_running ? <span className="drift" title="status says running, but no live session holds it: a crash leftover">stale</span> : null}
         {!b.has_workspace ? <span>pulled</span> : null}
         {b.live.length > 0 ? <span title={b.live.map((s) => `${s.kind} pid ${s.pid}`).join("\n")}>● {b.live.length} live</span> : null}
@@ -207,26 +200,6 @@ function IsolationTag({ isolation, weak }: { isolation: string; weak: boolean })
   );
 }
 
-/** Not red: the fleet's red means enforcement fired, and nothing was refused
- *  here. An operator opened a door on purpose, and it is standing open. */
-function SharedNowChip({ shared }: { shared: SharedNow }) {
-  const relayed = shared.transport !== "p2p";
-  return (
-    <span
-      className={`shared${relayed ? " relayed" : ""}`}
-      title={
-        `somebody outside can reach port ${shared.port} inside this box right now, over ${shared.transport}, on ${shared.grants} live ticket(s).` +
-        (relayed
-          ? "\nThis transport is relayed: a third party terminates TLS."
-          : "\nDirect peer to peer: no relay carries the application bytes.") +
-        "\nThe receipt lands when the share ends."
-      }
-    >
-      ⇄ shared :{shared.port} {shared.transport}
-    </span>
-  );
-}
-
 /** The one badge in the fleet. Never a score, only what was recorded. */
 function SignalBadge({ signals }: { signals: Signals }) {
   if (signals.verdict === "denial") {
@@ -244,7 +217,6 @@ function SignalBadge({ signals }: { signals: Signals }) {
       signals.failed ? `${signals.failed} failed` : null,
       signals.timed_out ? `${signals.timed_out} timed out` : null,
       signals.browser_issues ? `${signals.browser_issues} page issue(s)` : null,
-      signals.kernel_alerts ? `${signals.kernel_alerts} kernel alert(s): ${(signals.kernel_rules ?? []).join(", ")}` : null,
     ].filter(Boolean);
     return (
       <span className="pressure warning" title={parts.join(", ")}>
@@ -341,8 +313,6 @@ function DetailPane({ box, tick, view, onView }: { box: BoxRow; tick: number; vi
 function SignalSummary({ box }: { box: BoxRow }) {
   const s = box.signals;
   const notes: ReactElement[] = [];
-  const live: ReactElement[] = [];
-  const history: ReactElement[] = [];
 
   if (s.egress_denied > 0) {
     notes.push(
@@ -363,31 +333,6 @@ function SignalSummary({ box }: { box: BoxRow }) {
       <Note key="fail" tone="warn">
         {s.failed} {plural(s.failed, "run")} exited non-zero{s.timed_out > 0 ? `, ${s.timed_out} killed by the wall-clock limit` : ""}. A
         failing command is not a boundary trip; it is a failing command.
-      </Note>,
-    );
-  }
-  if (box.shared_now) {
-    const sn = box.shared_now;
-    const relayed = sn.transport !== "p2p";
-    live.push(
-      <Note key="shared-now" tone="warn">
-        Somebody outside can reach port <code>{sn.port}</code> inside this box right now, over <code>{sn.transport}</code>, on {sn.grants} live{" "}
-        {plural(sn.grants, "ticket")}.{" "}
-        {relayed
-          ? "This transport is relayed: a third party terminates TLS, so it is not end-to-end encrypted."
-          : "Direct peer to peer: no relay carries the application bytes."}{" "}
-        The receipt for it lands when the share ends.
-      </Note>,
-    );
-  }
-  if (s.shares > 0) {
-    history.push(
-      <Note key="shares">
-        {s.shares} share {plural(s.shares, "session")} admitted {s.share_peers} {plural(s.share_peers, "peer")} into this box.{" "}
-        {s.shares_third_party_readable > 0
-          ? `${s.shares_third_party_readable} of them ran over a relayed transport, so a third party could read that traffic.`
-          : "All of them ran peer to peer."}{" "}
-        Each one is a receipt below, host-observed.
       </Note>,
     );
   }
@@ -415,36 +360,6 @@ function SignalSummary({ box }: { box: BoxRow }) {
       </Note>,
     );
   }
-  if (s.kernel_alerts) {
-    notes.push(
-      <Note key="kernel" tone="warn">
-        An eBPF collector in the kernel recorded {s.kernel_alerts} alert-level {plural(s.kernel_alerts, "match", "matches")}
-        {s.kernel_rules?.length ? (
-          <>
-            {" "}
-            (<code>{s.kernel_rules.join(", ")}</code>)
-          </>
-        ) : null}
-        . Nothing was blocked: this lane observes and never denies. The receipts below carry what tripped each rule.
-      </Note>,
-    );
-  }
-  if (s.kernel_unwatched) {
-    notes.push(
-      <Note key="kernel-off">
-        {s.kernel_unwatched} {plural(s.kernel_unwatched, "run")} asked to be watched from the kernel and {s.kernel_unwatched === 1 ? "was" : "were"} not.
-        Open the run below for the reason. An unwatched run is not a quiet one.
-      </Note>,
-    );
-  }
-  if (s.kernel_events_lost) {
-    notes.push(
-      <Note key="kernel-lost" tone="warn">
-        {s.kernel_events_lost} kernel {plural(s.kernel_events_lost, "event")} were dropped before anything examined them, so every count from that
-        lane is a lower bound.
-      </Note>,
-    );
-  }
   if (notes.length === 0) {
     notes.push(
       <Note key="clean" tone="good">
@@ -452,7 +367,7 @@ function SignalSummary({ box }: { box: BoxRow }) {
       </Note>,
     );
   }
-  return <div className="detail-notes">{[...live, ...notes, ...history]}</div>;
+  return <div className="detail-notes">{notes}</div>;
 }
 
 function Services({ services }: { services: ServiceStatus[] }) {
@@ -580,7 +495,6 @@ function TimelineRow({ row, open, render, onToggle }: { row: Row; open: boolean;
             <span>{clock(r.timestamp)}</span>
             {r.redactions && r.redactions.length > 0 ? <span>redacted</span> : null}
           </div>
-          {r.share ? <ShareLine share={r.share} /> : null}
         </div>
         {LANES.map((l) => (
           <div key={l.key} className="lane-cell">
@@ -590,17 +504,6 @@ function TimelineRow({ row, open, render, onToggle }: { row: Row; open: boolean;
       </div>
       {open ? <div className="render-row">{render === undefined ? <Spin /> : <pre className="render">{render}</pre>}</div> : null}
     </>
-  );
-}
-
-function ShareLine({ share }: { share: ShareEvidence }) {
-  const relayed = thirdPartyCanRead(share);
-  return (
-    <div className={`run-share${relayed ? " relayed" : ""}`}>
-      ⇄ inbound, {share.transport} :{share.port}, {share.peers} {plural(share.peers, "peer")}, {fmtSecs(share.seconds)}
-      {share.turned_away ? `, ${share.turned_away} turned away` : ""}.{" "}
-      {relayed ? "A third party terminated TLS: not end-to-end encrypted." : "Direct peer to peer."}
-    </div>
   );
 }
 
@@ -627,22 +530,6 @@ function LaneVerdict({ lane, receipt }: { lane: LaneKey; receipt: ExecRecord }) 
       );
     }
     case "net": {
-      const sh = receipt.share;
-      if (sh) {
-        const relayed = thirdPartyCanRead(sh);
-        return (
-          <span
-            className={`verdict ${relayed ? "warning" : "info"}`}
-            title={
-              `inbound: ${sh.peers} peer(s) admitted to port ${sh.port} over ${sh.transport}, ${fmtSecs(sh.seconds)}` +
-              (sh.turned_away ? `, ${sh.turned_away} connection(s) turned away` : "") +
-              (relayed ? "\nRelayed transport: a third party terminated TLS." : "\nDirect peer to peer.")
-            }
-          >
-            ⇄ {sh.peers} in
-          </span>
-        );
-      }
       const e = receipt.egress;
       if (!e) return <span className="verdict none">·</span>;
       if (e.denied > 0) {
@@ -707,32 +594,6 @@ function LaneVerdict({ lane, receipt }: { lane: LaneKey; receipt: ExecRecord }) 
         </span>
       );
     }
-    case "kernel": {
-      const rt = receipt.runtime;
-      if (!rt) return <span className="verdict none">·</span>;
-      if (!runtimeObserved(rt))
-        return (
-          <span className="verdict weak" title={rt.unavailable ?? rt.coverage_reason ?? "the collector observed nothing for this run"}>
-            none
-          </span>
-        );
-      const dets = rt.detections ?? [];
-      const alerts = dets.filter((d) => d.severity === "alert");
-      const lost = rt.events_lost ? `\n${rt.events_lost} event(s) lost: this is a lower bound` : "";
-      const partial = rt.coverage === "partial" ? `\npartial coverage: ${rt.coverage_reason ?? "some of the run was out of scope"}` : "";
-      if (dets.length === 0)
-        return (
-          <span className="verdict ok" title={`${rt.events_seen ?? 0} kernel event(s), no signature fired${partial}${lost}`}>
-            ✓
-          </span>
-        );
-      const detail = dets.map((d) => `[${d.severity}] ${d.rule} ×${d.count}: ${d.title}`).join("\n");
-      return (
-        <span className={alerts.length ? "verdict critical" : "verdict warning"} title={`${detail}${partial}${lost}`}>
-          {dets.length}
-        </span>
-      );
-    }
   }
 }
 
@@ -792,7 +653,5 @@ function laneAllowance(lane: LaneKey, p: EnforcedPolicy | null): string {
       return `wall ${p.wall_secs}s`;
     case "browser":
       return "in box";
-    case "kernel":
-      return "observe only";
   }
 }

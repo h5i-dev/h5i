@@ -1,0 +1,42 @@
+[package]
+name = "h5i-app"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/h5i-dev/h5i"
+homepage = "https://github.com/h5i-dev/h5i"
+readme = "README.md"
+description = "The Axum-based application framework for h5i. Write application logic in Rust and prove its properties in Lean 4."
+
+# One dependency for the server side of an h5i-app application. Each feature
+# re-exports one of the `h5i-app-*` crates, which stay separate because the
+# boundary between them is the boundary of what gets extracted to Lean: a
+# kernel crate depends on `h5i-app-sql` and `h5i-app-schema` directly, so
+# Charon never walks into tokio or axum. Nothing here pulls in the h5i
+# browser, sandbox or CLI.
+[features]
+default = []
+# The axum shell: the `Actor` extractor, `H5iApp::respond`, `rpc_router`.
+http = ["dep:h5i-app-http", "postgres", "json", "token"]
+# The PostgreSQL engine: SERIALIZABLE execution, retries, idempotency keys.
+postgres = ["dep:h5i-app-pg", "sql", "pgsql"]
+# `schema!`: declare tables once, get Rust mappings and Lean.
+schema = ["dep:h5i-app-schema"]
+sql = ["dep:h5i-app-sql"]
+pgsql = ["dep:h5i-app-pgsql", "sql"]
+json = ["dep:h5i-app-json"]
+token = ["dep:h5i-app-token"]
+full = ["http", "postgres", "schema", "sql", "pgsql", "json", "token"]
+
+[dependencies]
+h5i-app-core.workspace = true
+h5i-app-http = { workspace = true, optional = true }
+h5i-app-pg = { workspace = true, optional = true }
+h5i-app-schema = { workspace = true, optional = true }
+h5i-app-sql = { workspace = true, optional = true }
+h5i-app-pgsql = { workspace = true, optional = true }
+h5i-app-json = { workspace = true, optional = true }
+h5i-app-token = { workspace = true, optional = true }
+
+[package.metadata.docs.rs]
+all-features = true

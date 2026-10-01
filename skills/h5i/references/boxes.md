@@ -18,10 +18,8 @@ instead of silently weakening a requested policy.
 
 An export is a proposal holding `patch.diff`, `report.md` and `receipt.json`.
 Review the report, denied egress, redactions, browser evidence and patch before
-applying it ([export.md](export.md)). Sharing admits traffic into agent-written
-code, so run `h5i box share` only when the user asks, and say that `--tunnel`
-lets Cloudflare terminate TLS ([share.md](share.md)). Read [policy.md](policy.md)
-before changing profiles, filesystem access, egress, or credentials.
+applying it ([export.md](export.md)). Read [policy.md](policy.md) before
+changing profiles, filesystem access, egress, or credentials.
 
 ## Sources
 

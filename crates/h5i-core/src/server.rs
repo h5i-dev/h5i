@@ -222,8 +222,7 @@ fn param(query: &str, key: &str) -> Option<String> {
 /// Every value of `name` in a `Cookie:` header.
 ///
 /// Every, not the first. Cookies are not scoped by port, so a page served from
-/// any other loopback port — a box's dev server, which is the case `h5i join`
-/// exists for — can set a second `h5i_console` on a longer path. RFC 6265 §5.4
+/// any other loopback port — a box's dev server, say — can set a second `h5i_console` on a longer path. RFC 6265 §5.4
 /// orders longer paths first, so reading one value let that page lock the
 /// operator out of their own console until they cleared a cookie they have no
 /// way to see. Reopening the printed URL did not repair it: that sets the
@@ -361,12 +360,11 @@ async fn asset(Path(path): Path<String>) -> Response {
 // ── API types ────────────────────────────────────────────────────────────────
 
 /// Boundary activity for one box, as arithmetic over its receipts.
-const HOST_OBSERVED_LANES: [&str; 5] = [
+const HOST_OBSERVED_LANES: [&str; 4] = [
     "host-env-run",
     "shell-egress",
     "viewer",
     "browser-proxy",
-    "share",
 ];
 
 #[derive(Serialize, Default, Debug, Clone, PartialEq, Eq)]
@@ -391,17 +389,6 @@ pub struct Signals {
     pub host_observed: usize,
     /// Runs recorded by the in-box tee shim. The box's own account.
     pub box_claimed: usize,
-    /// Runs observed from outside the box, on a machine we do not own: a runner
-    /// (design-runner.md R10).
-    /// Its own count rather than folded into either neighbour, because it is
-    /// genuinely neither. The box could not forge these, the worker having seen
-    /// them from outside it over a channel authenticated with a pinned host
-    /// key. But this machine did not watch them either, so a compromised runner
-    /// could. The honest reading is that they collapse to box-claimed exactly
-    /// when the runner host is compromised, and the runner host is the machine
-    /// chosen to be losable.
-    #[serde(default)]
-    pub runner_observed: usize,
     /// Timestamp of the newest receipt.
     pub last_run_ts: Option<String>,
     /// `denial` | `attention` | `clean`.
@@ -418,22 +405,6 @@ pub struct Signals {
     /// left writable, or a grant escaping the worktree by symlink. A boundary
     /// trip, so it colors the verdict.
     pub authority_unconfined: bool,
-    /// Share sessions on this log: times somebody outside was let in to a port
-    /// inside the box.
-    ///
-    /// Deliberately outside the verdict. Letting a peer in is something an
-    /// operator did on purpose, and a screen that turned amber for it would be
-    /// grading an intent rather than reporting a boundary trip. It is counted
-    /// so the pane can *say* it happened, which is a different job.
-    pub shares: usize,
-    /// Of those, the ones whose traffic a third party could read. Anything but
-    /// `p2p`, decided by
-    /// [`crate::receipt::ShareEvidence::third_party_can_read`] rather than
-    /// re-derived here, so one rule answers this question everywhere.
-    pub shares_third_party_readable: usize,
-    /// Distinct peers admitted across every recorded share, including any past
-    /// an individual receipt's record cap.
-    pub share_peers: u64,
     /// Other boxes of this repository whose effective grants overlap
     /// this one's, as the NEWEST host-observed run/shell receipt recorded
     /// them (`env/<id> via <path>`). Latest-record semantics on purpose:
@@ -443,47 +414,6 @@ pub struct Signals {
     /// applies to such pairs, and also for envs whose receipts never carried
     /// the check; the pane only speaks when there is something recorded.
     pub fs_overlap: Vec<String>,
-    /// Receipts whose kernel-observed lane actually watched the run
-    /// (design-detect.md D10).
-    /// Its own count, beside `host_observed` rather than inside it, for the
-    /// same reason `runner_observed` is its own: they are different claims. A
-    /// host-observed run is one h5i was the parent of; a kernel-watched run is
-    /// one an eBPF collector saw from underneath. The second is strictly harder
-    /// for a box to defeat and strictly narrower in what it covers.
-    #[serde(default)]
-    pub kernel_watched: usize,
-    /// Receipts that carry a runtime block which observed nothing. The probe
-    /// could not attach, or the tier is one a host probe cannot see into.
-    ///
-    /// Counted separately and shown, because the whole point of writing the
-    /// block anyway is that "not watched" must never render as "watched and
-    /// quiet".
-    #[serde(default)]
-    pub kernel_unwatched: usize,
-    /// Matches at `alert` severity, summed across watched runs.
-    #[serde(default)]
-    pub kernel_alerts: u64,
-    /// Matches at `notice` severity.
-    #[serde(default)]
-    pub kernel_notices: u64,
-    /// Events the kernel or the reader dropped. Nonzero means every count
-    /// above is a lower bound, and the pane says so rather than implying
-    /// completeness.
-    #[serde(default)]
-    pub kernel_events_lost: u64,
-    /// Distinct rule ids that fired, capped like `denied_hosts`.
-    #[serde(default)]
-    pub kernel_rules: Vec<String>,
-}
-
-/// [`signals`], for a test in another module of this crate.
-///
-/// The lane split is a property the whole product rests on, and the code that
-/// creates a runner-observed receipt lives in `env`. Testing it there against
-/// the real counter beats asserting a string and hoping this agreed.
-#[cfg(test)]
-pub(crate) fn signals_for_test(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
-    signals(m, receipts)
 }
 
 fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
@@ -493,7 +423,6 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
         ..Default::default()
     };
     let mut denied_hosts: Vec<String> = Vec::new();
-    let mut kernel_rules: Vec<String> = Vec::new();
     for r in receipts {
         if r.exit_code.is_some_and(|c| c != 0) {
             s.failed += 1;
@@ -508,10 +437,6 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
         // is precisely the distinction this screen exists to keep.
         if HOST_OBSERVED_LANES.contains(&r.source.as_str()) {
             s.host_observed += 1;
-        } else if r.source == crate::placement::RUNNER_OBSERVED_LANE {
-            // Deliberately a third arm rather than a sixth entry in the
-            // allowlist above. See `Signals::runner_observed`.
-            s.runner_observed += 1;
         } else {
             s.box_claimed += 1;
         }
@@ -533,59 +458,18 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
         if matches!(r.source.as_str(), "host-env-run" | "host-env-shell") {
             s.fs_overlap = r.fs_overlap.clone();
         }
-        if let Some(rt) = &r.runtime {
-            if rt.observed() {
-                s.kernel_watched += 1;
-            } else {
-                s.kernel_unwatched += 1;
-            }
-            s.kernel_events_lost += rt.events_lost;
-            for d in &rt.detections {
-                match d.severity {
-                    h5i_bpf::Severity::Alert => s.kernel_alerts += d.count,
-                    h5i_bpf::Severity::Notice => s.kernel_notices += d.count,
-                    h5i_bpf::Severity::Info => {}
-                }
-                if !kernel_rules.contains(&d.rule) {
-                    kernel_rules.push(d.rule.clone());
-                }
-            }
-        }
-        if let Some(sh) = &r.share {
-            s.shares += 1;
-            if sh.third_party_can_read() {
-                s.shares_third_party_readable += 1;
-            }
-            s.share_peers += sh.peers;
-        }
     }
     denied_hosts.truncate(DENIED_HOSTS_CAP);
     s.denied_hosts = denied_hosts;
-    kernel_rules.sort();
-    kernel_rules.truncate(DENIED_HOSTS_CAP);
-    s.kernel_rules = kernel_rules;
     s.fs_overlap.truncate(DENIED_HOSTS_CAP);
     // Receipts are appended in order and their timestamps sort lexically.
     s.last_run_ts = receipts.last().map(|r| r.timestamp.clone());
-    // "Nothing was watched from outside the box", which a runner-observed run
-    // *was*, by an h5i we authenticated. Counting only `host_observed` here
-    // would put the grey box-claimed badge on a runner box whose every run was
-    // seen from outside it, which is the opposite of what the badge means. The
-    // weaker evidence is still visible: `runner_observed` is its own count.
-    s.box_claimed_only = s.runs > 0 && s.host_observed == 0 && s.runner_observed == 0;
+    s.box_claimed_only = s.runs > 0 && s.host_observed == 0;
     s.authority_unconfined =
         m.fs_authority.is_some_and(|a| !a.confined() || a.symlink_clean == Some(false));
-    // A kernel-observed alert raises `attention`, never `denial`, and the
-    // difference is not pedantry. `denial` means *something was refused* (the
-    // egress proxy said no, the authority validator found a grant outside the
-    // declared set) and this lane refuses nothing: it reports that a box read
-    // a credential file, not that it was stopped. Folding it into `denial`
-    // would quietly redefine the one word on this screen that currently has a
-    // precise meaning (`box-console-honesty-model`). The count is shown on its
-    // own, which is the honest way to make it loud.
     s.verdict = if s.egress_denied > 0 || s.authority_unconfined {
         "denial"
-    } else if s.failed > 0 || s.timed_out > 0 || s.browser_issues > 0 || s.kernel_alerts > 0 {
+    } else if s.failed > 0 || s.timed_out > 0 || s.browser_issues > 0 {
         "attention"
     } else {
         "clean"
@@ -627,45 +511,6 @@ pub struct BoxRow {
     pub deletions: usize,
     pub last_event: Option<EnvEvent>,
     pub signals: Signals,
-    /// A share serving this box *right now*, if one is.
-    ///
-    /// The receipt lands when the share ends, so until this the console showed
-    /// nothing at all while a box was open to somebody on another machine,
-    /// and the console's whole job is saying what is pressing on a boundary.
-    /// The one lane that lets somebody *in* was the one it could not see while
-    /// it was open.
-    pub shared_now: Option<SharedNow>,
-}
-
-/// What the console needs to say about a share that is open.
-///
-/// Read off `<env>/share.json`, which is where the share keeps it, rather than
-/// through `h5i-share`: that crate is above this one. No secret is in the file
-/// and none is read here. The grant table stores digests, and this takes the
-/// transport, the port and the number of grants that can still admit anybody.
-#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
-pub struct SharedNow {
-    pub transport: String,
-    pub port: u64,
-    pub grants: usize,
-}
-
-fn shared_now(env_dir: &std::path::Path) -> Option<SharedNow> {
-    // Only when somebody can actually reach in. A share that is winding up, or
-    // whose grants have all been revoked, has a live pid and admits nobody,
-    // and the badge said "somebody outside can reach port 3000 right now" of
-    // it, for as long as that process took to exit. On a screen whose job is
-    // saying what is pressing on a boundary, overclaiming toward alarm is the
-    // failure that costs it its credibility.
-    let r = crate::share_record::read_live(env_dir)?;
-    if !r.is_admitting() {
-        return None;
-    }
-    Some(SharedNow {
-        transport: r.transport,
-        port: r.port as u64,
-        grants: r.live_grants,
-    })
 }
 
 fn build_row(
@@ -692,7 +537,6 @@ fn build_row(
         deletions,
         last_event: events.last().cloned(),
         signals: signals(m, receipts),
-        shared_now: shared_now(&m.dir(h5i_root)),
         manifest: m.clone(),
     }
 }
@@ -1719,8 +1563,6 @@ mod tests {
             persona_digest: None,
             pr: None,
             pr_head_ref: None,
-            runner_id: None,
-            runner: None,
         }
     }
 
@@ -1744,8 +1586,6 @@ mod tests {
             files: vec![],
             egress: None,
             browser: None,
-            share: None,
-            runtime: None,
             redactions: vec![],
             raw_oid: "d".repeat(64),
             raw_size: 0,
@@ -1757,112 +1597,6 @@ mod tests {
     /// The box writes `inbox-capture` records into its own spool. Counting any
     /// unknown source as host-observed let it clear the grey "box-claimed"
     /// badge. The one distinction this screen is built on.
-    #[test]
-    fn a_box_being_shared_right_now_says_so() {
-        // The receipt lands when the share *ends*, so until this the console
-        // showed nothing at all while a box was open to somebody on another
-        // machine. For the one lane that lets somebody in, on a screen whose
-        // job is saying what is pressing on a boundary.
-        let dir = tempfile::tempdir().expect("tempdir");
-        assert!(shared_now(dir.path()).is_none(), "no file, nothing to say");
-
-        let now = chrono::Utc::now().timestamp();
-        let record = |extra: &str, revoked: bool| {
-            serde_json::json!({
-                "v": 1,
-                "box_id": "env/a/demo",
-                "port": 3000,
-                "transport": "tunnel",
-                "endpoint": "https://x",
-                "started_at": "2026-01-01T00:00:00Z",
-                "pid": std::process::id(),
-                "winding_up": extra == "winding",
-                "grants": [
-                    {"id": "a", "secret_sha256": "ff", "revoked": revoked, "expires_at": now + 600},
-                    {"id": "b", "secret_sha256": "ff", "revoked": true,    "expires_at": now + 600},
-                    {"id": "c", "secret_sha256": "ff", "revoked": false,   "expires_at": now - 1},
-                ],
-            })
-            .to_string()
-        };
-
-        std::fs::write(dir.path().join("share.json"), record("", false)).expect("write");
-        let got = shared_now(dir.path()).expect("a live share");
-        assert_eq!(got.transport, "tunnel");
-        assert_eq!(got.port, 3000);
-        // Only the grants that can still admit somebody: one revoked and one
-        // expired are two tickets that let nobody in.
-        assert_eq!(got.grants, 1);
-
-        // A share that is winding up has a live pid and admits nobody. The
-        // badge used to say "somebody outside can reach port 3000 right now"
-        // of it, for as long as that process took to write its receipt.
-        std::fs::write(dir.path().join("share.json"), record("winding", false)).expect("write");
-        assert!(shared_now(dir.path()).is_none(), "a winding-up share is not admitting anyone");
-
-        // And so does one whose every grant has been revoked.
-        std::fs::write(dir.path().join("share.json"), record("", true)).expect("write");
-        assert!(shared_now(dir.path()).is_none(), "no live grant is nobody admitted");
-
-        // A record left by a process that is gone is not a share.
-        std::fs::write(dir.path().join("share.json"), "{\"pid\":0}").expect("write");
-        assert!(shared_now(dir.path()).is_none());
-    }
-
-    #[test]
-    fn a_share_is_host_observed_evidence() {
-        // h5i owns both ends of the share bridge and the box supplies none of
-        // it, so leaving the lane off the list inverted the badge: a box whose
-        // only receipt was a share read as having no host-observed evidence at
-        // all, which is the grey "the box told us this" badge. For the one
-        // lane the box cannot touch.
-        assert!(HOST_OBSERVED_LANES.contains(&"share"));
-    }
-
-    #[test]
-    fn ended_shares_are_counted_without_grading_the_box() {
-        // The evidence a share leaves behind was on the receipt and nowhere the
-        // console could reach it: the pane knew a box was shared *now* and
-        // forgot the moment the share ended, which is the moment the record
-        // finally exists.
-        let m = manifest("container");
-        let share = |transport: &str, peers: u64| {
-            let mut r = receipt("share", 0);
-            r.share = Some(crate::receipt::ShareEvidence {
-                transport: transport.into(),
-                port: 3000,
-                peers,
-                seconds: 61,
-                turned_away: 1,
-            });
-            r
-        };
-
-        let s = signals(&m, &[share("p2p", 2), share("tunnel", 1)]);
-        assert_eq!(s.shares, 2);
-        assert_eq!(s.share_peers, 3);
-        // The transport is read as a field. Recovering it from the rendered
-        // command line is what reported a P2P share of a box called `tunnel`
-        // as Cloudflare-terminated.
-        assert_eq!(s.shares_third_party_readable, 1);
-
-        // And none of it moves the verdict. A share is an operator letting
-        // somebody in on purpose, not the boundary saying no.
-        assert_eq!(s.verdict, "clean");
-        assert_eq!(s.failed, 0);
-
-        // A transport this h5i does not know is not a promise of end-to-end
-        // encryption, and the count follows the same rule the receipt does.
-        let unknown = signals(&m, &[share("something-later", 1)]);
-        assert_eq!(unknown.shares_third_party_readable, 1);
-
-        // A box that was never shared says nothing at all.
-        let quiet = signals(&m, &[receipt("host-env-run", 0)]);
-        assert_eq!(quiet.shares, 0);
-        assert_eq!(quiet.share_peers, 0);
-        assert_eq!(quiet.shares_third_party_readable, 0);
-    }
-
     #[test]
     fn box_written_lanes_are_never_counted_as_host_observed() {
         let m = manifest("container");
@@ -2090,9 +1824,9 @@ mod tests {
     /// A markup-driven GET (`<img>`, `<script src>`, `<link>`) sends no
     /// `Origin` at all, and the console's cookie is `SameSite=Strict`, which
     /// constrains cross-*site* requests only. Two loopback ports are different
-    /// origins and the same site, so a page served by any other local service,
-    /// and `h5i join` puts somebody else's agent-written app on exactly such a
-    /// port, reached this console with its cookie attached.
+    /// origins and the same site, so a page served by any other local service
+    /// (an agent-written dev server, say) reached this console with its cookie
+    /// attached.
     #[test]
     fn a_page_on_another_loopback_port_cannot_ride_the_console_cookie() {
         let tok = "0123456789abcdef";

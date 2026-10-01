@@ -1,0 +1,10 @@
+[package]
+name = "filters-kernel"
+description = "Saved filters: template substitution and filter parsing over bytes, as an h5i-app kernel"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+publish = false
+
+# No dependencies: this crate is extracted to Lean by Charon + Aeneas.
+[dependencies]

@@ -1762,12 +1762,6 @@ tr.is-refused .path-dir {
 .fleet-sub .drift {
   color: var(--amber);
 }
-.fleet-sub .shared {
-  color: var(--cyan);
-}
-.fleet-sub .shared.relayed {
-  color: var(--amber);
-}
 .fleet-bottom {
   margin-top: 6px;
   display: flex;
@@ -1852,14 +1846,6 @@ tr.is-refused .path-dir {
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
-}
-.run-share {
-  color: var(--cyan);
-  font-size: var(--fs-xs);
-  margin-top: 3px;
-}
-.run-share.relayed {
-  color: var(--amber);
 }
 .source {
   font-size: var(--fs-xs);

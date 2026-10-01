@@ -8,8 +8,7 @@
 pub mod boxes;
 // `h5i browser`. Gated with the `browser` feature it drives, so a build without
 // the rendering engine linked in has no `browser` verb rather than one that
-// starts a subprocess that cannot render. The same rule `ui`, `share` and
-// `runner` follow.
+// starts a subprocess that cannot render. The same rule `ui` follows.
 #[cfg(feature = "browser")]
 pub mod browser;
 #[cfg(feature = "browser")]
@@ -46,28 +45,6 @@ pub fn websec_seq(id: &str) -> anyhow::Result<u64> {
 // `h5i plugin`: capabilities installed rather than shipped. Not feature-gated,
 // because the verbs are how a user finds out a capability exists at all.
 pub mod plugin;
-// `h5i box detect`. Not feature-gated, deliberately: the verbs are how a user
-// finds out *why* a build cannot watch a box, and gating them behind the
-// feature that provides the collector would hide that answer from exactly the
-// builds that need it.
-pub mod detect;
-// `h5i box share` / `h5i join`. Gated with `share-tunnel`, the narrower of
-// the two switches, because the tunnel transport is what this module always
-// has: a build with `share-tunnel` and no `share` gets `box share --tunnel`
-// and no `join`. Without either, there is no `share` verb rather than a
-// broken one.
-#[cfg(feature = "share-tunnel")]
-pub mod share;
-// `h5i runner`. Gated with the `runner` feature it drives, so a build without
-// it has no `runner` verb rather than a broken one, and, since the worker end
-// of the protocol is this same binary, no ability to *be* a runner either.
-// The bridge between h5i-core's placement trait and the runner protocol. Same
-// gate as `runner`, because it is the half of that feature the box lifecycle
-// reaches for.
-#[cfg(feature = "runner")]
-pub mod placement;
-#[cfg(feature = "runner")]
-pub mod runner;
 pub mod skill;
 // `h5i box watch`. Not feature-gated: `browser_events` is exported from
 // h5i-core unconditionally, and the verb is how someone finds out what a box

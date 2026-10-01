@@ -72,51 +72,6 @@ export interface BrowserEvidence {
   unavailable?: boolean;
 }
 
-/** What an ingress session was — `h5i_core::receipt::ShareEvidence`. */
-export interface ShareEvidence {
-  transport: string;
-  port: number;
-  peers: number;
-  seconds: number;
-  turned_away?: number;
-}
-
-/** A transport this console does not know is not a promise of end-to-end
- *  encryption, so it answers true. */
-export function thirdPartyCanRead(share: ShareEvidence): boolean {
-  return share.transport !== "p2p";
-}
-
-export interface Detection {
-  rule: string;
-  family: string;
-  severity: "info" | "notice" | "alert";
-  title: string;
-  count: number;
-  first_ns: number;
-  last_ns: number;
-  examples?: string[];
-  examples_truncated?: boolean;
-}
-
-/** What the kernel-observed lane saw. An empty `detections` is only clean if
- *  the run was watched; {@link runtimeObserved} is that test. */
-export interface RuntimeEvidence {
-  lane: string;
-  scope: string;
-  coverage: "full" | "partial" | "none";
-  coverage_reason?: string;
-  events_seen?: number;
-  events_lost?: number;
-  events_filtered?: number;
-  detections?: Detection[];
-  unavailable?: string;
-}
-
-export function runtimeObserved(rt: RuntimeEvidence): boolean {
-  return !rt.unavailable && rt.coverage !== "none";
-}
-
 /** One observed execution — `h5i_core::receipt::ExecRecord`. */
 export interface ExecRecord {
   id: string;
@@ -137,8 +92,6 @@ export interface ExecRecord {
   files?: string[];
   egress?: EgressSummary;
   browser?: BrowserEvidence;
-  share?: ShareEvidence;
-  runtime?: RuntimeEvidence;
   redactions?: string[];
   raw_oid: string;
   raw_size: number;
@@ -163,22 +116,7 @@ export interface Signals {
   verdict: Verdict;
   weak_isolation: boolean;
   box_claimed_only: boolean;
-  kernel_watched?: number;
-  kernel_unwatched?: number;
-  kernel_alerts?: number;
-  kernel_notices?: number;
-  kernel_events_lost?: number;
-  kernel_rules?: string[];
-  shares: number;
-  shares_third_party_readable: number;
-  share_peers: number;
   fs_overlap: string[];
-}
-
-export interface SharedNow {
-  transport: string;
-  port: number;
-  grants: number;
 }
 
 export interface BoxRow extends EnvManifest {
@@ -192,7 +130,6 @@ export interface BoxRow extends EnvManifest {
   deletions: number;
   last_event?: EnvEvent;
   signals: Signals;
-  shared_now?: SharedNow | null;
 }
 
 export interface EnforcedPolicy {

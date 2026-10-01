@@ -632,7 +632,7 @@ h5i plugin remove websec
 ```
 
 Nothing like this exists today. `h5i` has cargo features (`web`, `browser`,
-`share`, `runner`, `ytdlp`, `identity`) and no runtime install path at all, so
+`ytdlp`, `identity`) and no runtime install path at all, so
 W21 is the section that has to be built before phase A can ship the way this
 file describes.
 

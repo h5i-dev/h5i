@@ -1,0 +1,29 @@
+[package]
+name = "h5i-app-pgsql"
+description = "PostgreSQL text for h5i-app's planned statements; extracted to Lean and proven to mean what the planner's statements mean"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+repository = "https://github.com/h5i-dev/h5i"
+homepage = "https://github.com/h5i-dev/h5i"
+readme = "../h5i-app/README.md"
+
+# Only h5i-app-sql: this crate is extracted to Lean by Charon + Aeneas.
+[dependencies]
+h5i-app-sql.workspace = true
+
+# Written in the subset of Rust that Charon + Aeneas translate: no `?`, no
+# `matches!`, `&Vec` rather than slices, explicit arithmetic. Clippy's
+# idiomatic rewrites leave that subset, so they are allowed here rather than
+# applied. In the manifest, not the source, so that the `Source:` line numbers
+# in the extracted Lean stay put.
+[lints.clippy]
+assign_op_pattern = "allow"
+len_zero = "allow"
+manual_is_multiple_of = "allow"
+manual_map = "allow"
+manual_range_contains = "allow"
+match_like_matches_macro = "allow"
+ptr_arg = "allow"
+vec_init_then_push = "allow"
+question_mark = "allow"

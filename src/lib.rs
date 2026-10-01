@@ -95,49 +95,6 @@ pub enum Commands {
         action: cli::browser::BrowserCommands,
     },
 
-    /// Open a box someone else is sharing, from a ticket they sent you.
-    ///
-    /// Connects peer to peer, end-to-end encrypted, and serves their dev server
-    /// on this machine's loopback. The local URL carries its own token, minted
-    /// here; the ticket's secret is never handed to a browser.
-    ///
-    /// What you are opening is somebody else's agent's code.
-    #[cfg(feature = "share")]
-    Join {
-        /// The `h5i1_…` ticket you were sent, or `-` to read it from stdin.
-        ///
-        /// `/proc/<pid>/cmdline` is world-readable on an ordinary Linux box and
-        /// this process runs for the whole session, so a ticket passed as an
-        /// argument is legible to every other user on the machine for as long as
-        /// you are joined, and a ticket is the whole authorization. `pbpaste |
-        /// h5i join -` keeps it out of the process table and your shell history.
-        #[arg(value_name = "TICKET")]
-        ticket: String,
-        /// Local port to serve it on. 0 picks a free one and prints it.
-        #[arg(long, default_value_t = 0)]
-        port: u16,
-        /// Join even when the only address left is `127.0.0.1`.
-        #[arg(long)]
-        shared_jar: bool,
-        /// Serve on this loopback address instead of a random `127.x.y.z`.
-        ///
-        /// The address is bound exactly, no fallback, and only loopback
-        /// (`127.0.0.0/8`) is accepted. This is the WSL answer: Windows forwards
-        /// only `127.0.0.1` into the VM, so the private address a join normally
-        /// picks binds fine and is then unreachable from a Windows browser.
-        /// `--bind 127.0.0.1` counts as shared-jar consent by itself; any other
-        /// loopback address keeps a cookie jar of its own.
-        #[arg(long, value_name = "ADDR")]
-        bind: Option<std::net::Ipv4Addr>,
-    },
-
-    /// Run boxes on another Linux machine you own.
-    #[cfg(feature = "runner")]
-    Runner {
-        #[command(subcommand)]
-        action: cli::runner::RunnerCommands,
-    },
-
     /// Install, list or remove a plugin.
     ///
     /// A plugin is a capability that is not in the default build: a separate
@@ -309,11 +266,6 @@ impl BoxArgs {
             backend: "auto".into(),
             audit: "signal".into(),
             json: self.json,
-            // The short form has no `--runner`: placing a box on another
-            // machine is a deliberate choice, and `h5i box create --runner` is
-            // where a deliberate choice belongs.
-            #[cfg(feature = "runner")]
-            runner: None,
         })
     }
 }
@@ -341,15 +293,6 @@ pub fn run() -> anyhow::Result<()> {
         Commands::CaptureProxy(args) => cli::capture_proxy::run(args)?,
         #[cfg(feature = "browser")]
         Commands::Browser { action } => cli::browser::run(action)?,
-        #[cfg(feature = "share")]
-        Commands::Join {
-            ticket,
-            port,
-            shared_jar,
-            bind,
-        } => cli::share::join(&ticket, port, bind, shared_jar)?,
-        #[cfg(feature = "runner")]
-        Commands::Runner { action } => cli::runner::run(action)?,
         Commands::Plugin { action } => cli::plugin::run(action)?,
         Commands::Plugged(args) => {
             let (name, rest) = args.split_first().ok_or_else(|| {
@@ -432,13 +375,6 @@ fn compiled_features() -> Vec<&'static str> {
     let mut features: Vec<&str> = Vec::new();
     #[cfg(feature = "web")]
     features.push("web");
-    // Both switches, because they are separately selectable and a consumer
-    // deciding whether to offer a share UI needs to know which half is here:
-    // `share-tunnel` alone means `box share --tunnel` and no `join`.
-    #[cfg(feature = "share-tunnel")]
-    features.push("share-tunnel");
-    #[cfg(feature = "share")]
-    features.push("share");
     features.sort_unstable();
     features
 }
@@ -454,26 +390,6 @@ mod tests {
         assert!(features.contains(&"web"));
         #[cfg(not(feature = "web"))]
         assert!(!features.contains(&"web"));
-        // `share` implies `share-tunnel`, so the p2p build reports both and a
-        // tunnel-only build reports exactly one. This output is what an
-        // installer or a wrapper reads to decide whether the share workflow
-        // exists at all; a default build that omitted it read as one without
-        // sharing compiled in.
-        #[cfg(feature = "share")]
-        {
-            assert!(features.contains(&"share"));
-            assert!(features.contains(&"share-tunnel"));
-        }
-        #[cfg(all(feature = "share-tunnel", not(feature = "share")))]
-        {
-            assert!(features.contains(&"share-tunnel"));
-            assert!(!features.contains(&"share"));
-        }
-        #[cfg(not(feature = "share-tunnel"))]
-        {
-            assert!(!features.contains(&"share"));
-            assert!(!features.contains(&"share-tunnel"));
-        }
         // Sorted, because the JSON is diffable output.
         let mut sorted = features.clone();
         sorted.sort_unstable();

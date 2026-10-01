@@ -25,8 +25,6 @@ essential to this one.
 | browser engine | shipped. WPT core tier 75.7%; a production React build is not cleared | [`docs/design/design-browser.md`](design/design-browser.md) |
 | in-terminal viewer | shipped, V1 to V8. Keyboard-driven, in the terminal or a browser | [`docs/design/design-interminal-browser.md`](design/design-interminal-browser.md) |
 | policy resolution | P1 shipped; P2 shipped, opt-in; P3 and P4 designed, not built | [`docs/design/design-policy.md`](design/design-policy.md) |
-| remote runner | R13.1 built. R13.2 to R13.4 are not | [`docs/design/design-runner.md`](design/design-runner.md) |
-| runtime detection | built 2026-08-19, off by default at three layers | [`docs/design/design-detect.md`](design/design-detect.md) |
 | HTTP workbench | phases A and B built and benchmarked, plus experiments and findings (W22, W23); installed with `h5i plugin install websec` | [`docs/design/design-websec.md`](design/design-websec.md) |
 | box console | sessions and the attention model built 2026-09-07 | [`docs/design/design-console.md`](design/design-console.md) |
 | reconnaissance | phase 1 built 2026-09-07: ledger, extract, known, crawl, paths, triage, jobs. `h5i plugin install recon` | [`docs/design/design-recon.md`](design/design-recon.md) |
@@ -54,9 +52,7 @@ essential to this one.
    This is what makes the central claim reachable on an ordinary Linux box.
 2. WPT core tier to 80%. The next ~5,000 subtests are measured and ranked in
    [`docs/design/design-browser.md`](design/design-browser.md) B1.
-3. R13.2 to R13.4: remote create, exec and export against a paired runner.
-   The design is settled; see [`docs/design/design-runner.md`](design/design-runner.md).
-4. More than one session per box. Needs per-session service names and stream
+3. More than one session per box. Needs per-session service names and stream
    files.
 
 ## What is deliberately not built
@@ -69,12 +65,6 @@ than re-argued.
   absent, is B4 in
   [`docs/design/design-browser.md`](design/design-browser.md).
 - No vendored engine crates, by owner decision on 2026-08-28 (B4).
-- The runtime detector never denies anything: no `bpf_send_signal`, no LSM
-  programs, no daemon, no privilege escalation of its own (D12 in
-  [`docs/design/design-detect.md`](design/design-detect.md)).
-- The runner MVP refuses profiles that need the secrets broker or the auth
-  proxy, and any request past a runner's advertised capabilities (R12 in
-  [`docs/design/design-runner.md`](design/design-runner.md)).
 
 ## How to read the design set
 
@@ -86,8 +76,6 @@ of it whether you need the rest.
 | B1 to B5 | `docs/design/design-browser.md` | the engine, the session surface, and what it is not |
 | V1 to V8 | `docs/design/design-interminal-browser.md` | the viewers: the keymap, hints, latency, the lock |
 | P1 to P4 | `docs/design/design-policy.md` | resolution, the authority validator, mount realization |
-| R1 to R13 | `docs/design/design-runner.md` | placement, transport, the frame protocol, export |
-| D1 to D14 | `docs/design/design-detect.md` | the kernel-observed lane |
 | W1 to W23 | `docs/design/design-websec.md` | capture, replay, diff, experiments, findings, and the plugin the workbench ships as |
 | N1 to N21 | `docs/design/design-recon.md` | the endpoint ledger, discovery, triage, and where recon stops |
 | C1 to C8 | `docs/design/design-console.md` | what `h5i ui` shows, what it refuses to, and how it says which session wants you |

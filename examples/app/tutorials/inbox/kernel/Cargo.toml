@@ -1,0 +1,12 @@
+[package]
+name = "inbox-kernel"
+description = "Tutorial 4: the verified kernel of private messaging"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+publish = false
+
+# Extracted to Lean by Charon + Aeneas (scripts/app/extract-inbox.sh).
+[dependencies]
+h5i-app-schema = { path = "../../../../../crates/h5i-app-schema" }
+h5i-app-sql = { path = "../../../../../crates/h5i-app-sql" }

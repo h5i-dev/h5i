@@ -1,0 +1,12 @@
+[package]
+name = "h5i-app-schema"
+description = "Declare kernel row types once; get the structs and their table mappings"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+repository = "https://github.com/h5i-dev/h5i"
+homepage = "https://github.com/h5i-dev/h5i"
+readme = "../h5i-app/README.md"
+
+# Macros, plus the Lean renderer they call from tests; extraction never reaches it.
+[dependencies]

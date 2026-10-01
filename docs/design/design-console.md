@@ -143,9 +143,7 @@ one.
 - **No actions.** The console cannot open, drive, crawl or replay. Every route
   is a GET, and the buttons copy commands rather than run them.
 - **No message rendering**, per C2.
-- **No cross-machine fleet.** It shows this machine and this repository. A
-  runner's boxes appear through the runner's own records, not by the console
-  reaching out.
+- **No cross-machine fleet.** It shows this machine and this repository.
 - **No notifications.** Attention is a state on a screen someone is looking at.
   A console that pushed would need a channel, a policy and a reason to be
   trusted with one.

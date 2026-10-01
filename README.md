@@ -11,9 +11,11 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-<h1 align="center">The Agent-Native Red-Teaming Workspace</h1>
+<h1 align="center">The Agent-Native Workspace for Secure Web Development</h1>
 
-**h5i** (pronounced *high-five*) is a lightweight, agent-native workspace for red teaming. For web testing, it combines browser automation with direct control over HTTP traffic, letting agents navigate applications and capture, inspect, modify, replay, and compare requests through one interface. Sandboxing, network policies, credential isolation, and auditable sessions keep autonomous testing contained, reproducible, and within scope.
+**h5i** (pronounced *high-five*) is an agent-native workspace for building and securing web applications. Give your coding agent tools to test running applications, preserve security checks in CI, and prove critical properties of Rust application logic in Lean 4.
+
+Use the red-teaming tools with your existing stack: browser automation and direct control over HTTP traffic let agents navigate applications and capture, inspect, modify, replay, and compare requests through one interface. Or adopt [h5i-app](#4-build-verifiable-apps-h5i-app), h5i's Axum-based framework, for application logic you can formally verify. Sandboxing, network policies, credential isolation, and auditable sessions keep agent workflows contained, reproducible, and reviewable.
 
 <table align="center">
   <tr>
@@ -33,10 +35,14 @@
       <strong>Fast browser</strong><br>
       <sub><a href="./docs/design/design-browser.md">~3× faster, ~86% less memory</a></sub>
     </td>
+    <td align="center">
+      <strong>Verifiable apps</strong><br>
+      <sub><a href="#4-build-verifiable-apps-h5i-app">Prove properties in Lean 4</a></sub>
+    </td>
   </tr>
 </table>
 
-**Let agents test like professional hackers. Keep every action contained and auditable.**
+**Build with agents. Test for vulnerabilities. Prove critical properties.**
 
 ```bash
 # Browse, scrape, and automate.
@@ -211,13 +217,9 @@ h5i box export alpha                          # export the patch and receipts
 h5i box rm alpha                              # discard the environment
 ```
 
-Share a running service or watch the workflow from the host:
+Watch the workflow from the host:
 
 ```bash
-h5i box share alpha --port 3000
-h5i box share alpha --port 3000 --tunnel
-h5i join <ticket>
-
 h5i ui
 ```
 
@@ -266,13 +268,41 @@ receives a private, one-time copy of approved HOME state.
 
 ---
 
-## 4. Tutorial
+## 4. Build verifiable apps: h5i-app
+
+[h5i-app](crates/h5i-app) is an Axum-based Rust web framework for proving
+properties of application logic in Lean 4. Red-teaming finds the problems you
+did not anticipate; h5i-app proves the ones you can state, such as
+authorization, tenant isolation and state transitions, and CI re-checks them
+on every change. It is a library: an application that uses it pulls in none of
+the browser, sandbox or CLI.
+
+- Write the logic as one pure Rust function, the *kernel*, and prove it in
+  Lean 4 via [Aeneas](https://github.com/AeneasVerif/aeneas).
+- Serve it with axum; handlers never touch the database.
+- Run each request in a SERIALIZABLE PostgreSQL transaction, with retries and
+  idempotency keys.
+- Declare tables once with `schema!` and get Rust mappings and Lean proofs.
+
+```toml
+[dependencies]
+h5i-app = { version = "0.1", features = ["http", "postgres"] }
+```
+
+Start with the [tutorials](examples/app/tutorials), then read
+[what is proven and what is assumed](docs/app/TRUST.md). Ports of real
+applications live in [examples/app](examples/app) and the design in
+[docs/app](docs/app/DESIGN.md).
+
+---
+
+## 5. Tutorial
 
 - [Web Security Tutorial with h5i — Part 1: HTTP Request Tampering](https://medium.com/@Koukyosyumei/web-security-tutorial-with-h5i-part-1-http-request-tampering-39c4a0857b85)
 
 ---
 
-## 5. Documentation
+## 6. Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
 - [MANUAL.md](docs/MANUAL.md) / `man h5i`: full command reference
@@ -281,7 +311,7 @@ receives a private, one-time copy of approved HOME state.
 
 ---
 
-## 6. FAQ
+## 7. FAQ
 
 <details>
 <summary>What is h5i?</summary>
@@ -364,13 +394,13 @@ provider.
 
 ---
 
-## 7. License
+## 8. License
 
 Apache-2.0. See [LICENSE](LICENSE).
 
 ---
 
-## 8. Contributors
+## 9. Contributors
 
 <a href="https://github.com/h5i-dev/h5i/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=h5i-dev/h5i" alt="h5i contributors" />

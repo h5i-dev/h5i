@@ -1,0 +1,23 @@
+[package]
+name = "h5i-app-pg"
+description = "PostgreSQL engine for h5i-app: tenant-scoped snapshots, SERIALIZABLE execution with retry, idempotency"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+repository = "https://github.com/h5i-dev/h5i"
+homepage = "https://github.com/h5i-dev/h5i"
+readme = "../h5i-app/README.md"
+
+[features]
+# Test-only hooks (Tx::backend_pid).
+testing = []
+
+[dependencies]
+h5i-app-core.workspace = true
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
+tokio-postgres = "0.7"
+deadpool-postgres = { version = "0.14", features = ["rt_tokio_1"] }
+bytes = "1"
+tracing = "0.1"
+h5i-app-sql.workspace = true
+h5i-app-pgsql.workspace = true

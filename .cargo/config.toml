@@ -1,0 +1,4 @@
+[alias]
+# Run h5i-app's CI checks locally (crates/h5i-app-xtask). `--release` because
+# a dev build of this workspace is very large; see CLAUDE.md.
+app-verify = "run -q --release -p h5i-app-xtask -- verify"

@@ -170,8 +170,8 @@ pub fn box_pid(env_dir: &Path) -> Option<u32> {
 /// [`connect_in_netns`] can check that it arrived where the walk was looking
 /// rather than wherever the pid points by the time it is used.
 pub fn box_pid_ns(env_dir: &Path) -> Option<(u32, std::ffi::OsString)> {
-    // Verified, because this pid decides which network namespace a share
-    // publishes a port out of. See [`session_pid_verified`].
+    // Verified, because this pid decides which network namespace a caller
+    // enters. See [`session_pid_verified`].
     let session = session_pid_verified(env_dir, true)?;
     let own_netns = std::fs::read_link("/proc/self/ns/net").ok()?;
     let children = child_map();
@@ -230,8 +230,7 @@ fn child_map() -> std::collections::HashMap<u32, Vec<u32>> {
 /// Public because it is what "the box" *means* on a platform with no
 /// namespaces. [`box_pid`] answers "which pid is inside the box's network
 /// namespace", which is a question only Linux has; on macOS a box is the
-/// process tree under this pid, and `h5i box share` identifies it that way
-/// (`h5i_share::owner`).
+/// process tree under this pid.
 pub fn session_pid(env_dir: &Path) -> Option<u32> {
     session_pid_verified(env_dir, false)
 }

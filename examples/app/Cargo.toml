@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = [
+    "atuin/kernel",
+    "conduit/kernel",
+    "conduit/server",
+    "cratesio/kernel",
+    "cratesio/server",
+    "docs/difftest",
+    "docs/kernel",
+    "docs/server",
+    "filters/kernel",
+    "keys/kernel",
+    "kellnr/kernel",
+    "tutorials/board/kernel",
+    "tutorials/board/server",
+    "tutorials/booking/kernel",
+    "tutorials/booking/server",
+    "tutorials/calculator/kernel",
+    "tutorials/calculator/server",
+    "tutorials/inbox/kernel",
+    "tutorials/inbox/server",
+    "tutorials/ledger/kernel",
+    "tutorials/ledger/server",
+    "wastebin/kernel",
+    "wastebin/server",
+]

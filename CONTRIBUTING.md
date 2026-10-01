@@ -18,17 +18,21 @@ does the obvious thing, and the libraries are under `crates/`:
 | `h5i-error` | the shared error type. Depends on nothing else here |
 | `h5i-wire` | receipt rows and stored HTTP messages, without the engine that produces them |
 | `h5i-sandbox` | policy and enforcement. `sandbox_policy.rs` resolves `.h5i/env.toml`; `seccomp_notify.rs`, `supervisor.rs`, `container.rs`, `microvm.rs`, `seatbelt.rs` are the per-tier backends; `secrets*.rs` and `auth_proxy.rs` the credential paths |
-| `h5i-bpf` | the `kernel-observed` lane on eBPF tracepoints, off by default |
 | `h5i-core` | sessions, boxes and evidence: `browser_session.rs`, `env.rs`, `receipt.rs`, `redact.rs`, `export.rs`, `server.rs`, `ui.rs` |
 | `h5i-browser` | the engine: fetch path, policy, cookies, CORS, snapshot, verbs |
-| `h5i-runner`, `h5i-share` | a box on a second machine over SSH; a bridge to one box's web app |
 | `h5i-websec`, `h5i-recon`, `h5i-test` | plugin binaries, installed with `h5i plugin install <name>` |
+| `h5i-app`, `h5i-app-*` | the verifiable application framework, published on its own; `h5i-app-xtask` is `cargo app-verify` |
 
 `src/cli/` is the clap tree, `web/` the console's React sources, `tests/` the
 integration suites.
 
-Dependencies run one way: `h5i-error` under `h5i-wire`, `h5i-sandbox` and
-`h5i-bpf`, those under `h5i-core`, and `h5i-core` under the engine, the plugins
+The `h5i-app` crates depend on nothing else in the workspace, and nothing else
+depends on them. Their examples are a separate Cargo workspace in
+`examples/app`, their scripts are in `scripts/app`, their design notes in
+`docs/app`, and `.github/workflows/app.yaml` is their CI.
+
+Dependencies run one way: `h5i-error` under `h5i-wire` and `h5i-sandbox`,
+those under `h5i-core`, and `h5i-core` under the engine, the plugins
 and the binary. Prefer an existing module boundary over a new abstraction.
 
 ## Build and test
@@ -72,9 +76,17 @@ cargo test --test console_api           # spawns the binary, speaks HTTP to it
 ./scripts/websec/smoke.sh target/release/h5i target/release/h5i-websec
 ```
 
-Five more CI jobs sit behind that first one. `smoke` drives the plugin binaries
-against a real server, `bpf` compiles the probe and proves the run seam behaves
-on a host with no CAP_BPF, `macos` runs `--lib` and checks Seatbelt is present,
+For h5i-app, which also needs PostgreSQL, Lean 4 (via elan), and Charon and
+Aeneas at the commit pinned in `.github/workflows/app.yaml`:
+
+```bash
+H5I_APP_TEST_DATABASE_URL=postgres://… scripts/app/ci-rust-tests.sh --release
+cargo app-verify            # CI's checks; a missing tool is reported as skipped
+cargo app-verify --full     # adds the mutation suites and the differential test
+```
+
+Four more CI jobs sit behind that first one. `smoke` drives the plugin binaries
+against a real server, `macos` runs `--lib` and checks Seatbelt is present,
 `docs` diffs the generated manuals, and `cross-check` compile-checks the four
 release targets.
 
@@ -100,8 +112,8 @@ boxes have to be skipped.
   stops. It never downgrades quietly.
 - Never claim a boundary you did not enforce. When a guarantee holds only at
   some tiers or on one platform, the code and the docs both name which.
-- Keep the evidence lanes apart. `engine-claimed`, `host-observed`,
-  `box-claimed` and `kernel-observed` are never merged or averaged into a score.
+- Keep the evidence lanes apart. `engine-claimed`, `host-observed` and
+  `box-claimed` are never merged or averaged into a score.
 - Treat what comes out of a box or off a page as attacker-composed: command
   output, receipts, paths, branch names, page text, and any policy read back
   from a worktree.

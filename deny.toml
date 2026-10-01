@@ -1,0 +1,18 @@
+# Only h5i-app-pg may talk to the database directly (ROADMAP A8).
+# Run: cargo deny check bans
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+deny = [
+    { crate = "tokio-postgres", wrappers = ["h5i-app-pg", "deadpool-postgres"], reason = "database access goes through h5i-app-pg" },
+    { crate = "deadpool-postgres", wrappers = ["h5i-app-pg"], reason = "database access goes through h5i-app-pg" },
+    { crate = "postgres", reason = "database access goes through h5i-app-pg" },
+    { crate = "sqlx", reason = "database access goes through h5i-app-pg" },
+    { crate = "diesel", reason = "database access goes through h5i-app-pg" },
+    { crate = "sea-orm", reason = "database access goes through h5i-app-pg" },
+]
+
+[graph]
+# Tests may use the driver to inject faults; shipped code may not.
+exclude-dev = true

@@ -25,7 +25,7 @@ const POLL: std::time::Duration = std::time::Duration::from_millis(400);
 ///
 /// `println!` panics on `EPIPE` because Rust ignores `SIGPIPE`, so
 /// `h5i box watch mybox | head -3` would unwind out of the poll loop instead of
-/// stopping. The same guard `h5i box share` carries, for the same reason.
+/// stopping.
 macro_rules! say {
     ($($arg:tt)*) => {{
         let _ = writeln!(std::io::stdout(), $($arg)*);

@@ -351,55 +351,6 @@ pub struct HomeBind {
 
 // ─── policy profile (§7) ────────────────────────────────────────────────────
 
-/// `[profile.X.detect]`: the runtime-detection lane (design-detect.md D11).
-///
-/// Four optional fields, and `enabled` is `false` by default. The collector
-/// needs `CAP_BPF`, which an ordinary install lacks, so a default of `true`
-/// would produce a fleet of `unavailable` blocks and teach everyone to skip
-/// the hardest-to-forge part of the receipt. This crate holds the policy, not
-/// the mechanism: `h5i-bpf` sits beside `h5i-sandbox`, not below it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DetectPolicy {
-    /// Attach the probe for runs under this profile.
-    pub enabled: bool,
-    /// Refuse to run at all when the probe cannot attach.
-    /// The fail-closed switch, off by default for the same reason `enabled` is:
-    /// a mandatory detector on a laptop kernel is a tool that does not start.
-    /// Right for "I am running somebody else's dependency tree", which is an
-    /// operator's decision.
-    pub require: bool,
-    /// Ring-buffer size in KiB, clamped by the collector to its own bounds.
-    pub buffer_kb: u32,
-    /// Rule selectors: ids (`net.direct-egress`), families (`net`), or `*`.
-    /// A selector matching no rule is refused at run time rather than ignored.
-    /// A profile that believes it enabled a rule and enabled nothing is the
-    /// exact failure this lane exists to catch.
-    pub rules: Vec<String>,
-}
-
-impl Default for DetectPolicy {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            require: false,
-            // Mirrors `h5i_bpf::DEFAULT_BUFFER_KB`. Duplicated rather than
-            // imported, because importing it would put the collector below the
-            // sandbox in the dependency graph for the sake of one integer.
-            buffer_kb: 256,
-            rules: vec!["*".to_string()],
-        }
-    }
-}
-
-impl DetectPolicy {
-    /// Is this the default? Drives `skip_serializing_if`, so that every
-    /// profile written before this section existed serializes byte for byte as
-    /// it did, and its pinned policy digest is unchanged.
-    pub fn is_default(&self) -> bool {
-        self == &Self::default()
-    }
-}
-
 /// A fully-resolved policy profile. Every field explicit, suitable for
 /// serializing as `policy.resolved.toml` and digesting. Field order is the
 /// canonical serialization order (digest stability depends on it).
@@ -511,18 +462,6 @@ pub struct Profile {
     /// `state_load`. Serialized only when non-empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub browser_deny: Vec<String>,
-
-    /// The runtime-detection lane (`[profile.X.detect]`, design-detect.md D11).
-    ///
-    /// Skipped when default, but *in* the digest when set: whether a box was
-    /// watched is part of what its policy claimed, and a reviewer comparing two
-    /// receipts must not find that difference invisible.
-    ///
-    /// Being a table, it must stay the final field: TOML puts tables after
-    /// scalars, so a scalar below this one would serialize into
-    /// `[profile.detect]`.
-    #[serde(default, skip_serializing_if = "DetectPolicy::is_default")]
-    pub detect: DetectPolicy,
 }
 
 /// The browser engines a `browser` box can be pinned to.
@@ -776,11 +715,10 @@ fn default_fs_read() -> Vec<String> {
 }
 
 fn default_fs_deny() -> Vec<String> {
-    // `~/.config/h5i` holds the runner directory: a per-runner private key and
-    // the pinned host key that is the whole basis of `runner_id`. That is the
-    // `~/.ssh` threat model exactly. It held by omission before, since nothing
-    // in the defaults grants anything under `$HOME`, but the deny list is what
-    // survives a user-authored profile granting `~/.config`.
+    // `~/.config/h5i` is h5i's own configuration, which a box must not read or
+    // rewrite. It held by omission before, since nothing in the defaults grants
+    // anything under `$HOME`, but the deny list is what survives a
+    // user-authored profile granting `~/.config`.
     ["~/.ssh", "~/.aws", "~/.config/gh", "~/.config/h5i", "$REPO/.git/hooks"]
         .iter()
         .map(|s| s.to_string())
@@ -833,7 +771,6 @@ impl Profile {
             loopback_ports: Vec::new(),
             engine: None,
             browser_deny: Vec::new(),
-            detect: DetectPolicy::default(),
         }
     }
 
@@ -2160,43 +2097,6 @@ audit_capture = "verbose"
 "#,
         )
         .is_err());
-    }
-    /// A default `[detect]` must not appear in the serialization at all, or
-    /// every pinned policy digest in every existing box changes the day this
-    /// field ships.
-    #[test]
-    fn a_default_detect_section_leaves_the_digest_untouched() {
-        let plain = Profile::builtin("default", IsolationClaim::Process);
-        let toml = toml::to_string(&plain).unwrap();
-        assert!(!toml.contains("detect"), "{toml}");
-    }
-
-    #[test]
-    fn an_enabled_detect_section_is_serialized_and_round_trips() {
-        let mut p = Profile::builtin("default", IsolationClaim::Process);
-        p.detect = DetectPolicy {
-            enabled: true,
-            require: true,
-            buffer_kb: 512,
-            rules: vec!["net".into(), "secret.read".into()],
-        };
-        let toml = toml::to_string(&p).unwrap();
-        assert!(toml.contains("[detect]"), "{toml}");
-        let back: Profile = toml::from_str(&toml).unwrap();
-        assert_eq!(back.detect, p.detect);
-    }
-
-    /// The digest is what a reviewer compares two boxes by. Whether a box was
-    /// watched has to be inside it.
-    #[test]
-    fn enabling_detection_changes_the_policy_digest() {
-        let base = ResolvedPolicy::new(
-            IsolationClaim::Process,
-            Profile::builtin("default", IsolationClaim::Process),
-        );
-        let mut watched = base.clone();
-        watched.profile.detect.enabled = true;
-        assert_ne!(base.digest().unwrap(), watched.digest().unwrap());
     }
 }
 

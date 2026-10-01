@@ -160,9 +160,6 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 | [`h5i test`](#h5i-test) | Replay portable attack flows and check them with your own oracles. A plugin. |
 | [`h5i project`](#h5i-project) | The durable engagement: notes, findings, evidence, checklists and reports. |
 | [`h5i box`](#boxes) | Create, run, inspect and export boxes. Optional containment. |
-| [`h5i box share`](#h5i-box-share) | Open one box's dev server to one other person. The only inbound path. |
-| [`h5i join`](#h5i-box-share) | Open a box someone else is sharing, from their ticket. |
-| [`h5i runner`](#h5i-runner) | Pair a second Linux machine and run boxes there over SSH. |
 | [`h5i ui`](#the-console) | The console: every session and box on this machine, read-only. |
 | [`h5i skill`](#h5i-skill) | Write or print the agent skill this binary carries. |
 | [`h5i plugin`](#h5i-plugin) | Install what is not in the default build: the workbench, the ledger, the tests. |
@@ -1205,24 +1202,6 @@ h5i box log <name>                    # the box's event log
 session spawns is contained by the box rather than by the agent choosing to wrap
 each call.
 
-### h5i box detect
-
-Runtime detection: what an eBPF collector in the kernel saw inside a box.
-Read-only, and available on every build, because the verbs are how you find out
-why the collector is *not* working, so gating them behind it would hide the
-answer from the hosts that need it.
-
-```bash
-h5i box detect probe                  # can this machine watch a box, and if not, why
-h5i box detect rules                  # the whole signature catalogue
-h5i box detect rules --filter secret  # one family, or one rule id
-h5i box detect show <name>            # what fired in this box, worst first
-h5i box detect show <name> --min alert
-```
-
-Turn it on per profile with `[profile.<name>.detect] enabled = true`; see
-[Runtime detection](#runtime-detection) for the section and what it costs.
-
 ### Services and ports
 
 ```bash
@@ -1257,9 +1236,8 @@ git apply --3way ./review/patch.diff
 | File | What it is |
 |---|---|
 | `patch.diff` | The tree diff against the pinned base, path-validated: no symlink escapes, no nested `.git`, no agent-introduced gitlinks. |
-| `report.md` | What ran, what the browser saw, what the kernel saw, who was at the controls, and the agent's own proposal. |
+| `report.md` | What ran, what the browser saw, who was at the controls, and the agent's own proposal. |
 | `receipt.json` | Every observed execution, with the policy digest that was enforced. |
-| `receipts/<id>.raw` | Each ingress session: who connected, over what path, for how long, how much moved, what was refused. Present when the box was shared. |
 
 It refuses rather than overwrites a non-empty directory (`--force` to replace).
 Secret redaction and size caps apply throughout.
@@ -1267,7 +1245,7 @@ Secret redaction and size caps apply throughout.
 Read `report.md` before applying. In order: denied egress attempts, every
 command with its lane and exit code, what the browser saw (console errors,
 uncaught exceptions, failed requests, observed by h5i rather than reported by
-the agent), what the kernel saw when runtime detection was on, viewer sessions
+the agent), viewer sessions
 including whether a human took the controls, and the agent's proposal.
 
 `h5i box apply <name>` lands a proposed box onto its parent branch in this
@@ -1398,219 +1376,6 @@ run inside a box.
 
 ---
 
-## h5i box share
-
-Share one port from a running box without publishing that port directly.
-
-```bash
-h5i box share <name> [--port 3000] [--expire 60m] [--label alex]
-h5i box share <name> --direct-only
-h5i box share <name> --tunnel
-h5i box share status <name>
-h5i box share grant <name> --label sam --expire 30m
-h5i box share revoke <name> <grant>
-h5i box share stop <name>
-```
-
-The recipient runs `h5i join -` and supplies the ticket on stdin. Passing the
-ticket as an argument also works, but exposes it to shell history and the process
-list. Treat a ticket like a password: possession is authorization, forwarding it
-admits another person, and h5i stores only its hash.
-
-Peer-to-peer mode is end-to-end encrypted and may use a relay that sees endpoint
-addresses, timing, and volume but not content. `--direct-only` refuses relay
-fallback. `--tunnel` creates a normal browser link through Cloudflare; Cloudflare
-terminates TLS and can read that traffic. Tunnel mode requires `cloudflared`.
-
-A share needs a live box session. On Linux the box must have a usable network
-namespace; h5i refuses configurations where it cannot distinguish the box's port
-from the host's. On macOS h5i verifies that the listening process belongs to the
-box and repeats that ownership check for every connection.
-
-The share credential moves from the first URL into an HttpOnly cookie, and h5i
-removes it before forwarding the request to the app. Proxy and visitor identity
-headers are also removed. The app still receives ordinary browser headers, its
-own cookies, and its query string. WebSocket upgrades are supported.
-
-Each request is authorized independently and normally uses one connection into
-the box. A share permits at most 64 concurrent box connections. Malformed,
-unauthorized, expired, revoked, overloaded, and unreachable attempts are counted
-separately in the receipt.
-
-### Joining safely
-
-The shared page is agent-written code running in your browser. Use a private
-window when practical, especially when the joiner must bind `127.0.0.1`, because
-browser cookies are scoped by host rather than port.
-
-h5i normally chooses a private address from `127.0.0.0/8`. macOS may require
-`--shared-jar`; WSL browser access may require `--bind 127.0.0.1`. Both choices
-share browser storage with other services on that host and therefore require
-explicit consent. h5i never binds the join proxy outside loopback.
-
-h5i blocks service-worker registration and cross-site requests carrying the
-share credential. It does not otherwise sandbox the page: downloads, granted
-permissions, browser storage, and page scripts have the same powers as on any
-link you open.
-
-### Grants, revocation, and receipts
-
-Use one labeled grant per person. `share revoke` drops that person's live
-connections; `share stop` ends every grant and writes the final receipt.
-Additional grants are currently available only for tunnel shares. The maximum
-share lifetime is 24 hours and the default is one hour.
-
-The receipt records transport, duration, grants, peers, connection and byte
-counts, refusals, route failures, incomplete responses, clock anomalies, and
-whether shutdown produced partial totals. Tunnel receipts explicitly state that
-the connection was not end-to-end encrypted.
-## h5i runner
-
-A *runner* is a second Linux machine you own that h5i reaches over SSH: a spare
-laptop, a lab box, a VM, a small server. Boxes run there; the repository, the
-policy, the credentials and the patch gate stay here.
-
-This is *placement*, a second axis beside the isolation tier a box already
-declares. It does not change what a box is allowed to do. What it changes is
-which machine an escape would reach.
-
-```bash
-h5i runner pair pi5 h5i@pi.local      # pair, pinning the machine's host key
-h5i runner probe pi5                  # what can it actually do, right now
-h5i runner list                       # what this account has paired
-h5i runner unpair pi5                 # forget it here
-```
-
-### What pairing does
-
-1. Reads and pins the machine's SSH *host key*. That key is the runner's
-   identity: `runner_id` is its SHA-256, and a box records the id, never the
-   name, so renaming a runner cannot move a box onto other hardware.
-2. Generates a keypair for this runner alone, owner-only, under
-   `~/.config/h5i/runners/<name>/`.
-3. Installs one line in the runner's `authorized_keys`:
-
-   ```
-   restrict,command="/usr/local/bin/h5i runner serve-stdio" ssh-ed25519 AAAA…
-   ```
-
-   `restrict` is the security argument in one word: that key cannot open a
-   shell, forward a port, forward your agent, or allocate a terminal.
-4. Connects over the new key and probes, so pairing either works end to end or
-   leaves nothing behind.
-
-Nothing listens on the runner: no daemon, no port, no token, no TLS. The worker
-is a process per request, started by sshd and gone when the request ends.
-
-Pairing trusts the host key it sees first, like your first `ssh` to a new host.
-To close that window, read the real fingerprint on the machine and pass it:
-
-```bash
-ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub   # on the runner
-h5i runner pair pi5 h5i@pi.local --fingerprint SHA256:…
-```
-
-`--print-only` prints the `authorized_keys` line instead of installing it.
-
-### What a runner advertises
-
-A runner needs Linux, sshd and `h5i`, not a container runtime. Everything past
-those three is *advertised* by `h5i runner probe`:
-
-```
-$ h5i runner probe pi5
-✔ `pi5` — h5i 0.3.4 on linux aarch64, protocol 1
-
-  isolation     process, supervised
-  container     no
-  memory        7.6 GiB
-  workspace     41.2 GiB free
-  boxes persist yes
-  own egress    yes
-  kvm           no
-  runner id     3f9a1c04b7e2
-```
-
-A box asking for something a runner does not advertise is refused with the
-missing capability named, never quietly given something weaker. The isolation
-list is what that kernel demonstrably ran a moment ago, not which features are
-present.
-
-Two entries change what you can do next:
-
-- boxes persist: no. Box state does not survive a reboot (read-only OS, tmpfs
-  workspace). Anything not exported is gone.
-- own egress: no. The runner has no default route, so a box on it cannot pull
-  images or install packages.
-
-### Putting a box on one
-
-```bash
-h5i box create fix-auth --runner pi5
-```
-
-The base commit, the branch and the resolved policy digest are all made here.
-What crosses is the source as a git bundle; what comes back is the digest the
-runner actually enforced, and the box is refused if the two differ.
-
-```
-$ h5i box ls
-env/human/fix-auth   created   isolation=container  base=fa31b1f97547 captures=0 on=pi5
-```
-
-The manifest records the runner's host-key hash, not its name, so renaming a
-runner cannot move a box onto other hardware. `h5i box rm` checks that identity
-before removing anything there, and clears this side first: an unreachable
-runner leaves the box for its lease to reap.
-
-### Working in one
-
-```bash
-h5i box run fix-auth -- cargo test      # runs on the runner
-h5i box propose fix-auth                # bring the work home
-h5i box diff fix-auth                   # review it here
-h5i box apply fix-auth                  # land it
-h5i box export fix-auth                 # or take the patch and receipts
-```
-
-`box run` executes under the policy pinned at create, and the receipt comes home
-with the exit code, timings and the runner's egress summary. Its lane is
-*`runner-observed`*: h5i saw it from outside the box, so the box could not have
-forged it, but this machine did not watch it either. It counts as neither
-host-observed nor box-claimed.
-
-`box propose` is the careful part. The runner commits what the box has and sends
-a bundle of only the new work. h5i unpacks it into a throwaway repository with
-its own object database and inspects it there: size and count ceilings, path
-traversal, nested git repositories, submodule pointers the base did not have.
-Only a passing tree crosses into your repository, and h5i writes the commit
-itself, so the runner's history and authorship never enter yours.
-
-If something is refused, nothing lands:
-
-```
-$ h5i box propose fix-auth
-Error: mediated commit refused (fail-closed) — 1 path violation(s):
-  - a submodule pointer the base did not have, at vendor/thing
-```
-
-After a successful propose, `diff`, `apply` and `export` behave exactly as for a
-local box.
-
-### Not on a runner yet
-
-`box shell` (needs a pty), streamed output (`box run` returns when the command
-finishes), agents (h5i will not send model credentials to another machine), and
-`clone:` / `--new` sources. See `docs/design/design-runner.md` R1 to R13.
-
-### Unpairing
-
-`h5i runner unpair <name>` removes the record, the key and the pin from this
-machine. It does not touch the runner: the `authorized_keys` line stays until
-you delete it, and the command says so, with the comment to search for.
-
----
-
 ## The console
 
 ```bash
@@ -1642,8 +1407,8 @@ The console never renders a stored message. Headers, cookies and bodies stay
 on disk, owner-only, and every row prints the `h5i websec show` that reads it.
 
 **Boxes** show each box's tier, status and one signal, and for a selected box
-its findings, a flight recorder of one row per receipt across six lanes
-(files, egress, exit, limits, page, kernel), the policy that was actually
+its findings, a flight recorder of one row per receipt across five lanes
+(files, egress, exit, limits, page), the policy that was actually
 enforced, and the diff against the pinned base. A browser box has a second
 tab with the live in-box browser terminal.
 
@@ -1800,29 +1565,6 @@ mem   = "4G"
 procs = 256
 wall  = "30m"
 ```
-
-### Runtime detection
-
-Optional eBPF detection reports what a run actually did from kernel syscall
-tracepoints. It observes; it does not block. Landlock, seccomp, namespaces, and
-the egress proxy remain the enforcement mechanisms.
-
-```toml
-[profile.review.detect]
-enabled = true
-require = false
-buffer_kb = 256
-rules = ["*"]
-```
-
-`require = true` refuses a run when observation cannot attach. Detection needs
-a build with `--features bpf`, Linux 5.8 or newer, and `CAP_BPF` plus
-`CAP_PERFMON`. Use `h5i box detect probe`, `detect rules`, and
-`detect show <box>` to inspect availability and results.
-
-Coverage is full for workspace, process, and supervised runs; partial for
-containers whose workload leaves h5i's process tree; and unavailable inside a
-microVM's guest kernel. Every receipt states its coverage.
 
 ### Isolation tiers
 
@@ -1989,9 +1731,6 @@ never blur:
 | `tee-shim` | The box's shell shim. Box-claimed. |
 | `inbox-capture` | Staged by the box. Box-claimed. |
 
-A record can also carry a `runtime` block, which is a *second observer of the
-same command* rather than a lane of its own. See below.
-
 ### What the browser saw
 
 A run that drove the browser also carries what the page said back: console
@@ -2004,43 +1743,11 @@ A browser command with no browser to ask is recorded as `unavailable`, not as a
 clean page. "Nothing was looked at" is a different claim from "nothing was
 wrong", and a reviewer has to be able to tell them apart.
 
-### What the kernel saw
-
-A run under a profile with `[detect] enabled = true` carries a `runtime` block:
-which scope selected the events, how completely it covered the tier, how many
-events were seen and how many were lost, and every signature that fired with a
-few examples of what tripped it.
-
-The block is written even when the collector could not attach, carrying the
-reason. That is deliberate and it is the point of the whole lane: a missing
-block and a quiet box would otherwise look identical. Read it this way:
-
-- No `runtime` block at all: the profile did not ask to be watched.
-- A block with `unavailable`: it asked, and the probe could not attach. The
-  reason is in the block; `h5i box detect probe` explains it in full.
-- A block with `coverage: none` or `partial`: some or all of the run happened
-  where this scope cannot reach it, with the reason attached.
-- A block with detections and `events_lost` above zero: the list is a lower
-  bound, because events were dropped before anything examined them.
-- A block with no detections, `coverage: full` and `events_lost: 0`: nothing the
-  catalogue models happened. That is not the same as nothing happening: `h5i box
-  detect rules` is a finite list, and behaviour no rule models produces no line.
-
-Every path and command line in the block is a string the box passed to a
-syscall, captured on the way *in*. It is not the kernel's resolution of that
-string, and the probe sees the attempt rather than the outcome. A `connect` the
-network namespace refused looks exactly like one that succeeded.
-
 ### What we do not claim
 
 An agent can stage *extra* records, or stop writing. Both are visible: a gap
 between host-observed exits and box-reported commands is itself a finding. We do
 not claim more than that.
-
-The kernel lane narrows what "stop writing" buys, and does not close it: the
-collector cannot be defeated by a box declining to cooperate, but it only runs
-where the profile asked and the host could attach, and it only reports what a
-signature models.
 
 ---
 
@@ -2094,7 +1801,6 @@ h5i states these limits explicitly because its claims are security-sensitive.
 | `.git/.h5i/env/<agent>/<slug>/spool/` | The box's one writable window: staged posts and capture records. |
 | `~/.config/h5i/` | Host-side egress allowlist. Outside every box-granted path. |
 | `~/.config/h5i/projects/<name>.toml` | One project's engagement scope, resolved by `browser open --project`. Outside every box-granted path, for the reason under [Scope](#scope-the-engagement-kind). |
-| `~/.config/h5i/runners/<name>/` | One paired runner: its record, its dedicated key, its pinned host key. Owner-only, and outside every box-granted path for the same reason the allowlist is. |
 
 ### A browser session's directory
 
@@ -2163,15 +1869,11 @@ Read these to detect that you are in one; do not set them yourself.
 |---|---|
 | `H5I_TEST_CONTAINER` | Opt in to the real-container integration tests (pulls an image, makes a live call). |
 | `H5I_TEST_NET` | Opt in to the supervised egress allowlist end-to-end test (needs outbound network). |
-| `H5I_RUNNER_STATE_DIR` | Where a runner worker keeps box state. For driving a worker against a scratch directory; a real runner uses its default. |
-| `H5I_BPF_LIVE` | Opt in to the live eBPF attach suite. It loads programs into the running kernel, so it needs `CAP_BPF` and does not run by accident; without it the suite skips and prints why. |
 
 ### Builds
 
 | Variable | Purpose |
 |---|---|
-| `H5I_BPF_REQUIRE` | Fail the build if the eBPF probe cannot be compiled, instead of shipping a binary whose detector reports `unavailable` forever. Set it in CI and for releases. |
-| `CLANG` | Which `clang` compiles the eBPF probe. Otherwise `clang`, then `clang-20` down to `clang-14`, each tested against the BPF target before it is trusted. |
 | `H5I_SKIP_WEB_BUILD` | Skip the console bundle and leave a stub, for a Rust-only build with no Node on the machine. |
 
 ---
@@ -2183,6 +1885,5 @@ Read these to detect that you are in one; do not set them yourself.
 - [`skills/h5i/`](../skills/h5i/): the agent-facing skill (`h5i skill show`)
 - [`docs/ROADMAP.md`](ROADMAP.md): what is built and what is not
 - [`docs/design/`](design/): the design behind each part
-  (`design-browser.md`, `design-policy.md`, `design-runner.md`,
-  `design-detect.md`)
+  (`design-browser.md`, `design-policy.md`)
 - [`SECURITY.md`](../SECURITY.md): reporting a vulnerability

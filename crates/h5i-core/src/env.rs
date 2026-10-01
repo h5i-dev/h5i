@@ -376,21 +376,6 @@ pub struct EnvManifest {
     /// The target of the push-back hint after apply.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr_head_ref: Option<String>,
-    /// The machine this box runs on, when it is not this one: the SHA-256 of
-    /// that runner's pinned SSH host key (design-runner.md R6).
-    ///
-    /// Identity rather than a label. A name can be re-pointed at different
-    /// hardware tomorrow, and a box bound to one would silently follow; a host
-    /// key cannot be, so a reinstalled machine is honestly a different runner.
-    /// Validated as an object id on import, beside `base_commit` and
-    /// `policy_digest`, because it decides which machine a later operation
-    /// talks to.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runner_id: Option<String>,
-    /// That runner's display name, for humans and command lines. Never
-    /// identity: see `runner_id`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runner: Option<String>,
 }
 
 impl EnvManifest {
@@ -541,38 +526,11 @@ fn validate_imported_manifest(m: &EnvManifest) -> Result<(), H5iError> {
     // caller has already committed to *skipping* a bad manifest rather than
     // aborting the sync, so anything that is not an id is refused here rather
     // than left to panic in a renderer three commands later.
-    let mut ids: Vec<(&str, &String)> = vec![
+    let ids: Vec<(&str, &String)> = vec![
         ("base_commit", &m.base_commit),
         ("base_tree", &m.base_tree),
         ("policy_digest", &m.policy_digest),
     ];
-    // Present only for a box that lives on another machine, and then it decides
-    // which machine every later operation talks to, so it is guarded here
-    // rather than left to `sanitize_display` on the way to a terminal.
-    if let Some(runner_id) = &m.runner_id {
-        ids.push(("runner_id", runner_id));
-    }
-    // The display name is peer data too. It is resolved against this machine's
-    // paired runners, which name-checks it again, but it also reaches a
-    // receipt and a terminal, so it is pinned to the same shape here rather
-    // than trusted to be pinned somewhere downstream.
-    if let Some(runner) = &m.runner {
-        let ok = !runner.is_empty()
-            && runner.len() <= 64
-            && runner
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphanumeric())
-            && runner
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-        if !ok {
-            return Err(H5iError::Metadata(format!(
-                "manifest runner name is not one this machine could have paired (got '{}')",
-                crate::redact::sanitize_display(runner)
-            )));
-        }
-    }
     for (field, got) in ids {
         let ok = (7..=64).contains(&got.len()) && got.bytes().all(|b| b.is_ascii_hexdigit());
         if !ok {
@@ -1503,10 +1461,6 @@ pub struct CreateOpts {
     pub pr_head_ref: Option<String>,
     /// Where the code comes from. Defaults to a worktree of this repository.
     pub source: BoxSource,
-    /// Run this box on a paired runner instead of this machine, by display
-    /// name. The identity that reaches the manifest comes from the runner
-    /// itself (`RemoteCreated::runner_id`), not from this string.
-    pub runner: Option<String>,
 }
 
 impl Default for CreateOpts {
@@ -1520,7 +1474,6 @@ impl Default for CreateOpts {
             backend: "auto".into(),
             audit_capture: sandbox::AuditCapture::Signal,
             parent_branch: None,
-            runner: None,
             pr: None,
             pr_head_ref: None,
             source: BoxSource::Repo,
@@ -1707,53 +1660,17 @@ pub fn create(
     slug: &str,
     opts: CreateOpts,
 ) -> Result<EnvManifest, H5iError> {
-    create_with_remote(repo, h5i_root, workdir, agent, slug, opts, None)
-}
-
-/// [`create`], optionally placing the box on another machine.
-/// The remote path is the same function up to the point where a local box would
-/// grow a worktree (design-runner.md R7): the base commit is pinned, the branch
-/// is created, the profile is resolved and its digest taken, all here, and
-/// then, instead of a worktree, the source goes across as a bundle and the
-/// runner builds the box. Everything that decides *what* the box is stays on
-/// this machine; only the execution moves.
-/// `remote` is a trait object rather than a runner name because this crate has
-/// no transport in it; see [`crate::placement`].
-pub fn create_with_remote(
-    repo: &Repository,
-    h5i_root: &Path,
-    workdir: &Path,
-    agent: &str,
-    slug: &str,
-    opts: CreateOpts,
-    remote: Option<&dyn crate::placement::RemoteRunner>,
-) -> Result<EnvManifest, H5iError> {
     validate_slug(slug)?;
     validate_agent(agent)?;
-    // A remote box has no worktree on this machine, so calling its backend
-    // `worktree` would be a statement about a directory that does not exist.
-    let backend = match (opts.backend.as_str(), remote.is_some()) {
-        (_, true) => "runner",
-        ("auto" | "worktree", false) => "worktree",
-        (other, false) => {
+    let backend = match opts.backend.as_str() {
+        "auto" | "worktree" => "worktree",
+        other => {
             return Err(H5iError::Metadata(format!(
                 "workspace backend '{other}' is not available in this build (worktree only; \
                  branchfs is a later, opt-in phase)"
             )))
         }
     };
-
-    // Refused here rather than part-way through: a detached source has its
-    // repository inside the box, and moving that across is the export
-    // milestone's problem, not this one's.
-    if remote.is_some() && opts.source.is_detached() {
-        return Err(H5iError::Metadata(format!(
-            "a `{}` source cannot be placed on a runner yet — clone and new boxes build their \
-             own repository inside the box, and sending one across is a later milestone. \
-             Create it here, or use this repository as the source.",
-            opts.source.as_manifest_str()
-        )));
-    }
 
     let id = format!("env/{agent}/{slug}");
     let dir = env_dir(h5i_root, agent, slug);
@@ -1916,25 +1833,6 @@ pub fn create_with_remote(
     let mut policy = sandbox::resolve(&profile, &caps)?;
     policy.audit.capture = opts.audit_capture;
     // Functionally verify the confinement can actually run a command.
-    if remote.is_some() {
-        let wants_secrets = !policy.profile.secrets.is_empty() || !policy.profile.secret_grants.is_empty();
-        let wants_auth = !policy.profile.auth.is_empty();
-        if wants_secrets || wants_auth {
-            return Err(H5iError::Metadata(format!(
-                "profile `{}` needs {} on a runner, and h5i will not send credentials to \
-                 another machine. A broker that keeps them here is a later milestone; until \
-                 then a runner box runs builds, tests and commands rather than anything that \
-                 authenticates. Use a profile without them, or create this box locally.",
-                policy.profile.name,
-                match (wants_secrets, wants_auth) {
-                    (true, true) => "secrets and an authenticated API",
-                    (true, false) => "secrets",
-                    _ => "an authenticated API",
-                }
-            )));
-        }
-    }
-
     sandbox::verify_exec(&policy)?;
     let policy_digest = policy.digest()?;
 
@@ -2008,86 +1906,25 @@ pub fn create_with_remote(
         repo.branch(&branch_short, &base_commit, false)?;
         rollback.branch = Some(branch_short.clone());
         let wt_name = format!("h5i-env-{agent}-{slug}");
-        // A remote box has no worktree here: its source goes across as a bundle
-        // and is materialised on the runner. Which also dissolves the hardest
-        // part of the local path. The identical-path git plumbing binds exist
-        // only because a local box shares this repository's inodes, and a
-        // remote one shares nothing (design-runner.md R7).
-        if remote.is_none() {
-            // One directory under `.git/worktrees/` that is not a worktree
-            // makes libgit2 report *every* branch as already checked out, so
-            // the add below would fail for this env and every future one. Clear
-            // those before asking (see `sweep_invalid_worktree_registrations`).
-            sweep_invalid_worktree_registrations(repo);
-            let branch_ref = repo.find_reference(&branch_full)?;
-            let mut wt_opts = git2::WorktreeAddOptions::new();
-            wt_opts.reference(Some(&branch_ref));
-            let wt = repo
-                .worktree(&wt_name, &work_path, Some(&wt_opts))
-                .map_err(|e| {
-                    H5iError::Metadata(format!("worktree creation failed for {id}: {e}"))
-                })?;
-            // Lock the worktree for the env's whole life so a stray
-            // `git worktree prune` can't reclaim a live env out from under it;
-            // `h5i box gc` is the only thing that unlocks+prunes it (and only
-            // when applied/aborted).
-            let _ = wt.lock(Some(&format!("h5i env {id} live")));
-        }
+        // One directory under `.git/worktrees/` that is not a worktree
+        // makes libgit2 report *every* branch as already checked out, so
+        // the add below would fail for this env and every future one. Clear
+        // those before asking (see `sweep_invalid_worktree_registrations`).
+        sweep_invalid_worktree_registrations(repo);
+        let branch_ref = repo.find_reference(&branch_full)?;
+        let mut wt_opts = git2::WorktreeAddOptions::new();
+        wt_opts.reference(Some(&branch_ref));
+        let wt = repo
+            .worktree(&wt_name, &work_path, Some(&wt_opts))
+            .map_err(|e| {
+                H5iError::Metadata(format!("worktree creation failed for {id}: {e}"))
+            })?;
+        // Lock the worktree for the env's whole life so a stray
+        // `git worktree prune` can't reclaim a live env out from under it;
+        // `h5i box gc` is the only thing that unlocks+prunes it (and only
+        // when applied/aborted).
+        let _ = wt.lock(Some(&format!("h5i env {id} live")));
         (base_commit.id(), base_tree, parent_branch)
-    };
-
-    // The box itself, on the other machine. Everything that decides *what* it
-    // is has already happened here; this is where the execution moves.
-    let placed = match remote {
-        None => None,
-        Some(runner) => {
-            let repo_path = repo.workdir().ok_or_else(|| {
-                H5iError::Metadata(
-                    "a runner box needs a repository with a working directory to bundle from"
-                        .into(),
-                )
-            })?;
-            let base = base_commit_id.to_string();
-            let box_id = crate::placement::remote_box_id(&id);
-            let policy_json = serde_json::to_value(&policy).map_err(|e| {
-                H5iError::Metadata(format!("could not serialise the resolved policy: {e}"))
-            })?;
-            let spec = crate::placement::RemoteCreateSpec {
-                box_id: &box_id,
-                isolation: policy.claim.as_str(),
-                image: policy.profile.image.as_deref(),
-                policy_json,
-                policy_digest: &policy_digest,
-                source: Some(crate::placement::RemoteSource {
-                    repo: repo_path,
-                    base_commit: &base,
-                }),
-            };
-            let created = runner.create(&spec)?;
-
-            // The runner echoes the digest of the policy it actually enforced,
-            // and the box is not accepted unless it matches. That turns "the
-            // runner silently enforced an older policy" from a possibility into
-            // a detected fault (R7). The client checks this too; checking it
-            // here as well is what makes the *manifest* honest, since this is
-            // the value the manifest is about to pin.
-            if created.policy_digest != policy_digest {
-                // The box is on the runner and this side is refusing it, so it
-                // goes away again. Best effort, the lease would reap it in a
-                // couple of hours regardless, but leaving a box holding a copy
-                // of somebody's source on a machine with no record of it is not
-                // a thing to shrug at when one more RPC closes it.
-                let _ = runner.destroy(&box_id);
-                return Err(H5iError::Metadata(format!(
-                    "runner `{}` built the box under a different policy than the one resolved \
-                     here — expected {policy_digest}, it enforced {}. The box was not recorded, \
-                     and was removed from the runner.",
-                    runner.name(),
-                    created.policy_digest
-                )));
-            }
-            Some(created)
-        }
     };
 
     // From here on the worktree, the branch and `<env>/` all exist, but the
@@ -2109,11 +1946,7 @@ pub fn create_with_remote(
     // never enters the agent's diff/commit. Fail-closed: a missing source
     // aborts create rather than launching an agent with a silently-empty
     // persona.
-    let persona_digest = if remote.is_some() {
-        None
-    } else {
-        materialize_persona(&work_path, &profile.persona)?
-    };
+    let persona_digest = materialize_persona(&work_path, &profile.persona)?;
 
     // The viewer token, minted before anything inside the box has run. Minting
     // it lazily on the first `h5i box view` would mean minting it after an
@@ -2122,17 +1955,9 @@ pub fn create_with_remote(
     // lives in the env directory, outside every path the box can write or read.
     crate::view::ensure_token(&dir)?;
 
-    // The effective baseline describes what a *local* kernel-tier invocation
-    // would apply. Landlock grants and bind mounts against paths on this
-    // machine. A box on a runner has none of those here, and its work directory
-    // does not exist on this side at all, so computing one would be describing
-    // a confinement nobody is going to enforce.
-    let baseline = if remote.is_some() {
-        None
-    } else {
-        write_effective_baseline(&policy, &dir, &work_path)?
-    };
-    let (effective_digest, fs_authority) = match baseline {
+    // The effective baseline describes what a kernel-tier invocation would
+    // apply: Landlock grants and bind mounts against paths on this machine.
+    let (effective_digest, fs_authority) = match write_effective_baseline(&policy, &dir, &work_path)? {
         Some((digest, verdict)) => (Some(digest), verdict),
         None => (None, None),
     };
@@ -2160,39 +1985,14 @@ pub fn create_with_remote(
         persona_digest,
         pr: opts.pr,
         pr_head_ref: opts.pr_head_ref.clone(),
-        runner_id: placed.as_ref().map(|p| p.runner_id.clone()),
-        runner: placed.as_ref().map(|p| p.runner.clone()),
     };
 
-    // Grouped so a runner box's remote half can be cleaned up if this side
-    // cannot record it. Locally these are the same `?`s they always were.
-    let mut policy_toml = String::new();
-    let save_result = (|| -> Result<(), H5iError> {
-
-        policy_toml = policy.to_toml()?;
-        let policy_path = dir.join(POLICY_RESOLVED_FILE);
-        std::fs::write(&policy_path, &policy_toml)
-            .map_err(|e| H5iError::with_path(e, &policy_path))?;
-        save_manifest(h5i_root, &manifest)?;
-        Ok(())
-    })();
+    let policy_toml = policy.to_toml()?;
+    let policy_path = dir.join(POLICY_RESOLVED_FILE);
+    std::fs::write(&policy_path, &policy_toml).map_err(|e| H5iError::with_path(e, &policy_path))?;
+    save_manifest(h5i_root, &manifest)?;
     // The env is resolvable now: `rm` and `gc` can clean up anything that fails
     // after this point, so stop unwinding on drop.
-    // Everything above this point can still fail, and for a runner box a
-    // failure here means the box exists over there with nothing here to
-    // remember it. The lease reaps it eventually and a retry is idempotent, so
-    // this is tidiness rather than correctness, but an orphan holding a copy
-    // of someone's source is worth one more RPC.
-    if let (Some(runner), Some(_)) = (remote, placed.as_ref())
-        && let Err(e) = save_result.as_ref()
-    {
-        let _ = runner.destroy(&crate::placement::remote_box_id(&id));
-        return Err(H5iError::Metadata(format!(
-            "{id} could not be recorded on this machine ({e}), so it was removed from the \
-             runner as well"
-        )));
-    }
-    save_result?;
     rollback.armed = false;
     // Mirror the manifest AND the resolved policy into refs/h5i/env so the
     // whole environment is shareable from creation.
@@ -2450,34 +2250,6 @@ fn detached_err(m: &EnvManifest, op: &str) -> H5iError {
 /// Is this box detached (its git repository lives inside the box)?
 pub fn is_detached(m: &EnvManifest) -> bool {
     m.source != "repo"
-}
-
-/// Does this box live on another machine?
-///
-/// Keyed on `runner_id` rather than on `backend`, because the identity is the
-/// thing every later operation actually needs: `backend` says what kind of
-/// workspace it has, and this says which machine to ask.
-pub fn is_remote(m: &EnvManifest) -> bool {
-    m.runner_id.is_some()
-}
-
-/// A uniform refusal for operations that would need a local workspace a runner
-/// box does not have here.
-///
-/// Distinct from [`no_workspace_err`], which is about a box whose clone is
-/// elsewhere: this box is fine, it is simply on a machine this milestone cannot
-/// yet run commands on, and saying so beats a message about a missing
-/// directory.
-pub fn remote_unsupported_err(m: &EnvManifest, op: &str) -> H5iError {
-    H5iError::Metadata(format!(
-        "{}: `{op}` does not work on a runner box yet — this box runs on `{}`, and running \
-         commands there is the next milestone. `h5i box status {}` and `h5i box ls` work now, \
-         and `h5i box rm {}` removes it from both sides.",
-        m.id,
-        m.runner.as_deref().unwrap_or("another machine"),
-        m.slug,
-        m.slug
-    ))
 }
 
 /// A uniform error for operations that need a local worktree the env lacks.
@@ -5015,132 +4787,6 @@ pub fn run(
     run_inner(repo, h5i_root, m, argv, None)
 }
 
-/// Run a command in a box that lives on a runner.
-pub fn run_remote(
-    repo: &Repository,
-    h5i_root: &Path,
-    m: &mut EnvManifest,
-    argv: &[String],
-    runner: &dyn crate::placement::RemoteRunner,
-) -> Result<RunOutcome, H5iError> {
-    if argv.is_empty() {
-        return Err(H5iError::Metadata("empty command".into()));
-    }
-    // The same lifecycle gate `run_inner` applies. Without it a box that had
-    // been applied or aborted could be run again, the box lives on the runner
-    // until its lease or a `box rm`, and the run would rewrite a terminal
-    // status back to `idle`, in the manifest and in `refs/h5i/env`, where it
-    // travels to other clones as an ordinary run event.
-    match m.status.as_str() {
-        ST_CREATED | ST_RUNNING | ST_IDLE => {}
-        other => {
-            return Err(H5iError::Metadata(format!(
-                "{}: status is '{other}' — `box run` is only valid before propose/apply/abort",
-                m.id
-            )));
-        }
-    }
-
-    let env_dir_path = env_dir(h5i_root, &m.agent, &m.slug);
-    // `RunLock` is flock, so it exists on Unix only. The same guard every other
-    // writer in this file carries. Elsewhere the serialization is absent rather
-    // than faked, which is the pre-existing property of this lock and not
-    // something the remote path gets to decide differently.
-    #[cfg(unix)]
-    let _lock = RunLock::acquire(&m.dir(h5i_root))?;
-
-    let box_id = crate::placement::remote_box_id(&m.id);
-    let result = runner.exec(&crate::placement::RemoteExec {
-        box_id: &box_id,
-        argv,
-        cwd: None,
-        env: &[],
-        timeout_secs: None,
-    })?;
-
-    let mut raw = result.stdout.clone();
-    raw.extend_from_slice(&result.stderr);
-    if result.output_truncated {
-        // Said, because the runner said it. The receipt's own `raw_truncated`
-        // is computed from this machine's cap and would record `false` for a
-        // log the runner had already cut. A truncated log stored as a complete
-        // one is the thing the flag exists to prevent.
-        raw.extend_from_slice(
-            b"\n[h5i: the runner truncated this output before sending it]\n",
-        );
-    }
-
-    let input = crate::receipt::RecordInput {
-        env_id: m.id.clone(),
-        policy_digest: Some(m.policy_digest.clone()),
-        // Absent by construction, not by omission: the effective configuration
-        // describes a kernel-tier invocation on *this* host, and there was not
-        // one. A value here would be a measurement of the wrong machine.
-        effective_digest: None,
-        // Likewise empty rather than computed. `fs_overlap` answers "which
-        // other boxes on this host share a writable path with this one", and a
-        // box on another machine shares none of them.
-        fs_overlap: Vec::new(),
-        source: crate::placement::RUNNER_OBSERVED_LANE.to_string(),
-        cmd: Some(argv.join(" ")),
-        // The runner's path, said as such. A local-looking path here would be
-        // a directory somebody could try to `cd` into.
-        cwd: Some(crate::redact::sanitize_display(&format!(
-            "{} (on {})",
-            result.cwd,
-            m.runner.as_deref().unwrap_or("runner")
-        ))),
-        exit_code: result.exit_code,
-        timed_out: result.timed_out,
-        wall_ms: Some(result.wall_ms),
-        cpu_ms: Some(result.cpu_ms),
-        max_rss_kb: result.max_rss_kb.and_then(|kb| u64::try_from(kb).ok()),
-        // Absent, not the base tree. This field means "the HEAD tree the run
-        // was taken against", and every local producer supplies the live one.
-        // Supplying the tree the box was *built* from would make every receipt
-        // from a runner box carry one identical value. Indistinguishable, to a
-        // reader or a later tool, from a box where nothing ever changed. The
-        // real answer is not knowable from here until an export brings it back,
-        // and `None` is what the other producers that cannot know it already
-        // use.
-        git_tree: None,
-        files: Vec::new(),
-        egress: result.egress.clone(),
-        browser: None,
-        share: None,
-        // Absent for the same reason `effective_digest` is: the
-        // runtime-detection lane watches processes on *this* kernel, and the
-        // run happened on another machine's. A block here would be a
-        // measurement of the wrong host, and an empty one would read as a
-        // quiet box. Extending the runner protocol to carry the far side's
-        // block is future work, and until it exists the honest answer is to
-        // say nothing rather than to say nothing happened.
-        runtime: None,
-    };
-    let captured = crate::receipt::append(&env_dir_path, input, &raw)?;
-    m.captures.push(captured.id.clone());
-
-    set_status(
-        repo,
-        h5i_root,
-        m,
-        ST_IDLE,
-        "run",
-        Some(crate::redact::sanitize_display(&argv.join(" "))),
-        Some(captured.id.clone()),
-    )?;
-
-    Ok(RunOutcome {
-        capture_id: captured.id.clone(),
-        exit_code: result.exit_code,
-        timed_out: result.timed_out,
-        wall_ms: result.wall_ms as u128,
-        cpu_ms: result.cpu_ms as u128,
-        max_rss_kb: result.max_rss_kb,
-        receipt: captured,
-    })
-}
-
 /// [`run`], plus one *writable* cache bind.
 ///
 /// The only caller is `h5i box cache refresh`, which runs an ecosystem's fetch
@@ -5177,19 +4823,7 @@ fn run_inner(
     }
     let work = m.work_dir(h5i_root);
     if !work.is_dir() {
-        // A runner box reaching this function means the caller did not route it
-        // to `run_remote`, which is a bug here rather than a limitation to
-        // explain away, so it says so, instead of blaming the box.
-        return Err(if is_remote(m) {
-            H5iError::Metadata(format!(
-                "{}: this box runs on `{}` and was not routed to its runner — \
-                 use `h5i box run`, which does",
-                m.id,
-                m.runner.as_deref().unwrap_or("a runner")
-            ))
-        } else {
-            no_workspace_err(m, "env run")
-        });
+        return Err(no_workspace_err(m, "env run"));
     }
 
     // Serialize concurrent runs of THIS env (status + captures are mutated
@@ -5291,31 +4925,7 @@ fn run_inner(
         Some("running".into()),
         None,
     )?;
-    // The kernel-observed lane, started BEFORE the payload is spawned so the
-    // payload's own `execve` is the first thing it sees (design-detect.md D6).
-    // A refusal here is fatal only when the profile said `require = true`.
-    let watch = match start_watch(&policy, h5i_root, &work) {
-        Ok(w) => w,
-        Err(e) => {
-            let _ = protected_hook_configs.finish();
-            set_status(
-                repo,
-                h5i_root,
-                m,
-                ST_IDLE,
-                "status",
-                Some("idle (refused: unwatched)".into()),
-                None,
-            )?;
-            return Err(e);
-        }
-    };
     let result = sandbox::run_with_env(&policy, &work, argv, &injected_env);
-    // Stopped before anything else touches the box, so the block describes the
-    // command and not the bookkeeping that follows it. The browser drain
-    // below runs `sandbox::run_with_env` again, and its syscalls are h5i's
-    // work, not the box's.
-    let runtime_evidence = finish_watch(watch);
     // Whatever happened, leave the running state before propagating errors.
     let outcome = match result {
         Ok(o) => o,
@@ -5431,18 +5041,10 @@ fn run_inner(
         // for workspace/process. Host observed: the box never supplies this.
         egress: outcome.egress.clone(),
         browser: browser_evidence,
-        // Not a share. That lane is written by `h5i-share`, which sits above
-        // this crate.
-        share: None,
-        // Kernel observed. Absent when the profile did not ask to be watched;
-        // present with its reason when it asked and the probe could not
-        // attach, because a missing block and a quiet box must never look the
-        // same.
-        runtime: runtime_evidence,
     };
     // The brokered values reach every field the pattern scan reaches, not just
     // the payload the caller scrubbed above: `cmd` is the argv the host shell
-    // expanded, and the kernel-observed exemplars are box-chosen command lines.
+    // expanded.
     let captured = crate::receipt::append_with_secrets(
         &env_dir(h5i_root, &m.agent, &m.slug),
         input,
@@ -5552,15 +5154,7 @@ pub fn shell(
     }
     let work = m.work_dir(h5i_root);
     if !work.is_dir() {
-        return Err(if is_remote(m) {
-            // Truer than "no local workspace": the box exists and is healthy,
-            // it is simply on a machine this milestone cannot run commands on
-            // yet. A message about a missing directory would send someone
-            // looking for a bug that is not there.
-            remote_unsupported_err(m, "env shell")
-        } else {
-            no_workspace_err(m, "env shell")
-        });
+        return Err(no_workspace_err(m, "env shell"));
     }
 
     // An observer takes the shared observer-presence lock (many coexist, and it
@@ -5774,28 +5368,6 @@ pub fn shell(
     // No managed-settings injection: the in-box hook it carried rewrote agent
     // commands into `h5i capture run`, which no longer exists. The container
     // tee shim is the observation floor, and it needs no agent cooperation.
-    // Same lane, same ordering, for the interactive path. An interactive
-    // session is where an agent does the most unobserved work, the tee shim
-    // only sees commands a cooperating shell reported, so this is where a
-    // kernel-observed second opinion is worth the most.
-    let watch = match start_watch(&policy, h5i_root, &work) {
-        Ok(w) => w,
-        Err(e) => {
-            let _ = protected_hook_configs.finish();
-            if !readonly {
-                set_status(
-                    repo,
-                    h5i_root,
-                    m,
-                    ST_IDLE,
-                    "status",
-                    Some("idle (refused: unwatched)".into()),
-                    None,
-                )?;
-            }
-            return Err(e);
-        }
-    };
     let session = match sandbox::run_interactive(&policy, &work, &argv, &injected_env, None) {
         Ok(outcome) => outcome,
         Err(e) => {
@@ -5814,7 +5386,6 @@ pub fn shell(
             return Err(e);
         }
     };
-    let runtime_evidence = finish_watch(watch);
     let exit_code = session.exit_code;
     if let Err(e) = protected_hook_configs.finish() {
         if !readonly {
@@ -5901,23 +5472,6 @@ pub fn shell(
         .map(|eg| format!(" egress={}ok/{}denied", eg.allowed, eg.denied))
         .unwrap_or_default();
 
-    // What the kernel saw during the session, as its own record. A session is
-    // one shell and many commands, so the block is a summary of the whole
-    // session rather than of any one of them, which is exactly what makes it
-    // useful next to the tee shim's per-command records, and exactly why it is
-    // a separate record instead of being folded into one of theirs.
-    let runtime_note = match runtime_evidence {
-        Some(ev) => {
-            let note = format!(" runtime={}", ev.summary());
-            match capture_shell_runtime(h5i_root, m, &work, ev, exit_code, &brokered.redactions) {
-                Ok(id) => m.captures.push(id),
-                Err(e) => eprintln!("warning: shell runtime capture failed: {e}"),
-            }
-            note
-        }
-        None => String::new(),
-    };
-
     let safe_cmd = crate::secrets::redact_text(&argv.join(" "));
     let observed_note = if observed > 0 {
         format!(" observed={observed}")
@@ -5931,7 +5485,7 @@ pub fn shell(
         ST_IDLE,
         "shell",
         Some(format!(
-            "interactive cmd=`{safe_cmd}` exit={exit_code}{observed_note}{egress_note}{runtime_note}"
+            "interactive cmd=`{safe_cmd}` exit={exit_code}{observed_note}{egress_note}"
         )),
         egress_capture,
     )?;
@@ -5963,175 +5517,6 @@ pub fn shell(
         )?;
     }
     Ok(exit_code)
-}
-
-// ─── runtime detection: the kernel-observed lane (design-detect.md D1–D14) ──
-
-/// Build the collector's configuration from a resolved policy, or `None` when
-/// the profile did not ask to be watched.
-///
-/// Everything the rules need is derived from the policy that is actually in
-/// force, never from a global idea of what is suspicious: a box that was
-/// *granted* `unix_sockets` is not reported for using them, and a box with an
-/// unrestricted network is not reported for using it.
-fn detect_config(
-    policy: &crate::sandbox_policy::ResolvedPolicy,
-    h5i_root: &Path,
-    work: &Path,
-) -> Option<h5i_bpf::DetectConfig> {
-    let d = &policy.profile.detect;
-    if !d.enabled {
-        return None;
-    }
-    // `NetMode` is `deny|host`; the third state a rule cares about, "there is
-    // an allowlist", is the profile declaring egress hosts, which is what
-    // puts a CONNECT proxy in front of the box.
-    let net_mode = if policy.profile.scopes_egress() {
-        "proxy"
-    } else {
-        match policy.profile.net_mode {
-            crate::sandbox_policy::NetMode::Deny => "deny",
-            crate::sandbox_policy::NetMode::Host => "allow",
-        }
-    };
-    // The box's home, which on every kernel tier is this user's: `HOME` is in
-    // the default `env.pass` and no tier below `container` gives the box one of
-    // its own. Empty when unset, and `kernel_prefixes` then contributes no
-    // home-relative prefixes rather than watching `/.ssh`, which is a real path
-    // and not the one anybody meant.
-    let home = std::env::var("HOME").unwrap_or_default();
-    let control_dir = h5i_root.display().to_string();
-
-    let mut cfg = h5i_bpf::DetectConfig {
-        tier: h5i_bpf::Tier::parse(policy.claim.as_str()),
-        buffer_kb: d.buffer_kb,
-        rules: d.rules.clone(),
-        context: h5i_bpf::RuleContext {
-            net_mode: net_mode.to_string(),
-            unix_sockets: policy.profile.unix_sockets,
-            workspace: work.display().to_string(),
-            home: home.clone(),
-            control_dir: control_dir.clone(),
-            // The addresses a proxied box is *supposed* to dial. Loopback is
-            // already exempt in the rule itself, and every proxy h5i runs binds
-            // loopback, so this stays empty on the tiers this lane covers
-            // fully. It exists for the container tier, whose proxy is reached
-            // at a gateway address, and that tier is `partial` for other
-            // reasons anyway.
-            proxy_peers: Vec::new(),
-            enabled: Default::default(),
-        },
-        prefixes: h5i_bpf::kernel_prefixes(&home, &control_dir),
-        open_all: false,
-    };
-    // Resolve here as well as inside `Watch::start`, so `context.enabled` is
-    // populated for callers that inspect the config (and so `want_dotenv` is
-    // answered from the resolved set rather than the selector strings).
-    let _ = cfg.resolve();
-    Some(cfg)
-}
-
-/// Start watching a run.
-///
-/// `Ok(None)` means the profile did not ask. `Err` means it asked with
-/// `require = true` and the probe could not attach. The run is refused rather
-/// than performed unwatched, which is the whole point of that switch.
-fn start_watch(
-    policy: &crate::sandbox_policy::ResolvedPolicy,
-    h5i_root: &Path,
-    work: &Path,
-) -> Result<Option<h5i_bpf::Watch>, H5iError> {
-    let Some(cfg) = detect_config(policy, h5i_root, work) else {
-        return Ok(None);
-    };
-    let watch = h5i_bpf::Watch::start(cfg);
-    if !watch.is_live() {
-        let why = watch.refusal().unwrap_or("no reason given").to_string();
-        if policy.profile.detect.require {
-            return Err(H5iError::Metadata(format!(
-                "this box's profile sets `[detect] require = true`, and the runtime-detection \
-                 probe could not attach: {why}\n           \
-                 Fix the cause above, or set `require = false` in `[profile.{}.detect]` to run \
-                 unwatched (the receipt will say so).",
-                policy.profile.name
-            )));
-        }
-        // Not fatal, and not silent either: the block that reaches the receipt
-        // carries this same reason, so the run is recorded as unwatched rather
-        // than as quiet.
-        eprintln!("note: runtime detection unavailable — {why}");
-    }
-    Ok(Some(watch))
-}
-
-/// Stop watching. `None` when nothing was.
-fn finish_watch(watch: Option<h5i_bpf::Watch>) -> Option<h5i_bpf::RuntimeEvidence> {
-    watch.map(|w| w.finish())
-}
-
-/// Persist what the kernel-observed lane saw during an interactive session.
-///
-/// Its own record rather than a field on somebody else's, because the thing it
-/// describes is the *session*: a shell runs many commands, the tee shim writes
-/// one record per command it managed to see, and this is the one observer that
-/// covers the gaps between them. Written even when nothing fired. A watched
-/// session with no detections is a result, and it is a different result from a
-/// session nobody watched.
-fn capture_shell_runtime(
-    h5i_root: &Path,
-    m: &EnvManifest,
-    work: &Path,
-    runtime: h5i_bpf::RuntimeEvidence,
-    exit_code: i32,
-    secrets: &[String],
-) -> Result<String, H5iError> {
-    let mut raw = format!("runtime detection ({}): {}\n", runtime.lane, runtime.summary());
-    raw.push_str(&format!(
-        "scope={} coverage={} seen={} lost={} filtered={}\n",
-        runtime.scope,
-        runtime.coverage.as_str(),
-        runtime.events_seen,
-        runtime.events_lost,
-        runtime.events_filtered
-    ));
-    if let Some(why) = &runtime.coverage_reason {
-        raw.push_str(&format!("note: {why}\n"));
-    }
-    for d in &runtime.detections {
-        raw.push_str(&format!(
-            "\n[{}] {} — {} ({} match{})\n",
-            d.severity.as_str(),
-            d.rule,
-            d.title,
-            d.count,
-            if d.count == 1 { "" } else { "es" }
-        ));
-        for ex in &d.examples {
-            raw.push_str(&format!("    {ex}\n"));
-        }
-        if d.examples_truncated {
-            raw.push_str("    …\n");
-        }
-    }
-    let input = crate::receipt::RecordInput {
-        env_id: m.id.clone(),
-        policy_digest: Some(m.policy_digest.clone()),
-        effective_digest: effective_digest_of(&m.dir(h5i_root)),
-        fs_overlap: fs_overlap_with_boxes(h5i_root, m),
-        source: "host-env-shell".into(),
-        cmd: Some(format!("env shell {}", m.id)),
-        cwd: Some(work.display().to_string()),
-        exit_code: Some(exit_code),
-        runtime: Some(runtime),
-        ..Default::default()
-    };
-    Ok(crate::receipt::append_with_secrets(
-        &env_dir(h5i_root, &m.agent, &m.slug),
-        input,
-        raw.as_bytes(),
-        secrets,
-    )?
-    .id)
 }
 
 /// Persist an interactive session's egress tally as an env-tagged capture. The
@@ -6808,29 +6193,8 @@ pub fn diff_from(
         render(diff)
     } else {
         // Remote/no-worktree: diff base_tree → env branch tip (the committed,
-        // proposed state) using the shared object store. A remote box's branch
-        // exists from creation and points at the base until a
-    // propose advances it. Diffing base against base renders an empty patch and
-    // exits zero. "This box changed nothing" for a box that may have rewritten
-    // its whole tree on the runner. An empty answer that looks like a fact is
-    // worse than a refusal.
-    if is_remote(m) {
-        let tip = repo
-            .find_reference(&m.branch)
-            .and_then(|r| r.peel_to_commit())
-            .map(|c| c.tree_id().to_string())
-            .unwrap_or_default();
-        if tip == m.base_tree {
-            return Err(H5iError::Metadata(format!(
-                "{}: this box runs on `{}` and its work has not been brought home yet, so \
-                 there is nothing here to diff. `h5i box propose {}` fetches it.",
-                m.id,
-                m.runner.as_deref().unwrap_or("a runner"),
-                m.slug
-            )));
-        }
-    }
-    // Whose repository holds the branch. A detached box (`h5i dev --new`) has
+        // proposed state) using the shared object store.
+        // Whose repository holds the branch. A detached box (`h5i dev --new`) has
         // its own, which is why the worktree path opens one; the host's repo
         // has no such ref, and asking it produced "run `h5i pull`" for a branch
         // that was never going to be there.
@@ -6938,29 +6302,7 @@ pub fn diffstat_report_from(
         let diff = wt_repo.diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))?;
         render(diff)
     } else {
-        // A remote box's branch exists from creation and points at the base
-        // until a
-    // propose advances it. Diffing base against base renders an empty patch and
-    // exits zero. "This box changed nothing" for a box that may have rewritten
-    // its whole tree on the runner. An empty answer that looks like a fact is
-    // worse than a refusal.
-    if is_remote(m) {
-        let tip = repo
-            .find_reference(&m.branch)
-            .and_then(|r| r.peel_to_commit())
-            .map(|c| c.tree_id().to_string())
-            .unwrap_or_default();
-        if tip == m.base_tree {
-            return Err(H5iError::Metadata(format!(
-                "{}: this box runs on `{}` and its work has not been brought home yet, so \
-                 there is nothing here to diff. `h5i box propose {}` fetches it.",
-                m.id,
-                m.runner.as_deref().unwrap_or("a runner"),
-                m.slug
-            )));
-        }
-    }
-    // Whose repository holds the branch. A detached box (`h5i dev --new`) has
+        // Whose repository holds the branch. A detached box (`h5i dev --new`) has
         // its own, which is why the worktree path opens one; the host's repo
         // has no such ref, and asking it produced "run `h5i pull`" for a branch
         // that was never going to be there.
@@ -7091,17 +6433,6 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
     // cleaned here for exactly that reason, and its neighbours were not.
     use crate::redact::sanitize_display as clean;
     let mut out = String::new();
-    // Said first, because everything below it is about a machine that is not
-    // this one. `box create` deliberately suppresses the work path for a runner
-    // box so nobody tries to `cd` into a directory that was never made; this is
-    // the command those users are pointed at, and it used to print local paths,
-    // local grants and local limits without ever mentioning the runner.
-    if let (Some(runner), Some(id)) = (&m.runner, &m.runner_id) {
-        out.push_str(&format!("  runs on  : {} ({})\n", clean(runner), short(id, 12)));
-        out.push_str(
-            "             the workspace and the confinement below are enforced there,              not here\n",
-        );
-    }
     out.push_str(&format!("── {} ──\n", clean(&m.id)));
     // Reconcile the durable status against the live registry: a `running`
     // manifest with no live writer is a crash leftover, and saying so beats
@@ -7205,44 +6536,6 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
         }
         if !p.tools.is_empty() {
             out.push_str(&format!("  tools    : {}\n", p.tools.join(", ")));
-        }
-        // The runtime-detection lane, and, the part that matters, whether
-        // this host can actually deliver it. A profile that says
-        // `enabled = true` on a machine with no `CAP_BPF` is watching nothing,
-        // and a status page that printed only the profile's intent would be
-        // the exact "reads like enforcement, enforces nothing" failure this
-        // product keeps finding in itself.
-        if p.detect.enabled {
-            let caps = crate::bpf::probe_host();
-            out.push_str(&format!(
-                "  detect   : rules={} buffer={}KiB{}\n",
-                p.detect.rules.join(","),
-                p.detect.buffer_kb,
-                if p.detect.require {
-                    " require=true"
-                } else {
-                    ""
-                }
-            ));
-            match caps.unavailable_reason() {
-                None => {
-                    let (cov, why) = crate::bpf::Tier::parse(policy.claim.as_str()).coverage();
-                    out.push_str(&format!(
-                        "             kernel-observed, coverage={} on the {} tier{}\n",
-                        cov.as_str(),
-                        policy.claim.as_str(),
-                        why.map(|w| format!(" — {w}")).unwrap_or_default()
-                    ));
-                }
-                Some(why) => out.push_str(&format!(
-                    "             NOT watching on this host — {}{}\n",
-                    clean(&why),
-                    caps.fix
-                        .as_deref()
-                        .map(|f| format!("\n             fix: {f}"))
-                        .unwrap_or_default()
-                )),
-            }
         }
         // Named, not implied: these are held out of `diff`, `propose` and the
         // exported patch, and a reviewer should see that from the status page
@@ -7369,27 +6662,6 @@ pub fn doctor(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> DoctorRepo
     }
 
     // 2. Enforcement readiness: can the host actually run this claim?
-    //
-    // For a runner box the honest answer is that this machine is not the one
-    // confining it, and probing here would answer about the wrong kernel. The
-    // dangerous direction is the green one: a remote `supervised` box inspected
-    // from a host that also does `supervised` would report "functionally
-    // runnable here" and `healthy: true`: a false assurance produced by
-    // measuring somebody else's machine. `h5i runner probe` is the question
-    // that has an answer.
-    if is_remote(m) {
-        chk!(
-            "enforcement",
-            true,
-            true,
-            format!(
-                "this box is confined on `{}`, not here — `h5i runner probe {}` asks the \
-                 machine that is doing it",
-                m.runner.as_deref().unwrap_or("a runner"),
-                m.runner.as_deref().unwrap_or("<name>")
-            )
-        );
-    } else {
     match IsolationClaim::parse(&m.isolation_claim) {
         Ok(claim) => {
             let caps = sandbox::probe_host();
@@ -7464,24 +6736,10 @@ pub fn doctor(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> DoctorRepo
             format!("unknown isolation claim: {e}")
         ),
     }
-    }
 
     // 3. Workspace: present for live envs, advisory-absent for pulled/gc'd ones.
     if has_workspace(m, h5i_root) {
         chk!("workspace", true, false, "git worktree present".into());
-    } else if is_remote(m) {
-        // Neither pulled nor gc'd: this box's workspace is on another machine
-        // and was never meant to be here.
-        chk!(
-            "workspace",
-            true,
-            true,
-            format!(
-                "the workspace is on `{}` — `h5i box propose {}` brings the work home",
-                m.runner.as_deref().unwrap_or("a runner"),
-                m.slug
-            )
-        );
     } else {
         chk!(
             "workspace",
@@ -7735,7 +6993,7 @@ pub fn proc_start_ticks(_pid: u32) -> Option<u64> {
 /// `true` when the recorded start time matches the pid's, and `true` when
 /// there is nothing to compare. An older record, or a platform with no
 /// `/proc`. Callers that cannot tolerate the unverifiable case check
-/// `started_ticks.is_some()` themselves; `h5i box share` does.
+/// `started_ticks.is_some()` themselves; `view::session_pid_verified` does.
 pub fn live_identity_holds(rec: &LiveSession) -> bool {
     match (rec.started_ticks, proc_start_ticks(rec.pid)) {
         (Some(recorded), Some(now)) => recorded == now,
@@ -7768,8 +7026,7 @@ impl LiveGuard {
             started_at: now_ts(),
             command,
             // Written so a later reader can tell this process from whatever
-            // inherits its pid after a crash. See the field's own comment for
-            // what that costs `h5i box share`.
+            // inherits its pid after a crash (`view::session_pid_verified`).
             started_ticks: proc_start_ticks(pid),
         };
         if let Ok(json) = serde_json::to_string(&rec) {
@@ -8568,7 +7825,7 @@ pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
         // In a guest the port is bound inside the box's own network stack, so
         // it is not a host URL. Saying so beats printing one that cannot work.
         let url = match &s.record.runtime {
-            ServiceRuntime::Guest { .. } => "in the box's network (see `box share`)".to_string(),
+            ServiceRuntime::Guest { .. } => "in the box's network".to_string(),
             ServiceRuntime::Host => format!("http://127.0.0.1:{port}"),
         };
         out.push_str(&format!(
@@ -8993,15 +8250,7 @@ pub fn mediated_commit(
 ) -> Result<Option<git2::Oid>, H5iError> {
     let work = m.work_dir(h5i_root);
     if !work.is_dir() {
-        return Err(if is_remote(m) {
-            // Truer than "no local workspace": the box exists and is healthy,
-            // it is simply on a machine this milestone cannot run commands on
-            // yet. A message about a missing directory would send someone
-            // looking for a bug that is not there.
-            remote_unsupported_err(m, "propose/rebase")
-        } else {
-            no_workspace_err(m, "propose/rebase")
-        });
+        return Err(no_workspace_err(m, "propose/rebase"));
     }
     let wt_repo = open_env_worktree(h5i_root, m)?;
     let canon_work = work
@@ -9390,99 +8639,6 @@ fn staged_path_violation(canon_work: &Path, rel: &Path, absent: Absent) -> Optio
 // ─── propose / apply / abort / gc (§9) ──────────────────────────────────────
 
 /// Mediated-commit the worktree, mark the env `proposed`, and return a review brief.
-pub fn propose_remote(
-    repo: &Repository,
-    h5i_root: &Path,
-    m: &mut EnvManifest,
-    runner: &dyn crate::placement::RemoteRunner,
-) -> Result<String, H5iError> {
-    // Unix only, like every other writer's hold in this file.
-    #[cfg(unix)]
-    let _lock = RunLock::acquire(&m.dir(h5i_root))?;
-    if !matches!(
-        m.status.as_str(),
-        ST_CREATED | ST_RUNNING | ST_IDLE | ST_PROPOSED
-    ) {
-        return Err(H5iError::Metadata(format!(
-            "{}: cannot propose from status '{}'",
-            m.id, m.status
-        )));
-    }
-
-    let scratch = tempfile::tempdir()
-        .map_err(|e| H5iError::Metadata(format!("could not stage the export: {e}")))?;
-    let bundle = scratch.path().join("export.bundle");
-    let box_id = crate::placement::remote_box_id(&m.id);
-    let described = runner.export(&box_id, &bundle)?;
-
-    let private = private_path_rels(h5i_root, m);
-    let accepted = crate::quarantine::import_tree(
-        repo,
-        &bundle,
-        &m.base_commit,
-        &described.tip_tree,
-        &private,
-    )?;
-
-    let (tree_oid, private_dropped) = match accepted {
-        crate::quarantine::Inspected::Refused { violations } => {
-            // Recorded the way a local mediated commit records one, so a
-            // refusal on a runner reads like a refusal anywhere else.
-            return Err(record_commit_violation(repo, m, violations));
-        }
-        crate::quarantine::Inspected::Accepted {
-            tree,
-            private_dropped,
-        } => (tree, private_dropped),
-    };
-
-    // The commit this side authors, over a tree a scan reached.
-    let parent = repo.find_reference(&m.branch)?.peel_to_commit()?;
-    let snapshot = if parent.tree_id() == tree_oid {
-        None
-    } else {
-        let tree = repo.find_tree(tree_oid)?;
-        let sig = crate::refstore::signature(repo)?;
-        Some(repo.commit(
-            Some(&m.branch),
-            &sig,
-            &sig,
-            &format!("h5i env: mediated commit ({})", m.id),
-            &tree,
-            &[&parent],
-        )?)
-    };
-
-    let stat = diff(repo, h5i_root, m, true).unwrap_or_default();
-    let detail = match &snapshot {
-        Some(oid) => format!("snapshot={oid} runner={}", m.runner.as_deref().unwrap_or("?")),
-        None => "no new changes (the box's tree matches the branch tip)".to_string(),
-    };
-    set_status(repo, h5i_root, m, ST_PROPOSED, "proposed", Some(detail), None)?;
-
-    let mut brief = String::new();
-    brief.push_str(&format!("{}: proposed\n", m.id));
-    brief.push_str(&format!(
-        "  runner   {}\n",
-        m.runner.as_deref().unwrap_or("?")
-    ));
-    brief.push_str(&format!("  base     {}\n", short(&m.base_commit, 12)));
-    brief.push_str(&format!("  branch   {}\n", m.branch));
-    if !private_dropped.is_empty() {
-        brief.push_str(&format!(
-            "  private  {} path(s) held back by policy\n",
-            private_dropped.len()
-        ));
-    }
-    if !described.has_changes {
-        brief.push_str("  note     the box's tree is identical to its base\n");
-    }
-    if !stat.trim().is_empty() {
-        brief.push_str(&stat);
-    }
-    Ok(brief)
-}
-
 pub fn propose(
     repo: &Repository,
     h5i_root: &Path,
@@ -9589,48 +8745,6 @@ fn conflict_runbook(m: &EnvManifest) -> String {
     )
 }
 
-/// Refuse a lifecycle operation on a box somebody is connected to.
-fn hold_gate_unless_shared(
-    h5i_root: &Path,
-    m: &EnvManifest,
-    verb: &str,
-) -> Result<crate::share_record::ShareGate, H5iError> {
-    let gate = crate::share_record::share_gate(&m.dir(h5i_root))?;
-    refuse_if_shared(h5i_root, m, verb)?;
-    Ok(gate)
-}
-
-fn refuse_if_shared(h5i_root: &Path, m: &EnvManifest, verb: &str) -> Result<(), H5iError> {
-    let Some(s) = crate::share_record::read_live(&m.dir(h5i_root)) else {
-        return Ok(());
-    };
-    // Any live share process, not only one that could admit somebody new.
-    if s.winding_up {
-        return Err(H5iError::Metadata(format!(
-            "{} is being shared by pid {} and that share is already shutting down — it will be \
-             gone in a moment. Run `h5i box {verb} {}` again then.",
-            m.id, s.pid, m.slug
-        )));
-    }
-    if s.starting {
-        return Err(H5iError::Metadata(format!(
-            "{} is about to be shared: pid {} has claimed it and is setting up its transport. \
-             `{verb}` now would change the box out from under whoever is sent the invite. \
-             Wait for it, or stop it: `h5i box share stop {}`.",
-            m.id, s.pid, m.slug
-        )));
-    }
-    // Naming `--force` as well, because the two verbs read the file with different rules: this
-    // one goes through `share_record`, which requires every field it knows about, and `share
-    // stop` goes through `h5i-share`.
-    Err(H5iError::Metadata(format!(
-        "{} is being shared right now by pid {} — somebody outside may be connected to it, and \
-         `{verb}` would change the box under them. Stop the share first: \
-         `h5i box share stop {}` (or `--force` on that, if nothing really is).",
-        m.id, s.pid, m.slug
-    )))
-}
-
 /// Apply a proposed env onto its parent branch. Explicit, reviewer-driven:
 /// requires the parent branch checked out and a clean tracked working tree.
 /// `--patch` squashes the env's diff into one commit; the default `--merge`
@@ -9646,7 +8760,6 @@ pub fn apply(
     }
     // Serialize the PROPOSED→APPLIED transition against any concurrent run or shell on the same
     // env.
-    let _share_gate = hold_gate_unless_shared(h5i_root, m, "apply")?;
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     if m.status != ST_PROPOSED {
@@ -9824,10 +8937,7 @@ pub fn rebase(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result
     }
     // Rebase force-checks-out the worktree and re-pins the base in the
     // manifest; serialize against a concurrent `env run`/`shell` exactly like
-    // propose. Held for the whole operation, not checked and let go: see
-    // `hold_gate_unless_shared`. A share cannot claim this box while this guard
-    // is alive, so "no share when we looked" stays true while we act.
-    let _share_gate = hold_gate_unless_shared(h5i_root, m, "rebase")?;
+    // propose.
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     match m.status.as_str() {
@@ -9950,10 +9060,7 @@ pub fn abort(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result<
     // Mutates the manifest status; serialize against a concurrent run/shell so
     // a run's terminal IDLE write can't clobber the ABORTED set here (a live
     // run holds the lock → abort waits/fails "busy" until it ends or is
-    // killed). Held for the whole operation, not checked and let go: see
-    // `hold_gate_unless_shared`. A share cannot claim this box while this guard
-    // is alive, so "no share when we looked" stays true while we act.
-    let _share_gate = hold_gate_unless_shared(h5i_root, m, "abort")?;
+    // killed).
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     if m.status == ST_APPLIED {
@@ -10013,13 +9120,6 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
         if m.status != ST_APPLIED && m.status != ST_ABORTED {
             continue;
         }
-        // A runner box has no work dir here and is not therefore reclaimable
-        // *locally*; skipping it silently meant `box gc` never mentioned the
-        // one kind of box that is still consuming something. The remote half is
-        // `h5i runner gc`, and saying so beats saying nothing.
-        if is_remote(&m) {
-            continue;
-        }
         if !m.work_dir(h5i_root).exists() {
             continue;
         }
@@ -10037,14 +9137,6 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
             Ok(g) => g,
             Err(_) => continue,
         };
-        // Skipped rather than refused, because this is a bulk sweep: one box
-        // being shared is no reason to stop reclaiming the others. Same shape
-        // as the observer case above. A share of an already-applied or aborted
-        // box is unusual, and pruning its worktree out from under a visitor is
-        // not something to do quietly.
-        if crate::share_record::read_live(&m.dir(h5i_root)).is_some() {
-            continue;
-        }
         // A failed prune leaves this env for a later sweep rather than aborting
         // the whole gc; skip it and keep going.
         if prune_workspace(repo, h5i_root, &m).is_err() {
@@ -10075,20 +9167,6 @@ pub fn rm(
     m: &EnvManifest,
     force: bool,
 ) -> Result<(), H5iError> {
-    // Checked *before* the status guard below.
-    let _share_gate = crate::share_record::share_gate(&m.dir(h5i_root))?;
-    let shared = crate::share_record::read_live(&m.dir(h5i_root));
-    if let Some(s) = &shared
-        && !force
-    {
-        return Err(H5iError::Metadata(format!(
-            "{} is being shared right now by pid {} — somebody outside may be connected \
-             to it. Stop the share first (`h5i box share stop {}`), or pass --force to \
-             remove the box anyway.",
-            m.id, s.pid, m.slug
-        )));
-    }
-
     let live = matches!(
         m.status.as_str(),
         ST_CREATED | ST_RUNNING | ST_IDLE | ST_PROPOSED
@@ -10113,19 +9191,6 @@ pub fn rm(
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     #[cfg(unix)]
     let _teardown = RunLock::acquire_teardown(&m.dir(h5i_root))?;
-
-    // Said here, not beside the check above. Up there it printed and *then*
-    // `rm` failed on a busy lock, so the operator was told a share would end
-    // itself in a few seconds while nothing had been removed and the share was
-    // still serving, and a shared box normally does have a live session, so
-    // that was the ordinary case rather than a corner.
-    if let Some(s) = &shared {
-        eprintln!(
-            "box rm: {} was being shared by pid {}; that share will notice within a few \
-             seconds and end itself.",
-            m.id, s.pid
-        );
-    }
 
     // 1. Reclaim the workspace. Must precede the branch delete: git refuses to
     //    delete a branch still checked out in a registered worktree.
@@ -10191,501 +9256,6 @@ pub fn rm(
 #[cfg(test)]
 mod tests {
 
-    // ─── placement (design-runner.md R7) ───────────────────────────────────
-
-    /// A repository with one commit, for the remote-create tests.
-    fn placement_repo() -> (tempfile::TempDir, git2::Repository) {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let repo = git2::Repository::init(dir.path()).expect("init");
-        {
-            let mut cfg = repo.config().expect("config");
-            cfg.set_str("user.name", "Test").unwrap();
-            cfg.set_str("user.email", "t@example.com").unwrap();
-        }
-        std::fs::write(dir.path().join("a.txt"), b"one").unwrap();
-        {
-            // Scoped so the tree and signature are dropped before `repo` moves.
-            let mut index = repo.index().unwrap();
-            index.add_path(std::path::Path::new("a.txt")).unwrap();
-            index.write().unwrap();
-            let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
-            let sig = repo.signature().unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "one", &tree, &[])
-                .unwrap();
-        }
-        (dir, repo)
-    }
-
-    #[test]
-    fn a_runner_box_records_the_machine_and_grows_no_worktree() {
-        // The remote path is the local one up to where a worktree would appear:
-        // the base is pinned, the branch exists, the policy is resolved and
-        // digested, and then the box is somewhere else.
-        let (dir, repo) = placement_repo();
-        let h5i_root = dir.path().join(".h5i");
-        let fake = crate::placement::fake::FakeRunner::new("pi5");
-
-        let m = create_with_remote(
-            &repo,
-            &h5i_root,
-            dir.path(),
-            "human",
-            "remote-demo",
-            CreateOpts {
-                runner: Some("pi5".into()),
-                ..Default::default()
-            },
-            Some(&fake),
-        )
-        .expect("create on a runner");
-
-        assert_eq!(m.runner.as_deref(), Some("pi5"));
-        assert_eq!(
-            m.runner_id.as_deref(),
-            Some(fake.runner_id.as_str()),
-            "the manifest pins the machine, not the label"
-        );
-        assert_eq!(m.backend, "runner", "its workspace is not a worktree here");
-        assert!(is_remote(&m));
-
-        // The branch exists on this side. The base is pinned here even though
-        // the execution is not.
-        assert!(repo.find_reference(&m.branch).is_ok());
-        assert!(!m.base_commit.is_empty());
-
-        // And no worktree was made.
-        assert!(
-            !m.work_dir(&h5i_root).exists(),
-            "a runner box has no worktree on this machine"
-        );
-        let asked = fake.created.lock().unwrap();
-        assert_eq!(asked.len(), 1);
-        assert!(asked[0].0.starts_with("env-human-remote-demo-"));
-    }
-
-    #[test]
-    fn a_local_box_still_records_no_runner() {
-        // The field is absent rather than empty for every box that was already
-        // possible, so existing manifests and existing JSON are unchanged.
-        let (dir, repo) = placement_repo();
-        let h5i_root = dir.path().join(".h5i");
-        let m = create(
-            &repo,
-            &h5i_root,
-            dir.path(),
-            "human",
-            "local-demo",
-            CreateOpts::default(),
-        )
-        .expect("create");
-
-        assert!(m.runner_id.is_none());
-        assert!(m.runner.is_none());
-        assert!(!is_remote(&m));
-        assert_eq!(m.backend, "worktree");
-
-        let json = serde_json::to_value(&m).unwrap();
-        assert!(
-            json.get("runner_id").is_none(),
-            "an absent placement must not appear in the JSON contract"
-        );
-    }
-
-    #[test]
-    fn a_runner_that_enforced_another_policy_is_refused_and_records_nothing() {
-        // The check that turns "the runner silently enforced an older policy"
-        // into a detected fault (R7 step 4).
-        let (dir, repo) = placement_repo();
-        let h5i_root = dir.path().join(".h5i");
-        let mut fake = crate::placement::fake::FakeRunner::new("pi5");
-        fake.lie_with_digest = Some("f".repeat(64));
-
-        let err = create_with_remote(
-            &repo,
-            &h5i_root,
-            dir.path(),
-            "human",
-            "liar",
-            CreateOpts {
-                runner: Some("pi5".into()),
-                ..Default::default()
-            },
-            Some(&fake),
-        )
-        .expect_err("a different policy must not be accepted");
-        assert!(
-            format!("{err}").contains("different policy"),
-            "the refusal says why: {err}"
-        );
-
-        // And the box is not recorded, so nothing points at a machine holding
-        // something we refused.
-        assert!(find(&h5i_root, "liar").is_err());
-    }
-
-    #[test]
-    fn a_runner_that_fails_leaves_no_branch_or_manifest_behind() {
-        let (dir, repo) = placement_repo();
-        let h5i_root = dir.path().join(".h5i");
-        let mut fake = crate::placement::fake::FakeRunner::new("pi5");
-        fake.fail_with = Some("the runner is on fire".into());
-
-        let err = create_with_remote(
-            &repo,
-            &h5i_root,
-            dir.path(),
-            "human",
-            "doomed",
-            CreateOpts {
-                runner: Some("pi5".into()),
-                ..Default::default()
-            },
-            Some(&fake),
-        )
-        .expect_err("the create failed");
-        assert!(format!("{err}").contains("on fire"));
-
-        assert!(find(&h5i_root, "doomed").is_err(), "no manifest");
-        assert!(
-            repo.find_branch("h5i/human/doomed", git2::BranchType::Local)
-                .is_err(),
-            "and the rollback took the branch with it"
-        );
-    }
-
-    #[test]
-    fn a_profile_needing_credentials_cannot_be_placed_on_a_runner() {
-        // R12's refusal, which was written down and not implemented. Secret
-        // values never cross, a grant carries a name and a source descriptor,
-        // but the runner would resolve those descriptors against *its* own
-        // environment, handing the box the runner's credential or none at all
-        // while its policy says otherwise. Both are the silent weakening R1
-        // forbids.
-        let (dir, repo) = placement_repo();
-        let h5i_root = dir.path().join(".h5i");
-        let fake = crate::placement::fake::FakeRunner::new("pi5");
-
-        // A repo policy that asks for a secret.
-        let policy_dir = dir.path().join(".h5i");
-        std::fs::create_dir_all(&policy_dir).unwrap();
-        std::fs::write(
-            policy_dir.join("env.toml"),
-            "[profile.needy]\nisolation = \"workspace\"\nsecrets = [\"API_KEY\"]\n",
-        )
-        .unwrap();
-
-        let err = create_with_remote(
-            &repo,
-            &h5i_root,
-            dir.path(),
-            "human",
-            "needy-box",
-            CreateOpts {
-                runner: Some("pi5".into()),
-                profile: Some("needy".into()),
-                ..Default::default()
-            },
-            Some(&fake),
-        )
-        .expect_err("a profile needing credentials must not be placed on a runner");
-        let text = format!("{err}");
-        assert!(text.contains("secrets"), "names what it needs: {text}");
-        assert!(
-            text.contains("will not send credentials to another machine"),
-            "and why: {text}"
-        );
-        assert!(
-            fake.created.lock().unwrap().is_empty(),
-            "and the runner was never asked"
-        );
-    }
-
-    #[test]
-    fn a_detached_source_cannot_be_placed_on_a_runner_yet() {
-        // Refused up front rather than part-way through: a clone or a new box
-        // builds its repository inside the box, and sending one across is the
-        // export milestone's problem.
-        let (dir, repo) = placement_repo();
-        let h5i_root = dir.path().join(".h5i");
-        let fake = crate::placement::fake::FakeRunner::new("pi5");
-
-        let err = create_with_remote(
-            &repo,
-            &h5i_root,
-            dir.path(),
-            "human",
-            "detached",
-            CreateOpts {
-                runner: Some("pi5".into()),
-                source: BoxSource::New,
-                ..Default::default()
-            },
-            Some(&fake),
-        )
-        .expect_err("detached sources are not placeable yet");
-        assert!(format!("{err}").contains("later milestone"), "{err}");
-        assert!(
-            fake.created.lock().unwrap().is_empty(),
-            "and the runner was never asked"
-        );
-    }
-
-    #[test]
-    fn operations_that_need_a_workspace_say_the_box_is_elsewhere() {
-        // A message about a missing directory would send someone looking for a
-        // bug that is not there.
-        let (dir, repo) = placement_repo();
-        let h5i_root = dir.path().join(".h5i");
-        let fake = crate::placement::fake::FakeRunner::new("pi5");
-        let m = create_with_remote(
-            &repo,
-            &h5i_root,
-            dir.path(),
-            "human",
-            "elsewhere",
-            CreateOpts {
-                runner: Some("pi5".into()),
-                ..Default::default()
-            },
-            Some(&fake),
-        )
-        .expect("create");
-
-        let err = remote_unsupported_err(&m, "box shell");
-        let text = format!("{err}");
-        assert!(text.contains("pi5"), "names the machine: {text}");
-        assert!(text.contains("next milestone"), "and what is missing");
-        assert!(!text.contains("no local workspace"), "not the other message");
-    }
-
-    #[test]
-    fn a_pulled_manifest_naming_an_impossible_runner_is_refused() {
-        // A manifest can arrive from another clone through `refs/h5i/env`, so
-        // every field of it is peer data. The runner name is resolved against
-        // this machine's paired runners *and* lands in a receipt, so it is
-        // pinned to the shape a paired name can have rather than trusted to be
-        // checked wherever it is next used.
-        let (dir, repo) = placement_repo();
-        let h5i_root = dir.path().join(".h5i");
-        let fake = crate::placement::fake::FakeRunner::new("pi5");
-        let mut m = create_with_remote(
-            &repo,
-            &h5i_root,
-            dir.path(),
-            "human",
-            "checked",
-            CreateOpts {
-                runner: Some("pi5".into()),
-                ..Default::default()
-            },
-            Some(&fake),
-        )
-        .expect("create");
-        assert!(validate_imported_manifest(&m).is_ok());
-
-        for bad in [
-            "../../etc",
-            "a/b",
-            ".hidden",
-            "-lead",
-            "name\u{1b}[2Jforged",
-            "",
-            &"x".repeat(65),
-        ] {
-            m.runner = Some(bad.to_string());
-            assert!(
-                validate_imported_manifest(&m).is_err(),
-                "`{bad}` must not survive as a runner name"
-            );
-        }
-    }
-
-    #[test]
-    fn a_remote_run_is_filed_under_the_runner_observed_lane() {
-        // The evidence is the same shape as a local run's; what differs is the
-        // lane, which is the whole of R10.
-        let (dir, repo) = placement_repo();
-        let h5i_root = dir.path().join(".h5i");
-        let fake = crate::placement::fake::FakeRunner::new("pi5");
-        let mut m = create_with_remote(
-            &repo,
-            &h5i_root,
-            dir.path(),
-            "human",
-            "runs",
-            CreateOpts {
-                runner: Some("pi5".into()),
-                ..Default::default()
-            },
-            Some(&fake),
-        )
-        .expect("create");
-
-        let out = run_remote(
-            &repo,
-            &h5i_root,
-            &mut m,
-            &["echo".to_string(), "hi".to_string()],
-            &fake,
-        )
-        .expect("run on the runner");
-
-        assert_eq!(out.exit_code, Some(0));
-        assert_eq!(
-            out.receipt.source,
-            crate::placement::RUNNER_OBSERVED_LANE,
-            "not host-observed, and not box-claimed"
-        );
-        assert_eq!(fake.execed.lock().unwrap().len(), 1);
-
-        // The three fields with host-local provenance are absent rather than
-        // computed against the wrong machine.
-        assert!(out.receipt.effective_digest.is_none());
-        assert!(out.receipt.fs_overlap.is_empty());
-        assert!(
-            out.receipt.cwd.as_deref().is_some_and(|c| c.contains("pi5")),
-            "the path is named as the runner's: {:?}",
-            out.receipt.cwd
-        );
-
-        // And it is on the box's own receipt log, like any other run.
-        let listed = crate::receipt::list(&env_dir(&h5i_root, &m.agent, &m.slug)).unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].id, out.capture_id);
-    }
-
-    #[test]
-    fn a_terminal_status_cannot_be_reset_by_running_on_the_runner() {
-        // The box lives on the runner until its lease or a `box rm`, so without
-        // a gate an applied box could be run again. Rewriting a terminal
-        // status back to `idle` in the manifest and in `refs/h5i/env`, where it
-        // travels to other clones as an ordinary run.
-        let (dir, repo) = placement_repo();
-        let h5i_root = dir.path().join(".h5i");
-        let fake = crate::placement::fake::FakeRunner::new("pi5");
-        let mut m = create_with_remote(
-            &repo,
-            &h5i_root,
-            dir.path(),
-            "human",
-            "gated",
-            CreateOpts {
-                runner: Some("pi5".into()),
-                ..Default::default()
-            },
-            Some(&fake),
-        )
-        .expect("create");
-
-        // Before a terminal state it runs.
-        assert!(run_remote(&repo, &h5i_root, &mut m, &["true".to_string()], &fake).is_ok());
-
-        m.status = ST_APPLIED.to_string();
-        let err = match run_remote(&repo, &h5i_root, &mut m, &["true".to_string()], &fake) {
-            Err(e) => e,
-            Ok(_) => panic!("an applied box must not be runnable"),
-        };
-        assert!(format!("{err}").contains("only valid before"), "{err}");
-        assert_eq!(m.status, ST_APPLIED, "and the status is untouched");
-    }
-
-    #[test]
-    fn a_remote_box_that_has_not_proposed_refuses_to_diff_rather_than_answering_empty() {
-        // The branch exists from creation and points at the base, so diffing
-        // base against base renders an empty patch and exits zero. "This box
-        // changed nothing" for a box that may have rewritten its whole tree.
-        let (dir, repo) = placement_repo();
-        let h5i_root = dir.path().join(".h5i");
-        let fake = crate::placement::fake::FakeRunner::new("pi5");
-        let m = create_with_remote(
-            &repo,
-            &h5i_root,
-            dir.path(),
-            "human",
-            "undiffed",
-            CreateOpts {
-                runner: Some("pi5".into()),
-                ..Default::default()
-            },
-            Some(&fake),
-        )
-        .expect("create");
-
-        let err = diff(&repo, &h5i_root, &m, false)
-            .expect_err("an empty answer that looks like a fact is worse than a refusal");
-        let text = format!("{err}");
-        assert!(text.contains("has not been brought home"), "{text}");
-        assert!(text.contains("box propose"), "and says what to do: {text}");
-    }
-
-    // The counter under test lives in the console module, which is behind the
-    // `web` feature; the lane string it keys on is not. Gated rather than
-    // duplicated, because asserting the string here and hoping the console
-    // agreed is exactly the drift this test exists to catch.
-    #[cfg(feature = "web")]
-    #[test]
-    fn a_runner_observed_run_is_not_counted_as_box_claimed() {
-        // The console badge would otherwise say "the box told us this" about a
-        // run the box could not have forged.
-        let (dir, repo) = placement_repo();
-        let h5i_root = dir.path().join(".h5i");
-        let fake = crate::placement::fake::FakeRunner::new("pi5");
-        let mut m = create_with_remote(
-            &repo,
-            &h5i_root,
-            dir.path(),
-            "human",
-            "signals",
-            CreateOpts {
-                runner: Some("pi5".into()),
-                ..Default::default()
-            },
-            Some(&fake),
-        )
-        .expect("create");
-        run_remote(&repo, &h5i_root, &mut m, &["true".to_string()], &fake).expect("run");
-
-        let receipts = crate::receipt::list(&env_dir(&h5i_root, &m.agent, &m.slug)).unwrap();
-        let signals = crate::server::signals_for_test(&m, &receipts);
-        assert_eq!(signals.runner_observed, 1);
-        assert_eq!(signals.box_claimed, 0, "it is not the box's own account");
-        assert_eq!(signals.host_observed, 0, "and this machine did not watch it");
-        assert!(
-            !signals.box_claimed_only,
-            "a run seen from outside the box must not read as box-claimed only"
-        );
-    }
-
-    #[test]
-    fn a_manifest_with_a_runner_id_that_is_not_an_id_is_refused_on_import() {
-        // It decides which machine every later operation talks to, so it is
-        // guarded beside base_commit rather than left to a renderer.
-        let (dir, repo) = placement_repo();
-        let h5i_root = dir.path().join(".h5i");
-        let fake = crate::placement::fake::FakeRunner::new("pi5");
-        let mut m = create_with_remote(
-            &repo,
-            &h5i_root,
-            dir.path(),
-            "human",
-            "checked",
-            CreateOpts {
-                runner: Some("pi5".into()),
-                ..Default::default()
-            },
-            Some(&fake),
-        )
-        .expect("create");
-
-        assert!(validate_imported_manifest(&m).is_ok());
-        m.runner_id = Some("not-an-object-id".into());
-        let err = validate_imported_manifest(&m).expect_err("refused");
-        assert!(format!("{err}").contains("runner_id"), "{err}");
-
-        // Absent is fine: every local box has none.
-        m.runner_id = None;
-        assert!(validate_imported_manifest(&m).is_ok());
-    }
     use super::*;
 
     /// A pid is only meaningful inside the namespace that issued it, so the
@@ -10731,10 +9301,10 @@ mod tests {
     /// Every supported platform must be able to prove whose pid a record is.
     /// Not a property of the identity check but of the *platform support*, and
     /// asserted here because answering `None` is silently catastrophic rather
-    /// than merely unhelpful: `h5i box share` asks `session_pid_verified` for
+    /// than merely unhelpful: `view::box_pid` asks `session_pid_verified` for
     /// the strict answer, that call skips any record whose `started_ticks` is
-    /// absent, and a platform where this function cannot answer therefore has
-    /// no shareable box at all. macOS shipped in exactly that state.
+    /// absent, and a platform where this function cannot answer therefore can
+    /// never identify a box's process at all. macOS shipped in exactly that state.
     /// A platform added later with no implementation fails here rather than in
     /// somebody's terminal.
     #[test]
@@ -10743,7 +9313,7 @@ mod tests {
         let mine = proc_start_ticks(me);
         assert!(
             mine.is_some(),
-            "this platform cannot prove a live record's identity, so `h5i box share` will \
+            "this platform cannot prove a live record's identity, so `view::box_pid` will \
              refuse every box on it"
         );
         // Stable for the life of the process: an identity that changed between
@@ -10773,7 +9343,7 @@ mod tests {
     /// wrote `None` happily, `live_identity_holds` tolerated `None` happily,
     /// and only the caller that demanded `Some`, in another crate, broke.
     #[test]
-    fn a_registered_session_satisfies_the_check_that_sharing_makes() {
+    fn a_registered_session_satisfies_the_strict_session_check() {
         let rec = LiveSession {
             pid: std::process::id(),
             kind: "run".into(),
@@ -10783,7 +9353,7 @@ mod tests {
         };
         assert!(
             rec.started_ticks.is_some(),
-            "a session registering itself must record an identity, or sharing refuses it"
+            "a session registering itself must record an identity, or the strict check refuses it"
         );
         assert!(
             live_identity_holds(&rec),
@@ -11270,8 +9840,6 @@ mod tests {
             persona_digest: None,
             pr: None,
             pr_head_ref: None,
-            runner_id: None,
-            runner: None,
         }
     }
 
@@ -13333,8 +11901,6 @@ mod tests {
             persona_digest: None,
             pr: None,
             pr_head_ref: None,
-            runner_id: None,
-            runner: None,
         };
         let text = serde_json::to_string_pretty(&m).unwrap();
         let back: EnvManifest = serde_json::from_str(&text).unwrap();
@@ -13459,8 +12025,6 @@ mod tests {
                 persona_digest: None,
                 pr: None,
                 pr_head_ref: None,
-                runner_id: None,
-                runner: None,
             };
             save_manifest(h5i_root, &m).unwrap();
         }
@@ -13479,141 +12043,6 @@ mod tests {
     }
 
     // ── build_branch_scoped_merge / scoped_code_branch_refs ─────────────────
-
-    #[test]
-    fn a_lifecycle_verb_will_not_change_a_box_somebody_is_connected_to() {
-        // `rm` learned to check this first and the other verbs did not: they
-        // all take `run.lock` and none took any notice of a share, so with the
-        // writer session gone they ran straight through. `abort` printed
-        // success and `box ls` said `aborted` while a public tunnel URL and a
-        // valid ticket kept pointing at the box; `rebase` force-checks-out the
-        // worktree, which changes the files under the dev server a visitor is
-        // looking at.
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path();
-        let m = canonical_manifest("human", "shared");
-        let dir = m.dir(root);
-        std::fs::create_dir_all(&dir).expect("mkdir");
-
-        // No share record: every verb proceeds.
-        for verb in ["abort", "apply", "rebase"] {
-            assert!(
-                refuse_if_shared(root, &m, verb).is_ok(),
-                "{verb} refused an unshared box"
-            );
-        }
-
-        let record = |winding: bool| {
-            serde_json::json!({
-                "v": 1,
-                "box_id": m.id,
-                "port": 3000,
-                "transport": "tunnel",
-                "endpoint": "https://x",
-                "started_at": "2026-01-01T00:00:00Z",
-                "pid": std::process::id(),
-                "winding_up": winding,
-                "grants": [{
-                    "id": "a1b2c3d4",
-                    "secret_sha256": "ff",
-                    "revoked": false,
-                    "expires_at": 4_000_000_000i64,
-                }],
-            })
-            .to_string()
-        };
-
-        std::fs::write(dir.join("share.json"), record(false)).expect("write");
-        for verb in ["abort", "apply", "rebase"] {
-            let err = refuse_if_shared(root, &m, verb)
-                .expect_err("a live share must stop a lifecycle verb");
-            let said = format!("{err}");
-            assert!(said.contains("being shared right now"), "{verb}: {said}");
-            // With a command that works, and it is the one that tells the other
-            // person their access has ended rather than pulling it out from
-            // under them.
-            assert!(said.contains("h5i box share stop shared"), "{verb}: {said}");
-        }
-
-        // A share already on its way out says so, and says to try again. It
-        // will be gone in seconds, so refusing outright would be advice to
-        // wait without saying so.
-        std::fs::write(dir.join("share.json"), record(true)).expect("write");
-        let err = refuse_if_shared(root, &m, "abort").expect_err("winding up");
-        let said = format!("{err}");
-        assert!(said.contains("already shutting down"), "{said}");
-        assert!(said.contains("h5i box abort shared"), "{said}");
-
-        // And a record whose process is gone is not a share.
-        std::fs::write(
-            dir.join("share.json"),
-            r#"{"v":1,"box_id":"x","port":1,
-            "transport":"p2p","endpoint":"e","started_at":"t","pid":0,"grants":[]}"#,
-        )
-        .expect("write");
-        assert!(
-            refuse_if_shared(root, &m, "abort").is_ok(),
-            "a dead record blocked abort"
-        );
-    }
-
-    /// A share is exclusionary for as long as its process is, not only while it could admit
-    /// somebody new.
-    #[test]
-    fn a_share_still_draining_is_not_a_box_free_to_change() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path();
-        let m = canonical_manifest("human", "draining");
-        let dir = m.dir(root);
-        std::fs::create_dir_all(&dir).expect("mkdir");
-
-        let record = |grant: serde_json::Value, starting: bool| {
-            serde_json::json!({
-                "v": 1,
-                "box_id": m.id,
-                "port": 3000,
-                "transport": "tunnel",
-                "endpoint": "https://x",
-                "started_at": "2026-01-01T00:00:00Z",
-                "pid": std::process::id(),
-                "starting": starting,
-                "grants": if grant.is_null() { serde_json::json!([]) } else { serde_json::json!([grant]) },
-            })
-            .to_string()
-        };
-        let revoked = serde_json::json!({
-            "id": "a1b2c3d4", "secret_sha256": "ff",
-            "revoked": true, "expires_at": 4_000_000_000i64,
-        });
-        let expired = serde_json::json!({
-            "id": "a1b2c3d4", "secret_sha256": "ff",
-            "revoked": false, "expires_at": 1i64,
-        });
-
-        for (what, g) in [("revoked", revoked), ("expired", expired)] {
-            std::fs::write(dir.join("share.json"), record(g, false)).expect("write");
-            let err = refuse_if_shared(root, &m, "rebase").expect_err(what);
-            assert!(
-                format!("{err}").contains("being shared right now"),
-                "{what}: {err}"
-            );
-        }
-
-        // And the window before a transport exists at all: the record is
-        // written before `Setup::start`, which for `--tunnel` waits up to
-        // forty-five seconds. Nothing was on disk during it, so every verb
-        // here saw an unshared box and proceeded, and the start then
-        // announced a public endpoint on top of what they had done.
-        std::fs::write(
-            dir.join("share.json"),
-            record(serde_json::Value::Null, true),
-        )
-        .expect("write");
-        let err = refuse_if_shared(root, &m, "abort").expect_err("a starting share");
-        let said = format!("{err}");
-        assert!(said.contains("about to be shared"), "{said}");
-        assert!(said.contains("h5i box share stop draining"), "{said}");
-    }
 
     fn manifest_on_branch(agent: &str, slug: &str, parent_branch: &str) -> EnvManifest {
         let mut m = canonical_manifest(agent, slug);
@@ -13919,8 +12348,6 @@ mod tests {
             persona_digest: None,
             pr: None,
             pr_head_ref: None,
-            runner_id: None,
-            runner: None,
         }
     }
 

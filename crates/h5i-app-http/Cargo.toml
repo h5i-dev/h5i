@@ -1,0 +1,19 @@
+[package]
+name = "h5i-app-http"
+description = "HTTP shell for h5i-app kernels: authentication and input decoding (trusted), dispatch to the engine"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+repository = "https://github.com/h5i-dev/h5i"
+homepage = "https://github.com/h5i-dev/h5i"
+readme = "../h5i-app/README.md"
+
+[dependencies]
+h5i-app-core.workspace = true
+h5i-app-pg.workspace = true
+axum = "0.8"
+serde_json = "1"
+h5i-app-token.workspace = true
+h5i-app-json.workspace = true
+libcrux-hmac = "0.0.8"
+tracing = "0.1"

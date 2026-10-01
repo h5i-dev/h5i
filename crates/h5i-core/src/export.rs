@@ -8,12 +8,7 @@
 //!   patch.diff    the tree diff against the pinned base, path-validated
 //!   report.md     what the box was, what it changed, what it ran
 //!   receipt.json  every observed execution, with the enforced policy digest
-//!   receipts/     the raw payload of each ingress session, by record id
 //! ```
-//!
-//! `receipts/` exists because the bundle has to stand alone: `receipt.json`
-//! names a payload by `raw_oid`, a content address into the *box's* store, which
-//! a reviewer holding only this directory cannot resolve.
 //!
 //! The patch comes from the same mediated commit `propose` runs
 //! ([`env::DiffSource::Proposed`]), so the `$WORK` allowlist invariants hold
@@ -116,22 +111,6 @@ pub fn export(
     out: &Path,
     force: bool,
 ) -> Result<ExportSummary, H5iError> {
-    export_with_remote(repo, h5i_root, m, out, force, None)
-}
-
-/// [`export`], for a box that lives on a runner.
-///
-/// Only the freeze differs. Everything after it (the diff, the receipts, the
-/// report) is object-store and on-disk work that never cared where the box
-/// ran, which is why this takes a placement rather than forking the bundle.
-pub fn export_with_remote(
-    repo: &Repository,
-    h5i_root: &Path,
-    m: &mut EnvManifest,
-    out: &Path,
-    force: bool,
-    remote: Option<&dyn crate::placement::RemoteRunner>,
-) -> Result<ExportSummary, H5iError> {
     if out.exists() {
         let empty = std::fs::read_dir(out)
             .map(|mut d| d.next().is_none())
@@ -144,25 +123,9 @@ pub fn export_with_remote(
         }
     }
 
-    // Asked before the freeze, purely so the answer is the true one.
-    let _share_gate = crate::share_record::share_gate(&m.dir(h5i_root))?;
-    if let Some(sh) = crate::share_record::read_live(&m.dir(h5i_root)) {
-        return Err(H5iError::Metadata(format!(
-            "{} is being shared right now by pid {} — the export has to freeze the box into a \
-             commit, and it cannot do that under somebody who is looking at it. Stop the share \
-             first (`h5i box share stop {}`), then export: the ingress receipt is written when \
-             the share ends, so exporting afterwards is also the only way to get the account of \
-             who connected.",
-            m.id, sh.pid, m.slug
-        )));
-    }
-
     // Same freeze as `propose`: the mediated commit is what makes the diff
     // trustworthy, so export never reads a live worktree directly.
-    let brief = match remote {
-        Some(runner) => env::propose_remote(repo, h5i_root, m, runner)?,
-        None => env::propose(repo, h5i_root, m)?,
-    };
+    let brief = env::propose(repo, h5i_root, m)?;
 
     // From the commit `propose` just made, not from the live worktree. The
     // worktree is what `env::diff` reads by default, and reading it here meant
@@ -223,15 +186,6 @@ pub fn export_with_remote(
     std::fs::write(&receipt_path, serde_json::to_vec_pretty(&bundle)?)
         .map_err(|e| H5iError::with_path(e, &receipt_path))?;
 
-    // The bundle is supposed to stand alone, and the share section promises a
-    // reviewer "the full account of each". That account is the raw payload,
-    // which lived only in the box's own receipt store under a content address,
-    // so what actually reached the reviewer was an aggregate command string
-    // and a digest they had no way to resolve. Copied in, one file per share
-    // record, named by the record id the JSON already carries.
-    let share_payloads =
-        copy_share_payloads(&env::env_dir(h5i_root, &m.agent, &m.slug), out, &records);
-
     let summary = ExportSummary {
         env_id: m.id.clone(),
         dir: out.to_path_buf(),
@@ -247,11 +201,6 @@ pub fn export_with_remote(
     };
 
     let report_path = out.join("report.md");
-    // Read straight off disk rather than plumbed in: this crate is below
-    // `h5i-share`, and the one fact needed here, is a live process serving
-    // this box right now, is a two-line read of a file that sits beside the
-    // receipt log.
-    let live_share = crate::share_record::read_live(&m.dir(h5i_root)).map(|s| s.pid.to_string());
     std::fs::write(
         &report_path,
         report(
@@ -259,8 +208,6 @@ pub fn export_with_remote(
             &summary,
             &records,
             &brief,
-            live_share.as_deref(),
-            &share_payloads,
             &sessions,
         )
         .as_bytes(),
@@ -340,48 +287,11 @@ fn export_browser_audits(m: &EnvManifest, out: &Path) -> Vec<ExportedSession> {
     exported
 }
 
-fn copy_share_payloads(
-    env_dir: &Path,
-    out: &Path,
-    records: &[crate::receipt::ExecRecord],
-) -> std::collections::BTreeSet<String> {
-    let mut copied = std::collections::BTreeSet::new();
-    let shares: Vec<_> = records.iter().filter(|r| r.source == "share").collect();
-    if shares.is_empty() {
-        return copied;
-    }
-    let dir = out.join("receipts");
-    if std::fs::create_dir_all(&dir).is_err() {
-        return copied;
-    }
-    for r in shares {
-        // The record's id becomes a filename here, and a record is a line of
-        // JSON read back off disk: `append` writes a hex digest, but this code
-        // is holding whatever the file says. An id of `../../../../../x` would
-        // put an attacker-chosen payload at an attacker-chosen path on the host,
-        // during the one command whose whole job is to produce a bundle a human
-        // will then trust. Anything that is not a record handle is skipped, and
-        // the report says the payload is missing (which it is).
-        if !crate::receipt::is_record_handle(&r.id) {
-            continue;
-        }
-        let Ok(raw) = crate::receipt::raw_bytes(env_dir, &r.id) else {
-            continue;
-        };
-        if std::fs::write(dir.join(format!("{}.raw", r.id)), &raw).is_ok() {
-            copied.insert(r.id.clone());
-        }
-    }
-    copied
-}
-
 fn report(
     m: &EnvManifest,
     s: &ExportSummary,
     records: &[crate::receipt::ExecRecord],
     brief: &str,
-    live_share: Option<&str>,
-    share_payloads: &std::collections::BTreeSet<String>,
     sessions: &[ExportedSession],
 ) -> String {
     let mut out = String::new();
@@ -567,86 +477,6 @@ fn report(
         }
     }
 
-    // What the kernel saw. Placed above the agent's proposal for the same
-    // reason the browser section is: it is the part of the report the thing
-    // being reviewed could not write.
-    let watched: Vec<(&crate::receipt::ExecRecord, &h5i_bpf::RuntimeEvidence)> = records
-        .iter()
-        .filter_map(|r| r.runtime.as_ref().map(|rt| (r, rt)))
-        .collect();
-    if !watched.is_empty() {
-        out.push_str("\n## What the kernel saw\n\n");
-        let unobserved = watched.iter().filter(|(_, rt)| !rt.observed()).count();
-        let detections: Vec<_> = watched
-            .iter()
-            .filter(|(_, rt)| !rt.detections.is_empty())
-            .collect();
-
-        if detections.is_empty() && unobserved == 0 {
-            let seen: u64 = watched.iter().map(|(_, rt)| rt.events_seen).sum();
-            out.push_str(&format!(
-                "{} run(s) were watched from the kernel — {seen} syscall event(s) — and no \
-                 signature fired. This says nothing about behaviour no signature models; \
-                 `h5i box detect rules` lists what was looked for.\n",
-                watched.len()
-            ));
-        } else {
-            out.push_str(
-                "Observed by an eBPF collector in the kernel, not reported by the box. Each \
-                 line is a signature that fired, with an example of what tripped it.\n\n",
-            );
-            for (r, rt) in &detections {
-                out.push_str(&format!(
-                    "- {} ({}) — {}\n",
-                    md_code(&crate::redact::sanitize_display(
-                        r.cmd.as_deref().unwrap_or("run")
-                    )),
-                    r.timestamp,
-                    md_escape(&crate::redact::sanitize_display(&rt.summary()))
-                ));
-                for d in &rt.detections {
-                    out.push_str(&format!(
-                        "  - **{}** `{}` — {} (×{})\n",
-                        d.severity.as_str(),
-                        d.rule,
-                        md_escape(&crate::redact::sanitize_display(&d.title)),
-                        d.count
-                    ));
-                    for ex in &d.examples {
-                        out.push_str(&format!(
-                            "    - {}\n",
-                            md_escape(&crate::redact::sanitize_display(ex))
-                        ));
-                    }
-                }
-            }
-        }
-
-        // "Nothing was looked at" is a different claim from "nothing was
-        // wrong". Same rule as the browser section above, and it matters more
-        // here: this lane is the one a reader is most likely to take as
-        // complete.
-        if unobserved > 0 {
-            out.push_str(&format!(
-                "\n_{unobserved} run(s) carry a runtime block that observed nothing:_\n"
-            ));
-            for (r, rt) in watched.iter().filter(|(_, rt)| !rt.observed()) {
-                out.push_str(&format!(
-                    "- {} — {}\n",
-                    r.timestamp,
-                    md_escape(&crate::redact::sanitize_display(&rt.summary()))
-                ));
-            }
-        }
-        let lost: u64 = watched.iter().map(|(_, rt)| rt.events_lost).sum();
-        if lost > 0 {
-            out.push_str(&format!(
-                "\n_{lost} event(s) were dropped before they could be examined, so the list \
-                 above is a lower bound._\n"
-            ));
-        }
-    }
-
     // Who was at the controls. A patch produced with a human driving the
     // browser is a different artifact from one an agent produced alone, and a
     // reviewer should not have to infer which this was.
@@ -679,83 +509,6 @@ fn report(
         }
     }
 
-    // Who was let *in*.
-    if live_share.is_some() {
-        out.push_str("\n## Shared with someone, right now\n\n");
-        out.push_str(
-            "**This box was being shared when this export was taken.** Somebody outside was \
-             able to reach a server inside it while this patch was being produced. The \
-             receipt for that session is written when the share ends, so it is not in this \
-             bundle — export again afterwards if you need the account of who connected.\n",
-        );
-    }
-
-    let shares: Vec<_> = records.iter().filter(|r| r.source == "share").collect();
-    if !shares.is_empty() {
-        out.push_str("\n## Shared with someone\n\n");
-        out.push_str(
-            "This box was opened to another person while it was running. h5i owned both ends \
-             of the bridge, so this is host-observed evidence and the box supplied none of \
-             it.\n\n| when | transport | port | peers | for | turned away | full account |\n\
-             |---|---|---|---|---|---|---|\n",
-        );
-        for r in &shares {
-            // Rendered from the structured field, with the command string kept
-            // as the last column because it is what the receipt listing shows.
-            // Nothing here parses that string: it contains the box's name, and
-            // deciding "this was a Cloudflare tunnel" by looking for `tunnel`
-            // in it classified a P2P share of a box called `my-tunnel` as
-            // one. A false security claim in the artifact a reviewer trusts.
-            let (transport, port, peers, secs, away) = match &r.share {
-                Some(s) => (
-                    s.transport.clone(),
-                    s.port.to_string(),
-                    s.peers.to_string(),
-                    format!("{}s", s.seconds),
-                    s.turned_away.to_string(),
-                ),
-                // A record from a build before the field existed. Said, not
-                // guessed: the alternative is the substring test again.
-                None => (
-                    "unrecorded".into(),
-                    "?".into(),
-                    "?".into(),
-                    "?".into(),
-                    "?".into(),
-                ),
-            };
-            let account = if share_payloads.contains(&r.id) {
-                format!("`receipts/{}.raw`", r.id)
-            } else {
-                "**missing** — the payload could not be read from the box".to_string()
-            };
-            out.push_str(&format!(
-                "| {} | {transport} | {port} | {peers} | {secs} | {away} | {account} |\n",
-                r.timestamp,
-            ));
-        }
-        if shares
-            .iter()
-            .any(|r| r.share.as_ref().is_none_or(|s| s.third_party_can_read()))
-        {
-            out.push_str(
-                "\n**At least one of these was not end-to-end encrypted** — a Cloudflare quick \
-                 tunnel terminates TLS, and a session whose transport this h5i did not record \
-                 cannot be claimed to have been private either.\n",
-            );
-        }
-        // Named by their bundled path, not by a digest the reader cannot
-        // resolve. `raw_oid` is a content address into the *box's* receipt
-        // store, and this bundle is supposed to stand alone: a reviewer given
-        // the directory had the aggregate command string and no way to reach
-        // the account this paragraph promised them.
-        out.push_str(
-            "\nEach `receipts/<id>.raw` beside this report is that session's full account: \
-             who connected, over what path, for how long, how much moved, and what was \
-             refused. The same id is the `id` field of the record in `receipt.json`.\n",
-        );
-    }
-
     out.push_str("\n## Proposal\n\n```\n");
     out.push_str(brief);
     out.push_str("\n```\n");
@@ -771,76 +524,13 @@ mod tests {
     use super::*;
     use crate::receipt::{BrowserEvidence, ExecRecord};
 
-    /// The bundle names each share payload after the record's id, and a record
-    /// is a line of JSON read back off disk. An id that is not a record handle
-    /// must never reach `Path::join`: `../../../../../x` would put box-supplied
-    /// bytes at a host path of the writer's choosing, during the command whose
-    /// output a human is about to trust.
-    #[test]
-    fn a_record_id_that_is_not_a_handle_never_becomes_a_bundle_path() {
-        let env_dir = tempfile::TempDir::new().unwrap();
-        let out = tempfile::TempDir::new().unwrap();
-
-        let mut hostile = record(None);
-        hostile.source = "share".into();
-        hostile.id = "../../../../pwned".into();
-        let mut absolute = record(None);
-        absolute.source = "share".into();
-        absolute.id = "/tmp/h5i-export-escape".into();
-
-        let copied = copy_share_payloads(
-            env_dir.path(),
-            out.path(),
-            &[hostile.clone(), absolute.clone()],
-        );
-
-        assert!(copied.is_empty(), "a forged id must copy nothing: {copied:?}");
-        assert!(!out.path().join("../../../../pwned.raw").exists());
-        assert!(!Path::new("/tmp/h5i-export-escape.raw").exists());
-
-        // And the report says the payload is missing rather than naming a file
-        // that was never written.
-        let text = report(
-            &manifest(),
-            &summary(),
-            &[hostile],
-            "brief",
-            None,
-            &copied,
-            &[],
-        );
-        assert!(text.contains("**missing**"), "{text}");
-    }
-
-    #[test]
-    fn the_mid_share_section_is_reachable_only_in_the_gap_it_describes() {
-        // Kept, and worth being exact about why. A live share needs a live
-        // process inside the box; that process holds `run.lock`; and `export`
-        // freezes through `propose`, which takes it, so the ordinary
-        // mid-share export never gets this far, and now fails with a message
-        // that names the share instead of the lock. What remains reachable is
-        // the second between the box session ending and the share process
-        // noticing and exiting: the lock is free, the record is still live.
-        // That is a real second, and it is the one this section is for.
-        let m = manifest();
-        let s = summary();
-        let body = report(&m, &s, &[], "", Some("4321"), &Default::default(), &[]);
-        assert!(body.contains("Shared with someone, right now"), "{body}");
-        assert!(body.contains("export again afterwards"), "{body}");
-
-        let quiet = report(&m, &s, &[], "", None, &Default::default(), &[]);
-        assert!(!quiet.contains("right now"), "{quiet}");
-    }
-
     #[test]
     fn a_command_in_a_table_reaches_the_reviewer_without_its_escapes() {
         // Backslash escapes are not processed inside a code span, so escaping
         // the content and then wrapping it in backticks put the backslashes on
-        // the reviewer's screen. Every share receipt says "(port 3000, 1
-        // peer(s), 20s)", so every export of a shared box carried four of
-        // them: `h5i box share demo \(port 3000, 1 peer\(s\), 20s\)`.
-        let cell = md_code("h5i box share demo (port 3000, 1 peer(s), 20s)");
-        assert_eq!(cell, "`h5i box share demo (port 3000, 1 peer(s), 20s)`");
+        // the reviewer's screen: `echo \(port 3000, 1 peer\(s\), 20s\)`.
+        let cell = md_code("echo (port 3000, 1 peer(s), 20s)");
+        assert_eq!(cell, "`echo (port 3000, 1 peer(s), 20s)`");
         assert!(!cell.contains('\\'));
 
         // The pipe is the exception, because GFM splits a row on pipes before
@@ -885,8 +575,6 @@ mod tests {
             persona_digest: None,
             pr: None,
             pr_head_ref: None,
-            runner_id: None,
-            runner: None,
         }
     }
 
@@ -926,8 +614,6 @@ mod tests {
             files: Vec::new(),
             egress: None,
             browser,
-            share: None,
-            runtime: None,
             redactions: Vec::new(),
             raw_oid: "sha256:0".into(),
             raw_size: 0,
@@ -950,8 +636,6 @@ mod tests {
             &summary(),
             &[record(Some(ev))],
             "brief",
-            None,
-            &Default::default(),
             &[],
         );
 
@@ -981,8 +665,6 @@ mod tests {
             &summary(),
             &[record(Some(clean))],
             "brief",
-            None,
-            &Default::default(),
             &[],
         );
         assert!(text.contains("no console errors"), "{text}");
@@ -999,141 +681,9 @@ mod tests {
             &summary(),
             &[record(Some(blind))],
             "brief",
-            None,
-            &Default::default(),
             &[],
         );
         assert!(text.contains("no browser available to observe"), "{text}");
-    }
-
-    #[test]
-    fn an_export_taken_during_a_share_says_the_share_is_still_open() {
-        // A live share has written no receipt yet, so an export taken during a
-        // demo said nothing at all about the box having been opened to
-        // somebody, and during a demo is when somebody takes one.
-        let text = report(
-            &manifest(),
-            &summary(),
-            &[record(None)],
-            "brief",
-            Some("4242"),
-            &Default::default(),
-            &[],
-        );
-        assert!(text.contains("Shared with someone, right now"), "{text}");
-        assert!(text.contains("written when the share ends"), "{text}");
-
-        // And a box nobody is sharing does not grow the section.
-        let quiet = report(
-            &manifest(),
-            &summary(),
-            &[record(None)],
-            "brief",
-            None,
-            &Default::default(),
-            &[],
-        );
-        assert!(!quiet.contains("right now"), "{quiet}");
-    }
-
-    #[test]
-    fn a_box_that_was_shared_with_somebody_says_so() {
-        // The one path that lets a second person reach *into* a running box,
-        // rendered as an ordinary row in "What ran", which reads as a command
-        // the box happened to execute rather than as a door that was opened.
-        let mut r = record(None);
-        r.source = "share".into();
-        r.cmd = Some("h5i box share demo --tunnel (port 3000, 1 peer(s), 600s)".into());
-        r.share = Some(crate::receipt::ShareEvidence {
-            transport: "tunnel".into(),
-            port: 3000,
-            peers: 1,
-            seconds: 600,
-            turned_away: 0,
-        });
-        let payloads: std::collections::BTreeSet<String> = [r.id.clone()].into_iter().collect();
-        let text = report(&manifest(), &summary(), &[r], "brief", None, &payloads, &[]);
-        assert!(text.contains("## Shared with someone"), "{text}");
-        assert!(text.contains("terminates TLS"), "{text}");
-        // The account is named by a path inside this bundle, not by a content
-        // address into the box's own store that the reviewer cannot resolve.
-        assert!(text.contains("receipts/0123456789abcdef.raw"), "{text}");
-        assert!(!text.contains("raw_oid"), "{text}");
-
-        // And a box nobody shared does not grow the section.
-        let text = report(
-            &manifest(),
-            &summary(),
-            &[record(None)],
-            "brief",
-            None,
-            &Default::default(),
-            &[],
-        );
-        assert!(!text.contains("## Shared with someone"), "{text}");
-    }
-
-    /// A box whose *name* contains `tunnel` is not a Cloudflare session.
-    ///
-    /// The transport was being recovered by searching the rendered command
-    /// string for the substring `tunnel`, and that string carries the box's
-    /// name, so an ordinary end-to-end encrypted P2P share of a box called
-    /// `my-tunnel` put "not end to end encrypted" into the artifact a reviewer
-    /// treats as evidence. Wrong in the direction of alarm, but wrong.
-    #[test]
-    fn a_p2p_share_of_a_box_named_tunnel_is_not_reported_as_cloudflare() {
-        let mut r = record(None);
-        r.source = "share".into();
-        r.cmd = Some("h5i box share my-tunnel (port 3000, 1 peer(s), 600s)".into());
-        r.share = Some(crate::receipt::ShareEvidence {
-            transport: "p2p".into(),
-            port: 3000,
-            peers: 1,
-            seconds: 600,
-            turned_away: 0,
-        });
-        let text = report(
-            &manifest(),
-            &summary(),
-            &[r],
-            "brief",
-            None,
-            &Default::default(),
-            &[],
-        );
-        assert!(text.contains("## Shared with someone"), "{text}");
-        assert!(
-            !text.contains("not end-to-end encrypted"),
-            "a P2P share was reported as Cloudflare-terminated: {text}"
-        );
-        assert!(text.contains("| p2p |"), "{text}");
-    }
-
-    /// A record from a build before the transport was a field says so.
-    ///
-    /// The safe direction: an unrecorded transport is not a promise that the
-    /// traffic was private, so the warning stays and the column says
-    /// `unrecorded` rather than guessing.
-    #[test]
-    fn a_share_record_with_no_transport_field_is_not_claimed_to_be_private() {
-        let mut r = record(None);
-        r.source = "share".into();
-        r.cmd = Some("h5i box share demo (port 3000, 1 peer(s), 600s)".into());
-        r.share = None;
-        let text = report(
-            &manifest(),
-            &summary(),
-            &[r],
-            "brief",
-            None,
-            &Default::default(),
-            &[],
-        );
-        assert!(text.contains("unrecorded"), "{text}");
-        assert!(text.contains("not end-to-end encrypted"), "{text}");
-        // And a payload that could not be copied is stated, not implied by a
-        // filename that resolves to nothing.
-        assert!(text.contains("**missing**"), "{text}");
     }
 
     #[test]
@@ -1146,8 +696,6 @@ mod tests {
             &summary(),
             &[r],
             "brief",
-            None,
-            &Default::default(),
             &[],
         );
 
@@ -1165,8 +713,6 @@ mod tests {
             &summary(),
             &[watched],
             "brief",
-            None,
-            &Default::default(),
             &[],
         );
         assert!(text.contains("## Viewer sessions"), "{text}");
@@ -1182,8 +728,6 @@ mod tests {
             &summary(),
             &[record(None)],
             "brief",
-            None,
-            &Default::default(),
             &[],
         );
         assert!(!text.contains("What the browser saw"), "{text}");

@@ -5,8 +5,9 @@ engagement that comes before a payload: finding what an application exposes,
 recording where each candidate came from, and handing a confirmed request to
 the workbench. Sections marked "built" say what shipped, and where it differs
 from the paragraph above. `N` is the section prefix because `B`, `V`, `P`, `R`,
-`D` and `W` are taken by the browser, the viewers, policy, the runner,
-detection and websec, and live code cites these numbers.
+`D` and `W` were taken by the browser, the viewers, policy, the runner,
+detection and websec (the runner and detection have since been removed), and
+live code cites these numbers.
 
 ## In one screen
 

@@ -12,12 +12,6 @@ pub mod cache;
 pub mod control;
 pub mod env;
 pub mod export;
-/// Where a box runs: the trait the lifecycle engine uses to place one on
-/// another machine, with no transport in it (design-runner.md R1, R7).
-pub mod placement;
-/// Taking a tree from a machine we agreed might be compromised
-/// (design-runner.md R9).
-pub mod quarantine;
 pub mod receipt;
 pub mod redact;
 pub mod refstore;
@@ -35,10 +29,6 @@ pub mod message_view;
 // write, both of which every build has.
 pub mod project;
 pub mod session_view;
-// Reading `share.json` for everything below `h5i-share`. See the module note:
-// there were three hand-rolled probes here and they did not agree with the
-// crate that writes the file.
-pub mod share_record;
 pub mod skill;
 pub mod source;
 pub mod storage;
@@ -71,8 +61,3 @@ pub use h5i_sandbox::fs_authority;
 /// SBPL generator is testable from the Linux job.
 #[cfg(unix)]
 pub use h5i_sandbox::seatbelt;
-/// The runtime-detection lane (design-detect.md D1–D14). Re-exported
-/// unconditionally, every build has to be able to read a receipt written by one
-/// that had the collector, while the collector itself is behind this crate's
-/// `bpf` feature.
-pub use h5i_bpf as bpf;

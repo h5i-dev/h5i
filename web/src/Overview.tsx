@@ -150,7 +150,7 @@ export function Overview({ fleet, go }: { fleet: Fleet; go: (parts: string[]) =>
               </div>
             ) : pressing.length === 0 ? (
               <div className="card-empty">
-                Every box ran clean: no refused egress, no failed run, nothing the kernel lane flagged.
+                Every box ran clean: no refused egress and no failed run.
               </div>
             ) : (
               pressing.map((b) => <BoxLine key={b.id} b={b} onOpen={() => go(["boxes", b.agent, b.slug])} />)
@@ -168,7 +168,6 @@ function BoxLine({ b, onOpen }: { b: BoxRow; onOpen: () => void }) {
     s.egress_denied ? `${s.egress_denied} refused egress` : null,
     s.failed ? `${s.failed} failed` : null,
     s.timed_out ? `${s.timed_out} timed out` : null,
-    s.kernel_alerts ? `${s.kernel_alerts} kernel ${plural(s.kernel_alerts, "alert")}` : null,
   ].filter(Boolean);
   return (
     <button type="button" className="card-row" onClick={onOpen}>
