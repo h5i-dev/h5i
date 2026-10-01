@@ -11,7 +11,7 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-<h1 align="center">The AI-Native Workspace for Secure Web Development</h1>
+<h1 align="center">Agent-Native Workspace for Secure Web Development</h1>
 
 **h5i** (pronounced *high-five*) is an agent-native workspace for building and securing web applications. Give your coding agent tools to test running applications, preserve security checks in CI, and prove critical properties of Rust application logic in Lean 4.
 
