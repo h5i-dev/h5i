@@ -49,9 +49,10 @@
 ## 1. Install
 
 ```bash
-curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test         # `websec`, `recon`, and `test` are optional plugins
 # curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh  # if you would rather not add a domain to the chain:
 # cargo install --path .                                                         # build from source
+# h5i plugin list                                                                # says what is installed
 ```
 
 The agent-facing interface is a skill, and the binary carries it:
@@ -60,14 +61,6 @@ The agent-facing interface is a skill, and the binary carries it:
 npx skills add h5i-dev/h5i         # if you do not have the binary yet
 # h5i skill install                # writes it where your runtime looks
 # h5i skill show policy            # or just read a page
-```
-
-The optional `websec`, `recon` and `test` plugins ship as their own archives. The
-installer can fetch and register them in the same pass:
-
-```bash
-curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test
-# h5i plugin list                  # says what is installed
 ```
 
 ---
