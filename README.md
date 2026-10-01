@@ -100,7 +100,7 @@ h5i recon endpoints --state confirmed                # discovery, each row names
 
 ### 2.3. Replay confirmed flows in CI
 
-Confirmed attack flows live in the repository and replay in CI. See
+We can replay confirmed attack flows in CI. See
 [`examples/security-regression-ci`](examples/security-regression-ci) for the
 GitHub Actions template:
 
