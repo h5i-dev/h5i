@@ -129,7 +129,7 @@ of GitHub Actions are available at [`examples/security-regression-ci`](examples/
     # min-coverage is optional; omitting it keeps coverage informational.
 ```
 
-### 2.4. Control and audit agent access
+### 2.4. Sandbox and audit agent access
 
 Web content is untrusted input to an AI agent. h5i reduces the risks of giving
 agents web access by applying a network policy and recording both allowed and
@@ -204,8 +204,6 @@ h5i ui
 
 - Write the logic as pure Rust functions and prove it in Lean 4 via [Aeneas](https://github.com/AeneasVerif/aeneas).
 - Serve it with [axum](https://github.com/tokio-rs/axum); handlers never touch the database.
-- Run each request in a SERIALIZABLE PostgreSQL transaction, with retries and idempotency keys.
-- Declare tables once with `schema!` and get Rust mappings and Lean proofs.
 - Prove that invariants hold for the rows loaded back from the database.
 - Prove properties across requests, for every order in which clients' requests commit.
 
