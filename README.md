@@ -113,7 +113,7 @@ GitHub Actions template:
 
 ### 2.4. Sandbox and audit the agent
 
-AI agnet might run out of control and perform dangerous operations. To reduce such risks,
+Since AI agnets might run out of control and perform dangerous actions,
 h5i offers an auditable sandbox, where `h5i browser requests` and
 `h5i browser audit` show the full logs. For stronger isolation, a profile
 in `.h5i/env.toml` picks a tier (`workspace`, `process`, `supervised`,
