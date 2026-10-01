@@ -29,7 +29,7 @@
     </td>
     <td align="center">
       <strong>Formal verification</strong><br>
-      <sub><a href="#4-build-verifiable-apps-h5i-app">Rust + Lean 4</a></sub>
+      <sub><a href="#3-build-verifiable-apps-h5i-app">Rust + Lean 4</a></sub>
     </td>
     <td align="center">
       <strong>CI/CD</strong><br>
@@ -72,125 +72,66 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 ### 2.1. Browse, scrape, and automate
 
 A **session** combines one page state, cookie jar, network policy, and request
-record. Agents can read pages, interact with elements, and extract structured
-data through one CLI:
+record. Agents read pages, interact with elements, and extract structured data
+through one CLI:
 
 ```bash
 h5i browser open https://docs.rs/ --allow docs.rs
 h5i browser snapshot                        # page outline with @ref handles
-h5i browser snapshot --delta                # only what changed
 h5i browser click @e3
-h5i browser type @e5 "serde"
 h5i browser extract '{"titles": ["h2"]}'    # structured extraction
-h5i browser markdown                        # readable page content
-h5i browser close
-
-h5i browser read https://docs.rs/           # for a single page without a persistent session
+h5i browser read https://docs.rs/           # one page, no persistent session
 ```
 
 ### 2.2. Test web applications
 
-The native browser owns its network layer, so agents can capture, inspect, edit,
-replay, and compare HTTP traffic without a separate repeater. On Linux and
-macOS, sites that need full Chromium can use the same workbench through h5i's
-agent-browser capture proxy.
-
-Use these capabilities only on systems you own or are authorized to test:
+The native browser owns its network layer, so agents capture, inspect, edit,
+replay, and compare HTTP traffic without a separate repeater. Sites that need
+full Chromium go through the same workbench via `h5i browser proxy`. Use these
+capabilities only on systems you own or are authorized to test:
 
 ```bash
 h5i browser open https://target.example --capture --allow target.example
-# Or: h5i browser proxy https://target.example --session chrome
-# Then run the printed agent-browser command.
-# Linux trusts the session CA. macOS passes --ignore-https-errors.
-
 h5i websec requests                                  # list messages and IDs
-h5i websec show req_42 --raw                         # inspect a request
-h5i websec replay req_42 --set query.id=456          # edit and resend it
+h5i websec replay req_42 --set query.id=456          # edit and resend one
 h5i websec diff res_42 res_43                        # compare responses
-h5i websec match res_43 --status 200 --contains "ok" # assert a condition
 h5i websec sequence flow.json                        # run a multi-step test
-
-# Discovery, kept apart from testing: recon says what exists and how it knows.
-h5i recon extract                                    # read what the session already fetched
-h5i recon crawl --max-requests 200 --rate 4          # walk it under this session's login
-h5i recon triage --calibrate                         # soft 404s folded, the rest confirmed
-h5i recon endpoints --state confirmed --json         # each row names the message that proves it
+h5i recon endpoints --state confirmed                # discovery, each row names its evidence
 ```
 
 ### 2.3. CI/CD integration
 
-Confirmed attack flows can be kept in a repository and replayed in CI. Templates and examples 
-of GitHub Actions are available at [`examples/security-regression-ci`](examples/security-regression-ci).
+Confirmed attack flows live in the repository and replay in CI. See
+[`examples/security-regression-ci`](examples/security-regression-ci) for the
+GitHub Actions template:
 
 ```yaml
 - uses: h5i-dev/h5i@v1
   with:
     target: http://localhost:3000
     tests: .h5i-tests/tests
-    openapi: openapi.yaml
-    # min-coverage is optional; omitting it keeps coverage informational.
 ```
 
 ### 2.4. Sandbox and audit agent access
 
-Web content is untrusted input to an AI agent. h5i reduces the risks of giving
-agents web access by applying a network policy and recording both allowed and
-denied requests:
-
-```bash
-h5i browser requests    # allowed and denied network requests
-h5i browser audit       # actions, fetches, handovers, and session ending
-h5i browser status      # isolation, policy digest, and network placement
-```
-
-For authenticated Chromium testing, use `agent-browser dashboard start`. The
-human signs in directly in Chromium while `h5i websec` and `h5i recon` consume
-the captured traffic through the same session interface.
-
-For stronger isolation, define network and filesystem limits in
-`.h5i/env.toml`:
-
-```toml
-[profile.reading]
-isolation = "supervised"          # workspace | process | supervised | container | microvm
-
-[profile.reading.net]
-mode = "host"
-egress = ["docs.rs", "static.crates.io"]
-
-[profile.reading.fs]
-read = ["/usr", "/etc"]
-write = []
-```
-
-Then place the browser inside that environment:
-
-```bash
-h5i box --profile reading --name docs
-h5i browser open https://docs.rs/ --in docs
-```
-
-### 2.5. Contain the entire agent workflow
-
-A sandbox can contain more than the browser. It can also hold the workspace,
-toolchain, development server, and agent itself. This is useful when an agent is
-building and testing an application in the same environment.
+Web content is untrusted input to an AI agent. Every session applies a network
+policy and records allowed and denied requests, so `h5i browser requests` and
+`h5i browser audit` show what the agent did. For stronger isolation, a profile
+in `.h5i/env.toml` picks a tier (`workspace`, `process`, `supervised`,
+`container`, or `microvm`) and limits network egress and filesystem access. A
+**box** built from that profile can hold the browser alone, or the whole
+workflow: workspace, toolchain, dev server, and the agent itself.
 
 ```bash
 h5i box create alpha --profile agent-claude   # sandboxed git worktree
 h5i box shell alpha                           # interactive confined session
-h5i box run alpha -- cargo test               # run a command inside it
-h5i box propose alpha                         # create a reviewable snapshot
+h5i browser open https://docs.rs/ --in alpha  # browser inside the box
+h5i box propose alpha                         # reviewable snapshot
 h5i box apply alpha                           # merge approved changes
-h5i box export alpha                          # export the patch and receipts
-h5i box rm alpha                              # discard the environment
+h5i box rm alpha                              # discard it
 ```
 
-Watch the workflow from the host:
-
-```bash
-h5i ui
-```
+Watch it all from the host with `h5i ui`:
 
 <p align="center">
   <img src="./docs/_static/sandbox-ui-demo.png" alt="Watching a sandboxed browser session from the host" width="99%" />
@@ -200,49 +141,18 @@ h5i ui
 
 ## 3. Build verifiable apps: h5i-app
 
-`h5i-app` is a Rust web framework that lets developers prove properties of their application logic in Lean 4.
-
-**High level features**
+`h5i-app` is a Rust web framework that lets you prove properties of your
+application logic in Lean 4.
 
 - Write the logic as pure Rust functions and prove it in Lean 4 via [Aeneas](https://github.com/AeneasVerif/aeneas).
 - Serve it with [axum](https://github.com/tokio-rs/axum); handlers never touch the database.
 - Prove that invariants hold for the rows loaded back from the database.
 - Prove properties across requests, for every order in which clients' requests commit.
 
-**Usage example**
-
-The kernel is one function that decides what a command does. This one, from
-the calculator tutorial, keeps one number per user:
-
-```rust
-pub fn transition(actor: &Principal, snap: &Snapshot, cmd: &Command) -> Result<(Option<Memory>, Reply), Error> {
-    match cmd {
-        Command::Set { value } => Ok((Some(Memory { user: actor.user, value: *value }), Reply::Value(*value))),
-        Command::Apply { op, arg } => {
-            let m = memory_of(&snap.memories, actor.user);
-            match compute(*op, m, *arg) {
-                Ok(v) => Ok((Some(Memory { user: actor.user, value: v }), Reply::Value(v))),
-                Err(e) => Err(e),
-            }
-        }
-        Command::Get => Ok((None, Reply::Value(memory_of(&snap.memories, actor.user)))),
-    }
-}
-```
-
-The server around it is an ordinary axum application:
-
-```rust
-let engine = Arc::new(Engine::<Calc, CalcStore>::new(pool(&url, 8)?, EngineConfig::default()));
-engine.install_schema().await?;
-let app = I5h::new(engine, HmacAuth::<Calc>::new(secret, principal));
-let router = Router::new().route("/healthz", get(|| async { "ok" })).merge(rpc_router(app));
-axum::serve(TcpListener::bind("127.0.0.1:8080").await?, router).await?;
-```
-
-After the kernel is translated to Lean, you can prove properties of it, for
-example that after any successful command a `get` by the same user returns its
-result:
+The kernel is one `transition` function that decides what a command does. Once
+Aeneas translates it to Lean, theorems about it are ordinary Lean. This one,
+from the [calculator tutorial](examples/app/tutorials/calculator/TUTORIAL.md),
+says a `get` after any successful command returns that command's result:
 
 ```lean
 theorem get_after (a : Principal) (s s' : Snapshot) (c : Command) (w : Option Memory) (v : U64)
@@ -250,6 +160,9 @@ theorem get_after (a : Principal) (s s' : Snapshot) (c : Command) (w : Option Me
     (ht : transition a s c = ok (.Ok (w, .Value v))) (hs : apply s w = ok s') :
     transition a s' .Get = ok (.Ok (none, .Value v))
 ```
+
+See [crates/h5i-app](crates/h5i-app/README.md) for the full kernel, the axum
+server around it, and the proof workflow.
 
 ---
 
