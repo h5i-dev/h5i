@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i: The Agent-Native Workspace for Secure Web Development</title>
+  <title>h5i: Secure Web Development for Every Team</title>
   <meta name="description" content="An agent-native workspace for secure web development. Test running apps, keep security checks in CI, and explore provable Rust application logic with the i5h framework.">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
@@ -20,7 +20,7 @@
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i: The Agent-Native Workspace for Secure Web Development">
+  <meta property="og:title" content="h5i: Secure Web Development for Every Team">
   <meta property="og:description" content="An agent-native workspace for secure web development. Test running apps, keep security checks in CI, and explore provable Rust application logic with the i5h framework.">
   <meta property="og:url" content="https://h5i.dev/">
   <meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
@@ -29,7 +29,7 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i: The Agent-Native Workspace for Secure Web Development">
+  <meta name="twitter:title" content="h5i: Secure Web Development for Every Team">
   <meta name="twitter:description" content="An agent-native workspace for secure web development. Test running apps, keep security checks in CI, and explore provable Rust application logic with the i5h framework.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
   <meta name="twitter:image:alt" content="An h5i browser session: the page an agent is reading, beside the request log the engine wrote before any bytes moved">
@@ -113,7 +113,7 @@
       "@type": "WebPage",
       "@id": "https://h5i.dev/#webpage",
       "url": "https://h5i.dev/",
-      "name": "h5i: The Agent-Native Workspace for Secure Web Development",
+      "name": "h5i: Secure Web Development for Every Team",
       "description": "An agent-native workspace for secure web development. Test running apps, keep security checks in CI, and explore provable Rust application logic with the i5h framework.",
       "isPartOf": {
         "@id": "https://h5i.dev/#website"
@@ -266,6 +266,18 @@
   <link rel="stylesheet" href="/_static/console-mock.css?v=c9174b2b5b">
   <link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
   <style>
+
+    .section-title br.heading-break { display: block; }
+    #what-you-get .section-title, #framework .section-title { max-width: none; }
+    .proof-flow { margin: 36px 0 0; overflow-x: auto; }
+    .proof-diagram { display: block; width: 100%; min-width: 760px; height: auto; }
+    .proof-diagram text { font-family: var(--mono); }
+    .proof-diagram .pd-title { font-family: var(--disp); font-size: 22px; font-weight: 800; fill: var(--ink); }
+    .proof-diagram .pd-label { font-size: 11px; letter-spacing: 1.2px; fill: var(--dim); }
+    .proof-diagram .pd-text { font-size: 13px; fill: var(--ink); }
+    .proof-diagram .pd-code { font-size: 13px; fill: var(--dim); }
+    .proof-diagram .pd-accent { fill: var(--spot); }
+    .proof-flow figcaption { margin-top: 12px; font-family: var(--mono); font-size: 11px; color: var(--dim); }
     @media (min-width: 900px) {
       .feat-grid.feat-grid-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -296,9 +308,9 @@
 <section id="hero" tabindex="-1">
   <div class="hero-inner">
     <div class="hero-badge">Build &middot; Test &middot; Verify</div>
-    <h1 class="hero-title">The Agent-Native Workspace<br>for <em>Secure Web Development.</em></h1>
+    <h1 class="hero-title"><em>Secure Web Development</em><br>for Every Team</h1>
     <p class="hero-sub">
-    <strong>Build with agents. Test for vulnerabilities. Prove critical properties.</strong> Bring security into your development workflow, from application logic to the running web app.
+    <strong>Build with agents. Red-team for bugs. Formally verify properties.</strong> Bring security into your development workflow, from application logic to the running web app.
     </p>
     <div class="hero-install" id="quickstart">
       <code id="install-cmd">curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --test</code>
@@ -329,36 +341,30 @@
   <a class="stat" href="https://github.com/h5i-dev/h5i/graphs/contributors">
     <b>20+</b><span>contributors</span>
   </a>
-  <a class="stat" href="https://github.com/h5i-dev/h5i/blob/main/LICENSE">
-    <b>Apache 2.0</b><span>open source, no lock-in</span>
+  <a class="stat" href="https://github.com/h5i-dev/h5i/tree/main/examples/security-regression-ci">
+    <b>CI/CD</b><span>Compatible with GitHub Actions</span>
   </a>
 </div>
 
-<!-- ── The development workflow ────────────────────────────── -->
+<!-- ── The problem ────────────────────────────────────────── -->
 <section id="problem">
   <div class="container">
     <div class="section-head">
-      <span class="section-tag">One development workflow</span>
-      <h2 class="section-title">Ship changes. Keep your security properties.</h2>
-      <p class="section-sub">Authorization, tenant isolation, and business rules need to hold as your app evolves.
-        Test the running application, prove selected properties of its logic, and check both as you make changes.</p>
+      <span class="section-tag">The problem</span>
+      <h2 class="section-title">Secure Web Development Is Still Difficult, Even with AI.</h2>
+      <p class="section-sub">AI agents make it easy to write code. Building secure web applications is still difficult.</p>
     </div>
-    <div class="feat-grid">
-      <a class="feat-card" href="#framework">
-        <span class="feat-cmd">01 / Build &amp; prove</span>
-        <div class="feat-name">Make critical logic verifiable</div>
-        <div class="feat-desc">Write application logic in Rust and prove its properties in Lean 4 with the Axum-based i5h framework, the foundation for h5i-app.</div>
-      </a>
-      <a class="feat-card" href="#what-you-get">
-        <span class="feat-cmd">02 / Test the running app</span>
-        <div class="feat-name">Put security assumptions to the test</div>
-        <div class="feat-desc">Give your agent a browser and direct HTTP controls to investigate how your application behaves. Start with your existing stack.</div>
-      </a>
-      <a class="feat-card" href="#ci">
-        <span class="feat-cmd">03 / Check every change</span>
-        <div class="feat-name">Make security checks repeatable</div>
-        <div class="feat-desc">Keep regression tests in your repository and run them in CI. For verified Rust logic, run the framework's proof checks alongside them.</div>
-      </a>
+    <div class="feat-grid feat-grid-four">
+      <div class="feat-card">
+        <span class="feat-cmd">01 / Red-teaming</span>
+        <div class="feat-name">Expert hackers are expensive. Red-teaming AI can go rogue.</div>
+        <div class="feat-desc">Professional red teams are expensive, and AI agents can run out of control. Effective security testing needs both the right tools and enforceable limits on what agents can do.</div>
+      </div>
+      <div class="feat-card">
+        <span class="feat-cmd">02 / Formal verification</span>
+        <div class="feat-name">Proving correctness is hard.</div>
+        <div class="feat-desc">Writing code is easier than proving it correct. Ruling out bugs requires precise specifications, explicit assumptions, and proofs that the implementation satisfies them.</div>
+      </div>
     </div>
   </div>
 </section>
@@ -370,7 +376,7 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">Security testing / Any stack</span>
-      <h2 class="section-title">Give your agent the tools to test your app.</h2>
+      <h2 class="section-title">Professional Red-Teaming<br class="heading-break">for Every Team</h2>
       <p class="section-sub">Use h5i with the web app you already have. Browser automation and direct HTTP control let your agent
         inspect application behavior and investigate security issues. No framework migration required.
         Use it only on applications you own or are authorized to test.</p>
@@ -392,16 +398,7 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i websec diff res_42 res_43 --human</span>                                         <span class="t-cmt"># how the two answers differ</span>
 <span class="t-out">  status   : 200 &#8594; 200</span>
 <span class="t-out">  bytes    : 1412 &#8594; 1903 (+491)</span>
-<span class="t-out">  alike    : 0.712</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i websec match res_43 --contains "not your item"</span>                            <span class="t-cmt"># exits 0 when it holds</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i websec sitemap --human</span>                                                    <span class="t-cmt"># origins and endpoints reached</span>
-<span class="t-out">  target.example</span>
-<span class="t-out">  * /api/item                        GET      200          x3  ?id</span>
-
-<span class="t-cmt"># Optional: open a separate browser session inside a container.</span>
-<span class="t-prompt">$</span> <span class="t-cmd">printf '[profile.custom-sandbox]\nisolation = "container"\n' &gt; .h5i/env.toml</span>  <span class="t-cmt"># a container-isolation profile</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i box --profile custom-sandbox --name custom-sandbox</span>                        <span class="t-cmt"># create the box with it</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://docs.rs/ --in custom-sandbox</span>                         <span class="t-cmt"># open the session inside that box</span></pre></div></div>
+<span class="t-out">  alike    : 0.712</span></pre></div></div>
     <div class="feat-grid">
       <div class="feat-card">
         <div class="feat-name">Explore your app automatically</div>
@@ -428,12 +425,72 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">Application framework / Rust + Lean 4</span>
-      <h2 class="section-title">Write the logic. Prove the properties.</h2>
+      <h2 class="section-title">Formal Verification<br class="heading-break">for Every Team</h2>
       <p class="section-sub">Build on Axum with a Rust application kernel that can be extracted into Lean 4.
         State the rules your app must preserve, then check proofs against that logic.</p>
-      <p class="section-sub">Available today as <a href="https://github.com/h5i-dev/i5h">i5h</a>.
-        Integration into this workspace as <strong>h5i-app</strong> is planned.</p>
     </div>
+    <figure class="proof-flow">
+      <svg class="proof-diagram" viewBox="0 0 1120 380" role="img" aria-labelledby="proof-title proof-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="proof-title">From Rust application logic to Lean-checked properties</title>
+        <desc id="proof-desc">Aeneas extracts the supported Rust kernel into Lean definitions. Developers supply specifications and proofs. Lean checks the proofs against the extracted logic, establishing the specified authorization, isolation, and state properties.</desc>
+        <defs>
+          <marker id="proof-arrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="currentColor" stroke-width="1.5"/></marker>
+          <pattern id="proof-grid" width="18" height="18" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".7" fill="currentColor" opacity=".14"/></pattern>
+        </defs>
+        <!-- Source file: visual code lines show the kernel, not a runnable example. -->
+        <text x="20" y="28" class="pd-label">RUST / APPLICATION KERNEL</text>
+        <path d="M20 64H225L253 92V307H20Z" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M225 64V92H253" fill="none" stroke="var(--line2)"/>
+        <text x="40" y="98" class="pd-text">kernel.rs</text>
+        <path d="M20 116H253" stroke="var(--line2)"/>
+        <text x="40" y="145" class="pd-code"><tspan class="pd-accent">fn</tspan> transition(...) {</text>
+        <path d="M57 163H107M119 163H169M57 182H91M103 182H211M74 201H155M74 220H113M125 220H195M57 239H176" stroke="var(--dim)" stroke-width="4" opacity=".45"/>
+        <path d="M57 182H91M74 220H113" stroke="var(--spot)" stroke-width="4"/>
+        <text x="40" y="266" class="pd-code">}</text>
+        <text x="20" y="339" class="pd-code">The logic your app runs</text>
+        <!-- Extraction connection. -->
+        <g style="color:var(--spot)">
+          <path d="M266 190H355" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
+        </g>
+        <text x="310" y="168" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
+        <text x="310" y="217" class="pd-code" text-anchor="middle">extract</text>
+        <!-- Verification boundary, with a second input for specs and proofs. -->
+        <rect x="371" y="93" width="428" height="215" rx="12" fill="url(#proof-grid)" style="color:var(--spot)"/>
+        <rect x="371" y="93" width="428" height="215" rx="12" fill="none" stroke="var(--spot)" stroke-opacity=".65"/>
+        <rect x="389" y="82" width="220" height="23" fill="var(--bg)"/>
+        <text x="400" y="98" class="pd-label pd-accent">LEAN 4 / VERIFICATION</text>
+        <rect x="557" y="10" width="234" height="47" rx="4" fill="var(--panel)" stroke="var(--line2)"/>
+        <text x="674" y="29" class="pd-label" text-anchor="middle">YOU SUPPLY</text>
+        <text x="674" y="47" class="pd-text" text-anchor="middle">Specifications + proofs</text>
+        <path d="M674 57V128" fill="none" stroke="var(--spot)" stroke-width="1.5" style="color:var(--spot)" marker-end="url(#proof-arrowhead)"/>
+        <rect x="393" y="139" width="157" height="116" rx="4" fill="var(--panel)" stroke="var(--line2)"/>
+        <text x="409" y="163" class="pd-text">Kernel.lean</text>
+        <path d="M410 180H455M465 180H529M410 198H430M440 198H509M424 216H522M424 234H482" stroke="var(--dim)" stroke-width="3" opacity=".45"/>
+        <path d="M410 180H455M424 216H458" stroke="var(--spot)" stroke-width="3"/>
+        <path d="M552 194H603" fill="none" stroke="var(--spot)" stroke-width="1.5" style="color:var(--spot)" marker-end="url(#proof-arrowhead)"/>
+        <path d="M674 134L730 165V223L674 254L618 223V165Z" fill="var(--panel)" stroke="var(--spot)"/>
+        <path d="M659 166l10 10 20-23" fill="none" stroke="var(--spot)" stroke-width="2.5"/>
+        <text x="674" y="202" class="pd-text" text-anchor="middle">Lean</text>
+        <text x="674" y="224" class="pd-code" text-anchor="middle">checker</text>
+        <text x="471" y="283" class="pd-label" text-anchor="middle">EXTRACTED LOGIC</text>
+        <text x="674" y="283" class="pd-label" text-anchor="middle">CHECK THE PROOFS</text>
+        <!-- Output: properties established by the supplied proofs. -->
+        <path d="M731 194H862" fill="none" stroke="var(--spot)" stroke-width="1.5" style="color:var(--spot)" marker-end="url(#proof-arrowhead)"/>
+        <text x="832" y="171" class="pd-label pd-accent" text-anchor="middle">PASS</text>
+        <text x="886" y="105" class="pd-label">PROVEN PROPERTIES</text>
+        <g fill="none" stroke="var(--spot)" stroke-width="1.8">
+          <circle cx="898" cy="145" r="11"/><path d="M892 145l4 4 8-9"/>
+          <circle cx="898" cy="196" r="11"/><path d="M892 196l4 4 8-9"/>
+          <circle cx="898" cy="247" r="11"/><path d="M892 247l4 4 8-9"/>
+        </g>
+        <text x="920" y="150" class="pd-text">Authorization</text>
+        <text x="920" y="201" class="pd-text">Tenant isolation</text>
+        <text x="920" y="252" class="pd-text">State invariants</text>
+        <path d="M920 166H1100M920 217H1100M920 268H1100" stroke="var(--line2)"/>
+        <text x="585" y="339" class="pd-code" text-anchor="middle">The extracted logic, checked against your specifications</text>
+      </svg>
+      <figcaption>Illustrative workflow &middot; Properties depend on the specifications and proofs you supply.</figcaption>
+    </figure>
     <div class="feat-grid">
       <div class="feat-card">
         <span class="feat-cmd">Authorization</span>
@@ -451,47 +508,9 @@
         <div class="feat-desc">Specify valid application states and prove that accepted transitions preserve the conditions you define.</div>
       </div>
     </div>
-    <p class="section-sub" style="margin-top:24px">Proofs cover stated properties under explicit assumptions.
-      Authentication, HTTP integration, and database behavior still need review and testing.
-      The framework can be adopted independently of the browser and sandbox.</p>
     <div class="hero-actions">
       <a href="https://github.com/h5i-dev/i5h/tree/main/examples/tutorials" class="btn btn-primary">Explore the Rust tutorials</a>
       <a href="https://i5h.dev/" class="btn btn-ghost">How the proofs work</a>
-    </div>
-  </div>
-</section>
-
-<!-- ── Continuous checks ───────────────────────────────────── -->
-<section id="ci">
-  <div class="container">
-    <div class="section-head">
-      <span class="section-tag">CI / Security regression testing</span>
-      <h2 class="section-title">Check the next change, too.</h2>
-      <p class="section-sub">Keep security test flows and their expected outcomes in version control.
-        Replay them against your test environment in CI. If you use i5h, run its verification checks
-        alongside those tests to check selected properties of your Rust logic.</p>
-    </div>
-    <div class="terminal">
-      <div class="terminal-bar"><span class="terminal-path">GitHub Actions / security regression checks</span></div>
-      <div class="terminal-body"><pre><span class="t-cmt"># Against your running local test application</span>
-- uses: h5i-dev/h5i@v1
-  with:
-    target: http://localhost:3000
-    tests: .h5i-tests/tests
-    openapi: openapi.yaml</pre></div>
-    </div>
-    <p class="section-sub"><a href="https://github.com/h5i-dev/h5i/tree/main/examples/security-regression-ci">Explore the CI examples &#8594;</a></p>
-    <div class="feat-grid feat-grid-four">
-      <div class="feat-card">
-        <span class="feat-cmd">Tests + proofs</span>
-        <div class="feat-name">Two ways to check one requirement</div>
-        <div class="feat-desc">For a requirement such as tenant isolation, test the running app's behavior and prove the corresponding property of its kernel. Passing tests and checked proofs provide different kinds of evidence.</div>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">Planned integration</span>
-        <div class="feat-name">Connect tests to application specifications</div>
-        <div class="feat-desc">The next step is to connect routes, policies, and proof assumptions to test coverage, so developers can see which requirements are checked and which integration boundaries still need attention.</div>
-      </div>
     </div>
   </div>
 </section>
@@ -751,7 +770,7 @@
   </div>
 </section>
 
-<!-- ── FAQ ───────────────────────────────────────────────── -->
+<!-- ── FAQ ───────────────────────────────────────────────────── -->
 <section id="faq">
   <div class="container">
     <div class="section-head">
@@ -762,7 +781,7 @@
     <div class="faq-list">
       <details class="faq-item" open>
         <summary>What is h5i?</summary>
-        <div class="faq-answer">h5i is an open-sourc agent-native workspace for secure web development. It provides browser and HTTP security testing, regression checks in CI, and configurable sandboxing. The companion i5h framework lets developers prove properties of Rust application logic in Lean 4; integration as h5i-app is planned.</div>
+        <div class="faq-answer">h5i is an open-source, agent-native workspace for secure web development. It provides browser and HTTP security testing, regression checks in CI, and configurable sandboxing. The companion i5h framework lets developers prove properties of Rust application logic in Lean 4; integration as h5i-app is planned.</div>
       </details>
       <details class="faq-item">
         <summary>Do I need to rewrite my app in Rust?</summary>
@@ -816,15 +835,15 @@
   </div>
 </section>
 
-<!-- ── Close ──────────────────────────────────────â──────────── -->
+<!-- ── Close ──────────────────────────────────────────────────── -->
 <section id="cta">
   <div class="container">
-    <h2 class="cta-title">Build with agents. Keep security in the loop.</h2>
+    <h2 class="cta-title">Build securely with AI.</h2>
     <p class="cta-sub">Start with security testing on your existing app, or explore verifiable Rust application logic.
       Open source, local-first, and designed to work with your own agent.</p>
     <div class="hero-install">
       <code>curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --test</code>
-      <button class="copy-btn" typ>copy</button>
+      <button class="copy-btn" type="button">copy</button>
     </div>
     <div class="hero-actions">
       <a href="/manual/#h5i-browser" class="btn btn-primary">Start your first session</a>
@@ -853,7 +872,7 @@
   </div>
 </footer>
 
-<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cfbeacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
 <script src="/_static/blog.js?v=41dbda103a" defer></script>
 <script src="/_static/highlight.js?v=ed81eee4e6" defer></script>
 </body>
