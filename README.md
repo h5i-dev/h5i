@@ -198,29 +198,58 @@ h5i ui
 
 ## 3. Build verifiable apps: h5i-app
 
-[h5i-app](crates/h5i-app) is an Axum-based Rust web framework for proving
-properties of application logic in Lean 4. Red-teaming finds the problems you
-did not anticipate; h5i-app proves the ones you can state, such as
-authorization, tenant isolation and state transitions, and CI re-checks them
-on every change. It is a library: an application that uses it pulls in none of
-the browser, sandbox or CLI.
+`h5i-app` is a Rust web framework that lets developers prove properties of their application logic in Lean 4.
 
-- Write the logic as one pure Rust function, the *kernel*, and prove it in
-  Lean 4 via [Aeneas](https://github.com/AeneasVerif/aeneas).
-- Serve it with axum; handlers never touch the database.
-- Run each request in a SERIALIZABLE PostgreSQL transaction, with retries and
-  idempotency keys.
+**High level features**
+
+- Write the logic as pure Rust functions and prove it in Lean 4 via [Aeneas](https://github.com/AeneasVerif/aeneas).
+- Serve it with [axum](https://github.com/tokio-rs/axum); handlers never touch the database.
+- Run each request in a SERIALIZABLE PostgreSQL transaction, with retries and idempotency keys.
 - Declare tables once with `schema!` and get Rust mappings and Lean proofs.
+- Prove that invariants hold for the rows loaded back from the database.
+- Prove properties across requests, for every order in which clients' requests commit.
 
-```toml
-[dependencies]
-h5i-app = { version = "0.1", features = ["http", "postgres"] }
+**Usage example**
+
+The kernel is one function that decides what a command does. This one, from
+the calculator tutorial, keeps one number per user:
+
+```rust
+pub fn transition(actor: &Principal, snap: &Snapshot, cmd: &Command) -> Result<(Option<Memory>, Reply), Error> {
+    match cmd {
+        Command::Set { value } => Ok((Some(Memory { user: actor.user, value: *value }), Reply::Value(*value))),
+        Command::Apply { op, arg } => {
+            let m = memory_of(&snap.memories, actor.user);
+            match compute(*op, m, *arg) {
+                Ok(v) => Ok((Some(Memory { user: actor.user, value: v }), Reply::Value(v))),
+                Err(e) => Err(e),
+            }
+        }
+        Command::Get => Ok((None, Reply::Value(memory_of(&snap.memories, actor.user)))),
+    }
+}
 ```
 
-Start with the [tutorials](examples/app/tutorials), then read
-[what is proven and what is assumed](docs/app/TRUST.md). Ports of real
-applications live in [examples/app](examples/app) and the design in
-[docs/app](docs/app/DESIGN.md).
+The server around it is an ordinary axum application:
+
+```rust
+let engine = Arc::new(Engine::<Calc, CalcStore>::new(pool(&url, 8)?, EngineConfig::default()));
+engine.install_schema().await?;
+let app = I5h::new(engine, HmacAuth::<Calc>::new(secret, principal));
+let router = Router::new().route("/healthz", get(|| async { "ok" })).merge(rpc_router(app));
+axum::serve(TcpListener::bind("127.0.0.1:8080").await?, router).await?;
+```
+
+After the kernel is translated to Lean, you can prove properties of it, for
+example that after any successful command a `get` by the same user returns its
+result:
+
+```lean
+theorem get_after (a : Principal) (s s' : Snapshot) (c : Command) (w : Option Memory) (v : U64)
+    (hroom : s.memories.length < Usize.max)
+    (ht : transition a s c = ok (.Ok (w, .Value v))) (hs : apply s w = ok s') :
+    transition a s' .Get = ok (.Ok (none, .Value v))
+```
 
 ---
 
