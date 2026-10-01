@@ -142,8 +142,7 @@ Watch it all from the host with `h5i ui`:
 ## 3. Prove correctness: build on h5i-app
 
 Red-teaming finds the bugs you did not anticipate. `h5i-app` is a Rust web
-framework for proving, in Lean 4, the properties you can state. It needs no
-h5i binary:
+framework for proving, in Lean 4, the properties you can state.
 
 ```toml
 [dependencies]
@@ -155,10 +154,27 @@ h5i-app = { version = "0.1", features = ["http", "postgres"] }
 - Prove that invariants hold for the rows loaded back from the database.
 - Prove properties across requests, for every order in which clients' requests commit.
 
-The kernel is one `transition` function that decides what a command does. Once
-Aeneas translates it to Lean, theorems about it are ordinary Lean. This one,
-from the [calculator tutorial](examples/app/tutorials/calculator/TUTORIAL.md),
-says a `get` after any successful command returns that command's result:
+The kernel is one function that decides what a command does. This one, from the
+[calculator tutorial](examples/app/tutorials/calculator/TUTORIAL.md), keeps one
+number per user:
+
+```rust
+pub fn transition(actor: &Principal, snap: &Snapshot, cmd: &Command) -> Result<(Option<Memory>, Reply), Error> {
+    match cmd {
+        Command::Set { value } => Ok((Some(Memory { user: actor.user, value: *value }), Reply::Value(*value))),
+        Command::Apply { op, arg } => {
+            let m = memory_of(&snap.memories, actor.user);
+            match compute(*op, m, *arg) {
+                Ok(v) => Ok((Some(Memory { user: actor.user, value: v }), Reply::Value(v))),
+                Err(e) => Err(e),
+            }
+        }
+        Command::Get => Ok((None, Reply::Value(memory_of(&snap.memories, actor.user)))),
+    }
+}
+```
+
+Aeneas translates it to Lean, where theorems about it are ordinary Lean:
 
 ```lean
 theorem get_after (a : Principal) (s s' : Snapshot) (c : Command) (w : Option Memory) (v : U64)
@@ -194,11 +210,11 @@ for exactly what is proven and what is assumed.
 <summary>What is h5i?</summary>
 
 h5i is an open-source workspace for building secure web applications. The
-`h5i` CLI is a lightweight browser built for AI agents, written in Rust without
-Chromium or V8, with policy-controlled, auditable sessions, configurable
-sandboxing, and tools for inspecting and testing HTTP traffic. `h5i-app` is a
-Rust web framework whose application logic is proven in Lean 4. Both run
-locally.
+`h5i` CLI is a red-teaming tool for AI agents. It drives a target through its
+own lightweight Rust browser, or through a capture proxy in front of Chromium,
+and lets the agent capture, inspect, replay, and compare the HTTP traffic from
+policy-controlled, auditable, sandboxed sessions. `h5i-app` is a Rust web
+framework whose application logic is proven in Lean 4.
 
 </details>
 
