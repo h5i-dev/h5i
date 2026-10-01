@@ -19,8 +19,6 @@
 
 **Defense**: *Application logic you can formally verify.* Build on [h5i-app](#4-build-verifiable-apps-h5i-app), h5i’s Axum-based Rust framework, and prove properties of your application logic in Lean 4, from authorization and tenant isolation to business rules and state invariants.
 
-**Use either side independently, or combine them to build and secure your web app.**
-
 <table align="center">
   <tr>
     <td align="center">
