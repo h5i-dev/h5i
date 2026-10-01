@@ -963,7 +963,7 @@ Capture an external Chromium session through an h5i HTTP/S proxy
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBproxy\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-project\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-expires\-in\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+\fBproxy\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-project\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-expires\-in\fR] [\fB\-\-dom\-instrument\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -982,6 +982,9 @@ Refuse loopback too
 .TP
 \fB\-\-expires\-in\fR \fI<SECONDS>\fR
 End the proxy automatically after this many seconds
+.TP
+\fB\-\-dom\-instrument\fR
+Instrument pages for prototype pollution and DOM\-XSS: inject the DOM instrument into HTML and collect what reaches a sink, for `h5i websec dom scan`
 .TP
 \fB\-\-json\fR
 Print the session record as JSON

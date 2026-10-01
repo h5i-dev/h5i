@@ -17,6 +17,7 @@
 //! `h5i browser`, and defaults chosen for a loop rather than for a person
 //! reading a page.
 
+mod dom;
 mod experiment;
 mod finding;
 mod grpc;
@@ -355,6 +356,17 @@ enum Verb {
         #[command(subcommand)]
         command: GrpcVerb,
     },
+
+    /// Probe for prototype pollution and DOM-XSS source→sink flows.
+    ///
+    /// The DOM Invader analogue. `scan` drives client-side prototype-pollution
+    /// payloads through a session and reports what reached a sink; `node` runs
+    /// a Node target confined in a box and reports which `Object.prototype`
+    /// pollutions reach a dangerous sink. Both land their results as findings.
+    Dom {
+        #[command(subcommand)]
+        what: dom::DomVerb,
+    },
 }
 
 /// Where a call's descriptors come from: a `.proto`, a protoset, or the server.
@@ -621,6 +633,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Verb::Grpc { command } => {
             return grpc::run(session.as_deref(), command, json_out);
         }
+        Verb::Dom { what } => {
+            return dom::run(&root, session.as_deref(), what, json_out);
+        }
         _ => {}
     }
 
@@ -669,7 +684,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         | Verb::Matrix { .. }
         | Verb::Finding { .. }
         | Verb::ImportNuclei { .. }
-        | Verb::Grpc { .. } => {
+        | Verb::Grpc { .. }
+        | Verb::Dom { .. } => {
             unreachable!("the verbs this process handles return before this")
         }
         Verb::Replay {

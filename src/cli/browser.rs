@@ -124,6 +124,11 @@ pub enum BrowserCommands {
         /// End the proxy automatically after this many seconds.
         #[arg(long, value_name = "SECONDS")]
         expires_in: Option<u64>,
+        /// Instrument pages for prototype pollution and DOM-XSS: inject the DOM
+        /// instrument into HTML and collect what reaches a sink, for
+        /// `h5i websec dom scan`.
+        #[arg(long = "dom-instrument")]
+        dom_instrument: bool,
         /// Print the session record as JSON.
         #[arg(long)]
         json: bool,
@@ -1305,6 +1310,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             allow,
             no_loopback,
             expires_in,
+            dom_instrument,
             json,
         } => start_proxy(
             &root,
@@ -1314,6 +1320,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             allow,
             no_loopback,
             expires_in,
+            dom_instrument,
             json,
         ),
         BrowserCommands::Open {
@@ -2459,6 +2466,7 @@ fn start_proxy(
     allow: Vec<String>,
     no_loopback: bool,
     expires_in: Option<u64>,
+    dom_instrument: bool,
     json_out: bool,
 ) -> anyhow::Result<()> {
     let trust = host_proxy_chromium_tls()?;
@@ -2528,6 +2536,9 @@ fn start_proxy(
     }
     if no_loopback {
         command.arg("--no-loopback");
+    }
+    if dom_instrument {
+        command.arg("--dom-report").arg(dir.join("dom-report.jsonl"));
     }
     let log = std::fs::File::create(&log_path)?;
     command

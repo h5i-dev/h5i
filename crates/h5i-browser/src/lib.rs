@@ -9,6 +9,7 @@ pub mod capture;
 pub mod cors;
 pub mod budget;
 pub mod cookies;
+pub mod dom_inject;
 pub mod engine;
 pub mod extract;
 pub mod grpc;

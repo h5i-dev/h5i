@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head><title>pp fixture</title></head>
+<body>
+<div id="out"></div>
+<script>
+// A deliberately vulnerable page for `h5i websec dom scan`.
+//
+// It merges the query string and the fragment into an object following
+// `__proto__`, which pollutes Object.prototype, and it reflects the fragment
+// into innerHTML, which is a DOM-XSS sink. Drive it with, e.g.:
+//   ?__proto__[h5ipp]=reserved        -> prototype pollution (canary)
+//   #name=<img src=x onerror=alert(1)> -> hash -> innerHTML flow
+function setPath(obj, path, value) {
+  var keys = path.split(/[\.\[\]]+/).filter(Boolean);
+  var cur = obj;
+  for (var i = 0; i < keys.length - 1; i++) {
+    if (!(keys[i] in cur)) cur[keys[i]] = {};
+    cur = cur[keys[i]];
+  }
+  cur[keys[keys.length - 1]] = value;
+}
+function merge(qs) {
+  qs.split('&').forEach(function (pair) {
+    if (!pair) return;
+    var kv = pair.split('=');
+    setPath({}, decodeURIComponent(kv[0]), decodeURIComponent(kv[1] || ''));
+    // The empty base above is the realistic shape: the walk still reaches
+    // Object.prototype through __proto__, which is the whole bug.
+  });
+}
+try { merge(location.search.replace(/^\?/, '')); } catch (e) {}
+try { merge(location.hash.replace(/^#/, '')); } catch (e) {}
+document.getElementById('out').innerHTML = 'fragment: ' + location.hash;
+</script>
+</body>
+</html>
