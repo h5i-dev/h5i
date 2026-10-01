@@ -114,9 +114,16 @@
   try { wrapMethod(Element.prototype, "insertAdjacentHTML", "insertAdjacentHTML", 1); } catch (e) {}
   try { wrapMethod(Element.prototype, "setAttribute", "setAttribute", 1); } catch (e) {}
   try { wrapMethod(document, "write", "document.write", 0); } catch (e) {}
+  // Direct URL-property assignment (script.src = x, iframe.src, a.href): a very
+  // common prototype-pollution DOM-XSS landing spot that setAttribute wrapping
+  // does not see.
+  try { wrapSetter(HTMLScriptElement.prototype, "src", "script.src"); } catch (e) {}
+  try { wrapSetter(HTMLIFrameElement.prototype, "src", "iframe.src"); } catch (e) {}
+  try { wrapSetter(HTMLImageElement.prototype, "src", "img.src"); } catch (e) {}
+  try { wrapSetter(HTMLAnchorElement.prototype, "href", "a.href"); } catch (e) {}
   // eval is deliberately not wrapped: a wrapper turns the page's direct eval
   // into indirect eval (global scope), which changes behaviour of the very
-  // page we are measuring. innerHTML/write/setAttribute cover the DOM sinks.
+  // page we are measuring. innerHTML/write/setAttribute cover the HTML sinks.
 
   // postMessage: a Chromium-only feature here (a single-realm engine has no
   // second frame to receive from). Log the origin and a clipped sample.

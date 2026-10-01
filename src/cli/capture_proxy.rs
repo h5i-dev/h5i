@@ -333,10 +333,21 @@ pub fn run(args: Args) -> anyhow::Result<()> {
     // now so the file's presence tells `websec dom scan` the session is armed.
     let (instrument, dom_report) = match &args.dom_report {
         Some(path) => {
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)?;
+            let mut options = std::fs::OpenOptions::new();
+            options.create(true).append(true);
+            // Owner-only: the reports carry sampled target page content, like
+            // the capture store and findings, so they never land world-readable.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                options.mode(0o600);
+            }
+            let file = options.open(path)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+            }
             (
                 Some(Arc::<str>::from(dom_inject::render_instrument())),
                 Some(Arc::new(Mutex::new(file))),

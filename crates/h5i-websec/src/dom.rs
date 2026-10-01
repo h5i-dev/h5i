@@ -60,8 +60,6 @@ pub struct Hit {
     pub property: String,
     /// The sink the value reached, if a source→sink flow was seen.
     pub sink: Option<String>,
-    /// A per-library DOM-XSS gadget that matched the polluted page, if any.
-    pub gadget: Option<String>,
 }
 
 /// The scheme-host-port origin of a URL, or the whole URL if it will not parse.
@@ -90,9 +88,6 @@ impl Hit {
         );
         if let Some(sink) = &self.sink {
             note.push_str(&format!("; reached sink {sink}"));
-        }
-        if let Some(gadget) = &self.gadget {
-            note.push_str(&format!("; library gadget: {gadget}"));
         }
         note
     }
@@ -163,6 +158,10 @@ pub struct Report {
     pub property: Option<String>,
     #[serde(default)]
     pub flows: Vec<Flow>,
+    /// Inbound postMessages the page received (Chromium vehicle only). Kept as
+    /// opaque values: `scan` only reports how many were logged.
+    #[serde(default)]
+    pub messages: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -187,7 +186,6 @@ pub fn hits_from(report: &Report) -> Vec<Hit> {
             source: "url".into(),
             property: property.clone(),
             sink: None,
-            gadget: None,
         });
     }
     for flow in &report.flows {
@@ -197,7 +195,6 @@ pub fn hits_from(report: &Report) -> Vec<Hit> {
             source: flow.source.clone(),
             property: property.clone(),
             sink: Some(flow.sink.clone()),
-            gadget: None,
         });
     }
     hits
@@ -505,18 +502,32 @@ fn scan(
     }
 
     // The browser beacons its reports as it loads each page, which is before
-    // `scan` runs, so fold every report. Dedup by the finding title (one per
-    // source→sink pair): the four payload forms that all pollute `via url` are
-    // one vulnerability, not four, and a title already in the log from an
-    // earlier scan is the same finding again.
+    // `scan` runs, so fold every report. The file is append-only across scans;
+    // bound the read so a long engagement (or a hostile flood of beacons) can't
+    // make it an unbounded load.
+    const MAX_REPORT_BYTES: u64 = 16 * 1024 * 1024;
+    if std::fs::metadata(&report_path).map(|m| m.len()).unwrap_or(0) > MAX_REPORT_BYTES {
+        anyhow::bail!(
+            "{} exceeds {MAX_REPORT_BYTES} bytes; close and reopen the proxy session to reset it",
+            report_path.display()
+        );
+    }
     let text = std::fs::read_to_string(&report_path).unwrap_or_default();
     let reports = parse_reports(&text);
+    let total_messages: usize = reports.iter().map(|r| r.messages.len()).sum();
 
+    // Dedup by the finding title (one per origin + source→sink pair): the four
+    // payload forms that all pollute `via url` are one vulnerability, and a
+    // title already in the log is the same finding again. Seed only from prior
+    // DOM findings so an unrelated manual finding can't suppress a scan result.
     let log = Findings::open(root, &session.id)?;
-    let mut seen: std::collections::HashSet<String> =
-        log.read()?.iter().map(|f| f.title.clone()).collect();
+    let mut seen: std::collections::HashSet<String> = log
+        .read()?
+        .iter()
+        .map(|f| f.title.clone())
+        .filter(|t| t.starts_with("prototype pollution"))
+        .collect();
     let mut recorded: Vec<String> = Vec::new();
-    let fresh = reports.len();
     for report in &reports {
         for hit in hits_from(report) {
             if !seen.insert(hit.title()) {
@@ -534,7 +545,8 @@ fn scan(
             serde_json::to_string_pretty(&serde_json::json!({
                 "ok": true,
                 "session": session.id,
-                "reports_read": fresh,
+                "reports_on_file": reports.len(),
+                "post_messages": total_messages,
                 "findings": recorded,
                 "probes": all_probes,
             }))?
@@ -544,26 +556,27 @@ fn scan(
     if recorded.is_empty() {
         if no_drive {
             println!(
-                "  no new DOM findings from {fresh} report(s). Drive these probes through the \
-                 proxied browser (or drop --no-drive), then scan again:"
+                "  no new DOM findings on file. Drive these probes through the proxied \
+                 browser (or drop --no-drive), then scan again:"
             );
             for probe in all_probes.iter().take(PP_PAYLOADS.len() * 2) {
                 println!("    {probe}");
             }
         } else {
             println!(
-                "  drove {} probe(s); {fresh} report(s) came back and none showed pollution \
-                 reaching a sink.",
+                "  drove {} probe(s); nothing showed pollution reaching a sink.",
                 all_probes.len()
             );
         }
     } else {
         println!(
-            "  recorded {} finding(s) from {} report(s): {}",
+            "  recorded {} finding(s): {}",
             recorded.len(),
-            fresh,
             recorded.join(", ")
         );
+    }
+    if total_messages > 0 {
+        println!("  postMessage: {total_messages} inbound message(s) logged");
     }
     Ok(())
 }
@@ -594,7 +607,6 @@ mod tests {
             source: "hash".into(),
             property: "h5ipp".into(),
             sink: Some("innerHTML".into()),
-            gadget: None,
         };
         let entry = hit_entry("finding_1", &hit, vec!["res_7".into()]).unwrap();
         assert_eq!(entry.id, "finding_1");
@@ -616,14 +628,13 @@ mod tests {
             source: "url".into(),
             property: "h5ipp".into(),
             sink: None,
-            gadget: Some("jquery: __proto__[url]=data:,alert(1)//".into()),
         };
         let entry = hit_entry("finding_2", &hit, vec![]).unwrap();
         assert_eq!(
             entry.title.as_deref(),
             Some("prototype pollution via url (https://app.example)")
         );
-        assert!(entry.note.unwrap().contains("library gadget: jquery"));
+        assert!(entry.note.unwrap().contains("Object.prototype.h5ipp"));
     }
 
     #[test]
@@ -655,9 +666,9 @@ mod tests {
 
     #[test]
     fn the_origin_distinguishes_two_targets_but_not_two_payload_forms() {
-        let a = Report { url: "https://app.one/x?__proto__[h5ipp]=reserved".into(), canary: true, property: None, flows: vec![] };
-        let b = Report { url: "https://app.one/x#constructor[prototype][h5ipp]=reserved".into(), canary: true, property: None, flows: vec![] };
-        let c = Report { url: "https://app.two/y?__proto__[h5ipp]=reserved".into(), canary: true, property: None, flows: vec![] };
+        let a = Report { url: "https://app.one/x?__proto__[h5ipp]=reserved".into(), canary: true, property: None, flows: vec![], messages: vec![] };
+        let b = Report { url: "https://app.one/x#constructor[prototype][h5ipp]=reserved".into(), canary: true, property: None, flows: vec![], messages: vec![] };
+        let c = Report { url: "https://app.two/y?__proto__[h5ipp]=reserved".into(), canary: true, property: None, flows: vec![], messages: vec![] };
         // Same origin, different payload form → same title (collapses).
         assert_eq!(hits_from(&a)[0].title(), hits_from(&b)[0].title());
         // Different origin → different title (kept apart).
@@ -672,6 +683,7 @@ mod tests {
             canary: false,
             property: None,
             flows: vec![],
+            messages: vec![],
         };
         assert!(hits_from(&report).is_empty());
     }

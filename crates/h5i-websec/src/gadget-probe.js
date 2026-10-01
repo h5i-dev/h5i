@@ -17,6 +17,10 @@ var RUN = crypto.randomBytes(4).toString("hex");
 var PROP = process.env.H5I_GADGET_PROP || "";
 var REPORT = process.env.H5I_GADGET_REPORT || "";
 var MARKER = "h5iGADGET_" + PROP + "_" + RUN;
+// The Object.prototype key actually polluted. For NODE_OPTIONS the gadget
+// pollutes `env` (whose NODE_OPTIONS a child inherits), so the reproducible
+// property differs from the gadget's name.
+var KEY = PROP === "NODE_OPTIONS" ? "env" : PROP;
 
 var findings = [];
 var seen = Object.create(null);
@@ -34,7 +38,7 @@ function record(sink, detail) {
   seen[sink] = true;
   findings.push({
     gadget: PROP,
-    property: PROP,
+    property: KEY,
     sink: sink,
     marker: MARKER,
     detail: String(detail).slice(0, 256),
