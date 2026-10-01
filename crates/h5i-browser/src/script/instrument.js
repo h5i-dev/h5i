@@ -34,18 +34,22 @@
     return out;
   }
 
-  // A sink argument is tainted when it contains a run of >=8 chars that also
-  // appears verbatim in a source. Cheap, and it does not false-positive on the
-  // short tokens the page itself uses.
+  // A sink argument is tainted when it contains a run of >=N chars that also
+  // appears verbatim in a source. Windows overlap (stride 1) so a match is not
+  // missed at a boundary, and N is large enough that a shared "https://" alone
+  // does not trip it. Generic needles are skipped for the same reason.
+  var NEEDLE = 12;
+  var GENERIC = /^(https?:\/\/|www\.|\/|\s)+$/;
   function tainted(arg) {
     var a = clip(arg);
-    if (a.length < 8) return null;
+    if (a.length < NEEDLE) return null;
     var src = sources();
     for (var i = 0; i < src.length; i++) {
       var val = src[i][1];
-      for (var start = 0; start + 8 <= val.length; start += 8) {
-        var needle = val.slice(start, start + 8);
-        if (needle && a.indexOf(needle) !== -1) return src[i][0];
+      for (var start = 0; start + NEEDLE <= val.length; start++) {
+        var needle = val.slice(start, start + NEEDLE);
+        if (GENERIC.test(needle)) continue;
+        if (a.indexOf(needle) !== -1) return src[i][0];
       }
     }
     return null;
@@ -97,7 +101,9 @@
   try { wrapMethod(Element.prototype, "insertAdjacentHTML", "insertAdjacentHTML", 1); } catch (e) {}
   try { wrapMethod(Element.prototype, "setAttribute", "setAttribute", 1); } catch (e) {}
   try { wrapMethod(document, "write", "document.write", 0); } catch (e) {}
-  try { wrapMethod(window, "eval", "eval", 0); } catch (e) {}
+  // eval is deliberately not wrapped: a wrapper turns the page's direct eval
+  // into indirect eval (global scope), which changes behaviour of the very
+  // page we are measuring. innerHTML/write/setAttribute cover the DOM sinks.
 
   // postMessage: a Chromium-only feature here (a single-realm engine has no
   // second frame to receive from). Log the origin and a clipped sample.

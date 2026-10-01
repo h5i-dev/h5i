@@ -27,9 +27,15 @@ pub fn render_instrument() -> String {
         .replace("__H5I_BEACON__", BEACON_URL)
 }
 
+/// The most a response body is decoded to before injection. A hostile target
+/// can send a few KB of gzip that inflates to gigabytes; past this the response
+/// is passed through unmodified rather than decoded into an OOM.
+pub const MAX_DECODE_BYTES: u64 = 32 * 1024 * 1024;
+
 /// Decode a response body for injection. `None` means "leave the original
-/// alone": an encoding this cannot decode, or a decode that failed. An absent
-/// or `identity` encoding returns the bytes unchanged.
+/// alone": an encoding this cannot decode, a decode that failed, or output that
+/// would exceed [`MAX_DECODE_BYTES`]. An absent or `identity` encoding returns
+/// the bytes unchanged.
 pub fn decode_body(raw: &[u8], content_encoding: Option<&str>) -> Option<Vec<u8>> {
     let encoding = content_encoding.unwrap_or("").trim();
     // One layer, matching the engine's own rule: a stacked `gzip, br` is not
@@ -43,20 +49,34 @@ pub fn decode_body(raw: &[u8], content_encoding: Option<&str>) -> Option<Vec<u8>
     if layers.next().is_some() {
         return None;
     }
+    // Every decoder is bounded to MAX_DECODE_BYTES + 1 so a bomb cannot grow the
+    // buffer without limit; one byte over the cap means "too big, pass through".
+    let cap = MAX_DECODE_BYTES;
     let mut out = Vec::new();
     let read = match name.to_ascii_lowercase().as_str() {
         "" => return Some(raw.to_vec()),
-        "gzip" | "x-gzip" => flate2::read::GzDecoder::new(raw).read_to_end(&mut out),
+        "gzip" | "x-gzip" => flate2::read::GzDecoder::new(raw)
+            .take(cap + 1)
+            .read_to_end(&mut out),
         "deflate" => flate2::read::ZlibDecoder::new(raw)
+            .take(cap + 1)
             .read_to_end(&mut out)
             .or_else(|_| {
                 out.clear();
-                flate2::read::DeflateDecoder::new(raw).read_to_end(&mut out)
+                flate2::read::DeflateDecoder::new(raw)
+                    .take(cap + 1)
+                    .read_to_end(&mut out)
             }),
-        "br" => brotli::Decompressor::new(raw, 4096).read_to_end(&mut out),
+        "br" => brotli::Decompressor::new(raw, 4096)
+            .take(cap + 1)
+            .read_to_end(&mut out),
         _ => return None,
     };
-    read.ok().map(|_| out)
+    read.ok()?;
+    if out.len() as u64 > cap {
+        return None;
+    }
+    Some(out)
 }
 
 /// Insert a `<script>` carrying `js` so it runs before the page's own scripts:

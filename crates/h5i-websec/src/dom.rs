@@ -27,21 +27,12 @@ const GADGET_PROBE_JS: &str = include_str!("gadget-probe.js");
 /// Where the probe is written inside the box's `/work`, and run from.
 const PROBE_IN_BOX: &str = "./.h5i-gadget-probe.js";
 
-/// The prototype-pollution corpus, as query-parameter fragments.
-///
-/// The two families ppfuzz calls "object" (`__proto__`) and "pointer"
-/// (`constructor.prototype`), each in dot and bracket form. `{p}` is the canary
-/// property, `{v}` its value.
-pub const QUERY_PAYLOADS: &[&str] = &[
-    "__proto__.{p}={v}",
-    "__proto__[{p}]={v}",
-    "constructor.prototype.{p}={v}",
-    "constructor[prototype][{p}]={v}",
-];
-
-/// The same families as URL fragments. Fragments never reach the server, so the
-/// proxy cannot see these: the navigation surface seeds them into the URL.
-pub const FRAGMENT_PAYLOADS: &[&str] = &[
+/// The prototype-pollution corpus. The two families ppfuzz calls "object"
+/// (`__proto__`) and "pointer" (`constructor.prototype`), each in dot and
+/// bracket form. `{p}` is the canary property, `{v}` its value. Each is tried
+/// both as a query parameter and as a URL fragment (fragments never reach the
+/// server, so only the proxied browser's navigation seeds them).
+pub const PP_PAYLOADS: &[&str] = &[
     "__proto__.{p}={v}",
     "__proto__[{p}]={v}",
     "constructor.prototype.{p}={v}",
@@ -58,6 +49,9 @@ pub fn render(template: &str) -> String {
 /// One confirmed client-side result: a pollution, and where it landed.
 #[derive(Debug, Clone)]
 pub struct Hit {
+    /// The origin the pollution was seen on, e.g. `https://app.example`. Part of
+    /// the title so two different targets are two findings, not one.
+    pub origin: String,
     /// The rendered payload that polluted, e.g. `__proto__[h5ipp]=reserved`.
     pub payload: String,
     /// The source the tainted value came from: `url`, `hash`, `name`, …
@@ -70,12 +64,21 @@ pub struct Hit {
     pub gadget: Option<String>,
 }
 
+/// The scheme-host-port origin of a URL, or the whole URL if it will not parse.
+fn origin_of(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(u) => u.origin().ascii_serialization(),
+        Err(_) => url.to_string(),
+    }
+}
+
 impl Hit {
-    /// One line naming the finding.
+    /// One line naming the finding. The origin keeps two targets distinct; the
+    /// source and sink keep the different payload forms on one target together.
     fn title(&self) -> String {
         match &self.sink {
-            Some(sink) => format!("prototype pollution: {} → {sink}", self.source),
-            None => format!("prototype pollution via {}", self.source),
+            Some(sink) => format!("prototype pollution: {} → {sink} ({})", self.source, self.origin),
+            None => format!("prototype pollution via {} ({})", self.source, self.origin),
         }
     }
 
@@ -130,11 +133,21 @@ pub enum DomVerb {
         settle: u64,
     },
     /// Server-side: run a Node target confined in a box and report gadget reachability.
+    ///
+    /// The target is run once per candidate `Object.prototype` property, each
+    /// time polluting only that one (polluting several common names at once
+    /// breaks most real targets). A server that does not exit on its own is
+    /// stopped after `--timeout` seconds, and whatever it reached by then is
+    /// reported.
     Node {
         /// The box the target runs in. `dom node` refuses to run outside one.
         #[arg(long = "box", value_name = "BOX")]
         box_id: Option<String>,
-        /// The target command, after `--`.
+        /// Seconds to let each run go before stopping the target.
+        #[arg(long, value_name = "SECS", default_value_t = 20)]
+        timeout: u64,
+        /// The target command, after `--`. Any launcher works (node, npm, …);
+        /// the probe rides in on NODE_OPTIONS.
         #[arg(last = true, value_name = "ARG")]
         argv: Vec<String>,
     },
@@ -162,12 +175,14 @@ pub struct Flow {
 /// distinct source→sink flow. A report that proves nothing yields nothing.
 pub fn hits_from(report: &Report) -> Vec<Hit> {
     let mut hits = Vec::new();
+    let origin = origin_of(&report.url);
     let property = report
         .property
         .clone()
         .unwrap_or_else(|| CANARY_PROP.to_string());
     if report.canary {
         hits.push(Hit {
+            origin: origin.clone(),
             payload: report.url.clone(),
             source: "url".into(),
             property: property.clone(),
@@ -177,6 +192,7 @@ pub fn hits_from(report: &Report) -> Vec<Hit> {
     }
     for flow in &report.flows {
         hits.push(Hit {
+            origin: origin.clone(),
             payload: report.url.clone(),
             source: flow.source.clone(),
             property: property.clone(),
@@ -215,13 +231,14 @@ fn probe_fragment(base: &str, payload: &str) -> String {
     format!("{pre}#{payload}")
 }
 
-/// Every probe URL for one base: the query corpus, then the fragment corpus.
+/// Every probe URL for one base: each payload as a query parameter, then each
+/// as a URL fragment.
 pub fn probes(base: &str) -> Vec<String> {
     let mut out = Vec::new();
-    for t in QUERY_PAYLOADS {
+    for t in PP_PAYLOADS {
         out.push(probe_query(base, &render(t)));
     }
-    for t in FRAGMENT_PAYLOADS {
+    for t in PP_PAYLOADS {
         out.push(probe_fragment(base, &render(t)));
     }
     out
@@ -240,11 +257,10 @@ pub struct GadgetFinding {
     pub detail: String,
 }
 
-/// The probe's JSON report.
+/// The probe's JSON report. The shim also writes a `run`/`property` field; they
+/// are ignored here (serde drops unknown fields), the findings are what matter.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct GadgetReport {
-    #[serde(default)]
-    pub run: String,
     pub findings: Vec<GadgetFinding>,
 }
 
@@ -300,7 +316,11 @@ pub fn run(
             no_drive,
             settle,
         } => scan(root, selector, urls, *no_drive, *settle, json_out),
-        DomVerb::Node { box_id, argv } => node(root, selector, box_id.as_deref(), argv, json_out),
+        DomVerb::Node {
+            box_id,
+            timeout,
+            argv,
+        } => node(root, selector, box_id.as_deref(), *timeout, argv, json_out),
     }
 }
 
@@ -320,10 +340,18 @@ fn box_run(box_id: &str, argv: &[&str]) -> anyhow::Result<String> {
     Ok(combined)
 }
 
+/// The candidate properties probed, one per run. One at a time so a pollution
+/// that breaks the target only breaks the run that was testing it.
+const GADGET_PROPS: &[&str] = &["shell", "NODE_OPTIONS", "main", "method"];
+
+/// The report file the shim writes inside the box, relative to `/work`.
+const REPORT_IN_BOX: &str = "./.h5i-gadget-report.json";
+
 fn node(
     root: &std::path::Path,
     selector: Option<&str>,
     box_id: Option<&str>,
+    timeout_secs: u64,
     argv: &[String],
     json_out: bool,
 ) -> anyhow::Result<()> {
@@ -336,37 +364,57 @@ fn node(
     }
 
     // Place the probe in the box's /work (persists between runs), base64 so no
-    // shell quoting of the source is needed, then load it ahead of the target.
-    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, GADGET_PROBE_JS);
-    let place = format!("echo {encoded} | base64 -d > {PROBE_IN_BOX}");
-    box_run(box_id, &["sh", "-c", &place])?;
+    // shell quoting of the source is needed.
+    let encoded =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, GADGET_PROBE_JS);
+    box_run(
+        box_id,
+        &["sh", "-c", &format!("echo {encoded} | base64 -d > {PROBE_IN_BOX}")],
+    )?;
 
-    // The target is `node --require <probe> <its args>`. A leading `node` in the
-    // user's argv is theirs to keep; we always prepend the probe require.
-    let mut target: Vec<&str> = argv.iter().map(String::as_str).collect();
-    let first_is_node = target.first().is_some_and(|a| *a == "node" || a.ends_with("/node"));
-    if first_is_node {
-        target.remove(0);
+    // One run per property. The probe rides in on NODE_OPTIONS so any launcher
+    // (node, npm, ts-node) picks it up; `timeout` stops a server that never
+    // exits; `"$@"` passes the target argv without re-quoting. The report is
+    // read from a file so a timeout-killed run still yields what it found.
+    let mut all: Vec<GadgetFinding> = Vec::new();
+    let mut dedup: std::collections::HashSet<(String, String)> = Default::default();
+    let mut ran = 0usize;
+    for prop in GADGET_PROPS {
+        let script = format!(
+            "H5I_GADGET_PROP={prop} H5I_GADGET_REPORT={REPORT_IN_BOX} \
+             NODE_OPTIONS=\"--require {PROBE_IN_BOX}\" timeout {timeout_secs} \"$@\"; true"
+        );
+        let mut run_argv: Vec<&str> = vec!["sh", "-c", &script, "h5i-probe"];
+        run_argv.extend(argv.iter().map(String::as_str));
+        box_run(box_id, &run_argv)?;
+        let out = box_run(
+            box_id,
+            &["sh", "-c", &format!("cat {REPORT_IN_BOX} 2>/dev/null; rm -f {REPORT_IN_BOX}")],
+        )?;
+        if let Some(report) = parse_gadget_report(&out) {
+            ran += 1;
+            for g in report.findings {
+                if dedup.insert((g.gadget.clone(), g.sink.clone())) {
+                    all.push(g);
+                }
+            }
+        }
     }
-    let mut run_argv: Vec<&str> = vec!["node", "--require", PROBE_IN_BOX];
-    run_argv.extend(target);
-    let output = box_run(box_id, &run_argv)?;
-
-    let report = parse_gadget_report(&output).ok_or_else(|| {
-        anyhow::anyhow!(
-            "the probe wrote no report. The box needs `node` on PATH (an agent image has \
-             Node 22). Output was:\n{}",
-            output.trim()
-        )
-    })?;
+    if ran == 0 {
+        anyhow::bail!(
+            "the probe wrote no report on any of {} run(s). The box needs `node` on PATH (an \
+             agent image has Node 22) and `sh`/`timeout`/`base64`.",
+            GADGET_PROPS.len()
+        );
+    }
 
     let session = read::resolve_for_reading(root, selector)?;
     let log = Findings::open(root, &session.id)?;
     let mut recorded = Vec::new();
-    for g in &report.findings {
+    for g in &all {
         let id = log.next_id()?;
-        // Phase 2 records "observed"; the eBPF detect lane upgrades to
-        // "confirmed" in 2b, which is gated on CAP_BPF.
+        // Records "observed"; the eBPF detect lane upgrades to "confirmed" in
+        // sub-phase 2b, which is gated on CAP_BPF.
         log.append(&gadget_entry(&id, g, false, Vec::new())?)?;
         recorded.push(id);
     }
@@ -378,8 +426,7 @@ fn node(
                 "ok": true,
                 "session": session.id,
                 "box": box_id,
-                "probe_run": report.run,
-                "gadgets": report.findings.len(),
+                "gadgets": all.len(),
                 "findings": recorded,
             }))?
         );
@@ -417,12 +464,28 @@ fn scan(
     }
 
     let all_probes: Vec<String> = urls.iter().flat_map(|u| probes(u)).collect();
-    if !no_drive {
+    if !no_drive && !all_probes.is_empty() {
         // Drive the real Chromium the proxy session owns: each open is fetched
         // through h5i, so the injected instrument runs and beacons a report.
+        let mut failures = 0usize;
+        let mut last_err = None;
         for probe in &all_probes {
-            let _ = crate::ask_browser(&["proxy-open", probe], Some(&session.id));
+            if let Err(e) = crate::ask_browser(&["proxy-open", probe], Some(&session.id)) {
+                failures += 1;
+                last_err = Some(e);
+            }
             std::thread::sleep(std::time::Duration::from_millis(settle));
+        }
+        // Every open failing is not a clean target; it is a broken drive (no
+        // agent-browser, no Chrome, dead session). Say so rather than report
+        // "nothing found", which reads as an all-clear.
+        if failures == all_probes.len() {
+            anyhow::bail!(
+                "could not drive the browser for any of {} probe(s); is agent-browser installed \
+                 and the proxy session live?{}",
+                all_probes.len(),
+                last_err.map(|e| format!("\n  last error: {e}")).unwrap_or_default()
+            );
         }
     }
 
@@ -469,7 +532,7 @@ fn scan(
                 "  no new DOM findings from {fresh} report(s). Drive these probes through the \
                  proxied browser (or drop --no-drive), then scan again:"
             );
-            for probe in all_probes.iter().take(QUERY_PAYLOADS.len() + FRAGMENT_PAYLOADS.len()) {
+            for probe in all_probes.iter().take(PP_PAYLOADS.len() * 2) {
                 println!("    {probe}");
             }
         } else {
@@ -496,7 +559,7 @@ mod tests {
 
     #[test]
     fn the_corpus_renders_both_families_in_both_forms() {
-        let rendered: Vec<String> = QUERY_PAYLOADS.iter().map(|t| render(t)).collect();
+        let rendered: Vec<String> = PP_PAYLOADS.iter().map(|t| render(t)).collect();
         assert_eq!(
             rendered,
             vec![
@@ -506,15 +569,12 @@ mod tests {
                 "constructor[prototype][h5ipp]=reserved",
             ]
         );
-        // The fragment family carries the same shapes; the navigation surface
-        // puts them after the `#`, where the proxy never sees them.
-        assert_eq!(FRAGMENT_PAYLOADS.len(), QUERY_PAYLOADS.len());
-        assert_eq!(render(FRAGMENT_PAYLOADS[1]), "__proto__[h5ipp]=reserved");
     }
 
     #[test]
     fn a_hit_with_a_sink_names_the_flow() {
         let hit = Hit {
+            origin: "https://app.example".into(),
             payload: "__proto__[h5ipp]=reserved".into(),
             source: "hash".into(),
             property: "h5ipp".into(),
@@ -523,7 +583,10 @@ mod tests {
         };
         let entry = hit_entry("finding_1", &hit, vec!["res_7".into()]).unwrap();
         assert_eq!(entry.id, "finding_1");
-        assert_eq!(entry.title.as_deref(), Some("prototype pollution: hash → innerHTML"));
+        assert_eq!(
+            entry.title.as_deref(),
+            Some("prototype pollution: hash → innerHTML (https://app.example)")
+        );
         assert_eq!(entry.evidence, vec!["res_7".to_string()]);
         let note = entry.note.unwrap();
         assert!(note.contains("Object.prototype.h5ipp"));
@@ -533,6 +596,7 @@ mod tests {
     #[test]
     fn a_hit_without_a_sink_is_pollution_only() {
         let hit = Hit {
+            origin: "https://app.example".into(),
             payload: "__proto__.h5ipp=reserved".into(),
             source: "url".into(),
             property: "h5ipp".into(),
@@ -540,14 +604,17 @@ mod tests {
             gadget: Some("jquery: __proto__[url]=data:,alert(1)//".into()),
         };
         let entry = hit_entry("finding_2", &hit, vec![]).unwrap();
-        assert_eq!(entry.title.as_deref(), Some("prototype pollution via url"));
+        assert_eq!(
+            entry.title.as_deref(),
+            Some("prototype pollution via url (https://app.example)")
+        );
         assert!(entry.note.unwrap().contains("library gadget: jquery"));
     }
 
     #[test]
     fn probes_cover_the_query_and_fragment_corpora() {
         let p = probes("https://t.test/app?a=1");
-        assert_eq!(p.len(), QUERY_PAYLOADS.len() + FRAGMENT_PAYLOADS.len());
+        assert_eq!(p.len(), PP_PAYLOADS.len() * 2);
         assert!(p.contains(&"https://t.test/app?a=1&__proto__[h5ipp]=reserved".to_string()));
         assert!(p.contains(&"https://t.test/app?a=1#__proto__[h5ipp]=reserved".to_string()));
     }
@@ -572,6 +639,18 @@ mod tests {
     }
 
     #[test]
+    fn the_origin_distinguishes_two_targets_but_not_two_payload_forms() {
+        let a = Report { url: "https://app.one/x?__proto__[h5ipp]=reserved".into(), canary: true, property: None, flows: vec![] };
+        let b = Report { url: "https://app.one/x#constructor[prototype][h5ipp]=reserved".into(), canary: true, property: None, flows: vec![] };
+        let c = Report { url: "https://app.two/y?__proto__[h5ipp]=reserved".into(), canary: true, property: None, flows: vec![] };
+        // Same origin, different payload form → same title (collapses).
+        assert_eq!(hits_from(&a)[0].title(), hits_from(&b)[0].title());
+        // Different origin → different title (kept apart).
+        assert_ne!(hits_from(&a)[0].title(), hits_from(&c)[0].title());
+        assert_eq!(origin_of("https://app.one/x?q=1#f"), "https://app.one");
+    }
+
+    #[test]
     fn a_report_that_proves_nothing_yields_no_hits() {
         let report = Report {
             url: "https://t.test/".into(),
@@ -587,7 +666,6 @@ mod tests {
         let output = "starting server\nlistening on 3000\n\
             {\"run\":\"ab12\",\"findings\":[{\"gadget\":\"shell\",\"property\":\"shell\",\"sink\":\"child_process.execSync\",\"marker\":\"h5iGADGET_shell_ab12\",\"detail\":\"inherited options.shell\"}]}\n";
         let report = parse_gadget_report(output).unwrap();
-        assert_eq!(report.run, "ab12");
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].sink, "child_process.execSync");
     }

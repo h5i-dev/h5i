@@ -2675,6 +2675,27 @@ fn start_proxy(
     Ok(())
 }
 
+/// The agent-browser session name a proxy session's `proxy-open` drives.
+fn proxy_browser_session(id: &str) -> String {
+    format!("h5i-{id}")
+}
+
+/// Best-effort shutdown of the agent-browser daemon `proxy-open` started for a
+/// session. Nothing else reaps it, so closing the h5i session must, or a scan
+/// leaves a headless Chromium resident.
+fn close_proxy_browser(id: &str) {
+    if let Some(agent_browser) = executable_on_path("agent-browser") {
+        let _ = Command::new(agent_browser)
+            .arg("--session")
+            .arg(proxy_browser_session(id))
+            .arg("close")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
 /// Drive the agent-browser Chromium of a proxy session to a URL.
 fn proxy_open(
     root: &Path,
@@ -2691,7 +2712,7 @@ fn proxy_open(
     })?;
     let agent_browser = proxy_agent_browser()?;
     // One agent-browser browser per h5i session, so repeated opens reuse it.
-    let ab_session = format!("h5i-{}", s.id);
+    let ab_session = proxy_browser_session(&s.id);
     let output = Command::new(&agent_browser)
         .arg("--session")
         .arg(&ab_session)
@@ -5189,6 +5210,11 @@ fn close(
     for mut session in targets {
         if session.state.is_live() {
             stop_engine(&session)?;
+            // A proxy session may have an agent-browser daemon from proxy-open;
+            // stop_engine only killed the h5i proxy, so reap that browser too.
+            if session.proxy.is_some() {
+                close_proxy_browser(&session.id);
+            }
             bs::end(root, &mut session, bs::State::Closed, "closed by the user");
         }
         // After the engine has stopped, so nothing is still writing there.

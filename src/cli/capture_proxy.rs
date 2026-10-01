@@ -240,7 +240,14 @@ impl HttpHandler for Handler {
                 .get("content-type")
                 .and_then(|v| v.to_str().ok())
                 .is_some_and(|ct| ct.to_ascii_lowercase().contains("text/html"));
-            if (200..300).contains(&status) && is_html {
+            // Only a full HTML document with a body. 204/205 must carry none,
+            // and a 206 range would be spliced mid-stream with a now-wrong
+            // Content-Range, so an empty body or either status is left alone.
+            let injectable = is_html
+                && !body.is_empty()
+                && status != 206
+                && (200..300).contains(&status);
+            if injectable {
                 let encoding = parts
                     .headers
                     .get("content-encoding")
