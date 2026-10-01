@@ -70,6 +70,13 @@ fn origin_of(url: &str) -> String {
     }
 }
 
+/// Origin + path, dropping query and fragment — the key that matches a report's
+/// URL to a captured request, since a fragment probe's `#…` never hits the wire.
+fn url_key(url: &str) -> Option<String> {
+    let u = url::Url::parse(url).ok()?;
+    Some(format!("{}{}", u.origin().ascii_serialization(), u.path()))
+}
+
 impl Hit {
     /// One line naming the finding. The origin keeps two targets distinct; the
     /// source and sink keep the different payload forms on one target together.
@@ -516,6 +523,27 @@ fn scan(
     let reports = parse_reports(&text);
     let total_messages: usize = reports.iter().map(|r| r.messages.len()).sum();
 
+    // Correlate each report to the capture receipt of the navigation that
+    // produced it, so a finding cites real evidence. The proxy records every
+    // probe load; key by origin+path because a fragment probe's `#…` never
+    // reaches the wire (so the stored URL lacks it). Last seq wins = latest load.
+    let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
+    let mut seq_by_key: std::collections::HashMap<String, u64> = Default::default();
+    for seq in h5i_wire::read::sequences(&store) {
+        if let Ok(req) = h5i_wire::read::read_json::<h5i_wire::message::StoredRequest>(
+            &store.join(format!("{seq}.request.json")),
+        ) && let Some(key) = url_key(&req.url)
+        {
+            seq_by_key.insert(key, seq);
+        }
+    }
+    let evidence_for = |report_url: &str| -> Vec<String> {
+        url_key(report_url)
+            .and_then(|k| seq_by_key.get(&k))
+            .map(|seq| vec![format!("res_{seq}")])
+            .unwrap_or_default()
+    };
+
     // Dedup by the finding title (one per origin + source→sink pair): the four
     // payload forms that all pollute `via url` are one vulnerability, and a
     // title already in the log is the same finding again. Seed only from prior
@@ -529,12 +557,13 @@ fn scan(
         .collect();
     let mut recorded: Vec<String> = Vec::new();
     for report in &reports {
+        let evidence = evidence_for(&report.url);
         for hit in hits_from(report) {
             if !seen.insert(hit.title()) {
                 continue;
             }
             let id = log.next_id()?;
-            log.append(&hit_entry(&id, &hit, Vec::new())?)?;
+            log.append(&hit_entry(&id, &hit, evidence.clone())?)?;
             recorded.push(id);
         }
     }
@@ -674,6 +703,14 @@ mod tests {
         // Different origin → different title (kept apart).
         assert_ne!(hits_from(&a)[0].title(), hits_from(&c)[0].title());
         assert_eq!(origin_of("https://app.one/x?q=1#f"), "https://app.one");
+    }
+
+    #[test]
+    fn url_key_drops_query_and_fragment_so_query_and_fragment_probes_share_it() {
+        let q = url_key("https://app.one/app?__proto__[h5ipp]=reserved").unwrap();
+        let f = url_key("https://app.one/app#__proto__[h5ipp]=reserved").unwrap();
+        assert_eq!(q, "https://app.one/app");
+        assert_eq!(q, f);
     }
 
     #[test]
