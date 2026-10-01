@@ -43,7 +43,6 @@
 
 **Build with agents. Red-team for bugs. Formally verify properties.**
 
-<a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a>
 
 ---
 
@@ -63,6 +62,8 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 # h5i skill install                # writes it where your runtime looks
 # h5i skill show policy            # or just read a page
 ```
+
+<a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a>
 
 ---
 
