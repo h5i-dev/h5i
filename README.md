@@ -29,7 +29,7 @@
     </td>
     <td align="center">
       <strong>Formal verification</strong><br>
-      <sub><a href="#3-build-verifiable-apps-h5i-app">Rust + Lean 4</a></sub>
+      <sub><a href="#3-prove-correctness-build-on-h5i-app">Rust + Lean 4</a></sub>
     </td>
     <td align="center">
       <strong>CI/CD</strong><br>
@@ -67,9 +67,9 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 
 ---
 
-## 2. Use it
+## 2. Find bugs: red-team with agents
 
-### 2.1. Browse, scrape, and automate
+### 2.1. Drive the browser
 
 A **session** combines one page state, cookie jar, network policy, and request
 record. Agents read pages, interact with elements, and extract structured data
@@ -83,7 +83,7 @@ h5i browser extract '{"titles": ["h2"]}'    # structured extraction
 h5i browser read https://docs.rs/           # one page, no persistent session
 ```
 
-### 2.2. Test web applications
+### 2.2. Capture, replay, and compare traffic
 
 The native browser owns its network layer, so agents capture, inspect, edit,
 replay, and compare HTTP traffic without a separate repeater. Sites that need
@@ -99,7 +99,7 @@ h5i websec sequence flow.json                        # run a multi-step test
 h5i recon endpoints --state confirmed                # discovery, each row names its evidence
 ```
 
-### 2.3. CI/CD integration
+### 2.3. Replay confirmed flows in CI
 
 Confirmed attack flows live in the repository and replay in CI. See
 [`examples/security-regression-ci`](examples/security-regression-ci) for the
@@ -112,7 +112,7 @@ GitHub Actions template:
     tests: .h5i-tests/tests
 ```
 
-### 2.4. Sandbox and audit agent access
+### 2.4. Sandbox and audit the agent
 
 Web content is untrusted input to an AI agent. Every session applies a network
 policy and records allowed and denied requests, so `h5i browser requests` and
@@ -139,10 +139,16 @@ Watch it all from the host with `h5i ui`:
 
 ---
 
-## 3. Build verifiable apps: h5i-app
+## 3. Prove correctness: build on h5i-app
 
-`h5i-app` is a Rust web framework that lets you prove properties of your
-application logic in Lean 4.
+Red-teaming finds the bugs you did not anticipate. `h5i-app` is a Rust web
+framework for proving, in Lean 4, the properties you can state. It needs no
+h5i binary:
+
+```toml
+[dependencies]
+h5i-app = { version = "0.1", features = ["http", "postgres"] }
+```
 
 - Write the logic as pure Rust functions and prove it in Lean 4 via [Aeneas](https://github.com/AeneasVerif/aeneas).
 - Serve it with [axum](https://github.com/tokio-rs/axum); handlers never touch the database.
@@ -162,7 +168,8 @@ theorem get_after (a : Principal) (s s' : Snapshot) (c : Command) (w : Option Me
 ```
 
 See [crates/h5i-app](crates/h5i-app/README.md) for the full kernel, the axum
-server around it, and the proof workflow.
+server around it, and the proof workflow, and [TRUST.md](docs/app/TRUST.md)
+for exactly what is proven and what is assumed.
 
 ---
 
@@ -186,10 +193,36 @@ server around it, and the proof workflow.
 <details>
 <summary>What is h5i?</summary>
 
-h5i is a lightweight, open-source browser built for AI agents to browse, scrape,
-and automate the web. It combines policy-controlled, auditable sessions and
-configurable sandboxing with optional tools for inspecting and testing HTTP
-traffic. It runs locally and is written in Rust without Chromium or V8.
+h5i is an open-source workspace for building secure web applications. The
+`h5i` CLI is a lightweight browser built for AI agents, written in Rust without
+Chromium or V8, with policy-controlled, auditable sessions, configurable
+sandboxing, and tools for inspecting and testing HTTP traffic. `h5i-app` is a
+Rust web framework whose application logic is proven in Lean 4. Both run
+locally.
+
+</details>
+
+<details>
+<summary>Do I need h5i-app to red-team, or the h5i CLI to use h5i-app?</summary>
+
+No. The CLI tests any running web application, whatever it is built on.
+`h5i-app` is a crate you add to a Rust project and needs no h5i binary. They
+meet when an agent builds an application on `h5i-app` inside an h5i sandbox and
+red-teams it from the same box.
+
+</details>
+
+<details>
+<summary>What does h5i-app actually prove?</summary>
+
+Charon and Aeneas translate the kernel, the SQL planner and compiler, the JSON
+writer, and the token codec to Lean, and every theorem is about that extracted
+code. Proven: properties of `transition`, that compiled statements touch only
+the tenant's rows, and that an invariant kept by accepted writes holds in every
+database state and every snapshot loaded back, for every order in which
+requests commit. Trusted, not proven: axum, PostgreSQL's statement semantics,
+the HMAC key, the clock, and the translation tools. [TRUST.md](docs/app/TRUST.md)
+has the full list.
 
 </details>
 
