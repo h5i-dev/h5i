@@ -13,7 +13,7 @@
 
 <h1 align="center">Agent-native Workspace for Attack & Verify Web Security</h1>
 
-**h5i** (pronounced *high-five*) is an agent-native workspace for both **offensive and defensive web security**. Use it to find vulnerabilities in running applications, build Rust applications with formally verified properties, or bring both into your development workflow.
+**h5i** (pronounced *high-five*) is an agent-native workspace for both **offensive and verifiable web security**. Use it to find vulnerabilities in running applications, build Rust applications with formally verified properties, or bring both into your development workflow.
 
 **Attack — Professional red-teaming with your own agent.** Give your agent browser automation and direct HTTP traffic control to explore applications, inspect requests, and investigate vulnerabilities. Use it with your existing stack for bug bounty research, penetration testing, and security regression testing in CI. Configurable sandboxing and network policies keep agent activity within the boundaries you set.
 
