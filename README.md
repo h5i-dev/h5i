@@ -113,13 +113,11 @@ GitHub Actions template:
 
 ### 2.4. Sandbox and audit the agent
 
-Web content is untrusted input to an AI agent. Every session applies a network
-policy and records allowed and denied requests, so `h5i browser requests` and
+AI agnet might run out of control and perform dangerous operations. To reduce such risks,
+h5i offers an auditable sandbox, where `h5i browser requests` and
 `h5i browser audit` show what the agent did. For stronger isolation, a profile
 in `.h5i/env.toml` picks a tier (`workspace`, `process`, `supervised`,
-`container`, or `microvm`) and limits network egress and filesystem access. A
-**box** built from that profile can hold the browser alone, or the whole
-workflow: workspace, toolchain, dev server, and the agent itself.
+`container`, or `microvm`) and limits network egress and filesystem access.
 
 ```bash
 h5i box create alpha --profile agent-claude   # sandboxed git worktree
