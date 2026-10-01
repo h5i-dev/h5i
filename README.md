@@ -19,6 +19,7 @@
 - **Find it:** Automate red-teaming with AI agents. `h5i` provides browser control and HTTP interception in a configurable sandbox for seamless bug hunting and CI testing.
 - **Prove it:** Build on `h5i-app` (our Axum-based Rust framework) and use Lean 4 to formally verify your application's state invariants, tenant isolation, and authorization logic.
 
+**Build with agents. Red-team for bugs. Formally verify properties.**
 
 <table align="center">
   <tr>
@@ -41,7 +42,6 @@
   </tr>
 </table>
 
-**Build with agents. Red-team for bugs. Formally verify properties.**
 
 
 ---
