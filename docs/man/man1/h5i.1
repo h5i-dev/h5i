@@ -994,6 +994,27 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fIURL\fR>
 The first target, used to seed the origin allowlist
+.SH "H5I BROWSER PROXY-OPEN"
+Open a URL in the Chromium a `proxy` session drives
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBproxy\-open\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+The proxy session to drive
+.TP
+\fB\-\-json\fR
+Print the result as JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIURL\fR>
+The URL to open
 .SH "H5I BROWSER OPEN"
 Open a URL, making a session if there is not one already
 .ie \n(.g .ds Aq \(aq

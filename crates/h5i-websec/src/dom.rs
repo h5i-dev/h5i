@@ -121,12 +121,12 @@ pub enum DomVerb {
         /// Base URLs to build payload probes from. The corpus is appended to each.
         #[arg(value_name = "URL")]
         urls: Vec<String>,
-        /// Also navigate the session to each probe. For a proxied agent-browser
-        /// this seeds the pollution; for the bare engine it does nothing useful.
-        #[arg(long)]
-        navigate: bool,
+        /// Do not drive the browser; only fold reports already beaconed back.
+        /// By default `scan` opens each probe in the session's proxied Chromium.
+        #[arg(long = "no-drive")]
+        no_drive: bool,
         /// Milliseconds to wait after each navigation for the beacon to arrive.
-        #[arg(long, value_name = "MS", default_value_t = 500)]
+        #[arg(long, value_name = "MS", default_value_t = 700)]
         settle: u64,
     },
     /// Server-side: run a Node target confined in a box and report gadget reachability.
@@ -297,9 +297,9 @@ pub fn run(
     match what {
         DomVerb::Scan {
             urls,
-            navigate,
+            no_drive,
             settle,
-        } => scan(root, selector, urls, *navigate, *settle, json_out),
+        } => scan(root, selector, urls, *no_drive, *settle, json_out),
         DomVerb::Node { box_id, argv } => node(root, selector, box_id.as_deref(), argv, json_out),
     }
 }
@@ -401,7 +401,7 @@ fn scan(
     root: &std::path::Path,
     selector: Option<&str>,
     urls: &[String],
-    navigate: bool,
+    no_drive: bool,
     settle: u64,
     json_out: bool,
 ) -> anyhow::Result<()> {
@@ -416,30 +416,32 @@ fn scan(
         );
     }
 
-    // Only fold reports that arrive from here on, so a re-scan does not re-raise
-    // what a previous one already recorded.
-    let seen_before = std::fs::read_to_string(&report_path)
-        .map(|t| t.lines().count())
-        .unwrap_or(0);
-
     let all_probes: Vec<String> = urls.iter().flat_map(|u| probes(u)).collect();
-    if navigate {
+    if !no_drive {
+        // Drive the real Chromium the proxy session owns: each open is fetched
+        // through h5i, so the injected instrument runs and beacons a report.
         for probe in &all_probes {
-            let _ = crate::ask_browser(&["navigate", probe], Some(&session.id));
+            let _ = crate::ask_browser(&["proxy-open", probe], Some(&session.id));
             std::thread::sleep(std::time::Duration::from_millis(settle));
         }
     }
 
+    // The browser beacons its reports as it loads each page, which is before
+    // `scan` runs, so fold every report. Dedup by the finding title (one per
+    // source→sink pair): the four payload forms that all pollute `via url` are
+    // one vulnerability, not four, and a title already in the log from an
+    // earlier scan is the same finding again.
     let text = std::fs::read_to_string(&report_path).unwrap_or_default();
-    let fresh: Vec<Report> = parse_reports(&text).into_iter().skip(seen_before).collect();
+    let reports = parse_reports(&text);
 
     let log = Findings::open(root, &session.id)?;
+    let mut seen: std::collections::HashSet<String> =
+        log.read()?.iter().map(|f| f.title.clone()).collect();
     let mut recorded: Vec<String> = Vec::new();
-    let mut dedup: std::collections::BTreeSet<(String, Option<String>)> = Default::default();
-    for report in &fresh {
+    let fresh = reports.len();
+    for report in &reports {
         for hit in hits_from(report) {
-            let key = (hit.source.clone(), hit.sink.clone());
-            if !dedup.insert(key) {
+            if !seen.insert(hit.title()) {
                 continue;
             }
             let id = log.next_id()?;
@@ -454,7 +456,7 @@ fn scan(
             serde_json::to_string_pretty(&serde_json::json!({
                 "ok": true,
                 "session": session.id,
-                "reports_read": fresh.len(),
+                "reports_read": fresh,
                 "findings": recorded,
                 "probes": all_probes,
             }))?
@@ -462,19 +464,26 @@ fn scan(
         return Ok(());
     }
     if recorded.is_empty() {
-        println!(
-            "  no new DOM findings from {} report(s). Drive these probes through the \
-             proxied browser, then scan again:",
-            fresh.len()
-        );
-        for probe in all_probes.iter().take(QUERY_PAYLOADS.len() + FRAGMENT_PAYLOADS.len()) {
-            println!("    {probe}");
+        if no_drive {
+            println!(
+                "  no new DOM findings from {fresh} report(s). Drive these probes through the \
+                 proxied browser (or drop --no-drive), then scan again:"
+            );
+            for probe in all_probes.iter().take(QUERY_PAYLOADS.len() + FRAGMENT_PAYLOADS.len()) {
+                println!("    {probe}");
+            }
+        } else {
+            println!(
+                "  drove {} probe(s); {fresh} report(s) came back and none showed pollution \
+                 reaching a sink.",
+                all_probes.len()
+            );
         }
     } else {
         println!(
             "  recorded {} finding(s) from {} report(s): {}",
             recorded.len(),
-            fresh.len(),
+            fresh,
             recorded.join(", ")
         );
     }
