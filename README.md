@@ -17,7 +17,7 @@
 **h5i** (pronounced *high-five*) is a unified workspace for building secure web applications through two complementary approaches: finding bugs and proving correctness.
 
 * **Find Bugs (Red-Teaming):** Equip your AI agents with headless browser automation and deep HTTP traffic control to explore apps, intercept requests, and uncover vulnerabilities inside a configurable sandbox. Perfect for bug bounties, penetration testing, and CI regressions.
-* **Prove Correctness (Formal Verification):** Build your backend on `h5i-app` (our Axum-based Rust framework) and use Lean 4 to formally verify your application logic—proving everything from tenant isolation and authorization to core business state invariants.
+* **Prove Correctness (Formal Verification):** Build your backend on `h5i-app` (our Axum-based Rust framework) and use Lean 4 to formally verify your application logic, proving everything from tenant isolation and authorization to core business state invariants.
 
 **Build with agents. Red-team for bugs. Formally verify properties.**
 
