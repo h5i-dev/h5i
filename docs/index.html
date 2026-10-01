@@ -929,7 +929,7 @@
     for (var i = fish.length - 1; i >= 0; i--) {
       var f = fish[i], a = Math.atan2(f.vy, f.vx), k = f.red ? 1.25 : f.s;
       ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(a); ctx.scale(k, k);
-      ctx.fillStyle = f.red ? '#ff6258' : 'rgba(164,164,174,0.45)';
+      ctx.fillStyle = f.red ? '#ff6258' : 'rgba(255,98,88,0.3)';
       ctx.beginPath(); ctx.ellipse(0, 0, 7, 2.8, 0, 0, 6.28); ctx.fill();
       ctx.beginPath(); ctx.moveTo(-5, 0); ctx.lineTo(-11, -3.5); ctx.lineTo(-11, 3.5); ctx.fill();
       ctx.restore();
