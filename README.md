@@ -11,9 +11,9 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-<h1 align="center">Agent-native Workspace for Attack & Verify Web Security</h1>
+<h1 align="center">The Agent-Native Web Security Workspace</h1>
 
-**h5i** (pronounced *high-five*) is an agent-native workspace for both **offensive and verifiable web security**.
+**h5i** (pronounced *high-five*) helps you find vulnerabilities in web applications and prove security properties of their code. It brings agent-driven red-teaming and formally verifiable application development into one workspace
 
 **Attack**: Give your agent browser automation and HTTP traffic control to explore applications, inspect requests, and investigate bugs in a configurable sandbox. Perfect for bug bounty, penetration testing, and regression test in CI.
 
