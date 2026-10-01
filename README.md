@@ -31,7 +31,7 @@
     </td>
     <td align="center">
       <strong>CI/CD</strong><br>
-      <sub>Repeat security checks on every change</sub>
+      <sub>Continuous security checks</sub>
     </td>
     <td align="center">
       <strong>Sandboxed workflows</strong><br>
