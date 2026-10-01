@@ -23,34 +23,47 @@
     return s.length > CAP ? s.slice(0, CAP) : s;
   }
 
-  // The source pool: the attacker-controlled parts of this navigation. A sink
-  // argument that quotes a long enough slice of these is a source->sink flow.
+  // The source pool: the attacker-controlled parts of this navigation, each
+  // clipped — a hostile page can set a megabyte-long window.name, and the taint
+  // scan must stay bounded regardless.
+  var SRC_CAP = 1024;
   function sources() {
     var out = [];
-    try { out.push(["hash", decodeURIComponent(location.hash.replace(/^#/, ""))]); } catch (e) {}
-    try { out.push(["search", decodeURIComponent(location.search.replace(/^\?/, ""))]); } catch (e) {}
-    try { if (window.name) out.push(["name", String(window.name)]); } catch (e) {}
-    try { if (document.referrer) out.push(["referrer", String(document.referrer)]); } catch (e) {}
+    function add(name, raw) {
+      try {
+        var v = String(raw);
+        if (v) out.push([name, v.length > SRC_CAP ? v.slice(0, SRC_CAP) : v]);
+      } catch (e) {}
+    }
+    try { add("hash", decodeURIComponent(location.hash.replace(/^#/, ""))); } catch (e) { add("hash", location.hash); }
+    try { add("search", decodeURIComponent(location.search.replace(/^\?/, ""))); } catch (e) { add("search", location.search); }
+    try { add("name", window.name); } catch (e) {}
+    try { add("referrer", document.referrer); } catch (e) {}
     return out;
   }
 
   // A sink argument is tainted when it contains a run of >=N chars that also
-  // appears verbatim in a source. Windows overlap (stride 1) so a match is not
-  // missed at a boundary, and N is large enough that a shared "https://" alone
-  // does not trip it. Generic needles are skipped for the same reason.
+  // appears verbatim in a source. We build the set of source needles once (both
+  // sides clipped), then slide once over the arg — O(|sources| + |arg|), not the
+  // product. N is large enough that a shared "https://" alone does not trip it;
+  // wholly generic windows are skipped.
   var NEEDLE = 12;
   var GENERIC = /^(https?:\/\/|www\.|\/|\s)+$/;
   function tainted(arg) {
     var a = clip(arg);
     if (a.length < NEEDLE) return null;
+    var needles = Object.create(null);
     var src = sources();
     for (var i = 0; i < src.length; i++) {
       var val = src[i][1];
-      for (var start = 0; start + NEEDLE <= val.length; start++) {
-        var needle = val.slice(start, start + NEEDLE);
-        if (GENERIC.test(needle)) continue;
-        if (a.indexOf(needle) !== -1) return src[i][0];
+      for (var s = 0; s + NEEDLE <= val.length; s++) {
+        var n = val.slice(s, s + NEEDLE);
+        if (!GENERIC.test(n) && !(n in needles)) needles[n] = src[i][0];
       }
+    }
+    for (var j = 0; j + NEEDLE <= a.length; j++) {
+      var w = a.slice(j, j + NEEDLE);
+      if (w in needles) return needles[w];
     }
     return null;
   }
@@ -110,7 +123,7 @@
   try {
     window.addEventListener("message", function (ev) {
       try {
-        if (messages.length < 64) {
+        if (messages.length < 16) {
           var data = typeof ev.data === "string" ? ev.data : JSON.stringify(ev.data);
           messages.push({ origin: ev.origin, data: clip(data) });
         }

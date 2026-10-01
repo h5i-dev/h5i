@@ -101,11 +101,11 @@ pub enum BrowserCommands {
     /// Capture an external Chromium session through an h5i HTTP/S proxy.
     ///
     /// The command starts a resident session and prints the exact
-    /// `agent-browser` flags for it. On Linux those flags trust this session's
-    /// CA. On macOS they pass `--ignore-https-errors`, because agent-browser
-    /// cannot install a CA there and Chromium then accepts every certificate
-    /// error for that launch. Chromium remains agent-browser's; h5i owns
-    /// policy, capture, replay and evidence.
+    /// `agent-browser` flags for it. agent-browser exposes no single-CA trust
+    /// flag, so the flags pass `--ignore-https-errors` (Chromium accepts the
+    /// proxy's forged certs for that launch) on every platform; the session CA
+    /// is still written for anyone who prefers to install it. Chromium remains
+    /// agent-browser's; h5i owns policy, capture, replay and evidence.
     Proxy {
         /// The first target, used to seed the origin allowlist.
         url: String,

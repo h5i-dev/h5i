@@ -42,9 +42,16 @@ function record(sink, detail) {
   write(); // incremental, so a timeout kill still leaves this finding
 }
 
-// Pollute the single property this run targets. `env` is an object gadget (its
-// NODE_OPTIONS is what a spawned child would inherit); the rest are strings.
+// Pollute the single property this run targets.
+//   NODE_OPTIONS -> an `env` object gadget (a spawned child inherits it).
+//   main         -> a getter that fires only while a module is being resolved,
+//                   which is the real gadget (a package whose package.json has
+//                   no own `main` reads the inherited one). It returns undefined
+//                   so resolution is unchanged, so it never breaks the target
+//                   and never false-positives on unrelated `.main` reads.
+//   others       -> a plain string marker read off the sink's options object.
 var PROTO = Object.prototype;
+var inRequire = 0;
 function pollute() {
   try {
     if (PROP === "NODE_OPTIONS") {
@@ -53,6 +60,15 @@ function pollute() {
         enumerable: false,
         get: function () {
           return { NODE_OPTIONS: MARKER };
+        },
+      });
+    } else if (PROP === "main") {
+      Object.defineProperty(PROTO, "main", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          if (inRequire > 0) record("require", "a package 'main' fell through to the prototype");
+          return undefined;
         },
       });
     } else if (PROP) {
@@ -102,23 +118,22 @@ function install() {
     });
   });
 
-  // require / import of a bare package with no "main" falls through to the
-  // polluted Object.prototype.main.
+  // Count module resolutions so the `main` getter fires only inside one. The
+  // getter itself (installed in pollute) does the recording, so this only has
+  // to bracket the original call.
   try {
     var Module = require("module");
-    var builtins = Module.builtinModules || [];
-    wrap(Module, "_load", function (args) {
-      var request = args[0];
-      if (
-        typeof request === "string" &&
-        request.indexOf("/") === -1 &&
-        !request.startsWith("node:") &&
-        builtins.indexOf(request) === -1 &&
-        inherited({}, "main") === MARKER
-      ) {
-        record("require", "require('" + request + "') with polluted main");
-      }
-    });
+    var origLoad = Module._load;
+    if (typeof origLoad === "function") {
+      Module._load = function () {
+        inRequire++;
+        try {
+          return origLoad.apply(this, arguments);
+        } finally {
+          inRequire--;
+        }
+      };
+    }
   } catch (e) {}
 
   // fetch SSRF: a polluted options.method reaching the call.

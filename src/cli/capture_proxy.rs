@@ -128,7 +128,11 @@ impl HttpHandler for Handler {
         if let Some(report) = &self.dom_report {
             let (host, path) = host_and_path(&parts);
             if host.as_deref() == Some(dom_inject::BEACON_HOST) && path == dom_inject::BEACON_PATH {
-                if let Ok(collected) = body.collect().await {
+                // The report is a single small JSON line. Bound the read so page
+                // script cannot POST an unbounded body to this pre-policy
+                // endpoint; an oversized beacon is dropped, not buffered whole.
+                const BEACON_MAX: usize = 1 << 20;
+                if let Ok(collected) = http_body_util::Limited::new(body, BEACON_MAX).collect().await {
                     let mut line = collected.to_bytes().to_vec();
                     line.push(b'\n');
                     if let Ok(mut file) = report.lock() {

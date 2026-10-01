@@ -94,11 +94,23 @@ pub fn inject_script(html: &[u8], js: &str) -> Vec<u8> {
 }
 
 /// The byte offset just past the first `>` of an opening tag whose name matches
-/// `needle` (case-insensitive), or `None` if there is no such tag.
+/// `needle` (case-insensitive), or `None`. The byte after the name must be a tag
+/// boundary, so `<head` does not match inside `<header>`.
 fn after_opening_tag(html: &[u8], needle: &[u8]) -> Option<usize> {
     let lower: Vec<u8> = html.iter().map(u8::to_ascii_lowercase).collect();
-    let start = lower.windows(needle.len()).position(|w| w == needle)?;
-    html[start..].iter().position(|&b| b == b'>').map(|gt| start + gt + 1)
+    let is_boundary = |b: u8| matches!(b, b'>' | b' ' | b'/' | b'\t' | b'\n' | b'\r');
+    let mut from = 0;
+    while let Some(rel) = lower[from..].windows(needle.len()).position(|w| w == needle) {
+        let start = from + rel;
+        let after = start + needle.len();
+        if html.get(after).is_some_and(|&b| is_boundary(b))
+            && let Some(gt) = html[start..].iter().position(|&b| b == b'>')
+        {
+            return Some(start + gt + 1);
+        }
+        from = start + 1;
+    }
+    None
 }
 
 #[cfg(test)]
@@ -126,6 +138,17 @@ mod tests {
         assert!(String::from_utf8(out).unwrap().starts_with("<html><script>Z</script>"));
         let out = inject_script(b"nodoctype", "Z");
         assert!(String::from_utf8(out).unwrap().starts_with("<script>Z</script>nodoctype"));
+    }
+
+    #[test]
+    fn header_tag_does_not_masquerade_as_head() {
+        // No <head>; a <header> must not be mistaken for it, so the script goes
+        // after <html>, not inside <body> at <header>.
+        let out = inject_script(b"<html><body><header>h</header></body></html>", "Z");
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "<html><script>Z</script><body><header>h</header></body></html>"
+        );
     }
 
     #[test]

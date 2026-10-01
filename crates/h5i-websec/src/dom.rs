@@ -364,13 +364,24 @@ fn node(
     }
 
     // Place the probe in the box's /work (persists between runs), base64 so no
-    // shell quoting of the source is needed.
+    // shell quoting of the source is needed. Confirm it landed, so a missing
+    // box or a box without sh/base64 is a clear error, not a later "no report".
     let encoded =
         base64::Engine::encode(&base64::engine::general_purpose::STANDARD, GADGET_PROBE_JS);
-    box_run(
+    let placed = box_run(
         box_id,
-        &["sh", "-c", &format!("echo {encoded} | base64 -d > {PROBE_IN_BOX}")],
+        &[
+            "sh",
+            "-c",
+            &format!("echo {encoded} | base64 -d > {PROBE_IN_BOX} && echo h5i-placed"),
+        ],
     )?;
+    if !placed.contains("h5i-placed") {
+        anyhow::bail!(
+            "could not place the probe in box {box_id} (needs sh + base64). Output:\n{}",
+            placed.trim()
+        );
+    }
 
     // One run per property. The probe rides in on NODE_OPTIONS so any launcher
     // (node, npm, ts-node) picks it up; `timeout` stops a server that never
@@ -380,9 +391,13 @@ fn node(
     let mut dedup: std::collections::HashSet<(String, String)> = Default::default();
     let mut ran = 0usize;
     for prop in GADGET_PROPS {
+        // The target's own stdout/stderr is discarded: the report is read from
+        // a file, and a chatty server over the timeout window would otherwise
+        // buffer without bound in the parent.
         let script = format!(
             "H5I_GADGET_PROP={prop} H5I_GADGET_REPORT={REPORT_IN_BOX} \
-             NODE_OPTIONS=\"--require {PROBE_IN_BOX}\" timeout {timeout_secs} \"$@\"; true"
+             NODE_OPTIONS=\"--require {PROBE_IN_BOX}\" timeout {timeout_secs} \"$@\" \
+             >/dev/null 2>&1; true"
         );
         let mut run_argv: Vec<&str> = vec!["sh", "-c", &script, "h5i-probe"];
         run_argv.extend(argv.iter().map(String::as_str));
