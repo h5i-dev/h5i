@@ -281,6 +281,13 @@
     @media (min-width: 900px) {
       .feat-grid.feat-grid-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
+    .hero-school {
+      position: absolute; top: 0; right: 0; width: 55%; height: 100%;
+      z-index: 0; pointer-events: none;
+      -webkit-mask-image: linear-gradient(to right, transparent, #000 30%);
+              mask-image: linear-gradient(to right, transparent, #000 30%);
+    }
+    @media (max-width: 900px) { .hero-school { display: none; } }
   </style>
 <script>if (new URLSearchParams(location.search).has('workbench')) document.documentElement.classList.add('workbench-only');</script>
 </head>
@@ -306,6 +313,7 @@
 
 <!-- ── Hero ─────────────────────────────────────────────────── -->
 <section id="hero" tabindex="-1">
+  <canvas class="hero-school" aria-hidden="true"></canvas>
   <div class="hero-inner">
     <div class="hero-badge">Build &middot; Test &middot; Verify</div>
     <h1 class="hero-title"><em>Secure Web Development</em><br>for Every Team</h1>
@@ -875,6 +883,68 @@
 <!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
 <script src="/_static/blog.js?v=41dbda103a" defer></script>
 <script src="/_static/highlight.js?v=ed81eee4e6" defer></script>
+<script>
+// A school of small fish with one red one, Swimmy style. Plain boids.
+(function () {
+  var cv = document.querySelector('.hero-school');
+  if (!cv || !cv.getContext || getComputedStyle(cv).display === 'none') return;
+  var hero = document.getElementById('hero'), ctx = cv.getContext('2d');
+  var still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var W = 0, H = 0, fish = [], mouse = null, running = false, t = 0;
+  function size() {
+    var r = cv.getBoundingClientRect(), d = Math.min(devicePixelRatio || 1, 2);
+    W = r.width; H = r.height;
+    cv.width = W * d; cv.height = H * d; ctx.setTransform(d, 0, 0, d, 0, 0);
+  }
+  size();
+  for (var i = 0; i < 90; i++) {
+    var a = Math.random() * 6.28;
+    fish.push({ x: W * (0.4 + Math.random() * 0.4), y: H * (0.3 + Math.random() * 0.4),
+      vx: Math.cos(a), vy: Math.sin(a), s: 0.8 + Math.random() * 0.5, red: i === 0 });
+  }
+  function step() {
+    t += 0.004;
+    var gx = W * (0.55 + 0.3 * Math.cos(t)), gy = H * (0.5 + 0.3 * Math.sin(t * 1.7));
+    for (var i = 0; i < fish.length; i++) {
+      var f = fish[i], ax = 0, ay = 0, cx = 0, cy = 0, sx = 0, sy = 0, n = 0;
+      for (var j = 0; j < fish.length; j++) {
+        if (i === j) continue;
+        var o = fish[j], dx = o.x - f.x, dy = o.y - f.y, d2 = dx * dx + dy * dy;
+        if (d2 > 3600) continue;
+        n++; ax += o.vx; ay += o.vy; cx += dx; cy += dy;
+        if (d2 < 196) { sx -= dx / (d2 + 1); sy -= dy / (d2 + 1); }
+      }
+      if (n) { f.vx += (ax / n - f.vx) * 0.05 + cx / n * 0.0015; f.vy += (ay / n - f.vy) * 0.05 + cy / n * 0.0015; }
+      f.vx += sx * 1.2 + (gx - f.x) * 0.00012; f.vy += sy * 1.2 + (gy - f.y) * 0.00012;
+      if (mouse) {
+        var mx = f.x - mouse.x, my = f.y - mouse.y, m2 = mx * mx + my * my;
+        if (m2 < 10000) { f.vx += mx / (m2 + 1) * 4; f.vy += my / (m2 + 1) * 4; }
+      }
+      var sp = Math.hypot(f.vx, f.vy) || 1, c = Math.min(Math.max(sp, 0.9), 2.2) / sp;
+      f.vx *= c; f.vy *= c; f.x += f.vx; f.y += f.vy;
+    }
+  }
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    for (var i = fish.length - 1; i >= 0; i--) {
+      var f = fish[i], a = Math.atan2(f.vy, f.vx), k = f.red ? 1.25 : f.s;
+      ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(a); ctx.scale(k, k);
+      ctx.fillStyle = f.red ? '#ff6258' : 'rgba(164,164,174,0.45)';
+      ctx.beginPath(); ctx.ellipse(0, 0, 7, 2.8, 0, 0, 6.28); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(-5, 0); ctx.lineTo(-11, -3.5); ctx.lineTo(-11, 3.5); ctx.fill();
+      ctx.restore();
+    }
+  }
+  function frame() { if (!running) return; step(); draw(); requestAnimationFrame(frame); }
+  function go(on) { if (on && !running && !still) { running = true; requestAnimationFrame(frame); } else if (!on) running = false; }
+  hero.addEventListener('mousemove', function (e) { var r = cv.getBoundingClientRect(); mouse = { x: e.clientX - r.left, y: e.clientY - r.top }; });
+  hero.addEventListener('mouseleave', function () { mouse = null; });
+  addEventListener('resize', size);
+  if (still) { for (var k = 0; k < 200; k++) step(); draw(); return; }
+  new IntersectionObserver(function (es) { go(es[0].isIntersecting && !document.hidden); }).observe(hero);
+  document.addEventListener('visibilitychange', function () { go(!document.hidden); });
+})();
+</script>
 </body>
 </html>
 
