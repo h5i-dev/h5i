@@ -247,6 +247,12 @@
     .loop-lead .loop-arrow { color: var(--spot); font-family: var(--mono); font-weight: 400; }
     .loop-flow { margin-top: 14px; }
     .proof-diagram.loop-diagram { min-width: 720px; }
+    .loop-diagram .loop-arc { stroke-opacity: .3; }
+    .loop-diagram .loop-dash { stroke-dasharray: 5 9; animation: loop-flow 1.2s linear infinite; }
+    @keyframes loop-flow { to { stroke-dashoffset: -14; } }
+    .loop-diagram .loop-fish-tail { transform-box: fill-box; transform-origin: 100% 50%; animation: loop-wag .45s ease-in-out infinite alternate; }
+    @keyframes loop-wag { from { transform: rotate(-14deg); } to { transform: rotate(14deg); } }
+    @media (prefers-reduced-motion: reduce) { .loop-diagram .loop-dash, .loop-diagram .loop-fish-tail { animation: none; } }
     .proof-flow .tabpick { position: absolute; opacity: 0; pointer-events: none; }
     .ed-tabs { display: flex; align-items: stretch; height: 27px; margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1; }
     .ed-tabs label {
@@ -506,6 +512,12 @@
         <defs>
           <marker id="loop-arrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="currentColor" stroke-width="1.5"/></marker>
         </defs>
+        <!-- One red fish swims the loop, behind the boxes so it ducks through each step -->
+        <g class="loop-fish" fill="var(--spot)" aria-hidden="true">
+          <ellipse cx="0" cy="0" rx="7" ry="2.8"/>
+          <path class="loop-fish-tail" d="M-5 0L-11 -3.5L-11 3.5Z"/>
+          <animateMotion dur="16s" repeatCount="indefinite" rotate="auto" path="M362 118C470 44 630 44 736 118C756 132 756 162 738 176C630 250 470 250 364 176C344 162 344 132 362 118Z"/>
+        </g>
         <!-- Find vulnerabilities -->
         <rect x="0" y="95" width="360" height="104" rx="10" fill="var(--panel)" stroke="var(--spot)" stroke-opacity=".8"/>
         <text x="28" y="124" class="pd-label pd-accent">01 / RED-TEAMING</text>
@@ -518,8 +530,10 @@
         <text x="764" y="178" class="pd-code">state a rule, check its proof</text>
         <!-- The two halves of the loop -->
         <g fill="none" stroke="var(--spot)" stroke-width="1.5" style="color:var(--spot)">
-          <path d="M362 118C470 44 630 44 736 118" marker-end="url(#loop-arrowhead)"/>
-          <path d="M738 176C630 250 470 250 364 176" marker-end="url(#loop-arrowhead)"/>
+          <path class="loop-arc" d="M362 118C470 44 630 44 736 118" marker-end="url(#loop-arrowhead)"/>
+          <path class="loop-arc" d="M738 176C630 250 470 250 364 176" marker-end="url(#loop-arrowhead)"/>
+          <path class="loop-dash" d="M362 118C470 44 630 44 736 118"/>
+          <path class="loop-dash" d="M738 176C630 250 470 250 364 176"/>
         </g>
         <text x="550" y="140" class="pd-label" text-anchor="middle">REPEAT</text>
         <text x="550" y="160" class="pd-note" text-anchor="middle">with every change the AI ships</text>
@@ -1009,6 +1023,11 @@
 <script src="/_static/blog.js?v=41dbda103a" defer></script>
 <script src="/_static/highlight.js?v=ed81eee4e6" defer></script>
 <script>
+// SMIL ignores prefers-reduced-motion, so park the loop fish ourselves.
+if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  var loopSvg = document.querySelector('.loop-diagram');
+  if (loopSvg && loopSvg.pauseAnimations) loopSvg.pauseAnimations();
+}
 // A school of small fish with one red one, Swimmy style. Plain boids.
 (function () {
   var cv = document.querySelector('.hero-school');
