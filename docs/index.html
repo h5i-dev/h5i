@@ -400,6 +400,26 @@
     .cm-state.found { color: var(--cm-amber); background: var(--cm-amber-bg); }
     .cm-state.gone { color: var(--cm-ink-4); }
     .browser-win .cm-grid tr.dim td { color: var(--cm-ink-4); }
+    /* boxes */
+    /* Sessions and Boxes are the two views of this console; the topbar title is their switch */
+    .cm-views { display: flex; align-self: stretch; }
+    .cm-view { display: flex; align-items: center; padding: 0 10px; font-size: 14px; font-weight: 600; color: var(--cm-ink-3); border-bottom: 2px solid transparent; cursor: pointer; }
+    .cm-view:hover { color: var(--cm-ink-2); }
+    #cmv-sessions:checked ~ .console-plate .cm-view[for="cmv-sessions"], #cmv-boxes:checked ~ .console-plate .cm-view[for="cmv-boxes"] { color: var(--cm-ink); border-bottom-color: var(--cm-accent); }
+    .browser-win .cm-topbar .vitals { display: none; }
+    #cmv-sessions:checked ~ .console-plate .v-sessions, #cmv-boxes:checked ~ .console-plate .v-boxes { display: flex; }
+    .browser-win .cm-split { display: grid; }
+    .browser-win .cm-work { grid-area: 1 / 1; min-width: 0; visibility: hidden; }
+    #cmv-sessions:checked ~ .console-plate .cm-work-sessions, #cmv-boxes:checked ~ .console-plate .cm-work-boxes { visibility: visible; }
+    .bw-text .u-view { display: none; }
+    #cmv-sessions:checked ~ .bw-url .u-sessions, #cmv-boxes:checked ~ .bw-url .u-boxes { display: inline; }
+    .cm-box { padding-bottom: 14px; }
+    .browser-win .cm-run-cmd { font-size: 11px; }
+    .browser-win .cm-lane { grid-template-columns: minmax(0, 2.4fr) repeat(5, minmax(0, 1fr)); }
+    .browser-win .cm-run-meta { flex-wrap: wrap; }
+    .browser-win .cm-run-meta span { white-space: nowrap; }
+    .browser-win .cm-lane-cell { padding: 7px 6px; }
+    .browser-win .cm-v { white-space: nowrap; }
     /* about */
     .cm-about { padding: 0 16px 14px; }
     .cm-about .cm-note { margin: 14px 0 12px; }
@@ -591,6 +611,8 @@
       <div class="duet-col">
         <p class="duet-lbl"><b>02</b> you, in the console</p>
         <div class="browser-win">
+          <input class="tabpick" type="radio" name="cmview" id="cmv-sessions" checked>
+          <input class="tabpick" type="radio" name="cmview" id="cmv-boxes">
           <input class="tabpick" type="radio" name="cmtab" id="cmt-history" checked>
           <input class="tabpick" type="radio" name="cmtab" id="cmt-sitemap">
           <input class="tabpick" type="radio" name="cmtab" id="cmt-actions">
@@ -602,20 +624,21 @@
             <span class="win-plus">+</span>
             <span class="win-ctl" aria-hidden="true"><i></i><i></i><i></i></span>
           </div>
-          <div class="bw-url"><span class="bw-nav">&#8592;</span><span class="bw-nav dim">&#8594;</span><span class="bw-nav">&#8635;</span><span class="bw-addr"><i class="lock"></i><span class="bw-text">localhost:8765/#/sessions/br_9f3k2a/<span class="bw-route"><span class="r-history">history</span><span class="r-sitemap">sitemap</span><span class="r-actions">actions</span><span class="r-findings">findings</span><span class="r-recon">recon</span><span class="r-about">about</span></span></span></span></div>
+          <div class="bw-url"><span class="bw-nav">&#8592;</span><span class="bw-nav dim">&#8594;</span><span class="bw-nav">&#8635;</span><span class="bw-addr"><i class="lock"></i><span class="bw-text"><span class="u-view u-boxes">localhost:8765/#/sandboxes/alice/sandbox</span><span class="u-view u-sessions">localhost:8765/#/sessions/br_9f3k2a/<span class="bw-route"><span class="r-history">history</span><span class="r-sitemap">sitemap</span><span class="r-actions">actions</span><span class="r-findings">findings</span><span class="r-recon">recon</span><span class="r-about">about</span></span></span></span></span></div>
           <div class="console-plate">
-        <div class="console" role="img" aria-label="The h5i console, Sessions view, open in a browser tab: the checkout-idor session the agent is driving, with tabs for its HTTP history, sitemap, actions, findings, recon ledger and record. The history names the agent verb that spent each fetch, marks refused rows in red, and traces why one fetch exists.">
+        <div class="console" role="img" aria-label="The h5i console, Sessions view, open in a browser tab: the checkout-idor session the agent is driving, with tabs for its HTTP history, sitemap, actions, findings, recon ledger and record. A Sandboxes tab beside Sessions shows the sandbox the session runs in and its flight recorder. The history names the agent verb that spent each fetch, marks refused rows in red, and traces why one fetch exists.">
           <div class="cm-app">
             <nav class="cm-rail" aria-hidden="true">
               <div class="cm-brand"><b>h5i</b><span>console</span></div>
             </nav>
             <div class="cm-main">
               <div class="cm-topbar">
-                <h4>Sessions</h4>
-                <span class="vitals"><span><b>3</b> live</span><span><b>214</b> recorded</span></span>
+                <div class="cm-views"><label class="cm-view" for="cmv-sessions">Sessions</label><label class="cm-view" for="cmv-boxes">Sandboxes</label></div>
+                <span class="vitals v-sessions"><span><b>3</b> live</span><span><b>214</b> recorded</span></span>
+                <span class="vitals v-boxes"><span><b>1</b> sandbox</span><span class="loud"><b>1</b> refused egress</span><span><b>9</b> runs</span><span>strongest <b>container</b></span></span>
               </div>
               <div class="cm-split">
-                <div class="cm-work">
+                <div class="cm-work cm-work-sessions">
                   <div class="cm-work-head">
                     <div class="cm-title">
                       <h3>checkout-idor</h3><code>br_9f3k2a</code>
@@ -664,9 +687,7 @@
                         <div class="cm-tnode d1"><span class="tg">&#9662;</span><span class="lb">/api</span><span class="ct"><span>13</span><span class="refused">4</span></span></div>
                         <div class="cm-tnode d2"><span class="tg">&#9662;</span><span class="lb">/order</span><span class="ct"><span>GET</span><span>3</span><span class="refused">4</span></span></div>
                         <div class="cm-tnode d3 on"><span class="tg"></span><span class="lb">1042</span><span class="ct"><span>1</span></span></div>
-                        <div class="cm-tnode d2"><span class="tg"></span><span class="lb">/pay</span><span class="ct"><span>POST</span><span>3</span></span></div>
                         <div class="cm-tnode d2"><span class="tg"></span><span class="lb">/cart</span><span class="ct"><span>GET POST</span><span>7</span></span></div>
-                        <div class="cm-tnode d1"><span class="tg"></span><span class="lb">/checkout</span><span class="ct"><span class="nav">nav</span><span>1</span></span></div>
                         <div class="cm-tnode d1"><span class="tg"></span><span class="lb">/login</span><span class="ct"><span class="nav">nav</span><span>2</span></span></div>
                         <div class="cm-tnode d1"><span class="tg">&#9656;</span><span class="lb">/assets</span><span class="ct"><span>74</span></span></div>
                         <div class="cm-tnode origin"><span class="tg">&#9656;</span><span class="lb">https://cdn.example.test</span><span class="ct"><span>35</span></span></div>
@@ -687,7 +708,7 @@
                         <span class="cm-cmd">h5i websec show req_109 --session checkout-idor</span>
                       </div>
                     </div>
-                    <div class="cm-foot"><span>4 origins &#183; 9 paths</span><span class="bad">6 refused</span><span>3 paths that answered only 404 are left off</span></div>
+                    <div class="cm-foot"><span>4 origins &#183; 7 paths</span><span class="bad">6 refused</span><span>3 paths that answered only 404 are left off</span></div>
                   </div>
                   <div class="cm-pane cm-pane-actions">
                     <div class="cm-tl">
@@ -750,6 +771,52 @@
                     </div>
                   </div>
                   </div>
+                </div>
+                <div class="cm-work cm-work-boxes">
+                  <div class="cm-work-head">
+                    <div class="cm-title"><h3>alice/sandbox</h3><span class="cm-tag good">container</span><span class="cm-tag">browser</span><span class="cm-sig blocked">refused</span></div>
+                    <div class="cm-tabs"><span class="cm-tab on">Evidence</span><span class="cm-tab">Browser</span></div>
+                  </div>
+                  <div class="cm-box">
+                      <div class="cm-note bad"><b>The egress allowlist refused 2 requests</b> to <code>px.example.invalid:443</code>.</div>
+                      <div class="cm-panel">
+                        <div class="cm-lanes">
+                          <div class="cm-lane head">
+                            <div class="cm-run" style="padding-top:9px;padding-bottom:9px">policy allows</div>
+                            <div class="cm-lane-cell"><span class="nm">files</span><span class="al">$WORK rw</span></div>
+                            <div class="cm-lane-cell"><span class="nm">egress</span><span class="al">allow 3</span></div>
+                            <div class="cm-lane-cell"><span class="nm">exit</span><span class="al">any tool</span></div>
+                            <div class="cm-lane-cell"><span class="nm">limits</span><span class="al">wall 1800s</span></div>
+                            <div class="cm-lane-cell"><span class="nm">page</span><span class="al">in box</span></div>
+                          </div>
+                          <div class="cm-lane">
+                            <div class="cm-run"><div class="cm-run-cmd">h5i browser open https://shop.example.test</div><div class="cm-run-meta"><span class="cm-src observed">host-observed</span><span>exit 0</span><span>1.2s</span><span>14:02:11</span></div></div>
+                            <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v ok">&#10003; 3</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v ok">&#10003;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v info">96M</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v ok">&#10003;</span></div>
+                          </div>
+                          <div class="cm-lane">
+                            <div class="cm-run"><div class="cm-run-cmd">h5i websec replay req_108 --set path=/api/order/1042</div><div class="cm-run-meta"><span class="cm-src observed">host-observed</span><span>exit 0</span><span>29ms</span><span>14:02:31</span></div></div>
+                            <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v ok">&#10003; 1</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v ok">&#10003;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                          </div>
+                          <div class="cm-lane on">
+                            <div class="cm-run"><div class="cm-run-cmd">h5i browser click @e21</div><div class="cm-run-meta"><span class="cm-src observed">host-observed</span><span>exit 0</span><span>88ms</span><span>14:02:52</span></div></div>
+                            <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v bad">2 refused</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v ok">&#10003;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v warn">2</span></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="cm-foot"><span>3 of 9 runs</span><span class="bad">2 refused</span><span>the receipts: <code>h5i box status sandbox</code></span></div>
                 </div>
               </div>
             </div>
