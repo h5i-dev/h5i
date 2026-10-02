@@ -1,0 +1,64 @@
+# What these proofs cover and what they leave to the shell. Read by `h5i ui`.
+app = "cratesio"
+title = "crate ownership and publishing"
+kernel = "../kernel"
+server = "../server"
+upstream = "https://github.com/rust-lang/crates.io"
+pinned = "067b45e"
+
+# Server app on PostgreSQL.
+assumes = ["A1", "A4", "A5", "A6", "A7", "A8", "A9", "A10"]
+
+[[trusted_input]]
+name = "time"
+from = "Clock::Database, read on every attempt, with monotonic"
+note = "a lock that has ended or an invitation that has expired stays so"
+
+[[trusted_input]]
+name = "GitHub teams"
+from = "H5I_APP_TEAMS, passed in the principal"
+note = "proofs hold for whatever teams the shell reports; the report is not verified"
+
+[[trusted_input]]
+name = "download counts"
+from = "H5I_APP_DOWNLOADS"
+note = "same as teams: an input the kernel trusts"
+
+[[out_of_scope]]
+item = "crate, team and version names"
+reason = "names are numbers, so wildcard crate scopes and name normalization are not modeled"
+ref = "examples/app/cratesio/README.md"
+
+[[out_of_scope]]
+item = "trusted publishing, rate limits, 500-token limit, reserved names, 24-hour name hold, metadata, emails, index updates, GitHub API calls"
+reason = "left out of the model"
+ref = "examples/app/cratesio/README.md"
+
+[[out_of_scope]]
+item = "unauthenticated emailed links"
+reason = "here confirming an address or accepting an invitation needs a signed-in user"
+ref = "examples/app/cratesio/README.md"
+
+[[out_of_scope]]
+item = "crates.io invitation link lock bypass (current)"
+reason = "upstream's emailed link makes a locked user an owner; the kernel requires a session, so no theorem"
+ref = "examples/app/cratesio/README.md"
+
+[[out_of_scope]]
+item = "GitHub token refresh before the lock check"
+reason = "upstream writes a locked account's row per sign-in; the kernel runs the callback in one transaction"
+ref = "examples/app/cratesio/README.md"
+
+[[counterexample]]
+theorem = "pre14760_violates_lock"
+bug = "PR #14760"
+before = "PR #14760"
+note = "before the PR the OAuth callback wrote a session for a locked account"
+current = false
+
+[[counterexample]]
+theorem = "pre14760_signs_in"
+bug = "PR #14760"
+before = "PR #14760"
+note = "the witness: a locked user gets a session"
+current = false

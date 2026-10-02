@@ -239,6 +239,21 @@ fn missing(raw: &str) -> String {
     format!("<span class=\"missing\">[{}: not in this project]</span>", escape(raw))
 }
 
+/// One line for the report: theorem, relation, version.
+fn proof_sentence(p: &crate::project::finding::ProofLink) -> String {
+    let mut parts = Vec::new();
+    if !p.theorem.is_empty() {
+        parts.push(if p.theorem == "none" { "no theorem bears on it".to_string() } else { format!("bears on `{}`", p.theorem) });
+    }
+    if !p.relation.is_empty() {
+        parts.push(format!("relation {}", p.relation));
+    }
+    if !p.version.is_empty() {
+        parts.push(format!("build under test {}", p.version));
+    }
+    parts.join("; ")
+}
+
 fn finding_block(f: &finding::Finding, ctx: &Context) -> String {
     let mut out = format!(
         "<section class=\"finding\" id=\"{id}\"><div class=\"finding-head\"><span class=\"fid\">{id}</span>\
@@ -264,6 +279,9 @@ fn finding_block(f: &finding::Finding, ctx: &Context) -> String {
     out.push_str(&row("Severity basis", &f.severity_reason));
     out.push_str(&row("Owner", &f.owner));
     out.push_str(&row("Due", &f.due));
+    if let Some(p) = &f.proof {
+        out.push_str(&row("Proof", &proof_sentence(p)));
+    }
     out.push_str("</dl>");
 
     let para = |label: &str, value: &str| {
@@ -277,6 +295,9 @@ fn finding_block(f: &finding::Finding, ctx: &Context) -> String {
     out.push_str(&para("Impact", &f.impact));
     out.push_str(&para("Remediation", &f.remediation));
 
+    if let Some(p) = f.proof.as_ref().filter(|p| !p.note.trim().is_empty()) {
+        out.push_str(&para("Against the proof", &p.note));
+    }
     if !f.body.trim().is_empty() {
         // The free body is Markdown too; render it with the same rules.
         let inner = render(&dummy_project(), &f.body, ctx, &Meta::default());

@@ -1,0 +1,60 @@
+# What these proofs cover and what they leave to the shell. Read by `h5i ui`.
+app = "wastebin"
+title = "pastebin"
+kernel = "../kernel"
+server = "../server"
+upstream = "https://github.com/matze/wastebin"
+pinned = "b27a2ab"
+
+# Server app on PostgreSQL.
+assumes = ["A1", "A4", "A5", "A6", "A7", "A8", "A9", "A10"]
+
+[[trusted_input]]
+name = "time"
+from = "Clock::Database via Kernel::stamp, with monotonic"
+note = "the proofs trust the engine's clock to report the time"
+
+[[trusted_input]]
+name = "slug"
+from = "the server's Shell, one random slug per request in the Principal"
+note = "the shell is trusted to draw slugs at random"
+
+[[trusted_input]]
+name = "uids"
+from = "the signed uid cookie"
+note = "the shell is trusted to check the cookie's signature"
+
+[[trusted_input]]
+name = "password fingerprint"
+from = "the shell's keyed HMAC of the password"
+note = "the kernel compares fingerprints; the shell is trusted to fingerprint"
+
+[[out_of_scope]]
+item = "paste encryption"
+reason = "ChaCha20-Poly1305 under an Argon2 key is replaced by a fingerprint; text is stored in plain"
+ref = "examples/app/wastebin/README.md"
+
+[[out_of_scope]]
+item = "highlighting, Markdown, titles, QR codes, themes, render cache, HTML forms, ?owner= links, wastebin-ctl list"
+reason = "not modeled; the server speaks JSON and the file extension lives only in the URL"
+ref = "examples/app/wastebin/README.md"
+
+[[counterexample]]
+theorem = "preview_broken"
+bug = "issue #190"
+before = "632ddf2"
+note = "a bot's plain GET of the paste page showed and burned a burn-after-reading paste"
+current = false
+
+[[counterexample]]
+theorem = "pre190_bot_burns"
+bug = "issue #190"
+before = "632ddf2"
+note = "the witness: the plain request shows and deletes the paste in a reachable state"
+current = false
+
+[[counterexample]]
+theorem = "raw_link_burns"
+bug = "issue #190 (the fix covers the page only)"
+note = "/raw, /dl and /md still burn a paste on a plain GET"
+current = true

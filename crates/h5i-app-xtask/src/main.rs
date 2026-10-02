@@ -1,9 +1,15 @@
 //! `cargo app-verify`: run CI's checks locally (`--full` adds mutation and
-//! differential tests). Missing tools count as skipped, never passed.
+//! differential tests). Missing tools count as skipped, never passed. Every
+//! run writes a receipt to `.h5i/app-verify/latest.json` for `h5i ui`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
+
+use serde::Serialize;
+
+mod receipt;
+use receipt::{Receipt, StepRec};
 
 /// Proof projects: directory, extraction script, generated file.
 const PROJECTS: &[(&str, Option<&str>, Option<&str>)] = &[
@@ -27,7 +33,7 @@ const PROJECTS: &[(&str, Option<&str>, Option<&str>)] = &[
     ("crates/h5i-app-core/proofs", None, None),
 ];
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 enum Outcome {
     Pass,
     Fail(String),
@@ -36,11 +42,16 @@ enum Outcome {
 
 struct Ctx {
     root: PathBuf,
-    results: Vec<(String, Outcome, f32)>,
+    results: Vec<StepRec>,
 }
 
 impl Ctx {
     fn step(&mut self, name: &str, f: impl FnOnce(&Path) -> Outcome) {
+        self.step_in(name, None, f);
+    }
+
+    /// A step about one proof project, so the receipt can file it there.
+    fn step_in(&mut self, name: &str, project: Option<&str>, f: impl FnOnce(&Path) -> Outcome) {
         eprint!("{name:<44} ");
         let t = Instant::now();
         let out = f(&self.root);
@@ -50,19 +61,32 @@ impl Ctx {
             Outcome::Skip(why) => eprintln!("skipped ({why})"),
             Outcome::Fail(log) => eprintln!("FAILED  {secs:>6.1}s\n{log}"),
         }
-        self.results.push((name.to_string(), out, secs));
+        self.results.push(StepRec::new(name, project, &out, secs));
     }
 }
 
 /// Run a command; on failure return the last lines of its output.
 fn run(dir: &Path, prog: &str, args: &[&str]) -> Outcome {
-    match Command::new(prog).args(args).current_dir(dir).stdin(Stdio::null()).output() {
-        Err(e) => Outcome::Fail(format!("cannot run {prog}: {e}")),
-        Ok(o) if o.status.success() => Outcome::Pass,
+    run_env(dir, prog, args, &[]).0
+}
+
+/// `run` with extra environment, also returning the combined output.
+fn run_env(dir: &Path, prog: &str, args: &[&str], envs: &[(&str, &str)]) -> (Outcome, String) {
+    let mut cmd = Command::new(prog);
+    cmd.args(args).current_dir(dir).stdin(Stdio::null());
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    match cmd.output() {
+        Err(e) => (Outcome::Fail(format!("cannot run {prog}: {e}")), String::new()),
         Ok(o) => {
             let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
-            let tail: Vec<&str> = text.lines().rev().take(30).collect();
-            Outcome::Fail(tail.into_iter().rev().collect::<Vec<_>>().join("\n"))
+            if o.status.success() {
+                (Outcome::Pass, text)
+            } else {
+                let tail: Vec<&str> = text.lines().rev().take(30).collect();
+                (Outcome::Fail(tail.into_iter().rev().collect::<Vec<_>>().join("\n")), text)
+            }
         }
     }
 }
@@ -250,9 +274,17 @@ fn flagged_command_fields(text: &str) -> Vec<(usize, String)> {
     out
 }
 
+/// One app's authorization coverage: `schema`, `theorem` or `none`.
+#[derive(Serialize, Clone)]
+struct AuthzRow {
+    app: String,
+    dir: String,
+    status: &'static str,
+}
+
 /// Report which app proofs state a universal authorization theorem. Never
 /// fails; makes gaps visible.
-fn authz_coverage(root: &Path) -> Outcome {
+fn authz_coverage(root: &Path) -> (Outcome, Vec<AuthzRow>) {
     let mut dirs: Vec<PathBuf> = Vec::new();
     for base in ["examples/app", "examples/app/tutorials"] {
         if let Ok(entries) = std::fs::read_dir(root.join(base)) {
@@ -269,6 +301,7 @@ fn authz_coverage(root: &Path) -> Outcome {
     let schema = "WritesAuthorized";
     let mut covered = 0;
     let mut report = String::new();
+    let mut rows = Vec::new();
     for d in &dirs {
         let mut lean = Vec::new();
         rs_or_lean(d, &mut lean);
@@ -286,17 +319,23 @@ fn authz_coverage(root: &Path) -> Outcome {
             }
         }
         let app = d.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        match hit {
+        let dir = d.strip_prefix(root).unwrap_or(d).to_string_lossy().to_string();
+        let status = match hit {
             Some(_) => {
                 covered += 1;
                 let tag = if uses_schema { "schema" } else { "theorem" };
                 report.push_str(&format!("  {app:<16} authorized ({tag})\n"));
+                tag
             }
-            None => report.push_str(&format!("  {app:<16} no universal authorization theorem\n")),
-        }
+            None => {
+                report.push_str(&format!("  {app:<16} no universal authorization theorem\n"));
+                "none"
+            }
+        };
+        rows.push(AuthzRow { app, dir, status });
     }
     eprintln!("\n  authorization coverage: {covered}/{} app proof projects\n{}", dirs.len(), report.trim_end());
-    Outcome::Pass
+    (Outcome::Pass, rows)
 }
 
 /// Collect `.lean` files directly in `dir`.
@@ -341,12 +380,23 @@ fn main() -> ExitCode {
     let full = args.iter().any(|a| a == "--full");
     let extract = !args.iter().any(|a| a == "--no-extract");
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("repository root");
+    let started = SystemTime::now();
     let mut cx = Ctx { root, results: Vec::new() };
     let db = std::env::var("H5I_APP_TEST_DATABASE_URL").is_ok();
+    let scratch = receipt::scratch_dir(&cx.root);
+    let axioms_log = scratch.join("axioms.tsv");
+    let _ = std::fs::remove_file(&axioms_log);
+    let mut authz = Vec::new();
+    let mut mutants = Vec::new();
+    let mut difftest = None;
 
     cx.step("route coverage (mutating routes take an Actor)", route_coverage);
     cx.step("command hygiene (no client-set identity fields)", command_hygiene);
-    cx.step("authorization coverage report", authz_coverage);
+    cx.step("authorization coverage report", |r| {
+        let (out, rows) = authz_coverage(r);
+        authz = rows;
+        out
+    });
     cx.step("rust tests", |r| {
         if !db {
             return Outcome::Skip("H5I_APP_TEST_DATABASE_URL unset".into());
@@ -364,9 +414,9 @@ fn main() -> ExitCode {
     });
     if extract {
         let tools = have("charon") && have("aeneas");
-        for (_, script, generated) in PROJECTS {
+        for (dir, script, generated) in PROJECTS {
             let (Some(script), Some(generated)) = (script, generated) else { continue };
-            cx.step(&format!("extract {generated}"), |r| {
+            cx.step_in(&format!("extract {generated}"), Some(dir), |r| {
                 if !tools {
                     return Outcome::Skip("charon/aeneas not on PATH".into());
                 }
@@ -379,7 +429,7 @@ fn main() -> ExitCode {
     }
     let lake = have("lake");
     for (dir, _, _) in PROJECTS {
-        cx.step(&format!("lean {dir}"), |r| {
+        cx.step_in(&format!("lean {dir}"), Some(dir), |r| {
             if !lake {
                 return Outcome::Skip("lake not on PATH".into());
             }
@@ -389,27 +439,46 @@ fn main() -> ExitCode {
             }
         });
     }
+    let log_env = [("H5I_AXIOMS_LOG", axioms_log.to_string_lossy().to_string())];
+    let log_env: Vec<(&str, &str)> = log_env.iter().map(|(k, v)| (*k, v.as_str())).collect();
     cx.step("axioms of the docs theorems", |r| {
         if !lake {
             return Outcome::Skip("lake not on PATH".into());
         }
-        run(r, "bash", &["scripts/app/ci-lean-gate.sh"])
+        run_env(r, "bash", &["scripts/app/ci-lean-gate.sh"], &log_env).0
     });
     cx.step("axioms of the database theorems", |r| {
         if !lake {
             return Outcome::Skip("lake not on PATH".into());
         }
-        run(r, "bash", &["scripts/app/ci-db-axioms.sh"])
+        run_env(r, "bash", &["scripts/app/ci-db-axioms.sh"], &log_env).0
     });
     if full {
-        cx.step("mutation suite", |r| run(r, "python3", &["scripts/app/mutants.py"]));
-        cx.step("app mutation suite", |r| run(r, "python3", &["scripts/app/mutants-apps.py"]));
-        cx.step("rust vs lean differential test", |r| run(r, "bash", &["scripts/app/difftest.sh"]));
+        let docs_json = scratch.join("mutants-docs.json");
+        let apps_json = scratch.join("mutants-apps.json");
+        cx.step("mutation suite", |r| {
+            run(r, "python3", &["scripts/app/mutants.py", "--json", &docs_json.to_string_lossy()])
+        });
+        cx.step("app mutation suite", |r| {
+            run(r, "python3", &["scripts/app/mutants-apps.py", "--json", &apps_json.to_string_lossy()])
+        });
+        mutants = receipt::read_mutants(&[&docs_json, &apps_json]);
+        cx.step("rust vs lean differential test", |r| {
+            let (out, text) = run_env(r, "bash", &["scripts/app/difftest.sh"], &[]);
+            difftest = receipt::parse_difftest(&text);
+            out
+        });
     }
 
-    let failed = cx.results.iter().filter(|(_, o, _)| matches!(o, Outcome::Fail(_))).count();
-    let skipped = cx.results.iter().filter(|(_, o, _)| matches!(o, Outcome::Skip(_))).count();
+    let failed = cx.results.iter().filter(|s| s.outcome == "fail").count();
+    let skipped = cx.results.iter().filter(|s| s.outcome == "skip").count();
     eprintln!("\n{} passed, {failed} failed, {skipped} skipped", cx.results.len() - failed - skipped);
+
+    let rec = Receipt::build(&cx.root, started, full, extract, &cx.results, authz, &axioms_log, mutants, difftest);
+    match rec.write(&cx.root) {
+        Ok(path) => eprintln!("receipt: {}", path.display()),
+        Err(e) => eprintln!("receipt not written: {e}"),
+    }
     if failed > 0 { ExitCode::FAILURE } else { ExitCode::SUCCESS }
 }
 

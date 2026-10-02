@@ -58,6 +58,9 @@ lake build
 ../../../../scripts/app/mutants.py           # injected bugs must break a proof
 ```
 
+`scope.toml` beside these files lists what the theorems assume and leave out;
+`h5i ui` reads it, together with the receipt `cargo app-verify` writes.
+
 The generic lemmas come from `H5iAppLib` in `crates/h5i-app-core/proofs`. `loop_search`
 and `loop_fold` turn a fact about one step of an extracted loop into a fact
 about the whole loop, and `walk` and `h5i_step` step through extracted code.

@@ -46,13 +46,18 @@ impl Repo {
         }
     }
 
-    fn h5i_ok(&self, args: &[&str]) -> Output {
-        let out = Command::new(H5I)
+    /// Run `h5i` and hand back whatever it did.
+    fn h5i(&self, args: &[&str]) -> Output {
+        Command::new(H5I)
             .args(args)
             .envs(self.env())
             .current_dir(&self.dir)
             .output()
-            .expect("failed to run h5i");
+            .expect("failed to run h5i")
+    }
+
+    fn h5i_ok(&self, args: &[&str]) -> Output {
+        let out = self.h5i(args);
         assert!(
             out.status.success(),
             "h5i {} failed:\nstdout: {}\nstderr: {}",
@@ -756,4 +761,182 @@ fn the_console_serves_a_project_its_findings_and_a_rendered_report() {
     // The glossary is served for the definition panel.
     let glossary = ui.get_authed("/api/glossary").json();
     assert!(glossary.as_array().map(|t| t.len() > 20).unwrap_or(false));
+}
+
+// ─── apps: the repository's proof projects ────────────────────────────────────
+
+/// A proof project laid out the way `examples/app/*/proofs` are, with a
+/// receipt as `cargo app-verify` writes it.
+fn write_proof_project(repo: &Repo) {
+    let app = repo.dir.join("examples/app/notes");
+    std::fs::create_dir_all(app.join("proofs/generated")).unwrap();
+    std::fs::create_dir_all(app.join("kernel/src")).unwrap();
+    std::fs::create_dir_all(app.join("server/src")).unwrap();
+    std::fs::write(app.join("kernel/src/lib.rs"), "pub fn transition() {}\n").unwrap();
+    std::fs::write(app.join("server/src/lib.rs"), "// h5i-allow: no-actor (health route)\nfn health() {}\n").unwrap();
+    std::fs::write(app.join("server/Cargo.toml"), "[package]\nname = \"notes-server\"\n").unwrap();
+    std::fs::write(app.join("proofs/lakefile.lean"), "package notes_proofs\n").unwrap();
+    std::fs::write(
+        app.join("proofs/generated/NotesKernel.lean"),
+        "inductive Role where\n| Reader : Role\n| Writer : Role\n\ninductive Action where\n| Read : Action\n| Write : Action\n",
+    )
+    .unwrap();
+    std::fs::write(
+        app.join("proofs/Spec.lean"),
+        "/-! ## Policy -/\n\ndef policy : Role → Action → Bool\n  | .Writer, _ => true\n  | .Reader, .Read => true\n  | _, _ => false\n\n/-! ## Invariants -/\n\nstructure Inv (s : St) : Prop where\n  /-- Ids are unique. -/\n  keys : s.notes.Nodup\n",
+    )
+    .unwrap();
+    std::fs::write(
+        app.join("proofs/Theorems.lean"),
+        "namespace notes_kernel.Theorems\n\n/-- Every write fits the policy. -/\ntheorem authorized : True := by\n  have := h.keys\n  trivial\n\n/-- False before the fix. -/\ntheorem pre_fix_broken : ¬ False := by simp\n\nend notes_kernel.Theorems\n",
+    )
+    .unwrap();
+    std::fs::write(
+        app.join("proofs/scope.toml"),
+        "app = \"notes\"\ntitle = \"note service\"\nassumes = [\"A1\", \"A9\"]\n\n[[trusted_input]]\nname = \"clock\"\nfrom = \"Clock::System\"\n\n[[out_of_scope]]\nitem = \"liveness\"\nreason = \"no statement form\"\n\n[[counterexample]]\ntheorem = \"pre_fix_broken\"\nbug = \"issue #7\"\ncurrent = true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        app.join("README.md"),
+        "# notes\n\n## Theorems\n\n| Theorem | Statement |\n|---|---|\n| `authorized` | Every write is allowed by the policy. |\n| `pre_fix_broken` | Before the fix the statement is false. |\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(repo.dir.join("docs/app")).unwrap();
+    std::fs::write(
+        repo.dir.join("docs/app/ROADMAP.md"),
+        "## Assumption ledger\n\n| # | Assumption | Today | Target |\n|---|---|---|---|\n| A1 | Authenticator returns the real sender | proven token parser | keys trusted |\n| A9 | Running code is the extracted code | CI re-extracts | done |\n",
+    )
+    .unwrap();
+    // The receipt names the proofs' digest, so "unchanged since" is true, and
+    // one caught mutant whose failing proof names the `keys` clause.
+    let digest = h5i_core::apps::digest_tree(&app.join("proofs"), "lean");
+    let kernel = h5i_core::apps::digest_tree(&app.join("kernel"), "rs");
+    std::fs::create_dir_all(repo.dir.join(".h5i/app-verify")).unwrap();
+    let receipt = serde_json::json!({
+        "version": 1, "started": "2026-10-02T10:00:00Z", "finished": "2026-10-02T10:05:00Z", "secs": 300.0,
+        "git": {"head": "0123456789abcdef", "branch": "main", "dirty": false}, "full": true, "extract": true,
+        "summary": {"passed": 3, "failed": 0, "skipped": 1},
+        "steps": [
+            {"name": "route coverage", "project": null, "outcome": "pass", "detail": "", "secs": 0.1},
+            {"name": "lean examples/app/notes/proofs", "project": "examples/app/notes/proofs", "outcome": "pass", "detail": "", "secs": 40.0},
+            {"name": "lean elsewhere", "project": "examples/app/other/proofs", "outcome": "fail", "detail": "boom", "secs": 1.0},
+            {"name": "rust tests", "project": null, "outcome": "skip", "detail": "H5I_APP_TEST_DATABASE_URL unset", "secs": 0.0}
+        ],
+        "projects": [{"dir": "examples/app/notes/proofs", "app": "notes", "kernel": "examples/app/notes/kernel",
+                       "kernel_digest": kernel, "proofs_digest": digest, "lean": "pass", "extraction": "match", "authorization": "theorem"}],
+        "axioms": [{"dir": "examples/app/notes/proofs", "theorem": "notes_kernel.Theorems.authorized", "axioms": ["propext", "Classical.choice", "Quot.sound"], "verdict": "ok"}],
+        "mutants": [
+            {"suite": "apps", "name": "notes", "app": "examples/app/notes", "bug": "duplicate ids accepted", "expect": ["authorized"], "verdict": "caught", "stage": "lake",
+             "failed": [{"file": "Theorems.lean", "line": 5, "col": 2, "message": "unsolved goals", "decl": "notes_kernel.Theorems.authorized", "kind": "theorem"}], "secs": 30.0}
+        ],
+        "difftest": null
+    });
+    std::fs::write(repo.dir.join(".h5i/app-verify/latest.json"), receipt.to_string()).unwrap();
+}
+
+#[test]
+fn the_console_lists_proof_projects_and_reads_one_in_full() {
+    let repo = Repo::new();
+    write_proof_project(&repo);
+    let ui = Console::start(&repo);
+
+    let apps = ui.get_authed("/api/apps").json();
+    let rows = apps.as_array().expect("an array");
+    assert_eq!(rows.len(), 1, "one proof project, build output ignored: {apps}");
+    let a = &rows[0];
+    assert_eq!(a["dir"], "examples/app/notes/proofs");
+    assert_eq!(a["app"], "notes");
+    assert_eq!(a["kind"], "server");
+    assert_eq!(a["theorems"], 2);
+    assert_eq!(a["counterexamples"], 1);
+    assert_eq!(a["receipt"]["proofs_match"], true);
+    assert_eq!(a["receipt"]["kernel_match"], true);
+    assert_eq!(a["receipt"]["mutants"]["caught"], 1);
+    assert_eq!(a["receipt"]["axioms"]["ok"], 1);
+    assert_eq!(a["flags"], serde_json::json!([]), "a current receipt with nothing failing raises no flag");
+
+    let d = ui.get_authed("/api/app/examples/app/notes/proofs").json();
+    // The spec: a policy matrix over the generated enums, and the invariant
+    // clause with the mutant whose failing proof named it.
+    let policy = &d["spec"]["sections"][0]["items"][0];
+    assert_eq!(policy["matrix"]["rows"], serde_json::json!(["Reader", "Writer"]));
+    assert_eq!(policy["matrix"]["cells"][0], serde_json::json!(["true", "false"]));
+    let inv = &d["spec"]["sections"][1]["items"][0];
+    assert_eq!(inv["fields"][0]["name"], "keys");
+    assert_eq!(inv["fields"][0]["doc"], "Ids are unique.");
+    assert_eq!(inv["fields"][0]["mutants"], serde_json::json!(["notes"]));
+    // Theorems: the README statement, the gate's axioms, the mutant, and the
+    // counterexample tied to its upstream bug.
+    let th = d["theorems"].as_array().unwrap();
+    let authorized = th.iter().find(|t| t["name"] == "authorized").unwrap();
+    assert_eq!(authorized["statement"], "Every write is allowed by the policy.");
+    assert_eq!(authorized["qualified"], "notes_kernel.Theorems.authorized");
+    assert_eq!(authorized["axioms"]["verdict"], "ok");
+    assert_eq!(authorized["caught"], serde_json::json!(["notes"]));
+    assert_eq!(authorized["counterexample"], false);
+    let broken = th.iter().find(|t| t["name"] == "pre_fix_broken").unwrap();
+    assert_eq!(broken["counterexample"], true);
+    assert_eq!(broken["bug"]["bug"], "issue #7");
+    assert_eq!(broken["bug"]["current"], true);
+    // The trust boundary: ledger text resolved, the opt-out found, the version
+    // compared.
+    assert_eq!(d["trust"]["assumes"][0]["id"], "A1");
+    assert_eq!(d["trust"]["assumes"][0]["text"], "Authenticator returns the real sender");
+    assert_eq!(d["trust"]["edges"][0]["kind"], "no-actor");
+    assert_eq!(d["trust"]["trusted_inputs"][0]["name"], "clock");
+    assert_eq!(d["trust"]["out_of_scope"][0]["item"], "liveness");
+    assert_eq!(d["trust"]["version"]["proofs_match"], true);
+    assert_eq!(d["trust"]["version"]["receipt_head"], "0123456789abcdef");
+    // Evidence: this project's steps plus the global ones, never another
+    // project's.
+    let steps = d["evidence"]["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 3, "{steps:?}");
+    assert!(steps.iter().all(|s| s["name"] != "lean elsewhere"));
+    assert_eq!(d["evidence"]["mutants"][0]["as_expected"], true);
+    assert_eq!(d["evidence"]["counts"]["prepared"], 1);
+
+    assert_eq!(ui.get_authed("/api/app/examples/app/nope/proofs").status, 404);
+    assert_eq!(ui.get_authed("/api/app/examples/app/notes/../notes/proofs").status, 404);
+}
+
+#[test]
+fn proofs_become_a_checklist_and_a_finding_can_point_at_a_theorem() {
+    let repo = Repo::new();
+    write_proof_project(&repo);
+    repo.h5i_ok(&["project", "init", "notes", "--title", "note service"]);
+    repo.h5i_ok(&["project", "checklist", "import", "-p", "notes", "--proofs", "examples/app/notes/proofs", "--required"]);
+    repo.h5i_ok(&[
+        "project", "finding", "create", "-p", "notes", "--title", "Reader wrote a note", "--severity", "high",
+        "--proof-theorem", "authorized", "--proof-relation", "in-scope", "--proof-version", "unconfirmed",
+        "--proof-note", "staging build commit unknown",
+    ]);
+    // A later update changes one state and keeps the rest.
+    repo.h5i_ok(&["project", "finding", "update", "F-1", "-p", "notes", "--proof-version", "differs"]);
+    // The relation vocabulary is checked.
+    let bad = repo.h5i(&["project", "finding", "update", "F-1", "-p", "notes", "--proof-relation", "maybe"]);
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("proof relation"));
+
+    let ui = Console::start(&repo);
+    let detail = ui.get_authed("/api/project/notes").json();
+    let c = &detail["checklists"][0]["checklist"];
+    assert_eq!(c["slug"], "proofs-notes");
+    assert_eq!(c["mode"], "required");
+    assert!(c["source"].as_str().unwrap().starts_with("proofs:examples/app/notes/proofs"));
+    let texts: Vec<String> = c["items"].as_array().unwrap().iter().map(|i| i["text"].as_str().unwrap().to_string()).collect();
+    assert!(texts.iter().any(|t| t.starts_with("`authorized`: Every write is allowed by the policy. Assumes A1, A9.")), "{texts:?}");
+    assert!(texts.iter().any(|t| t.contains("pre_fix_broken") && t.contains("issue #7")), "{texts:?}");
+    assert!(texts.iter().any(|t| t.contains("no-actor")), "{texts:?}");
+    assert!(texts.iter().any(|t| t.starts_with("A1: Authenticator returns the real sender")), "{texts:?}");
+    assert!(texts.iter().any(|t| t.contains("Kernel digest at import")), "{texts:?}");
+    let groups: std::collections::BTreeSet<String> =
+        c["items"].as_array().unwrap().iter().map(|i| i["group"].as_str().unwrap().to_string()).collect();
+    assert!(groups.iter().any(|g| g.starts_with("Theorems")), "{groups:?}");
+    assert!(groups.iter().any(|g| g.starts_with("Version")), "{groups:?}");
+
+    let f = &detail["findings"][0];
+    assert_eq!(f["proof"]["theorem"], "authorized");
+    assert_eq!(f["proof"]["relation"], "in-scope");
+    assert_eq!(f["proof"]["version"], "differs");
+    assert_eq!(f["proof"]["note"], "staging build commit unknown");
 }

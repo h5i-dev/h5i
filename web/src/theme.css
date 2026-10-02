@@ -2724,3 +2724,132 @@ pre.render {
   font-size: var(--fs-sm);
   color: var(--ink-2);
 }
+
+/* Apps: the proof projects. A spec item is one declaration of Spec.lean; a
+   clause is one field of an invariant, with the injected bugs it caught. */
+.spec-section {
+  margin-bottom: 18px;
+}
+.spec-item {
+  border-top: 1px solid var(--line);
+  padding: 10px 0 12px;
+}
+.spec-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.spec-name {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--ink);
+}
+.spec-line {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  margin-left: auto;
+}
+.spec-doc {
+  margin: 6px 0 4px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+}
+.spec-code,
+.step-log {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: var(--fs-data);
+  white-space: pre;
+  overflow: auto;
+  max-height: 360px;
+}
+.step-log {
+  margin: 0;
+  max-height: 160px;
+  white-space: pre-wrap;
+}
+.clauses {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.clause {
+  padding: 6px 0 6px 12px;
+  border-left: 2px solid var(--line);
+  margin-bottom: 6px;
+}
+.clause-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.clause-head code {
+  font-weight: 600;
+}
+.clause-doc {
+  margin: 3px 0;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+}
+.clause-prop {
+  display: block;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+}
+.clause-bugs {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+}
+.matrix {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: var(--fs-sm);
+}
+.matrix th,
+.matrix td {
+  border: 1px solid var(--line);
+  padding: 4px 10px;
+  text-align: center;
+}
+.matrix th {
+  color: var(--ink-3);
+  font-weight: 500;
+  font-family: var(--font-mono);
+}
+.matrix tbody th {
+  text-align: left;
+}
+.matrix td.is-yes {
+  color: var(--ink);
+  font-weight: 600;
+}
+.matrix td.is-no {
+  color: var(--ink-4, var(--ink-3));
+}
+.subtle {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+}
+.ptable td.subtle,
+.ptable td .subtle {
+  white-space: normal;
+}
+.ptable th {
+  text-align: left;
+  color: var(--ink-3);
+  font-weight: 500;
+  font-size: var(--fs-xs);
+  padding: 4px 8px;
+}
+.ptable.theorems td:first-child {
+  white-space: nowrap;
+}

@@ -286,5 +286,18 @@ fails on any diff, and builds every proof project, rejecting `sorry`,
 `--full` adds the mutation suite and the Rust/Lean differential test. Missing
 tools are reported as skipped, not passed.
 
+Every run writes a receipt to `.h5i/app-verify/latest.json`: each step's
+outcome, a digest of every kernel and of every proof project's hand-written
+Lean, the axioms each gated theorem used, each mutant's verdict with the
+declarations it broke (`scripts/app/leanfail.py` reads them out of lake's
+output), and the differential test's case count. `h5i ui` shows it under
+Apps and says whether the tree it looks at still matches the digests.
+
+Each proof project carries a `scope.toml`: the ledger entries (`ROADMAP.md`)
+its theorems rest on, the shell inputs the kernel takes as true, what the
+proofs leave out by design, and which theorems are counterexamples for which
+upstream bug. It is the machine-readable form of the README's prose, so the
+console can keep "proven" and "unconfirmed before it applies" apart.
+
 Toolchain: stable Rust, elan with Lean v4.31.0, and Charon and Aeneas at the
 commit pinned in the proof lakefiles.

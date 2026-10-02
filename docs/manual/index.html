@@ -1195,6 +1195,27 @@ outcome; 4 open; 2 blocked" says what was looked at, not that the rest is safe.<
 h5i project checklist mark -p acme C1 --status recorded --note &quot;role check present&quot; --link F-2
 h5i project checklist coverage -p acme
 </code></pre>
+<p>For an app built on <code>h5i-app</code>, its Lean proofs make a checklist too. <code>--proofs</code>
+takes the proofs directory instead of a file: each theorem becomes an item that
+is proven about the extracted kernel and stays unconfirmed for the running app
+until the trusted edges under it (the assumption ledger, shell inputs,
+<code>h5i-allow</code> opt-outs, the version of the kernel the server was built from) are
+checked by hand. The import records the proofs digest, so a later import with
+<code>--replace</code> shows what changed.</p>
+<pre><code class="language-bash">h5i project checklist import -p acme --proofs examples/app/docs/proofs --required
+</code></pre>
+<p>A finding against such an app can say where it stands against the proofs.
+<code>--proof-theorem</code> names the theorem it bears on, or <code>none</code>; <code>--proof-relation</code>
+says whether the finding's run is <code>in-scope</code> or <code>out-of-scope</code> of that theorem
+(or, with <code>none</code>, whether the gap is <code>unspecified</code>, <code>intentional</code> or
+<code>unconfirmed</code>); <code>--proof-version</code> says whether the build under test <code>matches</code>
+or <code>differs</code> from the proven code. Every state defaults to unconfirmed and
+nothing fills them in but you: a finding in scope of a theorem on matching code
+means an assumption or a reading is wrong, and which one is not decided by h5i.</p>
+<pre><code class="language-bash">h5i project finding update F-3 -p acme --proof-theorem authorized \
+    --proof-relation in-scope --proof-version unconfirmed \
+    --proof-note &quot;reproduced on staging; its build commit is not recorded&quot;
+</code></pre>
 <h3 id="the-report">The report</h3>
 <p>The report is a free Markdown document you write. h5i fills the counts, ids and
 evidence through directives it resolves against the project, so the prose cannot
@@ -1666,9 +1687,10 @@ h5i ui --port 0
 h5i ui --open
 </code></pre>
 <p>The read-only web console is one screen over everything h5i is doing on this
-machine. Four sections: an overview of what wants a person, the browser
-sessions, the boxes, and what this host can enforce. Every route it calls is a
-GET, and every next step it suggests is a command it copies to the clipboard.</p>
+machine. Six sections: an overview of what wants a person, the projects, the
+browser sessions, the boxes, the Lean proof projects of this repository, and
+what this host can enforce. Every route it calls is a GET, and every next step
+it suggests is a command it copies to the clipboard.</p>
 <p><strong>Sessions</strong> are where the workbench and recon do their work. Boxes are the
 repository's; sessions are the machine's, because <code>h5i browser open</code> needs no
 repository. The column lists them loudest first and searches the whole registry
@@ -1714,6 +1736,46 @@ its findings, a flight recorder of one row per receipt across five lanes
 (files, egress, exit, limits, page), the policy that was actually
 enforced, and the diff against the pinned base. A browser box has a second
 tab with the live in-box browser terminal.</p>
+<p><strong>Apps</strong> are the repository's Lean proof projects: every directory with a
+<code>lakefile.lean</code> and hand-written proofs beside it, the way <code>examples/app/*/proofs</code>
+are laid out. The section answers two questions and keeps them apart: what is
+proven, and what is still unconfirmed before a theorem says anything about a
+running app. It never shows "verified". Five tabs:</p>
+<table>
+<thead>
+<tr>
+<th>tab</th>
+<th>shows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Spec</td>
+<td><code>Spec.lean</code> as a reviewer reads it: the policy as a table, each invariant clause with its docstring, and beside the clause the injected bugs whose failing proof named it. A clause no mutant reached is marked unevaluated, which is not the same as weak</td>
+</tr>
+<tr>
+<td>Theorems</td>
+<td>the README's theorem table with the file and line, the axioms the gate recorded, and which mutants broke each proof against which were predicted to</td>
+</tr>
+<tr>
+<td>Trust boundary</td>
+<td>the assumption-ledger entries the app rests on (<code>proofs/scope.toml</code>), the shell inputs the kernel takes as true, every <code>h5i-allow</code> opt-out and <code>assume_authenticated</code> in its sources, what the proofs leave out by design, and whether the kernel and proofs on disk still match the last receipt. Builds of the app recorded inside this repository's boxes are listed, because whether the server under test was built from the proven kernel is a separate fact from the proof</td>
+</tr>
+<tr>
+<td>Evidence</td>
+<td>the last <code>cargo app-verify</code> receipt (<code>.h5i/app-verify/latest.json</code>): each step's outcome, the mutants with the declarations each one broke, the differential test. Counts over one run, not a grade</td>
+</tr>
+<tr>
+<td>Counterexamples</td>
+<td>theorems of the form <code>¬ property old_code</code>: proven bugs, with the upstream issue and whether it is still present</td>
+</tr>
+</tbody>
+</table>
+<p>A finding that lands on one of the trusted edges is not a contradiction of a
+theorem; it is the theorem's hypothesis failing. <code>h5i project checklist import
+--proofs &lt;dir&gt;</code> turns the theorems and edges into a checklist a person closes,
+and <code>h5i project finding create --proof-theorem ...</code> records where a finding
+stands against a proof (below, under projects).</p>
 <h3 id="reclaiming-space">Reclaiming space</h3>
 <p>A session's record, logs and ledger are small; its capture store is not. Two
 verbs, named the way boxes name the same two acts:</p>

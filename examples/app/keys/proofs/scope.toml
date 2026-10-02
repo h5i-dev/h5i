@@ -1,0 +1,18 @@
+# What these proofs cover and what they leave to the shell. Read by `h5i ui`.
+app = "keys"
+title = "API keys and sessions"
+kernel = "../kernel"
+
+# Kernel-only example. The README names A5: the theorem is over serial runs, and any
+# interleaving the database commits is one of these runs only under SERIALIZABLE.
+assumes = ["A5", "A7", "A9", "A10"]
+
+[[counterexample]]
+theorem = "pre_acts_after_revoke"
+note = "transition_pre trusts a session after open, so it acts after the key is revoked"
+current = false
+
+[[counterexample]]
+theorem = "pre_run"
+note = "the witness run: issue, open a session, revoke, act through the session"
+current = false

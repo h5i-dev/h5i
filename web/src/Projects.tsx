@@ -8,10 +8,11 @@ import {
   type ProjectDetail,
   type ProjectFinding,
   type ProjectSummary,
+  type ProofLink,
   type ReportView,
   type SessionRow,
 } from "./api";
-import { AttentionTag, Chip, Cmd, Count, Empty, Note, Split, ago, plural } from "./ui";
+import { AttentionTag, Chip, Cmd, Count, Empty, Note, Split, type Tone, ago, plural } from "./ui";
 import { shownState } from "./seen";
 
 // A project is the durable engagement: notes, findings, the evidence they rest
@@ -489,6 +490,7 @@ function FindingCard({ f, name, evidenceCaptions }: { f: ProjectFinding; name: s
           {field("Affected", f.affected)}
           {field("Why this severity", f.severity_reason)}
           {field("Remediation", f.remediation)}
+          {f.proof ? <ProofBlock p={f.proof} /> : null}
           {f.evidence.length > 0 ? (
             <div className="finding-part">
               <h4>Evidence</h4>
@@ -523,6 +525,38 @@ function FindingCard({ f, name, evidenceCaptions }: { f: ProjectFinding; name: s
   );
 }
 
+/** The finding against the app's proofs: a chain of checks, each either
+ *  stated or still open. Nothing here is decided by the console. */
+function ProofBlock({ p }: { p: ProofLink }) {
+  const none = p.theorem === "none";
+  const relationTone: Tone =
+    p.relation === "in-scope" || p.relation === "unspecified" ? "warn" : p.relation === "" || p.relation === "unconfirmed" ? "dim" : "info";
+  const versionTone: Tone = p.version === "differs" ? "info" : p.version === "matches" ? "warn" : "dim";
+  return (
+    <div className="finding-part">
+      <h4>Against the proof</h4>
+      <div className="chips">
+        <Chip tone={none ? "dim" : "violet"} mono={!none} title="the theorem this finding bears on">
+          {p.theorem ? (none ? "no theorem" : p.theorem) : "theorem: not said"}
+        </Chip>
+        <Chip tone={relationTone} title={none ? "unspecified, intentional or unconfirmed gap" : "is the run inside the theorem's scope"}>
+          {p.relation || "scope: unconfirmed"}
+        </Chip>
+        <Chip tone={versionTone} title="is the build under test the proven code">
+          build {p.version || "unconfirmed"}
+        </Chip>
+      </div>
+      {p.note.trim() ? <p>{p.note}</p> : null}
+      {p.relation === "in-scope" && p.version === "matches" ? (
+        <p className="count">
+          In scope and the same code: the theorem and the finding cannot both hold. One of the proof's assumptions, or the
+          reading of the finding, is wrong. Neither is decided here.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function field(label: string, value: string) {
   if (!value.trim()) return null;
   return (
@@ -547,6 +581,12 @@ function CoverageTab({ detail }: { detail: ProjectDetail }) {
             Coverage is counts, never a score: "18 of 24 have an outcome" says what was looked at, not that the rest
             is safe.
           </p>
+          <p>
+            For an app built on h5i-app, its Lean proofs make a checklist too: each theorem is proven about the
+            extracted kernel and stays "application unconfirmed" until the trusted edges under it are checked on the
+            running app.
+          </p>
+          <Cmd text={`h5i project checklist import -p ${detail.meta.name} --proofs examples/app/docs/proofs --required`} />
         </Empty>
       </div>
     );

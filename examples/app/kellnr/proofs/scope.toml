@@ -1,0 +1,50 @@
+# What these proofs cover and what they leave to the shell. Read by `h5i ui`.
+app = "kellnr"
+title = "private crate registry"
+kernel = "../kernel"
+upstream = "https://github.com/kellnr/kellnr"
+pinned = "45043ee"
+
+# Kernel-only port: no server, so only the extraction and spec entries apply.
+assumes = ["A7", "A9", "A10"]
+
+[[trusted_input]]
+name = "accounts, group members, settings"
+from = "Kellnr, outside the modeled endpoints"
+note = "free to change between steps; Spec.Reachable lets them vary"
+
+[[out_of_scope]]
+item = "remove_owner with several users at once"
+reason = "its last-owner check differs slightly from the single-owner path"
+ref = "examples/app/kellnr/README.md"
+
+[[out_of_scope]]
+item = "add_empty_crate, required crate fields, storage, webhooks, session expiry, web UI routes"
+reason = "left out of the model"
+ref = "examples/app/kellnr/README.md"
+
+[[out_of_scope]]
+item = "crate, user and group names"
+reason = "names are numeric ids in the model"
+ref = "examples/app/kellnr/README.md"
+
+[[counterexample]]
+theorem = "pre1243_violates_read_only"
+bug = "PR #1243"
+before = "45043ee"
+note = "read_only_commits_nothing is false for the code before the PR"
+current = false
+
+[[counterexample]]
+theorem = "pre1243_session_adds_owner"
+bug = "PR #1243"
+before = "45043ee"
+note = "a read-only owner logs in with a session and adds an owner"
+current = false
+
+[[counterexample]]
+theorem = "pre1243_token_adds_group"
+bug = "PR #1243"
+before = "45043ee"
+note = "the same read-only user grants a group through a token"
+current = false

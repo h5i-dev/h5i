@@ -1,0 +1,17 @@
+# What these proofs cover and what they leave to the shell. Read by `h5i ui`.
+app = "filters"
+title = "saved search filters"
+kernel = "../kernel"
+
+# Kernel-only example: no server, so only the extraction and spec entries apply.
+assumes = ["A7", "A9", "A10"]
+
+[[out_of_scope]]
+item = "templates over 4096 bytes"
+reason = "search_succeeds covers well-formed templates of at most 4096 bytes"
+ref = "examples/app/filters/README.md"
+
+[[counterexample]]
+theorem = "pre_leaks"
+note = "transition_pre escapes backslash but not quote, so Eve's name returns Bob's record"
+current = false
