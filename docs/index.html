@@ -247,6 +247,12 @@
     .loop-lead .loop-arrow { color: var(--spot); font-family: var(--mono); font-weight: 400; }
     .loop-flow { margin-top: 14px; }
     .proof-diagram.loop-diagram { min-width: 720px; }
+    .loop-diagram .loop-arc { stroke-opacity: .3; }
+    .loop-diagram .loop-dash { stroke-dasharray: 5 9; animation: loop-flow 1.2s linear infinite; }
+    @keyframes loop-flow { to { stroke-dashoffset: -14; } }
+    .loop-diagram .loop-fish-tail { transform-box: fill-box; transform-origin: 100% 50%; animation: loop-wag .45s ease-in-out infinite alternate; }
+    @keyframes loop-wag { from { transform: rotate(-14deg); } to { transform: rotate(14deg); } }
+    @media (prefers-reduced-motion: reduce) { .loop-diagram .loop-dash, .loop-diagram .loop-fish-tail { animation: none; } }
     .proof-flow .tabpick { position: absolute; opacity: 0; pointer-events: none; }
     .ed-tabs { display: flex; align-items: stretch; height: 27px; margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1; }
     .ed-tabs label {
@@ -338,9 +344,14 @@
     #cmt-history:checked ~ .bw-url .r-history, #cmt-sitemap:checked ~ .bw-url .r-sitemap, #cmt-actions:checked ~ .bw-url .r-actions, #cmt-findings:checked ~ .bw-url .r-findings, #cmt-recon:checked ~ .bw-url .r-recon, #cmt-about:checked ~ .bw-url .r-about { display: inline; }
     /* the tab after the open one pulses softly, a hint that the tabs are live */
     #cmt-history:checked ~ .console-plate .cm-tab[for="cmt-sitemap"], #cmt-sitemap:checked ~ .console-plate .cm-tab[for="cmt-actions"], #cmt-actions:checked ~ .console-plate .cm-tab[for="cmt-findings"], #cmt-findings:checked ~ .console-plate .cm-tab[for="cmt-recon"], #cmt-recon:checked ~ .console-plate .cm-tab[for="cmt-about"], #cmt-about:checked ~ .console-plate .cm-tab[for="cmt-history"] { animation: cm-hint 2.4s ease-in-out infinite; }
+    #cmv-sessions:checked ~ .console-plate .cm-view[for="cmv-boxes"] { animation: cm-hint 2.4s ease-in-out infinite; }
     @keyframes cm-hint { 0%, 100% { color: var(--cm-ink-3); border-bottom-color: transparent; } 50% { color: var(--cm-accent-hi); border-bottom-color: var(--cm-accent-bg); } }
-    @media (prefers-reduced-motion: reduce) { .browser-win .cm-tab { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .browser-win .cm-tab, .browser-win .cm-view { animation: none; } }
     .browser-win .cm-wrap { overflow: hidden; }
+    /* tab strips scroll sideways rather than clip; the scrollbar stays hidden like a native tab bar */
+    .browser-win .cm-tabs, .browser-win .cm-views { overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap; scrollbar-width: none; }
+    .browser-win .cm-tabs::-webkit-scrollbar, .browser-win .cm-views::-webkit-scrollbar { display: none; }
+    .browser-win .cm-tab, .browser-win .cm-view { flex: none; white-space: nowrap; margin-bottom: 0; }
     .browser-win .cm-pane .cm-cmd { width: fit-content; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .browser-win code { font-family: var(--cm-mono); font-size: 10.5px; color: var(--cm-ink); background: none; border: 0; padding: 0; }
     .browser-win .cm-facts { border-collapse: collapse; font-size: 11px; }
@@ -394,6 +405,26 @@
     .cm-state.found { color: var(--cm-amber); background: var(--cm-amber-bg); }
     .cm-state.gone { color: var(--cm-ink-4); }
     .browser-win .cm-grid tr.dim td { color: var(--cm-ink-4); }
+    /* boxes */
+    /* Sessions and Boxes are the two views of this console; the topbar title is their switch */
+    .cm-views { display: flex; align-self: stretch; }
+    .cm-view { display: flex; align-items: center; padding: 0 10px; font-size: 14px; font-weight: 600; color: var(--cm-ink-3); border-bottom: 2px solid transparent; cursor: pointer; }
+    .cm-view:hover { color: var(--cm-ink-2); }
+    #cmv-sessions:checked ~ .console-plate .cm-view[for="cmv-sessions"], #cmv-boxes:checked ~ .console-plate .cm-view[for="cmv-boxes"] { color: var(--cm-ink); border-bottom-color: var(--cm-accent); }
+    .browser-win .cm-topbar .vitals { display: none; }
+    #cmv-sessions:checked ~ .console-plate .v-sessions, #cmv-boxes:checked ~ .console-plate .v-boxes { display: flex; }
+    .browser-win .cm-split { display: grid; }
+    .browser-win .cm-work { grid-area: 1 / 1; min-width: 0; visibility: hidden; }
+    #cmv-sessions:checked ~ .console-plate .cm-work-sessions, #cmv-boxes:checked ~ .console-plate .cm-work-boxes { visibility: visible; }
+    .bw-text .u-view { display: none; }
+    #cmv-sessions:checked ~ .bw-url .u-sessions, #cmv-boxes:checked ~ .bw-url .u-boxes { display: inline; }
+    .cm-box { padding-bottom: 14px; }
+    .browser-win .cm-run-cmd { font-size: 11px; }
+    .browser-win .cm-lane { grid-template-columns: minmax(0, 2.4fr) repeat(5, minmax(0, 1fr)); }
+    .browser-win .cm-run-meta { flex-wrap: wrap; }
+    .browser-win .cm-run-meta span { white-space: nowrap; }
+    .browser-win .cm-lane-cell { padding: 7px 6px; }
+    .browser-win .cm-v { white-space: nowrap; }
     /* about */
     .cm-about { padding: 0 16px 14px; }
     .cm-about .cm-note { margin: 14px 0 12px; }
@@ -401,6 +432,16 @@
       .duet { grid-template-columns: minmax(0, 1fr); }
       .cm-site { grid-template-columns: minmax(0, 1fr); }
       .cm-site > .rule { display: none; }
+    }
+    @media (max-width: 600px) {
+      .browser-win .cm-topbar .vitals { display: none !important; }
+      .browser-win .cm-wrap, .browser-win .cm-panel { overflow-x: auto; }
+      .browser-win .cm-hist .cm-grid, .browser-win .cm-recon .cm-grid { min-width: 560px; }
+      .browser-win .cm-lanes { min-width: 540px; }
+      /* on a phone the panes stop sharing one cell: only the open one takes up height */
+      .browser-win .cm-pane, .browser-win .cm-work { display: none; visibility: visible; }
+      #cmt-history:checked ~ .console-plate .cm-pane-history, #cmt-sitemap:checked ~ .console-plate .cm-pane-sitemap, #cmt-actions:checked ~ .console-plate .cm-pane-actions, #cmt-findings:checked ~ .console-plate .cm-pane-findings, #cmt-recon:checked ~ .console-plate .cm-pane-recon, #cmt-about:checked ~ .console-plate .cm-pane-about { display: block; }
+      #cmv-sessions:checked ~ .console-plate .cm-work-sessions, #cmv-boxes:checked ~ .console-plate .cm-work-boxes { display: flex; }
     }
     @media (min-width: 900px) {
       .feat-grid.feat-grid-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -449,8 +490,8 @@
       <button class="copy-btn" type="button">copy</button>
     </div>
     <div class="hero-actions">
-      <a href="#what-you-get" class="btn btn-primary">Test your existing app</a>
-      <a href="#framework" class="btn btn-ghost">Explore the framework</a>
+      <a href="#what-you-get" class="btn btn-primary">Find vulnerabilities</a>
+      <a href="#framework" class="btn btn-ghost">Prove correctness</a>
     </div>
     <div class="hero-meta">
       Apache 2.0 · Rust · Local-first ·
@@ -506,6 +547,12 @@
         <defs>
           <marker id="loop-arrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="currentColor" stroke-width="1.5"/></marker>
         </defs>
+        <!-- One red fish swims the loop, behind the boxes so it ducks through each step -->
+        <g class="loop-fish" fill="var(--spot)" aria-hidden="true">
+          <ellipse cx="0" cy="0" rx="7" ry="2.8"/>
+          <path class="loop-fish-tail" d="M-5 0L-11 -3.5L-11 3.5Z"/>
+          <animateMotion dur="16s" repeatCount="indefinite" rotate="auto" path="M362 118C470 44 630 44 736 118C756 132 756 162 738 176C630 250 470 250 364 176C344 162 344 132 362 118Z"/>
+        </g>
         <!-- Find vulnerabilities -->
         <rect x="0" y="95" width="360" height="104" rx="10" fill="var(--panel)" stroke="var(--spot)" stroke-opacity=".8"/>
         <text x="28" y="124" class="pd-label pd-accent">01 / RED-TEAMING</text>
@@ -518,8 +565,10 @@
         <text x="764" y="178" class="pd-code">state a rule, check its proof</text>
         <!-- The two halves of the loop -->
         <g fill="none" stroke="var(--spot)" stroke-width="1.5" style="color:var(--spot)">
-          <path d="M362 118C470 44 630 44 736 118" marker-end="url(#loop-arrowhead)"/>
-          <path d="M738 176C630 250 470 250 364 176" marker-end="url(#loop-arrowhead)"/>
+          <path class="loop-arc" d="M362 118C470 44 630 44 736 118" marker-end="url(#loop-arrowhead)"/>
+          <path class="loop-arc" d="M738 176C630 250 470 250 364 176" marker-end="url(#loop-arrowhead)"/>
+          <path class="loop-dash" d="M362 118C470 44 630 44 736 118"/>
+          <path class="loop-dash" d="M738 176C630 250 470 250 364 176"/>
         </g>
         <text x="550" y="140" class="pd-label" text-anchor="middle">REPEAT</text>
         <text x="550" y="160" class="pd-note" text-anchor="middle">with every change the AI ships</text>
@@ -577,6 +626,8 @@
       <div class="duet-col">
         <p class="duet-lbl"><b>02</b> you, in the console</p>
         <div class="browser-win">
+          <input class="tabpick" type="radio" name="cmview" id="cmv-sessions" checked>
+          <input class="tabpick" type="radio" name="cmview" id="cmv-boxes">
           <input class="tabpick" type="radio" name="cmtab" id="cmt-history" checked>
           <input class="tabpick" type="radio" name="cmtab" id="cmt-sitemap">
           <input class="tabpick" type="radio" name="cmtab" id="cmt-actions">
@@ -588,20 +639,21 @@
             <span class="win-plus">+</span>
             <span class="win-ctl" aria-hidden="true"><i></i><i></i><i></i></span>
           </div>
-          <div class="bw-url"><span class="bw-nav">&#8592;</span><span class="bw-nav dim">&#8594;</span><span class="bw-nav">&#8635;</span><span class="bw-addr"><i class="lock"></i><span class="bw-text">localhost:8765/#/sessions/br_9f3k2a/<span class="bw-route"><span class="r-history">history</span><span class="r-sitemap">sitemap</span><span class="r-actions">actions</span><span class="r-findings">findings</span><span class="r-recon">recon</span><span class="r-about">about</span></span></span></span></div>
+          <div class="bw-url"><span class="bw-nav">&#8592;</span><span class="bw-nav dim">&#8594;</span><span class="bw-nav">&#8635;</span><span class="bw-addr"><i class="lock"></i><span class="bw-text"><span class="u-view u-boxes">localhost:8765/#/sandboxes/alice/sandbox</span><span class="u-view u-sessions">localhost:8765/#/sessions/br_9f3k2a/<span class="bw-route"><span class="r-history">history</span><span class="r-sitemap">sitemap</span><span class="r-actions">actions</span><span class="r-findings">findings</span><span class="r-recon">recon</span><span class="r-about">about</span></span></span></span></span></div>
           <div class="console-plate">
-        <div class="console" role="img" aria-label="The h5i console, Sessions view, open in a browser tab: the checkout-idor session the agent is driving, with tabs for its HTTP history, sitemap, actions, findings, recon ledger and record. The history names the agent verb that spent each fetch, marks refused rows in red, and traces why one fetch exists.">
+        <div class="console" role="img" aria-label="The h5i console, Sessions view, open in a browser tab: the checkout-idor session the agent is driving, with tabs for its HTTP history, sitemap, actions, findings, recon ledger and record. A Sandboxes tab beside Sessions shows the sandbox the session runs in and its flight recorder. The history names the agent verb that spent each fetch, marks refused rows in red, and traces why one fetch exists.">
           <div class="cm-app">
             <nav class="cm-rail" aria-hidden="true">
               <div class="cm-brand"><b>h5i</b><span>console</span></div>
             </nav>
             <div class="cm-main">
               <div class="cm-topbar">
-                <h4>Sessions</h4>
-                <span class="vitals"><span><b>3</b> live</span><span><b>214</b> recorded</span></span>
+                <div class="cm-views"><label class="cm-view" for="cmv-sessions">Sessions</label><label class="cm-view" for="cmv-boxes">Sandboxes</label></div>
+                <span class="vitals v-sessions"><span><b>3</b> live</span><span><b>214</b> recorded</span></span>
+                <span class="vitals v-boxes"><span><b>1</b> sandbox</span><span class="loud"><b>1</b> refused egress</span><span><b>9</b> runs</span><span>strongest <b>container</b></span></span>
               </div>
               <div class="cm-split">
-                <div class="cm-work">
+                <div class="cm-work cm-work-sessions">
                   <div class="cm-work-head">
                     <div class="cm-title">
                       <h3>checkout-idor</h3><code>br_9f3k2a</code>
@@ -628,7 +680,7 @@
                     <div class="cm-presets"><span class="lbl">show</span><span class="cm-chip on dim">refused</span><span class="cm-chip dim">errors</span><span class="cm-chip dim">replays</span><span class="cm-chip dim">slow</span><span class="cm-chip dim">shop.example.test</span></div>
                   </div>
                   <div class="cm-hist">
-                    <div style="overflow:hidden">
+                    <div class="cm-wrap">
                       <table class="cm-grid">
                         <thead><tr><th class="cm-num">#</th><th>verb</th><th>method</th><th>host</th><th class="sorted">path &#8595;</th><th class="cm-num">status</th><th class="cm-num">time</th><th>initiator</th></tr></thead>
                         <tbody>
@@ -650,9 +702,7 @@
                         <div class="cm-tnode d1"><span class="tg">&#9662;</span><span class="lb">/api</span><span class="ct"><span>13</span><span class="refused">4</span></span></div>
                         <div class="cm-tnode d2"><span class="tg">&#9662;</span><span class="lb">/order</span><span class="ct"><span>GET</span><span>3</span><span class="refused">4</span></span></div>
                         <div class="cm-tnode d3 on"><span class="tg"></span><span class="lb">1042</span><span class="ct"><span>1</span></span></div>
-                        <div class="cm-tnode d2"><span class="tg"></span><span class="lb">/pay</span><span class="ct"><span>POST</span><span>3</span></span></div>
                         <div class="cm-tnode d2"><span class="tg"></span><span class="lb">/cart</span><span class="ct"><span>GET POST</span><span>7</span></span></div>
-                        <div class="cm-tnode d1"><span class="tg"></span><span class="lb">/checkout</span><span class="ct"><span class="nav">nav</span><span>1</span></span></div>
                         <div class="cm-tnode d1"><span class="tg"></span><span class="lb">/login</span><span class="ct"><span class="nav">nav</span><span>2</span></span></div>
                         <div class="cm-tnode d1"><span class="tg">&#9656;</span><span class="lb">/assets</span><span class="ct"><span>74</span></span></div>
                         <div class="cm-tnode origin"><span class="tg">&#9656;</span><span class="lb">https://cdn.example.test</span><span class="ct"><span>35</span></span></div>
@@ -673,7 +723,7 @@
                         <span class="cm-cmd">h5i websec show req_109 --session checkout-idor</span>
                       </div>
                     </div>
-                    <div class="cm-foot"><span>4 origins &#183; 9 paths</span><span class="bad">6 refused</span><span>3 paths that answered only 404 are left off</span></div>
+                    <div class="cm-foot"><span>4 origins &#183; 7 paths</span><span class="bad">6 refused</span><span>3 paths that answered only 404 are left off</span></div>
                   </div>
                   <div class="cm-pane cm-pane-actions">
                     <div class="cm-tl">
@@ -736,6 +786,52 @@
                     </div>
                   </div>
                   </div>
+                </div>
+                <div class="cm-work cm-work-boxes">
+                  <div class="cm-work-head">
+                    <div class="cm-title"><h3>alice/sandbox</h3><span class="cm-tag good">container</span><span class="cm-tag">browser</span><span class="cm-sig blocked">refused</span></div>
+                    <div class="cm-tabs"><span class="cm-tab on">Evidence</span><span class="cm-tab">Browser</span></div>
+                  </div>
+                  <div class="cm-box">
+                      <div class="cm-note bad"><b>The egress allowlist refused 2 requests</b> to <code>px.example.invalid:443</code>.</div>
+                      <div class="cm-panel">
+                        <div class="cm-lanes">
+                          <div class="cm-lane head">
+                            <div class="cm-run" style="padding-top:9px;padding-bottom:9px">policy allows</div>
+                            <div class="cm-lane-cell"><span class="nm">files</span><span class="al">$WORK rw</span></div>
+                            <div class="cm-lane-cell"><span class="nm">egress</span><span class="al">allow 3</span></div>
+                            <div class="cm-lane-cell"><span class="nm">exit</span><span class="al">any tool</span></div>
+                            <div class="cm-lane-cell"><span class="nm">limits</span><span class="al">wall 1800s</span></div>
+                            <div class="cm-lane-cell"><span class="nm">page</span><span class="al">in box</span></div>
+                          </div>
+                          <div class="cm-lane">
+                            <div class="cm-run"><div class="cm-run-cmd">h5i browser open https://shop.example.test</div><div class="cm-run-meta"><span class="cm-src observed">host-observed</span><span>exit 0</span><span>1.2s</span><span>14:02:11</span></div></div>
+                            <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v ok">&#10003; 3</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v ok">&#10003;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v info">96M</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v ok">&#10003;</span></div>
+                          </div>
+                          <div class="cm-lane">
+                            <div class="cm-run"><div class="cm-run-cmd">h5i websec replay req_108 --set path=/api/order/1042</div><div class="cm-run-meta"><span class="cm-src observed">host-observed</span><span>exit 0</span><span>29ms</span><span>14:02:31</span></div></div>
+                            <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v ok">&#10003; 1</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v ok">&#10003;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                          </div>
+                          <div class="cm-lane on">
+                            <div class="cm-run"><div class="cm-run-cmd">h5i browser click @e21</div><div class="cm-run-meta"><span class="cm-src observed">host-observed</span><span>exit 0</span><span>88ms</span><span>14:02:52</span></div></div>
+                            <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v bad">2 refused</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v ok">&#10003;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v none">&#183;</span></div>
+                            <div class="cm-lane-cell"><span class="cm-v warn">2</span></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="cm-foot"><span>3 of 9 runs</span><span class="bad">2 refused</span><span>the receipts: <code>h5i box status sandbox</code></span></div>
                 </div>
               </div>
             </div>
@@ -980,7 +1076,7 @@
     </div>
     <div class="hero-actions">
       <a href="/manual/#h5i-browser" class="btn btn-primary">Start your first session</a>
-      <a href="#framework" class="btn btn-ghost">Explore the framework</a>
+      <a href="https://crates.io/crates/h5i-app" class="btn btn-ghost">Explore the framework</a>
     </div>
   </div>
 </section>
@@ -1009,6 +1105,11 @@
 <script src="/_static/blog.js?v=41dbda103a" defer></script>
 <script src="/_static/highlight.js?v=ed81eee4e6" defer></script>
 <script>
+// SMIL ignores prefers-reduced-motion, so park the loop fish ourselves.
+if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  var loopSvg = document.querySelector('.loop-diagram');
+  if (loopSvg && loopSvg.pauseAnimations) loopSvg.pauseAnimations();
+}
 // A school of small fish with one red one, Swimmy style. Plain boids.
 (function () {
   var cv = document.querySelector('.hero-school');
