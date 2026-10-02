@@ -361,8 +361,8 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">The problem</span>
-      <h2 class="section-title">Secure Web Development Is Still Difficult, Even with AI.</h2>
-      <p class="section-sub">AI agents make it easy to write code. Building secure web applications is still difficult.</p>
+      <h2 class="section-title">Is the Web App Your AI Built Really Secure?</h2>
+      <p class="section-sub">AI agents make it easy to ship code. Making sure that code is secure is still difficult.</p>
     </div>
     <div class="feat-grid feat-grid-four">
       <div class="feat-card">
@@ -922,7 +922,7 @@
         var mx = f.x - mouse.x, my = f.y - mouse.y, m2 = mx * mx + my * my;
         if (m2 < 10000) { f.vx += mx / (m2 + 1) * 4; f.vy += my / (m2 + 1) * 4; }
       }
-      var sp = Math.hypot(f.vx, f.vy) || 1, c = Math.min(Math.max(sp, 0.9), 2.2) / sp;
+      var sp = Math.hypot(f.vx, f.vy) || 1, c = Math.min(Math.max(sp, 0.9), 1.5) / sp;
       f.vx *= c; f.vy *= c; f.x += f.vx; f.y += f.vy;
     }
   }
