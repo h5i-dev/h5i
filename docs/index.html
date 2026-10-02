@@ -240,6 +240,13 @@
     .section-title br.heading-break { display: block; }
     #what-you-get .section-title, #framework .section-title { max-width: none; }
     .proof-flow { margin: 36px 0 0; overflow-x: auto; position: relative; }
+    .loop-lead {
+      margin: 36px 0 0; display: flex; align-items: baseline; gap: 14px;
+      font-family: var(--disp); font-size: 22px; font-weight: 700; color: var(--ink);
+    }
+    .loop-lead .loop-arrow { color: var(--spot); font-family: var(--mono); font-weight: 400; }
+    .loop-flow { margin-top: 14px; }
+    .proof-diagram.loop-diagram { min-width: 720px; }
     .proof-flow .tabpick { position: absolute; opacity: 0; pointer-events: none; }
     .ed-tabs { display: flex; align-items: stretch; height: 27px; margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1; }
     .ed-tabs label {
@@ -487,6 +494,33 @@
         <div class="feat-desc">Writing code is easier than proving it correct. Ruling out bugs requires precise specifications, explicit assumptions, and proofs that the implementation satisfies them.</div>
       </div>
     </div>
+    <p class="loop-lead"><span class="loop-arrow">&#x27F9;</span> You need a loop: find vulnerabilities, prove correctness, repeat.</p>
+    <figure class="proof-flow loop-flow">
+      <svg class="proof-diagram loop-diagram" viewBox="0 30 1100 230" role="img" aria-labelledby="loop-title loop-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="loop-title">The loop: find vulnerabilities, prove correctness, repeat</title>
+        <desc id="loop-desc">Two steps joined into a cycle. Red-teaming the running app finds vulnerabilities, proving correctness in Lean 4 rules them out, and the loop repeats with every change the AI ships.</desc>
+        <defs>
+          <marker id="loop-arrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="currentColor" stroke-width="1.5"/></marker>
+        </defs>
+        <!-- Find vulnerabilities -->
+        <rect x="0" y="95" width="360" height="104" rx="10" fill="var(--panel)" stroke="var(--spot)" stroke-opacity=".8"/>
+        <text x="28" y="124" class="pd-label pd-accent">01 / RED-TEAMING</text>
+        <text x="28" y="153" class="pd-title">Find vulnerabilities</text>
+        <text x="28" y="178" class="pd-code">drive the app, replay, compare</text>
+        <!-- Prove correctness -->
+        <rect x="740" y="95" width="360" height="104" rx="10" fill="var(--panel)" stroke="var(--spot)" stroke-opacity=".8"/>
+        <text x="764" y="124" class="pd-label pd-accent">02 / FORMAL VERIFICATION</text>
+        <text x="764" y="153" class="pd-title">Prove correctness</text>
+        <text x="764" y="178" class="pd-code">state a rule, check its proof</text>
+        <!-- The two halves of the loop -->
+        <g fill="none" stroke="var(--spot)" stroke-width="1.5" style="color:var(--spot)">
+          <path d="M362 118C470 44 630 44 736 118" marker-end="url(#loop-arrowhead)"/>
+          <path d="M738 176C630 250 470 250 364 176" marker-end="url(#loop-arrowhead)"/>
+        </g>
+        <text x="550" y="140" class="pd-label" text-anchor="middle">REPEAT</text>
+        <text x="550" y="160" class="pd-note" text-anchor="middle">with every change the AI ships</text>
+      </svg>
+    </figure>
   </div>
 </section>
 
@@ -933,7 +967,7 @@
 <!-- ── Close ──────────────────────────────────────────────────── -->
 <section id="cta">
   <div class="container">
-    <h2 class="cta-title">Find Bugs.<br>Prove Correctness.</h2>
+    <h2 class="cta-title">Find Vulnerabilities.<br>Prove Correctness.</h2>
     <p class="cta-sub">Start with security testing on your existing app, or explore verifiable Rust application logic.
       Open source, local-first, and designed to work with your own agent.</p>
     <div class="hero-install">
