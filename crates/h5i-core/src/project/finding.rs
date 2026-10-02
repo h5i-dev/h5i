@@ -14,6 +14,12 @@ pub const FILE: &str = "findings.jsonl";
 
 pub const SEVERITIES: [&str; 5] = ["critical", "high", "medium", "low", "info"];
 pub const STATUSES: [&str; 5] = ["open", "in-progress", "fix-claimed", "fixed-verified", "risk-accepted"];
+/// How a finding relates to the proofs of an app built on h5i-app. With a
+/// theorem named: whether the finding's run falls in that theorem's scope.
+/// With `none`: whether the gap is unspecified, deliberate, or not yet checked.
+pub const PROOF_RELATIONS: [&str; 5] = ["in-scope", "out-of-scope", "unspecified", "intentional", "unconfirmed"];
+/// Whether the build under test is the proven code.
+pub const PROOF_VERSIONS: [&str; 3] = ["matches", "differs", "unconfirmed"];
 
 /// Which session finding a project finding came from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +28,40 @@ pub struct Source {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_name: Option<String>,
     pub finding: String,
+}
+
+/// Where a finding stands against a proof: the theorem it bears on (or
+/// `none`), whether the run is in that theorem's scope, and whether the build
+/// under test is the proven code. Empty fields are "not said yet".
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ProofLink {
+    #[serde(default)]
+    pub theorem: String,
+    #[serde(default)]
+    pub relation: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub note: String,
+}
+
+impl ProofLink {
+    pub fn is_empty(&self) -> bool {
+        self.theorem.is_empty() && self.relation.is_empty() && self.version.is_empty() && self.note.is_empty()
+    }
+
+    fn merge(&mut self, other: &ProofLink) {
+        for (mine, theirs) in [
+            (&mut self.theorem, &other.theorem),
+            (&mut self.relation, &other.relation),
+            (&mut self.version, &other.version),
+            (&mut self.note, &other.note),
+        ] {
+            if !theirs.is_empty() {
+                *mine = theirs.clone();
+            }
+        }
+    }
 }
 
 /// One write. Named fields replace; notes, evidence and sources accumulate.
@@ -63,6 +103,8 @@ pub struct Entry {
     pub sources: Vec<Source>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<ProofLink>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +139,8 @@ pub struct Finding {
     pub sources: Vec<Source>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<ProofLink>,
     pub created: String,
     pub updated: String,
 }
@@ -151,6 +195,9 @@ pub fn fold(entries: &[Entry]) -> Vec<Finding> {
         if let Some(n) = &e.from_note {
             f.from_note = Some(n.clone());
         }
+        if let Some(p) = &e.proof {
+            f.proof.get_or_insert_default().merge(p);
+        }
         if let Some(note) = &e.note {
             f.notes.push(Remark { at: e.at.clone(), text: note.clone() });
         }
@@ -201,19 +248,21 @@ pub struct Change {
     pub repro: Option<String>,
     pub sources: Vec<Source>,
     pub from_note: Option<String>,
+    pub proof: Option<ProofLink>,
 }
 
 impl Change {
     pub fn is_empty(&self) -> bool {
         let Change {
             title, summary, state, severity, severity_reason, impact, affected, remediation, status, owner, due, body,
-            note, evidence, repro, sources, from_note,
+            note, evidence, repro, sources, from_note, proof,
         } = self;
         [title, summary, state, severity, severity_reason, impact, affected, remediation, status, owner, due, body, note, repro, from_note]
             .iter()
             .all(|f| f.is_none())
             && evidence.is_empty()
             && sources.is_empty()
+            && proof.as_ref().is_none_or(ProofLink::is_empty)
     }
 
     fn into_entry(self, project: &Project, id: &str) -> Result<Entry> {
@@ -227,6 +276,14 @@ impl Change {
             && !STATUSES.contains(&s.as_str())
         {
             bail!("`{s}` is not a fix status: use one of {}", STATUSES.join(", "));
+        }
+        if let Some(p) = &self.proof {
+            if !p.relation.is_empty() && !PROOF_RELATIONS.contains(&p.relation.as_str()) {
+                bail!("`{}` is not a proof relation: use one of {}", p.relation, PROOF_RELATIONS.join(", "));
+            }
+            if !p.version.is_empty() && !PROOF_VERSIONS.contains(&p.version.as_str()) {
+                bail!("`{}` is not a proof version state: use one of {}", p.version, PROOF_VERSIONS.join(", "));
+            }
         }
         let evidence = evidence::check_ids(project, &self.evidence)?;
         Ok(Entry {
@@ -249,6 +306,7 @@ impl Change {
             repro: self.repro,
             sources: self.sources,
             from_note: self.from_note,
+            proof: self.proof.filter(|p| !p.is_empty()),
         })
     }
 }

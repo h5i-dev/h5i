@@ -1,0 +1,29 @@
+# What these proofs cover and what they leave to the shell. Read by `h5i ui`.
+app = "inbox"
+title = "private inbox"
+kernel = "../kernel"
+server = "../server"
+
+# Server app; the tutorial says the shell's encoding of errors as HTTP status codes is
+# trusted (A3) and refers to the earlier tutorials for the rest.
+assumes = ["A1", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10"]
+
+[[out_of_scope]]
+item = "timing channel"
+reason = "the kernel scans every message in the organization, so request time depends on others"
+ref = "examples/app/tutorials/inbox/TUTORIAL.md"
+
+[[out_of_scope]]
+item = "SERIALIZABLE retry latency"
+reason = "concurrent requests by other users cause retries a user may notice"
+ref = "examples/app/tutorials/inbox/TUTORIAL.md"
+
+[[out_of_scope]]
+item = "deleted flag visible to the sender"
+reason = "the view grants the whole message row; replies include it though the JSON does not print it"
+ref = "examples/app/tutorials/inbox/TUTORIAL.md"
+
+[[out_of_scope]]
+item = "inference across many steps"
+reason = "the theorem is about one command at a time; the view changes when others act"
+ref = "examples/app/tutorials/inbox/TUTORIAL.md"

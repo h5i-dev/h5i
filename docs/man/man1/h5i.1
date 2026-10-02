@@ -2205,7 +2205,7 @@ Write a finding
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBcreate\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-title\fR] [\fB\-\-summary\fR] [\fB\-\-state\fR] [\fB\-\-severity\fR] [\fB\-\-severity\-reason\fR] [\fB\-\-impact\fR] [\fB\-\-affected\fR] [\fB\-\-remediation\fR] [\fB\-\-status\fR] [\fB\-\-owner\fR] [\fB\-\-due\fR] [\fB\-\-body\fR] [\fB\-\-note\fR] [\fB\-\-evidence\fR] [\fB\-\-repro\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBcreate\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-title\fR] [\fB\-\-summary\fR] [\fB\-\-state\fR] [\fB\-\-severity\fR] [\fB\-\-severity\-reason\fR] [\fB\-\-impact\fR] [\fB\-\-affected\fR] [\fB\-\-remediation\fR] [\fB\-\-status\fR] [\fB\-\-owner\fR] [\fB\-\-due\fR] [\fB\-\-body\fR] [\fB\-\-note\fR] [\fB\-\-evidence\fR] [\fB\-\-repro\fR] [\fB\-\-proof\-theorem\fR] [\fB\-\-proof\-relation\fR] [\fB\-\-proof\-version\fR] [\fB\-\-proof\-note\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -2257,6 +2257,18 @@ Project evidence ids it rests on, as `E\-1,E\-2`
 .TP
 \fB\-\-repro\fR \fI<PATH>\fR
 
+.TP
+\fB\-\-proof\-theorem\fR \fI<NAME>\fR
+For an app built on h5i\-app: the theorem this finding bears on, or `none`
+.TP
+\fB\-\-proof\-relation\fR \fI<STATE>\fR
+With a theorem: in\-scope, out\-of\-scope or unconfirmed. With `none`: unspecified, intentional or unconfirmed
+.TP
+\fB\-\-proof\-version\fR \fI<STATE>\fR
+Whether the build under test is the proven code: matches, differs or unconfirmed
+.TP
+\fB\-\-proof\-note\fR \fI<TEXT>\fR
+What was checked to reach the states above
 .TP
 \fB\-\-json\fR
 
@@ -2268,7 +2280,7 @@ Change one. Title, severity, status and the prose fields replace; notes and evid
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBupdate\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-title\fR] [\fB\-\-summary\fR] [\fB\-\-state\fR] [\fB\-\-severity\fR] [\fB\-\-severity\-reason\fR] [\fB\-\-impact\fR] [\fB\-\-affected\fR] [\fB\-\-remediation\fR] [\fB\-\-status\fR] [\fB\-\-owner\fR] [\fB\-\-due\fR] [\fB\-\-body\fR] [\fB\-\-note\fR] [\fB\-\-evidence\fR] [\fB\-\-repro\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIID\fR> 
+\fBupdate\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-title\fR] [\fB\-\-summary\fR] [\fB\-\-state\fR] [\fB\-\-severity\fR] [\fB\-\-severity\-reason\fR] [\fB\-\-impact\fR] [\fB\-\-affected\fR] [\fB\-\-remediation\fR] [\fB\-\-status\fR] [\fB\-\-owner\fR] [\fB\-\-due\fR] [\fB\-\-body\fR] [\fB\-\-note\fR] [\fB\-\-evidence\fR] [\fB\-\-repro\fR] [\fB\-\-proof\-theorem\fR] [\fB\-\-proof\-relation\fR] [\fB\-\-proof\-version\fR] [\fB\-\-proof\-note\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIID\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -2320,6 +2332,18 @@ Project evidence ids it rests on, as `E\-1,E\-2`
 .TP
 \fB\-\-repro\fR \fI<PATH>\fR
 
+.TP
+\fB\-\-proof\-theorem\fR \fI<NAME>\fR
+For an app built on h5i\-app: the theorem this finding bears on, or `none`
+.TP
+\fB\-\-proof\-relation\fR \fI<STATE>\fR
+With a theorem: in\-scope, out\-of\-scope or unconfirmed. With `none`: unspecified, intentional or unconfirmed
+.TP
+\fB\-\-proof\-version\fR \fI<STATE>\fR
+Whether the build under test is the proven code: matches, differs or unconfirmed
+.TP
+\fB\-\-proof\-note\fR \fI<TEXT>\fR
+What was checked to reach the states above
 .TP
 \fB\-\-json\fR
 
@@ -2538,13 +2562,16 @@ Import a Markdown checklist. Its list items become tracked items
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBimport\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-name\fR] [\fB\-\-required\fR] [\fB\-\-replace\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIFILE\fR> 
+\fBimport\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-proofs\fR] [\fB\-\-name\fR] [\fB\-\-required\fR] [\fB\-\-replace\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIFILE\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
 
+.TP
+\fB\-\-proofs\fR \fI<DIR>\fR
+Instead of a file: a Lean proofs directory of an app built on h5i\-app. Each theorem becomes an item to confirm against the running app, with the trusted edges and the version under them
 .TP
 \fB\-\-name\fR \fI<SLUG>\fR
 The short name to file it under. Derived from the title otherwise
@@ -2561,7 +2588,7 @@ Revise an existing checklist, keeping ids and recording what dropped
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .TP
-<\fIFILE\fR>
+[\fIFILE\fR]
 The Markdown file, or `\-` for stdin
 .SH "H5I PROJECT CHECKLIST LIST"
 Every checklist and its coverage

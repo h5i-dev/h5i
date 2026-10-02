@@ -1,0 +1,30 @@
+# What these proofs cover and what they leave to the shell. Read by `h5i ui`.
+app = "atuin"
+title = "sync server accounts and records"
+kernel = "../kernel"
+upstream = "https://github.com/atuinsh/atuin"
+pinned = "5b10eb0"
+
+# Kernel-only port: no server, so only the extraction and spec entries apply.
+assumes = ["A7", "A9", "A10"]
+
+[[trusted_input]]
+name = "password hashes and matched flags"
+from = "the shell (password hashing and token checks)"
+note = "the kernel receives hashes and a password matched flag it cannot verify"
+
+[[out_of_scope]]
+item = "history table, metrics, webhooks, rate limits"
+reason = "not modeled; the current server only deletes the history table"
+ref = "examples/app/atuin/README.md"
+
+[[out_of_scope]]
+item = "host ids and record tags as strings"
+reason = "they are numbers in the model"
+ref = "examples/app/atuin/README.md"
+
+[[counterexample]]
+theorem = "current_deletes_without_password"
+bug = "issue #3297"
+note = "in transition_current a valid session alone deletes the account"
+current = true

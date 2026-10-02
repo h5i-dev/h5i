@@ -950,6 +950,33 @@ h5i project checklist mark -p acme C1 --status recorded --note "role check prese
 h5i project checklist coverage -p acme
 ```
 
+For an app built on `h5i-app`, its Lean proofs make a checklist too. `--proofs`
+takes the proofs directory instead of a file: each theorem becomes an item that
+is proven about the extracted kernel and stays unconfirmed for the running app
+until the trusted edges under it (the assumption ledger, shell inputs,
+`h5i-allow` opt-outs, the version of the kernel the server was built from) are
+checked by hand. The import records the proofs digest, so a later import with
+`--replace` shows what changed.
+
+```bash
+h5i project checklist import -p acme --proofs examples/app/docs/proofs --required
+```
+
+A finding against such an app can say where it stands against the proofs.
+`--proof-theorem` names the theorem it bears on, or `none`; `--proof-relation`
+says whether the finding's run is `in-scope` or `out-of-scope` of that theorem
+(or, with `none`, whether the gap is `unspecified`, `intentional` or
+`unconfirmed`); `--proof-version` says whether the build under test `matches`
+or `differs` from the proven code. Every state defaults to unconfirmed and
+nothing fills them in but you: a finding in scope of a theorem on matching code
+means an assumption or a reading is wrong, and which one is not decided by h5i.
+
+```bash
+h5i project finding update F-3 -p acme --proof-theorem authorized \
+    --proof-relation in-scope --proof-version unconfirmed \
+    --proof-note "reproduced on staging; its build commit is not recorded"
+```
+
 ### The report
 
 The report is a free Markdown document you write. h5i fills the counts, ids and
@@ -1385,9 +1412,10 @@ h5i ui --open
 ```
 
 The read-only web console is one screen over everything h5i is doing on this
-machine. Four sections: an overview of what wants a person, the browser
-sessions, the boxes, and what this host can enforce. Every route it calls is a
-GET, and every next step it suggests is a command it copies to the clipboard.
+machine. Six sections: an overview of what wants a person, the projects, the
+browser sessions, the boxes, the Lean proof projects of this repository, and
+what this host can enforce. Every route it calls is a GET, and every next step
+it suggests is a command it copies to the clipboard.
 
 **Sessions** are where the workbench and recon do their work. Boxes are the
 repository's; sessions are the machine's, because `h5i browser open` needs no
@@ -1411,6 +1439,26 @@ its findings, a flight recorder of one row per receipt across five lanes
 (files, egress, exit, limits, page), the policy that was actually
 enforced, and the diff against the pinned base. A browser box has a second
 tab with the live in-box browser terminal.
+
+**Apps** are the repository's Lean proof projects: every directory with a
+`lakefile.lean` and hand-written proofs beside it, the way `examples/app/*/proofs`
+are laid out. The section answers two questions and keeps them apart: what is
+proven, and what is still unconfirmed before a theorem says anything about a
+running app. It never shows "verified". Five tabs:
+
+| tab | shows |
+|---|---|
+| Spec | `Spec.lean` as a reviewer reads it: the policy as a table, each invariant clause with its docstring, and beside the clause the injected bugs whose failing proof named it. A clause no mutant reached is marked unevaluated, which is not the same as weak |
+| Theorems | the README's theorem table with the file and line, the axioms the gate recorded, and which mutants broke each proof against which were predicted to |
+| Trust boundary | the assumption-ledger entries the app rests on (`proofs/scope.toml`), the shell inputs the kernel takes as true, every `h5i-allow` opt-out and `assume_authenticated` in its sources, what the proofs leave out by design, and whether the kernel and proofs on disk still match the last receipt. Builds of the app recorded inside this repository's boxes are listed, because whether the server under test was built from the proven kernel is a separate fact from the proof |
+| Evidence | the last `cargo app-verify` receipt (`.h5i/app-verify/latest.json`): each step's outcome, the mutants with the declarations each one broke, the differential test. Counts over one run, not a grade |
+| Counterexamples | theorems of the form `¬ property old_code`: proven bugs, with the upstream issue and whether it is still present |
+
+A finding that lands on one of the trusted edges is not a contradiction of a
+theorem; it is the theorem's hypothesis failing. `h5i project checklist import
+--proofs <dir>` turns the theorems and edges into a checklist a person closes,
+and `h5i project finding create --proof-theorem ...` records where a finding
+stands against a proof (below, under projects).
 
 ### Reclaiming space
 

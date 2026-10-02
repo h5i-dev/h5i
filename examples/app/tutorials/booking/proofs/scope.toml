@@ -1,0 +1,38 @@
+# What these proofs cover and what they leave to the shell. Read by `h5i ui`.
+app = "booking"
+title = "meeting room booking"
+kernel = "../kernel"
+server = "../server"
+
+# Server app; the tutorial puts the clock in the trusted base "like the JSON decoder" (A2).
+assumes = ["A1", "A2", "A4", "A5", "A6", "A7", "A8", "A9", "A10"]
+
+[[trusted_input]]
+name = "now"
+from = "Clock::Database (the database's clock), with monotonic"
+note = "a wrong clock cannot create overlaps but can accept a booking that already started"
+
+[[trusted_input]]
+name = "command"
+from = "the JSON decoder"
+note = "part of the trusted base, like the clock"
+
+[[out_of_scope]]
+item = "the database's clock being right"
+reason = "servers agree with each other, but nothing checks the database's clock"
+ref = "examples/app/tutorials/booking/TUTORIAL.md"
+
+[[out_of_scope]]
+item = "started_stays without monotonic"
+reason = "it covers only runs of the engine with monotonic on"
+ref = "examples/app/tutorials/booking/TUTORIAL.md"
+
+[[out_of_scope]]
+item = "notification delivery"
+reason = "at least once and possibly out of order; receivers dedupe by key and order by booking"
+ref = "examples/app/tutorials/booking/TUTORIAL.md"
+
+[[out_of_scope]]
+item = "dispatcher code, registry, Notifier, the enqueue in write"
+reason = "the dispatcher is proven about a model of its protocol; the rest is trusted but tested"
+ref = "examples/app/tutorials/booking/TUTORIAL.md"

@@ -1003,6 +1003,25 @@ struct ProjectChecklist {
     coverage: project::checklist::Coverage,
 }
 
+/// `GET /api/apps`: the repository's proof projects, each with what the last
+/// `cargo app-verify` receipt says about it and whether the tree still matches.
+async fn api_apps(State(state): State<Arc<AppState>>) -> Json<Vec<crate::apps::Summary>> {
+    let repo = state.repo_path.clone();
+    Json(blocking(move || Some(crate::apps::discover(&repo))).await.unwrap_or_default())
+}
+
+/// `GET /api/app/<proofs dir>`: one proof project: spec, theorems, trusted
+/// edges, the receipt's evidence.
+async fn api_app(State(state): State<Arc<AppState>>, Path(dir): Path<String>) -> Result<Json<crate::apps::Detail>, StatusCode> {
+    let repo = state.repo_path.clone();
+    let detail = blocking(move || {
+        let h5i_root = open(&repo).map(|(_, r)| r);
+        crate::apps::detail(&repo, dir.trim_matches('/'), h5i_root.as_deref())
+    })
+    .await;
+    detail.map(Json).ok_or(StatusCode::NOT_FOUND)
+}
+
 /// `GET /api/projects`: every project, with the counts a list needs.
 async fn api_projects() -> Json<Vec<project::Summary>> {
     let rows = blocking(|| {
@@ -1452,6 +1471,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/project/:name/report", get(api_project_report))
         .route("/api/project/:name/asset/:file", get(api_project_asset))
         .route("/api/glossary", get(api_glossary))
+        .route("/api/apps", get(api_apps))
+        .route("/api/app/*dir", get(api_app))
         .route("/api/box/:agent/:slug", get(api_box))
         .route("/api/box/:agent/:slug/receipts/:id", get(api_receipt))
         .route("/api/box/:agent/:slug/browser", get(api_browser))

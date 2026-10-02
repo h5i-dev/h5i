@@ -8,6 +8,7 @@ import {
   type SessionRow,
 } from "./api";
 import { BoxesPage } from "./Boxes";
+import { AppsPage } from "./Apps";
 import { HostPage } from "./Host";
 import { Overview } from "./Overview";
 import { ProjectsPage } from "./Projects";
@@ -21,13 +22,14 @@ import { Empty, useHash } from "./ui";
 
 const POLL_MS = 8000;
 
-export type Section = "overview" | "projects" | "sessions" | "boxes" | "host";
+export type Section = "overview" | "projects" | "sessions" | "boxes" | "apps" | "host";
 
 const SECTIONS: { key: Section; label: string; hint: string }[] = [
   { key: "overview", label: "Overview", hint: "what wants a person, and what is running" },
   { key: "projects", label: "Projects", hint: "engagements, and every session under one" },
   { key: "sessions", label: "Sessions", hint: "browser sessions on this machine" },
   { key: "boxes", label: "Boxes", hint: "boxes of the repository this console was started in" },
+  { key: "apps", label: "Apps", hint: "Lean proofs in this repository: what is proven, and what is unconfirmed before it applies" },
   { key: "host", label: "Host", hint: "what this machine can enforce" },
 ];
 
@@ -158,6 +160,8 @@ export function App() {
           <SessionsPage fleet={fleet} route={route.slice(1)} go={go} />
         ) : section === "boxes" ? (
           <BoxesPage fleet={fleet} route={route.slice(1)} go={go} />
+        ) : section === "apps" ? (
+          <AppsPage fleet={fleet} route={route.slice(1)} go={go} />
         ) : (
           <HostPage fleet={fleet} />
         )}

@@ -1,0 +1,62 @@
+# What these proofs cover and what they leave to the shell. Read by `h5i ui`.
+app = "conduit"
+title = "RealWorld Conduit backend"
+kernel = "../kernel"
+server = "../server"
+upstream = "https://github.com/launchbadge/realworld-axum-sqlx"
+pinned = "f1b2565"
+
+# Server app on PostgreSQL; the README says the server is trusted to decode requests (A2).
+assumes = ["A1", "A2", "A4", "A5", "A6", "A7", "A8", "A9", "A10"]
+
+[[trusted_input]]
+name = "password hashes"
+from = "the server (HMAC keyed by the server secret, standing in for Argon2)"
+note = "the kernel receives hashes"
+
+[[trusted_input]]
+name = "slugs"
+from = "the server, with upstream's slugify"
+note = "the kernel receives slugs"
+
+[[trusted_input]]
+name = "sorted tag lists"
+from = "the server"
+note = "the server sorts tag lists before the kernel sees them"
+
+[[trusted_input]]
+name = "timestamps"
+from = "the server's clock"
+note = "time in Conduit's commands is a shell input"
+
+[[out_of_scope]]
+item = "case-insensitive usernames and emails"
+reason = "the kernel compares byte for byte while upstream ignores case"
+ref = "examples/app/conduit/README.md"
+
+[[out_of_scope]]
+item = "listing order"
+reason = "relies on the store loading rows in key order, which is id order"
+ref = "examples/app/conduit/README.md"
+
+[[out_of_scope]]
+item = "string ids and array tag columns"
+reason = "ids are counter numbers and tags are a table keyed by article and tag"
+ref = "examples/app/conduit/README.md"
+
+[[out_of_scope]]
+item = "tables with usize::MAX rows"
+reason = "apply_spec assumes no table reaches usize::MAX rows"
+ref = "examples/app/conduit/README.md"
+
+[[counterexample]]
+theorem = "upstream_violates_reply_spec"
+bug = "issue #16 (open)"
+note = "upstream's favorited query asks whether the caller favorited any article"
+current = true
+
+[[counterexample]]
+theorem = "favorited_filter"
+bug = "unreported"
+note = "?favorited=bob lists one article in the fixed kernel and two in upstream's"
+current = true

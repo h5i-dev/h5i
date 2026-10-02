@@ -7,14 +7,34 @@ catching a mutant. The normal verification run builds the unmodified projects.
 
 import argparse
 import concurrent.futures as futures
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
+
+import leanfail
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# app: the injected bug in words, for the `--json` record.
+BUGS = {
+    "kellnr": "a crate's last owner can be removed",
+    "atuin": "the host filter on a user's records is dropped",
+    "calculator": "a comparison is off by one (`<` becomes `<=`)",
+    "board": "the last moderator can be removed",
+    "ledger": "the owner check on a ledger action is removed",
+    "inbox": "messages are readable by users outside the conversation",
+    "booking": "the interval overlap check is off by one at the boundary",
+    "wastebin": "the `secs == 0` branch of expiry handling is removed",
+    "conduit": "a non-author may update an article",
+    "cratesio": "expired invitations are still accepted",
+    "filters": "a backslash is no longer escaped, only a quote",
+    "keys": "an already-taken secret can be issued again",
+}
 
 # app: (path below examples/app, old source, injected source)
 MUTANTS = {
@@ -57,10 +77,20 @@ def run(args, cwd, log):
         return subprocess.run(args, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT).returncode
 
 
+def lake_failures(log, proofs):
+    """Declarations the last `lake build` in `log` broke."""
+    tail = log.read_text(errors="replace").rsplit("$ lake build", 1)[-1]
+    return leanfail.failing_decls(tail, proofs)
+
+
 def check(name, keep, baseline):
+    """Returns (name, verdict, tmp, record); the record is the `--json` row."""
     app, old, new = MUTANTS[name]
     tmp = Path(tempfile.mkdtemp(prefix=f"h5i-app-mutant-{name}-"))
     log = tmp / "log.txt"
+    rec = {"suite": "apps", "name": name, "app": f"examples/app/{app}", "bug": BUGS.get(name, ""), "expect": [],
+           "verdict": "", "stage": "", "failed": []}
+    t0 = time.time()
     try:
         src_app = ROOT / "examples" / "app" / app
         dst_app = tmp / "examples" / "app" / app
@@ -77,7 +107,8 @@ def check(name, keep, baseline):
             source = kernel.read_text()
             count = source.count(old)
             if count != 1:
-                return name, f"invalid pattern ({count} matches)", tmp
+                rec.update(verdict="invalid", stage="pattern", secs=round(time.time() - t0, 1))
+                return name, f"invalid pattern ({count} matches)", tmp, rec
             kernel.write_text(source.replace(old, new, 1))
 
         proofs = dst_app / "proofs"
@@ -101,14 +132,16 @@ def check(name, keep, baseline):
             shutil.copy2(ROOT / "scripts" / "app" / script, scripts / script)
 
         if run(["cargo", "check", "-q"], tmp, log):
-            verdict = "invalid (rust)"
+            verdict, stage, json_verdict = "invalid (rust)", "rust", "invalid"
         elif run(["bash", scripts / extract], tmp, log):
-            verdict = "invalid (extraction)"
+            verdict, stage, json_verdict = "invalid (extraction)", "extraction", "invalid"
         elif run(["lake", "build"], proofs, log):
-            verdict = "BASELINE FAILED" if baseline else "caught"
+            rec["failed"] = lake_failures(log, proofs)
+            verdict, stage, json_verdict = ("BASELINE FAILED", "lake", "baseline-failed") if baseline else ("caught", "lake", "caught")
         else:
-            verdict = "ok" if baseline else "SURVIVED"
-        return name, verdict, tmp
+            verdict, stage, json_verdict = ("ok", "lake", "baseline-ok") if baseline else ("SURVIVED", "lake", "survived")
+        rec.update(verdict=json_verdict, stage=stage, secs=round(time.time() - t0, 1))
+        return name, verdict, tmp, rec
     finally:
         if not keep:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -119,6 +152,7 @@ def main():
     parser.add_argument("-j", type=int, default=1, help="parallel mutants (large Lean builds need memory)")
     parser.add_argument("--baseline", action="store_true", help="check that unmodified kernels build in isolation")
     parser.add_argument("--keep", action="store_true", help="keep logs and temporary workspaces")
+    parser.add_argument("--json", metavar="FILE", help="write one record per app")
     parser.add_argument("names", nargs="*", help="apps to check (default: all)")
     args = parser.parse_args()
     names = args.names or list(MUTANTS)
@@ -126,19 +160,27 @@ def main():
     if unknown:
         parser.error(f"unknown apps: {', '.join(sorted(unknown))}")
     results = {}
+    records = {}
     with futures.ThreadPoolExecutor(max_workers=args.j) as pool:
         pending = {pool.submit(check, name, args.keep, args.baseline): name for name in names}
         for task in futures.as_completed(pending):
             name = pending[task]
             try:
-                _, verdict, tmp = task.result()
+                _, verdict, tmp, rec = task.result()
             except Exception as error:  # noqa: BLE001
                 verdict, tmp = f"error: {error}", None
+                rec = {"suite": "apps", "name": name, "app": f"examples/app/{MUTANTS[name][0]}", "bug": BUGS.get(name, ""),
+                       "expect": [], "verdict": "error", "stage": "", "failed": [], "error": str(error)}
             results[name] = verdict
+            records[name] = rec
             print(f"{name:12} {verdict}" + (f"  ({tmp})" if args.keep and tmp else ""), flush=True)
     expected = "ok" if args.baseline else "caught"
     passed = sum(verdict == expected for verdict in results.values())
     print(f"{passed}/{len(names)} {'baselines built' if args.baseline else 'mutants caught'}")
+    if args.json:
+        with open(args.json, "w") as f:
+            json.dump([records[n] for n in names], f, indent=1)
+            f.write("\n")
     return 0 if passed == len(names) else 1
 
 

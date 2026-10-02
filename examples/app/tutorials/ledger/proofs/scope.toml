@@ -1,0 +1,23 @@
+# What these proofs cover and what they leave to the shell. Read by `h5i ui`.
+app = "ledger"
+title = "ledger"
+kernel = "../kernel"
+server = "../server"
+
+# Server app; the tutorial says JSON decoding is trusted (A2).
+assumes = ["A1", "A2", "A4", "A5", "A6", "A7", "A8", "A9", "A10"]
+
+[[trusted_input]]
+name = "command"
+from = "the JSON decoder"
+note = "JSON decoding remains trusted, as in the earlier tutorials"
+
+[[out_of_scope]]
+item = "store agreement with apply"
+reason = "checked by the test, not proven"
+ref = "examples/app/tutorials/ledger/TUTORIAL.md"
+
+[[out_of_scope]]
+item = "deposits after the total ever deposited reaches u64::MAX"
+reason = "refused by design, even if much was withdrawn; a larger counter would move the limit"
+ref = "examples/app/tutorials/ledger/TUTORIAL.md"

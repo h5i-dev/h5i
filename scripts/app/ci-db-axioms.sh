@@ -5,7 +5,7 @@ set -uo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
 fail=0
-check() { scripts/app/ci-axioms.sh "$@" > /dev/null || { scripts/app/ci-axioms.sh "$@" | grep error; fail=1; }; }
+check() { out=$(scripts/app/ci-axioms.sh "$@") || { grep error <<<"$out"; fail=1; }; }
 check crates/h5i-app-pgsql/proofs Sound -- h5i_app_pgsql.Comp.valid_spec h5i_app_pgsql.Comp.create_spec \
   h5i_app_pgsql.Comp.select_spec h5i_app_pgsql.Comp.compile_spec h5i_app_pgsql.render_spec \
   h5i_app_pgsql.Sound.write_sound "h5i_app_pgsql.Sound.select_sound'" "h5i_app_pgsql.Sound.create_sound'"

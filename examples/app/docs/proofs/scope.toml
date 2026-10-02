@@ -1,0 +1,45 @@
+# What these proofs cover and what they leave to the shell. Read by `h5i ui`.
+app = "docs"
+title = "document service"
+kernel = "../kernel"
+server = "../server"
+
+# Ledger entries (docs/app/ROADMAP.md "Assumption ledger") that must hold before a
+# theorem says anything about a running server. TRUST.md "Assumed" lists the JSON
+# codec and reply rendering as trusted for this app, hence A2 and A3.
+assumes = ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10"]
+
+[[trusted_input]]
+name = "principal"
+from = "Authenticator (HmacAuth token)"
+note = "trusted: the key and its storage, the expiry clock, ct_eq"
+
+[[trusted_input]]
+name = "command"
+from = "JSON codec (deny_unknown_fields, tagged enum)"
+note = "decodes the command the client meant; theorems hold for every command"
+
+[[out_of_scope]]
+item = "refusals under idempotency keys"
+reason = "refusals are not stored; a retried refusal runs again on the new state"
+ref = "docs/app/TRUST.md"
+
+[[out_of_scope]]
+item = "migrations"
+reason = "checked by the proven-exact checker, not proven, and do not establish reachability"
+ref = "docs/app/TRUST.md"
+
+[[out_of_scope]]
+item = "effect delivery"
+reason = "effects arrive at least once; dispatcher, registry and Deliver are trusted"
+ref = "docs/app/TRUST.md"
+
+[[out_of_scope]]
+item = "superuser logins"
+reason = "a superuser login bypasses lockdown and the engine's role separation"
+ref = "docs/app/TRUST.md"
+
+[[out_of_scope]]
+item = "tables with more than usize::MAX rows"
+reason = "apply_eq and scoped_sound assume no table overflows usize"
+ref = "examples/app/docs/proofs/README.md"

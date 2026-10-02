@@ -238,10 +238,31 @@ pub struct FindingFields {
     evidence: Vec<String>,
     #[arg(long, value_name = "PATH")]
     repro: Option<String>,
+    /// For an app built on h5i-app: the theorem this finding bears on, or
+    /// `none`.
+    #[arg(long = "proof-theorem", value_name = "NAME")]
+    proof_theorem: Option<String>,
+    /// With a theorem: in-scope, out-of-scope or unconfirmed. With `none`:
+    /// unspecified, intentional or unconfirmed.
+    #[arg(long = "proof-relation", value_name = "STATE")]
+    proof_relation: Option<String>,
+    /// Whether the build under test is the proven code: matches, differs or
+    /// unconfirmed.
+    #[arg(long = "proof-version", value_name = "STATE")]
+    proof_version: Option<String>,
+    /// What was checked to reach the states above.
+    #[arg(long = "proof-note", value_name = "TEXT")]
+    proof_note: Option<String>,
 }
 
 impl FindingFields {
     fn into_change(self) -> finding::Change {
+        let proof = finding::ProofLink {
+            theorem: self.proof_theorem.unwrap_or_default(),
+            relation: self.proof_relation.unwrap_or_default(),
+            version: self.proof_version.unwrap_or_default(),
+            note: self.proof_note.unwrap_or_default(),
+        };
         finding::Change {
             title: self.title,
             summary: self.summary,
@@ -260,6 +281,7 @@ impl FindingFields {
             repro: self.repro,
             sources: Vec::new(),
             from_note: None,
+            proof: (!proof.is_empty()).then_some(proof),
         }
     }
 }
@@ -323,7 +345,13 @@ pub enum ChecklistVerb {
         #[command(flatten)]
         which: Which,
         /// The Markdown file, or `-` for stdin.
-        file: String,
+        #[arg(required_unless_present = "proofs", conflicts_with = "proofs")]
+        file: Option<String>,
+        /// Instead of a file: a Lean proofs directory of an app built on
+        /// h5i-app. Each theorem becomes an item to confirm against the
+        /// running app, with the trusted edges and the version under them.
+        #[arg(long, value_name = "DIR")]
+        proofs: Option<String>,
         /// The short name to file it under. Derived from the title otherwise.
         #[arg(long, value_name = "SLUG")]
         name: Option<String>,
@@ -740,14 +768,24 @@ fn evidences(what: EvidenceVerb) -> anyhow::Result<()> {
 
 fn checklists(what: ChecklistVerb) -> anyhow::Result<()> {
     match what {
-        ChecklistVerb::Import { which, file, name, required, replace, json } => {
+        ChecklistVerb::Import { which, file, proofs, name, required, replace, json } => {
             let p = which.open()?;
-            let (source, markdown) = if file == "-" {
-                ("stdin".to_string(), stdin_string()?)
-            } else {
-                (file.clone(), std::fs::read_to_string(&file).with_context(|| format!("cannot read {file}"))?)
+            let (source, markdown, default_slug) = match (file, proofs) {
+                (_, Some(dir)) => {
+                    let (root, rel) = h5i_core::apps::locate(std::path::Path::new(&dir))
+                        .ok_or_else(|| anyhow::anyhow!("{dir} is not inside a git repository"))?;
+                    let (app, md) = h5i_core::apps::checklist_markdown(&root, &rel)
+                        .ok_or_else(|| anyhow::anyhow!("{dir} is not a Lean proofs directory (no lakefile.lean)"))?;
+                    (format!("proofs:{rel}"), md, Some(format!("proofs-{app}")))
+                }
+                (Some(file), None) if file == "-" => ("stdin".to_string(), stdin_string()?, None),
+                (Some(file), None) => {
+                    let text = std::fs::read_to_string(&file).with_context(|| format!("cannot read {file}"))?;
+                    (file, text, None)
+                }
+                (None, None) => anyhow::bail!("give a Markdown file or --proofs DIR"),
             };
-            let slug = name.unwrap_or_else(|| checklist::slug_from(&checklist::parse(&markdown).0));
+            let slug = name.or(default_slug).unwrap_or_else(|| checklist::slug_from(&checklist::parse(&markdown).0));
             let mode = if required { checklist::Mode::Required } else { checklist::Mode::Reference };
             let c = checklist::import(&p, &slug, &source, &markdown, mode, replace)?;
             emit(json, &c, || println!("  {} ({}, {} items) imported as `{}`", c.title, c.mode.as_str(), c.items.len(), c.slug))

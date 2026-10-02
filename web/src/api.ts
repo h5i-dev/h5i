@@ -503,6 +503,15 @@ export interface FindingRemark {
   text: string;
 }
 
+/** Where a finding stands against an app's proofs. Empty strings are "not
+ *  said yet"; the console never fills them in. */
+export interface ProofLink {
+  theorem: string;
+  relation: string;
+  version: string;
+  note: string;
+}
+
 export interface ProjectFinding {
   id: string;
   title: string;
@@ -520,6 +529,7 @@ export interface ProjectFinding {
   notes: FindingRemark[];
   evidence: string[];
   repro?: string | null;
+  proof?: ProofLink | null;
   sources: FindingSource[];
   from_note?: string | null;
   created: string;
@@ -631,7 +641,215 @@ export interface ReportView {
   version?: number | null;
 }
 
+// ── apps: the repository's Lean proof projects ──────────────────────────────
+
+export interface MutantCounts {
+  prepared: number;
+  caught: number;
+  survived: number;
+  invalid: number;
+}
+
+export interface AxiomCounts {
+  ok: number;
+  bad: number;
+  missing: number;
+}
+
+export interface AppReceipt {
+  started: string;
+  head: string;
+  branch: string;
+  dirty: boolean;
+  full: boolean;
+  lean: string;
+  extraction: string;
+  authorization: string | null;
+  kernel_match: boolean | null;
+  proofs_match: boolean;
+  axioms: AxiomCounts;
+  mutants: MutantCounts;
+}
+
+export interface AppSummary {
+  dir: string;
+  app: string;
+  title: string;
+  kind: "server" | "kernel" | "library";
+  has_scope: boolean;
+  theorems: number;
+  counterexamples: number;
+  receipt: AppReceipt | null;
+  flags: string[];
+}
+
+export interface TrustedInput {
+  name: string;
+  from: string;
+  note: string;
+}
+
+export interface OutOfScope {
+  item: string;
+  reason: string;
+  ref: string;
+}
+
+export interface CounterexampleRef {
+  theorem: string;
+  bug: string;
+  before: string;
+  note: string;
+  current: boolean;
+}
+
+export interface AppScope {
+  app: string;
+  title: string;
+  kernel?: string;
+  server?: string;
+  upstream?: string;
+  pinned?: string;
+  assumes: string[];
+  trusted_input: TrustedInput[];
+  out_of_scope: OutOfScope[];
+  counterexample: CounterexampleRef[];
+}
+
+export interface AxiomRec {
+  dir: string;
+  theorem: string;
+  axioms: string[];
+  verdict: string;
+}
+
+export interface AppTheorem {
+  name: string;
+  qualified: string | null;
+  file: string | null;
+  line: number | null;
+  doc: string;
+  statement: string;
+  counterexample: boolean;
+  bug: CounterexampleRef | null;
+  axioms: AxiomRec | null;
+  expected_by: string[];
+  caught: string[];
+}
+
+export interface SpecField {
+  name: string;
+  doc: string;
+  prop: string;
+  mutants: string[];
+}
+
+export interface SpecMatrix {
+  rows: string[];
+  cols: string[];
+  cells: string[][];
+}
+
+export interface SpecItem {
+  kind: string;
+  name: string;
+  line: number;
+  doc: string;
+  code: string;
+  truncated: boolean;
+  fields: SpecField[];
+  matrix: SpecMatrix | null;
+}
+
+export interface SpecSection {
+  heading: string;
+  items: SpecItem[];
+}
+
+export interface AppSpec {
+  file: string;
+  sections: SpecSection[];
+}
+
+export interface Assume {
+  id: string;
+  text: string;
+  today: string;
+}
+
+export interface TrustEdge {
+  kind: string;
+  file: string;
+  line: number;
+  text: string;
+}
+
+export interface BoxBuild {
+  env_id: string;
+  at: string;
+  cmd: string;
+  git_tree: string | null;
+}
+
+export interface AppVersion {
+  receipt_head: string | null;
+  receipt_dirty: boolean | null;
+  current_head: string | null;
+  kernel_match: boolean | null;
+  proofs_match: boolean | null;
+  kernel_digest: string | null;
+  proofs_digest: string;
+  builds: BoxBuild[];
+}
+
+export interface AppTrust {
+  assumes: Assume[];
+  trusted_inputs: TrustedInput[];
+  out_of_scope: OutOfScope[];
+  edges: TrustEdge[];
+  version: AppVersion;
+}
+
+export interface VerifyStep {
+  name: string;
+  project: string | null;
+  outcome: string;
+  detail: string;
+  secs: number;
+}
+
+export interface MutantView {
+  name: string;
+  bug: string;
+  expect: string[];
+  verdict: string;
+  stage: string;
+  failed: string[];
+  as_expected: boolean | null;
+  secs: number;
+}
+
+export interface AppEvidence {
+  steps: VerifyStep[];
+  mutants: MutantView[];
+  counts: MutantCounts;
+  difftest: { cases: number; outcomes: string } | null;
+  summary: { passed: number; failed: number; skipped: number } | null;
+}
+
+export interface AppDetail {
+  summary: AppSummary;
+  scope: AppScope | null;
+  readme: string | null;
+  spec: AppSpec | null;
+  theorems: AppTheorem[];
+  trust: AppTrust;
+  evidence: AppEvidence;
+}
+
 export const api = {
+  apps: () => get<AppSummary[]>("/api/apps"),
+  app: (dir: string) => get<AppDetail>(`/api/app/${dir.split("/").map(encodeURIComponent).join("/")}`),
   boxes: () => get<BoxRow[]>("/api/boxes"),
   projects: () => get<ProjectSummary[]>("/api/projects"),
   project: (name: string) => get<ProjectDetail>(`/api/project/${encodeURIComponent(name)}`),

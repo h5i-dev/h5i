@@ -85,6 +85,8 @@ cargo app-verify            # CI's checks; a missing tool is reported as skipped
 cargo app-verify --full     # adds the mutation suites and the differential test
 ```
 
+Each run leaves `.h5i/app-verify/latest.json`, which `h5i ui` reads under Apps.
+
 Four more CI jobs sit behind that first one. `smoke` drives the plugin binaries
 against a real server, `macos` runs `--lib` and checks Seatbelt is present,
 `docs` diffs the generated manuals, and `cross-check` compile-checks the four
