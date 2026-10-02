@@ -348,6 +348,10 @@
     @keyframes cm-hint { 0%, 100% { color: var(--cm-ink-3); border-bottom-color: transparent; } 50% { color: var(--cm-accent-hi); border-bottom-color: var(--cm-accent-bg); } }
     @media (prefers-reduced-motion: reduce) { .browser-win .cm-tab, .browser-win .cm-view { animation: none; } }
     .browser-win .cm-wrap { overflow: hidden; }
+    /* tab strips scroll sideways rather than clip; the scrollbar stays hidden like a native tab bar */
+    .browser-win .cm-tabs, .browser-win .cm-views { overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap; scrollbar-width: none; }
+    .browser-win .cm-tabs::-webkit-scrollbar, .browser-win .cm-views::-webkit-scrollbar { display: none; }
+    .browser-win .cm-tab, .browser-win .cm-view { flex: none; white-space: nowrap; margin-bottom: 0; }
     .browser-win .cm-pane .cm-cmd { width: fit-content; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .browser-win code { font-family: var(--cm-mono); font-size: 10.5px; color: var(--cm-ink); background: none; border: 0; padding: 0; }
     .browser-win .cm-facts { border-collapse: collapse; font-size: 11px; }
@@ -428,6 +432,16 @@
       .duet { grid-template-columns: minmax(0, 1fr); }
       .cm-site { grid-template-columns: minmax(0, 1fr); }
       .cm-site > .rule { display: none; }
+    }
+    @media (max-width: 600px) {
+      .browser-win .cm-topbar .vitals { display: none !important; }
+      .browser-win .cm-wrap, .browser-win .cm-panel { overflow-x: auto; }
+      .browser-win .cm-hist .cm-grid, .browser-win .cm-recon .cm-grid { min-width: 560px; }
+      .browser-win .cm-lanes { min-width: 540px; }
+      /* on a phone the panes stop sharing one cell: only the open one takes up height */
+      .browser-win .cm-pane, .browser-win .cm-work { display: none; visibility: visible; }
+      #cmt-history:checked ~ .console-plate .cm-pane-history, #cmt-sitemap:checked ~ .console-plate .cm-pane-sitemap, #cmt-actions:checked ~ .console-plate .cm-pane-actions, #cmt-findings:checked ~ .console-plate .cm-pane-findings, #cmt-recon:checked ~ .console-plate .cm-pane-recon, #cmt-about:checked ~ .console-plate .cm-pane-about { display: block; }
+      #cmv-sessions:checked ~ .console-plate .cm-work-sessions, #cmv-boxes:checked ~ .console-plate .cm-work-boxes { display: flex; }
     }
     @media (min-width: 900px) {
       .feat-grid.feat-grid-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -666,7 +680,7 @@
                     <div class="cm-presets"><span class="lbl">show</span><span class="cm-chip on dim">refused</span><span class="cm-chip dim">errors</span><span class="cm-chip dim">replays</span><span class="cm-chip dim">slow</span><span class="cm-chip dim">shop.example.test</span></div>
                   </div>
                   <div class="cm-hist">
-                    <div style="overflow:hidden">
+                    <div class="cm-wrap">
                       <table class="cm-grid">
                         <thead><tr><th class="cm-num">#</th><th>verb</th><th>method</th><th>host</th><th class="sorted">path &#8595;</th><th class="cm-num">status</th><th class="cm-num">time</th><th>initiator</th></tr></thead>
                         <tbody>
