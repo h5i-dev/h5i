@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i: Secure Web Development for Every Team</title>
-  <meta name="description" content="An agent-native workspace for secure web development. Test running apps, keep security checks in CI, and explore provable Rust application logic with the i5h framework.">
+  <title>h5i: The Agent-Native Web Security Workspace</title>
+  <meta name="description" content="h5i is an agent-native web security workspace. Red-team apps with a sandboxed browser and HTTP control, and formally verify Rust logic with h5i-app and Lean 4.">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -20,8 +20,8 @@
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i: Secure Web Development for Every Team">
-  <meta property="og:description" content="An agent-native workspace for secure web development. Test running apps, keep security checks in CI, and explore provable Rust application logic with the i5h framework.">
+  <meta property="og:title" content="h5i: The Agent-Native Web Security Workspace">
+  <meta property="og:description" content="h5i is an agent-native web security workspace. Red-team apps with a sandboxed browser and HTTP control, and formally verify Rust logic with h5i-app and Lean 4.">
   <meta property="og:url" content="https://h5i.dev/">
   <meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
   <meta property="og:image:alt" content="An h5i browser session: the page an agent is reading, beside the request log the engine wrote before any bytes moved">
@@ -29,8 +29,8 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i: Secure Web Development for Every Team">
-  <meta name="twitter:description" content="An agent-native workspace for secure web development. Test running apps, keep security checks in CI, and explore provable Rust application logic with the i5h framework.">
+  <meta name="twitter:title" content="h5i: The Agent-Native Web Security Workspace">
+  <meta name="twitter:description" content="h5i is an agent-native web security workspace. Red-team apps with a sandboxed browser and HTTP control, and formally verify Rust logic with h5i-app and Lean 4.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
   <meta name="twitter:image:alt" content="An h5i browser session: the page an agent is reading, beside the request log the engine wrote before any bytes moved">
 
@@ -60,7 +60,7 @@
       "name": "h5i",
       "alternateName": "high-five",
       "url": "https://h5i.dev/",
-      "description": "An agent-native workspace for secure web development. Test running apps, keep security checks in CI, and explore provable Rust application logic with the i5h framework.",
+      "description": "h5i is an agent-native web security workspace. Red-team apps with a sandboxed browser and HTTP control, and formally verify Rust logic with h5i-app and Lean 4.",
       "publisher": {
         "@id": "https://h5i.dev/#org"
       },
@@ -72,11 +72,11 @@
       "name": "h5i",
       "alternateName": "high-five",
       "applicationCategory": "DeveloperApplication",
-      "applicationSubCategory": "Secure web development workspace for AI agents",
+      "applicationSubCategory": "Web security workspace for AI agents: red-teaming and formal verification",
       "operatingSystem": "Linux, macOS, Windows (WSL2)",
-      "description": "An agent-native workspace for secure web development. Test running apps, keep security checks in CI, and explore provable Rust application logic with the i5h framework.",
+      "description": "h5i is an agent-native web security workspace. Red-team apps with a sandboxed browser and HTTP control, and formally verify Rust logic with h5i-app and Lean 4.",
       "featureList": [
-        "Page automation and compact snapshots with @ref handles for AI agents",
+        "Headless browser automation and compact snapshots with @ref handles for AI agents",
         "HTTP capture, inspection, editing, replay, and response comparison through the websec plugin",
         "Multi-step test flows that replay findings in CI with your own oracle",
         "Configurable sandboxing for the browser or the entire agent workflow",
@@ -84,9 +84,11 @@
         "Auditable browser actions and network requests",
         "Credential isolation and human takeover for sensitive steps",
         "Pure Rust, no Chromium or V8",
+        "h5i-app, an Axum-based Rust framework whose application logic is formally verified in Lean 4",
+        "Lean proofs of tenant isolation, authorization, and business state invariants",
         "About 3x faster reads with about 86% less peak memory than headless Chromium on simple websites in our benchmarks"
       ],
-      "keywords": "AI agents, secure web development, security regression testing, formal verification, Lean 4, Axum, Rust, red teaming, sandboxing",
+      "keywords": "web security, AI agents, red teaming, penetration testing, bug bounty, headless browser, HTTP interception, security regression testing, CI/CD, formal verification, Lean 4, Axum, Rust, h5i-app, sandboxing",
       "url": "https://h5i.dev/",
       "downloadUrl": "https://github.com/h5i-dev/h5i",
       "installUrl": "https://h5i.dev/#quickstart",
@@ -113,8 +115,8 @@
       "@type": "WebPage",
       "@id": "https://h5i.dev/#webpage",
       "url": "https://h5i.dev/",
-      "name": "h5i: Secure Web Development for Every Team",
-      "description": "An agent-native workspace for secure web development. Test running apps, keep security checks in CI, and explore provable Rust application logic with the i5h framework.",
+      "name": "h5i: The Agent-Native Web Security Workspace",
+      "description": "h5i is an agent-native web security workspace. Red-team apps with a sandboxed browser and HTTP control, and formally verify Rust logic with h5i-app and Lean 4.",
       "isPartOf": {
         "@id": "https://h5i.dev/#website"
       },
@@ -263,7 +265,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css?v=20ea6351e0">
-  <link rel="stylesheet" href="/_static/console-mock.css?v=c9174b2b5b">
+  <link rel="stylesheet" href="/_static/console-mock.css?v=dee528781b">
   <link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
   <style>
 
