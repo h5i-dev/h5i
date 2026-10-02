@@ -162,15 +162,7 @@
           "name": "Do I need to rewrite my app in Rust?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No. The browser, HTTP testing tools, and security regression tests work with existing web applications regardless of their implementation language. The optional application framework is for teams that want to write and verify application logic in Rust."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Is h5i-app available today?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "The framework is available today in the separate i5h repository. Its integration into h5i as h5i-app is planned. Use the i5h documentation and tutorials for the current framework; the h5i installer installs the testing tools."
+            "text": "No. The browser, HTTP testing tools, and security regression tests work with existing web applications in any language. The application framework is optional, for teams that want to write and verify application logic in Rust. It is available today in the separate i5h repository, with its own documentation and tutorials; its integration into h5i as h5i-app is planned."
           }
         },
         {
@@ -199,18 +191,10 @@
         },
         {
           "@type": "Question",
-          "name": "Why use h5i instead of Playwright or Puppeteer?",
+          "name": "How does h5i compare with Playwright, Puppeteer, or Burp Suite?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Use Playwright or Puppeteer when maximum website compatibility is your priority. Use h5i when your AI agent needs page automation and direct HTTP testing through one interface, with configurable sandboxing, network policies, and a reviewable session record."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Why use h5i instead of Burp Suite?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Use Burp Suite when an experienced tester wants the deepest workbench: an intercepting proxy, Scanner, Intruder, extensions, and Burp's own agent. Use h5i when your own AI agent should run the test end to end. One session drives the browser and records its traffic, and the agent edits, replays, and compares requests through a CLI built for it, without a security specialist driving each step. See the full comparison."
+            "text": "Playwright and Puppeteer are the right choice when maximum website compatibility is the priority. Burp Suite is the right choice when an experienced tester wants the deepest workbench: an intercepting proxy, Scanner, Intruder, and extensions. h5i is for the case where your own AI agent runs the test end to end: one session drives the browser and records its traffic, and the agent edits, replays, and compares requests through a CLI built for it, inside a sandbox with a reviewable record. See the Burp Suite comparison."
           }
         },
         {
@@ -223,34 +207,18 @@
         },
         {
           "@type": "Question",
-          "name": "Is h5i sandboxed by default?",
+          "name": "How is the agent contained?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "The browser uses lightweight process isolation when available. To restrict a red-teaming agent's other tools as well, sandbox the entire workflow and configure its network and filesystem policy. Available options include supervised isolation, containers, and microVMs; enforcement depends on the selected tier and host support."
+            "text": "The browser uses lightweight process isolation when available. To restrict the agent's other tools as well, sandbox the entire workflow and configure its network and filesystem policy; the options are supervised isolation, containers, and microVMs, and enforcement depends on the selected tier and host support. This limits what a misled agent can reach, but it does not prevent prompt injection: a tested application can still mislead the agent on a target you allowed."
           }
         },
         {
           "@type": "Question",
-          "name": "Can h5i prevent prompt injection?",
+          "name": "Where do my credentials and data go?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No. A tested application can still mislead an agent. h5i treats page content as untrusted, and configured network and filesystem restrictions can limit what the agent reaches. These controls reduce the impact; they do not guarantee safe actions on an allowed target."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Can the agent see my passwords or cookies?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "The agent can reference a named credential without reading its value, or a human can take control to log in. The authenticated session continues without returning the password or cookie to the model."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Does h5i keep my data local?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "h5i has no hosted service and stores its sessions locally. Browser traffic still goes to websites you allow, and model traffic goes to your configured model provider."
+            "text": "Credentials stay out of the model. The agent references a named credential without reading its value, or a human takes control to log in, and the authenticated session continues without returning the password or cookie. h5i has no hosted service and stores its sessions locally. Browser traffic still goes to the websites you allow, and model traffic goes to your configured model provider."
           }
         }
       ]
@@ -271,7 +239,19 @@
 
     .section-title br.heading-break { display: block; }
     #what-you-get .section-title, #framework .section-title { max-width: none; }
-    .proof-flow { margin: 36px 0 0; overflow-x: auto; }
+    .proof-flow { margin: 36px 0 0; overflow-x: auto; position: relative; }
+    .proof-flow .tabpick { position: absolute; opacity: 0; pointer-events: none; }
+    .ed-tabs { display: flex; align-items: stretch; height: 27px; margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1; }
+    .ed-tabs label {
+      display: flex; align-items: center; gap: 8px; padding: 0 14px 0 12px; cursor: pointer;
+      color: var(--dim); border-right: 1px solid var(--line2); border-top: 2px solid transparent;
+    }
+    .ed-tabs label i { width: 6px; height: 6px; border-radius: 50%; background: var(--line2); }
+    .ed-tabs label:hover { color: var(--ink); }
+    #ed-lib:checked ~ .proof-diagram label[for="ed-lib"], #ed-cargo:checked ~ .proof-diagram label[for="ed-cargo"] { color: var(--ink); background: var(--panel); border-top-color: var(--spot); }
+    #ed-lib:checked ~ .proof-diagram label[for="ed-lib"] i, #ed-cargo:checked ~ .proof-diagram label[for="ed-cargo"] i { background: var(--spot); }
+    .proof-diagram .ed-pane, .proof-diagram .ed-crumb { display: none; }
+    #ed-lib:checked ~ .proof-diagram .ed-lib, #ed-cargo:checked ~ .proof-diagram .ed-cargo { display: inline; }
     .proof-diagram { display: block; width: 100%; min-width: 880px; height: auto; }
     .proof-diagram text { font-family: var(--mono); }
     .proof-diagram .pd-title { font-family: var(--disp); font-size: 22px; font-weight: 800; fill: var(--ink); }
@@ -411,7 +391,6 @@
       .cm-site { grid-template-columns: minmax(0, 1fr); }
       .cm-site > .rule { display: none; }
     }
-    .proof-flow figcaption { margin-top: 12px; font-family: var(--mono); font-size: 11px; color: var(--dim); }
     @media (min-width: 900px) {
       .feat-grid.feat-grid-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -727,19 +706,16 @@
     <div class="feat-grid">
       <div class="feat-card">
         <div class="feat-name">Explore your app automatically</div>
-        <div class="feat-desc">Your agent can read pages, click, type, and extract data through compact snapshots.
-          Pure Rust, no Chromium or V8: ~3&times; faster reads with ~86% less peak memory than headless Chromium
-          <a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-browser.md">in our simple-site benchmarks</a>.</div>
+        <div class="feat-desc">Your agent can read pages, click, type, and extract data through compact snapshots.</div>
       </div>
       <div class="feat-card">
         <div class="feat-name">Test HTTP requests directly</div>
-        <div class="feat-desc">Your agent can capture traffic, inspect and edit requests, replay them, and compare responses. Browser activity and HTTP testing share one interface, with no separate proxy or CA setup for the native browser.</div>
+        <div class="feat-desc">Your agent can capture traffic, inspect and edit requests, replay them, and compare responses.</div>
       </div>
       <div class="feat-card">
         <div class="feat-name">Sandboxed workflow</div>
         <div class="feat-desc">Sandbox the browser or the entire AI agent workflow, with configurable network
-          and filesystem limits. Review recorded browser actions and blocked connections.
-          Enforcement depends on the selected isolation tier.</div>
+          and filesystem limits.</div>
       </div>
     </div>
   </div>
@@ -755,6 +731,8 @@
         State the rules your app must preserve, then check proofs against that logic.</p>
     </div>
     <figure class="proof-flow">
+      <input class="tabpick" type="radio" name="edtab" id="ed-lib" checked>
+      <input class="tabpick" type="radio" name="edtab" id="ed-cargo">
       <svg class="proof-diagram" viewBox="0 0 1100 486" role="img" aria-labelledby="proof-title proof-desc" xmlns="http://www.w3.org/2000/svg">
         <title id="proof-title">From Rust application logic to Lean-checked properties</title>
         <desc id="proof-desc">Aeneas extracts the Rust kernel of the bulletin board tutorial into Lean definitions. Developers supply specifications and proofs such as the authorized theorem. Lean checks the proofs against the extracted logic, establishing that every write is authorized, that invariants are preserved, and that no command panics.</desc>
@@ -764,16 +742,17 @@
         </defs>
         <!-- Source: the delete command of examples/app/tutorials/board, drawn as an editor. -->
         <text x="0" y="28" class="pd-label">RUST / APPLICATION KERNEL</text>
-        <rect x="0" y="44" width="368" height="376" rx="6" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M0 50a6 6 0 0 1 6-6h356a6 6 0 0 1 6 6v22H0z" fill="var(--bg)"/>
-        <path d="M0 72H368" stroke="var(--line2)"/>
-        <path d="M0 72V44h116v28" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M1 44.5H115" stroke="var(--spot)" stroke-width="2"/>
-        <circle cx="18" cy="58" r="3" fill="var(--spot)"/>
-        <text x="30" y="62" class="pd-text">lib.rs</text>
-        <text x="134" y="62" class="pd-code">Cargo.toml</text>
-        <text x="14" y="89" class="pd-note">board &#x203A; kernel &#x203A; src &#x203A; lib.rs</text>
-        <path d="M0 96H368" stroke="var(--line2)"/>
+        <rect x="0" y="44" width="376" height="376" rx="6" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M0 50a6 6 0 0 1 6-6h364a6 6 0 0 1 6 6v22H0z" fill="var(--bg)"/>
+        <path d="M0 72H376" stroke="var(--line2)"/>
+        <!-- The tab strip is HTML, so the tabs are labels for the two radios above the svg. -->
+        <foreignObject x="1" y="45" width="374" height="27">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="ed-tabs"><label for="ed-lib"><i></i>lib.rs</label><label for="ed-cargo"><i></i>Cargo.toml</label></div>
+        </foreignObject>
+        <text x="14" y="89" class="pd-note ed-crumb ed-lib">board &#x203A; kernel &#x203A; src &#x203A; lib.rs</text>
+        <text x="14" y="89" class="pd-note ed-crumb ed-cargo">board &#x203A; kernel &#x203A; Cargo.toml</text>
+        <path d="M0 96H376" stroke="var(--line2)"/>
+        <g class="ed-pane ed-lib">
         <g class="pd-ln" text-anchor="end">
           <text x="30" y="120">149</text><text x="30" y="139">150</text><text x="30" y="158">151</text><text x="30" y="177">152</text>
           <text x="30" y="196">153</text><text x="30" y="215">154</text><text x="30" y="234">155</text><text x="30" y="253">156</text>
@@ -796,13 +775,35 @@
           <text x="44" y="348">  }</text>
           <text x="44" y="367">}</text>
         </g>
+        </g>
+        <g class="ed-pane ed-cargo">
+        <g class="pd-ln" text-anchor="end">
+          <text x="30" y="120">1</text><text x="30" y="139">2</text><text x="30" y="158">3</text><text x="30" y="177">4</text>
+          <text x="30" y="196">5</text><text x="30" y="215">6</text><text x="30" y="234">7</text><text x="30" y="253">8</text>
+          <text x="30" y="272">9</text><text x="30" y="291">10</text><text x="30" y="310">11</text><text x="30" y="329">12</text>
+        </g>
+        <g class="pd-src" xml:space="preserve">
+          <text x="44" y="120"><tspan class="pd-kw">[package]</tspan></text>
+          <text x="44" y="139">name = "board-kernel"</text>
+          <text x="44" y="158">description = "Tutorial 2: a verified bulletin board"</text>
+          <text x="44" y="177">edition = "2024"</text>
+          <text x="44" y="196">license = "Apache-2.0"</text>
+          <text x="44" y="215">version = "0.1.0"</text>
+          <text x="44" y="234">publish = false</text>
+          <text x="44" y="253"></text>
+          <text x="44" y="272" class="pd-cm"># Extracted to Lean by Charon + Aeneas.</text>
+          <text x="44" y="291"><tspan class="pd-kw">[dependencies]</tspan></text>
+          <text x="44" y="310"><tspan class="pd-kw">h5i-app-schema</tspan> = { path = "&#x2026;/crates/h5i-app-schema" }</text>
+          <text x="44" y="329"><tspan class="pd-kw">h5i-app-sql</tspan>    = { path = "&#x2026;/crates/h5i-app-sql" }</text>
+        </g>
+        </g>
         <text x="0" y="456" class="pd-code">The logic your app runs</text>
         <!-- Extraction connection. -->
         <g style="color:var(--spot)">
-          <path d="M380 232H416" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
+          <path d="M388 232H418" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
         </g>
-        <text x="398" y="212" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
-        <text x="398" y="258" class="pd-note" text-anchor="middle">extract</text>
+        <text x="403" y="212" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
+        <text x="403" y="258" class="pd-note" text-anchor="middle">extract</text>
         <!-- Verification boundary: the extracted logic and the proofs you write, as two more editor tabs. -->
         <rect x="428" y="44" width="400" height="376" rx="12" fill="url(#proof-grid)" style="color:var(--spot)"/>
         <rect x="428" y="44" width="400" height="376" rx="12" fill="none" stroke="var(--spot)" stroke-opacity=".65"/>
@@ -811,8 +812,8 @@
         <rect x="444" y="68" width="368" height="152" rx="4" fill="var(--panel)" stroke="var(--line2)"/>
         <path d="M444 72a4 4 0 0 1 4-4h360a4 4 0 0 1 4 4v24H444z" fill="var(--bg)"/>
         <path d="M444 96H812" stroke="var(--line2)"/>
-        <path d="M444 96V68h142v28" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M445 68.5H585" stroke="var(--spot)" stroke-width="2"/>
+        <path d="M444 96V68h178v28" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M445 68.5H621" stroke="var(--spot)" stroke-width="2"/>
         <circle cx="460" cy="82" r="3" fill="var(--spot)"/>
         <text x="472" y="86" class="pd-text">BoardKernel.lean</text>
         <text x="800" y="86" class="pd-label" text-anchor="end">EXTRACTED</text>
@@ -831,8 +832,8 @@
         <rect x="444" y="236" width="368" height="172" rx="4" fill="var(--panel)" stroke="var(--line2)"/>
         <path d="M444 240a4 4 0 0 1 4-4h360a4 4 0 0 1 4 4v24H444z" fill="var(--bg)"/>
         <path d="M444 264H812" stroke="var(--line2)"/>
-        <path d="M444 264V236h128v28" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M445 236.5H571" stroke="var(--spot)" stroke-width="2"/>
+        <path d="M444 264V236h152v28" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M445 236.5H595" stroke="var(--spot)" stroke-width="2"/>
         <circle cx="460" cy="250" r="3" fill="var(--spot)"/>
         <text x="472" y="254" class="pd-text">Theorems.lean</text>
         <text x="800" y="254" class="pd-label pd-accent" text-anchor="end">YOU SUPPLY</text>
@@ -868,7 +869,6 @@
         <path d="M888 168H1100M888 274H1100M888 380H1100" stroke="var(--line2)"/>
         <text x="888" y="456" class="pd-code">Checked by Lean</text>
       </svg>
-      <figcaption>From the bulletin board tutorial &middot; Properties depend on the specifications and proofs you supply.</figcaption>
     </figure>
     <div class="hero-actions">
       <a href="https://github.com/h5i-dev/i5h/tree/main/examples/tutorials" class="btn btn-primary">Explore the Rust tutorials</a>
@@ -892,11 +892,7 @@
       </details>
       <details class="faq-item">
         <summary>Do I need to rewrite my app in Rust?</summary>
-        <div class="faq-answer">No. The browser, HTTP testing tools, and security regression tests work with existing web applications regardless of their implementation language. The optional application framework is for teams that want to write and verify application logic in Rust.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Is h5i-app available today?</summary>
-        <div class="faq-answer">The framework is available today in the separate i5h repository. Its integration into h5i as h5i-app is planned. Use the i5h documentation and tutorials for the current framework; the h5i installer installs the testing tools.</div>
+        <div class="faq-answer">No. The browser, HTTP testing tools, and security regression tests work with existing web applications in any language. The application framework is optional, for teams that want to write and verify application logic in Rust. It is available today in the separate i5h repository, with its own documentation and tutorials; its integration into h5i as h5i-app is planned.</div>
       </details>
       <details class="faq-item">
         <summary>Does a proof mean my entire app is secure?</summary>
@@ -911,32 +907,20 @@
         <div class="faq-answer">No. h5i does not run a fixed list of checks against a URL and hand back a report. It gives your agent the tools a professional tester uses, and the agent decides what to try. Once a finding is confirmed, <code>h5i test</code> can replay it as a flow in CI, so a fixed issue stays fixed.</div>
       </details>
       <details class="faq-item">
-        <summary>Why use h5i instead of Playwright or Puppeteer?</summary>
-        <div class="faq-answer">Use Playwright or Puppeteer when maximum website compatibility is your priority. Use h5i when your AI agent needs page automation and direct HTTP testing through one interface, with configurable sandboxing, network policies, and a reviewable session record.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Why use h5i instead of Burp Suite?</summary>
-        <div class="faq-answer">Use Burp Suite when an experienced tester wants the deepest workbench: an intercepting proxy, Scanner, Intruder, extensions, and Burp's own agent. Use h5i when your own AI agent should run the test end to end. One session drives the browser and records its traffic, and the agent edits, replays, and compares requests through a CLI built for it, without a security specialist driving each step. See the <a href="/blog/burp-suite-vs-h5i-for-ai-agents/">full comparison</a>.</div>
+        <summary>How does h5i compare with Playwright, Puppeteer, or Burp Suite?</summary>
+        <div class="faq-answer">Playwright and Puppeteer are the right choice when maximum website compatibility is the priority. Burp Suite is the right choice when an experienced tester wants the deepest workbench: an intercepting proxy, Scanner, Intruder, and extensions. h5i is for the case where your own AI agent runs the test end to end: one session drives the browser and records its traffic, and the agent edits, replays, and compares requests through a CLI built for it, inside a sandbox with a reviewable record. See the <a href="/blog/burp-suite-vs-h5i-for-ai-agents/">Burp Suite comparison</a>.</div>
       </details>
       <details class="faq-item">
         <summary>Does h5i work on every website?</summary>
         <div class="faq-answer">No. h5i works best for content-heavy websites and common browser interactions, but some browser APIs are not yet supported. For incompatible websites, you can run Chromium inside an h5i sandbox.</div>
       </details>
       <details class="faq-item">
-        <summary>Is h5i sandboxed by default?</summary>
-        <div class="faq-answer">The browser uses lightweight process isolation when available. To restrict a red-teaming agent's other tools as well, sandbox the entire workflow and configure its network and filesystem policy. Available options include supervised isolation, containers, and microVMs; enforcement depends on the selected tier and host support.</div>
+        <summary>How is the agent contained?</summary>
+        <div class="faq-answer">The browser uses lightweight process isolation when available. To restrict the agent's other tools as well, sandbox the entire workflow and configure its network and filesystem policy; the options are supervised isolation, containers, and microVMs, and enforcement depends on the selected tier and host support. This limits what a misled agent can reach, but it does not prevent prompt injection: a tested application can still mislead the agent on a target you allowed.</div>
       </details>
       <details class="faq-item">
-        <summary>Can h5i prevent prompt injection?</summary>
-        <div class="faq-answer">No. A tested application can still mislead an agent. h5i treats page content as untrusted, and configured network and filesystem restrictions can limit what the agent reaches. These controls reduce the impact; they do not guarantee safe actions on an allowed target.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Can the agent see my passwords or cookies?</summary>
-        <div class="faq-answer">The agent can reference a named credential without reading its value, or a human can take control to log in. The authenticated session continues without returning the password or cookie to the model.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Does h5i keep my data local?</summary>
-        <div class="faq-answer">h5i has no hosted service and stores its sessions locally. Browser traffic still goes to websites you allow, and model traffic goes to your configured model provider.</div>
+        <summary>Where do my credentials and data go?</summary>
+        <div class="faq-answer">Credentials stay out of the model. The agent references a named credential without reading its value, or a human takes control to log in, and the authenticated session continues without returning the password or cookie. h5i has no hosted service and stores its sessions locally. Browser traffic still goes to the websites you allow, and model traffic goes to your configured model provider.</div>
       </details>
     </div>
   </div>
@@ -945,7 +929,7 @@
 <!-- ── Close ──────────────────────────────────────────────────── -->
 <section id="cta">
   <div class="container">
-    <h2 class="cta-title">Find Bugs. Prove Correctness.</h2>
+    <h2 class="cta-title">Find Bugs.<br>Prove Correctness.</h2>
     <p class="cta-sub">Start with security testing on your existing app, or explore verifiable Rust application logic.
       Open source, local-first, and designed to work with your own agent.</p>
     <div class="hero-install">
