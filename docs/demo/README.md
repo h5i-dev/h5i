@@ -1,6 +1,6 @@
 # h5i demo film: is the web app your AI built really secure?
 
-The h5i product video (0:50), built as a deterministic HTML timeline and
+The h5i product video (0:56), built as a deterministic HTML timeline and
 rendered to mp4. It tells the same story as the front page and the pitch deck:
 **find bugs, prove correctness, two sides of one coin, one workspace.** It is
 linked from the site footer as "Demo video".
@@ -9,54 +9,51 @@ linked from the site footer as "Demo video".
 
 AI agents now write and ship web apps. Securing one has two sides: finding
 the bugs nobody anticipated, and proving the rules the logic must keep. The
-film shows h5i doing both. An agent red-teams the running app and finds a
-real access-control flaw, the network policy stops it when it drifts out of
-scope, and Lean 4 checks the proofs of application logic written on h5i-app.
+film shows h5i doing both, in one workspace with two faces. The agent
+red-teams the running app and finds a real access-control flaw, the network
+policy stops it when it drifts out of scope, then the workspace turns over and
+Lean 4 proves the application logic correct.
 
 There is exactly one bug, one denial, and one theorem. Each proves its half
 without turning the story into a tour.
 
-## The five scenes
+## One continuous shot
 
-**1. The question (0:00 to 0:09).** "Is the web app your AI built really
-secure?" Then the two sides: find bugs, prove correctness.
+The film is not a sequence of slides. After the question, one object is on
+screen the whole time: the workspace. Its front face is the target app beside
+the agent's shell; its back face is the Rust kernel beside its Lean proofs.
+What the agent types on the right happens on the left, in the app itself:
+the click changes the page, the replayed request renders Bob's order inside
+Alice's session, the refused navigation drops a red wall across the page. The
+coin flip is literal: the workspace rotates on its axis to reveal the other
+side. One line of words under the workspace carries the narration.
 
-**2. Find bugs (0:09 to 0:22).** The agent opens one authorized target with
-capture and an origin allowlist, clicks into Alice's orders, replays the
-captured request with Bob's ID, and compares the responses. Alice can read
-Bob's order, and the evidence is attached.
-
-**3. Within bounds (0:22 to 0:31).** Untrusted page content directs the agent
-to `paste.example`. The configured allowlist refuses the destination, and
-`h5i browser audit` shows the denied attempt in the same session record.
-
-**4. Prove correctness (0:31 to 0:43).** The `authorized` theorem from the
-bulletin-board tutorial, quoted from its proof file, then `lake build` and the
-three properties Lean checked. The closing line says what a proof covers and
-what red-teaming is still for.
-
-**5. The close (0:43 to 0:50).** "Find bugs. Prove correctness. With every
-change the AI ships." Then the product position, URLs, and license line.
+| Time | Beat |
+|---|---|
+| 0:00 | The question. "Security has two sides." |
+| 0:06 | A coin spins once: Find bugs / Prove correctness. It swells into the workspace. |
+| 0:10 | Front face. The agent opens the authorized target, clicks into Alice's orders, replays the captured request with Bob's ID. Bob's order appears in Alice's session. The diff names the bug. |
+| 0:24 | Untrusted page content tells the agent to leak the data. It tries; the allowlist refuses, the wall drops, the audit records it. |
+| 0:31 | The workspace turns over. "Same workspace. Other side of the coin." |
+| 0:34 | Back face. Aeneas extracts the Rust `delete` into Lean. The `authorized` theorem appears. `lake build` passes and three properties light up; the covered Rust lines get a green bar. |
+| 0:49 | The workspace recedes. "Find bugs. Prove correctness." Then the product position, URLs, and license line. |
 
 ## What is deliberately not in it
 
 Snapshots, recon, the console, human takeover, isolation tiers, credential
-brokering, export, the Rust side of the extraction, and the trust boundary
-are all real, but none is the point of this first look. Performance remains
-supporting proof on the website rather than the opening premise here.
-
-There are also no diagrams. Everything the film asserts, it asserts with the
-outline an agent actually gets and the terminal a person actually types into.
+brokering, export, and the trust boundary are all real, but none is the point
+of this first look. Performance remains supporting proof on the website rather
+than the opening premise here.
 
 ## The rules the frames follow
 
-- One subject per scene. Never two panels competing.
-- Colour is load-bearing and narrow: **red** is refused, **green** is allowed
-  or proven, **orange** is h5i and nothing else. `@ref` handles, message ids,
-  and Lean keywords get violet, which is none of the three.
-- The terminal appears only when it is proving something.
-- No persistent chip rail. Each command appears only where it advances the
-  story.
+- One object on screen. The workspace never cuts away; it changes.
+- Every command has a visible consequence in the app or the proof pane, so
+  nobody has to read the terminal to follow the story.
+- Colour is load-bearing and narrow: **red** is refused or wrong, **green** is
+  allowed or proven, **orange** is h5i and nothing else. `@ref` handles,
+  message ids, and Lean keywords get violet, which is none of the three.
+- One line of narration at a time, under the workspace, never over it.
 
 ## Files
 
@@ -83,22 +80,23 @@ crisp lower resolution.
 node render.mjs                          # -> out/h5i-demo.mp4 (2x supersampled, 4K)
 node render.mjs --out-height 1080        # supersampled, very crisp 1080p (smaller file)
 node render.mjs --scale 3 --crf 14       # 3x capture, higher quality
-node render.mjs --stills 6,20,41 --scale 1 # fast PNG frames for eyeballing a layout
+node render.mjs --stills 21,33,46 --scale 1 # fast PNG frames for eyeballing a layout
 ```
 
 ## Editing the film
 
 All content lives in `index.html`:
 
-- Scene scripts (`evFind`, `evDeny`, `evProve`) are arrays of
-  `{at, cmd}` / `{at, out:[html lines]}` events, times in seconds local to the
-  scene. `out` lines are raw HTML; `cmd` is escaped and typed out.
-- Scene boundaries and eyebrow labels are in the `SCENES` table; the total
-  runtime is `TOTAL`, and the duration in the scrub display is derived from it.
-- A terminal whose content outgrows its box scrolls silently, which reads as a
-  bug on video. After adding lines, check that `tbody.scrollHeight` still equals
-  `clientHeight` at the scene's fullest frame, and size the box or step the type
-  down until it does.
+- The `T` table holds the absolute times of every beat; everything else is
+  expressed relative to it, so moving a beat moves what belongs to it.
+- `term` is the agent's shell: `{at, cmd}` / `{at, out:[html lines]}` events.
+  `out` lines are raw HTML; `cmd` is escaped and typed out. The app pane's
+  state changes are in `draw()` next to the command that causes each one.
+- `rustLines`, `leanLines`, `thmLines` are the back face; `covered` is the set
+  of Rust lines the theorem's green bar marks.
+- `caps` is the narration line, one entry per beat.
+- A pane whose content outgrows its box clips silently. After adding lines,
+  render a still at the fullest frame and look.
 
 Because rendering is deterministic, re-rendering after an edit reproduces
 every unchanged frame exactly.
