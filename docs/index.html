@@ -328,6 +328,12 @@
     .win-plus { padding: 0 6px 8px; font-size: 14px; line-height: 1; color: var(--faint); }
     .win-ctl { margin-left: auto; display: flex; gap: 8px; padding: 0 2px 11px; }
     .win-ctl i { display: block; width: 9px; height: 9px; border-radius: 50%; border: 1px solid var(--line2); background: var(--panel); }
+    /* a browser gets its traffic lights; a shell has none */
+    .browser-win .win-ctl i { border: 0; }
+    .browser-win .win-ctl i:nth-child(1) { background: #ff5f57; }
+    .browser-win .win-ctl i:nth-child(2) { background: #febc2e; }
+    .browser-win .win-ctl i:nth-child(3) { background: #28c840; }
+    .shell-win .win-ctl { display: none; }
     .shell-win .terminal { flex: 1; margin: 0; border: 0; background: var(--panel); }
     .shell-win .terminal .terminal-body { padding: 14px 16px 16px; }
     .shell-win .terminal .terminal-body pre { font-size: 12px; line-height: 1.65; }
