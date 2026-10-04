@@ -28,7 +28,7 @@ a hard cut. "Your AI built it. In an afternoon." "Is it really secure?" Then
 correctness."
 
 **The desk (0:13 to 0:56).** Three windows, all real screens: the agent's
-shell on the left, headed by the coding agent that is driving it, the
+shell on the left, headed by the AI agent that is driving it, the
 `h5i ui` console on the right, and, overlapping the console's lower right,
 the app under test in the browser the agent drives, which in the second half
 becomes the agent's editor: the Rust kernel, its Lean extraction, the proof. The agent types in the shell; what it does shows up
