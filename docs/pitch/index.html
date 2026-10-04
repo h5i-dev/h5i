@@ -802,25 +802,20 @@
   .shine-q { color: var(--ink); }
   .shine-q::after { content: '?'; color: var(--red); }
 
-  /* ── The loop (slide 3): the landing page's diagram in this deck's palette ── */
-  .loop-flow { margin: 18px 0 0; width: 100%; overflow: hidden; }
-  .loop-diagram { display: block; width: 100%; height: auto; }
-  .loop-diagram text { font-family: var(--mono); }
-  .loop-diagram .pd-title { font-family: var(--sans); font-size: 22px; font-weight: 700; fill: var(--ink); }
-  .loop-diagram .pd-label { font-size: 11px; letter-spacing: 1.2px; fill: var(--text-dim); }
-  .loop-diagram .pd-accent { fill: var(--red-text); }
-  .loop-diagram .pd-code { font-size: 13px; fill: var(--text-dim); }
-  .loop-diagram .pd-note { font-size: 10.5px; fill: var(--text-faint); }
-  .loop-diagram .loop-arc { stroke-opacity: .3; }
-  .loop-diagram .loop-dash { stroke-dasharray: 5 9; animation: loop-flow 1.2s linear infinite; }
-  @keyframes loop-flow { to { stroke-dashoffset: -14; } }
-  .loop-diagram .loop-fish-tail { transform-box: fill-box; transform-origin: 100% 50%; animation: loop-wag .45s ease-in-out infinite alternate; }
-  @keyframes loop-wag { from { transform: rotate(-14deg); } to { transform: rotate(14deg); } }
-  @media (prefers-reduced-motion: reduce) { .loop-diagram .loop-dash, .loop-diagram .loop-fish-tail { animation: none; } }
-  .loop-legs { margin-top: 8px; }
-  .loop-legs .card-sm { display: flex; align-items: baseline; gap: 14px; }
-  .loop-legs .card-sm span { flex: none; min-width: 148px; font-size: 0.85rem; }
-  .loop-legs .card-sm p { font-size: 1rem; line-height: 1.45; }
+  /* ── One coin (slide 3): the landing page's diagram in this deck's palette ── */
+  .coin-flow { margin: 18px 0 0; width: 100%; overflow: hidden; }
+  .coin-diagram { display: block; width: 100%; height: auto; }
+  .coin-diagram text { font-family: var(--mono); }
+  .coin-diagram .pd-title { font-family: var(--sans); font-size: 22px; font-weight: 700; fill: var(--ink); }
+  .coin-diagram .pd-coin { font-family: var(--mono); font-size: 26px; }
+  .coin-diagram .pd-label { font-size: 11px; letter-spacing: 1.2px; fill: var(--text-dim); }
+  .coin-diagram .pd-accent { fill: var(--red-text); }
+  .coin-diagram .pd-code { font-size: 13px; fill: var(--text-dim); }
+  .coin-diagram .pd-note { font-size: 10.5px; fill: var(--text-faint); }
+  .coin-legs { margin-top: 8px; }
+  .coin-legs .card-sm { display: flex; align-items: baseline; gap: 14px; }
+  .coin-legs .card-sm span { flex: none; min-width: 148px; font-size: 0.85rem; }
+  .coin-legs .card-sm p { font-size: 1rem; line-height: 1.45; }
 
   /* ── Proof flow (slide 8): Rust in, Lean in the middle, properties out ── */
   .pf { display: flex; align-items: stretch; justify-content: center; gap: 10px; width: 100%; margin-top: 12px; }
@@ -925,7 +920,7 @@
     .pf-ar { flex: none; }
     .coin { flex-direction: column; }
     .coin-mid { flex: none; padding: 10px 0; }
-    .loop-legs .card-sm { flex-direction: column; gap: 6px; }
+    .coin-legs .card-sm { flex-direction: column; gap: 6px; }
     .sbx { flex-direction: column; }
     .sbx-side { flex: none; width: 100%; }
     .sbx-gate { flex-direction: row; gap: 10px; }
@@ -1066,37 +1061,36 @@
 <!-- 3: h5i gives both to developers and their AI -->
 <div class="slide" style="gap:18px;"><div style="width:100%;max-width:1080px;">
   <div class="section-tag">What h5i is</div><h2>One workspace for both,<br><span class="red">for developers and their AI.</span></h2>
-  <figure class="loop-flow">
-    <svg class="loop-diagram" viewBox="0 30 1100 230" role="img" aria-labelledby="loop-title loop-desc" xmlns="http://www.w3.org/2000/svg">
-      <title id="loop-title">The loop: find bugs, prove correctness, repeat</title>
-      <desc id="loop-desc">Two steps joined into a cycle. Red-teaming the running app finds bugs, proving correctness in Lean 4 rules them out, and the loop repeats with every change the AI ships.</desc>
-      <defs>
-        <marker id="loop-arrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="currentColor" stroke-width="1.5"/></marker>
-      </defs>
-      <g class="loop-fish" fill="var(--red)" aria-hidden="true">
-        <ellipse cx="0" cy="0" rx="7" ry="2.8"/>
-        <path class="loop-fish-tail" d="M-5 0L-11 -3.5L-11 3.5Z"/>
-        <animateMotion dur="16s" repeatCount="indefinite" rotate="auto" path="M362 118C470 44 630 44 736 118C756 132 756 162 738 176C630 250 470 250 364 176C344 162 344 132 362 118Z"/>
-      </g>
-      <rect x="0" y="95" width="360" height="104" rx="10" fill="var(--bg-card)" stroke="var(--red)" stroke-opacity=".8"/>
-      <text x="28" y="124" class="pd-label pd-accent">01 / RED-TEAMING</text>
-      <text x="28" y="153" class="pd-title">Find bugs</text>
-      <text x="28" y="178" class="pd-code">h5i browser · websec · box</text>
-      <rect x="740" y="95" width="360" height="104" rx="10" fill="var(--bg-card)" stroke="var(--red)" stroke-opacity=".8"/>
-      <text x="764" y="124" class="pd-label pd-accent">02 / FORMAL VERIFICATION</text>
-      <text x="764" y="153" class="pd-title">Prove correctness</text>
-      <text x="764" y="178" class="pd-code">h5i-app · Rust + Lean 4</text>
-      <g fill="none" stroke="var(--red)" stroke-width="1.5" style="color:var(--red)">
-        <path class="loop-arc" d="M362 118C470 44 630 44 736 118" marker-end="url(#loop-arrowhead)"/>
-        <path class="loop-arc" d="M738 176C630 250 470 250 364 176" marker-end="url(#loop-arrowhead)"/>
-        <path class="loop-dash" d="M362 118C470 44 630 44 736 118"/>
-        <path class="loop-dash" d="M738 176C630 250 470 250 364 176"/>
-      </g>
-      <text x="550" y="140" class="pd-label" text-anchor="middle">REPEAT</text>
-      <text x="550" y="160" class="pd-note" text-anchor="middle">with every change the AI ships</text>
-    </svg>
+  <figure class="coin-flow">
+    <svg class="proof-diagram coin-diagram" viewBox="0 30 1100 230" role="img" aria-labelledby="coin-title coin-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="coin-title">Two sides of one coin: find bugs, prove correctness</title>
+        <desc id="coin-desc">Two halves of web security joined by one coin. Red-teaming the running app finds the bugs nobody anticipated; proving correctness in Lean 4 establishes the rules you can state. h5i is the coin, one workspace for both.</desc>
+        <defs>
+          <radialGradient id="coin-face" cx="36%" cy="30%" r="75%"><stop offset="0" stop-color="var(--red)" stop-opacity=".55"/><stop offset=".55" stop-color="var(--red)" stop-opacity=".12"/><stop offset="1" stop-color="var(--red)" stop-opacity=".02"/></radialGradient>
+        </defs>
+        <!-- Find bugs -->
+        <rect x="0" y="95" width="360" height="104" rx="10" fill="var(--bg-card)" stroke="var(--red)" stroke-opacity=".8"/>
+        <text x="28" y="124" class="pd-label pd-accent">01 / RED-TEAMING</text>
+        <text x="28" y="153" class="pd-title">Find bugs</text>
+        <text x="28" y="178" class="pd-code">the bugs nobody anticipated</text>
+        <!-- Prove correctness -->
+        <rect x="740" y="95" width="360" height="104" rx="10" fill="var(--bg-card)" stroke="var(--red)" stroke-opacity=".8"/>
+        <text x="764" y="124" class="pd-label pd-accent">02 / FORMAL VERIFICATION</text>
+        <text x="764" y="153" class="pd-title">Prove correctness</text>
+        <text x="764" y="178" class="pd-code">the rules you can state</text>
+        <!-- The coin between them: one object, two faces. It turns slowly; a face reads h5i. -->
+        <g stroke="var(--red)" stroke-width="1.5" stroke-opacity=".45"><path d="M360 147H486"/><path d="M614 147H740"/></g>
+        <g class="coin-spin">
+          <ellipse cx="550" cy="147" rx="58" ry="58" fill="url(#coin-face)" stroke="var(--red)" stroke-width="2">
+            <animate attributeName="rx" values="58;58;4;58;58" keyTimes="0;.3;.5;.7;1" dur="9s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"/>
+          </ellipse>
+          <text x="550" y="156" class="pd-title pd-coin" text-anchor="middle">h5i<animate attributeName="opacity" values="1;1;0;1;1" keyTimes="0;.42;.5;.58;1" dur="9s" repeatCount="indefinite"/></text>
+        </g>
+        <text x="550" y="70" class="pd-label" text-anchor="middle">ONE COIN</text>
+        <text x="550" y="236" class="pd-note" text-anchor="middle">web security needs both sides, and one workspace holds both</text>
+      </svg>
   </figure>
-  <div class="g2 loop-legs">
+  <div class="g2 coin-legs">
     <div class="card-sm"><span class="mono red">the AI</span><p>runs one CLI: browse, attack, build, prove.</p></div>
     <div class="card-sm"><span class="mono red">the developer</span><p>reviews one console: findings, evidence, proofs.</p></div>
   </div>

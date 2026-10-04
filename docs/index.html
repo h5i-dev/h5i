@@ -240,19 +240,14 @@
     .section-title br.heading-break { display: block; }
     #what-you-get .section-title, #framework .section-title { max-width: none; }
     .proof-flow { margin: 36px 0 0; overflow-x: auto; position: relative; }
-    .loop-lead {
+    .coin-lead {
       margin: 36px 0 0; display: flex; align-items: baseline; gap: 14px;
       font-family: var(--disp); font-size: 22px; font-weight: 700; color: var(--ink);
     }
-    .loop-lead .loop-arrow { color: var(--spot); font-family: var(--mono); font-weight: 400; }
-    .loop-flow { margin-top: 14px; }
-    .proof-diagram.loop-diagram { min-width: 720px; }
-    .loop-diagram .loop-arc { stroke-opacity: .3; }
-    .loop-diagram .loop-dash { stroke-dasharray: 5 9; animation: loop-flow 1.2s linear infinite; }
-    @keyframes loop-flow { to { stroke-dashoffset: -14; } }
-    .loop-diagram .loop-fish-tail { transform-box: fill-box; transform-origin: 100% 50%; animation: loop-wag .45s ease-in-out infinite alternate; }
-    @keyframes loop-wag { from { transform: rotate(-14deg); } to { transform: rotate(14deg); } }
-    @media (prefers-reduced-motion: reduce) { .loop-diagram .loop-dash, .loop-diagram .loop-fish-tail { animation: none; } }
+    .coin-lead .coin-arrow { color: var(--spot); font-family: var(--mono); font-weight: 400; }
+    .coin-flow { margin-top: 14px; }
+    .proof-diagram.coin-diagram { min-width: 720px; }
+    .coin-diagram .pd-coin { font-family: var(--mono); font-size: 26px; }
     .proof-flow .tabpick { position: absolute; opacity: 0; pointer-events: none; }
     .ed-tabs { display: flex; align-items: stretch; height: 27px; margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1; }
     .ed-tabs label {
@@ -539,39 +534,34 @@
         <div class="feat-desc">Writing code is easier than proving it correct. Ruling out bugs requires precise specifications, explicit assumptions, and proofs that the implementation satisfies them.</div>
       </div>
     </div>
-    <p class="loop-lead"><span class="loop-arrow">&#x27F9;</span> You need a loop: find vulnerabilities, prove correctness, repeat.</p>
-    <figure class="proof-flow loop-flow">
-      <svg class="proof-diagram loop-diagram" viewBox="0 30 1100 230" role="img" aria-labelledby="loop-title loop-desc" xmlns="http://www.w3.org/2000/svg">
-        <title id="loop-title">The loop: find vulnerabilities, prove correctness, repeat</title>
-        <desc id="loop-desc">Two steps joined into a cycle. Red-teaming the running app finds vulnerabilities, proving correctness in Lean 4 rules them out, and the loop repeats with every change the AI ships.</desc>
+    <p class="coin-lead"><span class="coin-arrow">&#x27F9;</span> Web security needs both. Find the bugs, prove the correctness: two sides of one coin.</p>
+    <figure class="proof-flow coin-flow">
+      <svg class="proof-diagram coin-diagram" viewBox="0 30 1100 230" role="img" aria-labelledby="coin-title coin-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="coin-title">Two sides of one coin: find bugs, prove correctness</title>
+        <desc id="coin-desc">Two halves of web security joined by one coin. Red-teaming the running app finds the bugs nobody anticipated; proving correctness in Lean 4 establishes the rules you can state. h5i is the coin, one workspace for both.</desc>
         <defs>
-          <marker id="loop-arrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="currentColor" stroke-width="1.5"/></marker>
+          <radialGradient id="coin-face" cx="36%" cy="30%" r="75%"><stop offset="0" stop-color="var(--spot)" stop-opacity=".55"/><stop offset=".55" stop-color="var(--spot)" stop-opacity=".12"/><stop offset="1" stop-color="var(--spot)" stop-opacity=".02"/></radialGradient>
         </defs>
-        <!-- One red fish swims the loop, behind the boxes so it ducks through each step -->
-        <g class="loop-fish" fill="var(--spot)" aria-hidden="true">
-          <ellipse cx="0" cy="0" rx="7" ry="2.8"/>
-          <path class="loop-fish-tail" d="M-5 0L-11 -3.5L-11 3.5Z"/>
-          <animateMotion dur="16s" repeatCount="indefinite" rotate="auto" path="M362 118C470 44 630 44 736 118C756 132 756 162 738 176C630 250 470 250 364 176C344 162 344 132 362 118Z"/>
-        </g>
-        <!-- Find vulnerabilities -->
+        <!-- Find bugs -->
         <rect x="0" y="95" width="360" height="104" rx="10" fill="var(--panel)" stroke="var(--spot)" stroke-opacity=".8"/>
         <text x="28" y="124" class="pd-label pd-accent">01 / RED-TEAMING</text>
-        <text x="28" y="153" class="pd-title">Find vulnerabilities</text>
-        <text x="28" y="178" class="pd-code">drive the app, replay, compare</text>
+        <text x="28" y="153" class="pd-title">Find bugs</text>
+        <text x="28" y="178" class="pd-code">the bugs nobody anticipated</text>
         <!-- Prove correctness -->
         <rect x="740" y="95" width="360" height="104" rx="10" fill="var(--panel)" stroke="var(--spot)" stroke-opacity=".8"/>
         <text x="764" y="124" class="pd-label pd-accent">02 / FORMAL VERIFICATION</text>
         <text x="764" y="153" class="pd-title">Prove correctness</text>
-        <text x="764" y="178" class="pd-code">state a rule, check its proof</text>
-        <!-- The two halves of the loop -->
-        <g fill="none" stroke="var(--spot)" stroke-width="1.5" style="color:var(--spot)">
-          <path class="loop-arc" d="M362 118C470 44 630 44 736 118" marker-end="url(#loop-arrowhead)"/>
-          <path class="loop-arc" d="M738 176C630 250 470 250 364 176" marker-end="url(#loop-arrowhead)"/>
-          <path class="loop-dash" d="M362 118C470 44 630 44 736 118"/>
-          <path class="loop-dash" d="M738 176C630 250 470 250 364 176"/>
+        <text x="764" y="178" class="pd-code">the rules you can state</text>
+        <!-- The coin between them: one object, two faces. It turns slowly; a face reads h5i. -->
+        <g stroke="var(--spot)" stroke-width="1.5" stroke-opacity=".45"><path d="M360 147H486"/><path d="M614 147H740"/></g>
+        <g class="coin-spin">
+          <ellipse cx="550" cy="147" rx="58" ry="58" fill="url(#coin-face)" stroke="var(--spot)" stroke-width="2">
+            <animate attributeName="rx" values="58;58;4;58;58" keyTimes="0;.3;.5;.7;1" dur="9s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"/>
+          </ellipse>
+          <text x="550" y="156" class="pd-title pd-coin" text-anchor="middle">h5i<animate attributeName="opacity" values="1;1;0;1;1" keyTimes="0;.42;.5;.58;1" dur="9s" repeatCount="indefinite"/></text>
         </g>
-        <text x="550" y="140" class="pd-label" text-anchor="middle">REPEAT</text>
-        <text x="550" y="160" class="pd-note" text-anchor="middle">with every change the AI ships</text>
+        <text x="550" y="70" class="pd-label" text-anchor="middle">ONE COIN</text>
+        <text x="550" y="236" class="pd-note" text-anchor="middle">web security needs both sides, and one workspace holds both</text>
       </svg>
     </figure>
   </div>
@@ -1105,10 +1095,10 @@
 <script src="/_static/blog.js?v=41dbda103a" defer></script>
 <script src="/_static/highlight.js?v=ed81eee4e6" defer></script>
 <script>
-// SMIL ignores prefers-reduced-motion, so park the loop fish ourselves.
+// SMIL ignores prefers-reduced-motion, so park the turning coin ourselves.
 if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
-  var loopSvg = document.querySelector('.loop-diagram');
-  if (loopSvg && loopSvg.pauseAnimations) loopSvg.pauseAnimations();
+  var coinSvg = document.querySelector('.coin-diagram');
+  if (coinSvg && coinSvg.pauseAnimations) coinSvg.pauseAnimations();
 }
 // A school of small fish with one red one, Swimmy style. Plain boids.
 (function () {
