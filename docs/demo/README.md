@@ -23,7 +23,9 @@ without turning the story into a tour.
 The opening is a teaser; the rest is a demo.
 
 **Title cards (0:00 to 0:10).** Black, uppercase, letters tracking in, then
-a hard cut. "Your AI built it. Is it really secure?" Then
+a hard cut. "Your AI built it. Is it really secure?", over a slow drift of
+anonymized clippings: headlines and posts about shipped-in-a-day apps that
+leaked, with every name blanked. Then
 "Security has two sides, one workspace: find vulnerabilities, prove
 correctness."
 

@@ -59,6 +59,24 @@
     opacity:0}
   #glow{position:absolute;left:50%;top:50%;width:1400px;height:900px;margin:-450px 0 0 -700px;pointer-events:none;
     background:radial-gradient(ellipse at center,rgba(255,122,89,.16),rgba(255,122,89,.04) 45%,transparent 70%);opacity:0}
+  /* the clippings: anonymized headlines drifting up behind the question. Names are blanked on purpose. */
+  #clips{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+  .clip{position:absolute;width:340px;padding:16px 18px;border-radius:6px;background:#15151a;border:1px solid #26262d;color:#c9c9d0;opacity:0;
+    box-shadow:0 20px 50px rgba(0,0,0,.6)}
+  .clip .src{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#6b6b75;margin-bottom:8px}
+  .clip .src i{width:8px;height:8px;border-radius:2px;background:#3a3a44}
+  .clip h4{font-family:var(--sans);font-size:19px;font-weight:700;line-height:1.3;color:#e2e2e8;letter-spacing:-.01em}
+  .clip h4 b{color:#ff6258;font-weight:700}
+  .clip .x{display:inline-block;height:.78em;width:4.2em;vertical-align:-.08em;border-radius:2px;background:repeating-linear-gradient(90deg,#55555f 0 6px,#44444d 6px 8px)}
+  .clip .x.s{width:2.6em} .clip .x.l{width:6em}
+  .clip.post{border-radius:14px;background:#111116}
+  .clip.post .src{text-transform:none;letter-spacing:0;font-family:var(--sans);font-size:13px}
+  .clip.post .src .av{width:22px;height:22px;border-radius:50%;background:#2c2c35}
+  .clip.post .src b{color:#c9c9d0;font-weight:600}
+  .clip.post h4{font-size:17px;font-weight:400;color:#d8d8de}
+  .clip.post .meta{margin-top:8px;font-family:var(--mono);font-size:11px;color:#55555f}
+  .clip.paper{border-top:3px solid #3a3a44}
+  .clip.paper .src{border-bottom:1px solid #26262d;padding-bottom:6px}
   #dust{position:absolute;inset:0;pointer-events:none}
   .mote{position:absolute;width:3px;height:3px;border-radius:50%;background:#fff;opacity:0}
 
@@ -274,6 +292,15 @@
   <div id="cam">
     <div id="floor"></div>
     <div id="glow"></div>
+    <div id="clips">
+      <div class="clip paper" id="cl0"><div class="src"><i></i>technology · breaking</div><h4><span class="x"></span> breach exposes <b>2.4 million</b> customer records after an API skipped the ownership check</h4></div>
+      <div class="clip post" id="cl1"><div class="src"><span class="av"></span><b><span class="x s"></span></b><span>@<span class="x s"></span></span></div><h4>Just changed the id in the URL and got someone else's invoice. This app went live last week. <b>Who tested this?</b></h4><div class="meta">4.1K reposts · 12K likes</div></div>
+      <div class="clip paper" id="cl2"><div class="src"><i></i>security · analysis</div><h4><b>Prompt injection</b> turned an AI assistant into an exfiltration channel at <span class="x"></span></h4></div>
+      <div class="clip post" id="cl3"><div class="src"><span class="av"></span><b><span class="x s"></span></b><span>@<span class="x s"></span></span></div><h4>Shipped a whole SaaS in an afternoon with an agent. Woke up to a <b>$40k</b> cloud bill and an open admin panel.</h4><div class="meta">2.8K reposts · 9.6K likes</div></div>
+      <div class="clip paper" id="cl4"><div class="src"><i></i>business · regulation</div><h4><span class="x l"></span> fined after <b>IDOR</b> flaw let any user read any order for eleven months</h4></div>
+      <div class="clip post" id="cl5"><div class="src"><span class="av"></span><b><span class="x s"></span></b><span>@<span class="x s"></span></span></div><h4>The code review was "LGTM 🚀". The auth check was never there. <b>AI wrote both.</b></h4><div class="meta">6.3K reposts · 21K likes</div></div>
+      <div class="clip paper" id="cl6"><div class="src"><i></i>technology</div><h4>Vibe-coded checkout at <span class="x"></span> leaked <b>card tokens</b> through an unauthenticated debug route</h4></div>
+    </div>
     <div id="dust"></div>
 
     <div class="card" id="c-1"><h2>Your AI built it.</h2><h2 class="l2">Is it really secure<em>?</em></h2></div>
@@ -706,6 +733,20 @@ function draw(ms) {
   drawDust(t, cam);
 
   /* title cards */
+  /* the clippings: a slow upward drift behind the question, fading in with the second line and out at the cut to black */
+  {
+    // two columns in the margins, four or so in view at a time, rising past the headline
+    const lay = [[30,200,-5],[1590,420,4],[50,660,3],[1580,900,-4],[30,1140,5],[1590,1380,-3],[40,1620,2]];
+    const on = t >= T.c1 && t < T.black1 + .3;
+    const fade = eo(ramp(t, T.c1 + .2, 1.0)) * (1 - ramp(t, T.black1 - .6, .6));
+    for (let i = 0; i < lay.length; i++) {
+      const el = $('cl'+i), [x, y0, rot] = lay[i];
+      if (!on) { el.style.opacity = 0; continue; }
+      const y = y0 - (t - T.c1) * 110;
+      el.style.opacity = fade * .55;
+      el.style.transform = `translate(${x}px,${y}px) rotate(${rot}deg) scale(.9)`;
+    }
+  }
   card('c-1', t, T.c1, T.black1);
   { const l2 = $('c-1').querySelector('.l2'); const p = eo(ramp(t, T.c1b, .6)); l2.style.opacity = p; l2.style.letterSpacing = l2.style.textIndent = lerp(.34, .2, eo(ramp(t, T.c1b, T.black1 - T.c1b))) + 'em'; }
   { const em = $('c-1').querySelector('em'); const p = ramp(t, T.qmark, .22); em.style.opacity = p; em.style.transform = `scale(${lerp(2.2, 1, eo(p))})`; }
