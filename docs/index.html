@@ -969,13 +969,12 @@
         <text x="0" y="456" class="pd-code">The logic your app runs</text>
         <!-- Extraction connection. -->
         <g style="color:var(--spot)">
-          <path d="M388 101H418" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
+          <path d="M388 101H442" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
         </g>
-        <text x="402" y="81" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
-        <text x="402" y="127" class="pd-note" text-anchor="middle">extract</text>
+        <text x="415" y="81" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
+        <text x="415" y="127" class="pd-note" text-anchor="middle">extract</text>
         <!-- The console, in a browser window: the Apps view reading this kernel's receipt. -->
-        <text x="428" y="178" class="pd-label pd-accent">h5i ui / APPS</text>
-        <foreignObject x="428" y="184" width="672" height="236">
+        <foreignObject x="452" y="176" width="648" height="236">
           <div xmlns="http://www.w3.org/1999/xhtml" class="browser-win pd-win">
             <div class="win-bar"><span class="win-tab on"><i class="fav"></i>h5i console &#183; apps</span><span class="win-plus">+</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
             <div class="bw-url"><span class="bw-nav">&#8592;</span><span class="bw-nav dim">&#8594;</span><span class="bw-nav">&#8635;</span><span class="bw-addr"><i class="lock"></i><span class="bw-text">localhost:8765/#/apps/board/theorems</span></span></div>
@@ -996,25 +995,23 @@
             </div>
           </div>
         </foreignObject>
-        <!-- Between the two: the receipt the build writes is what the console reads. -->
-        <text x="1100" y="178" class="pd-note" text-anchor="end">cargo app-verify writes the receipt &#8595; the console reads</text>
         <!-- The proof you supply, in an editor of its own. -->
-        <text x="428" y="28" class="pd-label pd-accent">LEAN 4 / THE PROOF YOU SUPPLY</text>
-        <rect x="428" y="44" width="672" height="114" rx="6" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M428 50a6 6 0 0 1 6-6h660a6 6 0 0 1 6 6v22H428z" fill="var(--bg)"/>
-        <path d="M428 72H1100" stroke="var(--line2)"/>
-        <path d="M428 72V44h132v28" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M429 44.5H559" stroke="var(--spot)" stroke-width="2"/>
-        <circle cx="442" cy="58" r="3" fill="var(--spot)"/>
-        <text x="454" y="62" class="pd-text">Theorems.lean</text>
-        <g class="pd-ln" text-anchor="end"><text x="458" y="94">79</text><text x="458" y="111">80</text><text x="458" y="128">81</text><text x="458" y="145">82</text></g>
+        <text x="452" y="28" class="pd-label pd-accent">LEAN 4 / THE PROOF YOU SUPPLY</text>
+        <rect x="452" y="44" width="648" height="114" rx="6" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M452 50a6 6 0 0 1 6-6h636a6 6 0 0 1 6 6v22H452z" fill="var(--bg)"/>
+        <path d="M452 72H1100" stroke="var(--line2)"/>
+        <path d="M452 72V44h132v28" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M453 44.5H583" stroke="var(--spot)" stroke-width="2"/>
+        <circle cx="466" cy="58" r="3" fill="var(--spot)"/>
+        <text x="478" y="62" class="pd-text">Theorems.lean</text>
+        <g class="pd-ln" text-anchor="end"><text x="482" y="94">79</text><text x="482" y="111">80</text><text x="482" y="128">81</text><text x="482" y="145">82</text></g>
         <g class="pd-src" xml:space="preserve">
-          <text x="472" y="94"><tspan class="pd-kw">theorem</tspan> authorized (a : Principal) (s : Snapshot) (c : Command) ws r</text>
-          <text x="472" y="111">    (hinv : Inv (Snapshot.toSt s)) (h : transition a s c = .ok (.Ok (ws, r))) :</text>
-          <text x="472" y="128">    &#x2200; w &#x2208; ws.val, allowed (Snapshot.toSt s) a.user.val w</text>
-          <text x="472" y="145"><tspan class="pd-kw">    := by</tspan> &#x2026;</text>
+          <text x="496" y="94"><tspan class="pd-kw">theorem</tspan> authorized (a : Principal) (s : Snapshot) (c : Command) ws r</text>
+          <text x="496" y="111">    (hinv : Inv (Snapshot.toSt s)) (h : transition a s c = .ok (.Ok (ws, r))) :</text>
+          <text x="496" y="128">    &#x2200; w &#x2208; ws.val, allowed (Snapshot.toSt s) a.user.val w</text>
+          <text x="496" y="145"><tspan class="pd-kw">    := by</tspan> &#x2026;</text>
         </g>
-        <text x="764" y="456" class="pd-code" text-anchor="middle">The proof you write, and its verdict in the console you already use</text>
+        <text x="776" y="456" class="pd-code" text-anchor="middle">The proof you write, and its verdict in the console you already use</text>
       </svg>
     </figure>
     <div class="hero-actions">
