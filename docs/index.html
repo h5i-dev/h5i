@@ -249,7 +249,12 @@
     .proof-diagram.coin-diagram { min-width: 720px; }
     .coin-diagram .pd-coin { font-family: var(--mono); font-size: 26px; }
     /* the Apps view inside the proof diagram: the console's own tokens, drawn small */
-    .pd-ui { border: 0; border-radius: 10px; background: var(--cm-ground); font-family: var(--sans); font-size: 10.5px; line-height: 1.35; color: var(--cm-ink); height: 236px; overflow: hidden; box-shadow: none; }
+    .pd-win { height: 236px; border-radius: 8px; }
+    .pd-win .win-bar { height: 32px; padding-top: 6px; font-size: 10.5px; }
+    .pd-win .win-tab { padding: 4px 10px 5px; }
+    .pd-win .bw-url { padding: 4px 8px; font-size: 10px; }
+    .pd-win .bw-addr { padding: 2px 8px; }
+    .pd-ui { flex: 1; min-height: 0; border: 0; border-radius: 0; background: var(--cm-ground); font-family: var(--sans); font-size: 10.5px; line-height: 1.35; color: var(--cm-ink); overflow: hidden; box-shadow: none; }
     .pu-app { display: grid; grid-template-columns: 110px minmax(0, 1fr); height: 100%; }
     .pu-rail { background: var(--cm-surface); border-right: 1px solid var(--cm-line); padding: 10px 6px; display: flex; flex-direction: column; gap: 2px; color: var(--cm-ink-3); font-size: 10.5px; }
     .pu-rail > div { padding: 5px 8px; border-radius: 4px; }
@@ -257,22 +262,22 @@
     .pu-brand { font-family: var(--cm-mono); font-weight: 700; font-size: 13px; color: var(--cm-ink); padding-bottom: 10px !important; }
     .pu-brand b { color: var(--cm-accent); }
     .pu-main { display: flex; flex-direction: column; min-width: 0; }
-    .pu-top { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 12px; border-bottom: 1px solid var(--cm-line); background: var(--cm-surface); white-space: nowrap; }
+    .pu-top { display: flex; align-items: center; gap: 10px; height: 26px; padding: 0 12px; border-bottom: 1px solid var(--cm-line); background: var(--cm-surface); white-space: nowrap; }
     .pu-top b { font-size: 12px; }
     .pu-top span { color: var(--cm-ink-3); overflow: hidden; text-overflow: ellipsis; }
     .pu-top em { margin-left: auto; font-style: normal; color: var(--cm-ink-3); }
     .pu-top em i { font-style: normal; color: var(--cm-ink); font-weight: 600; }
-    .pu-head { display: flex; align-items: baseline; gap: 8px; padding: 10px 12px 0; background: var(--cm-surface); }
+    .pu-head { display: flex; align-items: baseline; gap: 8px; padding: 7px 12px 0; background: var(--cm-surface); }
     .pu-head b { font-size: 13px; }
     .pu-head code { font-family: var(--cm-mono); font-size: 9.5px; color: var(--cm-ink-3); background: none; border: 0; padding: 0; }
     .pu-pill { font-size: 9.5px; padding: 0 6px; border-radius: 3px; color: var(--cm-green); background: var(--cm-green-bg); }
-    .pu-tabs { display: flex; gap: 2px; margin-top: 6px; padding: 0 8px; border-bottom: 1px solid var(--cm-line); background: var(--cm-surface); }
+    .pu-tabs { display: flex; gap: 2px; margin-top: 4px; padding: 0 8px; border-bottom: 1px solid var(--cm-line); background: var(--cm-surface); }
     .pu-tabs span { padding: 5px 8px; color: var(--cm-ink-3); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
     .pu-tabs span.on { color: var(--cm-ink); border-bottom-color: var(--cm-accent); }
     .pu-tabs i { font-style: normal; font-family: var(--cm-mono); font-size: 9.5px; color: var(--cm-ink-3); margin-left: 3px; }
     .pu-table { width: 100%; border-collapse: collapse; font-size: 10px; }
     .pu-table th { text-align: left; padding: 5px 10px; color: var(--cm-ink-3); font-weight: 400; font-size: 9.5px; border-bottom: 1px solid var(--cm-line); background: var(--cm-surface); }
-    .pu-table td { padding: 7px 10px; border-bottom: 1px solid var(--cm-line); color: var(--cm-ink-2); vertical-align: top; }
+    .pu-table td { padding: 4px 10px; border-bottom: 1px solid var(--cm-line); color: var(--cm-ink-2); vertical-align: middle; }
     .pu-table td code { font-family: var(--cm-mono); font-size: 10px; color: var(--cm-violet); background: none; border: 0; padding: 0; }
     .pu-table td small { display: block; font-family: var(--cm-mono); font-size: 8.5px; color: var(--cm-ink-4); margin-top: 2px; }
     .pu-ok { font-family: var(--cm-mono); font-size: 9.5px; padding: 0 6px; border-radius: 3px; color: var(--cm-green); background: var(--cm-green-bg); white-space: nowrap; }
@@ -959,50 +964,53 @@
         <text x="0" y="456" class="pd-code">The logic your app runs</text>
         <!-- Extraction connection. -->
         <g style="color:var(--spot)">
-          <path d="M388 232H406" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
+          <path d="M388 363H418" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
         </g>
-        <text x="397" y="212" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
-        <text x="397" y="258" class="pd-note" text-anchor="middle">extract</text>
-        <!-- Verification boundary: the console's Apps view, where the proofs of this kernel are read. -->
-        <rect x="418" y="44" width="682" height="376" rx="12" fill="url(#proof-grid)" style="color:var(--spot)"/>
-        <rect x="418" y="44" width="682" height="376" rx="12" fill="none" stroke="var(--spot)" stroke-opacity=".65"/>
-        <rect x="434" y="33" width="214" height="23" fill="var(--bg)"/>
-        <text x="443" y="49" class="pd-label pd-accent">LEAN 4 / h5i ui &#183; APPS</text>
-        <foreignObject x="432" y="60" width="654" height="236">
-          <div xmlns="http://www.w3.org/1999/xhtml" class="console-plate pd-ui">
-            <div class="pu-app">
-              <div class="pu-rail"><div class="pu-brand">h<b>5</b>i</div><div>Overview</div><div>Sessions</div><div>Sandboxes</div><div class="on">Apps</div><div>Host</div></div>
-              <div class="pu-main">
-                <div class="pu-top"><b>Apps</b><span>what is proven, assumed, and unconfirmed</span><em><i>1</i> with a receipt</em></div>
-                <div class="pu-head"><b>board</b><code>examples/app/tutorials/board</code><span class="pu-pill">receipt &#183; just now</span></div>
-                <div class="pu-tabs"><span>Spec</span><span class="on">Theorems <i>3</i></span><span>Trust boundary</span><span>Evidence</span></div>
-                <table class="pu-table">
-                  <tr><th>theorem</th><th>status</th><th>mutants</th><th>axioms</th></tr>
-                  <tr><td><code>authorized</code><small>Theorems.lean:79</small></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">4 of 4 caught</span></td><td>standard</td></tr>
-                  <tr><td><code>inv_preserved</code><small>Theorems.lean:160</small></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">5 of 5 caught</span></td><td>standard</td></tr>
-                  <tr><td><code>transition_total</code><small>Theorems.lean:55</small></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">3 of 3 caught</span></td><td>standard</td></tr>
-                </table>
+        <text x="402" y="343" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
+        <text x="402" y="389" class="pd-note" text-anchor="middle">extract</text>
+        <!-- The console, in a browser window: the Apps view reading this kernel's receipt. -->
+        <text x="428" y="28" class="pd-label pd-accent">h5i ui / APPS</text>
+        <foreignObject x="428" y="44" width="672" height="236">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="browser-win pd-win">
+            <div class="win-bar"><span class="win-tab on"><i class="fav"></i>h5i console &#183; apps</span><span class="win-plus">+</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
+            <div class="bw-url"><span class="bw-nav">&#8592;</span><span class="bw-nav dim">&#8594;</span><span class="bw-nav">&#8635;</span><span class="bw-addr"><i class="lock"></i><span class="bw-text">localhost:8765/#/apps/board/theorems</span></span></div>
+            <div class="console-plate pd-ui">
+              <div class="pu-app">
+                <div class="pu-rail"><div class="pu-brand">h<b>5</b>i</div><div>Overview</div><div>Sessions</div><div>Sandboxes</div><div class="on">Apps</div><div>Host</div></div>
+                <div class="pu-main">
+                  <div class="pu-top"><b>Apps</b><span>what is proven, assumed, and unconfirmed</span><em><i>1</i> with a receipt</em></div>
+                  <div class="pu-head"><b>board</b><code>examples/app/tutorials/board</code><span class="pu-pill">receipt &#183; just now</span></div>
+                  <div class="pu-tabs"><span>Spec</span><span class="on">Theorems <i>3</i></span><span>Trust boundary</span><span>Evidence</span></div>
+                  <table class="pu-table">
+                    <tr><th>theorem</th><th>status</th><th>mutants</th><th>axioms</th></tr>
+                    <tr><td><code>authorized</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">4 of 4 caught</span></td><td>standard</td></tr>
+                    <tr><td><code>inv_preserved</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">5 of 5 caught</span></td><td>standard</td></tr>
+                    <tr><td><code>transition_total</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">3 of 3 caught</span></td><td>standard</td></tr>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
         </foreignObject>
-        <!-- Under the console, the proof it is reading: the theorem you supply. -->
-        <rect x="432" y="306" width="654" height="104" rx="4" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M432 310a4 4 0 0 1 4-4h646a4 4 0 0 1 4 4v22H432z" fill="var(--bg)"/>
-        <path d="M432 332H1086" stroke="var(--line2)"/>
-        <path d="M432 332V306h130v26" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M433 306.5H561" stroke="var(--spot)" stroke-width="2"/>
-        <circle cx="446" cy="319" r="3" fill="var(--spot)"/>
-        <text x="458" y="323" class="pd-text">Theorems.lean</text>
-        <text x="1074" y="323" class="pd-label pd-accent" text-anchor="end">YOU SUPPLY</text>
-        <g class="pd-ln" text-anchor="end"><text x="460" y="352">79</text><text x="460" y="369">80</text><text x="460" y="386">81</text><text x="460" y="403">82</text></g>
+        <!-- Between the two: the receipt the build writes is what the console reads. -->
+        <text x="1100" y="298" class="pd-note" text-anchor="end">cargo app-verify writes the receipt &#8593; the console reads</text>
+        <!-- The proof you supply, in an editor of its own. -->
+        <text x="428" y="298" class="pd-label pd-accent">LEAN 4 / THE PROOF YOU SUPPLY</text>
+        <rect x="428" y="306" width="672" height="114" rx="6" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M428 312a6 6 0 0 1 6-6h660a6 6 0 0 1 6 6v22H428z" fill="var(--bg)"/>
+        <path d="M428 334H1100" stroke="var(--line2)"/>
+        <path d="M428 334V306h132v28" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M429 306.5H559" stroke="var(--spot)" stroke-width="2"/>
+        <circle cx="442" cy="320" r="3" fill="var(--spot)"/>
+        <text x="454" y="324" class="pd-text">Theorems.lean</text>
+        <g class="pd-ln" text-anchor="end"><text x="458" y="356">79</text><text x="458" y="373">80</text><text x="458" y="390">81</text><text x="458" y="407">82</text></g>
         <g class="pd-src" xml:space="preserve">
-          <text x="474" y="352"><tspan class="pd-kw">theorem</tspan> authorized (a : Principal) (s : Snapshot) (c : Command) ws r</text>
-          <text x="474" y="369">    (hinv : Inv (Snapshot.toSt s)) (h : transition a s c = .ok (.Ok (ws, r))) :</text>
-          <text x="474" y="386">    &#x2200; w &#x2208; ws.val, allowed (Snapshot.toSt s) a.user.val w</text>
-          <text x="474" y="403"><tspan class="pd-kw">    := by</tspan> &#x2026;</text>
+          <text x="472" y="356"><tspan class="pd-kw">theorem</tspan> authorized (a : Principal) (s : Snapshot) (c : Command) ws r</text>
+          <text x="472" y="373">    (hinv : Inv (Snapshot.toSt s)) (h : transition a s c = .ok (.Ok (ws, r))) :</text>
+          <text x="472" y="390">    &#x2200; w &#x2208; ws.val, allowed (Snapshot.toSt s) a.user.val w</text>
+          <text x="472" y="407"><tspan class="pd-kw">    := by</tspan> &#x2026;</text>
         </g>
-        <text x="759" y="456" class="pd-code" text-anchor="middle">What Lean checked, in the console you already use</text>
+        <text x="764" y="456" class="pd-code" text-anchor="middle">The proof in its editor, its verdict in the console you already use</text>
       </svg>
     </figure>
     <div class="hero-actions">
