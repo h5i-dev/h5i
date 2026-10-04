@@ -247,7 +247,6 @@
     .coin-lead .coin-arrow { color: var(--spot); font-family: var(--mono); font-weight: 400; }
     .coin-flow { margin-top: 14px; }
     .proof-diagram.coin-diagram { min-width: 720px; }
-    .coin-diagram .pd-coin { font-family: var(--mono); font-size: 26px; }
     /* the Apps view inside the proof diagram: the console's own tokens, drawn small */
     .pd-win { height: 236px; border-radius: 8px; }
     .pd-win .win-bar { height: 32px; padding-top: 6px; font-size: 10.5px; }
@@ -262,12 +261,7 @@
     .pu-brand { font-family: var(--cm-mono); font-weight: 700; font-size: 13px; color: var(--cm-ink); padding-bottom: 10px !important; }
     .pu-brand b { color: var(--cm-accent); }
     .pu-main { display: flex; flex-direction: column; min-width: 0; }
-    .pu-top { display: flex; align-items: center; gap: 10px; height: 26px; padding: 0 12px; border-bottom: 1px solid var(--cm-line); background: var(--cm-surface); white-space: nowrap; }
-    .pu-top b { font-size: 12px; }
-    .pu-top span { color: var(--cm-ink-3); overflow: hidden; text-overflow: ellipsis; }
-    .pu-top em { margin-left: auto; font-style: normal; color: var(--cm-ink-3); }
-    .pu-top em i { font-style: normal; color: var(--cm-ink); font-weight: 600; }
-    .pu-head { display: flex; align-items: baseline; gap: 8px; padding: 7px 12px 0; background: var(--cm-surface); }
+    .pu-head { display: flex; align-items: baseline; gap: 8px; padding: 12px 12px 0; background: var(--cm-surface); }
     .pu-head b { font-size: 13px; }
     .pu-head code { font-family: var(--cm-mono); font-size: 9.5px; color: var(--cm-ink-3); background: none; border: 0; padding: 0; }
     .pu-pill { font-size: 9.5px; padding: 0 6px; border-radius: 3px; color: var(--cm-green); background: var(--cm-green-bg); }
@@ -590,11 +584,22 @@
         <g stroke="var(--spot)" stroke-width="1.5" stroke-opacity=".45"><path d="M360 147H486"/><path d="M614 147H740"/></g>
         <g class="coin-spin">
           <ellipse cx="550" cy="147" rx="58" ry="58" fill="url(#coin-face)" stroke="var(--spot)" stroke-width="2">
-            <animate attributeName="rx" values="58;58;0;58;0;58;58" keyTimes="0;.22;.36;.5;.64;.78;1" dur="10s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"/>
+            <animate attributeName="rx" values="58;58;0;58;58;0;58;58" keyTimes="0;.2;.32;.44;.64;.76;.88;1" dur="10s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"/>
           </ellipse>
-          <!-- the face: h5i on the front, its mirror image on the back, swapped each time the edge passes -->
-          <text x="550" y="156" class="pd-title pd-coin" text-anchor="middle">h5i<animate attributeName="opacity" values="1;0;1;1" keyTimes="0;.36;.64;1" dur="10s" repeatCount="indefinite" calcMode="discrete"/></text>
-          <text x="550" y="156" class="pd-title pd-coin" text-anchor="middle" transform="translate(1100 0) scale(-1 1)" opacity="0">h5i<animate attributeName="opacity" values="0;1;0;0" keyTimes="0;.36;.64;1" dur="10s" repeatCount="indefinite" calcMode="discrete"/></text>
+          <!-- heads: find vulnerabilities. A crosshair over the kernel of the mark. -->
+          <g class="coin-heads"><animate attributeName="opacity" values="1;0;1;1" keyTimes="0;.32;.76;1" dur="10s" repeatCount="indefinite" calcMode="discrete"/>
+            <circle cx="550" cy="140" r="19" fill="none" stroke="var(--ink)" stroke-width="1.6" stroke-opacity=".8"/>
+            <path d="M550 115V128M550 152V165M525 140H538M562 140H575" stroke="var(--ink)" stroke-width="1.6" stroke-opacity=".8"/>
+            <circle cx="550" cy="140" r="4" fill="var(--spot)"/>
+            <text x="550" y="186" class="pd-label" text-anchor="middle">FIND</text>
+          </g>
+          <!-- tails: prove correctness. A check inside a ring, with the inner ring a coin's reverse has. -->
+          <g class="coin-tails" opacity="0"><animate attributeName="opacity" values="0;1;0;0" keyTimes="0;.32;.76;1" dur="10s" repeatCount="indefinite" calcMode="discrete"/>
+            <circle cx="550" cy="147" r="48" fill="none" stroke="var(--spot)" stroke-width="1" stroke-opacity=".5"/>
+            <circle cx="550" cy="140" r="19" fill="none" stroke="var(--ink)" stroke-width="1.6" stroke-opacity=".8"/>
+            <path d="M540 141l7 7 13-15" fill="none" stroke="var(--spot)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            <text x="550" y="186" class="pd-label" text-anchor="middle">PROVE</text>
+          </g>
         </g>
         <text x="550" y="70" class="pd-label" text-anchor="middle">ONE COIN</text>
         <text x="550" y="236" class="pd-note" text-anchor="middle">web security needs both sides, and one workspace holds both</text>
@@ -964,13 +969,13 @@
         <text x="0" y="456" class="pd-code">The logic your app runs</text>
         <!-- Extraction connection. -->
         <g style="color:var(--spot)">
-          <path d="M388 363H418" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
+          <path d="M388 101H418" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
         </g>
-        <text x="402" y="343" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
-        <text x="402" y="389" class="pd-note" text-anchor="middle">extract</text>
+        <text x="402" y="81" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
+        <text x="402" y="127" class="pd-note" text-anchor="middle">extract</text>
         <!-- The console, in a browser window: the Apps view reading this kernel's receipt. -->
-        <text x="428" y="28" class="pd-label pd-accent">h5i ui / APPS</text>
-        <foreignObject x="428" y="44" width="672" height="236">
+        <text x="428" y="178" class="pd-label pd-accent">h5i ui / APPS</text>
+        <foreignObject x="428" y="184" width="672" height="236">
           <div xmlns="http://www.w3.org/1999/xhtml" class="browser-win pd-win">
             <div class="win-bar"><span class="win-tab on"><i class="fav"></i>h5i console &#183; apps</span><span class="win-plus">+</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
             <div class="bw-url"><span class="bw-nav">&#8592;</span><span class="bw-nav dim">&#8594;</span><span class="bw-nav">&#8635;</span><span class="bw-addr"><i class="lock"></i><span class="bw-text">localhost:8765/#/apps/board/theorems</span></span></div>
@@ -978,7 +983,6 @@
               <div class="pu-app">
                 <div class="pu-rail"><div class="pu-brand">h<b>5</b>i</div><div>Overview</div><div>Sessions</div><div>Sandboxes</div><div class="on">Apps</div><div>Host</div></div>
                 <div class="pu-main">
-                  <div class="pu-top"><b>Apps</b><span>what is proven, assumed, and unconfirmed</span><em><i>1</i> with a receipt</em></div>
                   <div class="pu-head"><b>board</b><code>examples/app/tutorials/board</code><span class="pu-pill">receipt &#183; just now</span></div>
                   <div class="pu-tabs"><span>Spec</span><span class="on">Theorems <i>3</i></span><span>Trust boundary</span><span>Evidence</span></div>
                   <table class="pu-table">
@@ -993,24 +997,24 @@
           </div>
         </foreignObject>
         <!-- Between the two: the receipt the build writes is what the console reads. -->
-        <text x="1100" y="298" class="pd-note" text-anchor="end">cargo app-verify writes the receipt &#8593; the console reads</text>
+        <text x="1100" y="178" class="pd-note" text-anchor="end">cargo app-verify writes the receipt &#8595; the console reads</text>
         <!-- The proof you supply, in an editor of its own. -->
-        <text x="428" y="298" class="pd-label pd-accent">LEAN 4 / THE PROOF YOU SUPPLY</text>
-        <rect x="428" y="306" width="672" height="114" rx="6" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M428 312a6 6 0 0 1 6-6h660a6 6 0 0 1 6 6v22H428z" fill="var(--bg)"/>
-        <path d="M428 334H1100" stroke="var(--line2)"/>
-        <path d="M428 334V306h132v28" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M429 306.5H559" stroke="var(--spot)" stroke-width="2"/>
-        <circle cx="442" cy="320" r="3" fill="var(--spot)"/>
-        <text x="454" y="324" class="pd-text">Theorems.lean</text>
-        <g class="pd-ln" text-anchor="end"><text x="458" y="356">79</text><text x="458" y="373">80</text><text x="458" y="390">81</text><text x="458" y="407">82</text></g>
+        <text x="428" y="28" class="pd-label pd-accent">LEAN 4 / THE PROOF YOU SUPPLY</text>
+        <rect x="428" y="44" width="672" height="114" rx="6" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M428 50a6 6 0 0 1 6-6h660a6 6 0 0 1 6 6v22H428z" fill="var(--bg)"/>
+        <path d="M428 72H1100" stroke="var(--line2)"/>
+        <path d="M428 72V44h132v28" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M429 44.5H559" stroke="var(--spot)" stroke-width="2"/>
+        <circle cx="442" cy="58" r="3" fill="var(--spot)"/>
+        <text x="454" y="62" class="pd-text">Theorems.lean</text>
+        <g class="pd-ln" text-anchor="end"><text x="458" y="94">79</text><text x="458" y="111">80</text><text x="458" y="128">81</text><text x="458" y="145">82</text></g>
         <g class="pd-src" xml:space="preserve">
-          <text x="472" y="356"><tspan class="pd-kw">theorem</tspan> authorized (a : Principal) (s : Snapshot) (c : Command) ws r</text>
-          <text x="472" y="373">    (hinv : Inv (Snapshot.toSt s)) (h : transition a s c = .ok (.Ok (ws, r))) :</text>
-          <text x="472" y="390">    &#x2200; w &#x2208; ws.val, allowed (Snapshot.toSt s) a.user.val w</text>
-          <text x="472" y="407"><tspan class="pd-kw">    := by</tspan> &#x2026;</text>
+          <text x="472" y="94"><tspan class="pd-kw">theorem</tspan> authorized (a : Principal) (s : Snapshot) (c : Command) ws r</text>
+          <text x="472" y="111">    (hinv : Inv (Snapshot.toSt s)) (h : transition a s c = .ok (.Ok (ws, r))) :</text>
+          <text x="472" y="128">    &#x2200; w &#x2208; ws.val, allowed (Snapshot.toSt s) a.user.val w</text>
+          <text x="472" y="145"><tspan class="pd-kw">    := by</tspan> &#x2026;</text>
         </g>
-        <text x="764" y="456" class="pd-code" text-anchor="middle">The proof in its editor, its verdict in the console you already use</text>
+        <text x="764" y="456" class="pd-code" text-anchor="middle">The proof you write, and its verdict in the console you already use</text>
       </svg>
     </figure>
     <div class="hero-actions">
