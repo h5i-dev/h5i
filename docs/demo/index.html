@@ -354,10 +354,10 @@ function camera(t) {
 }
 /* impacts: a flash and a decaying shake, in screen space */
 const hits = [
-  {at:T.qmark, amp:10, flash:.0,  col:'#fff'},
-  {at:F+10.4,  amp:16, flash:.55, col:'#ff6258'},   // Bob's order lands in Alice's session
-  {at:T.deny+3.6, amp:26, flash:.75, col:'#ff6258'}, // the wall
-  {at:T.cut,   amp:8,  flash:.9,  col:'#fff'},      // the cut from coin to workspace
+  {at:T.qmark, amp:0,  flash:.0,  col:'#fff'},
+  {at:F+10.4,  amp:6,  flash:.4,  col:'#ff6258'},   // Bob's order lands in Alice's session
+  {at:T.deny+3.6, amp:9, flash:.55, col:'#ff6258'}, // the wall
+  {at:T.cut,   amp:0,  flash:.8,  col:'#fff'},      // the cut from coin to workspace
   {at:T.back+10.6, amp:0, flash:.35, col:'#34d399'},
   {at:T.back+11.4, amp:0, flash:.35, col:'#34d399'},
   {at:T.back+12.2, amp:0, flash:.45, col:'#34d399'},
@@ -366,8 +366,8 @@ const hits = [
 function shake(t) {
   let dx = 0, dy = 0;
   for (const h of hits) if (t >= h.at && t < h.at + 1.2 && h.amp) {
-    const u = t - h.at, e = Math.exp(-u*7.5) * h.amp;
-    dx += e * Math.sin(u*71); dy += e * Math.cos(u*53);
+    const u = t - h.at, e = Math.exp(-u*9) * h.amp;
+    dx += e * Math.sin(u*44); dy += e * Math.cos(u*31) * .6;
   }
   return {dx, dy};
 }
