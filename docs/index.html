@@ -248,6 +248,35 @@
     .coin-flow { margin-top: 14px; }
     .proof-diagram.coin-diagram { min-width: 720px; }
     .coin-diagram .pd-coin { font-family: var(--mono); font-size: 26px; }
+    /* the Apps view inside the proof diagram: the console's own tokens, drawn small */
+    .pd-ui { border: 0; border-radius: 10px; background: var(--cm-ground); font-family: var(--sans); font-size: 10.5px; line-height: 1.35; color: var(--cm-ink); height: 236px; overflow: hidden; box-shadow: none; }
+    .pu-app { display: grid; grid-template-columns: 110px minmax(0, 1fr); height: 100%; }
+    .pu-rail { background: var(--cm-surface); border-right: 1px solid var(--cm-line); padding: 10px 6px; display: flex; flex-direction: column; gap: 2px; color: var(--cm-ink-3); font-size: 10.5px; }
+    .pu-rail > div { padding: 5px 8px; border-radius: 4px; }
+    .pu-rail .on { background: var(--cm-raised); color: var(--cm-ink); box-shadow: inset 2px 0 0 var(--cm-accent); }
+    .pu-brand { font-family: var(--cm-mono); font-weight: 700; font-size: 13px; color: var(--cm-ink); padding-bottom: 10px !important; }
+    .pu-brand b { color: var(--cm-accent); }
+    .pu-main { display: flex; flex-direction: column; min-width: 0; }
+    .pu-top { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 12px; border-bottom: 1px solid var(--cm-line); background: var(--cm-surface); white-space: nowrap; }
+    .pu-top b { font-size: 12px; }
+    .pu-top span { color: var(--cm-ink-3); overflow: hidden; text-overflow: ellipsis; }
+    .pu-top em { margin-left: auto; font-style: normal; color: var(--cm-ink-3); }
+    .pu-top em i { font-style: normal; color: var(--cm-ink); font-weight: 600; }
+    .pu-head { display: flex; align-items: baseline; gap: 8px; padding: 10px 12px 0; background: var(--cm-surface); }
+    .pu-head b { font-size: 13px; }
+    .pu-head code { font-family: var(--cm-mono); font-size: 9.5px; color: var(--cm-ink-3); background: none; border: 0; padding: 0; }
+    .pu-pill { font-size: 9.5px; padding: 0 6px; border-radius: 3px; color: var(--cm-green); background: var(--cm-green-bg); }
+    .pu-tabs { display: flex; gap: 2px; margin-top: 6px; padding: 0 8px; border-bottom: 1px solid var(--cm-line); background: var(--cm-surface); }
+    .pu-tabs span { padding: 5px 8px; color: var(--cm-ink-3); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+    .pu-tabs span.on { color: var(--cm-ink); border-bottom-color: var(--cm-accent); }
+    .pu-tabs i { font-style: normal; font-family: var(--cm-mono); font-size: 9.5px; color: var(--cm-ink-3); margin-left: 3px; }
+    .pu-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .pu-table th { text-align: left; padding: 5px 10px; color: var(--cm-ink-3); font-weight: 400; font-size: 9.5px; border-bottom: 1px solid var(--cm-line); background: var(--cm-surface); }
+    .pu-table td { padding: 7px 10px; border-bottom: 1px solid var(--cm-line); color: var(--cm-ink-2); vertical-align: top; }
+    .pu-table td code { font-family: var(--cm-mono); font-size: 10px; color: var(--cm-violet); background: none; border: 0; padding: 0; }
+    .pu-table td small { display: block; font-family: var(--cm-mono); font-size: 8.5px; color: var(--cm-ink-4); margin-top: 2px; }
+    .pu-ok { font-family: var(--cm-mono); font-size: 9.5px; padding: 0 6px; border-radius: 3px; color: var(--cm-green); background: var(--cm-green-bg); white-space: nowrap; }
+    .pu-foot { margin-top: auto; padding: 7px 12px; border-top: 1px solid var(--cm-line); background: var(--cm-surface); color: var(--cm-ink-3); font-family: var(--cm-mono); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .proof-flow .tabpick { position: absolute; opacity: 0; pointer-events: none; }
     .ed-tabs { display: flex; align-items: stretch; height: 27px; margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1; }
     .ed-tabs label {
@@ -556,9 +585,11 @@
         <g stroke="var(--spot)" stroke-width="1.5" stroke-opacity=".45"><path d="M360 147H486"/><path d="M614 147H740"/></g>
         <g class="coin-spin">
           <ellipse cx="550" cy="147" rx="58" ry="58" fill="url(#coin-face)" stroke="var(--spot)" stroke-width="2">
-            <animate attributeName="rx" values="58;58;4;58;58" keyTimes="0;.3;.5;.7;1" dur="9s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"/>
+            <animate attributeName="rx" values="58;58;0;58;0;58;58" keyTimes="0;.22;.36;.5;.64;.78;1" dur="10s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"/>
           </ellipse>
-          <text x="550" y="156" class="pd-title pd-coin" text-anchor="middle">h5i<animate attributeName="opacity" values="1;1;0;1;1" keyTimes="0;.42;.5;.58;1" dur="9s" repeatCount="indefinite"/></text>
+          <!-- the face: h5i on the front, its mirror image on the back, swapped each time the edge passes -->
+          <text x="550" y="156" class="pd-title pd-coin" text-anchor="middle">h5i<animate attributeName="opacity" values="1;0;1;1" keyTimes="0;.36;.64;1" dur="10s" repeatCount="indefinite" calcMode="discrete"/></text>
+          <text x="550" y="156" class="pd-title pd-coin" text-anchor="middle" transform="translate(1100 0) scale(-1 1)" opacity="0">h5i<animate attributeName="opacity" values="0;1;0;0" keyTimes="0;.36;.64;1" dur="10s" repeatCount="indefinite" calcMode="discrete"/></text>
         </g>
         <text x="550" y="70" class="pd-label" text-anchor="middle">ONE COIN</text>
         <text x="550" y="236" class="pd-note" text-anchor="middle">web security needs both sides, and one workspace holds both</text>
@@ -863,7 +894,7 @@
       <input class="tabpick" type="radio" name="edtab" id="ed-cargo">
       <svg class="proof-diagram" viewBox="0 0 1100 486" role="img" aria-labelledby="proof-title proof-desc" xmlns="http://www.w3.org/2000/svg">
         <title id="proof-title">From Rust application logic to Lean-checked properties</title>
-        <desc id="proof-desc">Aeneas extracts the Rust kernel of the bulletin board tutorial into Lean definitions. Developers supply specifications and proofs such as the authorized theorem. Lean checks the proofs against the extracted logic, establishing that every write is authorized, that invariants are preserved, and that no command panics.</desc>
+        <desc id="proof-desc">Aeneas extracts the Rust kernel of the bulletin board tutorial into Lean definitions. Developers supply theorems such as authorized, and the console's Apps view shows each theorem as proven, with the mutants its proof caught, over the latest verification receipt.</desc>
         <defs>
           <marker id="proof-arrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="currentColor" stroke-width="1.5"/></marker>
           <pattern id="proof-grid" width="18" height="18" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".7" fill="currentColor" opacity=".14"/></pattern>
@@ -928,74 +959,50 @@
         <text x="0" y="456" class="pd-code">The logic your app runs</text>
         <!-- Extraction connection. -->
         <g style="color:var(--spot)">
-          <path d="M388 232H418" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
+          <path d="M388 232H406" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
         </g>
-        <text x="403" y="212" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
-        <text x="403" y="258" class="pd-note" text-anchor="middle">extract</text>
-        <!-- Verification boundary: the extracted logic and the proofs you write, as two more editor tabs. -->
-        <rect x="428" y="44" width="400" height="376" rx="12" fill="url(#proof-grid)" style="color:var(--spot)"/>
-        <rect x="428" y="44" width="400" height="376" rx="12" fill="none" stroke="var(--spot)" stroke-opacity=".65"/>
-        <rect x="444" y="33" width="190" height="23" fill="var(--bg)"/>
-        <text x="453" y="49" class="pd-label pd-accent">LEAN 4 / VERIFICATION</text>
-        <rect x="444" y="68" width="368" height="152" rx="4" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M444 72a4 4 0 0 1 4-4h360a4 4 0 0 1 4 4v24H444z" fill="var(--bg)"/>
-        <path d="M444 96H812" stroke="var(--line2)"/>
-        <path d="M444 96V68h178v28" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M445 68.5H621" stroke="var(--spot)" stroke-width="2"/>
-        <circle cx="460" cy="82" r="3" fill="var(--spot)"/>
-        <text x="472" y="86" class="pd-text">BoardKernel.lean</text>
-        <text x="800" y="86" class="pd-label" text-anchor="end">EXTRACTED</text>
-        <g class="pd-ln" text-anchor="end">
-          <text x="472" y="118">465</text><text x="472" y="135">466</text><text x="472" y="152">467</text>
-          <text x="472" y="169">468</text><text x="472" y="186">469</text><text x="472" y="203">470</text>
-        </g>
+        <text x="397" y="212" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
+        <text x="397" y="258" class="pd-note" text-anchor="middle">extract</text>
+        <!-- Verification boundary: the console's Apps view, where the proofs of this kernel are read. -->
+        <rect x="418" y="44" width="682" height="376" rx="12" fill="url(#proof-grid)" style="color:var(--spot)"/>
+        <rect x="418" y="44" width="682" height="376" rx="12" fill="none" stroke="var(--spot)" stroke-opacity=".65"/>
+        <rect x="434" y="33" width="214" height="23" fill="var(--bg)"/>
+        <text x="443" y="49" class="pd-label pd-accent">LEAN 4 / h5i ui &#183; APPS</text>
+        <foreignObject x="432" y="60" width="654" height="236">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="console-plate pd-ui">
+            <div class="pu-app">
+              <div class="pu-rail"><div class="pu-brand">h<b>5</b>i</div><div>Overview</div><div>Sessions</div><div>Sandboxes</div><div class="on">Apps</div><div>Host</div></div>
+              <div class="pu-main">
+                <div class="pu-top"><b>Apps</b><span>what is proven, assumed, and unconfirmed</span><em><i>1</i> with a receipt</em></div>
+                <div class="pu-head"><b>board</b><code>examples/app/tutorials/board</code><span class="pu-pill">receipt &#183; just now</span></div>
+                <div class="pu-tabs"><span>Spec</span><span class="on">Theorems <i>3</i></span><span>Trust boundary</span><span>Evidence</span></div>
+                <table class="pu-table">
+                  <tr><th>theorem</th><th>status</th><th>mutants</th><th>axioms</th></tr>
+                  <tr><td><code>authorized</code><small>Theorems.lean:79</small></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">4 of 4 caught</span></td><td>standard</td></tr>
+                  <tr><td><code>inv_preserved</code><small>Theorems.lean:160</small></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">5 of 5 caught</span></td><td>standard</td></tr>
+                  <tr><td><code>transition_total</code><small>Theorems.lean:55</small></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">3 of 3 caught</span></td><td>standard</td></tr>
+                </table>
+              </div>
+            </div>
+          </div>
+        </foreignObject>
+        <!-- Under the console, the proof it is reading: the theorem you supply. -->
+        <rect x="432" y="306" width="654" height="104" rx="4" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M432 310a4 4 0 0 1 4-4h646a4 4 0 0 1 4 4v22H432z" fill="var(--bg)"/>
+        <path d="M432 332H1086" stroke="var(--line2)"/>
+        <path d="M432 332V306h130v26" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M433 306.5H561" stroke="var(--spot)" stroke-width="2"/>
+        <circle cx="446" cy="319" r="3" fill="var(--spot)"/>
+        <text x="458" y="323" class="pd-text">Theorems.lean</text>
+        <text x="1074" y="323" class="pd-label pd-accent" text-anchor="end">YOU SUPPLY</text>
+        <g class="pd-ln" text-anchor="end"><text x="460" y="352">79</text><text x="460" y="369">80</text><text x="460" y="386">81</text><text x="460" y="403">82</text></g>
         <g class="pd-src" xml:space="preserve">
-          <text x="486" y="118"><tspan class="pd-kw">def</tspan> delete (user : U64) (s : Snapshot) (id : U64)</text>
-          <text x="486" y="135">    : Result &#x2026; := <tspan class="pd-kw">do</tspan></text>
-          <text x="486" y="152">  <tspan class="pd-kw">let</tspan> o &#x2190; find_post s.posts id</text>
-          <text x="486" y="169">  <tspan class="pd-kw">match</tspan> o <tspan class="pd-kw">with</tspan></text>
-          <text x="486" y="186">  | none =&gt; ok (.Err .NotFound)</text>
-          <text x="486" y="203">  | some p =&gt; <tspan class="pd-kw">if</tspan> p.author = user <tspan class="pd-kw">then</tspan> &#x2026;</text>
+          <text x="474" y="352"><tspan class="pd-kw">theorem</tspan> authorized (a : Principal) (s : Snapshot) (c : Command) ws r</text>
+          <text x="474" y="369">    (hinv : Inv (Snapshot.toSt s)) (h : transition a s c = .ok (.Ok (ws, r))) :</text>
+          <text x="474" y="386">    &#x2200; w &#x2208; ws.val, allowed (Snapshot.toSt s) a.user.val w</text>
+          <text x="474" y="403"><tspan class="pd-kw">    := by</tspan> &#x2026;</text>
         </g>
-        <rect x="444" y="236" width="368" height="172" rx="4" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M444 240a4 4 0 0 1 4-4h360a4 4 0 0 1 4 4v24H444z" fill="var(--bg)"/>
-        <path d="M444 264H812" stroke="var(--line2)"/>
-        <path d="M444 264V236h152v28" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M445 236.5H595" stroke="var(--spot)" stroke-width="2"/>
-        <circle cx="460" cy="250" r="3" fill="var(--spot)"/>
-        <text x="472" y="254" class="pd-text">Theorems.lean</text>
-        <text x="800" y="254" class="pd-label pd-accent" text-anchor="end">YOU SUPPLY</text>
-        <g class="pd-ln" text-anchor="end">
-          <text x="472" y="286">77</text><text x="472" y="303">78</text><text x="472" y="320">79</text><text x="472" y="337">80</text>
-          <text x="472" y="354">81</text><text x="472" y="371">82</text><text x="472" y="388">83</text>
-        </g>
-        <g class="pd-src" xml:space="preserve">
-          <text x="486" y="286" class="pd-cm">/-- Every successful write is allowed. -/</text>
-          <text x="486" y="303"><tspan class="pd-kw">theorem</tspan> authorized (a : Principal) (s : Snapshot)</text>
-          <text x="486" y="320">    (c : Command) ws r (hinv : Inv (Snapshot.toSt s))</text>
-          <text x="486" y="337">    (h : transition a s c = .ok (.Ok (ws, r))) :</text>
-          <text x="486" y="354">    &#x2200; w &#x2208; ws.val,</text>
-          <text x="486" y="371">      allowed (Snapshot.toSt s) a.user.val w</text>
-          <text x="486" y="388"><tspan class="pd-kw">    := by</tspan> &#x2026;</text>
-        </g>
-        <text x="628" y="456" class="pd-code" text-anchor="middle">The extracted logic, checked against your specifications</text>
-        <!-- Output: properties established by the supplied proofs. -->
-        <path d="M840 232H876" fill="none" stroke="var(--spot)" stroke-width="1.5" style="color:var(--spot)" marker-end="url(#proof-arrowhead)"/>
-        <text x="858" y="212" class="pd-label pd-accent" text-anchor="middle">PASS</text>
-        <text x="888" y="28" class="pd-label">PROVEN PROPERTIES</text>
-        <g fill="none" stroke="var(--spot)" stroke-width="1.8">
-          <circle cx="899" cy="120" r="11"/><path d="M893 120l4 4 8-9"/>
-          <circle cx="899" cy="226" r="11"/><path d="M893 226l4 4 8-9"/>
-          <circle cx="899" cy="332" r="11"/><path d="M893 332l4 4 8-9"/>
-        </g>
-        <text x="920" y="125" class="pd-text">authorized</text>
-        <text x="888" y="151" class="pd-note">every write passes the policy</text>
-        <text x="920" y="231" class="pd-text">inv_preserved</text>
-        <text x="888" y="257" class="pd-note">invariants survive every step</text>
-        <text x="920" y="337" class="pd-text">transition_total</text>
-        <text x="888" y="363" class="pd-note">no panic, no overflow</text>
-        <path d="M888 168H1100M888 274H1100M888 380H1100" stroke="var(--line2)"/>
-        <text x="888" y="456" class="pd-code">Checked by Lean</text>
+        <text x="759" y="456" class="pd-code" text-anchor="middle">What Lean checked, in the console you already use</text>
       </svg>
     </figure>
     <div class="hero-actions">

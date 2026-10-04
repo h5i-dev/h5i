@@ -20,37 +20,32 @@ without turning the story into a tour.
 
 ## How it is cut
 
-Three layers sit on top of the product itself.
+The opening is a teaser; the rest is a demo.
 
-**Title cards.** Black, one uppercase line, letters tracking in, then a hard
-cut. "Your AI built it." "In an afternoon." "Is it really secure?" The question
-mark lands with a shake. At the end: "Find vulnerabilities." "Prove correctness." Then
-the mark, with bloom, and the tagline.
+**Title cards (0:00 to 0:13).** Black, uppercase, letters tracking in, then
+a hard cut. "Your AI built it. In an afternoon." "Is it really secure?" Then
+"Security has two sides, one workspace: find vulnerabilities, prove
+correctness."
 
-**The camera.** After the coin, one object is on screen the whole time: the
-workspace, resting at a three-quarter angle that drifts. The camera cuts
-between a wide shot and close-ups and dollies slowly within each. What the
-agent types on the right happens on the left, in the app itself: the click
-changes the page, the replayed request renders Bob's order inside Alice's
-session with a flash and a shake, the refused navigation drops a red wall. The
-coin flip is literal: the workspace rotates on its axis, with motion blur, to
-reveal the Rust kernel beside its Lean proofs.
-
-**Post.** A 2.39:1 letterbox, film grain reseeded every frame, a vignette,
-dust drifting through the frame with parallax, and a grid floor receding into
-the dark. A flash layer takes the impacts.
+**The workspace (0:13 to 0:51).** One window: the `h5i ui` console above, the
+agent's shell docked below. The agent types commands in the shell; a pointer
+clicks through the console's views and tabs. Nothing shakes and nothing
+flashes; the camera only cuts between a wide framing and a zoom on the part
+that matters.
 
 | Time | Beat |
 |---|---|
-| 0:01 | "Your AI built it." · "In an afternoon." · "Is it really secure?" |
-| 0:10 | "Security has two sides. One coin." The coin rises and spins, faster and faster, into a cut. |
-| 0:15 | Wide. The agent opens the authorized target and clicks into Alice's orders. |
-| 0:20 | Close on the shell. The captured request is replayed with Bob's ID. |
-| 0:25 | Close on the app. Bob's order lands in Alice's session. The diff names the bug. |
-| 0:28 | Close on the page: untrusted content tells the agent to leak the data. Wide: the allowlist refuses, the wall drops, the audit records it. |
-| 0:35 | The workspace turns over. "Same workspace. Other side of the coin." |
-| 0:38 | Wide. A scanline sweeps Rust into Lean. Close: the `authorized` theorem. Close: `lake build`, three properties light up, the covered Rust lines get a green bar. |
-| 0:51 | Black. "Find vulnerabilities." "Prove correctness." The mark. The tagline. The URLs. |
+| 0:13 | Sessions, Page tab. The agent opens the authorized target and clicks into Alice's orders; the page changes in the console. |
+| 0:19 | Click: History. The agent replays the captured request with Bob's ID; the row lands in the table. The diff names the vulnerability. |
+| 0:24 | Click: Findings. The finding card, with the three messages it rests on. |
+| 0:28 | Zoom on the shell: the agent tries to open paste.example and is refused. |
+| 0:31 | Click: Sandboxes. The refused run in the box's receipts, with the policy that refused it. |
+| 0:34 | Click: Apps. The board kernel's theorems, unconfirmed, with no receipt yet. |
+| 0:36 | The shell runs `cargo app-verify`; extraction, lake build, the axiom gate and the mutants pass, and the rows turn proven. |
+| 0:46 | Click: Evidence. The receipt: what was checked, over what was prepared, never a score. |
+
+**The close (0:51 to 1:00).** "Find vulnerabilities." "Prove correctness."
+The mark. The tagline. The URLs.
 
 ## What is deliberately not in it
 
@@ -62,16 +57,16 @@ video only.
 
 ## The rules the frames follow
 
-- One object on screen after the cards. The workspace never cuts away; the
-  camera does.
-- Every command has a visible consequence in the app or the proof pane, so
-  nobody has to read the terminal to follow the story.
+- One object on screen after the cards: the workspace. Scenes advance by a
+  command in the shell or a click on a tab, never by a cut to something else.
+- Every command has a visible consequence in the console, so nobody has to
+  read the terminal to follow the story.
 - Colour is load-bearing and narrow: **red** is refused or wrong, **green** is
   allowed or proven, **orange** is h5i and nothing else. `@ref` handles,
   message ids, and Lean keywords get violet, which is none of the three.
 - One line of narration at a time, as a lower third under the workspace.
-- Impacts are earned: a flash and a shake only when something lands (the
-  question mark, Bob's order, the wall, the cut, each proven property).
+- The cinema stays in the cards. After the cut into the workspace there is no
+  shake, no flash, no drift: a product demo, with a zoom where it helps.
 
 ## Files
 
@@ -107,14 +102,14 @@ All content lives in `index.html`:
 
 - The `T` table holds the absolute times of every beat; everything else is
   expressed relative to it, so moving a beat moves what belongs to it.
-- `shots` is the camera: each entry dollies from one framing to another, and
-  the boundaries between entries are hard cuts. `hits` are the impacts, each
-  a flash and a decaying shake.
+- `shots` is the camera: one static framing per beat, hard cuts between.
+  `clicks` is the pointer: which tab it moves to and when it presses.
 - `term` is the agent's shell: `{at, cmd}` / `{at, out:[html lines]}` events.
   `out` lines are raw HTML; `cmd` is escaped and typed out. The app pane's
   state changes are in `draw()` next to the command that causes each one.
-- `rustLines`, `leanLines`, `thmLines` are the back face; `covered` is the set
-  of Rust lines the theorem's green bar marks.
+- `drawConsole()` is the console's state as a function of time: which view and
+  tab are open, which rows and chips are visible. The markup between the
+  `ws:start` and `ws:end` markers is the mock itself; the pitch deck copies it.
 - `caps` is the lower third, one entry per beat. The title cards are the
   `.card` elements, driven by `card()`.
 - A pane whose content outgrows its box clips silently. After adding lines,
