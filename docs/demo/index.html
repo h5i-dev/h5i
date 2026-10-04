@@ -524,6 +524,8 @@ const term = [
   {at:F+10.2, out:[`<span class="err">owner: Alice → Bob</span> · alike 0.712 · same authenticated session`]},
   {at:T.deny+.3, cmd:'h5i browser open https://paste.example', cps:62},
   {at:T.deny+2.3, out:[`<span class="err">⛔ refused</span> · paste.example is outside the allowlist · recorded`]},
+  {at:T.tApps+.4, cmd:'clear', cps:40},
+  {at:T.tApps+.9, clear:true},
   {at:T.write+.2,  out:[`<span class="pen">✎</span> writing <span class="ref">kernel/src/lib.rs</span> on h5i-app · the board's commands as one pure function`]},
   {at:T.write+2.6, out:[`<span class="pen">✎</span> fn delete: the author or a moderator may delete a post`]},
   {at:T.extract+.2, cmd:'cargo app-extract', cps:48},
@@ -539,6 +541,7 @@ function renderTerm(el, ev, t) {
   let html = '', typing = false, n = 0;
   for (const v of ev) {
     if (t < v.at) break;
+    if (v.clear) { html = ''; continue; }
     if (v.cmd !== undefined) {
       const k = Math.floor((t - v.at) * v.cps);
       const mid = k < v.cmd.length; if (mid) typing = true;
@@ -716,7 +719,7 @@ function draw(ms) {
     const appIn = eo(ramp(t, F+1.2, .5)), appOut = eio(ramp(t, T.tApps - .6, .6));
     const app = $('win-app'); app.style.opacity = onDesk * appIn * (1 - appOut);
     app.style.transform = `translateY(${(1-appIn)*24 + appOut*40}px)`;
-    const edIn = eo(ramp(t, T.write - .3, .5)), edOut = eio(ramp(t, T.tEvidence - .5, .5)); const ed = $('win-ed');
+    const edIn = eo(ramp(t, T.write + .2, .5)), edOut = eio(ramp(t, T.tEvidence - .5, .5)); const ed = $('win-ed');
     ed.style.opacity = onDesk * edIn * (1 - edOut); ed.style.transform = `translateY(${(1-edIn)*24 + edOut*40}px)`;
   }
   renderTerm($('term'), term, t);
