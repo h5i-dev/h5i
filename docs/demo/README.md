@@ -1,6 +1,6 @@
 # h5i teaser: is the web app your AI built really secure?
 
-The h5i product film (1:00), built as a deterministic HTML timeline and
+The h5i product film (1:03), built as a deterministic HTML timeline and
 rendered to mp4. It is cut like a teaser, not a walkthrough, and tells the
 same story as the front page and the pitch deck: **find vulnerabilities, prove
 correctness, two sides of one coin, one workspace.** It is linked from the
@@ -26,10 +26,10 @@ The opening is a teaser; the rest is a demo.
 a hard cut. "Your AI built it. Is it really secure?", over a slow drift of
 anonymized clippings: headlines and posts about shipped-in-a-day apps that
 leaked, with every name blanked. Then
-"Security has two sides, one workspace: find vulnerabilities, prove
-correctness."
+"Security has two sides, one workspace. Let's find vulnerabilities like a
+professional hacker."
 
-**The desk (0:10 to 0:53).** Three windows, all real screens: the agent's
+**The desk (0:10 to 0:56).** Three windows, all real screens: the agent's
 shell on the left, headed by the AI agent that is driving it, the
 `h5i ui` console on the right, and, overlapping the console's lower right,
 the app under test in the browser the agent drives, which in the second half
@@ -47,13 +47,14 @@ theorems turning proven carry the story on their own.
 | 0:22 | Click: Findings. The finding card, with the three messages it rests on. |
 | 0:25 | Untrusted page content asks for a leak; the agent tries to open paste.example and the app window shows it refused by policy. |
 | 0:28 | Click: Sandboxes. The refused run in the box's receipts, with the policy that refused it. |
-| 0:31 | Click: Apps. The board kernel's theorems, unconfirmed, with no receipt yet. The editor window opens: the agent writes the kernel in Rust, on h5i-app. |
-| 0:35 | `cargo app-extract`: Charon and Aeneas turn the Rust into `BoardKernel.lean`, and the editor shows it. |
-| 0:38 | The agent states the rule and writes the proof in `Theorems.lean`. |
-| 0:43 | `cargo app-verify`: extraction, lake build, the axiom gate and the mutants pass, and the rows turn proven. |
-| 0:50 | Click: Evidence. The receipt: what was checked, over what was prepared, never a score. |
+| 0:31 | Black again, one card: "The other side of the coin. Let's prove correctness rigorously with Lean 4." |
+| 0:34 | Click: Apps. The board kernel's theorems, unconfirmed, with no receipt yet. The editor window opens: the agent writes the kernel in Rust, on h5i-app. |
+| 0:39 | `cargo app-extract`: Charon and Aeneas turn the Rust into `BoardKernel.lean`, and the editor shows it. |
+| 0:42 | The agent states the rule and writes the proof in `Theorems.lean`. |
+| 0:46 | `cargo app-verify`: extraction, lake build, the axiom gate and the mutants pass, and the rows turn proven. |
+| 0:53 | Click: Evidence. The receipt: what was checked, over what was prepared, never a score. |
 
-**The close (0:53 to 1:00).** One screen: the mark, the tagline, then
+**The close (0:56 to 1:03).** One screen: the mark, the tagline, then
 "Find vulnerabilities. Prove correctness.", then the URLs.
 
 ## What is deliberately not in it

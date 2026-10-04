@@ -4,31 +4,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>h5i: is the web app your AI built really secure?</title>
-<meta name="description" content="A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
+<meta name="description" content="A 63-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
 <link rel="canonical" href="https://h5i.dev/demo/">
 <link rel="icon" type="image/png" href="https://h5i.dev/_static/logo.png">
 <link rel="apple-touch-icon" href="https://h5i.dev/_static/logo.png">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="h5i">
 <meta property="og:title" content="h5i: is the web app your AI built really secure?">
-<meta property="og:description" content="A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
+<meta property="og:description" content="A 63-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
 <meta property="og:url" content="https://h5i.dev/demo/">
 <meta property="og:locale" content="en_US">
 <meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="h5i: is the web app your AI built really secure?">
-<meta name="twitter:description" content="A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
+<meta name="twitter:description" content="A 63-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
 <meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 <meta name="robots" content="index, follow, max-image-preview:large, max-video-preview:-1">
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"VideoObject",
  "name":"h5i: is the web app your AI built really secure?",
- "description":"A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.",
+ "description":"A 63-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.",
  "thumbnailUrl":"https://h5i.dev/_static/sandboxed-browser-ui.png",
  "uploadDate":"2026-10-04",
- "duration":"PT60S",
+ "duration":"PT63S",
  "embedUrl":"https://h5i.dev/demo/",
  "publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}}}
 </script>
@@ -87,7 +87,7 @@
   .card .kick{font-family:var(--mono);font-size:20px;letter-spacing:.34em;text-transform:uppercase;color:var(--accent);margin-bottom:26px;text-indent:.34em}
   #c-1 h2.l2{margin-top:22px;opacity:0}
   #c-1 em{display:inline-block;color:var(--accent)}
-  #c-two h2{font-size:64px;line-height:1.25;white-space:normal}
+  #c-two h2,#c-three h2{font-size:64px;line-height:1.25;white-space:normal}
 
   /* ws-css:start */
   /* ---- three windows on one desk: the agent's shell, the h5i console, and the app under test ---- */
@@ -304,7 +304,8 @@
     <div id="dust"></div>
 
     <div class="card" id="c-1"><h2>Your AI built it.</h2><h2 class="l2">Is it really secure<em>?</em></h2></div>
-    <div class="card" id="c-two"><div class="kick">security has two sides · one workspace</div><h2>Find vulnerabilities.<br>Prove correctness.</h2></div>
+    <div class="card" id="c-two"><div class="kick">security has two sides · one workspace</div><h2>Let's find vulnerabilities<br>like a professional hacker.</h2></div>
+    <div class="card" id="c-three"><div class="kick">the other side of the coin</div><h2>Let's prove correctness<br>rigorously with Lean 4.</h2></div>
 
     <div class="wsw" id="desk">
 <!-- ws:start -->
@@ -495,8 +496,8 @@ const T = {
   c1: 1.2, c1b: 3.0, qmark: 4.4, black1: 6.8,
   two: 7.2, cut: 10.3,
   ws: 10.3,
-  tHistory: 16.5, tFindings: 21.7, deny: 25.1, tBoxes: 27.9, tApps: 31.1, write: 31.9, extract: 35.5, prove: 38.5, verify: 42.9, tEvidence: 49.7,
-  close: 52.7, logo: 53.4, end: 60,
+  tHistory: 16.5, tFindings: 21.7, deny: 25.1, tBoxes: 27.9, card2: 31.1, tApps: 34.4, write: 35.2, extract: 38.8, prove: 41.8, verify: 46.2, tEvidence: 53.0,
+  close: 56.0, logo: 56.7, end: 63.2,
 };
 const TOTAL = T.end * 1000;
 const F = T.ws;
@@ -507,7 +508,8 @@ const shots = [
   {a:T.ws,        b:T.tFindings, from:{x:0,y:0,s:1},        to:{x:0,y:0,s:1}},
   {a:T.tFindings, b:T.deny,      from:{x:-70,y:40,s:1.1},   to:{x:-70,y:40,s:1.1}},     // the finding
   {a:T.deny,      b:T.tBoxes,    from:{x:0,y:0,s:1},        to:{x:0,y:0,s:1}},
-  {a:T.tBoxes,    b:T.tApps,     from:{x:-70,y:40,s:1.1},   to:{x:-70,y:40,s:1.1}},     // the refused run
+  {a:T.tBoxes,    b:T.card2,     from:{x:-70,y:40,s:1.1},   to:{x:-70,y:40,s:1.1}},     // the refused run
+  {a:T.card2,     b:T.tApps,     from:{x:0,y:0,s:1},        to:{x:0,y:0,s:1}},          // the second title card
   {a:T.tApps,     b:T.verify+4.6,from:{x:0,y:0,s:1},        to:{x:0,y:0,s:1}},
   {a:T.verify+4.6,b:T.close,     from:{x:-70,y:40,s:1.1},   to:{x:-70,y:40,s:1.1}},     // the theorems turn proven; the receipt
 ];
@@ -597,7 +599,7 @@ function centerOf(id) {
 }
 function drawPointer(t) {
   const p = $('ptr');
-  if (t < T.tFindings - 1.2 || t >= T.close) { p.style.opacity = 0; return; }
+  if (t < T.tFindings - 1.2 || t >= T.close || (t >= T.card2 && t < T.tApps - .4)) { p.style.opacity = 0; return; }
   let from = {x: 1500, y: 470}, to = from, moveAt = T.tFindings - 1.2, clickAt = Infinity;
   for (let i = 0; i < clicks.length; i++) {
     const c = clicks[i]; const start = c.at - .9;
@@ -712,7 +714,7 @@ const caps = [
 function renderCap(t) {
   let i = -1; for (let k = 0; k < caps.length; k++) if (t >= caps[k].at) i = k;
   const el = $('cap');
-  if (i < 0 || t >= T.close) { el.style.opacity = 0; return; }
+  if (i < 0 || t >= T.close || (t >= T.card2 && t < T.tApps)) { el.style.opacity = 0; return; }
   const c = caps[i], next = caps[i+1];
   if (el._i !== i) { el._i = i; el.innerHTML = c.html; }
   const inP = eo(ramp(t, c.at, .5));
@@ -751,11 +753,14 @@ function draw(ms) {
   { const l2 = $('c-1').querySelector('.l2'); const p = eo(ramp(t, T.c1b, .6)); l2.style.opacity = p; l2.style.letterSpacing = l2.style.textIndent = lerp(.34, .2, eo(ramp(t, T.c1b, T.black1 - T.c1b))) + 'em'; }
   { const em = $('c-1').querySelector('em'); const p = ramp(t, T.qmark, .22); em.style.opacity = p; em.style.transform = `scale(${lerp(2.2, 1, eo(p))})`; }
   card('c-two', t, T.two, T.cut, {ls0:.4, ls1:.2});
+  card('c-three', t, T.card2 + .3, T.tApps - .1, {ls0:.4, ls1:.2});
 
   /* the desk: the shell and the console from the cut; the app's window while the agent is browsing */
   {
     const away = eio(ramp(t, T.close, 1.0));
-    const onDesk = t >= T.ws && t < T.close + 1.0 ? 1 - away : 0;
+    // the desk steps aside for the second title card, then comes back with the Apps view
+    const stepOut = eio(ramp(t, T.card2, .35)), stepIn = eo(ramp(t, T.tApps - .4, .4));
+    const onDesk = t >= T.ws && t < T.close + 1.0 ? (1 - away) * (t < T.card2 ? 1 : t < T.tApps - .4 ? 1 - stepOut : stepIn) : 0;
     $('win-shell').style.opacity = onDesk; $('win-con').style.opacity = onDesk;
     const appIn = eo(ramp(t, F+1.2, .5)), appOut = eio(ramp(t, T.tApps - .6, .6));
     const app = $('win-app'); app.style.opacity = onDesk * appIn * (1 - appOut);
