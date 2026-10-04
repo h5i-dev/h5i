@@ -253,7 +253,7 @@
   /* ---- the lower third: the one line of narration ---- */
   /* the narration line sits in the lower letterbox bar: a clean black field, never over the windows */
   #cap{position:absolute;left:50%;transform:translateX(-50%);top:988px;white-space:nowrap;padding:0 10px;
-    text-align:center;font-family:var(--sans);font-size:30px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#b9b9c2;opacity:0;z-index:45}
+    text-align:center;font-family:var(--sans);font-size:32px;font-weight:500;letter-spacing:.005em;color:#b9b9c2;opacity:0;z-index:45}
   #cap b{color:#fff;font-weight:700}
   #cap em{font-style:normal;color:var(--accent);font-weight:700}
 
@@ -699,18 +699,18 @@ function card(id, t, a, b, opts={}) {
 
 /* the one line of narration, as a lower third */
 const caps = [
-  {at:F+1.0,        html:`the agent works in its shell · <b>you watch the console</b>`},
-  {at:F+6.6,        html:`it <b>replays a real request</b> like a hacker`},
-  {at:T.tFindings+.6, html:`<em>vulnerability found</em> · alice can read bob's order · evidence attached`},
-  {at:T.deny+.3,    html:`the page tells the agent to leak the data · it tries`},
-  {at:T.tBoxes+.6,  html:`the policy <b>refused it</b> · the sandbox <b>recorded it</b>`},
-  {at:T.tApps+.6,   html:`same console · <em>other side of the coin</em>`},
-  {at:T.write+.6,   html:`the agent <b>writes the app's logic</b> in rust, on h5i-app`},
-  {at:T.extract+.6, html:`aeneas <b>extracts it to lean 4</b>, line for line`},
-  {at:T.prove+.6,   html:`the agent <b>states the rule and writes the proof</b>`},
-  {at:T.verify+.6,  html:`lean checks it · <b>the console shows what is proven</b>`},
-  {at:T.verify+6.2, html:`<b>proven</b> · and the receipt says what was checked`},
-  {at:T.tEvidence+2.2, html:`a proof covers the <b>stated rule</b> · red-teaming covers <b>the rest</b>`},
+  {at:F+1.0,        html:`The agent works in its shell. <b>You watch the console.</b>`},
+  {at:F+6.6,        html:`It <b>replays a real request</b>, like a hacker.`},
+  {at:T.tFindings+.6, html:`<em>Vulnerability found.</em> Alice can read Bob's order, evidence attached.`},
+  {at:T.deny+.3,    html:`The page tells the agent to leak the data. It tries.`},
+  {at:T.tBoxes+.6,  html:`The policy <b>refused it</b>. The sandbox <b>recorded it</b>.`},
+  {at:T.tApps+.6,   html:`Same console, <em>other side of the coin</em>.`},
+  {at:T.write+.6,   html:`The agent <b>writes the app's logic</b> in Rust, on h5i-app.`},
+  {at:T.extract+.6, html:`Aeneas <b>extracts it to Lean 4</b>, line for line.`},
+  {at:T.prove+.6,   html:`The agent <b>states the rule and writes the proof</b>.`},
+  {at:T.verify+.6,  html:`Lean checks it. <b>The console shows what is proven.</b>`},
+  {at:T.verify+6.2, html:`<b>Proven</b>, and the receipt says what was checked.`},
+  {at:T.tEvidence+2.2, html:`A proof covers the <b>stated rule</b>. Red-teaming covers <b>the rest</b>.`},
 ];
 function renderCap(t) {
   let i = -1; for (let k = 0; k < caps.length; k++) if (t >= caps[k].at) i = k;
