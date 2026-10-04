@@ -651,6 +651,10 @@ name = "h5i-app-sql"
 version = "0.1.0"
 
 [[package]]
+name = "h5i-app-std"
+version = "0.1.0"
+
+[[package]]
 name = "h5i-app-token"
 version = "0.1.0"
 
@@ -1389,6 +1393,13 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "roles-kernel"
+version = "0.1.0"
+dependencies = [
+ "h5i-app-std",
+]
 
 [[package]]
 name = "rustc-hash"

@@ -12,6 +12,7 @@ members = [
     "filters/kernel",
     "keys/kernel",
     "kellnr/kernel",
+    "roles/kernel",
     "tutorials/board/kernel",
     "tutorials/board/server",
     "tutorials/booking/kernel",

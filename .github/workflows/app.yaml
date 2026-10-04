@@ -97,7 +97,7 @@ jobs:
       - name: Build the other extracted-crate proofs
         working-directory: .
         run: |
-          for d in crates/h5i-app-sql/proofs crates/h5i-app-pgsql/proofs crates/h5i-app-token/proofs crates/h5i-app-json/proofs crates/h5i-app-std/proofs examples/app/kellnr/proofs examples/app/atuin/proofs examples/app/tutorials/calculator/proofs examples/app/tutorials/board/proofs examples/app/wastebin/proofs examples/app/conduit/proofs examples/app/cratesio/proofs examples/app/tutorials/ledger/proofs examples/app/tutorials/inbox/proofs examples/app/tutorials/booking/proofs examples/app/filters/proofs examples/app/keys/proofs; do
+          for d in crates/h5i-app-sql/proofs crates/h5i-app-pgsql/proofs crates/h5i-app-token/proofs crates/h5i-app-json/proofs crates/h5i-app-std/proofs examples/app/kellnr/proofs examples/app/atuin/proofs examples/app/tutorials/calculator/proofs examples/app/tutorials/board/proofs examples/app/wastebin/proofs examples/app/conduit/proofs examples/app/cratesio/proofs examples/app/tutorials/ledger/proofs examples/app/tutorials/inbox/proofs examples/app/tutorials/booking/proofs examples/app/filters/proofs examples/app/keys/proofs examples/app/roles/proofs; do
             mkdir -p "$d/.lake"
             ln -sfn "$GITHUB_WORKSPACE/examples/app/docs/proofs/.lake/packages" "$d/.lake/packages"
             (cd "$d" && lake build)
@@ -144,6 +144,7 @@ jobs:
       - run: scripts/app/extract-booking.sh
       - run: scripts/app/extract-filters.sh
       - run: scripts/app/extract-keys.sh
+      - run: scripts/app/extract-roles.sh
       - run: |
           git diff --exit-code -- \
             examples/app/docs/proofs/generated/DocsKernel.lean \
@@ -163,4 +164,6 @@ jobs:
             examples/app/tutorials/inbox/proofs/generated/InboxKernel.lean \
             examples/app/tutorials/booking/proofs/generated/BookingKernel.lean \
             examples/app/filters/proofs/generated/FiltersKernel.lean \
-            examples/app/keys/proofs/generated/KeysKernel.lean
+            examples/app/keys/proofs/generated/KeysKernel.lean \
+            examples/app/roles/proofs/generated/RolesKernel.lean \
+            examples/app/roles/proofs/generated/StdSpecs.lean

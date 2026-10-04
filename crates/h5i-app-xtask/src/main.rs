@@ -25,6 +25,7 @@ const PROJECTS: &[(&str, Option<&str>, Option<&str>)] = &[
     ("examples/app/tutorials/booking/proofs", Some("scripts/app/extract-booking.sh"), Some("examples/app/tutorials/booking/proofs/generated/BookingKernel.lean")),
     ("examples/app/filters/proofs", Some("scripts/app/extract-filters.sh"), Some("examples/app/filters/proofs/generated/FiltersKernel.lean")),
     ("examples/app/keys/proofs", Some("scripts/app/extract-keys.sh"), Some("examples/app/keys/proofs/generated/KeysKernel.lean")),
+    ("examples/app/roles/proofs", Some("scripts/app/extract-roles.sh"), Some("examples/app/roles/proofs/generated/RolesKernel.lean")),
     ("crates/h5i-app-core/proofs", None, None),
 ];
 

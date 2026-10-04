@@ -33,7 +33,7 @@ HTTP (axum) ──► Actor<K> ──► H5iApp::respond ──► Engine: BEGIN
 | `examples/app/docs` | the document service, the largest example |
 | `examples/app/kellnr`, `examples/app/atuin` | ports of real authorization code, kernels and proofs only |
 | `examples/app/wastebin`, `examples/app/conduit`, `examples/app/cratesio` | ports of real applications, with servers |
-| `examples/app/filters`, `examples/app/keys` | patterns, kernels and proofs only: parsing over bytes, properties across requests |
+| `examples/app/filters`, `examples/app/keys`, `examples/app/roles` | patterns, kernels and proofs only: parsing over bytes, properties across requests, `h5i-app-std` and read authorization |
 | `xtask` | `cargo app-verify`, which runs CI's checks locally |
 
 The root Cargo workspace holds `crates/*` and `xtask`. `examples/app/` is a second
@@ -240,6 +240,8 @@ generated library's roots:
 ```bash
 scripts/app/std-specs.sh MyKernel my_kernel path/to/proofs/generated
 ```
+
+`examples/app/roles` does this end to end (`scripts/app/extract-roles.sh`).
 
 The copy imports the kernel's extraction and opens its namespace. Aeneas
 keeps only the functions the kernel calls, so each spec is guarded by its
