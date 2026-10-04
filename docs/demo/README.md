@@ -27,18 +27,22 @@ a hard cut. "Your AI built it. In an afternoon." "Is it really secure?" Then
 "Security has two sides, one workspace: find vulnerabilities, prove
 correctness."
 
-**The workspace (0:13 to 0:51).** One window: the `h5i ui` console above, the
-agent's shell docked below. The agent types commands in the shell; a pointer
-clicks through the console's views and tabs. Nothing shakes and nothing
-flashes; the camera only cuts between a wide framing and a zoom on the part
-that matters.
+**The desk (0:13 to 0:51).** Three windows, all real screens: the agent's
+shell on the left, the `h5i ui` console on the right, and, while the agent is
+browsing, the app under test in the browser it drives, overlapping the
+console's lower right. The agent types in the shell; what it does shows up
+in the console and in the app; a pointer clicks through the console's views
+and tabs. Nothing shakes and nothing flashes; the camera cuts to a gentle
+push toward the console where it helps and leaves the shell in frame. The
+narration line is optional: the finding's title, the refused run, and the
+theorems turning proven carry the story on their own.
 
 | Time | Beat |
 |---|---|
-| 0:13 | Sessions, Page tab. The agent opens the authorized target and clicks into Alice's orders; the page changes in the console. |
-| 0:19 | Click: History. The agent replays the captured request with Bob's ID; the row lands in the table. The diff names the vulnerability. |
+| 0:13 | The agent opens the authorized target and clicks into Alice's orders; the app window follows, the History fills. |
+| 0:19 | The agent replays the captured request with Bob's ID; the row lands in History, and Bob's order appears in Alice's page. The diff names the vulnerability. |
 | 0:24 | Click: Findings. The finding card, with the three messages it rests on. |
-| 0:28 | Zoom on the shell: the agent tries to open paste.example and is refused. |
+| 0:28 | Untrusted page content asks for a leak; the agent tries to open paste.example and the app window shows it refused by policy. |
 | 0:31 | Click: Sandboxes. The refused run in the box's receipts, with the policy that refused it. |
 | 0:34 | Click: Apps. The board kernel's theorems, unconfirmed, with no receipt yet. |
 | 0:36 | The shell runs `cargo app-verify`; extraction, lake build, the axiom gate and the mutants pass, and the rows turn proven. |
@@ -57,10 +61,11 @@ video only.
 
 ## The rules the frames follow
 
-- One object on screen after the cards: the workspace. Scenes advance by a
-  command in the shell or a click on a tab, never by a cut to something else.
-- Every command has a visible consequence in the console, so nobody has to
-  read the terminal to follow the story.
+- The shell and the console are always on screen after the cards; the app's
+  window joins them while the agent is browsing. Scenes advance by a command
+  in the shell or a click on a tab, never by a cut to something else.
+- Every command has a visible consequence in the console or the app, so the
+  film is followable with the narration line off.
 - Colour is load-bearing and narrow: **red** is refused or wrong, **green** is
   allowed or proven, **orange** is h5i and nothing else. `@ref` handles,
   message ids, and Lean keywords get violet, which is none of the three.
@@ -107,9 +112,10 @@ All content lives in `index.html`:
 - `term` is the agent's shell: `{at, cmd}` / `{at, out:[html lines]}` events.
   `out` lines are raw HTML; `cmd` is escaped and typed out. The app pane's
   state changes are in `draw()` next to the command that causes each one.
-- `drawConsole()` is the console's state as a function of time: which view and
-  tab are open, which rows and chips are visible. The markup between the
-  `ws:start` and `ws:end` markers is the mock itself; the pitch deck copies it.
+- `drawConsole()` is the console's and the app window's state as a function of
+  time: which view and tab are open, which rows, chips and pages are visible.
+  The console markup sits between the `ws:start` and `ws:end` markers; the
+  pitch deck carries its own static copies of an earlier, one-window version.
 - `caps` is the lower third, one entry per beat. The title cards are the
   `.card` elements, driven by `card()`.
 - A pane whose content outgrows its box clips silently. After adding lines,
