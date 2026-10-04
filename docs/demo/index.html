@@ -4,29 +4,29 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>h5i: is the web app your AI built really secure?</title>
-<meta name="description" content="A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
+<meta name="description" content="A 64-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
 <link rel="canonical" href="https://h5i.dev/demo/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="h5i">
 <meta property="og:title" content="h5i: is the web app your AI built really secure?">
-<meta property="og:description" content="A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
+<meta property="og:description" content="A 64-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
 <meta property="og:url" content="https://h5i.dev/demo/">
 <meta property="og:locale" content="en_US">
 <meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="h5i: is the web app your AI built really secure?">
-<meta name="twitter:description" content="A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
+<meta name="twitter:description" content="A 64-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
 <meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 <meta name="robots" content="index, follow, max-image-preview:large, max-video-preview:-1">
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"VideoObject",
  "name":"h5i: is the web app your AI built really secure?",
- "description":"A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.",
+ "description":"A 64-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.",
  "thumbnailUrl":"https://h5i.dev/_static/sandboxed-browser-ui.png",
  "uploadDate":"2026-10-04",
- "duration":"PT60S",
+ "duration":"PT64S",
  "embedUrl":"https://h5i.dev/demo/",
  "publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}}}
 </script>
@@ -88,6 +88,22 @@
   #win-shell{left:40px;top:160px;width:600px;height:760px}
   #win-con{left:670px;top:160px;width:1210px;height:760px}
   #win-app{left:1130px;top:528px;width:730px;height:376px;z-index:3}
+  #win-ed{left:1130px;top:528px;width:730px;height:376px;z-index:3}
+  .etabs{flex:none;display:flex;gap:2px;padding:8px 10px 0;background:var(--w-surface);border-bottom:1px solid var(--w-line)}
+  .etab{padding:6px 12px 8px;font-family:var(--w-mono);font-size:13px;color:var(--w-ink3);border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
+  .etab.cur{color:var(--w-ink);border-bottom-color:var(--w-accent)}
+  .etab i{font-style:normal;margin-left:8px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--w-accent)}
+  .code{display:none;flex:1;padding:12px 16px;font-family:var(--w-mono);font-size:13.5px;line-height:1.5;overflow:hidden}
+  .code.on{display:block}
+  .cl{display:flex;gap:14px;white-space:pre;opacity:0}
+  .cl.on{opacity:1}
+  .cl .n{width:22px;text-align:right;color:var(--w-ink4);flex:none;font-size:12px;padding-top:2px}
+  .cl .c{color:var(--w-ink)} .kw{color:var(--w-violet)}
+  .agent{flex:none;display:flex;align-items:center;gap:16px;padding:14px 20px 10px;border-bottom:1px solid var(--w-line)}
+  .mascot{margin:0;font-family:var(--w-mono);font-size:13px;line-height:1.05;color:var(--w-accent);text-shadow:0 0 14px rgba(255,122,89,.45)}
+  .who{font-size:15px;color:var(--w-ink2)} .who b{color:var(--w-ink);font-weight:600}
+  .who span{display:block;font-family:var(--w-mono);font-size:12px;color:var(--w-ink3);margin-top:3px}
+  .ln .pen{color:var(--w-violet)}
   /* the shell */
   .tbody{flex:1;padding:16px 20px;font-family:var(--w-mono);font-size:16.5px;line-height:1.7;overflow:hidden}
   .ln{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--w-ink)}
@@ -267,6 +283,10 @@
     <!-- the agent's shell -->
     <div class="wnd" id="win-shell">
       <div class="wbar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="tt">claude</span><span>· the agent's shell</span><span class="r">inside alice/sandbox</span></div>
+      <div class="agent"><pre class="mascot"> ▄▄▄▄▄▄▄
+█ ▀   ▀ █
+█  ▀▀▀  █
+ ▀▀▀▀▀▀▀ </pre><div class="who"><b>claude code</b> · coding agent<span>working inside alice/sandbox · h5i skill loaded</span></div></div>
       <div class="tbody" id="term"></div>
     </div>
 
@@ -387,6 +407,15 @@
       </div>
     </div>
 
+    <!-- the editor: the kernel the agent writes, what Aeneas makes of it, and the proof the agent writes -->
+    <div class="wnd" id="win-ed">
+      <div class="wbar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="tt">examples/app/tutorials/board</span><span class="r">the agent's editor</span></div>
+      <div class="etabs"><span class="etab cur" id="et-rs">kernel/src/lib.rs</span><span class="etab" id="et-lean">BoardKernel.lean<i>extracted</i></span><span class="etab" id="et-thm">proofs/Theorems.lean</span></div>
+      <div class="code on" id="ed-rs"><div class="cl" id="rs0"><span class="n">1</span><span class="c"><span class="kw">fn</span> delete(user: u64, s: &amp;Snapshot, id: u64)</span></div><div class="cl" id="rs1"><span class="n">2</span><span class="c"> -&gt; Outcome {</span></div><div class="cl" id="rs2"><span class="n">3</span><span class="c">  <span class="kw">match</span> find_post(&amp;s.posts, id) {</span></div><div class="cl" id="rs3"><span class="n">4</span><span class="c">    None =&gt; Err(Error::NotFound),</span></div><div class="cl" id="rs4"><span class="n">5</span><span class="c">    Some(p) =&gt; {</span></div><div class="cl" id="rs5"><span class="n">6</span><span class="c">      <span class="kw">if</span> p.author == user</span></div><div class="cl" id="rs6"><span class="n">7</span><span class="c">        || is_moderator(&amp;s.moderators, user) {</span></div><div class="cl" id="rs7"><span class="n">8</span><span class="c">        Ok((one(Write::DelPost(id)), Reply::Done))</span></div><div class="cl" id="rs8"><span class="n">9</span><span class="c">      } <span class="kw">else</span> {</span></div><div class="cl" id="rs9"><span class="n">10</span><span class="c">        Err(Error::Forbidden)</span></div><div class="cl" id="rs10"><span class="n">11</span><span class="c">      }</span></div><div class="cl" id="rs11"><span class="n">12</span><span class="c">    }</span></div><div class="cl" id="rs12"><span class="n">13</span><span class="c">  }</span></div><div class="cl" id="rs13"><span class="n">14</span><span class="c">}</span></div></div>
+      <div class="code" id="ed-lean"><div class="cl" id="le0"><span class="n">1</span><span class="c"><span class="kw">def</span> delete (user : U64) (s : Snapshot) (id : U64) := <span class="kw">do</span></span></div><div class="cl" id="le1"><span class="n">2</span><span class="c">  <span class="kw">let</span> o ← find_post s.posts id</span></div><div class="cl" id="le2"><span class="n">3</span><span class="c">  <span class="kw">match</span> o <span class="kw">with</span></span></div><div class="cl" id="le3"><span class="n">4</span><span class="c">  | none =&gt; ok (.Err .NotFound)</span></div><div class="cl" id="le4"><span class="n">5</span><span class="c">  | some p =&gt; <span class="kw">if</span> p.author = user <span class="kw">then</span> …</span></div></div>
+      <div class="code" id="ed-thm"><div class="cl" id="tl0"><span class="n">1</span><span class="c"><span class="dim">/-- Every successful write is allowed. -/</span></span></div><div class="cl" id="tl1"><span class="n">2</span><span class="c"><span class="kw">theorem</span> authorized (a : Principal) (s : Snapshot) (c : Command) ws r</span></div><div class="cl" id="tl2"><span class="n">3</span><span class="c">    (hinv : Inv (Snapshot.toSt s))</span></div><div class="cl" id="tl3"><span class="n">4</span><span class="c">    (h : transition a s c = .ok (.Ok (ws, r))) :</span></div><div class="cl" id="tl4"><span class="n">5</span><span class="c">    ∀ w ∈ ws.val, allowed (Snapshot.toSt s) a.user.val w</span></div><div class="cl" id="tl5"><span class="n">6</span><span class="c">    <span class="kw">:= by</span></span></div><div class="cl" id="tl6"><span class="n">7</span><span class="c">  <span class="kw">unfold</span> transition; <span class="kw">cases</span> c <span class="dim">&lt;;&gt;</span> <span class="kw">simp_all</span> [Spec.allowed]</span></div><div class="cl" id="tl7"><span class="n">8</span><span class="c">  <span class="kw">exact</span> ⟨writes_of a s c ws r hinv h, allowed_of_policy⟩</span></div></div>
+    </div>
+
     <div id="ptr"><div class="arr"></div><div class="ring"></div></div>
     </div>
 
@@ -438,8 +467,8 @@ const T = {
   c1: 1.2, c1b: 2.9, cq: 5.9, qmark: 7.3, black1: 9.5,
   two: 9.9, cut: 13.0,
   ws: 13.0,
-  tHistory: 19.2, tFindings: 24.4, deny: 27.8, tBoxes: 30.6, tApps: 33.8, verify: 36.2, tEvidence: 45.6,
-  close: 50.8, fin: 51.4, logo: 54.8, end: 60,
+  tHistory: 19.2, tFindings: 24.4, deny: 27.8, tBoxes: 30.6, tApps: 33.8, write: 34.6, extract: 38.2, prove: 41.2, verify: 45.6, tEvidence: 52.4,
+  close: 55.4, fin: 56.0, logo: 59.4, end: 64,
 };
 const TOTAL = T.end * 1000;
 const F = T.ws;
@@ -451,8 +480,8 @@ const shots = [
   {a:T.tFindings, b:T.deny,      from:{x:-70,y:40,s:1.1},   to:{x:-70,y:40,s:1.1}},     // the finding
   {a:T.deny,      b:T.tBoxes,    from:{x:0,y:0,s:1},        to:{x:0,y:0,s:1}},
   {a:T.tBoxes,    b:T.tApps,     from:{x:-70,y:40,s:1.1},   to:{x:-70,y:40,s:1.1}},     // the refused run
-  {a:T.tApps,     b:T.verify+7,  from:{x:0,y:0,s:1},        to:{x:0,y:0,s:1}},
-  {a:T.verify+7,  b:T.close,     from:{x:-70,y:40,s:1.1},   to:{x:-70,y:40,s:1.1}},     // the theorems turn proven; the receipt
+  {a:T.tApps,     b:T.verify+4.6,from:{x:0,y:0,s:1},        to:{x:0,y:0,s:1}},
+  {a:T.verify+4.6,b:T.close,     from:{x:-70,y:40,s:1.1},   to:{x:-70,y:40,s:1.1}},     // the theorems turn proven; the receipt
 ];
 function camera(t) {
   let x = 0, y = 0, s = 1;
@@ -495,12 +524,16 @@ const term = [
   {at:F+10.2, out:[`<span class="err">owner: Alice → Bob</span> · alike 0.712 · same authenticated session`]},
   {at:T.deny+.3, cmd:'h5i browser open https://paste.example', cps:62},
   {at:T.deny+2.3, out:[`<span class="err">⛔ refused</span> · paste.example is outside the allowlist · recorded`]},
-  {at:T.verify+.3, cmd:'cargo app-verify', cps:40},
-  {at:T.verify+1.5, out:[`extraction   <span class="ok">ok</span>     3.1s`]},
-  {at:T.verify+3.4, out:[`lake build   <span class="ok">ok</span>    41.2s`]},
-  {at:T.verify+4.6, out:[`axiom gate   <span class="ok">ok</span>`]},
-  {at:T.verify+6.0, out:[`mutants      <span class="ok">ok</span>  12 of 12 caught`]},
-  {at:T.verify+7.2, out:[`<span class="ok">4 passed</span>, 0 failed, 0 skipped · receipt written`]},
+  {at:T.write+.2,  out:[`<span class="pen">✎</span> writing <span class="ref">kernel/src/lib.rs</span> on h5i-app · the board's commands as one pure function`]},
+  {at:T.write+2.6, out:[`<span class="pen">✎</span> fn delete: the author or a moderator may delete a post`]},
+  {at:T.extract+.2, cmd:'cargo app-extract', cps:48},
+  {at:T.extract+1.4, out:[`Charon + Aeneas · <span class="ref">kernel/src/lib.rs</span> → <span class="ref">proofs/BoardKernel.lean</span> · 6 defs, no drift`]},
+  {at:T.prove+.2,  out:[`<span class="pen">✎</span> writing <span class="ref">proofs/Theorems.lean</span> · theorem authorized: every write passes the policy`]},
+  {at:T.prove+2.4, out:[`<span class="pen">✎</span> proof by cases on the command; the delete branch needs is_moderator_spec`]},
+  {at:T.verify+.2, cmd:'cargo app-verify', cps:48},
+  {at:T.verify+1.2, out:[`extraction   <span class="ok">ok</span>  no drift · lake build   <span class="ok">ok</span>  41.2s`]},
+  {at:T.verify+2.6, out:[`axiom gate   <span class="ok">ok</span> · mutants      <span class="ok">ok</span>  12 of 12 caught`]},
+  {at:T.verify+3.8, out:[`<span class="ok">4 passed</span>, 0 failed, 0 skipped · receipt written`]},
 ];
 function renderTerm(el, ev, t) {
   let html = '', typing = false, n = 0;
@@ -515,7 +548,7 @@ function renderTerm(el, ev, t) {
   if (!typing && html) html += `<div class="ln"><span class="pp">$</span> ${cur(t)}</div>`;
   // the panel holds eight lines; older ones scroll away, as a real shell would
   const lines = html.split('</div>').filter(Boolean);
-  html = lines.slice(-24).map(l => l + '</div>').join('');
+  html = lines.slice(-14).map(l => l + '</div>').join('');
   if (el._h !== html) { el._h = html; el.innerHTML = html; }
 }
 
@@ -585,11 +618,18 @@ function drawConsole(t) {
   const atab = t >= T.tEvidence ? 'evidence' : 'theorems';
   $('tab-theorems').classList.toggle('cur', atab === 'theorems'); $('tab-evidence').classList.toggle('cur', atab === 'evidence');
   on('p-theorems', atab === 'theorems'); on('p-evidence', atab === 'evidence');
-  [T.verify+7.6, T.verify+8.2, T.verify+8.8].forEach((at, i) => { const r = $('th'+(i+1)); r.classList.toggle('proven', t >= at);
+  [T.verify+4.4, T.verify+5.0, T.verify+5.6].forEach((at, i) => { const r = $('th'+(i+1)); r.classList.toggle('proven', t >= at);
     r.querySelector('.mu').innerHTML = t >= at ? `<span class="chip g">${[4,5,3][i]} of ${[4,5,3][i]} caught</span>` : `<span class="chip">${[4,5,3][i]} expected</span>`; });
-  const rcpt = t >= T.verify + 7.3;
+  const rcpt = t >= T.verify + 4.0;
   vis('pl-norcpt', !rcpt); vis('pl-rcpt', rcpt); $('n-rcpt').textContent = rcpt ? 1 : 0;
   [1,2,3,4,5].forEach(i => on('ev'+i, t >= T.tEvidence + .3 + i*.22));
+  // the editor: the agent writes Rust, Aeneas writes Lean, the agent writes the proof
+  const etab = t >= T.prove ? 'thm' : t >= T.extract + 1.2 ? 'lean' : 'rs';
+  $('et-rs').classList.toggle('cur', etab === 'rs'); $('et-lean').classList.toggle('cur', etab === 'lean'); $('et-thm').classList.toggle('cur', etab === 'thm');
+  on('ed-rs', etab === 'rs'); on('ed-lean', etab === 'lean'); on('ed-thm', etab === 'thm');
+  for (let i = 0; i < 14; i++) on('rs'+i, t >= T.write + .4 + i*.2);
+  for (let i = 0; i < 5; i++) on('le'+i, t >= T.extract + 1.5 + i*.25);
+  for (let i = 0; i < 8; i++) on('tl'+i, t >= T.prove + .4 + i*.42);
 }
 
 /* dust: a seeded field of motes drifting upward, parallaxed against the camera */
@@ -631,8 +671,11 @@ const caps = [
   {at:T.deny+.3,    html:`the page tells the agent to leak the data · it tries`},
   {at:T.tBoxes+.6,  html:`the policy <b>refused it</b> · the sandbox <b>recorded it</b>`},
   {at:T.tApps+.6,   html:`same console · <em>other side of the coin</em>`},
-  {at:T.verify+1.2, html:`the rules your logic must keep · <b>checked by lean 4</b>`},
-  {at:T.verify+9.2, html:`<b>proven</b> · and the receipt says what was checked`},
+  {at:T.write+.6,   html:`the agent <b>writes the app's logic</b> in rust, on h5i-app`},
+  {at:T.extract+.6, html:`aeneas <b>extracts it to lean 4</b>, line for line`},
+  {at:T.prove+.6,   html:`the agent <b>states the rule and writes the proof</b>`},
+  {at:T.verify+.6,  html:`lean checks it · <b>the console shows what is proven</b>`},
+  {at:T.verify+6.2, html:`<b>proven</b> · and the receipt says what was checked`},
   {at:T.tEvidence+2.2, html:`a proof covers the <b>stated rule</b> · red-teaming covers <b>the rest</b>`},
 ];
 function renderCap(t) {
@@ -673,6 +716,8 @@ function draw(ms) {
     const appIn = eo(ramp(t, F+1.2, .5)), appOut = eio(ramp(t, T.tApps - .6, .6));
     const app = $('win-app'); app.style.opacity = onDesk * appIn * (1 - appOut);
     app.style.transform = `translateY(${(1-appIn)*24 + appOut*40}px)`;
+    const edIn = eo(ramp(t, T.write - .3, .5)), edOut = eio(ramp(t, T.tEvidence - .5, .5)); const ed = $('win-ed');
+    ed.style.opacity = onDesk * edIn * (1 - edOut); ed.style.transform = `translateY(${(1-edIn)*24 + edOut*40}px)`;
   }
   renderTerm($('term'), term, t);
   drawConsole(t);
