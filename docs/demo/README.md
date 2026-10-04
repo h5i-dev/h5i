@@ -75,7 +75,7 @@ video only.
 - Colour is load-bearing and narrow: **red** is refused or wrong, **green** is
   allowed or proven, **orange** is h5i and nothing else. `@ref` handles,
   message ids, and Lean keywords get violet, which is none of the three.
-- One line of narration at a time, as a lower third under the workspace.
+- One line of narration at a time, set in the lower letterbox bar, never over the windows.
 - The cinema stays in the cards. After the cut into the workspace there is no
   shake, no flash, no drift: a product demo, with a zoom where it helps.
 

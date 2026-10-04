@@ -251,10 +251,11 @@
   #ptr .ring{position:absolute;left:-16px;top:-16px;width:38px;height:38px;border-radius:50%;border:2px solid var(--accent);opacity:0}
 
   /* ---- the lower third: the one line of narration ---- */
-  #cap{position:absolute;left:50%;transform:translateX(-50%);top:890px;white-space:nowrap;padding:6px 26px;border-radius:6px;background:rgba(6,6,8,.78);
-    text-align:center;font-family:var(--mono);font-size:19px;letter-spacing:.26em;text-transform:uppercase;color:var(--dim);opacity:0;text-indent:.26em;z-index:30}
-  #cap b{color:var(--text);font-weight:400}
-  #cap em{font-style:normal;color:var(--accent)}
+  /* the narration line sits in the lower letterbox bar: a clean black field, never over the windows */
+  #cap{position:absolute;left:50%;transform:translateX(-50%);top:988px;white-space:nowrap;padding:0 10px;
+    text-align:center;font-family:var(--sans);font-size:30px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#b9b9c2;opacity:0;z-index:45}
+  #cap b{color:#fff;font-weight:700}
+  #cap em{font-style:normal;color:var(--accent);font-weight:700}
 
   /* ---- the finale ---- */
   #logo .fin{margin-top:44px;display:flex;gap:46px;align-items:baseline}
