@@ -586,6 +586,10 @@
           <ellipse cx="550" cy="147" rx="58" ry="58" fill="url(#coin-face)" stroke="var(--spot)" stroke-width="2">
             <animate attributeName="rx" values="58;58;0;58;58;0;58;58" keyTimes="0;.2;.32;.44;.64;.76;.88;1" dur="10s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"/>
           </ellipse>
+          <!-- the faces foreshorten with the rim, so the coin reads as turning rather than fading -->
+          <g transform="translate(550 147)"><g>
+            <animateTransform attributeName="transform" type="scale" values="1 1;1 1;0 1;1 1;1 1;0 1;1 1;1 1" keyTimes="0;.2;.32;.44;.64;.76;.88;1" dur="10s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"/>
+            <g transform="translate(-550 -147)">
           <!-- heads: find vulnerabilities. A crosshair over the kernel of the mark. -->
           <g class="coin-heads"><animate attributeName="opacity" values="1;0;1;1" keyTimes="0;.32;.76;1" dur="10s" repeatCount="indefinite" calcMode="discrete"/>
             <circle cx="550" cy="140" r="19" fill="none" stroke="var(--ink)" stroke-width="1.6" stroke-opacity=".8"/>
@@ -599,7 +603,9 @@
             <circle cx="550" cy="140" r="19" fill="none" stroke="var(--ink)" stroke-width="1.6" stroke-opacity=".8"/>
             <path d="M540 141l7 7 13-15" fill="none" stroke="var(--spot)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
             <text x="550" y="186" class="pd-label" text-anchor="middle">PROVE</text>
-          </g>
+              </g>
+          </g></g>
+        </g>
         </g>
         <text x="550" y="70" class="pd-label" text-anchor="middle">ONE COIN</text>
         <text x="550" y="236" class="pd-note" text-anchor="middle">web security needs both sides, and one workspace holds both</text>
