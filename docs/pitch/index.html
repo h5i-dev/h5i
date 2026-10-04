@@ -1159,6 +1159,179 @@
   .rpt-panel::before { display: none; }
 }
 </style>
+<style>
+  /* Pitch v3: readable, camera-like product scenes. The demo never asks the
+     audience to read a whole desktop at once; these slides follow that rule. */
+  @font-face { font-family:'Space Grotesk'; src:url('../demo/assets/SpaceGrotesk-400.woff2') format('woff2'); font-weight:300 700; font-display:swap; }
+  @font-face { font-family:'Space Mono'; src:url('../demo/assets/SpaceMono-400.woff2') format('woff2'); font-weight:400; font-display:swap; }
+  @font-face { font-family:'Space Mono'; src:url('../demo/assets/SpaceMono-700.woff2') format('woff2'); font-weight:700; font-display:swap; }
+  :root { --accent:#ff7a59; --accent-soft:rgba(255,122,89,.12); --proof:#34d399; --ref:#a78bfa; --red:#ff7a59; --red-text:#ff7a59; --border-red:rgba(255,122,89,.45); }
+  .legacy-slide { display:none !important; }
+  .red { color:var(--accent); }
+  .section-tag { color:var(--accent); }
+  .section-tag::before { background:var(--accent); }
+
+  .scene-slide { padding:48px 78px 54px; align-items:stretch; }
+  .scene { width:100%; max-width:1124px; margin:0 auto; }
+  .scene-head { display:flex; align-items:flex-end; justify-content:space-between; gap:32px; margin-bottom:22px; }
+  .scene-head h2 { font-size:2.65rem; }
+  .scene-head .lede { max-width:520px; margin:0 0 3px; font-size:1.08rem; text-align:right; }
+  .ui-frame { border:1px solid #34343d; border-radius:16px; background:#0a0a0d; overflow:hidden; box-shadow:0 30px 80px rgba(0,0,0,.52); }
+  .ui-bar { height:38px; display:flex; align-items:center; gap:8px; padding:0 14px; border-bottom:1px solid #24242b; background:#101014; font:12px var(--mono); color:#75757f; }
+  .ui-dot { width:9px; height:9px; border-radius:50%; background:#34343d; }
+  .ui-dot:nth-child(1) { background:#ff5f57; } .ui-dot:nth-child(2) { background:#febc2e; } .ui-dot:nth-child(3) { background:#28c840; }
+  .ui-url { margin-left:7px; padding:4px 10px; border:1px solid #24242b; border-radius:6px; background:#0a0a0d; color:#a8a8b2; }
+  .ui-live { margin-left:auto; color:var(--proof); }
+  .scene-label { font:700 11px var(--mono); letter-spacing:.13em; text-transform:uppercase; color:#75757f; }
+  .scene-label.agent { color:var(--accent); } .scene-label.human { color:#ececf0; }
+  .status { display:inline-flex; align-items:center; padding:3px 8px; border-radius:5px; font:700 11px var(--mono); }
+  .status.bad { color:#fff; background:#d9231b; } .status.ok { color:var(--proof); background:rgba(52,211,153,.12); border:1px solid rgba(52,211,153,.3); }
+  .evidence { color:var(--ref); font-family:var(--mono); }
+
+  .overview-grid { display:grid; grid-template-columns:.88fr 1.12fr; gap:16px; }
+  .agent-panel, .review-panel { min-height:340px; }
+  .panel-title { display:flex; align-items:center; gap:10px; padding:14px 18px; border-bottom:1px solid #24242b; background:#101014; }
+  .panel-title b { font-size:17px; color:#ececf0; }
+  .panel-title span:last-child { margin-left:auto; }
+  .big-term { padding:18px 20px; font:14px/1.75 var(--mono); color:#ededf0; }
+  .big-term .prompt { color:var(--accent); } .big-term .ok { color:var(--proof); } .big-term .bad { color:#ff6258; }
+  .command-block + .command-block { margin-top:12px; padding-top:12px; border-top:1px solid #24242b; }
+  .review-body { padding:20px; }
+  .finding-hero { border:1px solid rgba(255,98,88,.52); border-radius:11px; background:rgba(255,98,88,.07); padding:18px; }
+  .finding-top { display:flex; gap:12px; align-items:center; }
+  .finding-top h3 { font-size:19px; line-height:1.25; }
+  .finding-copy { margin-top:13px; font-size:15px; line-height:1.55; color:#d1d1d8; }
+  .evidence-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:15px; }
+  .evidence-chip { padding:4px 9px; border:1px solid rgba(167,139,250,.38); border-radius:6px; background:rgba(167,139,250,.08); color:var(--ref); font:12px var(--mono); }
+  .review-foot { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:12px; }
+  .review-stat { padding:10px 12px; border:1px solid #24242b; border-radius:8px; color:#a8a8b2; font-size:12px; }
+  .review-stat b { display:block; margin-top:2px; color:#ededf0; font:700 14px var(--mono); }
+
+  .product-map { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .capability { border:1px solid #34343d; border-radius:14px; background:#0e0e12; overflow:hidden; }
+  .capability.redteam { border-top:2px solid #ff6258; }
+  .capability.proving { border-top:2px solid var(--proof); }
+  .cap-head { display:flex; align-items:center; gap:12px; padding:14px 18px; border-bottom:1px solid #24242b; background:#141419; }
+  .cap-num { font:700 12px var(--mono); color:var(--accent); }
+  .cap-head b { font-size:18px; color:#fff; }
+  .cap-scope { margin-left:auto; font:11px var(--mono); letter-spacing:.08em; text-transform:uppercase; color:#75757f; }
+  .cap-body { display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:14px; }
+  .cap-item { min-height:58px; padding:10px 11px; border:1px solid #292930; border-radius:8px; background:#101014; }
+  .cap-item b { display:block; color:#ededf0; font-size:13px; }
+  .cap-item span { display:block; margin-top:3px; color:#75757f; font-size:11.5px; line-height:1.35; }
+  .cap-output { display:flex; align-items:center; gap:9px; margin:0 14px 14px; padding:10px 12px; border-radius:8px; font:12px var(--mono); }
+  .redteam .cap-output { color:#ffd4d1; border:1px solid rgba(255,98,88,.35); background:rgba(255,98,88,.07); }
+  .proving .cap-output { color:#d7ffed; border:1px solid rgba(52,211,153,.32); background:rgba(52,211,153,.06); }
+  .cap-output strong { color:#fff; }
+  .unified { position:relative; margin-top:28px; border:1px solid rgba(255,122,89,.52); border-radius:13px; background:rgba(255,122,89,.045); padding:15px 18px; }
+  .unified::before, .unified::after { content:''; position:absolute; top:-29px; width:1px; height:29px; background:rgba(255,122,89,.55); }
+  .unified::before { left:25%; } .unified::after { right:25%; }
+  .unified-row { display:flex; align-items:center; gap:12px; }
+  .unified-title { color:#fff; font-size:17px; font-weight:700; white-space:nowrap; }
+  .unified-title b { color:var(--accent); font-family:var(--mono); }
+  .unified-chips { display:flex; gap:7px; flex-wrap:wrap; }
+  .unified-chip { padding:4px 8px; border:1px solid #34343d; border-radius:6px; background:#101014; color:#c9c9d1; font:11px var(--mono); }
+  .unified-roles { margin-left:auto; text-align:right; color:#a8a8b2; font-size:12.5px; line-height:1.55; white-space:nowrap; }
+  .unified-roles b { color:#fff; }
+
+  .testing-workbench { display:grid; grid-template-columns:1.08fr 54px .92fr; align-items:stretch; }
+  .cli-suite, .review-suite { min-height:355px; border:1px solid #34343d; border-radius:14px; background:#0e0e12; overflow:hidden; }
+  .suite-head { display:flex; align-items:center; gap:10px; padding:13px 16px; border-bottom:1px solid #24242b; background:#141419; }
+  .suite-head b { color:#fff; font-size:17px; }
+  .suite-head span:last-child { margin-left:auto; color:#75757f; font:11px var(--mono); text-transform:uppercase; letter-spacing:.08em; }
+  .tool-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px; padding:14px; }
+  .tool-card { min-height:86px; padding:12px; border:1px solid #292930; border-radius:9px; background:#101014; }
+  .tool-icon { color:var(--accent); font:700 11px var(--mono); letter-spacing:.08em; }
+  .tool-card b { display:block; margin-top:5px; color:#fff; font-size:14px; }
+  .tool-card p { margin-top:4px; color:#85858f; font-size:11.5px; line-height:1.35; }
+  .tool-card.optional { border-style:dashed; }
+  .tool-card.optional .tool-icon { color:#a8a8b2; }
+  .command-families { display:flex; align-items:center; gap:10px; margin:0 14px 14px; padding:11px 13px; border:1px solid rgba(255,122,89,.35); border-radius:8px; background:rgba(255,122,89,.06); font:12px var(--mono); }
+  .command-families .prompt { color:var(--accent); }
+  .command-families code { color:#d8d8df; }
+  .workbench-arrow { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px; color:var(--accent); }
+  .workbench-arrow b { font:24px var(--mono); }
+  .workbench-arrow span { writing-mode:vertical-rl; transform:rotate(180deg); color:#75757f; font:10px var(--mono); letter-spacing:.09em; text-transform:uppercase; }
+  .review-suite .review-body { padding:15px; }
+  .finding-summary { border:1px solid rgba(255,98,88,.48); border-radius:10px; background:rgba(255,98,88,.07); padding:15px; }
+  .finding-summary .sevline { display:flex; align-items:center; gap:8px; }
+  .finding-summary h3 { margin-top:10px; font-size:20px; line-height:1.2; }
+  .finding-summary p { margin-top:9px; color:#b7b7c0; font-size:13px; line-height:1.45; }
+  .review-evidence { margin-top:11px; display:flex; flex-direction:column; gap:7px; }
+  .review-evidence div { display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid #292930; border-radius:7px; background:#101014; font-size:12px; color:#a8a8b2; }
+  .review-evidence code { color:var(--ref); font:12px var(--mono); }
+  .review-evidence b { margin-left:auto; color:var(--proof); font:11px var(--mono); }
+
+  .attack-flow { display:grid; grid-template-columns:1fr 44px 1fr 44px 1.12fr; align-items:stretch; }
+  .flow-arrow { display:flex; align-items:center; justify-content:center; color:var(--accent); font:24px var(--mono); }
+  .flow-card { min-height:326px; border:1px solid #2c2c34; border-radius:13px; background:#0e0e12; overflow:hidden; }
+  .flow-step { display:flex; align-items:center; gap:9px; padding:12px 14px; border-bottom:1px solid #24242b; background:#141419; }
+  .step-num { display:grid; place-items:center; width:24px; height:24px; border-radius:50%; background:var(--accent); color:#0a0a0d; font:700 12px var(--mono); }
+  .flow-step b { font-size:15px; color:#fff; }
+  .mini-app { padding:16px; }
+  .mini-nav { display:flex; gap:14px; color:#75757f; font-size:12px; margin-bottom:17px; }
+  .mini-nav b { color:#ededf0; }
+  .order-card { display:grid; grid-template-columns:auto 1fr auto; gap:10px; padding:12px; border:1px solid #2c2c34; border-radius:8px; font-size:13px; color:#d4d4da; }
+  .order-card + .order-card { margin-top:8px; }
+  .order-card.target { border-color:rgba(255,98,88,.7); background:rgba(255,98,88,.08); }
+  .order-card .owner { color:#75757f; } .order-card.target .owner { color:#ff6258; font-weight:700; }
+  .request { padding:16px; font:13px/1.65 var(--mono); color:#d8d8de; }
+  .request .method { color:var(--ref); } .request .change { display:block; margin:14px 0; padding:11px; border:1px solid rgba(255,122,89,.4); border-radius:8px; background:var(--accent-soft); }
+  .request del { color:#75757f; } .request ins { color:var(--accent); text-decoration:none; font-weight:700; }
+  .result-card { padding:18px; }
+  .result-kicker { font:11px var(--mono); letter-spacing:.11em; color:#ff6258; text-transform:uppercase; }
+  .result-card h3 { margin-top:7px; font-size:24px; line-height:1.18; }
+  .result-card p { margin-top:12px; font-size:14px; line-height:1.5; color:#b8b8c1; }
+  .result-diff { margin-top:16px; padding:13px; border-left:3px solid #ff6258; background:rgba(255,98,88,.08); font:13px/1.65 var(--mono); }
+  .result-diff .bad { color:#ff6258; }
+
+  .sandbox-scene { display:grid; grid-template-columns:235px 1fr 235px; gap:18px; align-items:stretch; }
+  .edge-stack { display:flex; flex-direction:column; justify-content:center; gap:12px; }
+  .edge-title { font:700 11px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
+  .edge-title.bad { color:#ff6258; } .edge-title.ok { color:var(--proof); }
+  .edge-item { padding:13px 14px; border:1px solid #2c2c34; border-radius:9px; background:#0e0e12; font-size:14px; line-height:1.35; }
+  .edge-item.bad { border-color:rgba(255,98,88,.42); color:#ffd2cf; } .edge-item.ok { border-color:rgba(52,211,153,.36); color:#d9fff0; }
+  .sandbox-wall { position:relative; min-height:335px; padding:26px; border:2px solid rgba(255,122,89,.6); border-radius:18px; background:rgba(255,122,89,.035); }
+  .wall-label { position:absolute; top:-11px; left:22px; padding:0 10px; background:#08080b; color:var(--accent); font:700 12px var(--mono); }
+  .sandbox-loop { height:100%; display:grid; grid-template-columns:1fr 36px 1fr; grid-template-rows:1fr 32px 1fr; align-items:center; gap:7px; }
+  .loop-node { display:grid; place-items:center; align-content:center; height:100%; min-height:105px; padding:10px; border:1px solid #34343d; border-radius:10px; background:#101014; text-align:center; }
+  .loop-node b { font-size:16px; } .loop-node span { margin-top:5px; color:#75757f; font-size:12px; }
+  .loop-node.core { border-color:rgba(52,211,153,.48); background:rgba(52,211,153,.06); }
+  .loop-node.core b { color:var(--proof); font-family:var(--mono); }
+  .loop-arrow { text-align:center; color:var(--accent); font:20px var(--mono); }
+
+  .proof-flow { display:grid; grid-template-columns:1fr 58px 1fr 58px .84fr; align-items:stretch; }
+  .code-card, .receipt-card, .guarantee-card { min-height:338px; border:1px solid #2c2c34; border-radius:13px; background:#0e0e12; overflow:hidden; }
+  .code-head { padding:11px 14px; border-bottom:1px solid #24242b; background:#141419; font:12px var(--mono); color:#a8a8b2; }
+  .code-body { padding:15px 17px; font:13px/1.65 var(--mono); color:#d9d9df; }
+  .code-body .kw { color:var(--ref); } .code-body .fn { color:var(--accent); } .code-body .cm { color:#75757f; }
+  .receipt-body { padding:15px; }
+  .receipt-title { display:flex; align-items:center; gap:9px; margin-bottom:10px; font-size:17px; }
+  .receipt-line { display:grid; grid-template-columns:100px 58px 1fr; gap:8px; padding:9px 0; border-bottom:1px solid #24242b; font:12px/1.4 var(--mono); color:#a8a8b2; }
+  .receipt-line:last-child { border-bottom:0; } .receipt-line .ok { color:var(--proof); font-weight:700; }
+  .guarantee-card { display:flex; flex-direction:column; padding:15px; gap:10px; }
+  .guarantee { flex:1; padding:12px; border:1px solid rgba(52,211,153,.34); border-radius:9px; background:rgba(52,211,153,.055); }
+  .guarantee b { display:block; color:#fff; font:700 13px var(--mono); }
+  .guarantee span { display:block; margin-top:5px; color:#a8a8b2; font-size:12px; line-height:1.4; }
+  .source-stack { min-height:338px; display:grid; grid-template-rows:1fr 1fr; gap:9px; }
+  .source-file { border:1px solid #2c2c34; border-radius:10px; background:#0e0e12; overflow:hidden; }
+  .source-file .code-head { padding:8px 12px; }
+  .source-code { padding:9px 13px; font:11.5px/1.45 var(--mono); color:#d9d9df; }
+  .source-code .kw { color:var(--ref); } .source-code .fn { color:var(--accent); } .source-code .proof { color:var(--proof); } .source-code .cm { color:#75757f; }
+  .proof-source { min-height:338px; }
+  .proof-source .source-code { padding:15px 16px; font-size:12px; line-height:1.55; }
+  .proof-arrow { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px; color:var(--accent); }
+  .proof-arrow b { font:22px var(--mono); }
+  .proof-arrow span { color:#75757f; font:10px var(--mono); letter-spacing:.08em; text-transform:uppercase; text-align:center; line-height:1.4; }
+
+  @media screen and (max-width:768px) {
+    .scene-slide { padding-left:18px; padding-right:18px; }
+    .scene-head { display:block; } .scene-head .lede { margin-top:10px; text-align:left; }
+    .overview-grid, .product-map, .testing-workbench, .attack-flow, .sandbox-scene, .proof-flow { grid-template-columns:1fr; }
+    .flow-arrow { min-height:34px; transform:rotate(90deg); }
+    .sandbox-loop { min-height:330px; }
+  }
+</style>
 </head>
 <body>
 
@@ -1181,14 +1354,14 @@
   <div style="width:100%;max-width:1040px;">
     <div class="hero-badge">h5i · pitch</div>
     <h1 style="font-size:clamp(2.6rem,5.4vw,4.4rem);">Is the Web App Your AI Built<br><span class="shine-q">Really Secure</span></h1>
-    <p class="lede" style="max-width:900px;margin-top:26px;font-size:clamp(1.2rem,2.1vw,1.55rem);">AI agents now write and ship web apps. h5i is the workspace where developers and their AI check that what shipped is correct and secure.</p>
+    <p class="lede" style="max-width:900px;margin-top:26px;font-size:clamp(1.2rem,2.1vw,1.55rem);">The workspace to find bugs and prove correctness.</p>
   </div>
 </div>
 
 
 <!-- 2: two sides of one coin -->
 <div class="slide" style="gap:22px;"><div style="width:100%;max-width:1080px;">
-  <div class="section-tag">Security has two sides</div><h2>Find vulnerabilities. Prove correctness.<br><span class="red">Two sides of one coin.</span></h2>
+  <div class="section-tag">Web security has two sides</div><h2>Find vulnerabilities. Prove correctness.<br><span class="red">Two sides of web security.</span></h2>
   <div class="coin">
     <div class="coin-face">
       <span class="coin-k">01 · Red-teaming</span>
@@ -1196,7 +1369,7 @@
       <p>Attack the running app the way a hacker would, and catch what nobody anticipated.</p>
       <span class="coin-cost">Expert hackers are expensive. Red-teaming AI can go rogue.</span>
     </div>
-    <div class="coin-mid"><span>one</span><i></i><span>coin</span></div>
+    <div class="coin-mid"><span>web</span><i></i><span>security</span></div>
     <div class="coin-face">
       <span class="coin-k">02 · Formal verification</span>
       <h3>Prove correctness</h3>
@@ -1209,7 +1382,7 @@
 
 
 <!-- 3: h5i gives both to developers and their AI -->
-<div class="slide" style="gap:14px;"><div style="width:100%;max-width:1080px;">
+<div class="slide legacy-slide" style="gap:14px;"><div style="width:100%;max-width:1080px;">
   <div class="section-tag">What h5i is</div><h2>One workspace for both,<br><span class="red">for developers and their AI.</span></h2>
   <p class="lede" style="max-width:1000px;">The AI runs one CLI. You review one console: findings with evidence, theorems with receipts.</p>
   <div class="ws-box"><div class="ws-fit wsw"><!-- ws:start -->
@@ -1347,7 +1520,7 @@
 
 
 <!-- 4: find vulnerabilities -->
-<div class="slide" style="gap:14px;"><div style="width:100%;max-width:1080px;">
+<div class="slide legacy-slide" style="gap:14px;"><div style="width:100%;max-width:1080px;">
   <div class="section-tag">Find vulnerabilities / any stack</div><h2>Your agent red-teams<br><span class="red">the running app.</span></h2>
   <p class="lede" style="max-width:1000px;">It drives the app like a user and replays real requests like a hacker, inside limits you set.</p>
   <div class="ws-box"><div class="ws-fit wsw"><!-- ws:start -->
@@ -1485,7 +1658,7 @@
 
 
 <!-- 6: prove correctness -->
-<div class="slide" style="gap:14px;"><div style="width:100%;max-width:1080px;">
+<div class="slide legacy-slide" style="gap:14px;"><div style="width:100%;max-width:1080px;">
   <div class="section-tag">Prove correctness / Rust + Lean 4</div><h2>Lean 4 proves<br><span class="red">your logic correct.</span></h2>
   <p class="lede" style="max-width:1000px;">Write the logic on h5i-app. Aeneas extracts it into Lean 4, and the Apps view shows what is proven under which assumptions. Red-teaming covers the rest.</p>
   <div class="ws-box"><div class="ws-fit wsw"><!-- ws:start -->
@@ -1622,11 +1795,138 @@
 </div></div>
 
 
-<!-- 7: why h5i -->
+<!-- 3: the product map -->
+<div class="slide scene-slide">
+  <div class="scene">
+    <div class="scene-head">
+      <div><div class="section-tag">What h5i does</div><h2>Attack the running app.<br><span class="red">Prove the critical logic.</span></h2></div>
+      <p class="lede">Two complementary workflows, operated by the agent through one CLI and reviewed by the developer in one UI.</p>
+    </div>
+    <div class="product-map">
+      <div class="capability redteam">
+        <div class="cap-head"><span class="cap-num">01</span><b>Find vulnerabilities</b><span class="cap-scope">any web stack</span></div>
+        <div class="cap-body">
+          <div class="cap-item"><b>Browser automation</b><span>Drive the app as a real user.</span></div>
+          <div class="cap-item"><b>Traffic capture</b><span>Keep every request and response.</span></div>
+          <div class="cap-item"><b>Replay &amp; mutate</b><span>Change IDs, roles and inputs.</span></div>
+          <div class="cap-item"><b>Attack patterns</b><span>Apply predefined expert techniques.</span></div>
+        </div>
+        <div class="cap-output">output → <strong>finding + reproducible evidence</strong></div>
+      </div>
+      <div class="capability proving">
+        <div class="cap-head"><span class="cap-num">02</span><b>Prove correctness</b><span class="cap-scope">Rust + Lean 4</span></div>
+        <div class="cap-body">
+          <div class="cap-item"><b>h5i-app framework</b><span>Isolate security-critical Rust logic.</span></div>
+          <div class="cap-item"><b>Lean extraction</b><span>Translate that logic into a proof model.</span></div>
+          <div class="cap-item"><b>Machine proofs</b><span>Check authorization and invariants.</span></div>
+          <div class="cap-item"><b>Verification gates</b><span>Check axioms, mutants and code drift.</span></div>
+        </div>
+        <div class="cap-output">output → <strong>theorems + verification receipt</strong></div>
+      </div>
+    </div>
+    <div class="unified">
+      <div class="unified-row">
+        <div class="unified-title">One <b>h5i</b> workspace</div>
+        <div class="unified-chips"><span class="unified-chip">findings</span><span class="unified-chip">evidence</span><span class="unified-chip">theorems</span><span class="unified-chip">receipts</span></div>
+        <div class="unified-roles"><b>AI agent</b> operates via CLI<br><b>Human</b> reviews via UI</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 4: vulnerability story, zoomed into the decisive path -->
+<div class="slide scene-slide legacy-slide">
+  <div class="scene">
+    <div class="scene-head">
+      <div><div class="section-tag">Find vulnerabilities · any stack</div><h2>From a real click<br><span class="red">to a reproducible finding.</span></h2></div>
+      <p class="lede">h5i preserves the browser’s request, lets the agent change one thing, then records the security-relevant difference.</p>
+    </div>
+    <div class="attack-flow">
+      <div class="flow-card">
+        <div class="flow-step"><span class="step-num">1</span><b>Drive the app</b></div>
+        <div class="mini-app"><div class="mini-nav"><span>Shop</span><b>Orders</b><span>Help</span></div><div class="order-card"><span>#1041</span><span>Running shoes</span><span class="owner">Alice</span></div><div style="margin-top:18px;color:#75757f;font-size:13px;line-height:1.5;">The agent clicks the same UI a customer uses.</div><div class="evidence-row"><span class="evidence-chip">@e7 Orders</span><span class="evidence-chip">req_108</span></div></div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-card">
+        <div class="flow-step"><span class="step-num">2</span><b>Replay one request</b></div>
+        <div class="request"><span class="method">GET</span> /api/order/1041<div class="change"><del>order/1041</del><br><ins>order/1042</ins></div>same cookies<br>same signed-in user<br><span style="color:#75757f;">only the object ID changes</span></div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-card">
+        <div class="flow-step"><span class="step-num">3</span><b>Keep the proof</b></div>
+        <div class="result-card"><div class="result-kicker">authorization failure</div><h3>Alice receives Bob’s order.</h3><p>The response is not merely “different.” h5i keeps the exact before/after objects needed to reproduce and review it.</p><div class="result-diff"><span class="evidence">res_108</span> owner: Alice<br><span class="evidence">res_109</span> owner: <span class="bad">Bob</span><br>HTTP 200 · alike 0.712</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 5: safety boundary -->
+<div class="slide scene-slide legacy-slide">
+  <div class="scene">
+    <div class="scene-head">
+      <div><div class="section-tag">Bounded autonomy</div><h2>Let the agent attack.<br><span class="red">Keep the blast radius small.</span></h2></div>
+      <p class="lede">The test loop runs inside a supervised boundary. Files, network destinations, time and output are policy—not prompt suggestions.</p>
+    </div>
+    <div class="sandbox-scene">
+      <div class="edge-stack"><div class="edge-title bad">blocked at the wall</div><div class="edge-item bad">✕ paste.example<br><small>egress refused before bytes left</small></div><div class="edge-item bad">✕ ~/.ssh<br><small>outside the mounted workspace</small></div><div class="edge-item bad">✕ unlimited runtime<br><small>wall clock: 30 minutes</small></div></div>
+      <div class="sandbox-wall"><span class="wall-label">alice/sandbox · supervised</span><div class="sandbox-loop"><div class="loop-node core"><b>AI agent</b><span>chooses the next test</span></div><div class="loop-arrow">→</div><div class="loop-node"><b>Browser</b><span>drives the allowed target</span></div><div class="loop-arrow">↑</div><div></div><div class="loop-arrow">↓</div><div class="loop-node"><b>Evidence</b><span>requests, responses, diffs</span></div><div class="loop-arrow">←</div><div class="loop-node"><b>Replay</b><span>mutates captured traffic</span></div></div></div>
+      <div class="edge-stack"><div class="edge-title ok">allowed to leave</div><div class="edge-item ok">✓ Findings<br><small>human-readable conclusions</small></div><div class="edge-item ok">✓ Evidence IDs<br><small>auditable request chain</small></div><div class="edge-item ok">✓ Receipts<br><small>policy and exit status</small></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- 4: the complete web-testing loop -->
+<div class="slide scene-slide">
+  <div class="scene">
+    <div class="scene-head">
+      <div><div class="section-tag">Find vulnerabilities · any stack</div><h2>Give the agent the tools<br><span class="red">a security expert uses.</span></h2></div>
+      <p class="lede">Browser automation, captured traffic and 1,000+ attack patterns work together through one CLI. Every result is reviewable in the UI.</p>
+    </div>
+    <div class="testing-workbench">
+      <div class="cli-suite">
+        <div class="suite-head"><span class="scene-label agent">AI agent</span><b>Operates via CLI</b><span>one testing toolkit</span></div>
+        <div class="tool-grid">
+          <div class="tool-card"><span class="tool-icon">BROWSER</span><b>Browser automation</b><p>Navigate, click, fill forms and preserve authenticated state.</p></div>
+          <div class="tool-card"><span class="tool-icon">CAPTURE</span><b>Traffic capture</b><p>Record the exact requests and responses produced by each action.</p></div>
+          <div class="tool-card"><span class="tool-icon">1,000+</span><b>Attack patterns</b><p>Apply expert techniques across auth, input handling and configuration.</p></div>
+          <div class="tool-card optional"><span class="tool-icon">OPTIONAL</span><b>Supervised sandbox</b><p>Constrain files, network destinations and runtime when needed.</p></div>
+        </div>
+        <div class="command-families"><span class="prompt">$</span><code>h5i browser</code><span>·</span><code>h5i websec</code><span>·</span><code>h5i sandbox</code></div>
+      </div>
+      <div class="workbench-arrow"><span>findings + evidence</span><b>→</b></div>
+      <div class="review-suite">
+        <div class="suite-head"><span class="scene-label human">Human</span><b>Reviews via UI</b><span>h5i console</span></div>
+        <div class="review-body">
+          <div class="finding-summary"><div class="sevline"><span class="status bad">HIGH</span><span class="evidence">f_01</span></div><h3>Another customer’s order is readable</h3><p>A replay changed only the order ID. The same signed-in user received Bob’s data with HTTP 200.</p></div>
+          <div class="review-evidence"><div><code>req_108</code><span>original browser request</span><b>CAPTURED</b></div><div><code>res_109</code><span>mutated replay response</span><b>CAPTURED</b></div><div><code>repro</code><span>exact command and diff</span><b>READY</b></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 5: proof story, zoomed into the trust chain -->
+<div class="slide scene-slide">
+  <div class="scene">
+    <div class="scene-head">
+      <div><div class="section-tag">Prove correctness · Rust + Lean 4</div><h2>Test what might happen.<br><span class="red">Prove what must never happen.</span></h2></div>
+      <p class="lede">Build the security-critical kernel with h5i-app. Aeneas translates the Rust into Lean 4, where the rules become machine-checked theorems.</p>
+    </div>
+    <div class="proof-flow">
+      <div class="source-file proof-source"><div class="code-head">kernel/src/lib.rs · h5i-app / Rust</div><div class="source-code"><span class="cm">// declare the application state once</span><br><span class="fn">h5i_app_schema::schema!</span> {<br>&nbsp;&nbsp;mapping board_tables ...;<br>&nbsp;&nbsp;<span class="kw">pub struct</span> Snapshot {<br>&nbsp;&nbsp;&nbsp;&nbsp;posts: Vec&lt;Post&gt;,<br>&nbsp;&nbsp;&nbsp;&nbsp;moderators: Vec&lt;Moderator&gt;<br>&nbsp;&nbsp;}<br>}<br><br><span class="cm">// pure logic that ships</span><br><span class="kw">pub fn</span> <span class="fn">transition</span>(actor, state, cmd)<br>&nbsp;&nbsp;-&gt; Outcome { ... }</div></div>
+      <div class="proof-arrow"><span>Aeneas<br>extracts</span><b>→</b></div>
+      <div class="source-file proof-source"><div class="code-head">proofs/Theorems.lean · Lean 4</div><div class="source-code"><span class="kw">import</span> Commands<br><br><span class="cm">/-- Every successful write is allowed. -/</span><br><span class="kw">theorem</span> <span class="proof">authorized</span><br>&nbsp;&nbsp;(h : transition a s c = .ok result) :<br>&nbsp;&nbsp;∀ w ∈ writes result,<br>&nbsp;&nbsp;&nbsp;&nbsp;allowed s a.user w := <span class="kw">by</span><br>&nbsp;&nbsp;...<br><br><span class="kw">theorem</span> <span class="proof">inv_preserved</span> ... := <span class="kw">by</span><br>&nbsp;&nbsp;...</div></div>
+      <div class="proof-arrow"><span>Lean<br>checks</span><b>→</b></div>
+      <div class="guarantee-card"><div class="scene-label" style="color:var(--proof);">guarantees</div><div class="guarantee"><b>authorized</b><span>Every successful write is allowed by policy.</span></div><div class="guarantee"><b>invariant preserved</b><span>Every reachable state keeps the rules.</span></div><div class="guarantee"><b>transition total</b><span>No panic, overflow or invalid index.</span></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- 6: why h5i -->
 <div class="slide" style="gap:22px;">
   <div style="width:100%;max-width:1080px;">
     <div class="section-tag">Why h5i</div>
-    <h2>Other tools give you one side.<br><span class="red">h5i gives you the coin.</span></h2>
+    <h2>Other tools give you one side.<br><span class="red">h5i brings both together.</span></h2>
     <div class="ladder" style="margin-top:26px;">
       <div class="rung"><span class="rk" style="min-width:270px;">Browser + proxy tools</span><span class="rv">Built for people. The agent juggles browser, proxy, and CA setup. No proofs.</span></div>
       <div class="rung"><span class="rk" style="min-width:270px;">Sandboxes</span><span class="rv">Limit what the agent can reach. No testing, no evidence, no proofs.</span></div>
@@ -1637,7 +1937,7 @@
 </div>
 
 
-<!-- 8: traction and users -->
+<!-- 7: traction and users -->
 <div class="slide" style="gap:22px;"><div style="width:100%;max-width:1080px;">
   <div class="section-tag">Traction &amp; users</div><h2>Built in the open.<br><span class="red">Built for teams that ship with AI.</span></h2>
   <div class="g4" style="margin-top:24px;">
@@ -1655,7 +1955,7 @@
 </div></div>
 
 
-<!-- 9: next, and the ask -->
+<!-- 8: next, and the ask -->
 <div class="slide" style="gap:22px;"><div style="width:100%;max-width:1080px;">
   <div class="section-tag">Next</div><h2>Find vulnerabilities. Prove correctness.<br><span class="red">For every team that ships with AI.</span></h2>
   <div class="g3 who-row" style="margin-top:28px;">
@@ -1677,7 +1977,7 @@
 </style>
 
 <script>
-  const slides = Array.from(document.querySelectorAll('.slide'));
+  const slides = Array.from(document.querySelectorAll('.slide:not(.legacy-slide)'));
   const dotsEl = document.getElementById('dots');
   const curEl  = document.getElementById('cur');
   const totEl  = document.getElementById('tot');
