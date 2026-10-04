@@ -31,6 +31,7 @@ h5i-app-pg = { path = "crates/h5i-app-pg", version = "0.1.0" }
 h5i-app-pgsql = { path = "crates/h5i-app-pgsql", version = "0.1.0" }
 h5i-app-schema = { path = "crates/h5i-app-schema", version = "0.1.0" }
 h5i-app-sql = { path = "crates/h5i-app-sql", version = "0.1.0" }
+h5i-app-std = { path = "crates/h5i-app-std", version = "0.1.0" }
 h5i-app-token = { path = "crates/h5i-app-token", version = "0.1.0" }
 
 # The repo's primary product is the `h5i` binary, so it lives at the root

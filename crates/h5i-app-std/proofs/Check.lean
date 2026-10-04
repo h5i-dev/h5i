@@ -1,0 +1,45 @@
+import StdSpecs
+/-! Every spec in `StdSpecs` exists here (none was skipped by its `h5i_when` guard) and
+uses only the standard axioms. Not copied into kernels. -/
+#print axioms h5i_app_std.Specs.bytes.concat_spec
+#print axioms h5i_app_std.Specs.bytes.contains_byte_spec
+#print axioms h5i_app_std.Specs.bytes.contains_spec
+#print axioms h5i_app_std.Specs.bytes.ends_with_spec
+#print axioms h5i_app_std.Specs.bytes.eq_ignore_case_spec
+#print axioms h5i_app_std.Specs.bytes.eq_spec
+#print axioms h5i_app_std.Specs.bytes.find_byte_spec
+#print axioms h5i_app_std.Specs.bytes.is_whitespace_spec
+#print axioms h5i_app_std.Specs.bytes.lower_spec
+#print axioms h5i_app_std.Specs.bytes.range_eq_spec
+#print axioms h5i_app_std.Specs.bytes.range_eq_spec'
+#print axioms h5i_app_std.Specs.bytes.slice_spec
+#print axioms h5i_app_std.Specs.bytes.split_once_spec
+#print axioms h5i_app_std.Specs.bytes.split_spec
+#print axioms h5i_app_std.Specs.bytes.split_whitespace_spec
+#print axioms h5i_app_std.Specs.bytes.star_match_spec
+#print axioms h5i_app_std.Specs.bytes.starts_with_spec
+#print axioms h5i_app_std.Specs.bytes.strip_prefix_spec
+#print axioms h5i_app_std.Specs.bytes.strip_suffix_spec
+#print axioms h5i_app_std.Specs.bytes.to_lowercase_spec
+#print axioms h5i_app_std.Specs.bytes.trim_loop0_spec
+#print axioms h5i_app_std.Specs.bytes.trim_loop1_spec
+#print axioms h5i_app_std.Specs.bytes.trim_spec
+#print axioms h5i_app_std.Specs.graph.reachable_loop0_spec
+#print axioms h5i_app_std.Specs.graph.reachable_loop1_spec
+#print axioms h5i_app_std.Specs.graph.reachable_spec
+#print axioms h5i_app_std.Specs.graph.reachable_visit_spec
+#print axioms h5i_app_std.Specs.map.contains_key_spec
+#print axioms h5i_app_std.Specs.map.get_spec
+#print axioms h5i_app_std.Specs.map.insert_spec
+#print axioms h5i_app_std.Specs.map.remove_spec
+#print axioms h5i_app_std.Specs.set.contains_spec
+#print axioms h5i_app_std.Specs.set.insert_spec
+#print axioms h5i_app_std.Specs.set.intersects_spec
+#print axioms h5i_app_std.Specs.set.position_spec
+#print axioms h5i_app_std.Specs.set.remove_spec
+#print axioms h5i_app_std.Specs.set.set_eq_spec
+#print axioms h5i_app_std.Specs.set.subset_spec
+#print axioms h5i_app_std.Specs.time.expired_spec
+#print axioms h5i_app_std.Specs.time.not_yet_valid_spec
+#print axioms h5i_app_std.Specs.time.secs_ceil_spec
+#print axioms h5i_app_std.Specs.time.within_spec

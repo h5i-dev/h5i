@@ -2002,6 +2002,10 @@ name = "h5i-app-sql"
 version = "0.1.0"
 
 [[package]]
+name = "h5i-app-std"
+version = "0.1.0"
+
+[[package]]
 name = "h5i-app-token"
 version = "0.1.0"
 

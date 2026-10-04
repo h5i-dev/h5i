@@ -14,6 +14,7 @@ const PROJECTS: &[(&str, Option<&str>, Option<&str>)] = &[
     ("crates/h5i-app-pgsql/proofs", Some("scripts/app/extract-pgsql.sh"), Some("crates/h5i-app-pgsql/proofs/generated/H5iAppPgsql.lean")),
     ("crates/h5i-app-token/proofs", Some("scripts/app/extract-token.sh"), Some("crates/h5i-app-token/proofs/generated/H5iAppToken.lean")),
     ("crates/h5i-app-json/proofs", Some("scripts/app/extract-json.sh"), Some("crates/h5i-app-json/proofs/generated/H5iAppJson.lean")),
+    ("crates/h5i-app-std/proofs", Some("scripts/app/extract-std.sh"), Some("crates/h5i-app-std/proofs/generated/H5iAppStd.lean")),
     ("examples/app/tutorials/calculator/proofs", Some("scripts/app/extract-calculator.sh"), Some("examples/app/tutorials/calculator/proofs/generated/CalculatorKernel.lean")),
     ("examples/app/tutorials/board/proofs", Some("scripts/app/extract-board.sh"), Some("examples/app/tutorials/board/proofs/generated/BoardKernel.lean")),
     ("examples/app/wastebin/proofs", Some("scripts/app/extract-wastebin.sh"), Some("examples/app/wastebin/proofs/generated/WastebinKernel.lean")),
@@ -24,6 +25,7 @@ const PROJECTS: &[(&str, Option<&str>, Option<&str>)] = &[
     ("examples/app/tutorials/booking/proofs", Some("scripts/app/extract-booking.sh"), Some("examples/app/tutorials/booking/proofs/generated/BookingKernel.lean")),
     ("examples/app/filters/proofs", Some("scripts/app/extract-filters.sh"), Some("examples/app/filters/proofs/generated/FiltersKernel.lean")),
     ("examples/app/keys/proofs", Some("scripts/app/extract-keys.sh"), Some("examples/app/keys/proofs/generated/KeysKernel.lean")),
+    ("examples/app/roles/proofs", Some("scripts/app/extract-roles.sh"), Some("examples/app/roles/proofs/generated/RolesKernel.lean")),
     ("crates/h5i-app-core/proofs", None, None),
 ];
 
@@ -267,6 +269,7 @@ fn authz_coverage(root: &Path) -> Outcome {
     dirs.sort();
     let markers = ["WritesAuthorized", "theorem authorized", "writes_authorized", "writes_confined", "writes_scoped"];
     let schema = "WritesAuthorized";
+    let reads = "ReadsAuthorized";
     let mut covered = 0;
     let mut report = String::new();
     for d in &dirs {
@@ -274,10 +277,14 @@ fn authz_coverage(root: &Path) -> Outcome {
         rs_or_lean(d, &mut lean);
         let mut hit = None;
         let mut uses_schema = false;
+        let mut uses_reads = false;
         for f in &lean {
             let text = std::fs::read_to_string(f).unwrap_or_default();
             if text.contains(schema) {
                 uses_schema = true;
+            }
+            if text.contains(reads) {
+                uses_reads = true;
             }
             if hit.is_none()
                 && let Some(m) = markers.iter().find(|m| text.contains(**m))
@@ -290,7 +297,8 @@ fn authz_coverage(root: &Path) -> Outcome {
             Some(_) => {
                 covered += 1;
                 let tag = if uses_schema { "schema" } else { "theorem" };
-                report.push_str(&format!("  {app:<16} authorized ({tag})\n"));
+                let reads = if uses_reads { ", reads too" } else { "" };
+                report.push_str(&format!("  {app:<16} authorized ({tag}{reads})\n"));
             }
             None => report.push_str(&format!("  {app:<16} no universal authorization theorem\n")),
         }

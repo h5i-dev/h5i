@@ -28,11 +28,12 @@ HTTP (axum) ──► Actor<K> ──► H5iApp::respond ──► Engine: BEGIN
 | `crates/h5i-app-http` | axum integration: the `Actor` extractor, `H5iApp::respond` and `rpc_router` |
 | `crates/h5i-app-schema` | `schema!`, which declares kernel rows once |
 | `crates/h5i-app-sql`, `h5i-app-pgsql`, `h5i-app-token`, `h5i-app-json` | extracted and proven shell parts: statement planner, SQL compiler and printer, bearer tokens, JSON output |
+| `crates/h5i-app-std` | extracted and proven kernel helpers: byte strings, sets, maps, reachability, expiry checks |
 | `examples/app/tutorials` | step-by-step tutorials |
 | `examples/app/docs` | the document service, the largest example |
 | `examples/app/kellnr`, `examples/app/atuin` | ports of real authorization code, kernels and proofs only |
 | `examples/app/wastebin`, `examples/app/conduit`, `examples/app/cratesio` | ports of real applications, with servers |
-| `examples/app/filters`, `examples/app/keys` | patterns, kernels and proofs only: parsing over bytes, properties across requests |
+| `examples/app/filters`, `examples/app/keys`, `examples/app/roles` | patterns, kernels and proofs only: parsing over bytes, properties across requests, `h5i-app-std` and read authorization |
 | `xtask` | `cargo app-verify`, which runs CI's checks locally |
 
 The root Cargo workspace holds `crates/*` and `xtask`. `examples/app/` is a second
@@ -174,6 +175,13 @@ over every actor, state and command, so a forgotten check on any route fails
 the proof. `cargo app-verify` reports which app proofs state it; kellnr uses
 the schema.
 
+A leak is a reply, not a write. `H5iAppLib.ReadsAuthorized` is the
+counterpart for confidentiality: every row a successful reply discloses (as
+`readsOf` lists them) is `visible` to the actor, in the state the command ran
+in. A cross-tenant read breaks it without any write, so a read-only endpoint
+needs no placeholder write to be covered. `reads_of_filter` discharges the
+usual list endpoint, and `Authorized` states both.
+
 ## One schema per app
 
 The engine's tables (idempotency keys, outbox) have fixed names. Two apps in
@@ -189,6 +197,12 @@ Aeneas translates a subset of Rust. What falls outside it has a replacement:
 | Instead of | Write | Prove with |
 |---|---|---|
 | `String`, `&str` | `Vec<u8>`, `&[u8]` | `==` and `!=` specs in `H5iAppLib.Bytes` |
+| `str` methods (`starts_with`, `trim`, `split`, ...) | `h5i_app_std::bytes` | its specs, over lists (`<+:`, `trimB`, `splitB`) |
+| `HashSet`, `BTreeSet` | a `Vec<T>` and `h5i_app_std::set` | its specs: `∈`, `⊆`, `SetEq` |
+| `HashMap`, `BTreeMap` | a `Vec<(K, V)>` and `h5i_app_std::map` | its specs: `mapGet`, `mapInsert`, `mapRemove` |
+| recursion over a graph (role inheritance) | `h5i_app_std::graph::reachable` | its spec: exactly the `Reach` set |
+| `exp < now - leeway` | `h5i_app_std::time`, which cannot overflow | its specs, over `Nat` |
+| `held.contains(required)` on bitflags | `held & required == required` | `Covers`, `covers_iff_testBit` in `H5iAppLib.Bits` |
 | iterator adapters, closures (`.iter().any(..)`) | `for x in v.iter()` with `return` or `push` | `iter_any`, `iter_find`, `iter_filter_map`, `iter_fold` |
 | a parser with early exits | a `for` loop over bytes with a state enum | `iter_loop`, modeled by `iterRun` |
 | index loops `while i < v.len()` | `for` loops (the index loops still work) | `loop_search`, `loop_fold` |
@@ -210,13 +224,43 @@ per-element goal with `h5i_iter` and restates the conclusion; what it cannot
 close is left to the caller. `examples/app/filters` parses text this way, with a
 round trip proven for all byte strings.
 
+### `h5i-app-std`
+
+`h5i-app-std` holds what each port used to write and prove itself: `str`
+methods over bytes, a `Vec` as a set or a map, reachability, and expiry
+checks. Every function has a `@[step]` spec in
+`crates/h5i-app-std/proofs/StdSpecs.lean`, stated over lists with the models
+of `H5iAppLib.Text`, `Sets` and `Graph`, so `step*` goes through a call and
+the proof reasons about `<+:`, `⊆` or `Reach`, never about the loop.
+
+A kernel uses it like `h5i-app-sql`: extract with `--include h5i_app_std`,
+then copy the specs next to the extracted Lean and add `StdSpecs` to the
+generated library's roots:
+
+```bash
+scripts/app/std-specs.sh MyKernel my_kernel path/to/proofs/generated
+```
+
+`examples/app/roles` does this end to end (`scripts/app/extract-roles.sh`).
+
+The copy imports the kernel's extraction and opens its namespace. Aeneas
+keeps only the functions the kernel calls, so each spec is guarded by its
+function (`h5i_when`) and the rest are skipped. The `set`, `map` and `graph`
+functions are generic over `T: PartialEq` (and `Clone`); their specs need
+`EqLaw` (and `CloneLaw`) for the instance, which `H5iAppLib.Sets` provides
+for the scalars and `Vec<u8>`, and `h5i_derive_eq` (`h5i_derive_clone`) for
+kernel types.
+
 Tooling fixes for common failures:
 
 - Derived `==` on an enum compares `read_discriminant`, which the WP tactics
   do not reduce. `h5i_derive_eq T f` derives `DecidableEq T` and a `@[step]`
-  spec saying `f` decides equality. Run it for field types first, then structs.
+  spec saying `f` decides equality, and an `EqLaw` instance for `T`'s
+  `PartialEq`, so `h5i-app-std`'s generic specs apply to `Vec<T>`. Run it for
+  field types first, then structs.
 - `h5i_derive_clone T f` proves a derived `clone` is the identity, for `T` and
-  for `Vec<T>`, so `step*` passes through clones.
+  for `Vec<T>`, so `step*` passes through clones, and adds a `CloneLaw`
+  instance.
 - `let x = if c { a } else { b };` binds on an `if`, where `step*` stops.
   `h5i_steps` rewrites the bind into the branches and continues, whether
   they are plain values or calls, and splits a `match` it stops at.
@@ -226,6 +270,11 @@ Tooling fixes for common failures:
   (`bind_tc_eq_ok`). `loop_ok` does the same for a loop, by a measure.
 - `h5i_simp` normalizes `if false = true`, `id` and `ok` binds, and never
   fails for making no progress.
+- `step*` leaves `n < Usize.max` after a `push` onto a literal: `scalar_tac`
+  does not know `usize` has 32 bits. Close it with `usize_lt_max (by decide)`.
+- A model that computes with `==` (`List.lookup`, `List.contains`) picks up
+  Aeneas's own `BEq` on scalars, which is not the one `DecidableEq` gives.
+  Use `decide`/`∈` or the `DecidableEq` models (`mapGet`).
 - State postconditions as `model = extracted` (e.g. `findKey l k = o`), so
   `simp_all` rewrites the model into the extracted value. Add
   `-List.find?_eq_none` when a match on a `find?` result must reduce.

@@ -26,9 +26,11 @@ h5i-app = { version = "0.1", features = ["http", "postgres"] }
 | `h5i-app-pgsql` | statements to PostgreSQL text (extracted, proven) |
 | `h5i-app-json` | the reply JSON writer (extracted, proven) |
 | `h5i-app-token` | bearer-token encoding and parsing (extracted, proven) |
+| `h5i-app-std` | byte strings, sets, maps, reachability and expiry checks for kernels (extracted, proven) |
 
-A kernel crate depends on `h5i-app-sql` and `h5i-app-schema` directly, so that
-extraction sees only the code it translates.
+A kernel crate depends on `h5i-app-sql`, `h5i-app-schema` and, for text,
+sets or maps, `h5i-app-std` directly, so that extraction sees only the code
+it translates.
 
 ## High level features
 

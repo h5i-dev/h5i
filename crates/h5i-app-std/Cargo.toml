@@ -1,0 +1,26 @@
+[package]
+name = "h5i-app-std"
+description = "Byte strings, sets and maps for h5i-app kernels, extracted to Lean and proven"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+repository = "https://github.com/h5i-dev/h5i"
+homepage = "https://github.com/h5i-dev/h5i"
+readme = "../h5i-app/README.md"
+
+# No dependencies: this crate is extracted to Lean by Charon + Aeneas, both on
+# its own and inside every kernel that uses it.
+[dependencies]
+
+# Written in the subset of Rust that Charon + Aeneas translate: no `?`, no
+# closures, `&Vec` rather than slices, explicit loops. Clippy's idiomatic
+# rewrites leave that subset, so they are allowed here rather than applied.
+[lints.clippy]
+len_zero = "allow"
+manual_is_multiple_of = "allow"
+manual_map = "allow"
+manual_range_contains = "allow"
+manual_strip = "allow"
+needless_range_loop = "allow"
+op_ref = "allow"
+ptr_arg = "allow"

@@ -2,6 +2,8 @@ import H5iAppLib.Basic
 import H5iAppLib.Loops
 import H5iAppLib.Iter
 import H5iAppLib.Bytes
+import H5iAppLib.Text
+import H5iAppLib.Sets
 import H5iAppLib.Lists
 import H5iAppLib.Tables
 import H5iAppLib.Tactics
@@ -12,3 +14,5 @@ import H5iAppLib.Store
 import H5iAppLib.Pg
 import H5iAppLib.Decode
 import H5iAppLib.Authz
+import H5iAppLib.Bits
+import H5iAppLib.Graph
