@@ -574,7 +574,7 @@
         <title id="coin-title">Two sides of one coin: find vulnerabilities, prove correctness</title>
         <desc id="coin-desc">Two halves of web security joined by one coin. Red-teaming the running app finds the bugs nobody anticipated; proving correctness in Lean 4 establishes the rules you can state. h5i is the coin, one workspace for both.</desc>
         <defs>
-          <radialGradient id="coin-face" cx="36%" cy="30%" r="75%"><stop offset="0" stop-color="var(--spot)" stop-opacity=".55"/><stop offset=".55" stop-color="var(--spot)" stop-opacity=".12"/><stop offset="1" stop-color="var(--spot)" stop-opacity=".02"/></radialGradient>
+          <radialGradient id="coin-face" cx="36%" cy="30%" r="75%"><stop offset="0" stop-color="#5a1f16"/><stop offset=".55" stop-color="#2a1210"/><stop offset="1" stop-color="#15090a"/></radialGradient>
         </defs>
         <!-- Find vulnerabilities -->
         <rect x="0" y="95" width="360" height="104" rx="10" fill="var(--panel)" stroke="var(--spot)" stroke-opacity=".8"/>
@@ -589,13 +589,19 @@
         <!-- The coin between them: one object, two faces. It turns slowly; a face reads h5i. -->
         <g stroke="var(--spot)" stroke-width="1.5" stroke-opacity=".45"><path d="M360 147H486"/><path d="M614 147H740"/></g>
         <g class="coin-spin">
-          <ellipse cx="550" cy="147" rx="58" ry="58" fill="url(#coin-face)" stroke="var(--spot)" stroke-width="2">
-            <animate attributeName="rx" values="58;58;0;58;58;0;58;58" keyTimes="0;.2;.32;.44;.64;.76;.88;1" dur="10s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"/>
+          <!-- the rim: the coin's thickness, seen on the side turning toward you. It is what makes the turn read one way. -->
+          <ellipse cx="550" cy="147" rx="58" ry="58" fill="var(--spot)" fill-opacity=".55" stroke="var(--spot)" stroke-width="2">
+            <animate attributeName="rx" values="58;58;10;58;58;10;58;58" keyTimes="0;.2;.32;.44;.64;.76;.88;1" dur="10s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"/>
           </ellipse>
-          <!-- the faces foreshorten with the rim, so the coin reads as turning rather than fading -->
-          <g transform="translate(550 147)"><g>
-            <animateTransform attributeName="transform" type="scale" values="1 1;1 1;0 1;1 1;1 1;0 1;1 1;1 1" keyTimes="0;.2;.32;.44;.64;.76;.88;1" dur="10s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"/>
-            <g transform="translate(-550 -147)">
+          <!-- the face slides toward that side as it foreshortens -->
+          <g>
+            <animateTransform attributeName="transform" type="translate" values="0 0;0 0;10 0;0 0;0 0;10 0;0 0;0 0" keyTimes="0;.2;.32;.44;.64;.76;.88;1" dur="10s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"/>
+            <ellipse cx="550" cy="147" rx="58" ry="58" fill="url(#coin-face)" stroke="var(--spot)" stroke-width="2">
+              <animate attributeName="rx" values="58;58;0;58;58;0;58;58" keyTimes="0;.2;.32;.44;.64;.76;.88;1" dur="10s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"/>
+            </ellipse>
+            <g transform="translate(550 147)"><g>
+              <animateTransform attributeName="transform" type="scale" values="1 1;1 1;0 1;1 1;1 1;0 1;1 1;1 1" keyTimes="0;.2;.32;.44;.64;.76;.88;1" dur="10s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"/>
+              <g transform="translate(-550 -147)">
           <!-- heads: find vulnerabilities. A crosshair over the kernel of the mark. -->
           <g class="coin-heads"><animate attributeName="opacity" values="1;0;1;1" keyTimes="0;.32;.76;1" dur="10s" repeatCount="indefinite" calcMode="discrete"/>
             <circle cx="550" cy="140" r="19" fill="none" stroke="var(--ink)" stroke-width="1.6" stroke-opacity=".8"/>
@@ -609,8 +615,10 @@
             <circle cx="550" cy="140" r="19" fill="none" stroke="var(--ink)" stroke-width="1.6" stroke-opacity=".8"/>
             <path d="M540 141l7 7 13-15" fill="none" stroke="var(--spot)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
             <text x="550" y="186" class="pd-label" text-anchor="middle">PROVE</text>
-              </g>
-          </g></g>
+                </g>
+            </g></g>
+          </g>
+        </g></g>
         </g>
         </g>
         <text x="550" y="70" class="pd-label" text-anchor="middle">ONE COIN</text>
