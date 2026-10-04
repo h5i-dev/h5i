@@ -4,31 +4,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>h5i: is the web app your AI built really secure?</title>
-<meta name="description" content="A 63-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
+<meta name="description" content="A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
 <link rel="canonical" href="https://h5i.dev/demo/">
 <link rel="icon" type="image/png" href="https://h5i.dev/_static/logo.png">
 <link rel="apple-touch-icon" href="https://h5i.dev/_static/logo.png">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="h5i">
 <meta property="og:title" content="h5i: is the web app your AI built really secure?">
-<meta property="og:description" content="A 63-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
+<meta property="og:description" content="A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
 <meta property="og:url" content="https://h5i.dev/demo/">
 <meta property="og:locale" content="en_US">
 <meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="h5i: is the web app your AI built really secure?">
-<meta name="twitter:description" content="A 63-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
+<meta name="twitter:description" content="A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
 <meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 <meta name="robots" content="index, follow, max-image-preview:large, max-video-preview:-1">
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"VideoObject",
  "name":"h5i: is the web app your AI built really secure?",
- "description":"A 63-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.",
+ "description":"A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.",
  "thumbnailUrl":"https://h5i.dev/_static/sandboxed-browser-ui.png",
  "uploadDate":"2026-10-04",
- "duration":"PT63S",
+ "duration":"PT60S",
  "embedUrl":"https://h5i.dev/demo/",
  "publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}}}
 </script>
@@ -498,7 +498,7 @@ const T = {
   two: 7.2, cut: 10.3,
   ws: 10.3,
   tHistory: 16.5, tFindings: 21.7, deny: 25.1, tBoxes: 27.9, card2: 31.1, tApps: 34.4, write: 35.2, extract: 38.8, prove: 41.8, verify: 46.2, tEvidence: 53.0,
-  close: 56.0, logo: 56.7, end: 63.2,
+  close: 56.0, logo: 56.5, end: 60,
 };
 const TOTAL = T.end * 1000;
 const F = T.ws;
@@ -778,16 +778,16 @@ function draw(ms) {
   {
     const lg = $('logo'); const lp = eo(ramp(t, T.logo, 1.1));
     const l1 = lg.querySelector('.l1'), l2 = lg.querySelector('.l2');
-    const p1 = eo(ramp(t, T.logo + 1.9, .6)), p2 = eo(ramp(t, T.logo + 2.6, .6));
+    const p1 = eo(ramp(t, T.logo + 1.0, .5)), p2 = p1;
     l1.style.opacity = p1; l2.style.opacity = p2;
     l1.style.letterSpacing = lerp(.36, .2, p1) + 'em'; l2.style.letterSpacing = lerp(.36, .2, p2) + 'em';
     lg.style.opacity = t >= T.logo ? 1 : 0;
     lg.querySelector('.mark').style.transform = `scale(${lerp(1.25, 1, lp)})`;
     lg.querySelector('.mark').style.opacity = lp;
-    const tg = lg.querySelector('.tag'); const tp = eo(ramp(t, T.logo + 1.0, .9)); tg.style.opacity = tp;
+    const tg = lg.querySelector('.tag'); const tp = eo(ramp(t, T.logo + .3, .6)); tg.style.opacity = tp;
     tg.style.letterSpacing = tg.style.textIndent = lerp(.5, .34, tp) + 'em';
     const u = lg.querySelector('.urls'), o = lg.querySelector('.oss');
-    const up = eo(ramp(t, T.logo + 3.4, .6)), op = eo(ramp(t, T.logo + 3.8, .6));
+    const up = eo(ramp(t, T.logo + 1.0, .5)), op = up;
     u.style.opacity = up; u.style.transform = `translateY(${(1-up)*8}px)`; o.style.opacity = op; o.style.transform = `translateY(${(1-op)*8}px)`;
   }
 

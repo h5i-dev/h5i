@@ -1,6 +1,6 @@
 # h5i teaser: is the web app your AI built really secure?
 
-The h5i product film (1:03), built as a deterministic HTML timeline and
+The h5i product film (1:00), built as a deterministic HTML timeline and
 rendered to mp4. It is cut like a teaser, not a walkthrough, and tells the
 same story as the front page and the pitch deck: **find vulnerabilities, prove
 correctness, two sides of one coin, one workspace.** It is linked from the
@@ -54,8 +54,8 @@ theorems turning proven carry the story on their own.
 | 0:46 | `cargo app-verify`: extraction, lake build, the axiom gate and the mutants pass, and the rows turn proven. |
 | 0:53 | Click: Evidence. The receipt: what was checked, over what was prepared, never a score. |
 
-**The close (0:56 to 1:03).** One screen: the mark, the tagline, then
-"Find vulnerabilities. Prove correctness.", then the URLs.
+**The close (0:56 to 1:00).** One screen, two beats: the mark and the
+tagline, then "Find vulnerabilities. Prove correctness." with the URLs.
 
 ## What is deliberately not in it
 
