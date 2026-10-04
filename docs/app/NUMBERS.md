@@ -62,6 +62,7 @@ Shared code:
 | `h5i-app-sql` (planner) | 141 | 118 |
 | `h5i-app-token` (token parser and encoder) | 197 | 963 |
 | `h5i-app-json` (reply writer) | 207 | 427 |
+| `h5i-app-std` (bytes, sets, maps, reachability, expiry), with its list models in `H5iAppLib` | 335 | 1,102 |
 | `Schema.lean`, generated for docs | none | 474 |
 
 ## Checks

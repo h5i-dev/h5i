@@ -97,7 +97,7 @@ jobs:
       - name: Build the other extracted-crate proofs
         working-directory: .
         run: |
-          for d in crates/h5i-app-sql/proofs crates/h5i-app-pgsql/proofs crates/h5i-app-token/proofs crates/h5i-app-json/proofs examples/app/kellnr/proofs examples/app/atuin/proofs examples/app/tutorials/calculator/proofs examples/app/tutorials/board/proofs examples/app/wastebin/proofs examples/app/conduit/proofs examples/app/cratesio/proofs examples/app/tutorials/ledger/proofs examples/app/tutorials/inbox/proofs examples/app/tutorials/booking/proofs examples/app/filters/proofs examples/app/keys/proofs; do
+          for d in crates/h5i-app-sql/proofs crates/h5i-app-pgsql/proofs crates/h5i-app-token/proofs crates/h5i-app-json/proofs crates/h5i-app-std/proofs examples/app/kellnr/proofs examples/app/atuin/proofs examples/app/tutorials/calculator/proofs examples/app/tutorials/board/proofs examples/app/wastebin/proofs examples/app/conduit/proofs examples/app/cratesio/proofs examples/app/tutorials/ledger/proofs examples/app/tutorials/inbox/proofs examples/app/tutorials/booking/proofs examples/app/filters/proofs examples/app/keys/proofs; do
             mkdir -p "$d/.lake"
             ln -sfn "$GITHUB_WORKSPACE/examples/app/docs/proofs/.lake/packages" "$d/.lake/packages"
             (cd "$d" && lake build)
@@ -131,6 +131,7 @@ jobs:
       - run: scripts/app/extract-pgsql.sh
       - run: scripts/app/extract-token.sh
       - run: scripts/app/extract-json.sh
+      - run: scripts/app/extract-std.sh
       - run: scripts/app/extract-kellnr.sh
       - run: scripts/app/extract-atuin.sh
       - run: scripts/app/extract-calculator.sh
@@ -150,6 +151,7 @@ jobs:
             crates/h5i-app-pgsql/proofs/generated/H5iAppPgsql.lean \
             crates/h5i-app-token/proofs/generated/H5iAppToken.lean \
             crates/h5i-app-json/proofs/generated/H5iAppJson.lean \
+            crates/h5i-app-std/proofs/generated/H5iAppStd.lean \
             examples/app/kellnr/proofs/generated/KellnrKernel.lean \
             examples/app/atuin/proofs/generated/AtuinKernel.lean \
             examples/app/tutorials/calculator/proofs/generated/CalculatorKernel.lean \

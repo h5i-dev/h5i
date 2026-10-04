@@ -98,6 +98,44 @@ theorem loop_fold {α σ β : Type} (l : List α) (abs : σ → β) (g : β → 
       rw [heq, List.drop_eq_getElem_cons hlt, List.foldl_cons, ← habs, hk]
   · exact ⟨hi, hinv, rfl⟩
 
+/-- Per-step shape of a fold loop with two accumulators, whose state Aeneas
+lays out as `(a, b, i)`. -/
+def FoldStep2 {α σ τ β} (l : List α) (abs : σ → τ → β) (g : β → α → β) (Inv : σ → τ → Nat → Prop)
+    (a : σ) (b : τ) (i : Usize) : ControlFlow (σ × τ × Usize) (σ × τ) → Prop
+  | .done (a', b') => l.length ≤ i.val ∧ a' = a ∧ b' = b
+  | .cont (a', b', j) => ∃ h : i.val < l.length,
+      abs a' b' = g (abs a b) l[i.val] ∧ j.val = i.val + 1 ∧ Inv a' b' j.val
+
+theorem loop_fold2 {α σ τ β : Type} (l : List α) (abs : σ → τ → β) (g : β → α → β)
+    (Inv : σ → τ → Nat → Prop)
+    (body : σ × τ × Usize → Result (ControlFlow (σ × τ × Usize) (σ × τ)))
+    (hstep : ∀ (a : σ) (b : τ) (i : Usize), i.val ≤ l.length → Inv a b i.val →
+      body (a, b, i) ⦃ FoldStep2 l abs g Inv a b i ⦄)
+    (a : σ) (b : τ) (i : Usize) (hi : i.val ≤ l.length) (hinv : Inv a b i.val) :
+    loop body (a, b, i) ⦃ r => abs r.1 r.2 = (l.drop i.val).foldl g (abs a b) ∧ Inv r.1 r.2 l.length ⦄ := by
+  apply loop.spec_decr_nat (measure := fun (x : σ × τ × Usize) => l.length - x.2.2.val)
+    (inv := fun x => x.2.2.val ≤ l.length ∧ Inv x.1 x.2.1 x.2.2.val ∧
+      (l.drop i.val).foldl g (abs a b) = (l.drop x.2.2.val).foldl g (abs x.1 x.2.1))
+  · rintro ⟨t, u, j⟩ ⟨hj, hI, heq⟩
+    simp only at hj hI heq
+    apply WP.spec_mono (hstep t u j hj hI)
+    intro r h
+    cases r with
+    | done y =>
+      obtain ⟨t', u'⟩ := y
+      obtain ⟨hle, rfl, rfl⟩ := h
+      simp only
+      have : j.val = l.length := by omega
+      refine ⟨?_, this ▸ hI⟩
+      rw [heq, List.drop_eq_nil_of_le hle]; rfl
+    | cont x =>
+      obtain ⟨t', u', k⟩ := x
+      obtain ⟨hlt, habs, hk, hI'⟩ := h
+      simp only
+      refine ⟨⟨by omega, hI', ?_⟩, by omega⟩
+      rw [heq, List.drop_eq_getElem_cons hlt, List.foldl_cons, ← habs, hk]
+  · exact ⟨hi, hinv, rfl⟩
+
 /-! ## Model functions the loops compute -/
 
 theorem searchFrom_find {α β} (l : List α) (P : α → Bool) (f : α → β) (k : Nat) :
@@ -192,6 +230,42 @@ theorem search_find {α} (l : List α) (P : α → Bool) (r : Option α)
 theorem searchFrom_all {α} (l : List α) (P : α → Bool) :
     searchFrom l P (fun _ _ => false) true 0 = true ↔ ∀ x ∈ l, P x = false := by
   rw [searchFrom_const]; simp
+
+/-- An "all" check from 0 that returns `true` when no element satisfies `P`. -/
+theorem search_all {α} (l : List α) (P : α → Bool) (r : Bool)
+    (hr : r = searchFrom l P (fun _ _ => false) true (↑(0#usize : Usize))) : r = l.all (fun x => !P x) := by
+  rw [search_bool _ _ _ _ _ hr, List.all_eq_not_any_not]; simp only [Bool.not_not]
+  cases l.any P <;> rfl
+
+/-- A search that returns the index of the first match. -/
+theorem searchFrom_findIdx {α} (l : List α) (P : α → Bool) (k : Nat) :
+    searchFrom l P (fun i _ => some i) none k = ((l.drop k).findIdx? P).map (· + k) := by
+  induction h : l.length - k generalizing k with
+  | zero => rw [searchFrom_end (by omega), List.drop_eq_nil_of_le (by omega)]; rfl
+  | succ n ih =>
+    have hk : k < l.length := by omega
+    rw [List.drop_eq_getElem_cons hk, List.findIdx?_cons]
+    by_cases hp : P l[k]
+    · rw [searchFrom_found hk hp]; simp [hp]
+    · rw [searchFrom_skip hk hp, ih (k + 1) (by omega)]; simp [hp, Option.map_map]
+      congr 1; funext x; omega
+
+/-- A search that returns the index of the first match, or the length. -/
+theorem searchFrom_index {α} (l : List α) (P : α → Bool) (k : Nat) :
+    searchFrom l P (fun i _ => i) l.length k = min k l.length + ((l.drop k).takeWhile (fun x => !P x)).length := by
+  induction h : l.length - k generalizing k with
+  | zero => rw [searchFrom_end (by omega), List.drop_eq_nil_of_le (by omega)]; simp; omega
+  | succ n ih =>
+    have hk : k < l.length := by omega
+    rw [List.drop_eq_getElem_cons hk, List.takeWhile_cons]
+    by_cases hp : P l[k]
+    · rw [searchFrom_found hk hp]; simp [hp]; omega
+    · rw [searchFrom_skip hk hp, ih (k + 1) (by omega)]; simp [hp]; omega
+
+/-- A search from 0 that returns the index of the first match. -/
+theorem search_findIdx {α} (l : List α) (P : α → Bool) (r : Option Nat)
+    (hr : r = searchFrom l P (fun i _ => some i) none (↑(0#usize : Usize))) : r = l.findIdx? P := by
+  rw [hr, searchFrom_findIdx, UScalar.ofNatCore_val_eq, List.drop_zero]; simp
 
 theorem foldl_map {α β} (f : α → β) (l : List α) (acc : List β) :
     l.foldl (fun acc x => acc ++ [f x]) acc = acc ++ l.map f := by

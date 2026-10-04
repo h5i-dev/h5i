@@ -8,6 +8,14 @@ theorem usize_max_le : Usize.max ≤ U64.max := by
   rw [Usize.max_def, U64.max_def]
   cases System.Platform.numBits_eq <;> simp_all [Usize.numBits, U64.numBits]
 
+/-- `usize` has at least 32 bits. `scalar_tac` does not know it, so the side
+goal `n < Usize.max` of a `push` onto a short literal is `usize_lt_max`. -/
+theorem usize_max_ge : 2 ^ 32 - 1 ≤ Usize.max := by
+  rw [Usize.max_def]
+  cases System.Platform.numBits_eq <;> simp_all [Usize.numBits]
+
+theorem usize_lt_max {n : Nat} (h : n < 2 ^ 32 - 1) : n < Usize.max := Nat.lt_of_lt_of_le h usize_max_ge
+
 /-- Cloning a vector whose element clone is the identity returns the vector. -/
 theorem vec_clone_eq {T : Type} (inst : core.clone.Clone T) (v : alloc.vec.Vec T)
     (h : ∀ x, inst.clone x = ok x) : alloc.vec.CloneVec.clone inst v = ok v := by
