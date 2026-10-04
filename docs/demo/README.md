@@ -2,7 +2,7 @@
 
 The h5i product film (1:00), built as a deterministic HTML timeline and
 rendered to mp4. It is cut like a teaser, not a walkthrough, and tells the
-same story as the front page and the pitch deck: **find bugs, prove
+same story as the front page and the pitch deck: **find vulnerabilities, prove
 correctness, two sides of one coin, one workspace.** It is linked from the
 site footer as "Demo video".
 
@@ -24,7 +24,7 @@ Three layers sit on top of the product itself.
 
 **Title cards.** Black, one uppercase line, letters tracking in, then a hard
 cut. "Your AI built it." "In an afternoon." "Is it really secure?" The question
-mark lands with a shake. At the end: "Find bugs." "Prove correctness." Then
+mark lands with a shake. At the end: "Find vulnerabilities." "Prove correctness." Then
 the mark, with bloom, and the tagline.
 
 **The camera.** After the coin, one object is on screen the whole time: the
@@ -50,7 +50,7 @@ the dark. A flash layer takes the impacts.
 | 0:28 | Close on the page: untrusted content tells the agent to leak the data. Wide: the allowlist refuses, the wall drops, the audit records it. |
 | 0:35 | The workspace turns over. "Same workspace. Other side of the coin." |
 | 0:38 | Wide. A scanline sweeps Rust into Lean. Close: the `authorized` theorem. Close: `lake build`, three properties light up, the covered Rust lines get a green bar. |
-| 0:51 | Black. "Find bugs." "Prove correctness." The mark. The tagline. The URLs. |
+| 0:51 | Black. "Find vulnerabilities." "Prove correctness." The mark. The tagline. The URLs. |
 
 ## What is deliberately not in it
 

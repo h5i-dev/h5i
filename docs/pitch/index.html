@@ -857,7 +857,7 @@
   .bound-row .card-sm, .who-row .card-sm { display: flex; flex-direction: column; gap: 4px; }
   .bound-row b, .who-row b { color: var(--ink); font-size: 1.05rem; }
   .bound-row span, .who-row span { color: var(--text-dim); font-size: 0.95rem; line-height: 1.4; }
-  /* the one terminal on the find-bugs slides */
+  /* the one terminal on the find-vulnerabilities slides */
   .fb-term { margin-top: 18px; font-size: 1.02rem; line-height: 1.75; }
   .fb-term .terminal-body { padding: 1.1rem 1.4rem; }
   .pf-note { margin-top: 10px; max-width: 820px; font-size: 1rem; color: var(--text-dim); }
@@ -1038,11 +1038,11 @@
 
 <!-- 2: two sides of one coin -->
 <div class="slide" style="gap:22px;"><div style="width:100%;max-width:1080px;">
-  <div class="section-tag">Security has two sides</div><h2>Find bugs. Prove correctness.<br><span class="red">Two sides of one coin.</span></h2>
+  <div class="section-tag">Security has two sides</div><h2>Find vulnerabilities. Prove correctness.<br><span class="red">Two sides of one coin.</span></h2>
   <div class="coin">
     <div class="coin-face">
       <span class="coin-k">01 · Red-teaming</span>
-      <h3>Find bugs</h3>
+      <h3>Find vulnerabilities</h3>
       <p>Attack the running app the way a hacker would, and catch what nobody anticipated.</p>
       <span class="coin-cost">Expert hackers are expensive. Red-teaming AI can go rogue.</span>
     </div>
@@ -1063,15 +1063,15 @@
   <div class="section-tag">What h5i is</div><h2>One workspace for both,<br><span class="red">for developers and their AI.</span></h2>
   <figure class="coin-flow">
     <svg class="proof-diagram coin-diagram" viewBox="0 30 1100 230" role="img" aria-labelledby="coin-title coin-desc" xmlns="http://www.w3.org/2000/svg">
-        <title id="coin-title">Two sides of one coin: find bugs, prove correctness</title>
+        <title id="coin-title">Two sides of one coin: find vulnerabilities, prove correctness</title>
         <desc id="coin-desc">Two halves of web security joined by one coin. Red-teaming the running app finds the bugs nobody anticipated; proving correctness in Lean 4 establishes the rules you can state. h5i is the coin, one workspace for both.</desc>
         <defs>
           <radialGradient id="coin-face" cx="36%" cy="30%" r="75%"><stop offset="0" stop-color="var(--red)" stop-opacity=".55"/><stop offset=".55" stop-color="var(--red)" stop-opacity=".12"/><stop offset="1" stop-color="var(--red)" stop-opacity=".02"/></radialGradient>
         </defs>
-        <!-- Find bugs -->
+        <!-- Find vulnerabilities -->
         <rect x="0" y="95" width="360" height="104" rx="10" fill="var(--bg-card)" stroke="var(--red)" stroke-opacity=".8"/>
         <text x="28" y="124" class="pd-label pd-accent">01 / RED-TEAMING</text>
-        <text x="28" y="153" class="pd-title">Find bugs</text>
+        <text x="28" y="153" class="pd-title">Find vulnerabilities</text>
         <text x="28" y="178" class="pd-code">the bugs nobody anticipated</text>
         <!-- Prove correctness -->
         <rect x="740" y="95" width="360" height="104" rx="10" fill="var(--bg-card)" stroke="var(--red)" stroke-opacity=".8"/>
@@ -1097,9 +1097,9 @@
 </div></div>
 
 
-<!-- 4: find bugs -->
+<!-- 4: find vulnerabilities -->
 <div class="slide" style="gap:18px;"><div style="width:100%;max-width:1040px;">
-  <div class="section-tag">Find bugs / any stack</div><h2>Your agent red-teams<br><span class="red">the running app.</span></h2>
+  <div class="section-tag">Find vulnerabilities / any stack</div><h2>Your agent red-teams<br><span class="red">the running app.</span></h2>
   <p class="lede" style="max-width:960px;">It drives the app like a user and replays real requests like a hacker, inside limits you set. No framework migration required.</p>
   <div class="terminal fb-term">
     <div class="terminal-bar"><div class="dot"></div><div class="dot"></div><div class="dot"></div><span class="terminal-path">the agent's session · an authorized target</span></div>
@@ -1224,7 +1224,7 @@
 
 <!-- 9: next, and the ask -->
 <div class="slide" style="gap:22px;"><div style="width:100%;max-width:1080px;">
-  <div class="section-tag">Next</div><h2>Find bugs. Prove correctness.<br><span class="red">For every team that ships with AI.</span></h2>
+  <div class="section-tag">Next</div><h2>Find vulnerabilities. Prove correctness.<br><span class="red">For every team that ships with AI.</span></h2>
   <div class="g3 who-row" style="margin-top:28px;">
     <div class="card-sm"><b>Product</b><span>findings beside the proofs they touch, in one console</span></div>
     <div class="card-sm"><b>Adoption</b><span>10 design partners, then the first paid pilots</span></div>
