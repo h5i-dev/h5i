@@ -4,31 +4,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>h5i: is the web app your AI built really secure?</title>
-<meta name="description" content="A 61-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
+<meta name="description" content="A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
 <link rel="canonical" href="https://h5i.dev/demo/">
 <link rel="icon" type="image/png" href="https://h5i.dev/_static/logo.png">
 <link rel="apple-touch-icon" href="https://h5i.dev/_static/logo.png">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="h5i">
 <meta property="og:title" content="h5i: is the web app your AI built really secure?">
-<meta property="og:description" content="A 61-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
+<meta property="og:description" content="A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
 <meta property="og:url" content="https://h5i.dev/demo/">
 <meta property="og:locale" content="en_US">
 <meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="h5i: is the web app your AI built really secure?">
-<meta name="twitter:description" content="A 61-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
+<meta name="twitter:description" content="A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
 <meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 <meta name="robots" content="index, follow, max-image-preview:large, max-video-preview:-1">
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"VideoObject",
  "name":"h5i: is the web app your AI built really secure?",
- "description":"A 61-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.",
+ "description":"A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.",
  "thumbnailUrl":"https://h5i.dev/_static/sandboxed-browser-ui.png",
  "uploadDate":"2026-10-04",
- "duration":"PT61S",
+ "duration":"PT60S",
  "embedUrl":"https://h5i.dev/demo/",
  "publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}}}
 </script>
@@ -257,16 +257,16 @@
   #cap em{font-style:normal;color:var(--accent)}
 
   /* ---- the finale ---- */
-  #fin{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
-  #fin .l1,#fin .l2{font-size:84px;font-weight:700;text-transform:uppercase;letter-spacing:.22em;text-indent:.22em;line-height:1.15;opacity:0}
-  #fin .l2{color:var(--accent)}
+  #logo .fin{margin-top:44px;display:flex;gap:46px;align-items:baseline}
+  #logo .fin .l1,#logo .fin .l2{font-size:40px;font-weight:700;text-transform:uppercase;letter-spacing:.2em;line-height:1.15;opacity:0}
+  #logo .fin .l2{color:var(--accent)}
   #logo{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;opacity:0}
   #logo .mark{font-family:var(--mono);font-weight:700;font-size:220px;letter-spacing:-.02em;line-height:1;
     text-shadow:0 0 40px rgba(255,255,255,.25),0 0 120px rgba(255,122,89,.35)}
   #logo .mark b{color:var(--accent);text-shadow:0 0 40px rgba(255,122,89,.8),0 0 140px rgba(255,122,89,.6)}
   #logo .tag{margin-top:26px;font-size:28px;letter-spacing:.34em;text-indent:.34em;text-transform:uppercase;color:var(--dim);opacity:0}
   #logo .tag b{color:var(--text);font-weight:400}
-  #logo .urls{margin-top:54px;font-family:var(--mono);font-size:24px;letter-spacing:.12em;color:var(--text);opacity:0}
+  #logo .urls{margin-top:40px;font-family:var(--mono);font-size:24px;letter-spacing:.12em;color:var(--text);opacity:0}
   #logo .urls span{color:var(--faint);margin:0 20px}
   #logo .oss{margin-top:16px;font-family:var(--mono);font-size:16px;letter-spacing:.28em;text-transform:uppercase;color:var(--faint);opacity:0}
 
@@ -447,10 +447,10 @@
     <div id="ptr"><div class="arr"></div><div class="ring"></div></div>
     </div>
 
-    <div id="fin"><div class="l1">Find vulnerabilities.</div><div class="l2">Prove correctness.</div></div>
     <div id="logo">
       <div class="mark">h<b>5</b>i</div>
       <div class="tag">secure web development <b>for every team</b></div>
+      <div class="fin"><span class="l1">Find vulnerabilities.</span><span class="l2">Prove correctness.</span></div>
       <div class="urls">h5i.dev<span>·</span>github.com/h5i-dev/h5i</div>
       <div class="oss">open source · apache 2.0 · available now</div>
     </div>
@@ -496,7 +496,7 @@ const T = {
   two: 7.2, cut: 10.3,
   ws: 10.3,
   tHistory: 16.5, tFindings: 21.7, deny: 25.1, tBoxes: 27.9, tApps: 31.1, write: 31.9, extract: 35.5, prove: 38.5, verify: 42.9, tEvidence: 49.7,
-  close: 52.7, fin: 53.3, logo: 56.7, end: 61,
+  close: 52.7, logo: 53.4, end: 60,
 };
 const TOTAL = T.end * 1000;
 const F = T.ws;
@@ -770,20 +770,18 @@ function draw(ms) {
 
   /* the finale */
   {
-    const fin = $('fin'), l1 = fin.querySelector('.l1'), l2 = fin.querySelector('.l2');
-    const onF = t >= T.fin && t < T.logo;
-    const p1 = eo(ramp(t, T.fin, .7)), p2 = eo(ramp(t, T.fin + 1.3, .7));
-    l1.style.opacity = onF ? p1 : 0; l2.style.opacity = onF ? p2 : 0;
-    l1.style.letterSpacing = l1.style.textIndent = lerp(.4, .2, p1) + 'em';
-    l2.style.letterSpacing = l2.style.textIndent = lerp(.4, .2, p2) + 'em';
     const lg = $('logo'); const lp = eo(ramp(t, T.logo, 1.1));
+    const l1 = lg.querySelector('.l1'), l2 = lg.querySelector('.l2');
+    const p1 = eo(ramp(t, T.logo + 1.9, .6)), p2 = eo(ramp(t, T.logo + 2.6, .6));
+    l1.style.opacity = p1; l2.style.opacity = p2;
+    l1.style.letterSpacing = lerp(.36, .2, p1) + 'em'; l2.style.letterSpacing = lerp(.36, .2, p2) + 'em';
     lg.style.opacity = t >= T.logo ? 1 : 0;
     lg.querySelector('.mark').style.transform = `scale(${lerp(1.25, 1, lp)})`;
     lg.querySelector('.mark').style.opacity = lp;
     const tg = lg.querySelector('.tag'); const tp = eo(ramp(t, T.logo + 1.0, .9)); tg.style.opacity = tp;
     tg.style.letterSpacing = tg.style.textIndent = lerp(.5, .34, tp) + 'em';
     const u = lg.querySelector('.urls'), o = lg.querySelector('.oss');
-    const up = eo(ramp(t, T.logo + 2.0, .6)), op = eo(ramp(t, T.logo + 2.5, .6));
+    const up = eo(ramp(t, T.logo + 3.4, .6)), op = eo(ramp(t, T.logo + 3.8, .6));
     u.style.opacity = up; u.style.transform = `translateY(${(1-up)*8}px)`; o.style.opacity = op; o.style.transform = `translateY(${(1-op)*8}px)`;
   }
 
