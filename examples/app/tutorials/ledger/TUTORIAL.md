@@ -163,7 +163,7 @@ conservation on the final state.
 
 ## Writing the specification
 
-Extract the kernel with `scripts/app/extract-ledger.sh` and open
+Extract the kernel with `h5i app extract examples/app/tutorials/ledger` and open
 `proofs/Spec.lean`. The state is the ledger row's three numbers and the list
 of accounts, and the new definition is the total:
 

@@ -9,7 +9,7 @@ require h5i_app_lib from "../../h5i-app-core/proofs"
 
 package json_proofs
 
--- Generated Lean: the extracted Rust (scripts/app/extract-json.sh). Do not edit.
+-- Generated Lean: the extracted Rust (`h5i app extract`). Do not edit.
 lean_lib Generated where
   srcDir := "generated"
   roots := #[`H5iAppJson]

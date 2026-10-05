@@ -221,6 +221,7 @@
 <a class="t3" href="#attention">Attention</a>
 <a class="t3" href="#what-it-does-not-show">What it does not show</a>
 </div>
+<a class="t2" href="#h5i-app">h5i app</a>
 <a class="t2" href="#h5i-skill">h5i skill</a>
 <a class="t2" href="#h5i-plugin">h5i plugin</a>
 <a class="t2" href="#policy">Policy</a>
@@ -467,6 +468,10 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 <tr>
 <td><a href="#h5i-skill"><code>h5i skill</code></a></td>
 <td>Write or print the agent skill this binary carries.</td>
+</tr>
+<tr>
+<td><a href="#h5i-app"><code>h5i app</code></a></td>
+<td>Build verified applications with h5i-app: extract a kernel to Lean, gate its proofs, mutate it.</td>
 </tr>
 <tr>
 <td><a href="#h5i-plugin"><code>h5i plugin</code></a></td>
@@ -1786,6 +1791,56 @@ URL private: any local process or page that obtains it can read the console.
 Untrusted box and page strings are rendered as text, never HTML. The console can
 stop a browser or take its control lock, but it cannot edit the box or widen its
 policy.</p>
+<h2 id="h5i-app">h5i app</h2>
+<p><a href="https://github.com/h5i-dev/h5i/tree/main/crates/h5i-app">h5i-app</a> applications
+keep their logic in a kernel crate that Charon and Aeneas translate to Lean, so
+its properties are proven rather than tested. <code>h5i app</code> runs that loop. A
+project is the kernel crate, a Lake project of proofs (<code>proofs/</code>) and an
+<code>h5i-app.toml</code> that says what to extract, which theorems must exist, and which
+bugs the proofs must reject.</p>
+<pre><code class="language-bash">h5i app new counter            # a kernel, proofs that already go through, h5i-app.toml
+cd counter
+h5i app doctor                 # Charon, Aeneas and Lean at the versions this h5i pins
+h5i app prove                  # extract to proofs/generated/, lake build, then the gate
+h5i app lint                   # routes take an Actor; no client-set identity in Command
+h5i app mutate                 # each [[mutant]] must break a proof
+h5i app mutate --auto --list   # mutants generated from the kernel's syntax
+</code></pre>
+<p>For CI, <code>h5i app extract --check</code> changes nothing and fails if
+<code>proofs/generated/</code> is not what the kernel extracts to, and <code>--all</code> runs a verb
+on every project under a directory.</p>
+<p><code>check</code> (and <code>prove</code>) fail on <code>sorry</code> or <code>native_decide</code> in hand-written Lean,
+on any <code>axiom</code> declaration, and on any theorem of a hand-written module that
+depends on an axiom other than <code>propext</code>, <code>Classical.choice</code> and <code>Quot.sound</code>.</p>
+<p><code>mutate</code> runs each mutant in a copy of the project: it edits the kernel,
+re-extracts it and rebuilds the proofs. A mutant is caught when the proofs stop
+building. One that survives is a behaviour the spec does not pin down, such as
+a theorem that holds because the kernel refuses everything. <code>--auto</code> adds
+mutants generated from the kernel's syntax: comparison boundaries, <code>==</code> and
+<code>!=</code>, <code>&amp;&amp;</code> and <code>||</code>, dropped <code>!</code>, and <code>if</code> conditions forced to <code>true</code> or
+<code>false</code>.</p>
+<p><code>h5i app new</code> requires the h5i-app Lean library from git at this binary's
+release tag; <code>--h5i-path &lt;checkout&gt;</code> uses a local h5i checkout instead.</p>
+<pre><code class="language-toml"># h5i-app.toml
+[extract]
+crate = &quot;kernel&quot;
+start-from = [&quot;transition&quot;]   # Charon start points, inside the crate
+include = [&quot;h5i_app_sql&quot;]     # crates extracted with the kernel
+schema = true                 # also start from what schema! generates
+std-specs = true              # copy h5i-app-std's specs next to the extraction
+
+[check]
+theorems = [&quot;my_kernel.inv_preserved&quot;]   # must exist and pass the gate
+
+[mutate]
+targets = [&quot;Theorems&quot;]        # Lake targets a mutant must break (default: all)
+
+[[mutant]]
+name = &quot;off_by_one&quot;
+old = &quot;if s.count &gt;= s.limit {&quot;
+new = &quot;if s.count &gt; s.limit {&quot;
+</code></pre>
+<hr />
 <h2 id="h5i-skill">h5i skill</h2>
 <p><code>skills/h5i/</code> is embedded in the binary at build time, so the skill cannot
 document flags the installed binary does not have.</p>

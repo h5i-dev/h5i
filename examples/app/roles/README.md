@@ -19,11 +19,11 @@ proofs never open its loops.
 
 ## Extraction
 
-`scripts/app/extract-roles.sh` extracts the kernel with `--include
-h5i_app_std`, so `generated/RolesKernel.lean` holds the crate functions the
-kernel calls, and then runs `scripts/app/std-specs.sh`, which copies the
+`h5i app extract` extracts the kernel with `--include h5i_app_std` (the
+`include` in `h5i-app.toml`), so `generated/RolesKernel.lean` holds the crate
+functions the kernel calls, and, because of `std-specs = true`, copies the
 crate's specs to `generated/StdSpecs.lean` against this extraction. CI fails
-if either file differs from what the scripts produce, so the copy follows
+if either file differs from what extraction produces, so the copy follows
 `crates/h5i-app-std/proofs/StdSpecs.lean`.
 
 ## Theorems

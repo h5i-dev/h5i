@@ -1915,6 +1915,7 @@ dependencies = [
  "clap_mangen",
  "console",
  "git2",
+ "h5i-app-cli",
  "h5i-browser",
  "h5i-core",
  "h5i-wire",
@@ -1944,6 +1945,21 @@ dependencies = [
  "h5i-app-schema",
  "h5i-app-sql",
  "h5i-app-token",
+]
+
+[[package]]
+name = "h5i-app-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn 2.0.117",
+ "tempfile",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -2012,6 +2028,12 @@ version = "0.1.0"
 [[package]]
 name = "h5i-app-xtask"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "h5i-app-cli",
+ "tempfile",
+]
 
 [[package]]
 name = "h5i-browser"

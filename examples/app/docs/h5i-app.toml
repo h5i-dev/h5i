@@ -1,0 +1,185 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+start-from = [
+    "transition",
+    "apply",
+    "read_scope",
+    "check_inv",
+    "sql_writes",
+    "decode",
+    "scoped_project",
+]
+schema = true
+include = ["h5i_app_sql"]
+
+[check]
+# Must exist and use only the standard axioms (every theorem in a hand-written
+# module is gated as well).
+theorems = [
+    "H5iAppLib.Store.App.served_holds",
+    "H5iAppLib.Store.App.served_lists",
+    "H5iAppLib.Pg.compile_sound",
+    "H5iAppLib.Pg.compileAll_sound",
+    "H5iAppLib.Pg.select_sound",
+    "H5iAppLib.Pg.lists_of_selects",
+    "H5iAppLib.Pg.create_fresh",
+    "H5iAppLib.Pg.create_kept",
+    "H5iAppLib.Pg.lexName_quote",
+    "docs_kernel.Theorems.allows_eq",
+    "docs_kernel.Theorems.transition_total",
+    "docs_kernel.Theorems.apply_eq",
+    "docs_kernel.Theorems.authorized",
+    "docs_kernel.Theorems.reply_confined",
+    "docs_kernel.Theorems.inv_preserved",
+    "docs_kernel.Theorems.reachable_inv",
+    "docs_kernel.Theorems.noninterference",
+    "docs_kernel.Frame.transition_frame",
+    "docs_kernel.Check.check_inv_spec",
+    "docs_kernel.Storage.encode_applyAll",
+    "docs_kernel.Storage.stored",
+    "docs_kernel.Storage.sql_writes_spec",
+    "docs_kernel.Storage.sql_writes_stored",
+    "docs_kernel.Load.fresh",
+    "docs_kernel.Load.decode_spec",
+    "docs_kernel.Load.load_sound",
+    "docs_kernel.Load.store_sound",
+    "docs_kernel.Load.sql_writes_storedC",
+    "docs_kernel.Scoped.scoped_sound",
+    "docs_kernel.Scoped.scoped_command",
+    "docs_kernel.Scoped.served_inv",
+    "docs_kernel.Theorems.emit_publishes",
+    "docs_kernel.Scenarios.authorized_reachable",
+    "docs_kernel.Scenarios.noninterference_reachable",
+    "docs_kernel.Scenarios.transition_frame_reachable",
+    "docs_kernel.Scenarios.published_reachable",
+    "docs_kernel.Database.pg_served",
+    "docs_kernel.Database.db_inv",
+]
+
+[mutate]
+# Scenarios runs the extracted kernel on concrete states, so it catches
+# mutants that break a run without breaking a theorem.
+targets = [
+    "Theorems",
+    "Invariants",
+    "Noninterference",
+    "Frame",
+    "Check",
+    "Storage",
+    "Load",
+    "Scoped",
+    "Scenarios",
+]
+
+[[mutant]]
+name = "self_approval_allowed"
+old = "if d.author == user {\n                return Err(Error::SelfApproval);"
+new = "if false {\n                return Err(Error::SelfApproval);"
+
+[[mutant]]
+name = "editor_can_approve"
+old = "            Action::Approve => false,\n            Action::Manage => false,\n        },\n        Role::Viewer"
+new = "            Action::Approve => true,\n            Action::Manage => false,\n        },\n        Role::Viewer"
+
+[[mutant]]
+name = "remove_last_owner"
+old = "if r == Role::Owner && count_owners(&snap.members, *project) <= 1 {"
+new = "if r == Role::Owner && count_owners(&snap.members, *project) < 1 {"
+
+[[mutant]]
+name = "demote_last_owner"
+old = "if demotes_owner && count_owners(&snap.members, *project) <= 1 {"
+new = "if false && count_owners(&snap.members, *project) <= 1 {"
+
+[[mutant]]
+name = "hidden_doc_forbidden"
+old = "if !can(snap, user, d.project, Action::Read) {\n                Err(Error::NotFound)"
+new = "if !can(snap, user, d.project, Action::Read) {\n                Err(Error::Forbidden)"
+
+[[mutant]]
+name = "publish_from_review"
+old = "if d.status != Status::Approved {"
+new = "if d.status != Status::InReview {"
+
+[[mutant]]
+name = "edit_keeps_approver"
+old = "let mut e = match with_status(d, Status::Draft, None) {"
+new = "let keep = d.approver;\n            let mut e = match with_status(d, Status::Draft, keep) {"
+
+[[mutant]]
+name = "list_without_permission"
+old = "if !can(snap, user, *project, Action::Read) {\n                return Err(Error::Forbidden);\n            }\n            Ok((\n                Vec::new(),\n                Reply::Docs("
+new = "if false {\n                return Err(Error::Forbidden);\n            }\n            Ok((\n                Vec::new(),\n                Reply::Docs("
+
+[[mutant]]
+name = "delete_needs_only_write"
+old = "authorized_doc(snap, user, *doc, Action::Manage)"
+new = "authorized_doc(snap, user, *doc, Action::Write)"
+
+[[mutant]]
+name = "counter_not_incremented"
+old = "Ok((id, Counter { next_id: id + 1 }))"
+new = "Ok((id, Counter { next_id: id }))"
+
+[[mutant]]
+name = "get_skips_read_check"
+edits = [
+    { old = "Command::GetDocument { doc } => {\n            let d = match authorized_doc(snap, user, *doc, Action::Read) {", new = "Command::GetDocument { doc } => {\n            let d = match find_document_or_missing(&snap.documents, *doc) {" },
+    { old = "fn one(w: Write)", new = "fn find_document_or_missing(docs: &Vec<Document>, id: u64) -> Result<Document, Error> {\n    match find_document(docs, id) {\n        Some(d) => Ok(d),\n        None => Err(Error::NotFound),\n    }\n}\n\nfn one(w: Write)" },
+]
+
+[[mutant]]
+name = "webhook_without_manage"
+old = "Command::SetWebhook { project, dest } => {\n            if !can(snap, user, *project, Action::Manage) {"
+new = "Command::SetWebhook { project, dest } => {\n            if false {"
+
+[[mutant]]
+name = "effect_to_fixed_destination"
+old = "Some(dest) => Some(Effect {\n                    dest,"
+new = "Some(dest) => Some(Effect {\n                    dest: 0,"
+
+[[mutant]]
+name = "scope_too_narrow"
+old = "Command::SetWebhook { project, .. } => Scope::Project(*project),"
+new = "Command::SetWebhook { .. } => Scope::Counter,"
+
+[[mutant]]
+name = "checker_skips_doc_ids"
+old = "        && doc_ids_unique(&s.documents)\n"
+new = ""
+
+[[mutant]]
+name = "del_member_key_swapped"
+old = "Write::DelMember(p, u) => Some(h5i_app_sql::Write::Del { table: Member::TABLE, key: key2(*p, *u) }),"
+new = "Write::DelMember(p, u) => Some(h5i_app_sql::Write::Del { table: Member::TABLE, key: key2(*u, *p) }),"
+
+[[mutant]]
+name = "webhook_in_wrong_table"
+old = "Write::PutWebhook(h) => Some(put(Webhook::TABLE, Webhook::KEY_LEN, h.to_row())),"
+new = "Write::PutWebhook(h) => Some(put(Project::TABLE, Webhook::KEY_LEN, h.to_row())),"
+
+[[mutant]]
+name = "counter_not_stored"
+old = "Write::SetCounter(c) => Some(put(Counter::TABLE, Counter::KEY_LEN, c.to_row())),"
+new = "Write::SetCounter(_) => None,"
+
+[[mutant]]
+name = "role_decoded_wrong"
+old = "                } else if *n == 1 {\n                    Some(Role::Editor)"
+new = "                } else if *n == 1 {\n                    Some(Role::Owner)"
+
+[[mutant]]
+name = "fresh_counter_not_zero"
+old = "        Some(Counter { next_id: 0 })"
+new = "        Some(Counter { next_id: 1 })"
+
+[[mutant]]
+name = "scope_uses_doc_id"
+old = "                    Some(ds[0].project)"
+new = "                    Some(ds[0].id)"
+
+[[mutant]]
+name = "manage_any_project"
+old = "            role,\n        } => {\n            if !can(snap, user, *project, Action::Manage) {"
+new = "            role,\n        } => {\n            if false {"

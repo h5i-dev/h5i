@@ -1,0 +1,16 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+start-from = ["transition", "transition_upstream"]
+schema = true
+include = ["h5i_app_sql"]
+
+[check]
+# Must exist and use only the standard axioms (every theorem in a hand-written
+# module is gated as well).
+theorems = ["conduit_kernel.Storage.db_inv"]
+
+[[mutant]]
+name = "edit_others_article"
+old = "if a.author != me.id {\n        return Err(Error::Forbidden);\n    }\n    if slug_taken"
+new = "if false {\n        return Err(Error::Forbidden);\n    }\n    if slug_taken"

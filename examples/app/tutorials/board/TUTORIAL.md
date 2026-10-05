@@ -124,7 +124,7 @@ same state as `apply` for random command sequences.
 
 ## Writing the specification
 
-Extract the kernel with `scripts/app/extract-board.sh`, then open
+Extract the kernel with `h5i app extract examples/app/tutorials/board`, then open
 `proofs/Spec.lean`. It describes the state as lists:
 
 ```lean

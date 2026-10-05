@@ -125,6 +125,18 @@ pub enum Commands {
         action: cli::project::ProjectCommands,
     },
 
+    /// Build verified applications with h5i-app: extract the kernel to Lean,
+    /// gate the proofs, and test the spec with mutants.
+    ///
+    /// A project is a kernel crate, a Lake project of proofs about it, and an
+    /// `h5i-app.toml` that ties them together. `h5i app new` starts one that
+    /// already proves; `h5i app prove` extracts and checks; `h5i app mutate`
+    /// injects bugs that the proofs must reject.
+    App {
+        #[command(subcommand)]
+        action: h5i_app_cli::AppCommands,
+    },
+
     /// Write or print the agent skill this binary carries.
     Skill {
         #[command(subcommand)]
@@ -313,6 +325,12 @@ pub fn run() -> anyhow::Result<()> {
             }
         }
         Commands::Project { action } => cli::project::run(action)?,
+        Commands::App { action } => {
+            let cx = h5i_app_cli::Context {
+                default_rev: concat!("v", env!("CARGO_PKG_VERSION")).into(),
+            };
+            h5i_app_cli::run(action, &cx)?
+        }
         Commands::Skill { action } => cli::skill::run(action)?,
         Commands::Completion { shell } => cli::completion::run(shell)?,
     }

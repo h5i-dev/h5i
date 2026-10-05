@@ -34,9 +34,10 @@ HTTP (axum) ──► Actor<K> ──► H5iApp::respond ──► Engine: BEGIN
 | `examples/app/kellnr`, `examples/app/atuin` | ports of real authorization code, kernels and proofs only |
 | `examples/app/wastebin`, `examples/app/conduit`, `examples/app/cratesio` | ports of real applications, with servers |
 | `examples/app/filters`, `examples/app/keys`, `examples/app/roles` | patterns, kernels and proofs only: parsing over bytes, properties across requests, `h5i-app-std` and read authorization |
-| `xtask` | `cargo app-verify`, which runs CI's checks locally |
+| `crates/h5i-app-cli` | `h5i app`: `new`, `extract`, `check`, `prove`, `lint`, `mutate`, `doctor` over a project's `h5i-app.toml` |
+| `crates/h5i-app-xtask` | `cargo app-verify`, CI's checks over every project, composed from `h5i app` plus the repository's own (PostgreSQL tests, bans, difftest) |
 
-The root Cargo workspace holds `crates/*` and `xtask`. `examples/app/` is a second
+The root Cargo workspace holds `crates/*`. `examples/app/` is a second
 workspace whose crates depend on `crates/*` by path, as an application would.
 
 In each proof project (`*/proofs`), `generated/` holds extracted Rust and
@@ -161,18 +162,18 @@ extractor, which runs the `Authenticator`; a handler cannot fake an actor.
 authenticates its own way (Wastebin's signed cookie).
 
 Identity comes from the actor, not the command, since `transition` takes them
-separately. So `cargo app-verify` rejects an identity or privilege field
+separately. So `h5i app lint` rejects an identity or privilege field
 (`owner`, `role`, `is_admin`) in a `Command` unless the line carries
 `h5i-allow: privileged-field`. This is readur's register `role` and
 rust-web-app's owner reassignment.
 
-`cargo app-verify` also checks every `post`/`put`/`delete`/`patch` handler
+`h5i app lint` also checks every `post`/`put`/`delete`/`patch` handler
 takes an `Actor`, so a mutating route cannot dispatch without a resolved
 caller; opt out with `h5i-allow: no-actor`.
 
 For coverage, an app states one theorem, `H5iAppLib.WritesAuthorized`, quantified
 over every actor, state and command, so a forgotten check on any route fails
-the proof. `cargo app-verify` reports which app proofs state it; kellnr uses
+the proof. `h5i app lint` reports whether an app's proofs state it; kellnr uses
 the schema.
 
 A leak is a reply, not a write. `H5iAppLib.ReadsAuthorized` is the
@@ -234,14 +235,17 @@ of `H5iAppLib.Text`, `Sets` and `Graph`, so `step*` goes through a call and
 the proof reasons about `<+:`, `⊆` or `Reach`, never about the loop.
 
 A kernel uses it like `h5i-app-sql`: extract with `--include h5i_app_std`,
-then copy the specs next to the extracted Lean and add `StdSpecs` to the
-generated library's roots:
+have `h5i app extract` copy the specs next to the extracted Lean, and add
+`StdSpecs` to the generated library's roots:
 
-```bash
-scripts/app/std-specs.sh MyKernel my_kernel path/to/proofs/generated
+```toml
+[extract]
+start-from = ["transition"]
+include = ["h5i_app_std"]
+std-specs = true
 ```
 
-`examples/app/roles` does this end to end (`scripts/app/extract-roles.sh`).
+`examples/app/roles` does this end to end.
 
 The copy imports the kernel's extraction and opens its namespace. Aeneas
 keeps only the functions the kernel calls, so each spec is guarded by its
@@ -327,13 +331,27 @@ correctness is equality with a spec function (`examples/app/conduit`).
 
 ## Checks
 
-`cargo app-verify` runs the Rust tests (and the PostgreSQL tests when
-`H5I_APP_TEST_DATABASE_URL` is set), checks with `cargo deny` that only `h5i-app-pg`
-uses a database driver, re-extracts every kernel with Charon and Aeneas and
-fails on any diff, and builds every proof project, rejecting `sorry`,
-`native_decide`, `axiom` and non-standard axioms in the main theorems.
-`--full` adds the mutation suite and the Rust/Lean differential test. Missing
-tools are reported as skipped, not passed.
+Each proof project has an `h5i-app.toml` at its root: what to extract
+(`[extract]`: the crate, Charon's start points, `schema`, `include`,
+`std-specs`), theorems that must exist (`[check]`), and the bugs its proofs
+must reject (`[[mutant]]`). `h5i app` reads it:
+
+| Verb | Does |
+|---|---|
+| `h5i app new <dir>` | a kernel, a Lake project that already proves it, and its `h5i-app.toml`; the Lean library is required from git at this h5i's tag |
+| `h5i app extract` | Charon and Aeneas into `proofs/generated/`, `Source:` paths made relative to the repository. `--check` changes nothing and fails if the committed Lean is not what extraction produces |
+| `h5i app check` | `lake build`, then the gate: no `sorry` or `native_decide` in hand-written Lean, no `axiom` anywhere, and every theorem of every built hand-written module (plus the named ones) on `propext`, `Classical.choice` and `Quot.sound` only |
+| `h5i app prove` | `extract`, then `check` |
+| `h5i app lint` | every mutating route of a server crate takes an `Actor`, no `Command` field sets identity or privilege, and a report of whether the proofs state a universal authorization theorem |
+| `h5i app mutate` | each mutant in a copy of the project: edit, `cargo check`, extract, `lake build`. Caught when the proofs fail. `--auto` adds mutants generated from the kernel's syntax (comparison boundaries, `==`/`!=`, `&&`/`||`, dropped `!`, forced `if` conditions) |
+| `h5i app doctor` | Charon, Aeneas and Lean against the pins in `crates/h5i-app-cli/src/pins.rs`, and the project against the same pins |
+
+`cargo app-verify` runs `lint` on every project, the Rust tests (and the
+PostgreSQL tests when `H5I_APP_TEST_DATABASE_URL` is set), checks with
+`cargo deny` that only `h5i-app-pg` uses a database driver, and runs
+`extract --check` and `check` on every project. `--full` adds every project's mutants and the
+Rust/Lean differential test. Missing tools are reported as skipped, not passed.
 
 Toolchain: stable Rust, elan with Lean v4.31.0, and Charon and Aeneas at the
-commit pinned in the proof lakefiles.
+commit pinned in `crates/h5i-app-cli/src/pins.rs`; a test there checks every
+lakefile in the repository against it.

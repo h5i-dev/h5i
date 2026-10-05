@@ -13,6 +13,6 @@ start with the first one.
 | [5. Meeting rooms](booking/TUTORIAL.md) | rooms booked for intervals of time, with notifications | time as an input, monotonic time, interval invariants, effects through the outbox |
 
 Every tutorial runs with one PostgreSQL container and `cargo run`, and its
-proofs are checked by `cargo app-verify` and CI in the same way as the rest of
+proofs are checked by `h5i app prove` and CI in the same way as the rest of
 the repository. `examples/app/` is its own Cargo workspace, so run the `cargo`
 commands from there.

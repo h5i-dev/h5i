@@ -1,0 +1,9 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+start-from = ["transition", "transition_pre1243", "apply"]
+
+[[mutant]]
+name = "remove_last_owner"
+old = "count_a(&s.owners, *krate) <= 1"
+new = "count_a(&s.owners, *krate) < 1"

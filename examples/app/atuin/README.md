@@ -52,6 +52,6 @@ All of them depend only on Lean's standard axioms (`propext`,
 ## Building the proofs
 
 ```
-scripts/app/extract-atuin.sh        # regenerates proofs/generated/AtuinKernel.lean
-cd examples/app/atuin/proofs && lake build
+h5i app prove examples/app/atuin   # extract, build, gate
+h5i app mutate examples/app/atuin  # the bugs in h5i-app.toml must break a proof
 ```

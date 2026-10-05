@@ -13,6 +13,7 @@ on:
       - "scripts/app/**"
       - "deny.toml"
       - "Cargo.lock"
+      - ".cargo/config.toml"
       - ".github/workflows/app.yaml"
   pull_request:
     paths:
@@ -21,6 +22,7 @@ on:
       - "scripts/app/**"
       - "deny.toml"
       - "Cargo.lock"
+      - ".cargo/config.toml"
       - ".github/workflows/app.yaml"
 
 concurrency:
@@ -28,7 +30,8 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
-  # Keep in sync with examples/app/docs/proofs/lakefile.lean.
+  # Keep in sync with crates/h5i-app-cli/src/pins.rs, whose test checks every
+  # lakefile against it.
   AENEAS_REV: b86120db3183b0107eb5f2637b11c424cd06ef1c
 
 jobs:
@@ -63,6 +66,8 @@ jobs:
       - run: cargo build --workspace --all-targets --locked
         working-directory: examples/app
       - run: scripts/app/ci-rust-tests.sh
+      # Routes take an Actor; no client-set identity in a Command.
+      - run: cargo app lint --all crates examples/app
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
@@ -73,11 +78,10 @@ jobs:
 
   lean:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: examples/app/docs/proofs
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Install elan
         run: |
           curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
@@ -90,29 +94,29 @@ jobs:
           restore-keys: |
             lake-${{ hashFiles('examples/app/docs/proofs/lake-manifest.json', 'examples/app/docs/proofs/lean-toolchain', 'examples/app/docs/proofs/lakefile.lean') }}-
       - run: lake exe cache get
-      - run: lake build
-      # No sorry, no native_decide, only standard axioms.
-      - run: ../../../../scripts/app/ci-lean-gate.sh
-      # These projects share the docs project's pinned Aeneas packages.
-      - name: Build the other extracted-crate proofs
-        working-directory: .
+        working-directory: examples/app/docs/proofs
+      # Every proof project shares the docs project's pinned Aeneas packages.
+      - name: Share the Lake packages
         run: |
-          for d in crates/h5i-app-sql/proofs crates/h5i-app-pgsql/proofs crates/h5i-app-token/proofs crates/h5i-app-json/proofs crates/h5i-app-std/proofs examples/app/kellnr/proofs examples/app/atuin/proofs examples/app/tutorials/calculator/proofs examples/app/tutorials/board/proofs examples/app/wastebin/proofs examples/app/conduit/proofs examples/app/cratesio/proofs examples/app/tutorials/ledger/proofs examples/app/tutorials/inbox/proofs examples/app/tutorials/booking/proofs examples/app/filters/proofs examples/app/keys/proofs examples/app/roles/proofs; do
+          for m in $(find crates examples/app -name h5i-app.toml -not -path '*/target/*'); do
+            d="$(dirname "$m")/proofs"
+            [ "$d" = examples/app/docs/proofs ] && continue
             mkdir -p "$d/.lake"
             ln -sfn "$GITHUB_WORKSPACE/examples/app/docs/proofs/.lake/packages" "$d/.lake/packages"
-            (cd "$d" && lake build)
-            if grep -n -w -e sorry -e native_decide "$d"/*.lean; then exit 1; fi
-            if grep -n "^axiom" "$d"/*.lean "$d"/generated/*.lean; then exit 1; fi
           done
-      # The SQL compiler and every server's database invariant: standard axioms only.
-      - name: Axioms of the database theorems
-        working-directory: .
-        run: scripts/app/ci-db-axioms.sh
+      # Build every proof project and gate it: no sorry, native_decide or
+      # axiom, every theorem of a hand-written module on the standard axioms
+      # only, and the theorems each h5i-app.toml names present.
+      - run: cargo app check --all crates examples/app
   # A9: the committed Lean must be exactly what Aeneas extracts from the kernel.
   extract:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Before Nix puts Charon's toolchain on PATH.
+      - run: cargo build --release --locked -p h5i-app-xtask
       - uses: cachix/install-nix-action@v31
         with:
           # Aeneas CI pushes its builds here.
@@ -126,44 +130,4 @@ jobs:
           nix build "github:AeneasVerif/aeneas/$AENEAS_REV#charon" -o "$RUNNER_TEMP/charon" -L
           echo "$RUNNER_TEMP/aeneas/bin" >> "$GITHUB_PATH"
           echo "$RUNNER_TEMP/charon/bin" >> "$GITHUB_PATH"
-      - run: scripts/app/extract.sh
-      - run: scripts/app/extract-sql.sh
-      - run: scripts/app/extract-pgsql.sh
-      - run: scripts/app/extract-token.sh
-      - run: scripts/app/extract-json.sh
-      - run: scripts/app/extract-std.sh
-      - run: scripts/app/extract-kellnr.sh
-      - run: scripts/app/extract-atuin.sh
-      - run: scripts/app/extract-calculator.sh
-      - run: scripts/app/extract-board.sh
-      - run: scripts/app/extract-wastebin.sh
-      - run: scripts/app/extract-conduit.sh
-      - run: scripts/app/extract-cratesio.sh
-      - run: scripts/app/extract-ledger.sh
-      - run: scripts/app/extract-inbox.sh
-      - run: scripts/app/extract-booking.sh
-      - run: scripts/app/extract-filters.sh
-      - run: scripts/app/extract-keys.sh
-      - run: scripts/app/extract-roles.sh
-      - run: |
-          git diff --exit-code -- \
-            examples/app/docs/proofs/generated/DocsKernel.lean \
-            crates/h5i-app-sql/proofs/generated/H5iAppSql.lean \
-            crates/h5i-app-pgsql/proofs/generated/H5iAppPgsql.lean \
-            crates/h5i-app-token/proofs/generated/H5iAppToken.lean \
-            crates/h5i-app-json/proofs/generated/H5iAppJson.lean \
-            crates/h5i-app-std/proofs/generated/H5iAppStd.lean \
-            examples/app/kellnr/proofs/generated/KellnrKernel.lean \
-            examples/app/atuin/proofs/generated/AtuinKernel.lean \
-            examples/app/tutorials/calculator/proofs/generated/CalculatorKernel.lean \
-            examples/app/tutorials/board/proofs/generated/BoardKernel.lean \
-            examples/app/wastebin/proofs/generated/WastebinKernel.lean \
-            examples/app/conduit/proofs/generated/ConduitKernel.lean \
-            examples/app/cratesio/proofs/generated/CratesioKernel.lean \
-            examples/app/tutorials/ledger/proofs/generated/LedgerKernel.lean \
-            examples/app/tutorials/inbox/proofs/generated/InboxKernel.lean \
-            examples/app/tutorials/booking/proofs/generated/BookingKernel.lean \
-            examples/app/filters/proofs/generated/FiltersKernel.lean \
-            examples/app/keys/proofs/generated/KeysKernel.lean \
-            examples/app/roles/proofs/generated/RolesKernel.lean \
-            examples/app/roles/proofs/generated/StdSpecs.lean
+      - run: target/release/h5i-app-xtask extract --check --all crates examples/app

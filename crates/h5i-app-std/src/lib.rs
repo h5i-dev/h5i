@@ -9,8 +9,8 @@
 //! about those lists (prefix order, subset, lookups, reachability).
 //!
 //! A kernel extracts the functions it calls with its own code (`charon
-//! --include h5i_app_std`), and `scripts/app/std-specs.sh` copies the specs
-//! next to the kernel's Lean.
+//! --include h5i_app_std`), and `h5i app extract` copies the specs next to the
+//! kernel's Lean when its `h5i-app.toml` says `std-specs = true`.
 //!
 //! Written in the subset Charon + Aeneas translate: `while` loops, no
 //! closures, no `?`, `&Vec` rather than slices.

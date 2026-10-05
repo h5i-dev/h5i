@@ -162,6 +162,7 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 | [`h5i box`](#boxes) | Create, run, inspect and export boxes. Optional containment. |
 | [`h5i ui`](#the-console) | The console: every session and box on this machine, read-only. |
 | [`h5i skill`](#h5i-skill) | Write or print the agent skill this binary carries. |
+| [`h5i app`](#h5i-app) | Build verified applications with h5i-app: extract a kernel to Lean, gate its proofs, mutate it. |
 | [`h5i plugin`](#h5i-plugin) | Install what is not in the default build: the workbench, the ledger, the tests. |
 | `h5i completion` | Shell completions for bash, zsh, fish and friends. |
 
@@ -1474,6 +1475,67 @@ URL private: any local process or page that obtains it can read the console.
 Untrusted box and page strings are rendered as text, never HTML. The console can
 stop a browser or take its control lock, but it cannot edit the box or widen its
 policy.
+## h5i app
+
+[h5i-app](https://github.com/h5i-dev/h5i/tree/main/crates/h5i-app) applications
+keep their logic in a kernel crate that Charon and Aeneas translate to Lean, so
+its properties are proven rather than tested. `h5i app` runs that loop. A
+project is the kernel crate, a Lake project of proofs (`proofs/`) and an
+`h5i-app.toml` that says what to extract, which theorems must exist, and which
+bugs the proofs must reject.
+
+```bash
+h5i app new counter            # a kernel, proofs that already go through, h5i-app.toml
+cd counter
+h5i app doctor                 # Charon, Aeneas and Lean at the versions this h5i pins
+h5i app prove                  # extract to proofs/generated/, lake build, then the gate
+h5i app lint                   # routes take an Actor; no client-set identity in Command
+h5i app mutate                 # each [[mutant]] must break a proof
+h5i app mutate --auto --list   # mutants generated from the kernel's syntax
+```
+
+For CI, `h5i app extract --check` changes nothing and fails if
+`proofs/generated/` is not what the kernel extracts to, and `--all` runs a verb
+on every project under a directory.
+
+`check` (and `prove`) fail on `sorry` or `native_decide` in hand-written Lean,
+on any `axiom` declaration, and on any theorem of a hand-written module that
+depends on an axiom other than `propext`, `Classical.choice` and `Quot.sound`.
+
+`mutate` runs each mutant in a copy of the project: it edits the kernel,
+re-extracts it and rebuilds the proofs. A mutant is caught when the proofs stop
+building. One that survives is a behaviour the spec does not pin down, such as
+a theorem that holds because the kernel refuses everything. `--auto` adds
+mutants generated from the kernel's syntax: comparison boundaries, `==` and
+`!=`, `&&` and `||`, dropped `!`, and `if` conditions forced to `true` or
+`false`.
+
+`h5i app new` requires the h5i-app Lean library from git at this binary's
+release tag; `--h5i-path <checkout>` uses a local h5i checkout instead.
+
+```toml
+# h5i-app.toml
+[extract]
+crate = "kernel"
+start-from = ["transition"]   # Charon start points, inside the crate
+include = ["h5i_app_sql"]     # crates extracted with the kernel
+schema = true                 # also start from what schema! generates
+std-specs = true              # copy h5i-app-std's specs next to the extraction
+
+[check]
+theorems = ["my_kernel.inv_preserved"]   # must exist and pass the gate
+
+[mutate]
+targets = ["Theorems"]        # Lake targets a mutant must break (default: all)
+
+[[mutant]]
+name = "off_by_one"
+old = "if s.count >= s.limit {"
+new = "if s.count > s.limit {"
+```
+
+---
+
 ## h5i skill
 
 `skills/h5i/` is embedded in the binary at build time, so the skill cannot

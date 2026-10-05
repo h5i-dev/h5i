@@ -172,7 +172,7 @@ kernel's job, and the proofs are about the kernel.
 
 ## Writing the specification
 
-Extract the kernel with `scripts/app/extract-inbox.sh` and open
+Extract the kernel with `h5i app extract examples/app/tutorials/inbox` and open
 `proofs/Spec.lean`. The state is two lists, and `involves u m` says that user
 `u` sent or received message `m`. The central definition is the view, the
 part of the state that user `u` may learn:

@@ -9,7 +9,7 @@ the lists the vectors hold, with the models of `H5iAppLib.Text` and
 
 This file is checked against the crate's own extraction. A kernel that
 includes the crate gets a copy importing the kernel's extraction instead
-(`scripts/app/std-specs.sh`), which opens the kernel's namespace: the
+(`h5i app extract`, with `std-specs = true`), which opens the kernel's namespace: the
 extracted functions have the same names and bodies there, so the same proofs
 go through. Aeneas extracts only the functions the kernel calls, so each
 spec is guarded by its function (`h5i_when`).

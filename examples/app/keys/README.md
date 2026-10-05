@@ -43,6 +43,6 @@ request (`fixed_refuses`) and serves the same session before the revocation
 ## Building the proofs
 
 ```
-scripts/app/extract-keys.sh
-cd examples/app/keys/proofs && lake build
+h5i app prove examples/app/keys   # extract, build, gate
+h5i app mutate examples/app/keys  # the bugs in h5i-app.toml must break a proof
 ```

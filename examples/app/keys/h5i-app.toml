@@ -1,0 +1,9 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+start-from = ["transition", "transition_pre", "apply"]
+
+[[mutant]]
+name = "duplicate_secret"
+old = "if taken(snap, secret) {"
+new = "if false {"

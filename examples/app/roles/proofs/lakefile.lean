@@ -9,7 +9,7 @@ require h5i_app_lib from "../../../../crates/h5i-app-core/proofs"
 
 package roles_proofs
 
--- Generated Lean (scripts/app/extract-roles.sh). Do not edit: the extracted
+-- Generated Lean (`h5i app extract`). Do not edit: the extracted
 -- kernel, and h5i-app-std's specs copied against it.
 lean_lib Generated where
   srcDir := "generated"

@@ -152,6 +152,6 @@ give the same replies and the same final state.
 ## Building the proofs
 
 ```
-scripts/app/extract-cratesio.sh        # regenerates proofs/generated/CratesioKernel.lean
-cd examples/app/cratesio/proofs && lake build
+h5i app prove examples/app/cratesio   # extract, build, gate
+h5i app mutate examples/app/cratesio  # the bugs in h5i-app.toml must break a proof
 ```

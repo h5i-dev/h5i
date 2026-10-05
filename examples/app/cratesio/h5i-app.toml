@@ -1,0 +1,16 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+start-from = ["transition", "transition_pre14760"]
+schema = true
+include = ["h5i_app_sql"]
+
+[check]
+# Must exist and use only the standard axioms (every theorem in a hand-written
+# module is gated as well).
+theorems = ["cratesio_kernel.Storage.db_inv"]
+
+[[mutant]]
+name = "accept_expired_invitation"
+old = "if inv.expires <= p.now {"
+new = "if false {"

@@ -123,11 +123,15 @@ both give the same replies and the same final state.
 
 ## Translating the kernel to Lean
 
-Put Charon and Aeneas on your `PATH` and run the extraction script:
+Put Charon and Aeneas on your `PATH` (`h5i app doctor` checks their
+versions) and extract the kernel. From the repository root:
 
 ```
-scripts/app/extract-calculator.sh
+h5i app extract examples/app/tutorials/calculator
 ```
+
+What to extract is in `h5i-app.toml`, next to `kernel/` and `proofs/`: the
+crate, the functions Charon starts from, and the crates extracted with it.
 
 Charon compiles the kernel to an intermediate representation, and Aeneas
 writes `proofs/generated/CalculatorKernel.lean`. The `Mul` case above becomes:
@@ -242,10 +246,10 @@ if a <= b {            // was: a < b
     Err(Error::Underflow)
 ```
 
-Then re-extract and build:
+Then re-extract, build and gate the proofs:
 
 ```
-scripts/app/extract-calculator.sh && (cd examples/app/tutorials/calculator/proofs && lake build)
+h5i app prove examples/app/tutorials/calculator
 ```
 
 Lean stops at the `Sub` case and shows the goal it could not prove:

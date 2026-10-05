@@ -1,0 +1,16 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+start-from = ["transition", "apply", "sql_writes"]
+schema = true
+include = ["h5i_app_sql"]
+
+[check]
+# Must exist and use only the standard axioms (every theorem in a hand-written
+# module is gated as well).
+theorems = ["calculator_kernel.Storage.pg_stored"]
+
+[[mutant]]
+name = "underflow_boundary"
+old = "if a < b {"
+new = "if a <= b {"
