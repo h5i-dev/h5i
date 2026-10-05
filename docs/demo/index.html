@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>h5i: is the web app your AI built really secure?</title>
 <meta name="description" content="A 60-second teaser: your AI built the web app in an afternoon. Is it really secure? One workspace: the agent works in its shell, you watch the h5i console. A vulnerability lands in Findings, a leak is refused and recorded, then the Apps view shows what Lean 4 proved of the logic.">
 <link rel="canonical" href="https://h5i.dev/demo/">
@@ -282,10 +282,18 @@
 
   #ctl{position:fixed;left:50%;top:26px;transform:translateX(-50%);display:flex;gap:14px;
     align-items:center;padding:10px 18px;border-radius:999px;background:rgba(10,10,14,.9);
-    border:1px solid #2e323b;z-index:99;font-family:var(--mono);font-size:14px;color:var(--dim)}
+    border:1px solid #2e323b;z-index:99;font-family:var(--mono);font-size:14px;color:var(--dim);
+    width:min(560px,calc(100vw - 32px))}
   #ctl button{background:none;border:none;color:var(--text);font-size:18px;cursor:pointer;font-family:var(--mono)}
-  #ctl input[type=range]{width:420px;accent-color:var(--accent)}
+  #ctl input[type=range]{flex:1;min-width:0;accent-color:var(--accent)}
+  #tm{white-space:nowrap}
+  /* phones: the stage is letterboxed, so the bar goes under it instead of over the picture */
+  @media (max-width:700px),(hover:none) and (pointer:coarse){
+    #ctl{top:auto;bottom:calc(16px + env(safe-area-inset-bottom));gap:10px;padding:8px 14px;font-size:12px}
+  }
   body.render #ctl,body.embed #ctl{display:none}
+  /* phones: the 3D floor and the per-frame grain overrun iOS Safari's memory, so the page dies mid-film */
+  body.lite #floor,body.lite #grain{display:none}
 </style>
 </head>
 <body>
@@ -793,7 +801,7 @@ function draw(ms) {
 
   /* post */
   const fl = flash(t); $('flash').style.opacity = fl.a; $('flash').style.background = fl.col;
-  $('turb').setAttribute('seed', String(Math.floor(t * 24) % 997));
+  if (!LITE) $('turb').setAttribute('seed', String(Math.floor(t * 24) % 997));
   $('fade').style.opacity = Math.max(ramp(ms, TOTAL-1300, 1300), 1 - ramp(ms, 0, 500));
 }
 
@@ -802,6 +810,8 @@ addEventListener('resize', fit); fit();
 
 const RENDER = new URLSearchParams(location.search).has('render');
 const EMBED = new URLSearchParams(location.search).has('embed');
+const LITE = !RENDER && (new URLSearchParams(location.search).has('lite') || matchMedia('(hover: none) and (pointer: coarse)').matches);
+if (LITE) document.body.classList.add('lite');
 window.TOTAL = TOTAL;
 window.SEEK = ms => { draw(clamp(ms, 0, TOTAL)); };
 
