@@ -87,4 +87,91 @@ theorem covers_and_right (a b : UScalar ty) : Covers b (a &&& b) := by
 theorem Covers.of_and {h m r : UScalar ty} (hc : Covers (h &&& m) r) : Covers m r :=
   (covers_and_right h m).trans hc
 
+/-! ## Prefix masks (CIDR)
+
+`addr & (u32::MAX << (32 - prefix))` keeps the top bits of an address; two
+addresses agree under the mask iff they agree after dropping the low `k`
+bits. `step*` on `MAX <<< s` gives `m.bv = MAX.bv <<< s.val`; `max_bv`
+names `MAX.bv`. -/
+
+/-- The bit-level fact: masking off the low `k` bits equates exactly what
+shifting them out does. -/
+theorem bv_masked_eq_iff {n : Nat} (x y : BitVec n) (k : Nat) :
+    (x &&& (BitVec.allOnes n <<< k)) = (y &&& (BitVec.allOnes n <<< k)) ↔ x >>> k = y >>> k := by
+  constructor
+  · intro h
+    apply BitVec.eq_of_getLsbD_eq
+    intro i hi
+    have := congrArg (·.getLsbD (i + k)) h
+    simp only [BitVec.getLsbD_and, BitVec.getLsbD_shiftLeft, BitVec.getLsbD_allOnes, BitVec.getLsbD_ushiftRight] at this ⊢
+    by_cases hik : i + k < n
+    · simp [hik, show ¬ (i + k < k) by omega, show i < n by omega] at this
+      rw [Nat.add_comm, BitVec.getLsbD_eq_getElem hik, BitVec.getLsbD_eq_getElem hik]; exact this
+    · rw [BitVec.getLsbD_of_ge x (k + i) (by omega), BitVec.getLsbD_of_ge y (k + i) (by omega)]
+  · intro h
+    apply BitVec.eq_of_getLsbD_eq
+    intro i hi
+    simp only [BitVec.getLsbD_and, BitVec.getLsbD_shiftLeft, BitVec.getLsbD_allOnes]
+    by_cases hik : i < k
+    · simp [hik]
+    · have := congrArg (·.getLsbD (i - k)) h
+      simp only [BitVec.getLsbD_ushiftRight] at this
+      rw [show k + (i - k) = i by omega] at this
+      simp only [hik, decide_false, Bool.not_false, Bool.and_true, show i - k < n by omega, decide_true]
+      simpa [BitVec.getLsbD_eq_getElem hi, hi] using this
+
+theorem masked_eq_iff (x y m : UScalar ty) (k : Nat) (hm : m.bv = BitVec.allOnes _ <<< k) :
+    (x &&& m) = (y &&& m) ↔ x.val / 2 ^ k = y.val / 2 ^ k := by
+  rw [UScalar.eq_equiv_bv_eq, UScalar.bv_and, UScalar.bv_and, hm, bv_masked_eq_iff, ← BitVec.toNat_inj]
+  simp [BitVec.toNat_ushiftRight, Nat.shiftRight_eq_div_pow]
+
+theorem u8_max_bv : core.num.U8.MAX.bv = BitVec.allOnes UScalarTy.U8.numBits := by simp [core.num.U8.MAX]; rfl
+theorem u16_max_bv : core.num.U16.MAX.bv = BitVec.allOnes UScalarTy.U16.numBits := by simp [core.num.U16.MAX]; rfl
+theorem u32_max_bv : core.num.U32.MAX.bv = BitVec.allOnes UScalarTy.U32.numBits := by simp [core.num.U32.MAX]; rfl
+theorem u64_max_bv : core.num.U64.MAX.bv = BitVec.allOnes UScalarTy.U64.numBits := by simp [core.num.U64.MAX]; rfl
+theorem u128_max_bv : core.num.U128.MAX.bv = BitVec.allOnes UScalarTy.U128.numBits := by simp [core.num.U128.MAX]; rfl
+
+/-- The extracted shape: `let m ← core.num.U32.MAX <<< s`, then
+`x &&& m = y &&& m`. -/
+theorem u32_masked_eq_iff (x y m : U32) (s : Nat) (hm : m.bv = core.num.U32.MAX.bv <<< s) :
+    (x &&& m) = (y &&& m) ↔ x.val / 2 ^ s = y.val / 2 ^ s :=
+  masked_eq_iff (ty := .U32) x y m s (by simp only [u32_max_bv] at hm; exact hm)
+
+theorem u64_masked_eq_iff (x y m : U64) (s : Nat) (hm : m.bv = core.num.U64.MAX.bv <<< s) :
+    (x &&& m) = (y &&& m) ↔ x.val / 2 ^ s = y.val / 2 ^ s :=
+  masked_eq_iff (ty := .U64) x y m s (by simp only [u64_max_bv] at hm; exact hm)
+
+open Lean Meta in
+/-- The width of the first unsigned scalar variable in the context. -/
+private def scalarWidth? : MetaM (Option Nat) := do
+  for d in ← getLCtx do
+    if d.isImplementationDetail then continue
+    let ty ← whnfR d.type
+    if ty.isAppOfArity ``UScalar 1 then
+      match ty.appArg!.constName? with
+      | some ``UScalarTy.U8 => return some 8
+      | some ``UScalarTy.U16 => return some 16
+      | some ``UScalarTy.U32 => return some 32
+      | some ``UScalarTy.U64 => return some 64
+      | some ``UScalarTy.U128 => return some 128
+      | _ => pure ()
+  return none
+
+open Lean Elab Tactic Meta in
+/-- `h5i_bv`: a goal about `&&&`, `|||`, `^^^`, `~~~`, shifts, `MAX` and
+equality of unsigned scalars, by `bv_decide`. `bv_decide` rejects `UScalar`
+as it is; this runs Aeneas's `bvify` at the width of the scalars in the
+context and spells out `MAX`. `h5i_bv n` picks the width. -/
+elab "h5i_bv" n:(ppSpace num)? : tactic => withMainContext do
+  let w ← match n with
+    | some n => pure n.getNat
+    | none => match ← scalarWidth? with
+      | some w => pure w
+      | none => throwError "h5i_bv: no unsigned scalar in the context; give the width: `h5i_bv 32`"
+  let wT : Term := Syntax.mkNumLit (toString w)
+  evalTactic (← `(tactic| bvify ($wT) at *))
+  evalTactic (← `(tactic| try simp only [U8.rMax, U16.rMax, U32.rMax, U64.rMax, U128.rMax,
+    Nat.reducePow, Nat.reduceSub] at *))
+  evalTactic (← `(tactic| bv_decide))
+
 end H5iAppLib

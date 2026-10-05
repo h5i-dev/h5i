@@ -214,25 +214,22 @@ fn key(fingerprint: &str) -> String {
     format!("{name}-{h:016x}")
 }
 
-/// The toolchain, then each `require` with whitespace collapsed and local
-/// paths made absolute, so projects at different depths that require the same
-/// library share packages.
+/// The toolchain, then each `require` of a git or Reservoir package with
+/// whitespace collapsed. A `require` of a local directory is left out: Lake
+/// clones nothing for it, so a project that requires h5i's Lean library from a
+/// checkout shares packages with the library itself.
 fn fingerprint(proofs: &Path) -> Result<String> {
     let toolchain = std::fs::read_to_string(proofs.join("lean-toolchain")).unwrap_or_default();
     let mut lines = vec![toolchain.trim().to_string()];
     if let Ok(text) = std::fs::read_to_string(proofs.join("lakefile.lean")) {
-        lines.extend(lean_requires(&text).into_iter().map(|r| absolute_lean_path(proofs, &r)));
+        lines.extend(lean_requires(&text).into_iter().filter(|r| !is_path_require(r)));
     } else if let Ok(text) = std::fs::read_to_string(proofs.join("lakefile.toml")) {
         let doc: toml::Table = text.parse().context("parsing lakefile.toml")?;
         for r in doc.get("require").and_then(|r| r.as_array()).into_iter().flatten() {
-            let mut r = r.clone();
-            if let Some(t) = r.as_table_mut()
-                && let Some(path) = t.get("path").and_then(|p| p.as_str())
-            {
-                let abs = absolute(proofs, path);
-                t.insert("path".into(), toml::Value::String(abs));
+            if r.get("path").is_some() {
+                continue;
             }
-            lines.push(toml::to_string(&r)?.split_whitespace().collect::<Vec<_>>().join(" "));
+            lines.push(toml::to_string(r)?.split_whitespace().collect::<Vec<_>>().join(" "));
         }
     }
     Ok(lines.join("\n"))
@@ -263,18 +260,9 @@ fn lean_requires(text: &str) -> Vec<String> {
     out.into_iter().map(|r| r.split_whitespace().collect::<Vec<_>>().join(" ")).collect()
 }
 
-/// `require x from "../dir"`: make the directory absolute.
-fn absolute_lean_path(proofs: &Path, req: &str) -> String {
-    let Some(i) = req.find(" from \"") else { return req.to_string() };
-    let start = i + " from \"".len();
-    let Some(len) = req[start..].find('"') else { return req.to_string() };
-    let path = &req[start..start + len];
-    format!("{}{}{}", &req[..start], absolute(proofs, path), &req[start + len..])
-}
-
-fn absolute(proofs: &Path, path: &str) -> String {
-    let p = proofs.join(path);
-    p.canonicalize().unwrap_or(p).to_string_lossy().into_owned()
+/// `require x from "../dir"`, as opposed to `from git` or a Reservoir name.
+fn is_path_require(req: &str) -> bool {
+    req.contains(" from \"")
 }
 
 #[cfg(test)]
@@ -325,7 +313,9 @@ lean_lib Proofs where
         let c = project(t.path(), "c", "../../other");
         let k = |p: &Path| key(&fingerprint(p).unwrap());
         assert_eq!(k(&a), k(&b), "the package name and path depth do not matter");
-        assert_ne!(k(&a), k(&c));
+        assert_eq!(k(&a), k(&c), "nor a local require, for which Lake clones nothing");
+        std::fs::write(c.join("lakefile.lean"), LAKEFILE.replace("b86120db", "0123abcd")).unwrap();
+        assert_ne!(k(&a), k(&c), "another Aeneas is other packages");
         assert!(k(&a).starts_with("leanprover-lean4-v4.31.0-"), "{}", k(&a));
         std::fs::write(a.join("lean-toolchain"), "leanprover/lean4:v4.32.0\n").unwrap();
         assert_ne!(k(&a), k(&b));

@@ -1,4 +1,4 @@
-import Aeneas
+import H5iAppLib.Basic
 /-!
 # Specs for Aeneas loops over a vector
 
@@ -135,6 +135,67 @@ theorem loop_fold2 {α σ τ β : Type} (l : List α) (abs : σ → τ → β) (
       refine ⟨⟨by omega, hI', ?_⟩, by omega⟩
       rw [heq, List.drop_eq_getElem_cons hlt, List.foldl_cons, ← habs, hk]
   · exact ⟨hi, hinv, rfl⟩
+
+/-! ## Partial correctness of loops
+
+`loop_ok` (in `Basic`) with the common shapes filled in: a search that
+returns `true` only on a witness, one that returns `false` only when every
+element passed, and a measure fixed to `n - i` for an index `i` bounded by `n`. -/
+
+/-- `loop body x = ok true` gives `P`, if every step that returns `done true`
+has a witness for it. -/
+theorem loop_true_witness {α} (body : α → Result (ControlFlow α Bool)) (Inv : α → Prop) (μ : α → Nat) (P : Prop)
+    (hstep : ∀ x r, Inv x → body x = ok r → match r with
+      | .done b => b = true → P
+      | .cont x' => Inv x' ∧ μ x' < μ x)
+    (x : α) (hx : Inv x) (h : loop body x = ok true) : P :=
+  H5iAppLib.loop_ok body Inv (fun b => b = true → P) μ
+    (fun x r hx hr => by have := hstep x r hx hr; cases r <;> exact this) x true hx h rfl
+
+/-- `loop body x = ok false` gives `P`, if every step that returns
+`done false` establishes it (usually: the scan reached the end, so every
+element passed). -/
+theorem loop_false_all {α} (body : α → Result (ControlFlow α Bool)) (Inv : α → Prop) (μ : α → Nat) (P : Prop)
+    (hstep : ∀ x r, Inv x → body x = ok r → match r with
+      | .done b => b = false → P
+      | .cont x' => Inv x' ∧ μ x' < μ x)
+    (x : α) (hx : Inv x) (h : loop body x = ok false) : P :=
+  H5iAppLib.loop_ok body Inv (fun b => b = false → P) μ
+    (fun x r hx hr => by have := hstep x r hx hr; cases r <;> exact this) x false hx h rfl
+
+/-- `loop_ok` for a loop over an index `idx x` bounded by `n`: each step that
+continues moves the index forward and keeps it at most `n`. No measure to
+choose. -/
+theorem loop_idx_ok {α β} (body : α → Result (ControlFlow α β)) (idx : α → Usize) (n : Nat)
+    (Inv : α → Prop) (Q : β → Prop)
+    (hstep : ∀ x r, Inv x → (idx x).val ≤ n → body x = ok r → match r with
+      | .done y => Q y
+      | .cont x' => Inv x' ∧ (idx x).val < (idx x').val ∧ (idx x').val ≤ n)
+    (x : α) (y : β) (hx : Inv x) (hn : (idx x).val ≤ n) (h : loop body x = ok y) : Q y := by
+  refine H5iAppLib.loop_ok body (fun x => Inv x ∧ (idx x).val ≤ n) Q (fun x => n - (idx x).val) ?_ x y ⟨hx, hn⟩ h
+  rintro x r ⟨hI, hle⟩ hr
+  have := hstep x r hI hle hr
+  cases r with
+  | done y => exact this
+  | cont x' => obtain ⟨h1, h2, h3⟩ := this; exact ⟨⟨h1, h3⟩, by omega⟩
+
+/-- The total version: a spec for `loop body x` over an index bounded by `n`,
+from a spec of each step. With `post := fun _ => True` it says the loop does
+not fail (`h5i_total`). -/
+theorem loop_idx_spec {α β} (body : α → Result (ControlFlow α β)) (idx : α → Usize) (n : Nat)
+    (Inv : α → Prop) (post : β → Prop)
+    (hstep : ∀ x, Inv x → (idx x).val ≤ n → body x ⦃ r => match r with
+      | .done y => post y
+      | .cont x' => Inv x' ∧ (idx x).val < (idx x').val ∧ (idx x').val ≤ n ⦄)
+    (x : α) (hx : Inv x) (hn : (idx x).val ≤ n) : loop body x ⦃ post ⦄ := by
+  apply loop.spec_decr_nat (measure := fun x => n - (idx x).val) (inv := fun x => Inv x ∧ (idx x).val ≤ n)
+  · rintro x ⟨hI, hle⟩
+    apply WP.spec_mono (hstep x hI hle)
+    intro r hr
+    cases r with
+    | done y => exact hr
+    | cont x' => obtain ⟨h1, h2, h3⟩ := hr; exact ⟨⟨h1, h3⟩, by omega⟩
+  · exact ⟨hx, hn⟩
 
 /-! ## Model functions the loops compute -/
 

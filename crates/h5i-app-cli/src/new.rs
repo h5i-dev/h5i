@@ -264,7 +264,11 @@ lean_lib Generated where
 "#;
 
 const THEOREMS: &str = r#"import {{module}}
-open Aeneas Aeneas.Std Result
+import H5iAppLib
+open Aeneas Aeneas.Std Result Aeneas.Std.WP H5iAppLib
+
+-- `step*` specs for every `==` and `clone` the kernel derives.
+h5i_derive_all
 
 namespace {{id}}
 
@@ -314,6 +318,10 @@ h5i app mutate --auto  # so should generated ones; a survivor is a gap in the sp
 `h5i app check` rejects `sorry`, `native_decide` and `axiom`, and any theorem
 in a hand-written module that depends on an axiom beyond `propext`,
 `Classical.choice` and `Quot.sound`.
+
+The tactics and lemmas for the proofs (`h5i_invert`, `h5i_arith`,
+`h5i_search_any`, ...) are listed in H5iAppLib's README:
+`crates/h5i-app-core/proofs/README.md` in the h5i repository.
 "#;
 
 #[cfg(test)]
