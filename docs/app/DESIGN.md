@@ -340,7 +340,7 @@ must reject (`[[mutant]]`). `h5i app` reads it:
 |---|---|
 | `h5i app new <dir>` | a kernel, a Lake project that already proves it, and its `h5i-app.toml`; the Lean library is required from git at this h5i's tag |
 | `h5i app extract` | Charon and Aeneas into `proofs/generated/`, `Source:` paths made relative to the repository. `--check` changes nothing and fails if the committed Lean is not what extraction produces |
-| `h5i app check` | `lake build`, then the gate: no `sorry` or `native_decide` in hand-written Lean, no `axiom` anywhere, and every theorem of every built hand-written module (plus the named ones) on `propext`, `Classical.choice` and `Quot.sound` only |
+| `h5i app check` | fetch the Lake packages if needed, `lake build`, then the gate: no `sorry` or `native_decide` in hand-written Lean, no `axiom` anywhere, and every theorem of every built hand-written module (plus the named ones) on `propext`, `Classical.choice` and `Quot.sound` only. `--refetch` discards the packages and fetches them again |
 | `h5i app prove` | `extract`, then `check` |
 | `h5i app lint` | every mutating route of a server crate takes an `Actor`, no `Command` field sets identity or privilege, and a report of whether the proofs state a universal authorization theorem |
 | `h5i app mutate` | each mutant in a copy of the project: edit, `cargo check`, extract, `lake build`. Caught when the proofs fail. `--auto` adds mutants generated from the kernel's syntax (comparison boundaries, `==`/`!=`, `&&`/`||`, dropped `!`, forced `if` conditions) |
@@ -351,6 +351,14 @@ PostgreSQL tests when `H5I_APP_TEST_DATABASE_URL` is set), checks with
 `cargo deny` that only `h5i-app-pg` uses a database driver, and runs
 `extract --check` and `check` on every project. `--full` adds every project's mutants and the
 Rust/Lean differential test. Missing tools are reported as skipped, not passed.
+
+Lake packages (Aeneas, Mathlib, a few gigabytes) are fetched once and shared:
+`proofs/.lake/packages` links to `$XDG_CACHE_HOME/h5i/lake/<key>/packages`
+(default `~/.cache/h5i/lake`), the key a hash of the `lean-toolchain` and the
+lakefile's `require`s, so projects that require the same Aeneas share one copy.
+`H5I_LAKE_CACHE=<dir>` moves the cache, `H5I_LAKE_CACHE=off` keeps a copy in
+each project. A fetch counts as done only once it finishes: one cut short is
+resumed by the next `check`, and `--refetch` starts over.
 
 Toolchain: stable Rust, elan with Lean v4.31.0, and Charon and Aeneas at the
 commit pinned in `crates/h5i-app-cli/src/pins.rs`; a test there checks every

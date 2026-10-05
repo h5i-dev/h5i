@@ -87,23 +87,14 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
             | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      # `h5i app check` fetches the Lake packages (Aeneas, Mathlib) once into
+      # this cache, shared by every proof project with the same requires.
       - uses: actions/cache@v4
         with:
-          path: examples/app/docs/proofs/.lake
-          key: lake-${{ hashFiles('examples/app/docs/proofs/lake-manifest.json', 'examples/app/docs/proofs/lean-toolchain', 'examples/app/docs/proofs/lakefile.lean') }}-${{ github.sha }}
+          path: ~/.cache/h5i/lake
+          key: lake-${{ hashFiles('**/proofs/lean-toolchain', '**/proofs/lakefile.lean', '**/proofs/lake-manifest.json') }}-${{ github.sha }}
           restore-keys: |
-            lake-${{ hashFiles('examples/app/docs/proofs/lake-manifest.json', 'examples/app/docs/proofs/lean-toolchain', 'examples/app/docs/proofs/lakefile.lean') }}-
-      - run: lake exe cache get
-        working-directory: examples/app/docs/proofs
-      # Every proof project shares the docs project's pinned Aeneas packages.
-      - name: Share the Lake packages
-        run: |
-          for m in $(find crates examples/app -name h5i-app.toml -not -path '*/target/*'); do
-            d="$(dirname "$m")/proofs"
-            [ "$d" = examples/app/docs/proofs ] && continue
-            mkdir -p "$d/.lake"
-            ln -sfn "$GITHUB_WORKSPACE/examples/app/docs/proofs/.lake/packages" "$d/.lake/packages"
-          done
+            lake-${{ hashFiles('**/proofs/lean-toolchain', '**/proofs/lakefile.lean', '**/proofs/lake-manifest.json') }}-
       # Build every proof project and gate it: no sorry, native_decide or
       # axiom, every theorem of a hand-written module on the standard axioms
       # only, and the theorems each h5i-app.toml names present.

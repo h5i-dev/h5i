@@ -405,7 +405,7 @@ fn sandbox(p: &Project, name: &str) -> Result<Sandbox> {
         );
     }
     std::fs::create_dir_all(copy.join(".lake"))?;
-    symlink(&packages.canonicalize()?, &copy.join(".lake/packages"))?;
+    util::symlink(&packages.canonicalize()?, &copy.join(".lake/packages"))?;
     absolute_path_requires(&proofs, &copy)?;
 
     let project = Project::load(&at(&p.root).join(crate::manifest::FILE))?;
@@ -415,16 +415,6 @@ fn sandbox(p: &Project, name: &str) -> Result<Sandbox> {
         project,
         log,
     })
-}
-
-#[cfg(unix)]
-fn symlink(from: &Path, to: &Path) -> Result<()> {
-    Ok(std::os::unix::fs::symlink(from, to)?)
-}
-
-#[cfg(not(unix))]
-fn symlink(from: &Path, to: &Path) -> Result<()> {
-    Ok(std::os::windows::fs::symlink_dir(from, to)?)
 }
 
 /// Dev-dependencies are never built here, but Cargo would still resolve them,

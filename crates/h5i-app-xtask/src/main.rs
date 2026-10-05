@@ -189,7 +189,7 @@ fn verify(root: PathBuf, full: bool, extract: bool) -> ExitCode {
             if !lake {
                 return Outcome::Skip("lake not on PATH".into());
             }
-            logged(|out| h5i_app_cli::check::check(p, out))
+            logged(|out| h5i_app_cli::check::check(p, false, out))
         });
     }
     if full {

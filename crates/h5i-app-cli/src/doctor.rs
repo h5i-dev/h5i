@@ -127,31 +127,39 @@ pub fn doctor(project: Option<&Project>) -> Result<()> {
             ),
         }
         check_lakefile(&mut r, &proofs);
-        let packages = proofs.join(".lake/packages");
-        if packages.exists() {
-            r.ok("lake packages", "fetched");
-            let pin = packages.join("aeneas/charon-pin");
-            if let Ok(text) = std::fs::read_to_string(&pin) {
-                let c = text
-                    .lines()
-                    .map(str::trim)
-                    .find(|l| !l.starts_with('#') && !l.is_empty())
-                    .unwrap_or("");
-                if c != pins::CHARON_REV {
-                    r.fail(
-                        "charon-pin",
-                        &format!(
-                            "the fetched Aeneas wants Charon {c}, this h5i pins {}",
-                            pins::CHARON_REV
-                        ),
-                    );
-                }
-            }
+        let pk = crate::packages::Packages::locate(&proofs, crate::packages::cache_root().as_deref())?;
+        let at = if pk.shared {
+            format!("shared, in {}", crate::manifest::display_path(&pk.dir))
         } else {
-            r.warn(
+            crate::manifest::display_path(&pk.dir)
+        };
+        match pk.state() {
+            crate::packages::State::Ready => r.ok("lake packages", &at),
+            crate::packages::State::Incomplete => r.warn(
                 "lake packages",
-                "not fetched yet; `h5i app check` fetches them",
-            );
+                &format!("{at}: fetch unfinished; `h5i app check` resumes it, `--refetch` starts over"),
+            ),
+            crate::packages::State::Missing => r.warn(
+                "lake packages",
+                &format!("not fetched yet; `h5i app check` fetches them ({at})"),
+            ),
+        }
+        let pin = pk.dir.join("aeneas/charon-pin");
+        if let Ok(text) = std::fs::read_to_string(&pin) {
+            let c = text
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.starts_with('#') && !l.is_empty())
+                .unwrap_or("");
+            if c != pins::CHARON_REV {
+                r.fail(
+                    "charon-pin",
+                    &format!(
+                        "the fetched Aeneas wants Charon {c}, this h5i pins {}",
+                        pins::CHARON_REV
+                    ),
+                );
+            }
         }
         if let Some(ex) = &p.manifest.extract {
             let krate = p.root.join(&ex.krate);

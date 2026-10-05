@@ -28,6 +28,7 @@ pub mod lint;
 pub mod manifest;
 pub mod mutate;
 pub mod new;
+pub mod packages;
 pub mod pins;
 pub mod util;
 
@@ -68,10 +69,20 @@ pub enum AppCommands {
     /// Build the proofs and gate them: no sorry, native_decide or axiom, and
     /// every theorem in a hand-written module uses only propext,
     /// Classical.choice and Quot.sound.
-    Check(Targets),
+    Check {
+        #[command(flatten)]
+        targets: Targets,
+        #[command(flatten)]
+        fetch: FetchArgs,
+    },
 
     /// `extract`, then `check`.
-    Prove(Targets),
+    Prove {
+        #[command(flatten)]
+        targets: Targets,
+        #[command(flatten)]
+        fetch: FetchArgs,
+    },
 
     /// Check the source for what the proofs assume but cannot see: every
     /// mutating route takes an authenticated `Actor`, and no `Command` field
@@ -132,6 +143,19 @@ impl Targets {
     }
 }
 
+/// Where `check` gets the Lake packages: Aeneas, Mathlib and the rest,
+/// shared by every project with the same requires in
+/// `$XDG_CACHE_HOME/h5i/lake` (`H5I_LAKE_CACHE` names another directory, or
+/// `off` for a copy in each project).
+#[derive(clap::Args, Debug, Default)]
+pub struct FetchArgs {
+    /// Discard the project's Lake packages and fetch them again, for a fetch
+    /// that left them broken. Shared packages are discarded for every
+    /// project that uses them.
+    #[arg(long)]
+    pub refetch: bool,
+}
+
 /// How `mutate` runs.
 #[derive(clap::Args, Debug, Default)]
 pub struct MutateArgs {
@@ -170,6 +194,16 @@ pub struct Context {
 
 pub fn run(cmd: AppCommands, cx: &Context) -> Result<()> {
     let out = Out::Inherit;
+    // `--all --refetch`: projects that share packages fetch them once.
+    let refetched = std::cell::RefCell::new(Vec::new());
+    let refetch = |p: &Project, fetch: &FetchArgs| -> Result<bool> {
+        if !fetch.refetch {
+            return Ok(false);
+        }
+        let dir = packages::Packages::locate(&p.proofs(), packages::cache_root().as_deref())?.dir;
+        let mut seen = refetched.borrow_mut();
+        Ok(if seen.contains(&dir) { false } else { seen.push(dir); true })
+    };
     match cmd {
         AppCommands::New {
             dir,
@@ -197,16 +231,16 @@ pub fn run(cmd: AppCommands, cx: &Context) -> Result<()> {
             eprintln!("{}: lint ok", p.display());
             Ok(())
         }),
-        AppCommands::Check(t) => each(&t, |p| {
-            check::check(p, &out)?;
+        AppCommands::Check { targets: t, fetch } => each(&t, |p| {
+            check::check(p, refetch(p, &fetch)?, &out)?;
             eprintln!("{}: proofs ok", p.display());
             Ok(())
         }),
-        AppCommands::Prove(t) => each(&t, |p| {
+        AppCommands::Prove { targets: t, fetch } => each(&t, |p| {
             if p.manifest.extract.is_some() {
                 extract::extract(p, &out)?;
             }
-            check::check(p, &out)?;
+            check::check(p, refetch(p, &fetch)?, &out)?;
             eprintln!("{}: proofs ok", p.display());
             Ok(())
         }),
