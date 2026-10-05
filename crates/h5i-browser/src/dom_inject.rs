@@ -1,6 +1,6 @@
-//! The DOM instrument, as bytes the proxy injects and as a decoder/injector
-//! the proxy needs to place it. The engine vehicle (an opt-in realm hook) reads
-//! the same [`INSTRUMENT_JS`] so the two vehicles cannot drift.
+//! The DOM instrument, as bytes the capture proxy injects and as the
+//! decoder/injector that places it. The native engine does not run this
+//! script: it is not a full DOM, so there is no realm hook to install it in.
 
 use std::io::Read as _;
 
@@ -123,6 +123,10 @@ mod tests {
         assert!(!js.contains("__H5I_"));
         assert!(js.contains("h5ipp"));
         assert!(js.contains(BEACON_URL));
+        assert!(js.contains("localStorage"));
+        assert!(js.contains("sessionStorage"));
+        assert!(js.contains("document.cookie"));
+        assert!(js.contains("\"message\""));
     }
 
     #[test]

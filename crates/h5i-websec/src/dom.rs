@@ -2,13 +2,16 @@
 //!
 //! Prototype pollution and DOM-XSS have their source in the page, not on the
 //! wire, so the workbench's other verbs cannot see them. `scan` drives
-//! client-side probes (the ppfuzz payload model) and reads what reached a sink;
-//! `node` runs a confined Node target and reports which `Object.prototype`
-//! pollutions reach a dangerous sink. Both land their results as findings.
+//! client-side probes and folds `dom-report.jsonl` (written by the capture
+//! proxy's instrument) into findings. `node` runs a confined Node target and
+//! reports which `Object.prototype` pollutions reach a dangerous sink. A hit
+//! is an observation. `node` stays `observed` unless some other observer
+//! confirms it; this crate does not pretend a kernel trace exists.
 //!
-//! This module is the skeleton: the corpus, the result types, and the path from
-//! a detection to a `finding::Entry`. The drivers that produce detections land
-//! in later phases (proxy injection for `scan`, the box prober for `node`).
+//! The instrument's sources are the URL hash and search, `window.name`,
+//! `document.referrer`, `document.cookie`, `localStorage`, `sessionStorage`,
+//! and postMessage data. A logged postMessage that never reaches a sink is a
+//! count, not a finding. `eval` is not wrapped.
 
 use crate::finding::{self, Findings};
 use crate::read;
@@ -175,6 +178,9 @@ pub struct Report {
 pub struct Flow {
     pub source: String,
     pub sink: String,
+    /// The sink argument the instrument clipped, when it sent one.
+    #[serde(default)]
+    pub sample: Option<String>,
 }
 
 /// Turn a report into the hits worth recording: a pollution canary, and each
@@ -196,9 +202,15 @@ pub fn hits_from(report: &Report) -> Vec<Hit> {
         });
     }
     for flow in &report.flows {
+        let payload = flow
+            .sample
+            .as_deref()
+            .filter(|sample| !sample.is_empty())
+            .unwrap_or(report.url.as_str())
+            .to_string();
         hits.push(Hit {
             origin: origin.clone(),
-            payload: report.url.clone(),
+            payload,
             source: flow.source.clone(),
             property: property.clone(),
             sink: Some(flow.sink.clone()),
@@ -691,6 +703,17 @@ mod tests {
         assert_eq!(hits.len(), 2);
         assert!(hits[0].sink.is_none()); // the canary
         assert_eq!(hits[1].sink.as_deref(), Some("innerHTML"));
+        assert_eq!(hits[1].payload, "https://t.test/?x");
+    }
+
+    #[test]
+    fn a_flow_sample_is_the_hit_payload() {
+        let line = r#"{"url":"https://t.test/","canary":false,"flows":[{"source":"message","sink":"innerHTML","sample":"h5i-canary-marker"}]}"#;
+        let hits = hits_from(&parse_reports(line)[0]);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].source, "message");
+        assert_eq!(hits[0].payload, "h5i-canary-marker");
+        assert_eq!(hits[0].sink.as_deref(), Some("innerHTML"));
     }
 
     #[test]

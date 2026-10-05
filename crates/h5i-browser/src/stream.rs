@@ -1637,6 +1637,10 @@ fn control_verb_inner(
                     .get("together")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                last_byte: request
+                    .get("last_byte")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
                 no_follow: request
                     .get("no_follow")
                     .and_then(Value::as_bool)

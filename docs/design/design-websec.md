@@ -97,7 +97,10 @@ The workbench is mostly a matter of exposing machinery that is shipped.
    edits are applied *in the broker process*, so the renderer never holds the
    credential a stored request carries.
 4. **No timing detail, parallelism, site map, sequence engine, DOM taint or
-   OAST.** Features 11, 12, 15 to 20. Experiments and findings (21, 22) were
+   OAST.** Features 11, 12, 15 to 20. Timing, parallelism (including last-byte
+   sync; see W15), the site map, and sequences were built with their sections.
+   DOM instrumentation and the lab OAST listener were built later; see W18 and
+   W19. Experiments and findings (21, 22) were
    built 2026-09-10; see W22 and W23. Match and extract (feature 14) were built
    2026-09-03: `h5i websec match` takes regex, substring, JSON path, header,
    status and length conditions, ANDs them, hands back what each captured, and
@@ -464,12 +467,18 @@ then send. The barrier is the point. Without it the first thread is already
 waiting on the network before the last has been spawned, and a check-then-act
 window measured in milliseconds closes in between.
 
-Named a burst rather than a single-packet attack, because that is what it is:
-the requests leave within the cost of waking a thread, not with their last bytes
-held back and released together. Ordinary check-then-act windows do not need
-that, and claiming the stronger thing would be claiming a capability the code
-does not have. `scripts/websec/smoke.sh` redeems a one-use coupon twelve times
-out of twenty against a server that sleeps between its check and its act.
+Named a burst rather than a single-packet attack, because that is what `--race`
+alone is: the requests leave within the cost of waking a thread.
+`scripts/websec/smoke.sh` redeems a one-use coupon twelve times out of twenty
+against a server that sleeps between its check and its act.
+
+`--sync last-byte` (2026-10-05) is the tighter release, and it requires
+`--race`. Each connection dials, sets `TCP_NODELAY`, writes every byte but the
+last, and waits. The final byte is written only once every connection has
+reached that wait. A peer that never gets there aborts the burst, and the call
+fails instead of reporting a short burst as a result. It is still one
+connection per request, HTTP/1.1, and not an HTTP/2 single-packet attack.
+`--rate` and a per-value walk are refused with it, as they are with the burst.
 
 A panicked sender fails the whole call rather than being skipped: a burst that
 quietly sent fewer requests than it was asked for would make a race that did not
@@ -532,30 +541,49 @@ scraping belongs in a separately named command.
 
 ## W18. DOM instrumentation
 
-The DOM Invader analogue, and the first feature that is a plugin rather than
-core. With `--script` on, instrument the sources (`location`, `name`,
-`document.referrer`, `postMessage` data, storage) and the sinks (`innerHTML`,
-`eval`, `document.write`, `setAttribute` on URL attributes, `Function`), and
-report reachability from source to sink with the path taken. Add a
-`postMessage` log and a prototype pollution probe.
+Built 2026-10-05 as a capture-proxy inject, not as a hook in the native engine.
+The native engine is not a full DOM, so it does not run the instrument.
+`h5i browser proxy --dom-instrument` injects `script/instrument.js` into HTML
+responses and swallows the beacon. `h5i websec dom scan` folds
+`dom-report.jsonl` into findings. `dom node` runs the gadget probe in a box,
+one `Object.prototype` property per run.
 
-It sits last but one because it is engine-invasive, it only pays off on
-client-side problems, and everything before it pays off on every problem.
+Sources the instrument actually reads: the URL hash and search, `window.name`,
+`document.referrer`, `document.cookie`, `localStorage` and `sessionStorage`
+(32 keys each), and postMessage data. Sinks: `innerHTML`, `outerHTML`,
+`insertAdjacentHTML`, `setAttribute`, `document.write`, and the URL setters on
+`script`, `iframe`, `img`, and `a`. A flow is a run of at least 12 characters
+of a source inside a sink. `eval` is not wrapped, because a wrapper would run
+the page's direct eval as indirect eval and change the page being measured.
+A postMessage that never reaches a sink is counted and is not a finding.
+
+Findings from `scan` are observations (`unconfirmed`). `node` stays `observed`
+unless something else confirms the gadget. This build does not add a kernel
+trace, and it does not call a canary a vulnerability.
 
 ## W19. OAST
 
-Out-of-band detection needs a callback receiver, which means a service, which
-means an operating cost and a privacy story. The design here stops short of
-running one:
+Built 2026-10-05 as a lab HTTP listener in the websec plugin. No hosted
+callback domain ships, and nothing is sent to an h5i-operated service.
 
-- A neutral interface: `h5i websec oast token` mints a correlation id and
-  returns a hostname and URL to embed; `h5i websec oast poll <token>` returns
-  the interactions seen, with type, source address and time.
-- Backends are pluggable and none ships hosted. Bring your own domain, your own
-  webhook endpoint, or a self-hosted receiver; a lab backend that binds a local
-  listener covers CTF targets that can reach the host.
-- Nothing is sent to an h5i-operated service, because a payload URL in a target
-  application is data about someone else's system.
+- `h5i websec oast serve` binds the listener, `127.0.0.1` and a free port by
+  default, and records that under the session's `oast/` directory (owner-only).
+  Binding an unspecified address requires `--public-base`, because a target
+  cannot dial `0.0.0.0`. A second `serve` while the recorded pid is alive is
+  refused.
+- `h5i websec oast token` mints an id from `/dev/urandom` and prints
+  `{public_base}/{token}`. It refuses when `serve` is not running.
+- `h5i websec oast poll <token>` reads `interactions.jsonl` and returns the
+  hits for that token: method, path, host, peer, time, and a body preview
+  capped at 4 KiB. Headers are capped at 64 KiB. The interactions file stops
+  growing at 16 MiB; the listener still answers.
+- The listener always responds `200` with the body `ok`. It does not reflect
+  the token, and it does not fetch. Unmatched requests are not recorded.
+  Tokens minted after `serve` started are visible, because the token file is
+  reread per request.
+- DNS on port 53 is not implemented. A DNS-only interaction is not seen unless
+  the name hits this HTTP listener.
+- Poll output is the observation. The verb does not write a finding.
 
 ## W20. Order, and what each phase buys
 
@@ -578,11 +606,11 @@ The twenty features, ranked, with the phase that carries them.
 | 11 | extract and bind | macros, session rules | B, built |
 | 12 | multi-request sequences | Repeater sequences | B, built |
 | 15 | precise timing | Repeater, Intruder | B, built |
-| 16 | controlled parallel replay | Intruder, race testing | B, built |
+| 16 | controlled parallel replay | Intruder, race testing | B, built (burst and last-byte) |
 | 17 | redirect chain observation and control | Proxy, Repeater | B, built |
 | 18 | site map and inventory | Target site map | B, built |
-| 19 | DOM instrumentation | DOM Invader | C |
-| 20 | OAST callbacks | Collaborator | C |
+| 19 | DOM instrumentation | DOM Invader | C, built |
+| 20 | OAST callbacks | Collaborator | C, built (HTTP lab listener) |
 | 21 | multi-position experiments | Intruder, Caido Automate | B, built |
 | 22 | findings | none: Burp's is a report | B, built |
 
@@ -601,7 +629,10 @@ RPC of W10 lands here, driven by whichever loop first proves too slow, and the
 Python client lands after that, extracted from scripts that already exist rather
 than designed in advance.
 
-**Phase C, the long tail.** Features 19 and 20. Client-side and blind classes.
+**Phase C, the long tail.** Features 19 and 20, built as W18 and W19 describe:
+client-side observation through the proxy instrument, and blind callbacks
+through the lab HTTP listener. DNS-only OAST and a kernel confirmation of a
+Node gadget are not part of that build.
 
 **The benchmark.** Each phase's claim is a measured one: a corpus of web CTF
 problems, run by an agent with only these verbs, scored on solved and on how

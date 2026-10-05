@@ -64,6 +64,13 @@ impl Wire {
         })
     }
 
+    /// Do not let Nagle hold the final byte back. Last-byte sync is two writes
+    /// on purpose, and a delayed ACK would glue them into the one write it is
+    /// not.
+    pub(crate) fn set_nodelay(&self, on: bool) -> std::io::Result<()> {
+        self.sock.set_nodelay(on)
+    }
+
     /// Write and flush all bytes.
     pub(crate) fn write_all(&self, data: &[u8]) -> std::io::Result<()> {
         match &self.tls {

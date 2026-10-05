@@ -1753,7 +1753,7 @@ Send one of this session's own requests again, with changes
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBresend\fR [\fB\-\-set\fR] [\fB\-\-set\-file\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-\-repeat\fR] [\fB\-\-race\fR] [\fB\-\-no\-follow\fR] [\fB\-\-reset\-budget\fR] [\fB\-\-as\fR] [\fB\-\-keep\-credentials\fR] [\fB\-\-raw\-target\fR] [\fB\-\-raw\-headers\fR] [\fB\-\-set\-each\fR] [\fB\-\-raw\-request\fR] [\fB\-\-walk\fR] [\fB\-\-rate\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
+\fBresend\fR [\fB\-\-set\fR] [\fB\-\-set\-file\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-\-repeat\fR] [\fB\-\-race\fR] [\fB\-\-sync\fR] [\fB\-\-no\-follow\fR] [\fB\-\-reset\-budget\fR] [\fB\-\-as\fR] [\fB\-\-keep\-credentials\fR] [\fB\-\-raw\-target\fR] [\fB\-\-raw\-headers\fR] [\fB\-\-set\-each\fR] [\fB\-\-raw\-request\fR] [\fB\-\-walk\fR] [\fB\-\-rate\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1790,9 +1790,12 @@ Release the repeated sends together, for a race.
 
 The test for check\-then\-act: an application that reads a balance, decides, and writes it back has a window between the read and the write, and `\-\-repeat 20 \-\-race` is what finds out how wide it is.
 
-A burst, and named as one: the sends leave from twenty threads that meet at a barrier first. It is not a single\-packet attack, which needs each request split across two writes with the last byte held back. Ordinary check\-then\-act windows do not need that.
+A burst, and named as one: the sends leave from threads that meet at a barrier first. That reaches an ordinary check\-then\-act window. `\-\-sync last\-byte` holds the final byte of each request until every connection has written the rest. That is HTTP/1.1 on one connection per request, not an HTTP/2 single\-packet attack.
 
 Every send is a receipt and a stored message like any other, so a race that reproduces is a race somebody else can read afterwards.
+.TP
+\fB\-\-sync\fR \fI<MODE>\fR
+With `\-\-race`, how the burst is released. `last\-byte` writes every byte but the last, waits until every connection has done that, then writes the final byte on all of them
 .TP
 \fB\-\-no\-follow\fR
 Stop at the first redirect and report it, rather than following it.

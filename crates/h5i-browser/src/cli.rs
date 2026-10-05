@@ -754,6 +754,13 @@ enum SessionVerb {
         /// Release the sends together rather than one after another.
         #[arg(long)]
         together: bool,
+        /// With `--together`: write every byte but the last, wait until every
+        /// connection has done that, then write the final byte on all of them.
+        ///
+        /// HTTP/1.1, one connection per request. A tighter release than the
+        /// barrier burst, and still not an HTTP/2 single-packet attack.
+        #[arg(long, requires = "together")]
+        last_byte: bool,
         /// Stop at the first redirect and report it, rather than following it.
         #[arg(long)]
         no_follow: bool,
@@ -1753,6 +1760,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             create,
             repeat,
             together,
+            last_byte,
             no_follow,
             reset_budget,
             request,
@@ -1812,6 +1820,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     "create": create,
                     "repeat": repeat,
                     "together": together,
+                    "last_byte": last_byte,
                     "no_follow": no_follow,
                     "reset_budget": reset_budget,
                     "request": composed,

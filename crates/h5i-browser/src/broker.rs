@@ -186,6 +186,7 @@ pub struct Given {
 }
 
 /// A request written directly to the socket, without URL parsing.
+#[derive(Clone)]
 pub struct RawRequest {
     /// The authority used for policy checks and dialing. Its path is ignored.
     pub url: Url,
@@ -244,11 +245,14 @@ pub struct Sends {
     ///
     /// A burst, and named as one. Every request is written and flushed at
     /// roughly the same moment from `count` threads that meet at a barrier
-    /// first; it is not a single-packet attack, which needs the request split
-    /// across two writes and the last byte of each held back. What it does
-    /// reach is the ordinary check-then-act window, which is where nearly every
-    /// real one lives.
+    /// first. That reaches the ordinary check-then-act window.
     pub together: bool,
+    /// With [`Sends::together`]: write every byte but the last, wait until
+    /// every connection has done that, then write the final byte on all of
+    /// them. A tighter release than the burst, still one connection per
+    /// request, not an HTTP/2 single-packet attack.
+    #[serde(default)]
+    pub last_byte: bool,
     /// A request-target to write unchanged. `None` uses the normal sender.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_target: Option<String>,
@@ -275,6 +279,7 @@ impl Default for Sends {
         Self {
             count: 1,
             together: false,
+            last_byte: false,
             no_follow: false,
             raw_target: None,
             raw_headers: false,

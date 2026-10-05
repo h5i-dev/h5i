@@ -1,7 +1,7 @@
 //! The broker: the only way bytes enter this engine.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
 use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request};
@@ -2236,182 +2236,8 @@ impl crate::broker::Broker for LocalBroker {
     }
 
     fn send_raw(&self, req: &crate::broker::RawRequest) -> FetchOutcome {
-        let url = &req.url;
-        // Show the authority and the target that was actually sent.
-        let display = format!("{}{}", scheme_authority(url), req.target);
-
-        let denied = |broker: &Self, seq: u64, reason: &str| -> FetchOutcome {
-            let record =
-                RequestRecord::request(seq, Initiator::Replay, &req.method, &display)
-                    .denied(reason);
-            if let Err(e) = broker.record_pair(&record) {
-                return FetchOutcome::failed(url.clone(), format!("receipt sink refused: {e}"));
-            }
-            FetchOutcome::failed_at(url.clone(), reason.to_string(), Some(seq))
-        };
-
-        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
-
-        // 1. Check policy and record any refusal.
-        if let Some(reason) = self.policy.check_from(url, None).reason() {
-            return denied(self, seq, reason);
-        }
-
-        // 2. Raw sockets cannot bypass the proxy except for loopback.
-        if self.proxied && !crate::rawsock::is_loopback(url) {
-            return denied(
-                self,
-                seq,
-                "a raw request is a socket this session's egress proxy does not carry, so it is \
-                 refused off loopback rather than sent around the allowlist the proxy enforces",
-            );
-        }
-
-        // 3. Pin and check addresses before dialing.
-        if let Err(reason) = self.pin_addresses(url) {
-            return denied(self, seq, &reason);
-        }
-
-        // 4. Claim the request budget.
-        if let Err(over) = self.budget.claim_request(Spender::Agent) {
-            return denied(self, seq, &over.0);
-        }
-
-        // 5. Record the decision before sending. Fail closed if this fails.
-        let mut record =
-            RequestRecord::request(seq, Initiator::Replay, &req.method, &display);
-        record.headers_overridden = req.broke.clone();
-        if let Err(e) = self.append(&record) {
-            return FetchOutcome::failed(
-                url.clone(),
-                format!("refusing to fetch: the receipt could not be written: {e}"),
-            );
-        }
-
-        // Capture the outgoing request when a store is enabled.
-        if let Some(capture) = &self.capture {
-            let body = req.wire.get(req.body_at..).unwrap_or(&[]);
-            let content_type = req
-                .headers
-                .iter()
-                .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
-                .map(|(_, value)| value.as_str());
-            capture.request(seq, &req.method, &display, req.headers.clone(), body, content_type);
-        }
-
-        // 6. Send the request.
-        let started = Instant::now();
-        let approved = url.host_str().and_then(|host| self.approved_addresses(host));
-        let mut wire = match crate::rawsock::dial(url, approved) {
-            Ok(wire) => wire,
-            Err(e) => {
-                let mut outcome = record.response();
-                outcome.duration_ms = Some(started.elapsed().as_millis() as u64);
-                outcome.error = Some(e.clone());
-                let _ = self.append(&outcome);
-                return FetchOutcome::failed_at(url.clone(), e, Some(seq));
-            }
-        };
-        // Do not wait forever for a silent server. Over TLS the socket timeout
-        // does not do this on its own: the read loop retries on it, so that a
-        // writer can take the connection lock, and the wait has to be said as a
-        // deadline as well. Without it a raw send to an https server that keeps
-        // its connection open blocked this thread and the engine behind it.
-        let wait = crate::rawsock::RAW_READ_DEADLINE;
-        wire.set_read_timeout(Some(wait));
-        wire.set_read_deadline(Some(wait));
-
-        if let Err(e) = wire.write_all(&req.wire) {
-            wire.shutdown();
-            let mut outcome = record.response();
-            outcome.duration_ms = Some(started.elapsed().as_millis() as u64);
-            outcome.error = Some(format!("writing the request failed: {e}"));
-            let _ = self.append(&outcome);
-            return FetchOutcome::failed_at(
-                url.clone(),
-                format!("writing the request failed: {e}"),
-                Some(seq),
-            );
-        }
-
-        let cap = self.policy.max_response_bytes() as usize;
-        let response = crate::rawsock::read_http_response(&mut wire, &req.method, cap);
-        let ttfb = started.elapsed().as_millis() as u64;
-        // Only the raw path asks this, and only the raw path has a reason to:
-        // an ordinary fetch is one request and one response, while a request
-        // written byte for byte may have been two requests as far as the server
-        // was concerned. What comes back after the first response is the
-        // smuggled request's answer, and dropping it would leave the caller
-        // holding a successful desync with no way to see that it worked.
-        let followed = match &response {
-            Ok(resp) => {
-                crate::rawsock::read_whatever_follows(&mut wire, resp.leftover.clone(), cap)
-            }
-            Err(_) => Vec::new(),
-        };
-        wire.shutdown();
-
-        match response {
-            Err(e) => {
-                let mut outcome = record.response();
-                outcome.duration_ms = Some(ttfb);
-                outcome.ttfb_ms = Some(ttfb);
-                outcome.error = Some(e.clone());
-                let _ = self.append(&outcome);
-                FetchOutcome::failed_at(url.clone(), e, Some(seq))
-            }
-            Ok(resp) => {
-                // Store cookies from raw responses in the session jar.
-                let cookies_stored = self.jar.store(
-                    url,
-                    resp.headers
-                        .iter()
-                        .filter(|(name, _)| name.eq_ignore_ascii_case("set-cookie"))
-                        .map(|(_, value)| value.as_str()),
-                );
-
-                let mut outcome = record.response();
-                outcome.status = resp.status;
-                outcome.duration_ms = Some(ttfb);
-                outcome.ttfb_ms = Some(ttfb);
-                outcome.bytes = Some(resp.body.len() as u64);
-                outcome.cookies_stored = Some(cookies_stored);
-                if !followed.is_empty() {
-                    outcome.trailing_bytes = Some(followed.len() as u64);
-                }
-                let _ = self.append(&outcome);
-                self.budget.record(
-                    resp.body.len() as u64,
-                    resp.body.len() as u64,
-                    Duration::from_millis(ttfb),
-                );
-
-                if let Some(capture) = &self.capture {
-                    capture.response(crate::capture::Response {
-                        seq,
-                        url: &display,
-                        status: resp.status,
-                        headers: resp.headers.clone(),
-                        content_encoding: None,
-                        wire_bytes: None,
-                        body: crate::capture::Received::Bytes(&resp.body),
-                        trailing: &followed,
-                    });
-                }
-
-                FetchOutcome {
-                    seq: Some(seq),
-                    headers: resp.headers,
-                    final_url: url.clone(),
-                    body: resp.body,
-                    status: resp.status,
-                    error: None,
-                    opaque: false,
-                }
-            }
-        }
+        self.send_raw_held(req, None)
     }
-
 
     fn records(&self) -> Vec<RequestRecord> {
         self.log.records()
@@ -2536,7 +2362,249 @@ impl Pace {
     }
 }
 
+/// The rendezvous a last-byte burst shares.
+struct Hold {
+    release: Barrier,
+    abort: AtomicBool,
+}
+
+/// Reaches `Hold::release` if the send returns before `write_request` does.
+///
+/// Disarmed only after this thread has committed to waiting itself. Drop then
+/// waits exactly once, and a dial that fails still lets the others go.
+struct HoldGuard<'a> {
+    hold: &'a Hold,
+    armed: bool,
+}
+
+impl Drop for HoldGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.hold.abort.store(true, Ordering::SeqCst);
+            self.hold.release.wait();
+        }
+    }
+}
+
+/// Write `bytes`, holding the last one back when `guard` is set.
+///
+/// The guard is disarmed before the wait so `Drop` does not wait a second time.
+/// A panic between those two lines would leave the peers blocked; they sit on
+/// adjacent lines for that reason.
+fn write_request(
+    wire: &crate::rawsock::Wire,
+    bytes: &[u8],
+    guard: Option<&mut HoldGuard<'_>>,
+) -> Result<(), String> {
+    let Some(guard) = guard else {
+        return wire
+            .write_all(bytes)
+            .map_err(|e| format!("writing the request failed: {e}"));
+    };
+    wire.set_nodelay(true)
+        .map_err(|e| format!("writing the request failed: {e}"))?;
+    let at = bytes.len().saturating_sub(1);
+    wire.write_all(&bytes[..at])
+        .map_err(|e| format!("writing the request failed: {e}"))?;
+    guard.armed = false;
+    guard.hold.release.wait();
+    if guard.hold.abort.load(Ordering::SeqCst) {
+        wire.shutdown();
+        return Err(
+            "last-byte sync aborted: a peer did not reach the barrier, so this \
+             request's last byte was not sent"
+                .to_string(),
+        );
+    }
+    wire.write_all(&bytes[at..])
+        .map_err(|e| format!("writing the last byte failed: {e}"))
+}
+
 impl LocalBroker {
+    /// [`Broker::send_raw`], optionally holding the last byte for a synced race.
+    ///
+    /// `hold` is the barrier the whole burst shares. Any path that returns
+    /// before reaching it still has to arrive there, or the peers wait forever
+    /// and a failed dial looks like a race that did not reproduce. [`HoldGuard`]
+    /// does that on drop.
+    fn send_raw_held(
+        &self,
+        req: &crate::broker::RawRequest,
+        hold: Option<&Hold>,
+    ) -> FetchOutcome {
+        let mut hold_guard = hold.map(|hold| HoldGuard { hold, armed: true });
+        let url = &req.url;
+        // Show the authority and the target that was actually sent.
+        let display = format!("{}{}", scheme_authority(url), req.target);
+
+        let denied = |broker: &Self, seq: u64, reason: &str| -> FetchOutcome {
+            let record =
+                RequestRecord::request(seq, Initiator::Replay, &req.method, &display)
+                    .denied(reason);
+            if let Err(e) = broker.record_pair(&record) {
+                return FetchOutcome::failed(url.clone(), format!("receipt sink refused: {e}"));
+            }
+            FetchOutcome::failed_at(url.clone(), reason.to_string(), Some(seq))
+        };
+
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+
+        // 1. Check policy and record any refusal.
+        if let Some(reason) = self.policy.check_from(url, None).reason() {
+            return denied(self, seq, reason);
+        }
+
+        // 2. Raw sockets cannot bypass the proxy except for loopback.
+        if self.proxied && !crate::rawsock::is_loopback(url) {
+            return denied(
+                self,
+                seq,
+                "a raw request is a socket this session's egress proxy does not carry, so it is \
+                 refused off loopback rather than sent around the allowlist the proxy enforces",
+            );
+        }
+
+        // 3. Pin and check addresses before dialing.
+        if let Err(reason) = self.pin_addresses(url) {
+            return denied(self, seq, &reason);
+        }
+
+        // 4. Claim the request budget.
+        if let Err(over) = self.budget.claim_request(Spender::Agent) {
+            return denied(self, seq, &over.0);
+        }
+
+        // 5. Record the decision before sending. Fail closed if this fails.
+        let mut record =
+            RequestRecord::request(seq, Initiator::Replay, &req.method, &display);
+        record.headers_overridden = req.broke.clone();
+        if let Err(e) = self.append(&record) {
+            return FetchOutcome::failed(
+                url.clone(),
+                format!("refusing to fetch: the receipt could not be written: {e}"),
+            );
+        }
+
+        // Capture the outgoing request when a store is enabled.
+        if let Some(capture) = &self.capture {
+            let body = req.wire.get(req.body_at..).unwrap_or(&[]);
+            let content_type = req
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+                .map(|(_, value)| value.as_str());
+            capture.request(seq, &req.method, &display, req.headers.clone(), body, content_type);
+        }
+
+        // 6. Send the request.
+        let started = Instant::now();
+        let approved = url.host_str().and_then(|host| self.approved_addresses(host));
+        let mut wire = match crate::rawsock::dial(url, approved) {
+            Ok(wire) => wire,
+            Err(e) => {
+                let mut outcome = record.response();
+                outcome.duration_ms = Some(started.elapsed().as_millis() as u64);
+                outcome.error = Some(e.clone());
+                let _ = self.append(&outcome);
+                return FetchOutcome::failed_at(url.clone(), e, Some(seq));
+            }
+        };
+        // Do not wait forever for a silent server. Over TLS the socket timeout
+        // does not do this on its own: the read loop retries on it, so that a
+        // writer can take the connection lock, and the wait has to be said as a
+        // deadline as well. Without it a raw send to an https server that keeps
+        // its connection open blocked this thread and the engine behind it.
+        let wait = crate::rawsock::RAW_READ_DEADLINE;
+        wire.set_read_timeout(Some(wait));
+        wire.set_read_deadline(Some(wait));
+
+        if let Err(e) = write_request(&wire, &req.wire, hold_guard.as_mut()) {
+            wire.shutdown();
+            let mut outcome = record.response();
+            outcome.duration_ms = Some(started.elapsed().as_millis() as u64);
+            outcome.error = Some(e.clone());
+            let _ = self.append(&outcome);
+            return FetchOutcome::failed_at(url.clone(), e, Some(seq));
+        }
+
+        let cap = self.policy.max_response_bytes() as usize;
+        let response = crate::rawsock::read_http_response(&mut wire, &req.method, cap);
+        let ttfb = started.elapsed().as_millis() as u64;
+        // Only the raw path asks this, and only the raw path has a reason to:
+        // an ordinary fetch is one request and one response, while a request
+        // written byte for byte may have been two requests as far as the server
+        // was concerned. What comes back after the first response is the
+        // smuggled request's answer, and dropping it would leave the caller
+        // holding a successful desync with no way to see that it worked.
+        let followed = match &response {
+            Ok(resp) => {
+                crate::rawsock::read_whatever_follows(&mut wire, resp.leftover.clone(), cap)
+            }
+            Err(_) => Vec::new(),
+        };
+        wire.shutdown();
+
+        match response {
+            Err(e) => {
+                let mut outcome = record.response();
+                outcome.duration_ms = Some(ttfb);
+                outcome.ttfb_ms = Some(ttfb);
+                outcome.error = Some(e.clone());
+                let _ = self.append(&outcome);
+                FetchOutcome::failed_at(url.clone(), e, Some(seq))
+            }
+            Ok(resp) => {
+                // Store cookies from raw responses in the session jar.
+                let cookies_stored = self.jar.store(
+                    url,
+                    resp.headers
+                        .iter()
+                        .filter(|(name, _)| name.eq_ignore_ascii_case("set-cookie"))
+                        .map(|(_, value)| value.as_str()),
+                );
+
+                let mut outcome = record.response();
+                outcome.status = resp.status;
+                outcome.duration_ms = Some(ttfb);
+                outcome.ttfb_ms = Some(ttfb);
+                outcome.bytes = Some(resp.body.len() as u64);
+                outcome.cookies_stored = Some(cookies_stored);
+                if !followed.is_empty() {
+                    outcome.trailing_bytes = Some(followed.len() as u64);
+                }
+                let _ = self.append(&outcome);
+                self.budget.record(
+                    resp.body.len() as u64,
+                    resp.body.len() as u64,
+                    Duration::from_millis(ttfb),
+                );
+
+                if let Some(capture) = &self.capture {
+                    capture.response(crate::capture::Response {
+                        seq,
+                        url: &display,
+                        status: resp.status,
+                        headers: resp.headers.clone(),
+                        content_encoding: None,
+                        wire_bytes: None,
+                        body: crate::capture::Received::Bytes(&resp.body),
+                        trailing: &followed,
+                    });
+                }
+
+                FetchOutcome {
+                    seq: Some(seq),
+                    headers: resp.headers,
+                    final_url: url.clone(),
+                    body: resp.body,
+                    status: resp.status,
+                    error: None,
+                    opaque: false,
+                }
+            }
+        }
+    }
+
     /// One send, and what it cost.
     fn send_once(
         &self,
@@ -2626,6 +2694,95 @@ impl LocalBroker {
         Ok((samples, last.expect("at least one send")))
     }
 
+    /// The same request on several connections, released on the last byte.
+    ///
+    /// Each connection dials and writes every byte but the last, then waits.
+    /// The final byte goes out only once every connection has reached that
+    /// wait, so the server cannot start the request until the burst says so.
+    /// A peer that never gets there sets the abort and still enters the
+    /// barrier; the others then withhold their last byte, and this call fails
+    /// rather than reporting a short burst as a result.
+    fn send_last_byte(
+        &self,
+        raw: &crate::broker::RawRequest,
+        count: u32,
+    ) -> Result<(Vec<crate::broker::Timing>, FetchOutcome), crate::broker::SendError> {
+        let me = self.me.upgrade().ok_or_else(|| {
+            crate::broker::SendError::new("no-broker", "the broker is no longer running")
+        })?;
+        let hold = Arc::new(Hold {
+            release: Barrier::new(count as usize),
+            abort: AtomicBool::new(false),
+        });
+        let mut threads = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let broker = me.clone();
+            let hold = Arc::clone(&hold);
+            let raw = raw.clone();
+            threads.push(std::thread::spawn(move || {
+                let started = Instant::now();
+                let outcome = broker.send_raw_held(&raw, Some(&hold));
+                let wall_ms = started.elapsed().as_millis() as u64;
+                let recorded = outcome.seq.and_then(|seq| {
+                    broker
+                        .log
+                        .records()
+                        .into_iter()
+                        .find(|r| r.seq == seq && r.phase == crate::receipt::Phase::Response)
+                });
+                let total_ms = recorded
+                    .as_ref()
+                    .and_then(|r| r.duration_ms)
+                    .unwrap_or(wall_ms);
+                let ttfb_ms = recorded.as_ref().and_then(|r| r.ttfb_ms).unwrap_or(total_ms);
+                (
+                    crate::broker::Timing {
+                        seq: outcome.seq,
+                        status: outcome.status,
+                        value: None,
+                        ttfb_ms,
+                        total_ms,
+                        bytes: outcome.body.len() as u64,
+                        body_preview: crate::broker::body_preview(&outcome.body),
+                        body_truncated: outcome.body.len() > crate::broker::BODY_PREVIEW_BYTES,
+                    },
+                    outcome,
+                )
+            }));
+        }
+        let mut samples = Vec::with_capacity(count as usize);
+        let mut last = None;
+        let mut aborted = false;
+        for thread in threads {
+            match thread.join() {
+                Ok((sample, outcome)) => {
+                    if outcome.error.as_deref().is_some_and(|error| {
+                        error.starts_with("last-byte sync aborted")
+                    }) {
+                        aborted = true;
+                    }
+                    samples.push(sample);
+                    last = Some(outcome);
+                }
+                Err(_) => {
+                    return Err(crate::broker::SendError::new(
+                        "send-failed",
+                        "one of the parallel sends panicked, so the burst was not the size \
+                         it was asked for",
+                    ));
+                }
+            }
+        }
+        if aborted {
+            return Err(crate::broker::SendError::new(
+                "send-failed",
+                "one connection did not reach the last byte, so the burst was not the size \
+                 it was asked for",
+            ));
+        }
+        Ok((samples, last.expect("at least one send")))
+    }
+
     /// Apply the edits and put it on the wire.
     ///
     /// The one path both replay verbs end at, so a stored request and a
@@ -2700,6 +2857,64 @@ impl LocalBroker {
                     plan.rate.unwrap_or_default()
                 ),
             ));
+        }
+
+        // Last-byte sync is a `--race` released on the final byte. It has to
+        // be decided before the single raw send below, which writes the whole
+        // request in one go.
+        if plan.last_byte {
+            if !plan.together {
+                return Err(SendError::new(
+                    "bad-sync",
+                    "`--sync last-byte` releases a `--race`. Ask for both".to_string(),
+                ));
+            }
+            if plan.each.is_some() {
+                return Err(SendError::new(
+                    "bad-each",
+                    "`--sync last-byte` releases the same request together; a walk sends a \
+                     different request each time. Pick one"
+                        .to_string(),
+                ));
+            }
+            if plan.rate.is_some() {
+                return Err(SendError::new(
+                    "bad-rate",
+                    "`--sync last-byte` releases every request at one moment and `--rate` holds \
+                     them apart. Pick one"
+                        .to_string(),
+                ));
+            }
+            let sends = plan.count.max(1);
+            if sends < 2 {
+                return Err(SendError::new(
+                    "bad-sync",
+                    "`--sync last-byte` needs at least two sends".to_string(),
+                ));
+            }
+            let raw = if plan.raw_request.is_some()
+                || plan.raw_target.is_some()
+                || plan.raw_headers
+            {
+                build_raw_request(&editable, &plan).map_err(|e| SendError::new("bad-raw", e))?
+            } else {
+                build_managed_raw(&editable, &request_target(&editable.url))
+            };
+            let sent = crate::broker::Sent {
+                method: raw.method.clone(),
+                url: format!("{}{}", scheme_authority(&raw.url), raw.target),
+                header_names: raw.headers.iter().map(|(name, _)| name.clone()).collect(),
+                body_bytes: (raw.wire.len().saturating_sub(raw.body_at)) as u64,
+            };
+            let (mut samples, outcome) = self.send_last_byte(&raw, sends)?;
+            samples.sort_by_key(|sample| sample.seq);
+            return Ok(crate::broker::Edited {
+                seq: outcome.seq,
+                applied,
+                sent,
+                samples,
+                outcome,
+            });
         }
 
         // Build raw requests after edits so `--set` still applies.
@@ -3991,6 +4206,7 @@ mod capture_wire_tests {
             crate::broker::Sends {
                 count: 1,
                 together: false,
+                last_byte: false,
                 no_follow: true,
                 ..Default::default()
             },
@@ -4121,6 +4337,7 @@ mod capture_wire_tests {
             crate::broker::Sends {
                 count: 1,
                 together: false,
+                last_byte: false,
                 no_follow: false,
                 raw_target: Some("/cgi-bin/.%2e/.%2e/etc/passwd".to_string()),
                 raw_request: None,
@@ -4158,6 +4375,7 @@ mod capture_wire_tests {
             crate::broker::Sends {
                 count: 1,
                 together: false,
+                last_byte: false,
                 no_follow: false,
                 raw_target: None,
                 raw_request: None,
@@ -4202,6 +4420,7 @@ mod capture_wire_tests {
             crate::broker::Sends {
                 count: 1,
                 together: false,
+                last_byte: false,
                 no_follow: false,
                 raw_target: None,
                 raw_request: None,
@@ -4252,6 +4471,7 @@ mod capture_wire_tests {
             crate::broker::Sends {
                 count: 1,
                 together: false,
+                last_byte: false,
                 no_follow: false,
                 raw_target: None,
                 raw_request: None,
@@ -4311,6 +4531,7 @@ mod capture_wire_tests {
             crate::broker::Sends {
                 count: 4,
                 together: true,
+                last_byte: false,
                 no_follow: false,
                 raw_target: None,
                 raw_request: None,
@@ -4324,6 +4545,233 @@ mod capture_wire_tests {
             format!("{error:?}").contains("Pick one"),
             "the refusal says why: {error:?}"
         );
+    }
+
+    fn refuse_last_byte(plan: crate::broker::Sends) -> crate::broker::SendError {
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker");
+        crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "POST".to_string(),
+                url: Url::parse("http://127.0.0.1:1/").unwrap(),
+                headers: Vec::new(),
+                body: b"LASTBYTE".to_vec(),
+            },
+            &[],
+            false,
+            plan,
+        )
+        .expect_err("refused")
+    }
+
+    /// `--sync last-byte` is a way to release a race, not a send of its own.
+    #[test]
+    fn last_byte_without_a_race_is_refused() {
+        let error = refuse_last_byte(crate::broker::Sends {
+            count: 4,
+            together: false,
+            last_byte: true,
+            ..Default::default()
+        });
+        assert_eq!(error.code, "bad-sync");
+        assert!(error.message.contains("Ask for both"), "{}", error.message);
+    }
+
+    #[test]
+    fn last_byte_needs_two_sends() {
+        let error = refuse_last_byte(crate::broker::Sends {
+            count: 1,
+            together: true,
+            last_byte: true,
+            ..Default::default()
+        });
+        assert_eq!(error.code, "bad-sync");
+        assert!(error.message.contains("at least two"), "{}", error.message);
+    }
+
+    #[test]
+    fn last_byte_and_a_rate_are_refused() {
+        let error = refuse_last_byte(crate::broker::Sends {
+            count: 4,
+            together: true,
+            last_byte: true,
+            rate: Some(2.0),
+            ..Default::default()
+        });
+        assert!(
+            error.message.contains("Pick one"),
+            "the refusal says why: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn last_byte_and_a_walk_are_refused() {
+        let error = refuse_last_byte(crate::broker::Sends {
+            count: 2,
+            together: true,
+            last_byte: true,
+            each: Some(crate::broker::Each::over("query.id", vec!["1".into()])),
+            ..Default::default()
+        });
+        assert!(
+            error.message.contains("Pick one"),
+            "the refusal says why: {}",
+            error.message
+        );
+    }
+
+    /// The final byte stays off the wire until every peer has written the rest.
+    ///
+    /// The listener queues one handshake. The other clients stay in `connect`
+    /// until this thread accepts them, so the barrier cannot release while the
+    /// peek is running. The body is non-empty so the held byte is not the
+    /// blank line that ends the headers.
+    #[cfg(unix)]
+    #[test]
+    fn last_byte_sync_holds_the_final_byte_until_every_peer_arrives() {
+        use std::io::{ErrorKind, Read};
+        use std::os::fd::AsRawFd;
+        use std::sync::atomic::AtomicBool;
+
+        const N: u32 = 6;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // A backlog of 0 leaves room for one completed handshake. The other
+        // clients stay in connect until accept, so the barrier cannot release
+        // while this thread still has the first prefix.
+        assert_eq!(
+            unsafe { libc::listen(listener.as_raw_fd(), 0) },
+            0,
+            "the accept queue has to stay closed after one handshake"
+        );
+        let absent = Arc::new(AtomicBool::new(false));
+        let absent_thr = Arc::clone(&absent);
+        let server = std::thread::spawn(move || {
+            fn content_length(head: &str) -> usize {
+                head.split("\r\n")
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse().ok())
+                            .flatten()
+                    })
+                    .expect("Content-Length")
+            }
+            fn read_head(stream: &mut std::net::TcpStream) -> String {
+                let mut buf = Vec::new();
+                let mut byte = [0u8; 1];
+                loop {
+                    let n = stream.read(&mut byte).expect("a header byte");
+                    assert_eq!(n, 1, "the peer closed before the headers ended");
+                    buf.push(byte[0]);
+                    if buf.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                    assert!(buf.len() < 8192, "headers ran away");
+                }
+                String::from_utf8(buf).expect("headers")
+            }
+            fn respond(stream: &mut std::net::TcpStream) {
+                stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                    )
+                    .unwrap();
+            }
+            fn last_byte_absent(stream: &mut std::net::TcpStream) -> bool {
+                stream.set_nonblocking(true).unwrap();
+                let mut one = [0u8; 1];
+                let absent = match stream.peek(&mut one) {
+                    Ok(0) => true,
+                    Err(e)
+                        if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut =>
+                    {
+                        true
+                    }
+                    other => panic!("the last byte was already on the wire: {other:?} {one:?}"),
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                absent
+            }
+
+            let (mut first, _) = listener.accept().unwrap();
+            first
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let head = read_head(&mut first);
+            let cl = content_length(&head);
+            assert!(cl >= 1, "the held byte has to be in the body");
+            let mut prefix = vec![0u8; cl - 1];
+            first.read_exact(&mut prefix).unwrap();
+            assert_eq!(&prefix, b"LASTBYT", "the held byte is the last of the body");
+            assert!(
+                last_byte_absent(&mut first),
+                "the prefix is on the wire and the final byte is not"
+            );
+            // Long enough that a last byte sent with the prefix would have arrived.
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            assert!(
+                last_byte_absent(&mut first),
+                "the final byte stayed back while the other peers were still connecting"
+            );
+            absent_thr.store(true, Ordering::SeqCst);
+
+            let mut rest = Vec::new();
+            for _ in 1..N {
+                let (stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                rest.push(stream);
+            }
+            let mut last = [0u8; 1];
+            first.read_exact(&mut last).unwrap();
+            assert_eq!(last, [b'E']);
+            respond(&mut first);
+            for stream in &mut rest {
+                let head = read_head(stream);
+                let mut body = vec![0u8; content_length(&head)];
+                stream.read_exact(&mut body).unwrap();
+                assert!(body.ends_with(b"E"), "{body:?}");
+                respond(stream);
+            }
+        });
+
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker");
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/hold")).unwrap();
+        let sent = crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "POST".to_string(),
+                url,
+                headers: Vec::new(),
+                body: b"LASTBYTE".to_vec(),
+            },
+            &[],
+            false,
+            crate::broker::Sends {
+                count: N,
+                together: true,
+                last_byte: true,
+                ..Default::default()
+            },
+        );
+        server.join().expect("the server finished the burst");
+        let sent = sent.expect("every connection reached the last byte");
+        assert!(absent.load(Ordering::SeqCst), "the peek ran");
+        assert!(sent.outcome.error.is_none(), "{:?}", sent.outcome.error);
+        assert_eq!(sent.outcome.status, Some(200));
+        assert_eq!(sent.samples.len(), N as usize);
+        for sample in &sent.samples {
+            assert_eq!(sample.status, Some(200), "{sample:?}");
+            assert!(sample.seq.is_some(), "{sample:?}");
+        }
     }
 
     /// A number small enough to overflow the interval used to panic the
@@ -4356,6 +4804,7 @@ mod capture_wire_tests {
             crate::broker::Sends {
                 count: 1,
                 together: false,
+                last_byte: false,
                 no_follow: false,
                 raw_target: None,
                 raw_request: None,
@@ -4392,6 +4841,7 @@ mod capture_wire_tests {
             crate::broker::Sends {
                 count: 3,
                 together: false,
+                last_byte: false,
                 no_follow: false,
                 raw_target: None,
                 raw_request: None,
@@ -4430,6 +4880,7 @@ mod capture_wire_tests {
             crate::broker::Sends {
                 count: 1,
                 together: false,
+                last_byte: false,
                 no_follow: false,
                 raw_target: Some("/x".to_string()),
                 raw_request: None,

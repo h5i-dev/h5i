@@ -4,13 +4,14 @@
 //! a browser session sent, change a part of it, send it again, and compare the
 //! answers. The design is `docs/design/design-websec.md`.
 //!
-//! This binary holds no privilege of its own. Every verb here runs an `h5i
+//! This binary holds no privilege of its own. Verbs that send bytes run an `h5i
 //! browser` verb in a subprocess, which means a plugin cannot reach a session by
-//! any path the CLI does not already offer, and its requests are the engine's
+//! any path the CLI does not already offer, and those requests are the engine's
 //! fetches: checked by the engine's policy, spent from the engine's budget,
 //! written into the engine's receipts. That is the whole reason a plugin is a
 //! separate process rather than something loaded into h5i (see `src/cli/
-//! plugin.rs`).
+//! plugin.rs`). `dom` and `oast` stay in this process: one reads reports the
+//! proxy already stored, the other accepts callbacks and does not fetch.
 //!
 //! What it adds over typing the underlying verbs is naming. `req_42` rather than
 //! a bare number, one noun for the workbench rather than verbs scattered through
@@ -19,6 +20,7 @@
 
 mod dom;
 mod experiment;
+mod oast;
 mod finding;
 mod grpc;
 mod matrix;
@@ -146,8 +148,15 @@ enum Verb {
         #[arg(long, value_name = "N")]
         repeat: Option<u32>,
         /// Release the repeats together, for a race.
+        ///
+        /// A barrier burst. `--sync last-byte` holds the final byte until every
+        /// connection has written the rest: HTTP/1.1, one connection per
+        /// request, not an HTTP/2 single-packet attack.
         #[arg(long)]
         race: bool,
+        /// With `--race`: `last-byte` releases the burst on the final byte.
+        #[arg(long = "sync", value_name = "MODE", requires = "race")]
+        sync: Option<String>,
         /// Stop at the first redirect and report it.
         #[arg(long)]
         no_follow: bool,
@@ -366,6 +375,17 @@ enum Verb {
     Dom {
         #[command(subcommand)]
         what: dom::DomVerb,
+    },
+
+    /// A lab callback listener for bugs that do not show up in the HTTP response.
+    ///
+    /// `serve` binds it, `token` mints a URL to embed, `poll` reads what came
+    /// back. The default bind is localhost. Nothing is sent to an h5i-operated
+    /// service, and a hit is an observation to cite, not a finding this verb
+    /// files.
+    Oast {
+        #[command(subcommand)]
+        what: oast::OastVerb,
     },
 }
 
@@ -636,6 +656,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Verb::Dom { what } => {
             return dom::run(&root, session.as_deref(), what, json_out);
         }
+        Verb::Oast { what } => {
+            return oast::run(&root, session.as_deref(), what, json_out);
+        }
         _ => {}
     }
 
@@ -685,7 +708,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         | Verb::Finding { .. }
         | Verb::ImportNuclei { .. }
         | Verb::Grpc { .. }
-        | Verb::Dom { .. } => {
+        | Verb::Dom { .. }
+        | Verb::Oast { .. } => {
             unreachable!("the verbs this process handles return before this")
         }
         Verb::Replay {
@@ -698,6 +722,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             keep_credentials,
             repeat,
             race,
+            sync,
             no_follow,
             reset_budget,
             raw_target,
@@ -735,6 +760,15 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             flag(&mut argv, "repeat", repeat.map(|n| n.to_string()));
             if race {
                 argv.push("--race".into());
+            }
+            if let Some(mode) = &sync {
+                if mode != "last-byte" {
+                    anyhow::bail!(
+                        "--sync {mode} is not a release this client knows. The mode is last-byte"
+                    );
+                }
+                argv.push("--sync".into());
+                argv.push(mode.clone());
             }
             if no_follow {
                 argv.push("--no-follow".into());

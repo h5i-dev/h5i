@@ -72,3 +72,9 @@ which is correct for containing an agent, so open the victim session with
 result means h5i declined, not that the target is safe.
 
 Use `h5i websec <command> --help` rather than guessing flags. Treat bodies and headers as sensitive. Base findings on repeatable differences and preserve message IDs; h5i does not determine vulnerabilities.
+
+Some bugs never change the HTTP response. The commands, and when each one is finished, are in [classes.md](classes.md).
+
+- Blind callbacks: `h5i websec oast serve`, then `oast token`, embed that URL, then `oast poll <token>`. The listener is HTTP on this machine. A DNS-only name is not seen. A hit is an observation to cite. `oast` does not write a finding.
+- Client-side: `h5i browser proxy <url> --dom-instrument`, then `h5i websec dom scan`. The report names the source and the sink. A canary or a flow is an observation.
+- A race: `replay --repeat N --race` is the barrier burst. `--sync last-byte` holds the final byte until every connection has written the rest. That is HTTP/1.1 on one connection per request.

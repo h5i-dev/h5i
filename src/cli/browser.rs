@@ -1120,15 +1120,21 @@ pub enum BrowserCommands {
         /// decides, and writes it back has a window between the read and the
         /// write, and `--repeat 20 --race` is what finds out how wide it is.
         ///
-        /// A burst, and named as one: the sends leave from twenty threads that
-        /// meet at a barrier first. It is not a single-packet attack, which
-        /// needs each request split across two writes with the last byte held
-        /// back. Ordinary check-then-act windows do not need that.
+        /// A burst, and named as one: the sends leave from threads that meet
+        /// at a barrier first. That reaches an ordinary check-then-act window.
+        /// `--sync last-byte` holds the final byte of each request until every
+        /// connection has written the rest. That is HTTP/1.1 on one connection
+        /// per request, not an HTTP/2 single-packet attack.
         ///
         /// Every send is a receipt and a stored message like any other, so a
         /// race that reproduces is a race somebody else can read afterwards.
         #[arg(long, requires = "repeat")]
         race: bool,
+        /// With `--race`, how the burst is released. `last-byte` writes every
+        /// byte but the last, waits until every connection has done that, then
+        /// writes the final byte on all of them.
+        #[arg(long = "sync", value_name = "MODE", requires = "race")]
+        sync: Option<String>,
         /// Stop at the first redirect and report it, rather than following it.
         ///
         /// A browser follows a `Location`; a test usually wants the 302 itself.
@@ -1799,6 +1805,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             create,
             repeat,
             race,
+            sync,
             no_follow,
             reset_budget,
             as_session,
@@ -1866,6 +1873,14 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             }
             if race {
                 argv.push("--together".into());
+            }
+            if let Some(mode) = sync {
+                if mode != "last-byte" {
+                    anyhow::bail!(
+                        "--sync {mode} is not a release this client knows. The mode is last-byte"
+                    );
+                }
+                argv.push("--last-byte".into());
             }
             if no_follow {
                 argv.push("--no-follow".into());

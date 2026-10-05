@@ -1,8 +1,8 @@
-// h5i DOM instrument: the shared payload injected into a page (proxy vehicle)
-// or installed before page scripts (engine vehicle). It detects prototype
-// pollution, records source->sink flows, and logs postMessage traffic, then
-// reports once as JSON. __H5I_TOKEN__, __H5I_VALUE__ and __H5I_BEACON__ are
-// substituted by the host before delivery.
+// h5i DOM instrument. The capture proxy injects this into HTML responses.
+// The native engine does not install it: that engine is not a full DOM.
+// It detects prototype pollution, records source->sink flows, and logs
+// postMessage traffic, then reports once as JSON. __H5I_TOKEN__,
+// __H5I_VALUE__ and __H5I_BEACON__ are substituted by the host before delivery.
 (function () {
   "use strict";
   var TOKEN = "__H5I_TOKEN__";
@@ -25,8 +25,9 @@
 
   // The source pool: the attacker-controlled parts of this navigation, each
   // clipped — a hostile page can set a megabyte-long window.name, and the taint
-  // scan must stay bounded regardless.
+  // scan must stay bounded regardless. Storage is capped at 32 keys per store.
   var SRC_CAP = 1024;
+  var STORE_CAP = 32;
   function sources() {
     var out = [];
     function add(name, raw) {
@@ -35,10 +36,28 @@
         if (v) out.push([name, v.length > SRC_CAP ? v.slice(0, SRC_CAP) : v]);
       } catch (e) {}
     }
+    function fromStore(store) {
+      try {
+        var n = store.length;
+        if (typeof n !== "number") return;
+        if (n > STORE_CAP) n = STORE_CAP;
+        for (var i = 0; i < n; i++) {
+          var k = store.key(i);
+          if (k == null || k === "") continue;
+          add("storage", k + "=" + store.getItem(k));
+        }
+      } catch (e) {}
+    }
     try { add("hash", decodeURIComponent(location.hash.replace(/^#/, ""))); } catch (e) { add("hash", location.hash); }
     try { add("search", decodeURIComponent(location.search.replace(/^\?/, ""))); } catch (e) { add("search", location.search); }
     try { add("name", window.name); } catch (e) {}
     try { add("referrer", document.referrer); } catch (e) {}
+    try { add("cookie", document.cookie); } catch (e) {}
+    try { fromStore(localStorage); } catch (e) {}
+    try { fromStore(sessionStorage); } catch (e) {}
+    for (var m = 0; m < messages.length; m++) {
+      add("message", messages[m] && messages[m].data);
+    }
     return out;
   }
 

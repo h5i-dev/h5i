@@ -182,6 +182,7 @@
 </div>
 <a class="t2" href="#h5i-websec">h5i websec</a>
 <div class="t3group">
+<a class="t3" href="#outside-the-response">Outside the response</a>
 <a class="t3" href="#experiments">Experiments</a>
 <a class="t3" href="#findings">Findings</a>
 <a class="t3" href="#what-is-safe-to-paste-and-what-is-not">What is safe to paste, and what is not</a>
@@ -1102,7 +1103,11 @@ content-type: application/json
 
 {&quot;id&quot;:456,&quot;owner&quot;:&quot;bob&quot;}
 </code></pre>
-<p><code>--repeat</code>, <code>--race</code> and <code>--set-each</code> print one row per send instead. <code>--json</code>
+<p><code>--repeat</code>, <code>--race</code> and <code>--set-each</code> print one row per send instead. <code>--race</code>
+releases a barrier burst: the sends meet, then each one goes out. <code>--sync
+last-byte</code> (with <code>--race</code>) writes every byte but the last, waits until every
+connection has done that, then writes the final byte. That is HTTP/1.1 on one
+connection per request. It is not an HTTP/2 single-packet attack. <code>--json</code>
 on any verb gives the JSON envelope, for a caller that parses; the exit codes
 are the same either way.</p>
 <p><code>--body</code> prints the decoded, untruncated response body to stdout (the <code>curl</code>
@@ -1111,6 +1116,20 @@ for when the answer is in a header). Both also work with <code>--set-each</code>
 printing each send's response. Capture is opt-in (<code>--capture</code>) because the
 message store holds bodies and credentials in full. It is never included in an
 export unless it is named.</p>
+<h3 id="outside-the-response">Outside the response</h3>
+<p><code>oast</code> is a lab HTTP listener for a callback that never appears in the HTTP
+answer. <code>serve</code> binds it, on <code>127.0.0.1</code> and a free port unless you say
+otherwise. <code>token</code> prints a URL to embed. <code>poll &lt;token&gt;</code> prints the
+interactions that named it: method, path, host, peer, time. Binding <code>0.0.0.0</code>
+also requires <code>--public-base</code>, the URL a target can actually dial. The listener
+answers <code>ok</code> and does not fetch. It does not see a DNS-only interaction. It
+does not write a finding. The poll line is what you cite, next to the replay's
+message id.</p>
+<p><code>dom scan</code> folds the capture proxy's instrument into findings after
+<code>h5i browser proxy &lt;url&gt; --dom-instrument</code>. A finding there is an observation
+(a prototype-pollution canary, or a source that reached a sink), and the
+evidence is the navigation's message ids. <code>dom node</code> runs one
+<code>Object.prototype</code> property at a time inside a box and stays <code>observed</code>.</p>
 <h3 id="experiments">Experiments</h3>
 <p>One request sent many ways, with the answers folded into clusters. The plan
 names what varies; the values are yours, and nothing here generates one.</p>

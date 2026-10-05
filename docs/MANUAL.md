@@ -820,7 +820,11 @@ content-type: application/json
 {"id":456,"owner":"bob"}
 ```
 
-`--repeat`, `--race` and `--set-each` print one row per send instead. `--json`
+`--repeat`, `--race` and `--set-each` print one row per send instead. `--race`
+releases a barrier burst: the sends meet, then each one goes out. `--sync
+last-byte` (with `--race`) writes every byte but the last, waits until every
+connection has done that, then writes the final byte. That is HTTP/1.1 on one
+connection per request. It is not an HTTP/2 single-packet attack. `--json`
 on any verb gives the JSON envelope, for a caller that parses; the exit codes
 are the same either way.
 
@@ -830,6 +834,23 @@ for when the answer is in a header). Both also work with `--set-each`/`--repeat`
 printing each send's response. Capture is opt-in (`--capture`) because the
 message store holds bodies and credentials in full. It is never included in an
 export unless it is named.
+
+### Outside the response
+
+`oast` is a lab HTTP listener for a callback that never appears in the HTTP
+answer. `serve` binds it, on `127.0.0.1` and a free port unless you say
+otherwise. `token` prints a URL to embed. `poll <token>` prints the
+interactions that named it: method, path, host, peer, time. Binding `0.0.0.0`
+also requires `--public-base`, the URL a target can actually dial. The listener
+answers `ok` and does not fetch. It does not see a DNS-only interaction. It
+does not write a finding. The poll line is what you cite, next to the replay's
+message id.
+
+`dom scan` folds the capture proxy's instrument into findings after
+`h5i browser proxy <url> --dom-instrument`. A finding there is an observation
+(a prototype-pollution canary, or a source that reached a sink), and the
+evidence is the navigation's message ids. `dom node` runs one
+`Object.prototype` property at a time inside a box and stays `observed`.
 
 ### Experiments
 
