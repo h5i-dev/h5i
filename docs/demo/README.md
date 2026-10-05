@@ -22,14 +22,14 @@ without turning the story into a tour.
 
 The opening is a teaser; the rest is a demo.
 
-**Title cards (0:00 to 0:08).** Black, uppercase, letters tracking in, then
+**Title cards (0:00 to 0:07).** Black, uppercase, letters tracking in, then
 a hard cut. "Your AI built it. Is it really secure?", over a slow drift of
 anonymized clippings: headlines and posts about shipped-in-a-day apps that
 leaked, with every name blanked. Then
 "Security has two sides, one workspace. Let's find vulnerabilities like a
 professional hacker."
 
-**The desk (0:08 to 0:56).** Three windows, all real screens: the agent's
+**The desk (0:07 to 0:56).** Three windows, all real screens: the agent's
 shell on the left, headed by the AI agent that is driving it, the
 `h5i ui` console on the right, and, overlapping the console's lower right,
 the app under test in the browser the agent drives, which in the second half
@@ -42,17 +42,17 @@ theorems turning proven carry the story on their own.
 
 | Time | Beat |
 |---|---|
-| 0:08 | The agent opens the authorized target and clicks into Alice's orders; the app window follows, the History fills. |
-| 0:14 | The agent replays the captured request with Bob's ID; the row lands in History, and Bob's order appears in Alice's page. The diff names the vulnerability. |
-| 0:20 | Click: Findings. The finding card, with the three messages it rests on. |
-| 0:23 | Untrusted page content asks for a leak; the agent tries to open paste.example and the app window shows it refused by policy. |
-| 0:26 | Click: Sandboxes. The refused run in the box's receipts, with the policy that refused it. |
-| 0:29 | Black again, one card: "The other side of the coin. Let's prove correctness rigorously with Lean 4." |
-| 0:32 | Click: Apps. The board kernel's theorems, unconfirmed, with no receipt yet. The editor window opens: the agent writes the kernel in Rust, on h5i-app. |
+| 0:07 | The agent opens the authorized target and clicks into Alice's orders; the app window follows, the History fills. |
+| 0:13 | The agent replays the captured request with Bob's ID; the row lands in History, and Bob's order appears in Alice's page. The diff names the vulnerability. |
+| 0:18 | Click: Findings. The finding card, with the three messages it rests on. |
+| 0:21 | Untrusted page content asks for a leak; the agent tries to open paste.example and the app window shows it refused by policy. |
+| 0:24 | Click: Sandboxes. The refused run in the box's receipts, with the policy that refused it. |
+| 0:28 | Black again, one card: "The other side of the coin. Let's prove correctness rigorously with Lean 4." |
+| 0:31 | Click: Apps. The board kernel's theorems, unconfirmed, with no receipt yet. The editor window opens: the agent writes the kernel in Rust, on h5i-app. |
 | 0:37 | `cargo app-extract`: Charon and Aeneas turn the Rust into `BoardKernel.lean`, and the editor shows it. |
 | 0:40 | The agent states the rule and writes the proof in `Theorems.lean`. |
 | 0:46 | `cargo app-verify`: extraction, lake build, the axiom gate and the mutants pass, and the rows turn proven. |
-| 0:53 | Click: Evidence. The receipt: what was checked, over what was prepared, never a score. |
+| 0:52 | Click: Evidence. The receipt: what was checked, over what was prepared, never a score. |
 
 **The close (0:56 to 1:00).** One screen, two beats: the mark and the
 tagline, then "Find vulnerabilities. Prove correctness." with the URLs.

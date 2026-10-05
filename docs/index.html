@@ -248,6 +248,9 @@
     .coin-flow { margin-top: 14px; }
     .proof-diagram.coin-diagram { min-width: 720px; }
     /* the Apps view inside the proof diagram: the console's own tokens, drawn small */
+    .pd-stage { position: relative; min-width: 880px; }
+    /* 452,176 648x236 in the svg's 1100x486 viewBox; the script keeps --pd-s at the svg's scale */
+    .pd-overlay { position: absolute; left: 41.0909%; top: 36.214%; width: 648px; height: 236px; transform-origin: 0 0; transform: scale(var(--pd-s, .8)); }
     .pd-win { height: 236px; border-radius: 8px; }
     .pd-win .win-bar { height: 32px; padding-top: 6px; font-size: 10.5px; }
     .pd-win .win-tab { padding: 4px 10px 5px; }
@@ -284,12 +287,12 @@
     .proof-diagram .ed-tab text { font-size: 13px; fill: var(--dim); }
     .proof-diagram .ed-tab:hover text { fill: var(--ink); }
     .proof-diagram .ed-tab:focus-visible rect { stroke: var(--spot); stroke-width: 1; }
-    #ed-lib:checked ~ .proof-diagram .ed-tab-lib rect, #ed-cargo:checked ~ .proof-diagram .ed-tab-cargo rect { fill: var(--panel); }
-    #ed-lib:checked ~ .proof-diagram .ed-tab-lib .ed-tab-top, #ed-cargo:checked ~ .proof-diagram .ed-tab-cargo .ed-tab-top { stroke: var(--spot); }
-    #ed-lib:checked ~ .proof-diagram .ed-tab-lib circle, #ed-cargo:checked ~ .proof-diagram .ed-tab-cargo circle { fill: var(--spot); }
-    #ed-lib:checked ~ .proof-diagram .ed-tab-lib text, #ed-cargo:checked ~ .proof-diagram .ed-tab-cargo text { fill: var(--ink); }
+    #ed-lib:checked ~ .pd-stage .ed-tab-lib rect, #ed-cargo:checked ~ .pd-stage .ed-tab-cargo rect { fill: var(--panel); }
+    #ed-lib:checked ~ .pd-stage .ed-tab-lib .ed-tab-top, #ed-cargo:checked ~ .pd-stage .ed-tab-cargo .ed-tab-top { stroke: var(--spot); }
+    #ed-lib:checked ~ .pd-stage .ed-tab-lib circle, #ed-cargo:checked ~ .pd-stage .ed-tab-cargo circle { fill: var(--spot); }
+    #ed-lib:checked ~ .pd-stage .ed-tab-lib text, #ed-cargo:checked ~ .pd-stage .ed-tab-cargo text { fill: var(--ink); }
     .proof-diagram .ed-pane, .proof-diagram .ed-crumb { display: none; }
-    #ed-lib:checked ~ .proof-diagram .ed-lib, #ed-cargo:checked ~ .proof-diagram .ed-cargo { display: inline; }
+    #ed-lib:checked ~ .pd-stage .ed-lib, #ed-cargo:checked ~ .pd-stage .ed-cargo { display: inline; }
     .proof-diagram { display: block; width: 100%; min-width: 880px; height: auto; }
     .proof-diagram text { font-family: var(--mono); }
     .proof-diagram .pd-title { font-family: var(--disp); font-size: 22px; font-weight: 800; fill: var(--ink); }
@@ -477,6 +480,32 @@
     @media (min-width: 900px) {
       .feat-grid.feat-grid-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
+    #cta .cta-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 56px; align-items: center; }
+    @media (max-width: 1000px) { #cta .cta-grid { grid-template-columns: minmax(0, 1fr); gap: 40px; } }
+    .cta-film { margin: 0; }
+    .cta-film .bw-url { gap: 8px; }
+    .film-btn {
+      display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; flex: none;
+      border: 1px solid var(--line2); border-radius: 50%; background: var(--panel); color: var(--ink);
+      font-size: 11px; line-height: 1; cursor: pointer; text-decoration: none;
+    }
+    .film-btn:hover { border-color: var(--spot); color: var(--spot); }
+    .film-expand { font-size: 13px; }
+    .film-screen { position: relative; aspect-ratio: 16 / 9; background: #060608; }
+    .film-screen iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+    .film-poster {
+      position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+      border: 0; padding: 16px; cursor: pointer; color: #ececf0; text-align: center;
+      background: radial-gradient(ellipse at center, rgba(255, 98, 88, .12), transparent 65%), #060608;
+    }
+    .film-kick { font-family: var(--mono); font-size: 10.5px; letter-spacing: .28em; text-transform: uppercase; color: var(--spot); }
+    .film-q { font-family: var(--disp); font-weight: 800; font-size: clamp(18px, 2.4vw, 30px); line-height: 1.1; letter-spacing: .06em; text-transform: uppercase; }
+    .film-play {
+      width: 54px; height: 54px; border-radius: 50%; background: var(--spot); margin-top: 6px; position: relative;
+      transition: transform .2s ease;
+    }
+    .film-play::after { content: ""; position: absolute; left: 21px; top: 17px; border-style: solid; border-width: 10px 0 10px 16px; border-color: transparent transparent transparent #fff; }
+    .film-poster:hover .film-play { transform: scale(1.08); }
     .hero-school {
       position: absolute; top: 0; right: 0; width: 55%; height: 100%;
       z-index: 0; pointer-events: none;
@@ -923,6 +952,7 @@
     <figure class="proof-flow">
       <input class="tabpick" type="radio" name="edtab" id="ed-lib" checked>
       <input class="tabpick" type="radio" name="edtab" id="ed-cargo">
+      <div class="pd-stage">
       <svg class="proof-diagram" viewBox="0 0 1100 486" role="img" aria-labelledby="proof-title proof-desc" xmlns="http://www.w3.org/2000/svg">
         <title id="proof-title">From Rust application logic to Lean-checked properties</title>
         <desc id="proof-desc">Aeneas extracts the Rust kernel of the bulletin board tutorial into Lean definitions. Developers supply theorems such as authorized, and the console's Apps view shows each theorem as proven, with the mutants its proof caught, over the latest verification receipt.</desc>
@@ -996,28 +1026,6 @@
         </g>
         <text x="415" y="81" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
         <text x="415" y="127" class="pd-note" text-anchor="middle">extract</text>
-        <!-- The console, in a browser window: the Apps view reading this kernel's receipt. -->
-        <foreignObject x="452" y="176" width="648" height="236">
-          <div xmlns="http://www.w3.org/1999/xhtml" class="browser-win pd-win">
-            <div class="win-bar"><span class="win-tab on"><i class="fav"></i>h5i console &#183; apps</span><span class="win-plus">+</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
-            <div class="bw-url"><span class="bw-nav">&#8592;</span><span class="bw-nav dim">&#8594;</span><span class="bw-nav">&#8635;</span><span class="bw-addr"><i class="lock"></i><span class="bw-text">localhost:8765/#/apps/board/theorems</span></span></div>
-            <div class="console-plate pd-ui">
-              <div class="pu-app">
-                <div class="pu-rail"><div class="pu-brand">h<b>5</b>i</div><div>Overview</div><div>Sessions</div><div>Sandboxes</div><div class="on">Apps</div><div>Host</div></div>
-                <div class="pu-main">
-                  <div class="pu-head"><b>board</b><code>examples/app/tutorials/board</code><span class="pu-pill">receipt &#183; just now</span></div>
-                  <div class="pu-tabs"><span>Spec</span><span class="on">Theorems <i>3</i></span><span>Trust boundary</span><span>Evidence</span></div>
-                  <table class="pu-table">
-                    <tr><th>theorem</th><th>status</th><th>mutants</th><th>axioms</th></tr>
-                    <tr><td><code>authorized</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">4 of 4 caught</span></td><td>standard</td></tr>
-                    <tr><td><code>inv_preserved</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">5 of 5 caught</span></td><td>standard</td></tr>
-                    <tr><td><code>transition_total</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">3 of 3 caught</span></td><td>standard</td></tr>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        </foreignObject>
         <!-- The proof you supply, in an editor of its own. -->
         <text x="452" y="28" class="pd-label pd-accent">LEAN 4 / THE PROOF YOU SUPPLY</text>
         <rect x="452" y="44" width="648" height="114" rx="6" fill="var(--panel)" stroke="var(--line2)"/>
@@ -1036,6 +1044,30 @@
         </g>
         <text x="776" y="456" class="pd-code" text-anchor="middle">The proof you write, and its verdict in the console you already use</text>
       </svg>
+      <!-- The console, in a browser window: the Apps view reading this kernel's receipt.
+           HTML over the svg, not a foreignObject: iOS Safari misplaces HTML inside one. -->
+      <div class="pd-overlay">
+          <div class="browser-win pd-win">
+            <div class="win-bar"><span class="win-tab on"><i class="fav"></i>h5i console &#183; apps</span><span class="win-plus">+</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
+            <div class="bw-url"><span class="bw-nav">&#8592;</span><span class="bw-nav dim">&#8594;</span><span class="bw-nav">&#8635;</span><span class="bw-addr"><i class="lock"></i><span class="bw-text">localhost:8765/#/apps/board/theorems</span></span></div>
+            <div class="console-plate pd-ui">
+              <div class="pu-app">
+                <div class="pu-rail"><div class="pu-brand">h<b>5</b>i</div><div>Overview</div><div>Sessions</div><div>Sandboxes</div><div class="on">Apps</div><div>Host</div></div>
+                <div class="pu-main">
+                  <div class="pu-head"><b>board</b><code>examples/app/tutorials/board</code><span class="pu-pill">receipt &#183; just now</span></div>
+                  <div class="pu-tabs"><span>Spec</span><span class="on">Theorems <i>3</i></span><span>Trust boundary</span><span>Evidence</span></div>
+                  <table class="pu-table">
+                    <tr><th>theorem</th><th>status</th><th>mutants</th><th>axioms</th></tr>
+                    <tr><td><code>authorized</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">4 of 4 caught</span></td><td>standard</td></tr>
+                    <tr><td><code>inv_preserved</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">5 of 5 caught</span></td><td>standard</td></tr>
+                    <tr><td><code>transition_total</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">3 of 3 caught</span></td><td>standard</td></tr>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+      </div>
+      </div>
     </figure>
     <div class="hero-actions">
       <a href="https://github.com/h5i-dev/i5h/tree/main/examples/tutorials" class="btn btn-primary">Explore the Rust tutorials</a>
@@ -1095,7 +1127,8 @@
 
 <!-- ── Close ──────────────────────────────────────────────────── -->
 <section id="cta">
-  <div class="container">
+  <div class="container cta-grid">
+    <div class="cta-copy">
     <h2 class="cta-title">Find Vulnerabilities.<br>Prove Correctness.</h2>
     <p class="cta-sub">Start with security testing on your existing app, or explore verifiable Rust application logic.
       Open source, local-first, and designed to work with your own agent.</p>
@@ -1107,6 +1140,23 @@
       <a href="/manual/#h5i-browser" class="btn btn-primary">Start your first session</a>
       <a href="https://crates.io/crates/h5i-app" class="btn btn-ghost">Explore the framework</a>
     </div>
+    </div>
+    <!-- The demo film. The iframe is created on the first play, so the page never pays for it unasked. -->
+    <figure class="cta-film browser-win">
+      <div class="win-bar"><span class="win-tab on"><i class="fav"></i>h5i &#183; demo film</span><span class="win-plus">+</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
+      <div class="bw-url">
+        <button class="film-btn film-toggle" type="button" aria-label="Play the demo film">&#9654;</button>
+        <span class="bw-addr"><i class="lock"></i><span class="bw-text">h5i.dev/demo</span></span>
+        <a class="film-btn film-expand" href="/demo/" aria-label="Open the demo film on its own page" title="Open full size">&#10530;</a>
+      </div>
+      <div class="film-screen">
+        <button class="film-poster" type="button" aria-label="Play the demo film">
+          <span class="film-kick">The film &#183; 1:00</span>
+          <span class="film-q">Your AI built it.<br>Is it really secure?</span>
+          <span class="film-play" aria-hidden="true"></span>
+        </button>
+      </div>
+    </figure>
   </div>
 </section>
 
@@ -1134,6 +1184,25 @@
 <script src="/_static/blog.js?v=41dbda103a" defer></script>
 <script src="/_static/highlight.js?v=ed81eee4e6" defer></script>
 <script>
+document.querySelectorAll('.cta-film').forEach(function (fig) {
+  var screen = fig.querySelector('.film-screen'), toggle = fig.querySelector('.film-toggle'), frame = null, playing = false;
+  function show(on) { playing = on; toggle.innerHTML = on ? '&#10074;&#10074;' : '&#9654;'; toggle.setAttribute('aria-label', on ? 'Pause the demo film' : 'Play the demo film'); }
+  function play() {
+    if (!frame) {
+      frame = document.createElement('iframe');
+      frame.src = '/demo/?embed'; frame.title = 'h5i demo film'; frame.allow = 'fullscreen';
+      screen.innerHTML = ''; screen.appendChild(frame); show(true); return;
+    }
+    frame.contentWindow.postMessage({ h5i: 'toggle' }, location.origin); show(!playing);
+  }
+  fig.querySelector('.film-poster').addEventListener('click', play);
+  toggle.addEventListener('click', play);
+});
+document.querySelectorAll('.pd-stage').forEach(function (st) {
+  function fit() { st.style.setProperty('--pd-s', st.clientWidth / 1100); }
+  fit();
+  if (window.ResizeObserver) new ResizeObserver(fit).observe(st); else addEventListener('resize', fit);
+});
 document.querySelectorAll('.proof-diagram .ed-tab').forEach(function (t) {
   function pick() { document.getElementById(t.getAttribute('data-tab')).checked = true; }
   t.addEventListener('click', pick);
