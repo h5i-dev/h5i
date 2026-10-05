@@ -13,7 +13,7 @@ second.
 | A4 | Postgres store matches `apply` | Proven up to PostgreSQL: planner (`crates/h5i-app-sql`), SQL compiler and printer (`crates/h5i-app-pgsql`) against the model `H5iAppLib.Pg` (`exec`, `Lists`/`Sel`). `schema!` generates table code, `apply`, `sql_writes`, `decode`, their specs, and `PgServed`/`pg_loaded_inv`. Each server app proves `db_inv` from its extracted `transition` to every later load. Trusted: PostgreSQL matches `H5iAppLib.Pg`, driver value conversion, schema description. | Test `H5iAppLib.Pg` against PostgreSQL with generated statements |
 | A5 | SERIALIZABLE equals a serial order | Trusted; theorems over `H5iAppLib.Run` (every interleaving of requests) rest on it | Stays trusted (PostgreSQL guarantee) |
 | A6 | Engine protocol (retry, idempotency, lock, clock, outbox) is correct | Trusted contract in `TRUST.md`; integration and fault tests. The Lean engine model was removed: no refinement proof from `h5i-app-pg`. | Keep the engine small; extend tests with the contract |
-| A7 | Charon, Aeneas, Lean are sound | Trusted. Axiom gate; Rust-vs-Lean differential test (`scripts/app/difftest.sh`, 55k cases, no mismatch) | Stays trusted |
+| A7 | Charon, Aeneas, Lean are sound | Trusted. Axiom gate; Rust-vs-Lean differential test (the document service in h5i-web-app, 55k cases, no mismatch) | Stays trusted |
 | A8 | No handler bypasses the engine | Opaque `Tx` and pool; `cargo deny check bans` keeps DB crates in `h5i-app-pg`; `h5i_app_pg::lockdown` role separation. In CI. | Superusers out of scope |
 | A9 | Running code is the extracted code | CI re-extracts every kernel and extracted crate (`h5i-app-sql`, `h5i-app-token`, `h5i-app-json`) with pinned tools and fails on diff | Done |
 | A10 | The spec says what we meant | Human review; mutation suites (the `[[mutant]]`s in each `h5i-app.toml`, run by `h5i app mutate`; `--auto` for generated ones); scenario theorems in every app; one upstream-bug counterexample per port | Add mutants for new failure modes |
@@ -81,7 +81,7 @@ Done for docs:
 ## Phase 4: real applications
 
 Done: Kellnr (PR #1243), Atuin (issue #3297), Wastebin (issue #190), Conduit
-(issue #16), crates.io (PR #14760), each under `examples/app/`. See `TARGETS.md`.
+(issue #16), crates.io (PR #14760), now in the h5i-web-app repository. See `TARGETS.md`.
 Open: publish the numbers; run a pilot.
 
 ## Found from user feedback
@@ -89,12 +89,12 @@ Open: publish the numbers; run a pilot.
 Done:
 
 - Text handling: byte-string specs (`H5iAppLib.Bytes`) and parser loops
-  (`iter_loop`); `examples/app/filters` proves a substitute/parse round trip for
-  every name and refutes an escaping mismatch.
+  (`iter_loop`); the filters example (h5i-web-app) proves a substitute/parse
+  round trip for every name and refutes an escaping mismatch.
 - Collections: `for` loop specs state properties of the whole list, not of
   one element.
-- Multi-request properties: `H5iAppLib.Run`; `examples/app/keys` proves revocation
-  against every interleaving and refutes a check-then-use kernel.
+- Multi-request properties: `H5iAppLib.Run`; the keys example (h5i-web-app) proves
+  revocation against every interleaving and refutes a check-then-use kernel.
 - Automation: `h5i_for`, `h5i_derive_eq`, `h5i_derive_clone`, `h5i_steps`,
   `h5i_simp`, and partial correctness (`h5i_invert`, `loop_ok`).
 

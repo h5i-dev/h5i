@@ -2904,13 +2904,16 @@ Build the proofs and gate them: no sorry, native_decide or axiom, and every theo
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBcheck\fR [\fB\-\-all\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+\fBcheck\fR [\fB\-\-all\fR] [\fB\-\-refetch\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-\-all\fR
 Every project under the given directories (default: the current one)
+.TP
+\fB\-\-refetch\fR
+Discard the project\*(Aqs Lake packages and fetch them again, for a fetch that left them broken. Shared packages are discarded for every project that uses them
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
@@ -2922,13 +2925,16 @@ Project directories or h5i\-app.toml files (default: the project the current dir
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBprove\fR [\fB\-\-all\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+\fBprove\fR [\fB\-\-all\fR] [\fB\-\-refetch\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-\-all\fR
 Every project under the given directories (default: the current one)
+.TP
+\fB\-\-refetch\fR
+Discard the project\*(Aqs Lake packages and fetch them again, for a fetch that left them broken. Shared packages are discarded for every project that uses them
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

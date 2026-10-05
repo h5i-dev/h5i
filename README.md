@@ -152,7 +152,7 @@ h5i-app = { version = "0.1", features = ["http", "postgres"] }
 - Prove properties across requests, for every order in which clients' requests commit.
 
 The kernel is one function that decides what a command does. This one, from the
-[calculator tutorial](examples/app/tutorials/calculator/TUTORIAL.md), keeps one
+[calculator tutorial](examples/app/calculator/TUTORIAL.md), keeps one
 number per user:
 
 ```rust

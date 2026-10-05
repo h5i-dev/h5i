@@ -3,8 +3,8 @@
 ## Proven in Lean
 
 Charon and Aeneas translate the Rust to Lean; every theorem is about the
-extracted code. Covered: the kernel's `transition` and `apply` (example app:
-`examples/app/docs/proofs/Spec.lean`, theorems in `Theorems.lean`), the token
+extracted code. Covered: the kernel's `transition` and `apply` (example:
+`examples/app/calculator/proofs/Spec.lean`, theorems in `Proofs.lean`), the token
 parser and encoder, the JSON writer, and the storage path:
 
 | Code | Proven | Where |

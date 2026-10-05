@@ -14,12 +14,16 @@ use crate::util::{self, Out};
 /// The axioms a gated theorem may use.
 pub const STANDARD_AXIOMS: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
 
-pub fn check(p: &Project, out: &Out) -> Result<()> {
+/// `refetch` discards the Lake packages and fetches them again
+/// ([`crate::packages`]).
+pub fn check(p: &Project, refetch: bool, out: &Out) -> Result<()> {
     let proofs = p.proofs();
     if !proofs.join("lakefile.lean").is_file() && !proofs.join("lakefile.toml").is_file() {
         bail!("{} is not a Lake project", proofs.display());
     }
-    fetch_packages(&proofs, out);
+    // Held through the build, so another `h5i app` cannot discard the
+    // packages under it.
+    let _packages = crate::packages::prepare(&proofs, refetch, out)?;
     let mut build = Command::new("lake");
     build
         .arg("build")
@@ -48,25 +52,6 @@ pub fn check(p: &Project, out: &Out) -> Result<()> {
         );
     }
     Ok(())
-}
-
-/// A fresh project has no packages yet: fetch Mathlib's build cache, which
-/// Aeneas needs, rather than building Mathlib from source. Failure is not
-/// fatal; `lake build` will resolve and build what is missing.
-fn fetch_packages(proofs: &Path, out: &Out) {
-    if proofs.join(".lake/packages").exists() {
-        return;
-    }
-    out.note("fetching Lean packages and the Mathlib cache (first build only)");
-    let ok = util::status(
-        Command::new("lake")
-            .args(["exe", "cache", "get"])
-            .current_dir(proofs),
-        out,
-    );
-    if !matches!(ok, Ok(true)) {
-        out.note("warning: `lake exe cache get` failed; Mathlib will be built from source");
-    }
 }
 
 fn lean_files(dir: &Path, out: &mut Vec<PathBuf>) {

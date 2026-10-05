@@ -208,6 +208,16 @@ pub fn copy_tree(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+pub fn symlink(from: &Path, to: &Path) -> Result<()> {
+    Ok(std::os::unix::fs::symlink(from, to)?)
+}
+
+#[cfg(not(unix))]
+pub fn symlink(from: &Path, to: &Path) -> Result<()> {
+    Ok(std::os::windows::fs::symlink_dir(from, to)?)
+}
+
 /// The Rust crate identifier for a package name.
 pub fn ident(package: &str) -> String {
     package.replace('-', "_")

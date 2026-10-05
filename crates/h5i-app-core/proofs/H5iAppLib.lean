@@ -1,4 +1,6 @@
 import H5iAppLib.Basic
+import H5iAppLib.Inv
+import H5iAppLib.Spec
 import H5iAppLib.Loops
 import H5iAppLib.Iter
 import H5iAppLib.Bytes

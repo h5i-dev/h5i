@@ -10,3 +10,7 @@ package h5i_app_lib
 -- Reusable lemmas and tactics for Aeneas-extracted h5i-app kernels.
 @[default_target] lean_lib H5iAppLib where
   roots := #[`H5iAppLib]
+
+-- Tests of the library's tactics on code shaped like an extraction.
+@[default_target] lean_lib H5iAppLibTests where
+  roots := #[`H5iAppLibTests]

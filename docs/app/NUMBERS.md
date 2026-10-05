@@ -1,6 +1,8 @@
 # Numbers
 
-Measured 2026-09-27. Lines exclude blanks and comments. Hand-written Lean
+Measured 2026-09-27. Lines exclude blanks and comments. On 2026-10-05 the
+ports, the document service (docs), filters and keys moved to the
+h5i-web-app repository; their rows are kept as measured here. Hand-written Lean
 includes the spec and excludes generated files (extracted kernels,
 `Schema.lean`). Rust kernel sizes exclude tests.
 
@@ -8,26 +10,26 @@ includes the spec and excludes generated files (extracted kernels,
 
 | App | Kernel (Rust) | Spec (Lean) | Hand-written Lean | Lean per kernel line |
 |---|---|---|---|---|
-| `examples/app/docs` | 936 | 108 | 2,538 | 2.7 |
-| `examples/app/kellnr` | 374 | 71 | 820 | 2.2 |
-| `examples/app/atuin` | 459 | 51 | 527 | 1.1 |
-| `examples/app/wastebin` | 275 | 51 | 720 | 2.6 |
-| `examples/app/conduit` | 1,063 | 127 | 1,682 | 1.6 |
-| `examples/app/cratesio` | 1,030 | 142 | 1,497 | 1.5 |
+| docs | 936 | 108 | 2,538 | 2.7 |
+| kellnr | 374 | 71 | 820 | 2.2 |
+| atuin | 459 | 51 | 527 | 1.1 |
+| wastebin | 275 | 51 | 720 | 2.6 |
+| conduit | 1,063 | 127 | 1,682 | 1.6 |
+| cratesio | 1,030 | 142 | 1,497 | 1.5 |
 | tutorial 1, calculator | 114 | 11 | 218 | 1.9 |
 | tutorial 2, board | 221 | 45 | 441 | 2.0 |
 | tutorial 3, ledger | 180 | 29 | 461 | 2.6 |
 | tutorial 4, inbox | 239 | 41 | 580 | 2.4 |
 | tutorial 5, booking | 268 | 61 | 644 | 2.4 |
-| `examples/app/filters` | 251 | 55 | 425 | 1.7 |
-| `examples/app/keys` | 204 | 41 | 298 | 1.5 |
+| filters | 251 | 55 | 425 | 1.7 |
+| keys | 204 | 41 | 298 | 1.5 |
 
 Counts include scenarios and upstream-bug counterexamples. Kellnr grew
 after 2026-09-26 when its `apply` was extracted and its owner invariant
 proven. Upstream Conduit has 1,077 handler lines with inline SQL, about 1.6
 Lean lines per handler line.
 
-`examples/app/filters` and `examples/app/keys` (2026-09-30) use `for` loops and
+filters and keys (2026-09-30) use `for` loops and
 the `H5iAppLib.Iter` specs. `h5i_for` and `h5i_derive_clone` then cut their
 function-spec files from 227 to 123 lines (filters `Lemmas` 120 to 71, keys
 `Lemmas` 65 to 36, keys `Apply` 42 to 16); most loop specs are one line. The
@@ -69,9 +71,9 @@ Shared code:
 
 | Check | Result |
 |---|---|
-| `h5i app mutate examples/app/docs` | 22 of 22 kernel bugs break a proof |
+| `h5i app mutate` on docs | 22 of 22 kernel bugs break a proof |
 | `h5i app mutate` on the other twelve kernels | 12 of 12 compiling kernel bugs break a proof |
-| `scripts/app/difftest.sh` (Rust vs Lean) | 5,000 random cases per run agree (55,000 in one longer run); every outcome kind hit |
+| docs' Rust-vs-Lean differential test | 5,000 random cases per run agree (55,000 in one longer run); every outcome kind hit |
 | Axioms (`h5i app check`) | only `propext`, `Classical.choice`, `Quot.sound`, for all 3,974 theorems in hand-written modules |
 | Extraction drift (CI) | every kernel and extracted crate re-extracted and compared |
 
@@ -99,4 +101,4 @@ On a 128-core machine:
 | Conduit (issue #16, open) | `favorited` means "favorited any article" | `upstream_violates_reply_spec` |
 | Conduit (unreported) | `?favorited=` lists every article once the user favorited one | `favorited_filter` |
 | crates.io (before PR #14760) | a locked account could sign in | `pre14760_violates_lock` |
-| crates.io (current) | the emailed invitation link skips the lock check; a locked user can become owner | porting; `examples/app/cratesio/README.md` |
+| crates.io (current) | the emailed invitation link skips the lock check; a locked user can become owner | porting; the crates.io port's README |
