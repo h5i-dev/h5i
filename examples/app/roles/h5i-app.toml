@@ -1,6 +1,0 @@
-# Read by `h5i app` (extract, check, prove, mutate, doctor).
-
-[extract]
-start-from = ["transition"]
-include = ["h5i_app_std"]
-std-specs = true

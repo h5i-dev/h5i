@@ -1,0 +1,12 @@
+[package]
+name = "calculator-kernel"
+description = "Tutorial 1: the verified kernel of a calculator web app"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+publish = false
+
+# Extracted to Lean by Charon + Aeneas (`h5i app extract`).
+[dependencies]
+h5i-app-schema = { path = "../../../../crates/h5i-app-schema" }
+h5i-app-sql = { path = "../../../../crates/h5i-app-sql" }

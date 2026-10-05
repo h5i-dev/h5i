@@ -27,8 +27,8 @@ does the obvious thing, and the libraries are under `crates/`:
 integration suites.
 
 The `h5i-app` crates depend on nothing else in the workspace, and only the
-`h5i` binary depends on one of them: `h5i-app-cli`, which is `h5i app`. Their examples are a separate Cargo workspace in
-`examples/app`, each proof project is described by its `h5i-app.toml`, the
+`h5i` binary depends on one of them: `h5i-app-cli`, which is `h5i app`. Their examples are the tutorials, a separate Cargo
+workspace in `examples/app`, each proof project is described by its `h5i-app.toml`, the
 few remaining scripts are in `scripts/app`, their design notes in
 `docs/app`, and `.github/workflows/app.yaml` is their CI.
 
@@ -86,9 +86,9 @@ repository root, since `examples/app` is a workspace of its own.
 
 ```bash
 H5I_APP_TEST_DATABASE_URL=postgres://… scripts/app/ci-rust-tests.sh --release
-cargo app prove examples/app/atuin    # = h5i app prove: extract, build and gate one project
+cargo app prove examples/app/calculator    # = h5i app prove: extract, build and gate one project
 cargo app-verify            # CI's checks over every project; a missing tool is skipped
-cargo app-verify --full     # adds every project's mutants and the differential test
+cargo app-verify --full     # adds every project's mutants
 ```
 
 Four more CI jobs sit behind that first one. `smoke` drives the plugin binaries

@@ -29,13 +29,9 @@ HTTP (axum) ──► Actor<K> ──► H5iApp::respond ──► Engine: BEGIN
 | `crates/h5i-app-schema` | `schema!`, which declares kernel rows once |
 | `crates/h5i-app-sql`, `h5i-app-pgsql`, `h5i-app-token`, `h5i-app-json` | extracted and proven shell parts: statement planner, SQL compiler and printer, bearer tokens, JSON output |
 | `crates/h5i-app-std` | extracted and proven kernel helpers: byte strings, sets, maps, reachability, expiry checks |
-| `examples/app/tutorials` | step-by-step tutorials |
-| `examples/app/docs` | the document service, the largest example |
-| `examples/app/kellnr`, `examples/app/atuin` | ports of real authorization code, kernels and proofs only |
-| `examples/app/wastebin`, `examples/app/conduit`, `examples/app/cratesio` | ports of real applications, with servers |
-| `examples/app/filters`, `examples/app/keys`, `examples/app/roles` | patterns, kernels and proofs only: parsing over bytes, properties across requests, `h5i-app-std` and read authorization |
+| `examples/app` | the step-by-step tutorials: `calculator`, `board`, `ledger`, `inbox`, `booking` |
 | `crates/h5i-app-cli` | `h5i app`: `new`, `extract`, `check`, `prove`, `lint`, `mutate`, `doctor` over a project's `h5i-app.toml` |
-| `crates/h5i-app-xtask` | `cargo app-verify`, CI's checks over every project, composed from `h5i app` plus the repository's own (PostgreSQL tests, bans, difftest) |
+| `crates/h5i-app-xtask` | `cargo app-verify`, CI's checks over every project, composed from `h5i app` plus the repository's own (PostgreSQL tests, bans) |
 
 The root Cargo workspace holds `crates/*`. `examples/app/` is a second
 workspace whose crates depend on `crates/*` by path, as an application would.
@@ -46,36 +42,29 @@ hand-written specs and proofs sit at the top level.
 
 ## What the examples prove
 
-The document service (`examples/app/docs`) has projects, members and a review
-workflow. For every actor, reachable state and command, Lean checks that:
-committed writes fit the policy table (four-eyes rule included); replies show
-only documents the caller may read; invariants hold; results and error codes
-depend only on what the user may see; webhooks go only to the project's
-registered destination; a result depends only on one project's rows, so the
-server loads only those; the kernel never panics.
+The [tutorials](../../examples/app/README.md) each teach one kind of property:
+functional correctness, permissions and invariants, conservation of a sum,
+noninterference, and interval invariants with effects.
 
-Each port's property fails with a counterexample on the code before a known
-fix and holds after it.
+Ports of real applications, and the larger examples, live in the
+h5i-web-app repository, where agents are benchmarked on them. Each port's
+property fails with a counterexample on the code before a known fix and holds
+after it:
 
 | Port | Bug shown |
 |---|---|
-| `examples/app/kellnr` | read-only users could change owners (PR #1243) |
-| `examples/app/atuin` | a session alone can delete an account (issue #3297) |
-| `examples/app/wastebin` | link previews burned pastes before commit 632ddf2 (issue #190) |
-| `examples/app/conduit` | upstream's `favorited` flag is wrong (issue #16); every reply of realworld-axum-sqlx is proven equal to a spec |
-| `examples/app/cratesio` | locked accounts could still sign in before PR #14760 |
+| Kellnr | read-only users could change owners (PR #1243) |
+| Atuin | a session alone can delete an account (issue #3297) |
+| Wastebin | link previews burned pastes before commit 632ddf2 (issue #190) |
+| Conduit | upstream's `favorited` flag is wrong (issue #16); every reply of realworld-axum-sqlx is proven equal to a spec |
+| crates.io | locked accounts could still sign in before PR #14760 |
 
-Two more examples each show a bug class, before and after its fix:
-
-| Example | Bug shown |
-|---|---|
-| `examples/app/filters` | a template substituter and a filter parser disagree on escaping, so a user's name rewrites the filter |
-| `examples/app/keys` | a session checks its key once and uses it later, so it outlives the key's revocation |
-
-Porting the three servers found three more upstream problems, listed in
-[NUMBERS.md](NUMBERS.md). The [tutorials](../../examples/app/tutorials) each teach
-one kind of property: functional correctness, permissions and invariants,
-conservation of a sum, noninterference, and interval invariants with effects.
+The same repository has the document service (projects, members, a review
+workflow, webhooks and a Rust-vs-Lean differential test) and examples of two
+bug classes: a template substituter and a filter parser that disagree on
+escaping, and a session that checks its key once and outlives the key's
+revocation. Porting the servers found three more upstream problems, listed in
+[NUMBERS.md](NUMBERS.md).
 
 ## From transition to stored rows
 
@@ -188,8 +177,7 @@ usual list endpoint, and `Authorized` states both.
 The engine's tables (idempotency keys, outbox) have fixed names. Two apps in
 one database would share them, and one app's dispatcher would claim the
 other's effects. `h5i_app_pg::with_schema(url, "app")` gives an app its
-own PostgreSQL schema, created by `install_schema`. Every example except the
-document service uses one.
+own PostgreSQL schema, created by `install_schema`. Every tutorial uses one.
 
 ## Writing kernels in the Aeneas subset
 
@@ -222,8 +210,7 @@ A function whose body is one loop takes one line:
 
 `h5i_for` unfolds the function and its loop, applies the spec, closes the
 per-element goal with `h5i_iter` and restates the conclusion; what it cannot
-close is left to the caller. `examples/app/filters` parses text this way, with a
-round trip proven for all byte strings.
+close is left to the caller.
 
 ### `h5i-app-std`
 
@@ -244,8 +231,6 @@ start-from = ["transition"]
 include = ["h5i_app_std"]
 std-specs = true
 ```
-
-`examples/app/roles` does this end to end.
 
 The copy imports the kernel's extraction and opens its namespace. Aeneas
 keeps only the functions the kernel calls, so each spec is guarded by its
@@ -294,9 +279,8 @@ clients is such an order (A5). A theorem over every `Run` therefore covers
 every interleaving. `Run.inv` carries an invariant along a run. `Run.after`
 proves "once this event, then from then on", and `Run.fired` gives the state
 each event ran in. A check in one request and a use in another is an
-interleaving like any other: `examples/app/keys` proves a revocation holds
-against every later request, and refutes the kernel that trusts a session's
-earlier check.
+interleaving like any other: a revocation can be proven to hold against every
+later request, refuting the kernel that trusts a session's earlier check.
 
 Within one request there is no race to prove: `transition` runs on one
 snapshot and its writes commit atomically. Liveness ("eventually") is not
@@ -326,8 +310,8 @@ The examples prove their theorems in this order:
 
 A past bug is a second transition function differing in one command, refuted
 by a scenario theorem. Confidentiality is noninterference over
-a `view` of the state (`examples/app/tutorials/inbox`, `examples/app/docs`). Reply
-correctness is equality with a spec function (`examples/app/conduit`).
+a `view` of the state (`examples/app/inbox`). Reply correctness is equality
+with a spec function.
 
 ## Checks
 

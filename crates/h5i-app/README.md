@@ -58,7 +58,7 @@ flowchart LR
 ## Usage example
 
 The kernel is one function that decides what a command does. This one, from
-the [calculator tutorial](../../examples/app/tutorials/calculator/TUTORIAL.md), keeps one number per user:
+the [calculator tutorial](../../examples/app/calculator/TUTORIAL.md), keeps one number per user:
 
 ```rust
 pub fn transition(actor: &Principal, snap: &Snapshot, cmd: &Command) -> Result<(Option<Memory>, Reply), Error> {

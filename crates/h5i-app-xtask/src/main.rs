@@ -1,12 +1,11 @@
 //! `cargo app-verify`: CI's h5i-app checks, run locally over every
-//! `h5i-app.toml` in the repository (`--full` adds the mutants and the
-//! differential test). Missing tools count as skipped, never passed.
+//! `h5i-app.toml` in the repository (`--full` adds the mutants). Missing
+//! tools count as skipped, never passed.
 //!
 //! It is a composition, not a second implementation: each project goes through
 //! the same `h5i app lint`, `extract --check`, `check` and `mutate` an
 //! application developer runs, and only what belongs to this repository is
-//! added here (the PostgreSQL test run, the `cargo deny` bans of A8, the docs
-//! differential test).
+//! added here (the PostgreSQL test run and the `cargo deny` bans of A8).
 //!
 //! `cargo app <verb>` is `h5i app <verb>` for contributors: the same code
 //! without building the h5i binary and its browser engine.
@@ -101,7 +100,7 @@ enum Cmd {
     /// `cargo app-verify`: CI's checks over every project in the repository.
     #[command(hide = true)]
     Verify {
-        /// Add the mutants and the differential test.
+        /// Add the mutants.
         #[arg(long)]
         full: bool,
         /// Do not re-extract (no Charon or Aeneas needed).
@@ -203,7 +202,6 @@ fn verify(root: PathBuf, full: bool, extract: bool) -> ExitCode {
                 }
             });
         }
-        cx.step("rust vs lean differential test", |r| run(r, "bash", &["scripts/app/difftest.sh"]));
     }
 
     let failed = cx.results.iter().filter(|(_, o, _)| matches!(o, Outcome::Fail(_))).count();
