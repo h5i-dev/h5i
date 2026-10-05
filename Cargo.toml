@@ -39,7 +39,7 @@ h5i-app-token = { path = "crates/h5i-app-token", version = "0.1.0" }
 # drives is `crates/h5i-core`.
 [package]
 name = "h5i"
-version = "0.4.8"
+version = "0.4.9"
 edition = "2024"
 description = "h5i — security-first browser for AI agents (CLI)."
 

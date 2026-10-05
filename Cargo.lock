@@ -1905,7 +1905,7 @@ dependencies = [
 
 [[package]]
 name = "h5i"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1935,7 +1935,7 @@ dependencies = [
 
 [[package]]
 name = "h5i-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "h5i-app-core",
  "h5i-app-http",
