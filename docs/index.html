@@ -277,15 +277,17 @@
     .pu-ok { font-family: var(--cm-mono); font-size: 9.5px; padding: 0 6px; border-radius: 3px; color: var(--cm-green); background: var(--cm-green-bg); white-space: nowrap; }
     .pu-foot { margin-top: auto; padding: 7px 12px; border-top: 1px solid var(--cm-line); background: var(--cm-surface); color: var(--cm-ink-3); font-family: var(--cm-mono); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .proof-flow .tabpick { position: absolute; opacity: 0; pointer-events: none; }
-    .ed-tabs { display: flex; align-items: stretch; height: 27px; margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1; }
-    .ed-tabs label {
-      display: flex; align-items: center; gap: 8px; padding: 0 14px 0 12px; cursor: pointer;
-      color: var(--dim); border-right: 1px solid var(--line2); border-top: 2px solid transparent;
-    }
-    .ed-tabs label i { width: 6px; height: 6px; border-radius: 50%; background: var(--line2); }
-    .ed-tabs label:hover { color: var(--ink); }
-    #ed-lib:checked ~ .proof-diagram label[for="ed-lib"], #ed-cargo:checked ~ .proof-diagram label[for="ed-cargo"] { color: var(--ink); background: var(--panel); border-top-color: var(--spot); }
-    #ed-lib:checked ~ .proof-diagram label[for="ed-lib"] i, #ed-cargo:checked ~ .proof-diagram label[for="ed-cargo"] i { background: var(--spot); }
+    .proof-diagram .ed-tab { cursor: pointer; outline: none; }
+    .proof-diagram .ed-tab rect { fill: transparent; }
+    .proof-diagram .ed-tab .ed-tab-top { stroke: transparent; stroke-width: 2; }
+    .proof-diagram .ed-tab circle { fill: var(--line2); }
+    .proof-diagram .ed-tab text { font-size: 13px; fill: var(--dim); }
+    .proof-diagram .ed-tab:hover text { fill: var(--ink); }
+    .proof-diagram .ed-tab:focus-visible rect { stroke: var(--spot); stroke-width: 1; }
+    #ed-lib:checked ~ .proof-diagram .ed-tab-lib rect, #ed-cargo:checked ~ .proof-diagram .ed-tab-cargo rect { fill: var(--panel); }
+    #ed-lib:checked ~ .proof-diagram .ed-tab-lib .ed-tab-top, #ed-cargo:checked ~ .proof-diagram .ed-tab-cargo .ed-tab-top { stroke: var(--spot); }
+    #ed-lib:checked ~ .proof-diagram .ed-tab-lib circle, #ed-cargo:checked ~ .proof-diagram .ed-tab-cargo circle { fill: var(--spot); }
+    #ed-lib:checked ~ .proof-diagram .ed-tab-lib text, #ed-cargo:checked ~ .proof-diagram .ed-tab-cargo text { fill: var(--ink); }
     .proof-diagram .ed-pane, .proof-diagram .ed-crumb { display: none; }
     #ed-lib:checked ~ .proof-diagram .ed-lib, #ed-cargo:checked ~ .proof-diagram .ed-cargo { display: inline; }
     .proof-diagram { display: block; width: 100%; min-width: 880px; height: auto; }
@@ -933,10 +935,12 @@
         <rect x="0" y="44" width="376" height="376" rx="6" fill="var(--panel)" stroke="var(--line2)"/>
         <path d="M0 50a6 6 0 0 1 6-6h364a6 6 0 0 1 6 6v22H0z" fill="var(--bg)"/>
         <path d="M0 72H376" stroke="var(--line2)"/>
-        <!-- The tab strip is HTML, so the tabs are labels for the two radios above the svg. -->
-        <foreignObject x="1" y="45" width="374" height="27">
-          <div xmlns="http://www.w3.org/1999/xhtml" class="ed-tabs"><label for="ed-lib"><i></i>lib.rs</label><label for="ed-cargo"><i></i>Cargo.toml</label></div>
-        </foreignObject>
+        <!-- Drawn in SVG, not a foreignObject: iOS Safari misplaces HTML inside one. The script below flips the radios. -->
+        <g class="ed-tabs" role="tablist">
+          <g class="ed-tab ed-tab-lib" data-tab="ed-lib" role="tab" tabindex="0"><rect x="1" y="45" width="87" height="27"/><path class="ed-tab-top" d="M1 46H88"/><circle cx="16" cy="58.5" r="3"/><text x="27" y="63">lib.rs</text></g>
+          <g class="ed-tab ed-tab-cargo" data-tab="ed-cargo" role="tab" tabindex="0"><rect x="88" y="45" width="118" height="27"/><path class="ed-tab-top" d="M88 46H206"/><circle cx="103" cy="58.5" r="3"/><text x="114" y="63">Cargo.toml</text></g>
+          <path d="M88 45V72M206 45V72" stroke="var(--line2)"/>
+        </g>
         <text x="14" y="89" class="pd-note ed-crumb ed-lib">board &#x203A; kernel &#x203A; src &#x203A; lib.rs</text>
         <text x="14" y="89" class="pd-note ed-crumb ed-cargo">board &#x203A; kernel &#x203A; Cargo.toml</text>
         <path d="M0 96H376" stroke="var(--line2)"/>
@@ -1129,6 +1133,13 @@
 <!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
 <script src="/_static/blog.js?v=41dbda103a" defer></script>
 <script src="/_static/highlight.js?v=ed81eee4e6" defer></script>
+<script>
+document.querySelectorAll('.proof-diagram .ed-tab').forEach(function (t) {
+  function pick() { document.getElementById(t.getAttribute('data-tab')).checked = true; }
+  t.addEventListener('click', pick);
+  t.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+});
+</script>
 <script>
 // SMIL ignores prefers-reduced-motion, so park the turning coin ourselves.
 if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
