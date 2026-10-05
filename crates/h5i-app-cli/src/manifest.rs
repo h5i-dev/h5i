@@ -188,15 +188,12 @@ impl Project {
         if start.is_file() {
             return Project::load(&start);
         }
+        if let Some(f) = locate(&start) {
+            return Project::load(&f);
+        }
         let start = start
             .canonicalize()
             .with_context(|| format!("{} does not exist", start.display()))?;
-        for dir in start.ancestors() {
-            let f = dir.join(FILE);
-            if f.is_file() {
-                return Project::load(&f);
-            }
-        }
         bail!(
             "no {FILE} in {} or above it. `h5i app new <dir>` starts a project; an existing one needs a {FILE} \
              at its root",
@@ -231,6 +228,12 @@ impl Project {
     pub fn display(&self) -> String {
         display_path(&self.root)
     }
+}
+
+/// The manifest in `dir` or the nearest directory above it.
+pub fn locate(dir: &Path) -> Option<PathBuf> {
+    let dir = dir.canonicalize().ok()?;
+    dir.ancestors().map(|d| d.join(FILE)).find(|f| f.is_file())
 }
 
 pub fn display_path(p: &Path) -> String {

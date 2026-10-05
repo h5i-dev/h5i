@@ -162,7 +162,9 @@ pub struct MutateArgs {
 
 /// What the caller knows that this crate does not.
 pub struct Context {
-    /// The h5i revision whose Lean library `new` requires by default.
+    /// The h5i revision whose Lean library `new` requires by default: this
+    /// binary's release tag. `new` falls back to `main` when the h5i
+    /// repository has no such tag (a build between releases).
     pub default_rev: String,
 }
 
@@ -177,7 +179,10 @@ pub fn run(cmd: AppCommands, cx: &Context) -> Result<()> {
         } => {
             let lib = match h5i_path {
                 Some(p) => new::Lib::Path(p),
-                None => new::Lib::Git(rev.unwrap_or_else(|| cx.default_rev.clone())),
+                None => new::Lib::Git(match rev {
+                    Some(r) => r,
+                    None => new::default_rev(&cx.default_rev),
+                }),
             };
             new::new(&dir, name.as_deref(), &lib)
         }
@@ -214,7 +219,12 @@ pub fn run(cmd: AppCommands, cx: &Context) -> Result<()> {
         AppCommands::Doctor { path } => {
             let p = match path {
                 Some(p) => Some(Project::find(Some(&p))?),
-                None => Project::find(None).ok(),
+                // No project is fine (doctor checks the tools); a manifest
+                // that is there but does not parse is not.
+                None => match manifest::locate(&std::env::current_dir()?) {
+                    Some(f) => Some(Project::load(&f)?),
+                    None => None,
+                },
             };
             doctor::doctor(p.as_ref())
         }
@@ -223,16 +233,17 @@ pub fn run(cmd: AppCommands, cx: &Context) -> Result<()> {
 
 /// `mutate` on one project.
 pub fn mutate_project(p: &Project, args: &MutateArgs) -> Result<()> {
+    let wanted = |m: &mutate::Mutant| args.only.is_empty() || args.only.iter().any(|o| m.name.contains(o.as_str()));
     let mut mutants = mutate::declared(p)?;
+    mutants.retain(&wanted);
     if args.auto {
+        // Filter first, so `--limit` counts the mutants that were asked for.
         let mut g = mutate::generated(p)?;
+        g.retain(&wanted);
         if let Some(n) = args.limit {
             g.truncate(n);
         }
         mutants.extend(g);
-    }
-    if !args.only.is_empty() {
-        mutants.retain(|m| args.only.iter().any(|o| m.name.contains(o.as_str())));
     }
     if args.list {
         for m in &mutants {

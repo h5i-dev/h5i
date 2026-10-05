@@ -126,7 +126,10 @@ fn route_coverage(p: &Project) -> Vec<String> {
                     takes_actor.insert((ck.clone(), name.clone()));
                 }
             }
-            rest = &after[name.len().max(1)..];
+            // `name` is a prefix of `after` made of whole characters; with
+            // no name, step over one character, however wide.
+            let step = if name.is_empty() { after.chars().next().map_or(after.len(), char::len_utf8) } else { name.len() };
+            rest = &after[step..];
         }
     }
     let mut bad = Vec::new();
@@ -270,6 +273,18 @@ mod tests {
     fn command_hygiene_ignores_plain_fields() {
         let ok = "pub enum Command {\n    CreateDoc { project: u64, title: u64 },\n    AddMsg { conv: u64, user: u64 },\n}";
         assert!(flagged_command_fields(ok).is_empty(), "user/project/title are not privilege fields");
+    }
+
+    #[test]
+    fn scanning_survives_wide_characters_and_a_trailing_fn() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("h5i-app.toml"), "").unwrap();
+        let server = d.path().join("server");
+        std::fs::create_dir_all(server.join("src")).unwrap();
+        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n[dependencies]\naxum = \"0.8\"\n").unwrap();
+        std::fs::write(server.join("src/main.rs"), "// every fn — one\n// fn é\nfn ").unwrap();
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        assert!(route_coverage(&p).is_empty());
     }
 
     #[test]

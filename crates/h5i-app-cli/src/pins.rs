@@ -17,6 +17,10 @@ pub const LEAN_TOOLCHAIN: &str = "leanprover/lean4:v4.31.0";
 pub const H5I_REPO: &str = "https://github.com/h5i-dev/h5i";
 pub const LIB_SUBDIR: &str = "crates/h5i-app-core/proofs";
 
+/// The first h5i release whose tag has `LIB_SUBDIR`. v0.4.8 and earlier
+/// predate h5i-app's move into the repository.
+pub const LIB_SINCE: &str = "v0.4.9";
+
 #[cfg(test)]
 mod tests {
     use super::*;

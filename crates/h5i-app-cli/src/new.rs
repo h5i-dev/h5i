@@ -110,6 +110,43 @@ pub fn new(dir: &Path, name: Option<&str>, lib: &Lib) -> Result<()> {
     Ok(())
 }
 
+/// `preferred` (this binary's release tag) if the h5i repository has it,
+/// otherwise `main`: a build made between releases reports a version whose tag
+/// does not exist yet, or predates the Lean library. Offline, keep `preferred`
+/// and say so; Lake will need the network to fetch it anyway.
+pub fn default_rev(preferred: &str) -> String {
+    let out = std::process::Command::new("git")
+        .args(["ls-remote", "--exit-code", "--tags", pins::H5I_REPO])
+        .arg(format!("refs/tags/{preferred}"))
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output();
+    match out {
+        Ok(o) if o.status.success() && has_lib(preferred) => preferred.to_string(),
+        Ok(o) if o.status.success() || o.status.code() == Some(2) => {
+            eprintln!("note: h5i {preferred} has no h5i-app Lean library to require; using `main` (pin one with --rev)");
+            "main".to_string()
+        }
+        _ => {
+            eprintln!("warning: could not reach {} to check for tag {preferred}; requiring it anyway", pins::H5I_REPO);
+            preferred.to_string()
+        }
+    }
+}
+
+/// Whether release `tag` ships the Lean library. Releases before
+/// `LIB_SINCE` predate h5i-app's move into the h5i repository.
+fn has_lib(tag: &str) -> bool {
+    let v = |s: &str| -> Option<(u64, u64, u64)> {
+        let mut it = s.trim_start_matches('v').split('.').map(|p| p.parse::<u64>().ok());
+        Some((it.next()??, it.next()??, it.next()??))
+    };
+    match (v(tag), v(pins::LIB_SINCE)) {
+        (Some(t), Some(s)) => t >= s,
+        _ => true,
+    }
+}
+
 fn fill(t: &str, id: &str, module: &str, lean_pkg: &str, package: &str, require: &str) -> String {
     t.replace("{{id}}", id)
         .replace("{{module}}", module)
@@ -278,3 +315,16 @@ h5i app mutate --auto  # so should generated ones; a survivor is a gap in the sp
 in a hand-written module that depends on an axiom beyond `propext`,
 `Classical.choice` and `Quot.sound`.
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn releases_before_the_move_have_no_library() {
+        assert!(!has_lib("v0.4.8"));
+        assert!(has_lib("v0.4.9"));
+        assert!(has_lib("v0.10.0"));
+        assert!(has_lib("main"));
+    }
+}

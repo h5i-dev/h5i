@@ -28,7 +28,7 @@ pub fn check(p: &Project, out: &Out) -> Result<()> {
     util::run(&mut build, out)?;
 
     let mut problems = scan(&proofs)?;
-    let (built, unbuilt) = hand_written_modules(&proofs)?;
+    let (built, unbuilt) = hand_written_modules(&proofs, &p.manifest.check.targets)?;
     for m in &unbuilt {
         out.note(&format!(
             "note: {m} is not built by `lake build`, so its theorems are not gated"
@@ -123,34 +123,138 @@ pub fn scan(proofs: &Path) -> Result<Vec<String>> {
     Ok(bad)
 }
 
-/// The hand-written modules, split into those `lake build` produced an
-/// `.olean` for and those it did not.
-fn hand_written_modules(proofs: &Path) -> Result<(Vec<String>, Vec<String>)> {
+/// The hand-written modules, split into those this `lake build` built and
+/// the rest. Built means in the import closure of the roots it builds (the
+/// default `lean_lib`s, or the requested targets) and compiled: an `.olean`
+/// left over from another target or an old root is not evidence.
+fn hand_written_modules(proofs: &Path, targets: &[String]) -> Result<(Vec<String>, Vec<String>)> {
     let mut files = Vec::new();
     lean_files(proofs, &mut files);
     files.sort();
-    let (mut built, mut unbuilt) = (Vec::new(), Vec::new());
+    let mut modules = std::collections::BTreeMap::new();
     for f in files {
         if is_generated(proofs, &f) {
             continue;
         }
         let rel = f.strip_prefix(proofs)?.with_extension("");
-        let module = rel
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join(".");
-        let olean = proofs
-            .join(".lake/build/lib/lean")
-            .join(&rel)
-            .with_extension("olean");
-        if olean.is_file() {
-            built.push(module)
+        let module = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join(".");
+        modules.insert(module, rel);
+    }
+    let roots = build_roots(proofs, targets);
+    // Follow imports from the roots, through hand-written modules only.
+    let mut reached = std::collections::BTreeSet::new();
+    let mut stack: Vec<String> = roots.into_iter().filter(|r| modules.contains_key(r)).collect();
+    while let Some(m) = stack.pop() {
+        if !reached.insert(m.clone()) {
+            continue;
+        }
+        let text = std::fs::read_to_string(proofs.join(&modules[&m]).with_extension("lean")).unwrap_or_default();
+        for i in imports(&text) {
+            if modules.contains_key(&i) && !reached.contains(&i) {
+                stack.push(i);
+            }
+        }
+    }
+    let (mut built, mut unbuilt) = (Vec::new(), Vec::new());
+    for (module, rel) in &modules {
+        let olean = proofs.join(".lake/build/lib/lean").join(rel).with_extension("olean");
+        if reached.contains(module) && olean.is_file() {
+            built.push(module.clone())
         } else {
-            unbuilt.push(module)
+            unbuilt.push(module.clone())
         }
     }
     Ok((built, unbuilt))
+}
+
+/// The modules a file imports.
+fn imports(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let l = line.trim_start();
+        let rest = ["import ", "public import ", "meta import ", "public meta import "]
+            .iter()
+            .find_map(|k| l.strip_prefix(k));
+        if let Some(rest) = rest {
+            let rest = rest.split("--").next().unwrap_or("");
+            out.extend(rest.split_whitespace().filter(|w| *w != "all").map(str::to_string));
+        }
+    }
+    out
+}
+
+/// The root modules `lake build <targets>` compiles: a target that names a
+/// `lean_lib` stands for its roots, any other for the module of that name;
+/// no targets means the default `lean_lib`s.
+fn build_roots(proofs: &Path, targets: &[String]) -> Vec<String> {
+    let libs = lean_libs(proofs);
+    if targets.is_empty() {
+        return libs.into_iter().filter(|l| l.default).flat_map(|l| l.roots).collect();
+    }
+    targets
+        .iter()
+        .flat_map(|t| match libs.iter().find(|l| &l.name == t) {
+            Some(l) => l.roots.clone(),
+            None => vec![t.clone()],
+        })
+        .collect()
+}
+
+struct LeanLib {
+    name: String,
+    roots: Vec<String>,
+    default: bool,
+}
+
+/// The `lean_lib`s of a `lakefile.lean` (or `lakefile.toml`).
+fn lean_libs(proofs: &Path) -> Vec<LeanLib> {
+    if let Ok(text) = std::fs::read_to_string(proofs.join("lakefile.toml")) {
+        let Ok(doc) = text.parse::<toml::Table>() else { return Vec::new() };
+        let defaults: Vec<String> = doc
+            .get("defaultTargets")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        let libs = doc.get("lean_lib").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        return libs
+            .iter()
+            .filter_map(|l| {
+                let name = l.get("name")?.as_str()?.to_string();
+                let roots = l
+                    .get("roots")
+                    .and_then(|r| r.as_array())
+                    .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                    .unwrap_or_else(|| vec![name.clone()]);
+                Some(LeanLib { default: defaults.contains(&name), name, roots })
+            })
+            .collect();
+    }
+    let Ok(text) = std::fs::read_to_string(proofs.join("lakefile.lean")) else { return Vec::new() };
+    let mut libs = Vec::new();
+    let mut rest = text.as_str();
+    while let Some(i) = rest.find("lean_lib ") {
+        let line_start = rest[..i].rfind('\n').map_or(0, |n| n + 1);
+        let default = rest[line_start..i].contains("default_target");
+        let after = &rest[i + "lean_lib ".len()..];
+        let name: String = after.chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.').collect();
+        // The declaration runs to the next top-level one.
+        let end = ["\nlean_lib ", "\n@[", "\nlean_exe ", "\nrequire ", "\npackage ", "\ntarget "]
+            .iter()
+            .filter_map(|k| after.find(k))
+            .min()
+            .unwrap_or(after.len());
+        let body = &after[..end];
+        let roots = match body.find("roots").and_then(|r| body[r..].find("#[").map(|o| r + o + 2)) {
+            Some(open) => {
+                let close = body[open..].find(']').map_or(body.len(), |c| open + c);
+                body[open..close].split(',').map(|r| r.trim().trim_start_matches('`').to_string()).filter(|r| !r.is_empty()).collect()
+            }
+            None => vec![name.clone()],
+        };
+        libs.push(LeanLib { name, roots, default });
+        rest = &after[end..];
+    }
+    libs
 }
 
 fn lean_name(n: &str) -> String {
@@ -274,6 +378,35 @@ fn gate(proofs: &Path, modules: &[String], theorems: &[String], out: &Out) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_modules_the_build_reaches_are_gated() {
+        let d = tempfile::tempdir().unwrap();
+        let w = |f: &str, t: &str| {
+            let p = d.path().join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, t).unwrap();
+        };
+        w(
+            "lakefile.lean",
+            "lean_lib Generated where\n  srcDir := \"generated\"\n  roots := #[`K]\n\n@[default_target] lean_lib Proofs where\n  roots := #[`Theorems]\n\nlean_exe difftest where\n  root := `DiffTest\n",
+        );
+        w("generated/K.lean", "");
+        w("Theorems.lean", "import K\nimport Spec\n");
+        w("Spec.lean", "public import Lib.A -- comment\n");
+        w("Lib/A.lean", "");
+        w("DiffTest.lean", "import Theorems\n");
+        w("Old.lean", "");
+        // Every module has an .olean, as after other builds.
+        for m in ["Theorems", "Spec", "Lib/A", "DiffTest", "Old"] {
+            w(&format!(".lake/build/lib/lean/{m}.olean"), "");
+        }
+        let (built, unbuilt) = hand_written_modules(d.path(), &[]).unwrap();
+        assert_eq!(built, ["Lib.A", "Spec", "Theorems"]);
+        assert_eq!(unbuilt, ["DiffTest", "Old"]);
+        let (built, _) = hand_written_modules(d.path(), &["Spec".into()]).unwrap();
+        assert_eq!(built, ["Lib.A", "Spec"]);
+    }
 
     #[test]
     fn primes_are_quoted() {
