@@ -106,6 +106,6 @@ routes are those of the RealWorld spec.
 ## Building the proofs
 
 ```
-scripts/app/extract-conduit.sh        # regenerates proofs/generated/ConduitKernel.lean
-cd examples/app/conduit/proofs && lake build
+h5i app prove examples/app/conduit   # extract, build, gate
+h5i app mutate examples/app/conduit  # the bugs in h5i-app.toml must break a proof
 ```

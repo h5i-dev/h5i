@@ -9,12 +9,12 @@ require h5i_app_lib from "../../h5i-app-core/proofs"
 
 package std_proofs
 
--- Generated Lean: the extracted Rust (scripts/app/extract-std.sh). Do not edit.
+-- Generated Lean: the extracted Rust (`h5i app extract`). Do not edit.
 lean_lib Generated where
   srcDir := "generated"
   roots := #[`H5iAppStd]
 
 -- The specs. A kernel that includes h5i-app-std gets a copy of `StdSpecs`
--- importing its own extraction (scripts/app/std-specs.sh).
+-- importing its own extraction (`h5i app extract`, `std-specs = true`).
 @[default_target] lean_lib Proofs where
   roots := #[`StdSpecs, `Check]

@@ -1,0 +1,24 @@
+[package]
+name = "h5i-app-cli"
+description = "`h5i app`: extract an h5i-app kernel to Lean, gate its proofs, and test the spec with mutants"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+publish = false
+
+# The whole development loop of an h5i-app application, behind one command
+# (`h5i app`, and `cargo app` in this repository). It drives Charon, Aeneas and
+# Lake as subprocesses; nothing here links them.
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5.60", features = ["derive"] }
+serde = { workspace = true }
+serde_json = "1.0"
+toml = { workspace = true }
+tempfile = "3.8"
+# Auto-generated mutants: operators and `if` conditions found in the kernel's
+# syntax tree, located by span. `span-locations` gives spans line and column
+# outside a proc macro.
+syn = { version = "2", features = ["full", "visit", "parsing"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"

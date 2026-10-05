@@ -1,0 +1,5 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+crate = "."
+start-from = ["parse", "encode_payload", "join"]

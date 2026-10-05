@@ -1,0 +1,25 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+crate = "."
+start-from = [
+    "compile",
+    "select",
+    "create",
+    "render",
+]
+include = ["h5i_app_sql"]
+
+[check]
+# Must exist and use only the standard axioms (every theorem in a hand-written
+# module is gated as well).
+theorems = [
+    "h5i_app_pgsql.Comp.valid_spec",
+    "h5i_app_pgsql.Comp.create_spec",
+    "h5i_app_pgsql.Comp.select_spec",
+    "h5i_app_pgsql.Comp.compile_spec",
+    "h5i_app_pgsql.render_spec",
+    "h5i_app_pgsql.Sound.write_sound",
+    "h5i_app_pgsql.Sound.select_sound'",
+    "h5i_app_pgsql.Sound.create_sound'",
+]

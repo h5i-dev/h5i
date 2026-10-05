@@ -69,10 +69,10 @@ Shared code:
 
 | Check | Result |
 |---|---|
-| `scripts/app/mutants.py` | 22 of 22 kernel bugs break a proof |
-| `scripts/app/mutants-apps.py` | 12 of 12 compiling kernel bugs break a proof |
+| `h5i app mutate examples/app/docs` | 22 of 22 kernel bugs break a proof |
+| `h5i app mutate` on the other twelve kernels | 12 of 12 compiling kernel bugs break a proof |
 | `scripts/app/difftest.sh` (Rust vs Lean) | 5,000 random cases per run agree (55,000 in one longer run); every outcome kind hit |
-| Axioms | only `propext`, `Classical.choice`, `Quot.sound` |
+| Axioms (`h5i app check`) | only `propext`, `Classical.choice`, `Quot.sound`, for all 3,974 theorems in hand-written modules |
 | Extraction drift (CI) | every kernel and extracted crate re-extracted and compared |
 
 ## Time

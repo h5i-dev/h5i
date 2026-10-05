@@ -9,7 +9,7 @@ require h5i_app_lib from "../../../../../crates/h5i-app-core/proofs"
 
 package calculator_proofs
 
--- Generated Lean: the extracted Rust (scripts/app/extract-calculator.sh). Do not edit.
+-- Generated Lean: the extracted Rust (`h5i app extract`). Do not edit.
 lean_lib Generated where
   srcDir := "generated"
   roots := #[`CalculatorKernel, `Schema]

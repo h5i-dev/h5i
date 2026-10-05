@@ -21,14 +21,15 @@ does the obvious thing, and the libraries are under `crates/`:
 | `h5i-core` | sessions, boxes and evidence: `browser_session.rs`, `env.rs`, `receipt.rs`, `redact.rs`, `export.rs`, `server.rs`, `ui.rs` |
 | `h5i-browser` | the engine: fetch path, policy, cookies, CORS, snapshot, verbs |
 | `h5i-websec`, `h5i-recon`, `h5i-test` | plugin binaries, installed with `h5i plugin install <name>` |
-| `h5i-app`, `h5i-app-*` | the verifiable application framework, published on its own; `h5i-app-xtask` is `cargo app-verify` |
+| `h5i-app`, `h5i-app-*` | the verifiable application framework, published on its own; `h5i-app-cli` is `h5i app`, and `h5i-app-xtask` is `cargo app` and `cargo app-verify` |
 
 `src/cli/` is the clap tree, `web/` the console's React sources, `tests/` the
 integration suites.
 
-The `h5i-app` crates depend on nothing else in the workspace, and nothing else
-depends on them. Their examples are a separate Cargo workspace in
-`examples/app`, their scripts are in `scripts/app`, their design notes in
+The `h5i-app` crates depend on nothing else in the workspace, and only the
+`h5i` binary depends on one of them: `h5i-app-cli`, which is `h5i app`. Their examples are a separate Cargo workspace in
+`examples/app`, each proof project is described by its `h5i-app.toml`, the
+few remaining scripts are in `scripts/app`, their design notes in
 `docs/app`, and `.github/workflows/app.yaml` is their CI.
 
 Dependencies run one way: `h5i-error` under `h5i-wire` and `h5i-sandbox`,
@@ -77,12 +78,17 @@ cargo test --test console_api           # spawns the binary, speaks HTTP to it
 ```
 
 For h5i-app, which also needs PostgreSQL, Lean 4 (via elan), and Charon and
-Aeneas at the commit pinned in `.github/workflows/app.yaml`:
+Aeneas at the commit pinned in `crates/h5i-app-cli/src/pins.rs` (`h5i app
+doctor` checks them). Each proof project is driven by `h5i app` and its
+`h5i-app.toml`. In this repository, `cargo app <verb>` runs the same code
+without building the h5i binary and its browser engine; run it from the
+repository root, since `examples/app` is a workspace of its own.
 
 ```bash
 H5I_APP_TEST_DATABASE_URL=postgres://… scripts/app/ci-rust-tests.sh --release
-cargo app-verify            # CI's checks; a missing tool is reported as skipped
-cargo app-verify --full     # adds the mutation suites and the differential test
+cargo app prove examples/app/atuin    # = h5i app prove: extract, build and gate one project
+cargo app-verify            # CI's checks over every project; a missing tool is skipped
+cargo app-verify --full     # adds every project's mutants and the differential test
 ```
 
 Four more CI jobs sit behind that first one. `smoke` drives the plugin binaries

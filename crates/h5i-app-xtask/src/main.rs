@@ -1,33 +1,22 @@
-//! `cargo app-verify`: run CI's checks locally (`--full` adds mutation and
-//! differential tests). Missing tools count as skipped, never passed.
+//! `cargo app-verify`: CI's h5i-app checks, run locally over every
+//! `h5i-app.toml` in the repository (`--full` adds the mutants and the
+//! differential test). Missing tools count as skipped, never passed.
+//!
+//! It is a composition, not a second implementation: each project goes through
+//! the same `h5i app lint`, `extract --check`, `check` and `mutate` an
+//! application developer runs, and only what belongs to this repository is
+//! added here (the PostgreSQL test run, the `cargo deny` bans of A8, the docs
+//! differential test).
+//!
+//! `cargo app <verb>` is `h5i app <verb>` for contributors: the same code
+//! without building the h5i binary and its browser engine.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::Instant;
 
-/// Proof projects: directory, extraction script, generated file.
-const PROJECTS: &[(&str, Option<&str>, Option<&str>)] = &[
-    ("examples/app/docs/proofs", Some("scripts/app/extract.sh"), Some("examples/app/docs/proofs/generated/DocsKernel.lean")),
-    ("examples/app/kellnr/proofs", Some("scripts/app/extract-kellnr.sh"), Some("examples/app/kellnr/proofs/generated/KellnrKernel.lean")),
-    ("examples/app/atuin/proofs", Some("scripts/app/extract-atuin.sh"), Some("examples/app/atuin/proofs/generated/AtuinKernel.lean")),
-    ("crates/h5i-app-sql/proofs", Some("scripts/app/extract-sql.sh"), Some("crates/h5i-app-sql/proofs/generated/H5iAppSql.lean")),
-    ("crates/h5i-app-pgsql/proofs", Some("scripts/app/extract-pgsql.sh"), Some("crates/h5i-app-pgsql/proofs/generated/H5iAppPgsql.lean")),
-    ("crates/h5i-app-token/proofs", Some("scripts/app/extract-token.sh"), Some("crates/h5i-app-token/proofs/generated/H5iAppToken.lean")),
-    ("crates/h5i-app-json/proofs", Some("scripts/app/extract-json.sh"), Some("crates/h5i-app-json/proofs/generated/H5iAppJson.lean")),
-    ("crates/h5i-app-std/proofs", Some("scripts/app/extract-std.sh"), Some("crates/h5i-app-std/proofs/generated/H5iAppStd.lean")),
-    ("examples/app/tutorials/calculator/proofs", Some("scripts/app/extract-calculator.sh"), Some("examples/app/tutorials/calculator/proofs/generated/CalculatorKernel.lean")),
-    ("examples/app/tutorials/board/proofs", Some("scripts/app/extract-board.sh"), Some("examples/app/tutorials/board/proofs/generated/BoardKernel.lean")),
-    ("examples/app/wastebin/proofs", Some("scripts/app/extract-wastebin.sh"), Some("examples/app/wastebin/proofs/generated/WastebinKernel.lean")),
-    ("examples/app/conduit/proofs", Some("scripts/app/extract-conduit.sh"), Some("examples/app/conduit/proofs/generated/ConduitKernel.lean")),
-    ("examples/app/cratesio/proofs", Some("scripts/app/extract-cratesio.sh"), Some("examples/app/cratesio/proofs/generated/CratesioKernel.lean")),
-    ("examples/app/tutorials/ledger/proofs", Some("scripts/app/extract-ledger.sh"), Some("examples/app/tutorials/ledger/proofs/generated/LedgerKernel.lean")),
-    ("examples/app/tutorials/inbox/proofs", Some("scripts/app/extract-inbox.sh"), Some("examples/app/tutorials/inbox/proofs/generated/InboxKernel.lean")),
-    ("examples/app/tutorials/booking/proofs", Some("scripts/app/extract-booking.sh"), Some("examples/app/tutorials/booking/proofs/generated/BookingKernel.lean")),
-    ("examples/app/filters/proofs", Some("scripts/app/extract-filters.sh"), Some("examples/app/filters/proofs/generated/FiltersKernel.lean")),
-    ("examples/app/keys/proofs", Some("scripts/app/extract-keys.sh"), Some("examples/app/keys/proofs/generated/KeysKernel.lean")),
-    ("examples/app/roles/proofs", Some("scripts/app/extract-roles.sh"), Some("examples/app/roles/proofs/generated/RolesKernel.lean")),
-    ("crates/h5i-app-core/proofs", None, None),
-];
+use h5i_app_cli::manifest::Project;
+use h5i_app_cli::util::Out;
 
 #[derive(PartialEq)]
 enum Outcome {
@@ -78,289 +67,101 @@ fn have_cargo_sub(sub: &str) -> bool {
     Command::new("cargo").args([sub, "--version"]).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
 }
 
-/// Hand-written Lean files must not use sorry or native_decide; no file may declare an axiom.
-fn lean_scan(dir: &Path) -> Outcome {
-    let mut bad = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else { return Outcome::Fail(format!("{} missing", dir.display())) };
-    let mut files: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "lean")).collect();
-    for sub in ["Engine", "H5iAppLib", "generated"] {
-        if let Ok(e) = std::fs::read_dir(dir.join(sub)) {
-            files.extend(e.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "lean")));
-        }
-    }
-    for f in files {
-        let text = std::fs::read_to_string(&f).unwrap_or_default();
-        // Generated Lean (extracted kernels, schema! output) lives in generated/.
-        let is_generated = f.parent().is_some_and(|p| p.ends_with("generated"));
-        for (i, line) in text.lines().enumerate() {
-            let code = line.split("--").next().unwrap_or("");
-            let words = |w: &str| code.split(|c: char| !c.is_alphanumeric() && c != '_').any(|t| t == w);
-            if line.starts_with("axiom ") || (!is_generated && (words("sorry") || words("native_decide"))) {
-                bad.push(format!("{}:{}: {}", f.display(), i + 1, line.trim()));
-            }
-        }
-    }
-    if bad.is_empty() { Outcome::Pass } else { Outcome::Fail(bad.join("\n")) }
-}
 
-/// Collect `.rs` files under `dir` whose path contains `needle`.
-fn rs_files_under(dir: &Path, needle: &str, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for e in entries.flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            if !p.ends_with("target") && !p.file_name().is_some_and(|n| n == ".lake") {
-                rs_files_under(&p, needle, out);
-            }
-        } else if p.extension().is_some_and(|x| x == "rs") && p.to_string_lossy().contains(needle) {
-            out.push(p);
+/// Run `f` with its output in a log; on failure, the log's tail and the error.
+fn logged(f: impl FnOnce(&Out) -> anyhow::Result<()>) -> Outcome {
+    let log = match tempfile::NamedTempFile::new() {
+        Ok(l) => l,
+        Err(e) => return Outcome::Fail(e.to_string()),
+    };
+    let out = Out::Log(log.path().to_path_buf());
+    match f(&out) {
+        Ok(()) => Outcome::Pass,
+        Err(e) => {
+            let text = std::fs::read_to_string(log.path()).unwrap_or_default();
+            let tail: Vec<&str> = text.lines().rev().take(30).collect();
+            Outcome::Fail(format!(
+                "{}\n{e:#}",
+                tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+            ))
         }
     }
 }
 
-/// The crate a server file belongs to: the path up to and including `/server/`.
-fn server_crate_of(p: &Path) -> String {
-    let s = p.to_string_lossy();
-    match s.find("/server/") {
-        Some(i) => s[..i + "/server/".len()].to_string(),
-        None => s.to_string(),
-    }
+
+#[derive(clap::Parser)]
+#[command(name = "cargo app", bin_name = "cargo app", about = "h5i app, for contributors to this repository")]
+struct Cli {
+    #[command(subcommand)]
+    cmd: Cmd,
 }
 
-/// Read `text` from `start` (just past a `(`) and return the substring up to the
-/// matching close paren.
-fn balanced_parens(text: &str, start: usize) -> &str {
-    let bytes = text.as_bytes();
-    let mut depth = 1i32;
-    let mut i = start;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'(' => depth += 1,
-            b')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return &text[start..i];
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    &text[start..]
-}
-
-/// Every mutating route's handler must take an `Actor<` (an authenticated
-/// caller). Opt out with `h5i-allow: no-actor` on or above the route.
-fn route_coverage(root: &Path) -> Outcome {
-    let mut files = Vec::new();
-    rs_files_under(&root.join("examples/app"), "/server/", &mut files);
-    // Which handler idents take an `Actor<`, per crate.
-    let mut takes_actor: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
-    let mut known: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
-    let mut sources: Vec<(String, String)> = Vec::new();
-    for f in &files {
-        let text = std::fs::read_to_string(f).unwrap_or_default();
-        let ck = server_crate_of(f);
-        let mut rest = text.as_str();
-        while let Some(rel) = rest.find("fn ") {
-            let after = &rest[rel + 3..];
-            let name: String = after.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
-            if let Some(paren) = after.find('(') {
-                let params = balanced_parens(after, paren + 1);
-                if !name.is_empty() {
-                    known.insert((ck.clone(), name.clone()));
-                    if params.contains("Actor<") {
-                        takes_actor.insert((ck.clone(), name.clone()));
-                    }
-                }
-            }
-            rest = &after[name.len().max(1)..];
-        }
-        sources.push((ck, text));
-    }
-    // Scan mutating route registrations.
-    let mut bad = Vec::new();
-    let re_methods = ["post(", "put(", "delete(", "patch("];
-    for f in &files {
-        let text = std::fs::read_to_string(f).unwrap_or_default();
-        let ck = server_crate_of(f);
-        let lines: Vec<&str> = text.lines().collect();
-        for (lineno, line) in lines.iter().enumerate() {
-            let prev = lineno.checked_sub(1).map(|i| lines[i]).unwrap_or("");
-            if line.contains("h5i-allow: no-actor") || prev.contains("h5i-allow: no-actor") {
-                continue;
-            }
-            for m in re_methods {
-                let mut from = 0;
-                while let Some(i) = line[from..].find(m) {
-                    let at = from + i;
-                    // Require a routing context (method-router builder), not just any foo(.
-                    let after = &line[at + m.len()..];
-                    let handler: String = after.chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == ':').collect();
-                    let ident = handler.rsplit("::").next().unwrap_or(&handler).to_string();
-                    from = at + m.len();
-                    if ident.is_empty() {
-                        continue;
-                    }
-                    // Only judge handlers we can see in this crate; skip unknowns.
-                    if known.contains(&(ck.clone(), ident.clone())) && !takes_actor.contains(&(ck.clone(), ident.clone())) {
-                        bad.push(format!("{}:{}: {}({}) has no Actor<> parameter", f.display(), lineno + 1, m.trim_end_matches('('), ident));
-                    }
-                }
-            }
-        }
-    }
-    let _ = sources;
-    if bad.is_empty() { Outcome::Pass } else { Outcome::Fail(bad.join("\n")) }
-}
-
-/// A kernel `Command` must not carry a client-set identity or privilege field;
-/// identity comes from the `Actor`. Opt out with `h5i-allow: privileged-field`.
-fn command_hygiene(root: &Path) -> Outcome {
-    let mut files = Vec::new();
-    rs_files_under(&root.join("examples/app"), "/kernel/", &mut files);
-    let mut bad = Vec::new();
-    for f in &files {
-        let text = std::fs::read_to_string(f).unwrap_or_default();
-        for (line, name) in flagged_command_fields(&text) {
-            bad.push(format!("{}:{}: Command field `{}` is client-settable identity/privilege", f.display(), line, name));
-        }
-    }
-    if bad.is_empty() { Outcome::Pass } else { Outcome::Fail(bad.join("\n")) }
-}
-
-/// Denied identity/privilege fields in the `Command` type, as `(line, field)`.
-fn flagged_command_fields(text: &str) -> Vec<(usize, String)> {
-    const DENY: &[&str] = &["owner", "owner_id", "role", "is_admin", "admin", "tenant", "tenant_id", "principal"];
-    let Some(start) = text.find("enum Command").or_else(|| text.find("struct Command")) else { return Vec::new() };
-    let Some(brace) = text[start..].find('{') else { return Vec::new() };
-    let body = balanced_braces(&text[start + brace + 1..]);
-    let base_line = text[..start + brace].lines().count();
-    let mut out = Vec::new();
-    for (i, line) in body.lines().enumerate() {
-        if line.contains("h5i-allow: privileged-field") {
-            continue;
-        }
-        let code = line.split("//").next().unwrap_or("");
-        for field in code.split(',') {
-            let name = field.split(':').next().unwrap_or("").trim().trim_start_matches("pub ").trim();
-            if DENY.contains(&name) {
-                out.push((base_line + i, name.to_string()));
-            }
-        }
-    }
-    out
-}
-
-/// Report which app proofs state a universal authorization theorem. Never
-/// fails; makes gaps visible.
-fn authz_coverage(root: &Path) -> Outcome {
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    for base in ["examples/app", "examples/app/tutorials"] {
-        if let Ok(entries) = std::fs::read_dir(root.join(base)) {
-            for e in entries.flatten() {
-                let p = e.path().join("proofs");
-                if p.is_dir() {
-                    dirs.push(p);
-                }
-            }
-        }
-    }
-    dirs.sort();
-    let markers = ["WritesAuthorized", "theorem authorized", "writes_authorized", "writes_confined", "writes_scoped"];
-    let schema = "WritesAuthorized";
-    let reads = "ReadsAuthorized";
-    let mut covered = 0;
-    let mut report = String::new();
-    for d in &dirs {
-        let mut lean = Vec::new();
-        rs_or_lean(d, &mut lean);
-        let mut hit = None;
-        let mut uses_schema = false;
-        let mut uses_reads = false;
-        for f in &lean {
-            let text = std::fs::read_to_string(f).unwrap_or_default();
-            if text.contains(schema) {
-                uses_schema = true;
-            }
-            if text.contains(reads) {
-                uses_reads = true;
-            }
-            if hit.is_none()
-                && let Some(m) = markers.iter().find(|m| text.contains(**m))
-            {
-                hit = Some(*m);
-            }
-        }
-        let app = d.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        match hit {
-            Some(_) => {
-                covered += 1;
-                let tag = if uses_schema { "schema" } else { "theorem" };
-                let reads = if uses_reads { ", reads too" } else { "" };
-                report.push_str(&format!("  {app:<16} authorized ({tag}{reads})\n"));
-            }
-            None => report.push_str(&format!("  {app:<16} no universal authorization theorem\n")),
-        }
-    }
-    eprintln!("\n  authorization coverage: {covered}/{} app proof projects\n{}", dirs.len(), report.trim_end());
-    Outcome::Pass
-}
-
-/// Collect `.lean` files directly in `dir`.
-fn rs_or_lean(dir: &Path, out: &mut Vec<PathBuf>) {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for e in entries.flatten() {
-            let p = e.path();
-            if p.extension().is_some_and(|x| x == "lean") {
-                out.push(p);
-            }
-        }
-    }
-}
-
-/// Substring from just inside a `{` up to its matching `}`.
-fn balanced_braces(text: &str) -> &str {
-    let bytes = text.as_bytes();
-    let mut depth = 1i32;
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return &text[..i];
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    text
+#[derive(clap::Subcommand)]
+enum Cmd {
+    /// `cargo app-verify`: CI's checks over every project in the repository.
+    #[command(hide = true)]
+    Verify {
+        /// Add the mutants and the differential test.
+        #[arg(long)]
+        full: bool,
+        /// Do not re-extract (no Charon or Aeneas needed).
+        #[arg(long)]
+        no_extract: bool,
+    },
+    #[command(flatten)]
+    App(h5i_app_cli::AppCommands),
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().map(String::as_str) != Some("verify") {
-        eprintln!("usage: cargo app-verify [--full] [--no-extract]");
-        return ExitCode::from(2);
-    }
-    let full = args.iter().any(|a| a == "--full");
-    let extract = !args.iter().any(|a| a == "--no-extract");
+    use clap::Parser;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("repository root");
+    match Cli::parse().cmd {
+        Cmd::Verify { full, no_extract } => verify(root, full, !no_extract),
+        Cmd::App(cmd) => match h5i_app_cli::run(cmd, &h5i_app_cli::Context { default_rev: "main".into() }) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                ExitCode::FAILURE
+            }
+        },
+    }
+}
+
+fn verify(root: PathBuf, full: bool, extract: bool) -> ExitCode {
+    let projects = match Project::discover(&root.join("crates")).and_then(|mut c| {
+        c.extend(Project::discover(&root.join("examples/app"))?);
+        Ok(c)
+    }) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e:#}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let base = root.clone();
+    let rel = |p: &Project| p.root.strip_prefix(&base).unwrap_or(&p.root).display().to_string();
     let mut cx = Ctx { root, results: Vec::new() };
     let db = std::env::var("H5I_APP_TEST_DATABASE_URL").is_ok();
 
-    cx.step("route coverage (mutating routes take an Actor)", route_coverage);
-    cx.step("command hygiene (no client-set identity fields)", command_hygiene);
-    cx.step("authorization coverage report", authz_coverage);
+    for p in &projects {
+        cx.step(&format!("lint {}", rel(p)), |_| logged(|out| h5i_app_cli::lint::lint(p, out)));
+    }
+    // Never fails; makes the gaps visible.
+    let authz: Vec<(String, String)> =
+        projects.iter().filter_map(|p| h5i_app_cli::lint::authz_coverage(p).map(|n| (rel(p), n))).collect();
+    let proven = authz.iter().filter(|(_, n)| n.contains("proven")).count();
+    eprintln!("\n  authorization coverage: {proven}/{} kernels with commands", authz.len());
+    for (p, n) in &authz {
+        eprintln!("  {p:<34} {}", n.trim_start_matches("authorization: "));
+    }
+    eprintln!();
     cx.step("rust tests", |r| {
         if !db {
             return Outcome::Skip("H5I_APP_TEST_DATABASE_URL unset".into());
         }
         run(r, "bash", &["scripts/app/ci-rust-tests.sh", "--release"])
     });
+    // A8: only h5i-app-pg may depend on database drivers.
     cx.step("cargo deny (bans)", |r| {
         if !have_cargo_sub("deny") {
             return Outcome::Skip("cargo-deny not installed".into());
@@ -372,46 +173,36 @@ fn main() -> ExitCode {
     });
     if extract {
         let tools = have("charon") && have("aeneas");
-        for (_, script, generated) in PROJECTS {
-            let (Some(script), Some(generated)) = (script, generated) else { continue };
-            cx.step(&format!("extract {generated}"), |r| {
+        for p in projects.iter().filter(|p| p.manifest.extract.is_some()) {
+            // A9: the committed Lean is exactly what Aeneas extracts.
+            cx.step(&format!("extract --check {}", rel(p)), |_| {
                 if !tools {
                     return Outcome::Skip("charon/aeneas not on PATH".into());
                 }
-                match run(r, "bash", &[script]) {
-                    Outcome::Pass => run(r, "git", &["diff", "--exit-code", "--", generated]),
-                    other => other,
-                }
+                logged(|out| h5i_app_cli::extract::check_fresh(p, out))
             });
         }
     }
     let lake = have("lake");
-    for (dir, _, _) in PROJECTS {
-        cx.step(&format!("lean {dir}"), |r| {
+    for p in &projects {
+        cx.step(&format!("check {}", rel(p)), |_| {
             if !lake {
                 return Outcome::Skip("lake not on PATH".into());
             }
-            match run(&r.join(dir), "lake", &["build"]) {
-                Outcome::Pass => lean_scan(&r.join(dir)),
-                other => other,
-            }
+            logged(|out| h5i_app_cli::check::check(p, out))
         });
     }
-    cx.step("axioms of the docs theorems", |r| {
-        if !lake {
-            return Outcome::Skip("lake not on PATH".into());
-        }
-        run(r, "bash", &["scripts/app/ci-lean-gate.sh"])
-    });
-    cx.step("axioms of the database theorems", |r| {
-        if !lake {
-            return Outcome::Skip("lake not on PATH".into());
-        }
-        run(r, "bash", &["scripts/app/ci-db-axioms.sh"])
-    });
     if full {
-        cx.step("mutation suite", |r| run(r, "python3", &["scripts/app/mutants.py"]));
-        cx.step("app mutation suite", |r| run(r, "python3", &["scripts/app/mutants-apps.py"]));
+        let args = h5i_app_cli::MutateArgs { jobs: 2, ..Default::default() };
+        for p in projects.iter().filter(|p| !p.manifest.mutants.is_empty()) {
+            cx.step(&format!("mutants {}", rel(p)), |_| {
+                eprintln!();
+                match h5i_app_cli::mutate_project(p, &args) {
+                    Ok(()) => Outcome::Pass,
+                    Err(e) => Outcome::Fail(format!("{e:#}")),
+                }
+            });
+        }
         cx.step("rust vs lean differential test", |r| run(r, "bash", &["scripts/app/difftest.sh"]));
     }
 
@@ -419,37 +210,4 @@ fn main() -> ExitCode {
     let skipped = cx.results.iter().filter(|(_, o, _)| matches!(o, Outcome::Skip(_))).count();
     eprintln!("\n{} passed, {failed} failed, {skipped} skipped", cx.results.len() - failed - skipped);
     if failed > 0 { ExitCode::FAILURE } else { ExitCode::SUCCESS }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn balanced_helpers() {
-        assert_eq!(balanced_parens("f(a, g(b), c) x", 2), "a, g(b), c");
-        assert_eq!(balanced_braces("a { b } c } d"), "a { b } c ");
-    }
-
-    #[test]
-    fn command_hygiene_flags_role_from_body() {
-        // The readur class: a command carries the new user's role.
-        let bad = "pub enum Command {\n    Register { email: u64, role: Role },\n}";
-        let hits = flagged_command_fields(bad);
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].1, "role");
-    }
-
-    #[test]
-    fn command_hygiene_allows_reviewed_target() {
-        // An admin action naming its target, explicitly reviewed.
-        let ok = "pub enum Command {\n    SetRole { user: u64, role: Role }, // h5i-allow: privileged-field (admin sets target's role)\n}";
-        assert!(flagged_command_fields(ok).is_empty());
-    }
-
-    #[test]
-    fn command_hygiene_ignores_plain_fields() {
-        let ok = "pub enum Command {\n    CreateDoc { project: u64, title: u64 },\n    AddMsg { conv: u64, user: u64 },\n}";
-        assert!(flagged_command_fields(ok).is_empty(), "user/project/title are not privilege fields");
-    }
 }

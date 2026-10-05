@@ -1,0 +1,16 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+start-from = ["transition"]
+schema = true
+include = ["h5i_app_sql"]
+
+[check]
+# Must exist and use only the standard axioms (every theorem in a hand-written
+# module is gated as well).
+theorems = ["ledger_kernel.Storage.db_inv"]
+
+[[mutant]]
+name = "withdraw_from_others_account"
+old = "if a.owner != user {\n                Err(Error::Forbidden)\n            } else if l.deposited >"
+new = "if false {\n                Err(Error::Forbidden)\n            } else if l.deposited >"

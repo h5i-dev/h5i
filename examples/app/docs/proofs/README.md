@@ -2,7 +2,7 @@
 
 These are Lean 4 proofs about the Rust kernel in `../kernel`, as translated by
 Charon and Aeneas. The files in `generated/` are produced by tools and never
-edited: `DocsKernel.lean` comes from `scripts/app/extract.sh` and `Schema.lean`
+edited: `DocsKernel.lean` comes from `h5i app extract` and `Schema.lean`
 from `schema!`. Everything else is written by hand.
 
 ## Files
@@ -47,15 +47,14 @@ The following hold for every actor and command. `authorized`, `noninterference` 
 | `Database.db_inv` | The same on PostgreSQL: loading with the compiled `SELECT`s (full or scoped), running a successful command and storing the compiled statements of its writes, among any other tenants' statements, keeps the tenant's rows valid, and every full load decodes to a valid snapshot. The SQL comes from the extracted `h5i_app_pgsql`; PostgreSQL's meaning of it is the model in `H5iAppLib.Pg`. |
 
 Every theorem depends only on Lean's standard axioms (`propext`,
-`Classical.choice` and `Quot.sound`), which `scripts/app/ci-lean-gate.sh` checks.
+`Classical.choice` and `Quot.sound`), which `h5i app check` checks for every
+theorem in these files and for the main ones named in `../h5i-app.toml`.
 
 ## Building the proofs
 
 ```
-lake exe cache get
-lake build
-../../../../scripts/app/ci-lean-gate.sh      # rejects sorry and non-standard axioms
-../../../../scripts/app/mutants.py           # injected bugs must break a proof
+h5i app prove examples/app/docs    # extract, build, gate
+h5i app mutate examples/app/docs   # the bugs in h5i-app.toml must break a proof
 ```
 
 The generic lemmas come from `H5iAppLib` in `crates/h5i-app-core/proofs`. `loop_search`

@@ -58,6 +58,6 @@ All theorems depend only on Lean's standard axioms.
 ## Building the proofs
 
 ```
-../../../scripts/app/extract-kellnr.sh      # regenerates proofs/generated/KellnrKernel.lean
-cd proofs && lake build
+h5i app prove examples/app/kellnr   # extract, build, gate
+h5i app mutate examples/app/kellnr  # the bugs in h5i-app.toml must break a proof
 ```

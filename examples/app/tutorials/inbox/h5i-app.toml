@@ -1,0 +1,16 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+start-from = ["transition"]
+schema = true
+include = ["h5i_app_sql"]
+
+[check]
+# Must exist and use only the standard axioms (every theorem in a hand-written
+# module is gated as well).
+theorems = ["inbox_kernel.Storage.db_inv"]
+
+[[mutant]]
+name = "read_others_messages"
+old = "if from != user && to != user {"
+new = "if false {"

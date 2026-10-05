@@ -3,4 +3,4 @@
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 (cd "$root/examples/app/docs/proofs" && lake build difftest)
-cd "$root/examples" && cargo test -p docs-difftest -- --ignored --nocapture "$@"
+cd "$root/examples/app" && cargo test --release -p docs-difftest -- --ignored --nocapture "$@"

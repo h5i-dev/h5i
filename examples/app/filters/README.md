@@ -44,6 +44,6 @@ nothing (`fixed_hides`).
 ## Building the proofs
 
 ```
-scripts/app/extract-filters.sh
-cd examples/app/filters/proofs && lake build
+h5i app prove examples/app/filters   # extract, build, gate
+h5i app mutate examples/app/filters  # the bugs in h5i-app.toml must break a proof
 ```

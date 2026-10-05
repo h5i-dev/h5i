@@ -116,6 +116,6 @@ commands and runs the preview scenario through the HTTP routes.
 ## Building the proofs
 
 ```
-scripts/app/extract-wastebin.sh        # regenerates proofs/generated/WastebinKernel.lean
-cd examples/app/wastebin/proofs && lake build
+h5i app prove examples/app/wastebin   # extract, build, gate
+h5i app mutate examples/app/wastebin  # the bugs in h5i-app.toml must break a proof
 ```

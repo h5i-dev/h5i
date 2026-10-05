@@ -16,7 +16,7 @@ second.
 | A7 | Charon, Aeneas, Lean are sound | Trusted. Axiom gate; Rust-vs-Lean differential test (`scripts/app/difftest.sh`, 55k cases, no mismatch) | Stays trusted |
 | A8 | No handler bypasses the engine | Opaque `Tx` and pool; `cargo deny check bans` keeps DB crates in `h5i-app-pg`; `h5i_app_pg::lockdown` role separation. In CI. | Superusers out of scope |
 | A9 | Running code is the extracted code | CI re-extracts every kernel and extracted crate (`h5i-app-sql`, `h5i-app-token`, `h5i-app-json`) with pinned tools and fails on diff | Done |
-| A10 | The spec says what we meant | Human review; mutation suites (`scripts/app/mutants.py` for docs, `scripts/app/mutants-apps.py` for the other ten kernels); scenario theorems in every app; one upstream-bug counterexample per port | Add mutants for new failure modes |
+| A10 | The spec says what we meant | Human review; mutation suites (the `[[mutant]]`s in each `h5i-app.toml`, run by `h5i app mutate`; `--auto` for generated ones); scenario theorems in every app; one upstream-bug counterexample per port | Add mutants for new failure modes |
 
 ## Phase 0: proofs on the example app
 
@@ -54,9 +54,12 @@ Done:
   and `h5i_derive_clone` for derived `==` and `clone`; `h5i_steps` through binds on
   `if`; `h5i_simp`.
 - LLM-written proofs; humans review the policy table and invariants.
-- Done: `cargo app-verify` (`xtask/`) runs tests, bans, extraction drift and
+- Done: `cargo app-verify` (`crates/h5i-app-xtask`) runs tests, bans, extraction drift and
   all proofs with sorry/axiom gates. `--full` adds mutants and the
   differential test.
+- Done: `h5i app` (`crates/h5i-app-cli`): `new`, `extract`, `check`, `prove`,
+  `mutate` (declared and generated mutants) and `doctor`, driven by each
+  project's `h5i-app.toml` instead of a script per app.
 
 ## Phase 3: remove MVP simplifications
 

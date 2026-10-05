@@ -20,7 +20,7 @@ set_option maxRecDepth 2048
 namespace filters_kernel
 
 /-- Trait implementation: [core::slice::cmp::{impl core::cmp::PartialEq<[U]> for [T]}]
-    Source: 'examples/app//rustc/library/core/src/slice/cmp.rs', lines 14:0-16:28
+    Source: '/rustc/library/core/src/slice/cmp.rs', lines 14:0-16:28
     Name pattern: [core::cmp::PartialEq<[@T], [@U]>] -/
 @[reducible, rust_trait_impl "core::cmp::PartialEq<[@T], [@U]>"]
 def Slice.Insts.CoreCmpPartialEqSlice {T : Type} {U : Type} (cmpPartialEqInst :

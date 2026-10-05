@@ -9,7 +9,7 @@ require h5i_app_lib from "../../../../crates/h5i-app-core/proofs"
 
 package docs_proofs
 
--- Generated Lean: the extracted Rust (scripts/app/extract.sh) and schema! output. Do not edit.
+-- Generated Lean: the extracted Rust (`h5i app extract`) and schema! output. Do not edit.
 lean_lib Generated where
   srcDir := "generated"
   roots := #[`DocsKernel, `Schema]

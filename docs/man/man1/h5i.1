@@ -31,6 +31,9 @@ Install, list or remove a plugin
 h5i\-project(1)
 The engagement that outlives its sessions: notes, findings, evidence, checklists and reports
 .TP
+h5i\-app(1)
+Build verified applications with h5i\-app: extract the kernel to Lean, gate the proofs, and test the spec with mutants
+.TP
 h5i\-skill(1)
 Write or print the agent skill this binary carries
 .TP
@@ -2839,6 +2842,171 @@ Print help
 .TP
 [\fITERM\fR]
 The term, or nothing to list them all
+.SH "H5I APP"
+Build verified applications with h5i-app: extract the kernel to Lean, gate the proofs, and test the spec with mutants
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBapp\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I APP NEW"
+Start a project: a kernel crate, a Lake project that proves it, and the h5i-app.toml that ties them together
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBnew\fR [\fB\-\-name\fR] [\fB\-\-h5i\-path\fR] [\fB\-\-rev\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIDIR\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-name\fR \fI<NAME>\fR
+Crate name prefix (default: the directory\*(Aqs name)
+.TP
+\fB\-\-h5i\-path\fR \fI<H5I_CHECKOUT>\fR
+Require the h5i\-app Lean library from this local h5i checkout instead of from git
+.TP
+\fB\-\-rev\fR \fI<REV>\fR
+The h5i git revision to require the Lean library at (default: this binary\*(Aqs release tag)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIDIR\fR>
+Directory to create
+.SH "H5I APP EXTRACT"
+Extract the kernel to Lean: Rust -> LLBC (Charon) -> Lean (Aeneas), into proofs/generated/
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBextract\fR [\fB\-\-all\fR] [\fB\-\-check\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Every project under the given directories (default: the current one)
+.TP
+\fB\-\-check\fR
+Change nothing; fail if proofs/generated/ is not what the kernel extracts to (for CI)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATHS\fR]
+Project directories or h5i\-app.toml files (default: the project the current directory is in)
+.SH "H5I APP CHECK"
+Build the proofs and gate them: no sorry, native_decide or axiom, and every theorem in a hand-written module uses only propext, Classical.choice and Quot.sound
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcheck\fR [\fB\-\-all\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Every project under the given directories (default: the current one)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATHS\fR]
+Project directories or h5i\-app.toml files (default: the project the current directory is in)
+.SH "H5I APP PROVE"
+`extract`, then `check`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBprove\fR [\fB\-\-all\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Every project under the given directories (default: the current one)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATHS\fR]
+Project directories or h5i\-app.toml files (default: the project the current directory is in)
+.SH "H5I APP LINT"
+Check the source for what the proofs assume but cannot see: every mutating route takes an authenticated `Actor`, and no `Command` field lets the client set its own identity or privilege. Reports whether the proofs state a universal authorization theorem
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlint\fR [\fB\-\-all\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Every project under the given directories (default: the current one)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATHS\fR]
+Project directories or h5i\-app.toml files (default: the project the current directory is in)
+.SH "H5I APP MUTATE"
+Put bugs in the kernel and make sure each one breaks a proof. A bug that survives is behaviour the spec does not pin down
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBmutate\fR [\fB\-\-all\fR] [\fB\-\-only\fR] [\fB\-\-auto\fR] [\fB\-\-limit\fR] [\fB\-\-list\fR] [\fB\-j\fR|\fB\-\-jobs\fR] [\fB\-\-keep\fR] [\fB\-\-no\-baseline\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Every project under the given directories (default: the current one)
+.TP
+\fB\-\-only\fR \fI<TEXT>\fR
+Only mutants whose name contains this (repeatable)
+.TP
+\fB\-\-auto\fR
+Also generate mutants from the kernel\*(Aqs syntax: comparison boundaries, flipped equalities, swapped `&&`/`||`, dropped `!`, forced `if` conditions
+.TP
+\fB\-\-limit\fR \fI<LIMIT>\fR
+With \-\-auto: at most this many generated mutants per project
+.TP
+\fB\-\-list\fR
+List the mutants and exit
+.TP
+\fB\-j\fR, \fB\-\-jobs\fR \fI<JOBS>\fR [default: 1]
+Mutants to run at once. Each is a full Lean build; mind memory
+.TP
+\fB\-\-keep\fR
+Keep each mutant\*(Aqs directory and log
+.TP
+\fB\-\-no\-baseline\fR
+Skip building the unmodified copy first
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATHS\fR]
+Project directories or h5i\-app.toml files (default: the project the current directory is in)
+.SH "H5I APP DOCTOR"
+Check that Charon, Aeneas and Lean are installed at the versions this h5i extracts with, and that the project pins the same ones
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBdoctor\fR [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATH\fR]
+Project directory or h5i\-app.toml (default: the one the current directory is in, if any)
 .SH "H5I SKILL"
 Write or print the agent skill this binary carries
 .ie \n(.g .ds Aq \(aq

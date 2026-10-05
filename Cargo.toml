@@ -93,6 +93,9 @@ h5i-core = { path = "crates/h5i-core", default-features = false }
 h5i-browser = { path = "crates/h5i-browser", optional = true, default-features = false }
 # The store's types and readers, engine-free, shared with the plugins.
 h5i-wire = { path = "crates/h5i-wire" }
+# `h5i app`: extract an h5i-app kernel to Lean, gate its proofs, mutate it.
+# Drives Charon, Aeneas and Lake as subprocesses, so it links none of them.
+h5i-app-cli = { path = "crates/h5i-app-cli" }
 # A scratch directory: the workspace `h5i browser transcript --via` gives its
 # helper.
 tempfile = "3.8"

@@ -1,0 +1,5 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+crate = "."
+# No start points: the whole crate.

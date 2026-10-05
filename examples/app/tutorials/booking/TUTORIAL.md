@@ -267,7 +267,7 @@ the registry is never contacted.
 
 ## Writing the specification
 
-Extract the kernel with `scripts/app/extract-booking.sh` and open
+Extract the kernel with `h5i app extract examples/app/tutorials/booking` and open
 `proofs/Spec.lean`. The state is four lists, as on the board. The new
 definitions are about intervals. `Apart` says that two intervals share no
 instant, and two bookings are `Compatible` when they are for different rooms

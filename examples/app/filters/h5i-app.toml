@@ -1,0 +1,9 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+start-from = ["transition", "transition_pre"]
+
+[[mutant]]
+name = "backslash_not_escaped"
+old = "if *b == BSLASH || *b == QUOTE {"
+new = "if *b == QUOTE {"
