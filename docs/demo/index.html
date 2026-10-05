@@ -494,10 +494,10 @@ const vis = (id, v) => { $(id).style.display = v ? '' : 'none'; };
 
 /* ---------- timeline (absolute seconds) ---------- */
 const T = {
-  c1: 1.2, c1b: 3.0, qmark: 4.4, black1: 6.8,
-  two: 7.2, cut: 10.3,
-  ws: 10.3,
-  tHistory: 16.5, tFindings: 21.7, deny: 25.1, tBoxes: 27.9, card2: 31.1, tApps: 34.4, write: 35.2, extract: 38.8, prove: 41.8, verify: 46.2, tEvidence: 53.0,
+  c1: 1.2, c1b: 2.4, qmark: 3.4, black1: 4.8,
+  two: 5.2, cut: 8.3,
+  ws: 8.3,
+  tHistory: 14.5, tFindings: 19.7, deny: 23.1, tBoxes: 25.9, card2: 29.1, tApps: 32.4, write: 33.2, extract: 36.8, prove: 39.8, verify: 46.2, tEvidence: 53.0,
   close: 56.0, logo: 56.5, end: 60,
 };
 const TOTAL = T.end * 1000;
@@ -562,7 +562,7 @@ const term = [
   {at:T.extract+.2, cmd:'cargo app-extract', cps:48},
   {at:T.extract+1.4, out:[`Charon + Aeneas · <span class="ref">kernel/src/lib.rs</span> → <span class="ref">proofs/BoardKernel.lean</span> · 6 defs, no drift`]},
   {at:T.prove+.2,  out:[`<span class="pen">✎</span> writing <span class="ref">proofs/Theorems.lean</span> · theorem authorized: every write passes the policy`]},
-  {at:T.prove+2.4, out:[`<span class="pen">✎</span> proof by cases on the command; the delete branch needs is_moderator_spec`]},
+  {at:T.prove+3.4, out:[`<span class="pen">✎</span> proof by cases on the command; the delete branch needs is_moderator_spec`]},
   {at:T.verify+.2, cmd:'cargo app-verify', cps:48},
   {at:T.verify+1.2, out:[`extraction   <span class="ok">ok</span>  no drift · lake build   <span class="ok">ok</span>  41.2s`]},
   {at:T.verify+2.6, out:[`axiom gate   <span class="ok">ok</span> · mutants      <span class="ok">ok</span>  12 of 12 caught`]},
@@ -663,7 +663,7 @@ function drawConsole(t) {
   on('ed-rs', etab === 'rs'); on('ed-lean', etab === 'lean'); on('ed-thm', etab === 'thm');
   for (let i = 0; i < 14; i++) on('rs'+i, t >= T.write + .4 + i*.2);
   for (let i = 0; i < 5; i++) on('le'+i, t >= T.extract + 1.5 + i*.25);
-  for (let i = 0; i < 8; i++) on('tl'+i, t >= T.prove + .4 + i*.42);
+  for (let i = 0; i < 8; i++) on('tl'+i, t >= T.prove + .4 + i*.66);
 }
 
 /* dust: a seeded field of motes drifting upward, parallaxed against the camera */

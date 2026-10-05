@@ -40,7 +40,7 @@ PAGE_HISTORY = {
     "features/": ("2026-10-01", "54da30bf40f349d6"),
     "manual/": ("2026-10-01", "1ccb7e4d5d00af3f"),
     "pitch/": ("2026-10-04", "c025c2d296c5fa53"),
-    "demo/": ("2026-10-04", "14c65ccc336383ad"),
+    "demo/": ("2026-10-05", "e1bd00ebbefd1a04"),
     "guides/": ("2026-09-16", "f37b211cacc1bcb3"),
     "blog/": ("2026-09-15", "e6bef559cb5cc1b6"),
     "guides/recon-and-idor/": ("2026-09-26", "aa9fd18b188268a1"),
