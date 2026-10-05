@@ -240,19 +240,42 @@
     .section-title br.heading-break { display: block; }
     #what-you-get .section-title, #framework .section-title { max-width: none; }
     .proof-flow { margin: 36px 0 0; overflow-x: auto; position: relative; }
-    .loop-lead {
+    .coin-lead {
       margin: 36px 0 0; display: flex; align-items: baseline; gap: 14px;
       font-family: var(--disp); font-size: 22px; font-weight: 700; color: var(--ink);
     }
-    .loop-lead .loop-arrow { color: var(--spot); font-family: var(--mono); font-weight: 400; }
-    .loop-flow { margin-top: 14px; }
-    .proof-diagram.loop-diagram { min-width: 720px; }
-    .loop-diagram .loop-arc { stroke-opacity: .3; }
-    .loop-diagram .loop-dash { stroke-dasharray: 5 9; animation: loop-flow 1.2s linear infinite; }
-    @keyframes loop-flow { to { stroke-dashoffset: -14; } }
-    .loop-diagram .loop-fish-tail { transform-box: fill-box; transform-origin: 100% 50%; animation: loop-wag .45s ease-in-out infinite alternate; }
-    @keyframes loop-wag { from { transform: rotate(-14deg); } to { transform: rotate(14deg); } }
-    @media (prefers-reduced-motion: reduce) { .loop-diagram .loop-dash, .loop-diagram .loop-fish-tail { animation: none; } }
+    .coin-lead .coin-arrow { color: var(--spot); font-family: var(--mono); font-weight: 400; }
+    .coin-flow { margin-top: 14px; }
+    .proof-diagram.coin-diagram { min-width: 720px; }
+    /* the Apps view inside the proof diagram: the console's own tokens, drawn small */
+    .pd-win { height: 236px; border-radius: 8px; }
+    .pd-win .win-bar { height: 32px; padding-top: 6px; font-size: 10.5px; }
+    .pd-win .win-tab { padding: 4px 10px 5px; }
+    .pd-win .bw-url { padding: 4px 8px; font-size: 10px; }
+    .pd-win .bw-addr { padding: 2px 8px; }
+    .pd-ui { flex: 1; min-height: 0; border: 0; border-radius: 0; background: var(--cm-ground); font-family: var(--sans); font-size: 10.5px; line-height: 1.35; color: var(--cm-ink); overflow: hidden; box-shadow: none; }
+    .pu-app { display: grid; grid-template-columns: 110px minmax(0, 1fr); height: 100%; }
+    .pu-rail { background: var(--cm-surface); border-right: 1px solid var(--cm-line); padding: 10px 6px; display: flex; flex-direction: column; gap: 2px; color: var(--cm-ink-3); font-size: 10.5px; }
+    .pu-rail > div { padding: 5px 8px; border-radius: 4px; }
+    .pu-rail .on { background: var(--cm-raised); color: var(--cm-ink); box-shadow: inset 2px 0 0 var(--cm-accent); }
+    .pu-brand { font-family: var(--cm-mono); font-weight: 700; font-size: 13px; color: var(--cm-ink); padding-bottom: 10px !important; }
+    .pu-brand b { color: var(--cm-accent); }
+    .pu-main { display: flex; flex-direction: column; min-width: 0; }
+    .pu-head { display: flex; align-items: baseline; gap: 8px; padding: 12px 12px 0; background: var(--cm-surface); }
+    .pu-head b { font-size: 13px; }
+    .pu-head code { font-family: var(--cm-mono); font-size: 9.5px; color: var(--cm-ink-3); background: none; border: 0; padding: 0; }
+    .pu-pill { font-size: 9.5px; padding: 0 6px; border-radius: 3px; color: var(--cm-green); background: var(--cm-green-bg); }
+    .pu-tabs { display: flex; gap: 2px; margin-top: 4px; padding: 0 8px; border-bottom: 1px solid var(--cm-line); background: var(--cm-surface); }
+    .pu-tabs span { padding: 5px 8px; color: var(--cm-ink-3); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+    .pu-tabs span.on { color: var(--cm-ink); border-bottom-color: var(--cm-accent); }
+    .pu-tabs i { font-style: normal; font-family: var(--cm-mono); font-size: 9.5px; color: var(--cm-ink-3); margin-left: 3px; }
+    .pu-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .pu-table th { text-align: left; padding: 5px 10px; color: var(--cm-ink-3); font-weight: 400; font-size: 9.5px; border-bottom: 1px solid var(--cm-line); background: var(--cm-surface); }
+    .pu-table td { padding: 4px 10px; border-bottom: 1px solid var(--cm-line); color: var(--cm-ink-2); vertical-align: middle; }
+    .pu-table td code { font-family: var(--cm-mono); font-size: 10px; color: var(--cm-violet); background: none; border: 0; padding: 0; }
+    .pu-table td small { display: block; font-family: var(--cm-mono); font-size: 8.5px; color: var(--cm-ink-4); margin-top: 2px; }
+    .pu-ok { font-family: var(--cm-mono); font-size: 9.5px; padding: 0 6px; border-radius: 3px; color: var(--cm-green); background: var(--cm-green-bg); white-space: nowrap; }
+    .pu-foot { margin-top: auto; padding: 7px 12px; border-top: 1px solid var(--cm-line); background: var(--cm-surface); color: var(--cm-ink-3); font-family: var(--cm-mono); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .proof-flow .tabpick { position: absolute; opacity: 0; pointer-events: none; }
     .ed-tabs { display: flex; align-items: stretch; height: 27px; margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1; }
     .ed-tabs label {
@@ -305,6 +328,12 @@
     .win-plus { padding: 0 6px 8px; font-size: 14px; line-height: 1; color: var(--faint); }
     .win-ctl { margin-left: auto; display: flex; gap: 8px; padding: 0 2px 11px; }
     .win-ctl i { display: block; width: 9px; height: 9px; border-radius: 50%; border: 1px solid var(--line2); background: var(--panel); }
+    /* a browser gets its traffic lights; a shell has none */
+    .browser-win .win-ctl i { border: 0; }
+    .browser-win .win-ctl i:nth-child(1) { background: #ff5f57; }
+    .browser-win .win-ctl i:nth-child(2) { background: #febc2e; }
+    .browser-win .win-ctl i:nth-child(3) { background: #28c840; }
+    .shell-win .win-ctl { display: none; }
     .shell-win .terminal { flex: 1; margin: 0; border: 0; background: var(--panel); }
     .shell-win .terminal .terminal-body { padding: 14px 16px 16px; }
     .shell-win .terminal .terminal-body pre { font-size: 12px; line-height: 1.65; }
@@ -539,39 +568,60 @@
         <div class="feat-desc">Writing code is easier than proving it correct. Ruling out bugs requires precise specifications, explicit assumptions, and proofs that the implementation satisfies them.</div>
       </div>
     </div>
-    <p class="loop-lead"><span class="loop-arrow">&#x27F9;</span> You need a loop: find vulnerabilities, prove correctness, repeat.</p>
-    <figure class="proof-flow loop-flow">
-      <svg class="proof-diagram loop-diagram" viewBox="0 30 1100 230" role="img" aria-labelledby="loop-title loop-desc" xmlns="http://www.w3.org/2000/svg">
-        <title id="loop-title">The loop: find vulnerabilities, prove correctness, repeat</title>
-        <desc id="loop-desc">Two steps joined into a cycle. Red-teaming the running app finds vulnerabilities, proving correctness in Lean 4 rules them out, and the loop repeats with every change the AI ships.</desc>
+    <p class="coin-lead"><span class="coin-arrow">&#x27F9;</span> Web security needs both. Find the vulnerabilities, prove the correctness: two sides of one coin.</p>
+    <figure class="proof-flow coin-flow">
+      <svg class="proof-diagram coin-diagram" viewBox="0 30 1100 230" role="img" aria-labelledby="coin-title coin-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="coin-title">Two sides of one coin: find vulnerabilities, prove correctness</title>
+        <desc id="coin-desc">Two halves of web security joined by one coin. Red-teaming the running app finds the bugs nobody anticipated; proving correctness in Lean 4 establishes the rules you can state. h5i is the coin, one workspace for both.</desc>
         <defs>
-          <marker id="loop-arrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="currentColor" stroke-width="1.5"/></marker>
+          <radialGradient id="coin-face" cx="36%" cy="30%" r="75%"><stop offset="0" stop-color="#5a1f16"/><stop offset=".55" stop-color="#2a1210"/><stop offset="1" stop-color="#15090a"/></radialGradient>
         </defs>
-        <!-- One red fish swims the loop, behind the boxes so it ducks through each step -->
-        <g class="loop-fish" fill="var(--spot)" aria-hidden="true">
-          <ellipse cx="0" cy="0" rx="7" ry="2.8"/>
-          <path class="loop-fish-tail" d="M-5 0L-11 -3.5L-11 3.5Z"/>
-          <animateMotion dur="16s" repeatCount="indefinite" rotate="auto" path="M362 118C470 44 630 44 736 118C756 132 756 162 738 176C630 250 470 250 364 176C344 162 344 132 362 118Z"/>
-        </g>
         <!-- Find vulnerabilities -->
         <rect x="0" y="95" width="360" height="104" rx="10" fill="var(--panel)" stroke="var(--spot)" stroke-opacity=".8"/>
         <text x="28" y="124" class="pd-label pd-accent">01 / RED-TEAMING</text>
         <text x="28" y="153" class="pd-title">Find vulnerabilities</text>
-        <text x="28" y="178" class="pd-code">drive the app, replay, compare</text>
+        <text x="28" y="178" class="pd-code">the bugs nobody anticipated</text>
         <!-- Prove correctness -->
         <rect x="740" y="95" width="360" height="104" rx="10" fill="var(--panel)" stroke="var(--spot)" stroke-opacity=".8"/>
         <text x="764" y="124" class="pd-label pd-accent">02 / FORMAL VERIFICATION</text>
         <text x="764" y="153" class="pd-title">Prove correctness</text>
-        <text x="764" y="178" class="pd-code">state a rule, check its proof</text>
-        <!-- The two halves of the loop -->
-        <g fill="none" stroke="var(--spot)" stroke-width="1.5" style="color:var(--spot)">
-          <path class="loop-arc" d="M362 118C470 44 630 44 736 118" marker-end="url(#loop-arrowhead)"/>
-          <path class="loop-arc" d="M738 176C630 250 470 250 364 176" marker-end="url(#loop-arrowhead)"/>
-          <path class="loop-dash" d="M362 118C470 44 630 44 736 118"/>
-          <path class="loop-dash" d="M738 176C630 250 470 250 364 176"/>
+        <text x="764" y="178" class="pd-code">the rules you can state</text>
+        <!-- The coin between them: one object, two faces. It turns slowly and rests each time a face is square to the viewer. -->
+        <g stroke="var(--spot)" stroke-width="1.5" stroke-opacity=".45"><path d="M360 147H486"/><path d="M614 147H740"/></g>
+        <g class="coin-spin">
+          <!-- A thick disc turning at one speed. The far face and the band between the faces are the rim; the near face
+               slides one way while it shrinks and comes back in from the other side, which is what one direction looks like. -->
+          <g fill="#3b1511" stroke="var(--spot)" stroke-width="1.5" stroke-opacity=".7">
+            <ellipse cx="550" cy="147" rx="58" ry="58"><animate attributeName="stroke-width" values="1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;2.827;2.827;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;2.827;2.827;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500;1.500" keyTimes="0.00000;0.01488;0.02976;0.04464;0.05952;0.07441;0.08929;0.10416;0.11905;0.13393;0.14881;0.16369;0.17626;0.17857;0.17857;0.18088;0.19345;0.20834;0.22321;0.23809;0.25298;0.26786;0.28274;0.29762;0.31250;0.32738;0.34226;0.35714;0.50000;0.51488;0.52976;0.54464;0.55952;0.57441;0.58929;0.60416;0.61905;0.63393;0.64881;0.66369;0.67626;0.67857;0.67857;0.68088;0.69345;0.70834;0.72321;0.73809;0.75298;0.76786;0.78274;0.79762;0.81250;0.82738;0.84226;0.85714;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="linear"/><animate attributeName="cx" values="550.00;548.69;547.41;546.17;545.00;543.91;542.93;542.07;541.34;540.76;540.34;540.09;540.00;560.00;559.91;559.66;559.24;558.66;557.93;557.07;556.09;555.00;553.83;552.59;551.31;550.00;550.00;548.69;547.41;546.17;545.00;543.91;542.93;542.07;541.34;540.76;540.34;540.09;540.00;560.00;559.91;559.66;559.24;558.66;557.93;557.07;556.09;555.00;553.83;552.59;551.31;550.00;550.00" keyTimes="0.00000;0.01488;0.02976;0.04464;0.05952;0.07441;0.08929;0.10416;0.11905;0.13393;0.14881;0.16369;0.17857;0.17857;0.19345;0.20834;0.22321;0.23809;0.25298;0.26786;0.28274;0.29762;0.31250;0.32738;0.34226;0.35714;0.50000;0.51488;0.52976;0.54464;0.55952;0.57441;0.58929;0.60416;0.61905;0.63393;0.64881;0.66369;0.67857;0.67857;0.69345;0.70834;0.72321;0.73809;0.75298;0.76786;0.78274;0.79762;0.81250;0.82738;0.84226;0.85714;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="linear"/><animate attributeName="rx" values="58.00;57.50;56.02;53.59;50.23;46.01;41.01;35.31;29.00;22.20;15.01;7.57;0.15;0.15;7.57;15.01;22.20;29.00;35.31;41.01;46.01;50.23;53.59;56.02;57.50;58.00;58.00;57.50;56.02;53.59;50.23;46.01;41.01;35.31;29.00;22.20;15.01;7.57;0.15;0.15;7.57;15.01;22.20;29.00;35.31;41.01;46.01;50.23;53.59;56.02;57.50;58.00;58.00" keyTimes="0.00000;0.01488;0.02976;0.04464;0.05952;0.07441;0.08929;0.10416;0.11905;0.13393;0.14881;0.16369;0.17857;0.17857;0.19345;0.20834;0.22321;0.23809;0.25298;0.26786;0.28274;0.29762;0.31250;0.32738;0.34226;0.35714;0.50000;0.51488;0.52976;0.54464;0.55952;0.57441;0.58929;0.60416;0.61905;0.63393;0.64881;0.66369;0.67857;0.67857;0.69345;0.70834;0.72321;0.73809;0.75298;0.76786;0.78274;0.79762;0.81250;0.82738;0.84226;0.85714;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="linear"/></ellipse>
+            <rect x="550" y="89" width="0" height="116" stroke="none"><animate attributeName="x" values="550.00;548.69;547.41;546.17;545.00;543.91;542.93;542.07;541.34;540.76;540.34;540.09;540.00;540.00;540.09;540.34;540.76;541.34;542.07;542.93;543.91;545.00;546.17;547.41;548.69;550.00;550.00;548.69;547.41;546.17;545.00;543.91;542.93;542.07;541.34;540.76;540.34;540.09;540.00;540.00;540.09;540.34;540.76;541.34;542.07;542.93;543.91;545.00;546.17;547.41;548.69;550.00;550.00" keyTimes="0.00000;0.01488;0.02976;0.04464;0.05952;0.07441;0.08929;0.10416;0.11905;0.13393;0.14881;0.16369;0.17857;0.17857;0.19345;0.20834;0.22321;0.23809;0.25298;0.26786;0.28274;0.29762;0.31250;0.32738;0.34226;0.35714;0.50000;0.51488;0.52976;0.54464;0.55952;0.57441;0.58929;0.60416;0.61905;0.63393;0.64881;0.66369;0.67857;0.67857;0.69345;0.70834;0.72321;0.73809;0.75298;0.76786;0.78274;0.79762;0.81250;0.82738;0.84226;0.85714;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="linear"/><animate attributeName="width" values="0.00;2.61;5.18;7.65;10.00;12.18;14.14;15.87;17.32;18.48;19.32;19.83;20.00;20.00;19.83;19.32;18.48;17.32;15.87;14.14;12.18;10.00;7.65;5.18;2.61;0.00;0.00;2.61;5.18;7.65;10.00;12.18;14.14;15.87;17.32;18.48;19.32;19.83;20.00;20.00;19.83;19.32;18.48;17.32;15.87;14.14;12.18;10.00;7.65;5.18;2.61;0.00;0.00" keyTimes="0.00000;0.01488;0.02976;0.04464;0.05952;0.07441;0.08929;0.10416;0.11905;0.13393;0.14881;0.16369;0.17857;0.17857;0.19345;0.20834;0.22321;0.23809;0.25298;0.26786;0.28274;0.29762;0.31250;0.32738;0.34226;0.35714;0.50000;0.51488;0.52976;0.54464;0.55952;0.57441;0.58929;0.60416;0.61905;0.63393;0.64881;0.66369;0.67857;0.67857;0.69345;0.70834;0.72321;0.73809;0.75298;0.76786;0.78274;0.79762;0.81250;0.82738;0.84226;0.85714;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="linear"/></rect>
+          </g>
+          <g>
+            <animateTransform attributeName="transform" type="translate" values="0.00 0;1.31 0;2.59 0;3.83 0;5.00 0;6.09 0;7.07 0;7.93 0;8.66 0;9.24 0;9.66 0;9.91 0;10.00 0;-10.00 0;-9.91 0;-9.66 0;-9.24 0;-8.66 0;-7.93 0;-7.07 0;-6.09 0;-5.00 0;-3.83 0;-2.59 0;-1.31 0;-0.00 0;-0.00 0;1.31 0;2.59 0;3.83 0;5.00 0;6.09 0;7.07 0;7.93 0;8.66 0;9.24 0;9.66 0;9.91 0;10.00 0;-10.00 0;-9.91 0;-9.66 0;-9.24 0;-8.66 0;-7.93 0;-7.07 0;-6.09 0;-5.00 0;-3.83 0;-2.59 0;-1.31 0;-0.00 0;-0.00 0" keyTimes="0.00000;0.01488;0.02976;0.04464;0.05952;0.07441;0.08929;0.10416;0.11905;0.13393;0.14881;0.16369;0.17857;0.17857;0.19345;0.20834;0.22321;0.23809;0.25298;0.26786;0.28274;0.29762;0.31250;0.32738;0.34226;0.35714;0.50000;0.51488;0.52976;0.54464;0.55952;0.57441;0.58929;0.60416;0.61905;0.63393;0.64881;0.66369;0.67857;0.67857;0.69345;0.70834;0.72321;0.73809;0.75298;0.76786;0.78274;0.79762;0.81250;0.82738;0.84226;0.85714;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="linear"/>
+            <ellipse cx="550" cy="147" rx="58" ry="58" fill="#3b1511"><animate attributeName="rx" values="58.00;57.50;56.02;53.59;50.23;46.01;41.01;35.31;29.00;22.20;15.01;7.57;0.15;0.15;7.57;15.01;22.20;29.00;35.31;41.01;46.01;50.23;53.59;56.02;57.50;58.00;58.00;57.50;56.02;53.59;50.23;46.01;41.01;35.31;29.00;22.20;15.01;7.57;0.15;0.15;7.57;15.01;22.20;29.00;35.31;41.01;46.01;50.23;53.59;56.02;57.50;58.00;58.00" keyTimes="0.00000;0.01488;0.02976;0.04464;0.05952;0.07441;0.08929;0.10416;0.11905;0.13393;0.14881;0.16369;0.17857;0.17857;0.19345;0.20834;0.22321;0.23809;0.25298;0.26786;0.28274;0.29762;0.31250;0.32738;0.34226;0.35714;0.50000;0.51488;0.52976;0.54464;0.55952;0.57441;0.58929;0.60416;0.61905;0.63393;0.64881;0.66369;0.67857;0.67857;0.69345;0.70834;0.72321;0.73809;0.75298;0.76786;0.78274;0.79762;0.81250;0.82738;0.84226;0.85714;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="linear"/></ellipse>
+            <ellipse cx="550" cy="147" rx="58" ry="58" fill="url(#coin-face)" stroke="var(--spot)" stroke-width="2"><animate attributeName="rx" values="58.00;57.50;56.02;53.59;50.23;46.01;41.01;35.31;29.00;22.20;15.01;7.57;0.15;0.15;7.57;15.01;22.20;29.00;35.31;41.01;46.01;50.23;53.59;56.02;57.50;58.00;58.00;57.50;56.02;53.59;50.23;46.01;41.01;35.31;29.00;22.20;15.01;7.57;0.15;0.15;7.57;15.01;22.20;29.00;35.31;41.01;46.01;50.23;53.59;56.02;57.50;58.00;58.00" keyTimes="0.00000;0.01488;0.02976;0.04464;0.05952;0.07441;0.08929;0.10416;0.11905;0.13393;0.14881;0.16369;0.17857;0.17857;0.19345;0.20834;0.22321;0.23809;0.25298;0.26786;0.28274;0.29762;0.31250;0.32738;0.34226;0.35714;0.50000;0.51488;0.52976;0.54464;0.55952;0.57441;0.58929;0.60416;0.61905;0.63393;0.64881;0.66369;0.67857;0.67857;0.69345;0.70834;0.72321;0.73809;0.75298;0.76786;0.78274;0.79762;0.81250;0.82738;0.84226;0.85714;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="linear"/><animate attributeName="fill-opacity" values="1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;0.833;0.638;0.431;0.218;0.004;0.004;0.218;0.431;0.638;0.833;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;0.833;0.638;0.431;0.218;0.004;0.004;0.218;0.431;0.638;0.833;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000" keyTimes="0.00000;0.01488;0.02976;0.04464;0.05952;0.07441;0.08929;0.10416;0.11905;0.13393;0.14881;0.16369;0.17857;0.17857;0.19345;0.20834;0.22321;0.23809;0.25298;0.26786;0.28274;0.29762;0.31250;0.32738;0.34226;0.35714;0.50000;0.51488;0.52976;0.54464;0.55952;0.57441;0.58929;0.60416;0.61905;0.63393;0.64881;0.66369;0.67857;0.67857;0.69345;0.70834;0.72321;0.73809;0.75298;0.76786;0.78274;0.79762;0.81250;0.82738;0.84226;0.85714;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="linear"/><animate attributeName="stroke-width" values="2.000;2.000;2.000;2.000;2.000;2.000;2.000;2.000;1.917;1.819;1.716;1.609;1.519;2.829;2.829;1.519;1.609;1.716;1.819;1.917;2.000;2.000;2.000;2.000;2.000;2.000;2.000;2.000;2.000;2.000;2.000;2.000;2.000;2.000;2.000;2.000;1.917;1.819;1.716;1.609;1.519;2.829;2.829;1.519;1.609;1.716;1.819;1.917;2.000;2.000;2.000;2.000;2.000;2.000;2.000;2.000;2.000" keyTimes="0.00000;0.01488;0.02976;0.04464;0.05952;0.07441;0.08929;0.10416;0.11905;0.13393;0.14881;0.16369;0.17626;0.17857;0.17857;0.18088;0.19345;0.20834;0.22321;0.23809;0.25298;0.26786;0.28274;0.29762;0.31250;0.32738;0.34226;0.35714;0.50000;0.51488;0.52976;0.54464;0.55952;0.57441;0.58929;0.60416;0.61905;0.63393;0.64881;0.66369;0.67626;0.67857;0.67857;0.68088;0.69345;0.70834;0.72321;0.73809;0.75298;0.76786;0.78274;0.79762;0.81250;0.82738;0.84226;0.85714;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="linear"/><animate attributeName="stroke-opacity" values="1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;0.950;0.891;0.829;0.765;0.701;0.701;0.765;0.829;0.891;0.950;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;0.950;0.891;0.829;0.765;0.701;0.701;0.765;0.829;0.891;0.950;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000" keyTimes="0.00000;0.01488;0.02976;0.04464;0.05952;0.07441;0.08929;0.10416;0.11905;0.13393;0.14881;0.16369;0.17857;0.17857;0.19345;0.20834;0.22321;0.23809;0.25298;0.26786;0.28274;0.29762;0.31250;0.32738;0.34226;0.35714;0.50000;0.51488;0.52976;0.54464;0.55952;0.57441;0.58929;0.60416;0.61905;0.63393;0.64881;0.66369;0.67857;0.67857;0.69345;0.70834;0.72321;0.73809;0.75298;0.76786;0.78274;0.79762;0.81250;0.82738;0.84226;0.85714;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="linear"/></ellipse>
+            <g transform="translate(550 147)"><g>
+              <animateTransform attributeName="transform" type="scale" values="1.0000 1;0.9914 1;0.9659 1;0.9239 1;0.8660 1;0.7934 1;0.7071 1;0.6088 1;0.5000 1;0.3827 1;0.2588 1;0.1305 1;0.0026 1;0.0026 1;0.1305 1;0.2588 1;0.3827 1;0.5000 1;0.6088 1;0.7071 1;0.7934 1;0.8660 1;0.9239 1;0.9659 1;0.9914 1;1.0000 1;1.0000 1;0.9914 1;0.9659 1;0.9239 1;0.8660 1;0.7934 1;0.7071 1;0.6088 1;0.5000 1;0.3827 1;0.2588 1;0.1305 1;0.0026 1;0.0026 1;0.1305 1;0.2588 1;0.3827 1;0.5000 1;0.6088 1;0.7071 1;0.7934 1;0.8660 1;0.9239 1;0.9659 1;0.9914 1;1.0000 1;1.0000 1" keyTimes="0.00000;0.01488;0.02976;0.04464;0.05952;0.07441;0.08929;0.10416;0.11905;0.13393;0.14881;0.16369;0.17857;0.17857;0.19345;0.20834;0.22321;0.23809;0.25298;0.26786;0.28274;0.29762;0.31250;0.32738;0.34226;0.35714;0.50000;0.51488;0.52976;0.54464;0.55952;0.57441;0.58929;0.60416;0.61905;0.63393;0.64881;0.66369;0.67857;0.67857;0.69345;0.70834;0.72321;0.73809;0.75298;0.76786;0.78274;0.79762;0.81250;0.82738;0.84226;0.85714;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="linear"/><animate attributeName="opacity" values="1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;0.833;0.638;0.431;0.218;0.004;0.004;0.218;0.431;0.638;0.833;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;0.833;0.638;0.431;0.218;0.004;0.004;0.218;0.431;0.638;0.833;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000;1.000" keyTimes="0.00000;0.01488;0.02976;0.04464;0.05952;0.07441;0.08929;0.10416;0.11905;0.13393;0.14881;0.16369;0.17857;0.17857;0.19345;0.20834;0.22321;0.23809;0.25298;0.26786;0.28274;0.29762;0.31250;0.32738;0.34226;0.35714;0.50000;0.51488;0.52976;0.54464;0.55952;0.57441;0.58929;0.60416;0.61905;0.63393;0.64881;0.66369;0.67857;0.67857;0.69345;0.70834;0.72321;0.73809;0.75298;0.76786;0.78274;0.79762;0.81250;0.82738;0.84226;0.85714;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="linear"/>
+              <g transform="translate(-550 -147)">
+          <!-- heads: find vulnerabilities. A crosshair over the kernel of the mark. -->
+          <g class="coin-heads"><animate attributeName="opacity" values="1;0;1;1" keyTimes="0.00000;0.17857;0.67857;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="discrete"/>
+            <circle cx="550" cy="140" r="19" fill="none" stroke="var(--ink)" stroke-width="1.6" stroke-opacity=".8"/>
+            <path d="M550 115V128M550 152V165M525 140H538M562 140H575" stroke="var(--ink)" stroke-width="1.6" stroke-opacity=".8"/>
+            <circle cx="550" cy="140" r="4" fill="var(--spot)"/>
+            <text x="550" y="186" class="pd-label" text-anchor="middle">FIND</text>
+          </g>
+          <!-- tails: prove correctness. A check inside a ring, with the inner ring a coin's reverse has. -->
+          <g class="coin-tails" opacity="0"><animate attributeName="opacity" values="0;1;0;0" keyTimes="0.00000;0.17857;0.67857;1.00000" dur="8.4s" repeatCount="indefinite" calcMode="discrete"/>
+            <circle cx="550" cy="147" r="48" fill="none" stroke="var(--spot)" stroke-width="1" stroke-opacity=".5"/>
+            <circle cx="550" cy="140" r="19" fill="none" stroke="var(--ink)" stroke-width="1.6" stroke-opacity=".8"/>
+            <path d="M540 141l7 7 13-15" fill="none" stroke="var(--spot)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            <text x="550" y="186" class="pd-label" text-anchor="middle">PROVE</text>
+                </g>
+              </g>
+            </g></g>
+          </g>
         </g>
-        <text x="550" y="140" class="pd-label" text-anchor="middle">REPEAT</text>
-        <text x="550" y="160" class="pd-note" text-anchor="middle">with every change the AI ships</text>
+        <text x="550" y="70" class="pd-label" text-anchor="middle">ONE COIN</text>
+        <text x="550" y="236" class="pd-note" text-anchor="middle">web security needs both sides, and one workspace holds both</text>
       </svg>
     </figure>
   </div>
@@ -873,7 +923,7 @@
       <input class="tabpick" type="radio" name="edtab" id="ed-cargo">
       <svg class="proof-diagram" viewBox="0 0 1100 486" role="img" aria-labelledby="proof-title proof-desc" xmlns="http://www.w3.org/2000/svg">
         <title id="proof-title">From Rust application logic to Lean-checked properties</title>
-        <desc id="proof-desc">Aeneas extracts the Rust kernel of the bulletin board tutorial into Lean definitions. Developers supply specifications and proofs such as the authorized theorem. Lean checks the proofs against the extracted logic, establishing that every write is authorized, that invariants are preserved, and that no command panics.</desc>
+        <desc id="proof-desc">Aeneas extracts the Rust kernel of the bulletin board tutorial into Lean definitions. Developers supply theorems such as authorized, and the console's Apps view shows each theorem as proven, with the mutants its proof caught, over the latest verification receipt.</desc>
         <defs>
           <marker id="proof-arrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="currentColor" stroke-width="1.5"/></marker>
           <pattern id="proof-grid" width="18" height="18" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".7" fill="currentColor" opacity=".14"/></pattern>
@@ -938,74 +988,49 @@
         <text x="0" y="456" class="pd-code">The logic your app runs</text>
         <!-- Extraction connection. -->
         <g style="color:var(--spot)">
-          <path d="M388 232H418" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
+          <path d="M388 101H442" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
         </g>
-        <text x="403" y="212" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
-        <text x="403" y="258" class="pd-note" text-anchor="middle">extract</text>
-        <!-- Verification boundary: the extracted logic and the proofs you write, as two more editor tabs. -->
-        <rect x="428" y="44" width="400" height="376" rx="12" fill="url(#proof-grid)" style="color:var(--spot)"/>
-        <rect x="428" y="44" width="400" height="376" rx="12" fill="none" stroke="var(--spot)" stroke-opacity=".65"/>
-        <rect x="444" y="33" width="190" height="23" fill="var(--bg)"/>
-        <text x="453" y="49" class="pd-label pd-accent">LEAN 4 / VERIFICATION</text>
-        <rect x="444" y="68" width="368" height="152" rx="4" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M444 72a4 4 0 0 1 4-4h360a4 4 0 0 1 4 4v24H444z" fill="var(--bg)"/>
-        <path d="M444 96H812" stroke="var(--line2)"/>
-        <path d="M444 96V68h178v28" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M445 68.5H621" stroke="var(--spot)" stroke-width="2"/>
-        <circle cx="460" cy="82" r="3" fill="var(--spot)"/>
-        <text x="472" y="86" class="pd-text">BoardKernel.lean</text>
-        <text x="800" y="86" class="pd-label" text-anchor="end">EXTRACTED</text>
-        <g class="pd-ln" text-anchor="end">
-          <text x="472" y="118">465</text><text x="472" y="135">466</text><text x="472" y="152">467</text>
-          <text x="472" y="169">468</text><text x="472" y="186">469</text><text x="472" y="203">470</text>
-        </g>
+        <text x="415" y="81" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
+        <text x="415" y="127" class="pd-note" text-anchor="middle">extract</text>
+        <!-- The console, in a browser window: the Apps view reading this kernel's receipt. -->
+        <foreignObject x="452" y="176" width="648" height="236">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="browser-win pd-win">
+            <div class="win-bar"><span class="win-tab on"><i class="fav"></i>h5i console &#183; apps</span><span class="win-plus">+</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
+            <div class="bw-url"><span class="bw-nav">&#8592;</span><span class="bw-nav dim">&#8594;</span><span class="bw-nav">&#8635;</span><span class="bw-addr"><i class="lock"></i><span class="bw-text">localhost:8765/#/apps/board/theorems</span></span></div>
+            <div class="console-plate pd-ui">
+              <div class="pu-app">
+                <div class="pu-rail"><div class="pu-brand">h<b>5</b>i</div><div>Overview</div><div>Sessions</div><div>Sandboxes</div><div class="on">Apps</div><div>Host</div></div>
+                <div class="pu-main">
+                  <div class="pu-head"><b>board</b><code>examples/app/tutorials/board</code><span class="pu-pill">receipt &#183; just now</span></div>
+                  <div class="pu-tabs"><span>Spec</span><span class="on">Theorems <i>3</i></span><span>Trust boundary</span><span>Evidence</span></div>
+                  <table class="pu-table">
+                    <tr><th>theorem</th><th>status</th><th>mutants</th><th>axioms</th></tr>
+                    <tr><td><code>authorized</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">4 of 4 caught</span></td><td>standard</td></tr>
+                    <tr><td><code>inv_preserved</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">5 of 5 caught</span></td><td>standard</td></tr>
+                    <tr><td><code>transition_total</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">3 of 3 caught</span></td><td>standard</td></tr>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </foreignObject>
+        <!-- The proof you supply, in an editor of its own. -->
+        <text x="452" y="28" class="pd-label pd-accent">LEAN 4 / THE PROOF YOU SUPPLY</text>
+        <rect x="452" y="44" width="648" height="114" rx="6" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M452 50a6 6 0 0 1 6-6h636a6 6 0 0 1 6 6v22H452z" fill="var(--bg)"/>
+        <path d="M452 72H1100" stroke="var(--line2)"/>
+        <path d="M452 72V44h132v28" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M453 44.5H583" stroke="var(--spot)" stroke-width="2"/>
+        <circle cx="466" cy="58" r="3" fill="var(--spot)"/>
+        <text x="478" y="62" class="pd-text">Theorems.lean</text>
+        <g class="pd-ln" text-anchor="end"><text x="482" y="94">79</text><text x="482" y="111">80</text><text x="482" y="128">81</text><text x="482" y="145">82</text></g>
         <g class="pd-src" xml:space="preserve">
-          <text x="486" y="118"><tspan class="pd-kw">def</tspan> delete (user : U64) (s : Snapshot) (id : U64)</text>
-          <text x="486" y="135">    : Result &#x2026; := <tspan class="pd-kw">do</tspan></text>
-          <text x="486" y="152">  <tspan class="pd-kw">let</tspan> o &#x2190; find_post s.posts id</text>
-          <text x="486" y="169">  <tspan class="pd-kw">match</tspan> o <tspan class="pd-kw">with</tspan></text>
-          <text x="486" y="186">  | none =&gt; ok (.Err .NotFound)</text>
-          <text x="486" y="203">  | some p =&gt; <tspan class="pd-kw">if</tspan> p.author = user <tspan class="pd-kw">then</tspan> &#x2026;</text>
+          <text x="496" y="94"><tspan class="pd-kw">theorem</tspan> authorized (a : Principal) (s : Snapshot) (c : Command) ws r</text>
+          <text x="496" y="111">    (hinv : Inv (Snapshot.toSt s)) (h : transition a s c = .ok (.Ok (ws, r))) :</text>
+          <text x="496" y="128">    &#x2200; w &#x2208; ws.val, allowed (Snapshot.toSt s) a.user.val w</text>
+          <text x="496" y="145"><tspan class="pd-kw">    := by</tspan> &#x2026;</text>
         </g>
-        <rect x="444" y="236" width="368" height="172" rx="4" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M444 240a4 4 0 0 1 4-4h360a4 4 0 0 1 4 4v24H444z" fill="var(--bg)"/>
-        <path d="M444 264H812" stroke="var(--line2)"/>
-        <path d="M444 264V236h152v28" fill="var(--panel)" stroke="var(--line2)"/>
-        <path d="M445 236.5H595" stroke="var(--spot)" stroke-width="2"/>
-        <circle cx="460" cy="250" r="3" fill="var(--spot)"/>
-        <text x="472" y="254" class="pd-text">Theorems.lean</text>
-        <text x="800" y="254" class="pd-label pd-accent" text-anchor="end">YOU SUPPLY</text>
-        <g class="pd-ln" text-anchor="end">
-          <text x="472" y="286">77</text><text x="472" y="303">78</text><text x="472" y="320">79</text><text x="472" y="337">80</text>
-          <text x="472" y="354">81</text><text x="472" y="371">82</text><text x="472" y="388">83</text>
-        </g>
-        <g class="pd-src" xml:space="preserve">
-          <text x="486" y="286" class="pd-cm">/-- Every successful write is allowed. -/</text>
-          <text x="486" y="303"><tspan class="pd-kw">theorem</tspan> authorized (a : Principal) (s : Snapshot)</text>
-          <text x="486" y="320">    (c : Command) ws r (hinv : Inv (Snapshot.toSt s))</text>
-          <text x="486" y="337">    (h : transition a s c = .ok (.Ok (ws, r))) :</text>
-          <text x="486" y="354">    &#x2200; w &#x2208; ws.val,</text>
-          <text x="486" y="371">      allowed (Snapshot.toSt s) a.user.val w</text>
-          <text x="486" y="388"><tspan class="pd-kw">    := by</tspan> &#x2026;</text>
-        </g>
-        <text x="628" y="456" class="pd-code" text-anchor="middle">The extracted logic, checked against your specifications</text>
-        <!-- Output: properties established by the supplied proofs. -->
-        <path d="M840 232H876" fill="none" stroke="var(--spot)" stroke-width="1.5" style="color:var(--spot)" marker-end="url(#proof-arrowhead)"/>
-        <text x="858" y="212" class="pd-label pd-accent" text-anchor="middle">PASS</text>
-        <text x="888" y="28" class="pd-label">PROVEN PROPERTIES</text>
-        <g fill="none" stroke="var(--spot)" stroke-width="1.8">
-          <circle cx="899" cy="120" r="11"/><path d="M893 120l4 4 8-9"/>
-          <circle cx="899" cy="226" r="11"/><path d="M893 226l4 4 8-9"/>
-          <circle cx="899" cy="332" r="11"/><path d="M893 332l4 4 8-9"/>
-        </g>
-        <text x="920" y="125" class="pd-text">authorized</text>
-        <text x="888" y="151" class="pd-note">every write passes the policy</text>
-        <text x="920" y="231" class="pd-text">inv_preserved</text>
-        <text x="888" y="257" class="pd-note">invariants survive every step</text>
-        <text x="920" y="337" class="pd-text">transition_total</text>
-        <text x="888" y="363" class="pd-note">no panic, no overflow</text>
-        <path d="M888 168H1100M888 274H1100M888 380H1100" stroke="var(--line2)"/>
-        <text x="888" y="456" class="pd-code">Checked by Lean</text>
+        <text x="776" y="456" class="pd-code" text-anchor="middle">The proof you write, and its verdict in the console you already use</text>
       </svg>
     </figure>
     <div class="hero-actions">
@@ -1105,10 +1130,10 @@
 <script src="/_static/blog.js?v=41dbda103a" defer></script>
 <script src="/_static/highlight.js?v=ed81eee4e6" defer></script>
 <script>
-// SMIL ignores prefers-reduced-motion, so park the loop fish ourselves.
+// SMIL ignores prefers-reduced-motion, so park the turning coin ourselves.
 if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
-  var loopSvg = document.querySelector('.loop-diagram');
-  if (loopSvg && loopSvg.pauseAnimations) loopSvg.pauseAnimations();
+  var coinSvg = document.querySelector('.coin-diagram');
+  if (coinSvg && coinSvg.pauseAnimations) coinSvg.pauseAnimations();
 }
 // A school of small fish with one red one, Swimmy style. Plain boids.
 (function () {
