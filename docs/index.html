@@ -23,16 +23,16 @@
   <meta property="og:title" content="h5i: The Agent-Native Web Security Workspace">
   <meta property="og:description" content="h5i is an agent-native web security workspace. Red-team apps with a sandboxed browser and HTTP control, and formally verify Rust logic with h5i-app and Lean 4.">
   <meta property="og:url" content="https://h5i.dev/">
-  <meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
-  <meta property="og:image:alt" content="An h5i browser session: the page an agent is reading, beside the request log the engine wrote before any bytes moved">
+  <meta property="og:image" content="https://h5i.dev/_static/social-card.png">
+  <meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
   <meta property="og:locale" content="en_US">
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="h5i: The Agent-Native Web Security Workspace">
   <meta name="twitter:description" content="h5i is an agent-native web security workspace. Red-team apps with a sandboxed browser and HTTP control, and formally verify Rust logic with h5i-app and Lean 4.">
-  <meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
-  <meta name="twitter:image:alt" content="An h5i browser session: the page an agent is reading, beside the request log the engine wrote before any bytes moved">
+  <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
+  <meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
 
   <!-- Structured data -->
   <script type="application/ld+json">
@@ -123,7 +123,7 @@
       "about": {
         "@id": "https://h5i.dev/#app"
       },
-      "primaryImageOfPage": "https://h5i.dev/_static/sandboxed-browser-ui.png",
+      "primaryImageOfPage": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en"
     },
     {
@@ -154,7 +154,7 @@
           "name": "What is h5i?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "h5i is an open-source, agent-native workspace for secure web development. It provides browser and HTTP security testing, regression checks in CI, and configurable sandboxing. The companion i5h framework lets developers prove properties of Rust application logic in Lean 4; integration as h5i-app is planned."
+            "text": "h5i is an open-source, agent-native workspace for secure web development. It provides browser and HTTP security testing, regression checks in CI, and configurable sandboxing. Its h5i-app framework, an Axum-based Rust framework, lets developers prove properties of their application logic in Lean 4."
           }
         },
         {
@@ -162,7 +162,7 @@
           "name": "Do I need to rewrite my app in Rust?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No. The browser, HTTP testing tools, and security regression tests work with existing web applications in any language. The application framework is optional, for teams that want to write and verify application logic in Rust. It is available today in the separate i5h repository, with its own documentation and tutorials; its integration into h5i as h5i-app is planned."
+            "text": "No. The browser, HTTP testing tools, and security regression tests work with existing web applications in any language. The application framework is optional, for teams that want to write and verify application logic in Rust. It ships as h5i-app, with its documentation and tutorials in the h5i repository."
           }
         },
         {
@@ -1070,8 +1070,8 @@
       </div>
     </figure>
     <div class="hero-actions">
-      <a href="https://github.com/h5i-dev/i5h/tree/main/examples/tutorials" class="btn btn-primary">Explore the Rust tutorials</a>
-      <a href="https://i5h.dev/" class="btn btn-ghost">How the proofs work</a>
+      <a href="https://github.com/h5i-dev/h5i/tree/main/examples/app" class="btn btn-primary">Explore the Rust tutorials</a>
+      <a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/TRUST.md" class="btn btn-ghost">How the proofs work</a>
     </div>
   </div>
 </section>
@@ -1087,11 +1087,11 @@
     <div class="faq-list">
       <details class="faq-item" open>
         <summary>What is h5i?</summary>
-        <div class="faq-answer">h5i is an open-source, agent-native workspace for secure web development. It provides browser and HTTP security testing, regression checks in CI, and configurable sandboxing. The companion i5h framework lets developers prove properties of Rust application logic in Lean 4; integration as h5i-app is planned.</div>
+        <div class="faq-answer">h5i is an open-source, agent-native workspace for secure web development. It provides browser and HTTP security testing, regression checks in CI, and configurable sandboxing. Its h5i-app framework, an Axum-based Rust framework, lets developers prove properties of their application logic in Lean 4.</div>
       </details>
       <details class="faq-item">
         <summary>Do I need to rewrite my app in Rust?</summary>
-        <div class="faq-answer">No. The browser, HTTP testing tools, and security regression tests work with existing web applications in any language. The application framework is optional, for teams that want to write and verify application logic in Rust. It is available today in the separate i5h repository, with its own documentation and tutorials; its integration into h5i as h5i-app is planned.</div>
+        <div class="faq-answer">No. The browser, HTTP testing tools, and security regression tests work with existing web applications in any language. The application framework is optional, for teams that want to write and verify application logic in Rust. It ships as h5i-app, with its documentation and tutorials in the h5i repository.</div>
       </details>
       <details class="faq-item">
         <summary>Does a proof mean my entire app is secure?</summary>

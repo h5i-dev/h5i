@@ -1,14 +1,19 @@
 # h5i
 
-> h5i ("high-five") brings professional red-teaming to every team. It is an open-source toolkit that lets your AI agent test your web application from an attacker's perspective, so you do not need to be a security expert to start. The agent drives a browser session by id, reads the page as an outline with @ref handles, and then works the traffic that session produced: read a captured message byte for byte, change one field, send it again, compare the answers. The engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused. A request that is not in the log did not happen. Replay travels that same path, so it is not a side channel around scope. Sessions run on the host by default with no containment claimed, and one flag places the same session inside a sandbox, which adds an egress allowlist enforced outside the browser. Use h5i only against systems you own or are explicitly authorized to test.
+> h5i ("high-five") is an agent-native web security workspace: build with agents, red-team for bugs, formally verify properties. Red-teaming finds the bugs nobody anticipated in a running app on any stack, and formal verification proves the rules you can state, so you do not need to be a security expert to start.
+>
+> On the red-teaming side, your AI agent drives a browser session by id, reads the page as an outline with @ref handles, and then works the traffic that session produced: read a captured message byte for byte, change one field, send it again, compare the answers. The engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused. A request that is not in the log did not happen. Replay travels that same path, so it is not a side channel around scope. Sessions run on the host by default with no containment claimed, and one flag places the same session inside a sandbox, which adds an egress allowlist enforced outside the browser. Use h5i only against systems you own or are explicitly authorized to test.
+>
+> On the verification side, h5i-app is an Axum-based Rust framework whose application logic is extracted to Lean 4 and proven there, from tenant isolation and authorization to the app's own state invariants. h5i app runs that loop.
 
 ## Start here
 
-- [Features](https://h5i.dev/features/): Product overview: automated browsing, reconnaissance, HTTP capture and editing, the limits you place around the agent, and the review surface.
+- [Features](https://h5i.dev/features/): Product overview: automated browsing, reconnaissance, HTTP capture and editing, the limits you place around the agent, the review surface, and h5i-app for Lean 4 proofs.
 - [Run an authorized web security test](https://h5i.dev/guides/authorized-web-security-testing/): Scope a session to one target, inventory its endpoints, replay one request, and close with the evidence intact.
 - [Drive a browser session](https://h5i.dev/guides/drive-a-browser-session/): Open a session, read the page, act on it, and read back what it reached.
 - [AI pentesting tools compared](https://h5i.dev/blog/ai-pentesting-tools/): Burp Suite, OWASP ZAP, Caido, and h5i, chosen by what you delegate to AI.
 - [Manual](https://h5i.dev/manual/): Authoritative command, policy, receipt, and limitation reference.
+- [h5i-app](https://github.com/h5i-dev/h5i/blob/main/crates/h5i-app/README.md): The Axum-based Rust framework whose logic is proven in Lean 4, with the kernel, the server around it, and the proof workflow.
 
 ## The web security tutorial
 
@@ -106,6 +111,17 @@ Ten articles that walk the 42 runnable labs in h5i-dev/h5i-tutorial, from recon 
 - h5i box export produces patch.diff, report.md, and receipt.json, and writes browser/<id>.json for each session placed in the box.
 - h5i is local-first, Apache-2.0, and requires no hosted sandbox or SaaS account.
 
+## h5i-app and formal verification
+
+- h5i-app is optional. The browser, websec, recon, and test work with existing web applications in any language.
+- An application keeps its logic in a kernel crate: one pure Rust function decides what each command does, and handlers never touch the database.
+- Charon and Aeneas translate the kernel to Lean 4, where theorems about it are ordinary Lean.
+- Proofs cover the rows loaded back from PostgreSQL and properties across requests, for every order in which they commit.
+- h5i app new, extract, check, prove, lint, mutate, and doctor run the loop. check rejects sorry, native_decide, and axioms beyond propext, Classical.choice, and Quot.sound.
+- extract --check fails when the generated Lean is not what the kernel extracts to, which is the CI gate.
+- mutate plants bugs in the kernel; one that breaks no proof is behaviour the spec does not pin down.
+- What is proven and what is assumed is written down in docs/app/TRUST.md: PostgreSQL semantics, SERIALIZABLE isolation, the engine contract, and the translation toolchain are assumed.
+
 ## Honest limits
 
 - h5i cannot grant authorization or infer scope from a URL. Record the permitted hosts, accounts, techniques, request rate, and time window before running an agent.
@@ -115,7 +131,7 @@ Ten articles that walk the 42 runnable labs in h5i-dev/h5i-tutorial, from recon 
 - The capture store can hold credentials and personal data in full. Treat it as sensitive test evidence and redact it before sharing an artifact.
 - With the default cross-origin refusal in force h5i cannot act as the victim, so a negative CSRF result means h5i declined, not that the target is safe.
 - A session on the host is not sandboxed and h5i does not claim it is. Containment is the --in flag.
-- The engine is not a complete browser: canvas, WebSockets, Workers, and IndexedDB are absent. Of twenty single-page applications measured, eighteen read usefully and one not at all.
+- The engine is not a complete browser. Of twenty single-page applications measured, eighteen read usefully and one not at all. Tabs, extensions, iframes, Service Workers, Web Workers, WebRTC, and WebGL are absent, and a page that needs a missing API gets it named in the snapshot.
 - For a target the engine cannot read, run Chromium inside a box and accept the tier's boundary in place of engine-level capture.
 - h5i does not classify page content. It bounds what a persuaded agent can reach rather than detecting persuasion.
 - A boxed session needs a tier that can hold a resident process, and not every tier that enforces egress can.

@@ -11,12 +11,18 @@ what the commands are *for*.
 
 ## What h5i is
 
-> Give an AI agent a browser it can drive and you can audit. Every request is
-> policy-checked and written down before the bytes move, and the fetch is
-> refused when the record cannot be written.
+> Build with agents. Red-team for bugs. Formally verify properties.
 
-*h5i* (pronounced *high-five*) is a red-teaming browser for AI agents. An agent
-drives a session by name, reads the page as an outline with `@ref` handles, and
+*h5i* (pronounced *high-five*) is an agent-native web security workspace with
+two halves. Red-teaming finds the bugs nobody anticipated, in a running app on
+any stack. Formal verification proves the rules you can state: an application
+built on h5i-app keeps its logic in a Rust kernel that is proven in Lean 4, and
+[`h5i app`](#h5i-app) runs that loop. Most of this manual is the red-teaming
+half, because that is where the commands are.
+
+On the red-teaming side, every request is policy-checked and written down
+before the bytes move, and the fetch is refused when the record cannot be
+written. An agent drives a session by name, reads the page as an outline with `@ref` handles, and
 works on the traffic that page produced: inspect it, change one field, send it
 again, compare what came back. The page and its traffic are one session, because
 the engine *is* the HTTP client.

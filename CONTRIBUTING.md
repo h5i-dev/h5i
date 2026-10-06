@@ -1,10 +1,13 @@
 # Contributing to h5i
 
-h5i gives an agent a browser it can drive and a human can audit. The engine is
-the HTTP client, so every request is policy-checked and written to the session
-log before the bytes move, and a fetch that cannot be recorded is refused. A box
-is a second boundary, taken on request with `--in <box>` rather than built into
-the browser.
+h5i is an agent-native web security workspace with two halves. The red-teaming
+half gives an agent a browser and direct HTTP control over a running app, with
+every request policy-checked and written to the session log before the bytes
+move; a fetch that cannot be recorded is refused, and a box is a second
+boundary, taken on request with `--in <box>`. The formal verification half is
+h5i-app, an Axum-based Rust framework whose application logic is proven in
+Lean 4. One finds the bugs nobody anticipated, the other proves the rules you
+can state.
 
 `docs/ROADMAP.md` is the scope authority. Read it before proposing a feature.
 

@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i manual: CLI reference for the AI agent browser</title>
-  <meta name="description" content="Every h5i command: browser sessions and their audit, the five isolation tiers, the .h5i/env.toml policy, the credential broker, receipts, and the honest limits.">
-  <meta name="keywords" content="h5i manual, h5i cli reference, h5i browser, h5i browser open, h5i browser snapshot, h5i browser audit, agent browser cli, h5i box, isolation tiers, env.toml policy, egress allowlist, credential broker, execution receipt, claude code, codex">
+  <title>h5i manual: CLI reference for the web security workspace</title>
+  <meta name="description" content="Every h5i command: browser sessions, recon and websec, the five isolation tiers, the env.toml policy, h5i app for Lean 4 proofs, and the honest limits.">
+  <meta name="keywords" content="h5i manual, h5i cli reference, h5i browser, h5i browser open, h5i browser snapshot, h5i browser audit, agent browser cli, h5i box, isolation tiers, env.toml policy, egress allowlist, credential broker, execution receipt, h5i app, h5i-app, lean 4, claude code, codex">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -16,23 +16,23 @@
   <link rel="apple-touch-icon" href="/_static/logo.png">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i manual: CLI reference for the AI agent browser">
-  <meta property="og:description" content="Every h5i command: the browser session verbs, the five isolation tiers, the checked-in policy model, the credential broker, execution receipts, and the limits h5i declines to claim.">
+  <meta property="og:title" content="h5i manual: CLI reference for the web security workspace">
+  <meta property="og:description" content="Every h5i command: browser sessions, recon and websec, the five isolation tiers, the env.toml policy, h5i app for Lean 4 proofs, and the honest limits.">
   <meta property="og:url" content="https://h5i.dev/manual/">
-  <meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
-  <meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
+  <meta property="og:image" content="https://h5i.dev/_static/social-card.png">
+  <meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
   <meta property="og:locale" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i manual: CLI reference for the AI agent browser">
-  <meta name="twitter:description" content="The complete CLI reference for h5i: the auditable browser for AI agents, and the sandbox a session can be placed in.">
-  <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
-  <meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
+  <meta name="twitter:title" content="h5i manual: CLI reference for the web security workspace">
+  <meta name="twitter:description" content="Every h5i command: browser sessions, recon and websec, the five isolation tiers, the env.toml policy, h5i app for Lean 4 proofs, and the honest limits.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
+  <meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
 
   <script type="application/ld+json">
   {"@context":"https://schema.org","@graph":[
     {"@type":"TechArticle","@id":"https://h5i.dev/manual/#article",
-     "headline":"h5i manual: CLI reference for the AI agent browser",
-     "description":"Every h5i command: the browser session verbs and their audit, h5i box, the five isolation tiers, the .h5i/env.toml policy model, the credential broker, execution receipts, and the honest limits.",
+     "headline":"h5i manual: CLI reference for the web security workspace",
+     "description":"Every h5i command: browser sessions, recon and websec, the five isolation tiers, the env.toml policy, h5i app for Lean 4 proofs, and the honest limits.",
      "url":"https://h5i.dev/manual/",
      "inLanguage":"en",
      "isPartOf":{"@type":"WebSite","name":"h5i","url":"https://h5i.dev/"},
@@ -40,7 +40,7 @@
      "author":{"@type":"Organization","name":"h5i-dev"},
      "publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},
      "proficiencyLevel":"Beginner",
-     "keywords":"h5i browser, agent browser CLI, browser audit log, h5i box, isolation tiers, microvm, env.toml policy, egress allowlist, credential broker, execution receipt"},
+     "keywords":"h5i browser, agent browser CLI, browser audit log, h5i box, isolation tiers, microvm, env.toml policy, egress allowlist, credential broker, execution receipt, h5i app, Lean 4"},
     {"@type":"BreadcrumbList","@id":"https://h5i.dev/manual/#breadcrumb","itemListElement":[
       {"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},
       {"@type":"ListItem","position":2,"name":"Manual","item":"https://h5i.dev/manual/"}]}
@@ -263,12 +263,17 @@ what the commands are <em>for</em>.</p>
 <hr />
 <h2 id="what-h5i-is">What h5i is</h2>
 <blockquote>
-<p>Give an AI agent a browser it can drive and you can audit. Every request is
-policy-checked and written down before the bytes move, and the fetch is
-refused when the record cannot be written.</p>
+<p>Build with agents. Red-team for bugs. Formally verify properties.</p>
 </blockquote>
-<p><em>h5i</em> (pronounced <em>high-five</em>) is a red-teaming browser for AI agents. An agent
-drives a session by name, reads the page as an outline with <code>@ref</code> handles, and
+<p><em>h5i</em> (pronounced <em>high-five</em>) is an agent-native web security workspace with
+two halves. Red-teaming finds the bugs nobody anticipated, in a running app on
+any stack. Formal verification proves the rules you can state: an application
+built on h5i-app keeps its logic in a Rust kernel that is proven in Lean 4, and
+<a href="#h5i-app"><code>h5i app</code></a> runs that loop. Most of this manual is the red-teaming
+half, because that is where the commands are.</p>
+<p>On the red-teaming side, every request is policy-checked and written down
+before the bytes move, and the fetch is refused when the record cannot be
+written. An agent drives a session by name, reads the page as an outline with <code>@ref</code> handles, and
 works on the traffic that page produced: inspect it, change one field, send it
 again, compare what came back. The page and its traffic are one session, because
 the engine <em>is</em> the HTTP client.</p>

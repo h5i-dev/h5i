@@ -41,7 +41,7 @@ h5i-app-token = { path = "crates/h5i-app-token", version = "0.1.0" }
 name = "h5i"
 version = "0.4.9"
 edition = "2024"
-description = "h5i — security-first browser for AI agents (CLI)."
+description = "h5i: the agent-native web security workspace. Red-team web apps with a browser and HTTP control, and prove application logic in Lean 4 (CLI)."
 
 [lib]
 name = "h5i"
