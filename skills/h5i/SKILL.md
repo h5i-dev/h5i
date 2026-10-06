@@ -1,13 +1,15 @@
 ---
 name: h5i
-description: Red-team a web application under authorization by driving pages, capturing the HTTP traffic that produced them, inventorying what the target exposes, and replaying mutated requests with auditable evidence. Also covers ordinary browsing and scraping, and running untrusted or agent-written code inside disposable confined boxes with reviewed export.
+description: Red-team a web application under authorization by driving pages, capturing the HTTP traffic that produced them, inventorying what the target exposes, and replaying mutated requests with auditable evidence. Also covers ordinary browsing and scraping, running untrusted or agent-written code inside disposable confined boxes with reviewed export, and proving an h5i-app backend's logic in Lean 4 with `h5i app`.
 ---
 
 # Driving h5i
 
-h5i is a red-teaming browser for agents. The engine is the HTTP client, so the
-page you drove and the traffic you test are one session, and the request log is
-a decision record written before the bytes moved. Every message carries the id
+h5i is an agent-native web security workspace: red-team the running app for
+bugs, and formally verify the properties you can state. On the red-teaming side
+the engine is the HTTP client, so the page you drove and the traffic you test
+are one session, and the request log is a decision record written before the
+bytes moved. Every message carries the id
 you cite it by. Use `h5i <command> --help` before guessing flags.
 
 | Need | Use | Read |
@@ -17,6 +19,7 @@ you cite it by. Use `h5i <command> --help` before guessing flags.
 | Inspect, mutate and replay that traffic | `h5i websec` (a plugin) | [references/websec.md](references/websec.md) |
 | Hunt for high-impact bug-bounty findings | impact-first research loop | [references/impactful-bug-bounty.md](references/impactful-bug-bounty.md) |
 | Contain the work | `h5i box` | [references/boxes.md](references/boxes.md) |
+| Prove an h5i-app kernel in Lean 4 | `h5i app` | `h5i app --help` |
 
 ## The loop
 
@@ -134,3 +137,20 @@ for one when the code is untrusted or agent-written, or when the traffic needs a
 boundary outside the browser. Inside a box `$H5I_ENV_ID` is set: work normally,
 and do not create another box or pass `--in` to a browser command. Read
 [references/boxes.md](references/boxes.md) before driving one.
+
+## h5i-app
+
+h5i-app is the Axum-based Rust framework whose logic is proven in Lean 4. The
+kernel is pure Rust; `h5i app` extracts it to Lean and gates the proofs.
+
+```bash
+h5i app new ./ledger        # kernel crate, Lake project, h5i-app.toml
+h5i app doctor              # Charon, Aeneas and Lean at the pinned versions
+h5i app prove               # extract, then check: no sorry, native_decide or stray axiom
+h5i app lint                # mutating routes take an Actor; no client-set identity
+h5i app mutate              # a bug that breaks no proof is behaviour the spec leaves open
+```
+
+- Say proven only for what `check` passed. What a proof assumes is listed in
+  `docs/app/TRUST.md`; repeat the relevant assumption rather than drop it.
+- `extract --check` fails when `proofs/generated/` is stale. Run it in CI.

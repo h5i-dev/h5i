@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i Features: AI Red Teaming, Recon and Sandboxing</title>
-  <meta name="description" content="Explore h5i features for AI red teaming: automated browsing, recon, HTTP capture and editing, configurable sandboxing, and auditable sessions.">
+  <title>h5i Features: Red-Teaming and Formal Verification</title>
+  <meta name="description" content="h5i features: agent browsing, recon, and HTTP capture and replay for red-teaming, sandboxed and audited, plus h5i-app for Lean 4 proofs of app logic.">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -19,20 +19,20 @@
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i Features: AI Red Teaming, Recon and Sandboxing">
-  <meta property="og:description" content="Explore h5i features for AI red teaming: automated browsing, recon, HTTP capture and editing, configurable sandboxing, and auditable sessions.">
+  <meta property="og:title" content="h5i Features: Red-Teaming and Formal Verification">
+  <meta property="og:description" content="h5i features: agent browsing, recon, and HTTP capture and replay for red-teaming, sandboxed and audited, plus h5i-app for Lean 4 proofs of app logic.">
   <meta property="og:url" content="https://h5i.dev/features/">
-  <meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
-  <meta property="og:image:width" content="2293">
-  <meta property="og:image:height" content="901">
-  <meta property="og:image:alt" content="The h5i box console: every box with its tier, status and one signal on the left, and on the right the refused-egress finding, a flight recorder of one row per receipt across five lanes, and the policy that was actually enforced">
+  <meta property="og:image" content="https://h5i.dev/_static/social-card.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="629">
+  <meta property="og:image:alt" content="h5i: the agent-native web security workspace. Red-team for bugs. Prove correctness.">
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i Features: AI Red Teaming, Recon and Sandboxing">
-  <meta name="twitter:description" content="Explore h5i features for AI red teaming: automated browsing, recon, HTTP capture and editing, configurable sandboxing, and auditable sessions.">
-  <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
-  <meta name="twitter:image:alt" content="The h5i box console: every box with its tier, status and one signal on the left, and on the right the refused-egress finding, a flight recorder of one row per receipt across five lanes, and the policy that was actually enforced">
+  <meta name="twitter:title" content="h5i Features: Red-Teaming and Formal Verification">
+  <meta name="twitter:description" content="h5i features: agent browsing, recon, and HTTP capture and replay for red-teaming, sandboxed and audited, plus h5i-app for Lean 4 proofs of app logic.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
+  <meta name="twitter:image:alt" content="h5i: the agent-native web security workspace. Red-team for bugs. Prove correctness.">
 
   <!-- Structured data -->
   <script type="application/ld+json">
@@ -60,7 +60,7 @@
       "name": "h5i",
       "alternateName": "high-five",
       "url": "https://h5i.dev/",
-      "description": "The red-teaming browser for AI agents. h5i combines page automation, recon and HTTP testing plugins, configurable sandboxing, and auditable sessions.",
+      "description": "h5i is an agent-native web security workspace. Red-team apps with a sandboxed browser and HTTP control, and formally verify Rust logic with h5i-app and Lean 4.",
       "publisher": {
         "@id": "https://h5i.dev/#org"
       },
@@ -72,25 +72,26 @@
       "name": "h5i",
       "alternateName": "high-five",
       "applicationCategory": "DeveloperApplication",
-      "applicationSubCategory": "Red-teaming browser for AI agents",
+      "applicationSubCategory": "Web security workspace for AI agents: red-teaming and formal verification",
       "operatingSystem": "Linux, macOS, Windows (WSL2)",
-      "description": "h5i is an open-source browser for AI red teaming, built in Rust without Chromium or V8. Optional recon and websec plugins provide application reconnaissance and HTTP traffic testing. Configurable sandboxing restricts agent access, and session records support auditing.",
+      "description": "h5i is an agent-native web security workspace. Red-team apps with a sandboxed browser and HTTP control, and formally verify Rust logic with h5i-app and Lean 4.",
       "featureList": [
-        "Automated browsing with compact snapshots and element references",
+        "Headless browser automation and compact snapshots with @ref handles for AI agents",
+        "HTTP capture, inspection, editing, replay, and response comparison through the websec plugin",
+        "Multi-step test flows that replay findings in CI with your own oracle",
+        "Configurable sandboxing for the browser or the entire agent workflow",
+        "Network policies that restrict destinations and record denied requests",
+        "Auditable browser actions and network requests",
+        "Credential isolation and human takeover for sensitive steps",
         "Pure Rust, no Chromium or V8",
-        "Optional recon plugin for endpoint extraction, bounded crawling, calibration, and evidence-linked inventories",
-        "Optional websec plugin for HTTP capture, editing, replay, comparison, and repeatable tests",
-        "Configurable sandboxing for the browser or entire agent workflow",
-        "Network and filesystem policies with enforcement depending on the isolation tier",
-        "Credential isolation and human takeover",
-        "Auditable browser sessions and a dashboard with host and sandbox records",
-        "Reviewable patches, reports, and execution receipts",
-        "Read-only dependency caches and scoped development-server sharing"
+        "h5i-app, an Axum-based Rust framework whose application logic is formally verified in Lean 4",
+        "Lean proofs of tenant isolation, authorization, and business state invariants",
+        "About 3x faster reads with about 86% less peak memory than headless Chromium on simple websites in our benchmarks"
       ],
-      "keywords": "AI agents, red teaming, application reconnaissance, HTTP capture and replay, browser automation, sandboxing, auditing",
+      "keywords": "web security, AI agents, red teaming, penetration testing, bug bounty, headless browser, HTTP interception, security regression testing, CI/CD, formal verification, Lean 4, Axum, Rust, h5i-app, sandboxing",
       "url": "https://h5i.dev/",
       "downloadUrl": "https://github.com/h5i-dev/h5i",
-      "installUrl": "https://h5i.dev/features/#cta",
+      "installUrl": "https://h5i.dev/#quickstart",
       "softwareHelp": "https://h5i.dev/manual/",
       "softwareRequirements": "Rootless Podman for the container tier; microsandbox (msb) and hardware virtualization for the microvm tier",
       "isAccessibleForFree": true,
@@ -114,6 +115,14 @@
       "@type": "FAQPage",
       "@id": "https://h5i.dev/features/#faq",
       "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Do I need h5i-app to use the red-teaming tools?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. The browser, HTTP testing tools, and security regression tests work with existing web applications in any language. h5i-app is optional, for teams that want to write their application logic in Rust and prove it in Lean 4."
+          }
+        },
         {
           "@type": "Question",
           "name": "Are recon and websec included with the browser?",
@@ -169,10 +178,10 @@
       "about": {
         "@id": "https://h5i.dev/#app"
       },
-      "primaryImageOfPage": "https://h5i.dev/_static/sandbox-ui-demo.png",
+      "primaryImageOfPage": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
-      "name": "h5i Features: AI Red Teaming, Recon and Sandboxing",
-      "description": "Explore h5i features for AI red teaming: automated browsing, recon, HTTP capture and editing, configurable sandboxing, and auditable sessions."
+      "name": "h5i Features: Red-Teaming and Formal Verification",
+      "description": "h5i features: agent browsing, recon, and HTTP capture and replay for red-teaming, sandboxed and audited, plus h5i-app for Lean 4 proofs of app logic."
     }
   ]
 }
@@ -273,13 +282,13 @@
   <div class="container">
     <div class="section-head reveal">
       <span class="section-tag">Features</span>
-      <h1 class="section-title">Features for red teaming with AI agents.</h1>
-      <p class="section-sub">Automate browsing, discover application endpoints with recon, and inspect or edit HTTP traffic with websec.
-        Configure sandbox limits and audit the resulting sessions.</p>
+      <h1 class="section-title">Find vulnerabilities. Prove correctness.</h1>
+      <p class="section-sub">Red-team the running app on any stack: automate browsing, discover endpoints with recon, and inspect or edit HTTP traffic with websec,
+        inside sandbox limits you set and audit afterwards. Then prove the rules you can state with h5i-app and Lean 4.</p>
       <div class="divider"></div>
     </div>
-    <p class="section-sub">The browser runs on its own; recon and websec are optional plugins.
-      <a href="/manual/#h5i-plugin">Plugin installation &#8594;</a></p>
+    <p class="section-sub">The browser runs on its own; recon and websec are optional plugins, and h5i-app is an optional framework.
+      <a href="/manual/#h5i-plugin">Plugin installation &#8594;</a> &middot; <a href="#verify">Formal verification &#8594;</a></p>
   </div>
 </section>
 
@@ -539,6 +548,33 @@
   </div>
 </section>
 
+<section id="verify">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">h5i-app</span>
+      <h2 class="section-title">Prove the application logic</h2>
+      <p class="section-sub">Build the backend on h5i-app, an Axum-based Rust framework, and prove its logic in Lean 4: tenant isolation, authorization, and your own state invariants. <a href="https://github.com/h5i-dev/h5i/blob/main/crates/h5i-app/README.md">Framework guide &#8594;</a></p>
+    </div>
+    <div class="feat-grid">
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i app new &#183; extract</span>
+        <h3 class="feat-name">Logic as a pure Rust kernel</h3>
+        <div class="feat-desc">One function decides what each command does, and handlers never touch the database. Charon and Aeneas translate the kernel to Lean, where theorems about it are ordinary Lean.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i app prove</span>
+        <h3 class="feat-name">Proofs that hold for every request order</h3>
+        <div class="feat-desc">Prove invariants for the rows loaded back from PostgreSQL, and properties across requests for every order in which they commit. The gate rejects <code>sorry</code>, <code>native_decide</code>, and stray axioms.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i app lint &#183; mutate</span>
+        <h3 class="feat-name">Check what the proofs cannot see</h3>
+        <div class="feat-desc">Lint that every mutating route takes an authenticated actor, and plant bugs in the kernel to see whether a proof catches each one. What is proven and what is assumed is written down in <a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/TRUST.md">TRUST.md</a>.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="usecases">
   <span id="working" aria-hidden="true"></span>
   <div class="container">
@@ -574,6 +610,10 @@
     </div>
     <div class="faq-list">
       <details class="faq-item">
+        <summary>Do I need h5i-app to use the red-teaming tools?</summary>
+        <div class="faq-answer">No. The browser, HTTP testing tools, and security regression tests work with existing web applications in any language. h5i-app is optional, for teams that want to write their application logic in Rust and prove it in Lean 4.</div>
+      </details>
+      <details class="faq-item">
         <summary>Are recon and websec included with the browser?</summary>
         <div class="faq-answer">They are optional plugins. The installer accepts --recon and --websec to install them alongside h5i. Recon builds an endpoint inventory; websec inspects and tests HTTP traffic.</div>
       </details>
@@ -601,8 +641,8 @@
   <div class="cta-glow"></div>
   <div class="container">
     <div class="cta-inner">
-      <h2 class="cta-title">Equip your AI agent for web red teaming.</h2>
-      <p class="cta-sub">Install h5i with the recon and websec plugins. Local-first, open source, Apache 2.0.</p>
+      <h2 class="cta-title">Red-team for bugs. Formally verify properties.</h2>
+      <p class="cta-sub">Install h5i with the recon and websec plugins, and add h5i-app when you want proofs. Local-first, open source, Apache 2.0.</p>
       <div class="hero-install">
         <code>curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon</code>
         <button class="copy-btn" type="button">copy</button>
@@ -610,6 +650,7 @@
       <div class="hero-actions">
         <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">View on GitHub</a>
         <a href="/manual/" class="btn btn-ghost">Read the manual</a>
+        <a href="https://crates.io/crates/h5i-app" class="btn btn-ghost">Explore the framework</a>
       </div>
       <p class="cta-sub">Compare with <a href="/blog/burp-suite-vs-h5i-for-ai-agents/">Burp Suite</a>,
         <a href="/blog/owasp-zap-vs-h5i-for-ai-agents/">OWASP ZAP</a>, or

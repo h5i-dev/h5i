@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>
 <title>The h5i Blog</title><link>https://h5i.dev/blog/</link>
 <description>Design essays on giving an AI agent a browser you can audit: boundaries, evidence, and what a request log has to prove.</description>
-<language>en-us</language><lastBuildDate>Sun, 13 Sep 2026 12:00:00 GMT</lastBuildDate>
+<language>en-us</language><lastBuildDate>Tue, 06 Oct 2026 12:00:00 GMT</lastBuildDate>
 <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="https://h5i.dev/feed.xml" rel="self" type="application/rss+xml"/>
     <item><title>AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?</title><link>https://h5i.dev/blog/ai-pentesting-tools/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/ai-pentesting-tools/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>

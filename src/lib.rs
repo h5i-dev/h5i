@@ -1,4 +1,4 @@
-//! `h5i`: the red-teaming browser for AI agents.
+//! `h5i`: the agent-native web security workspace.
 //!
 //! The library owns the whole CLI: the top-level `Cli`/`Commands` parse, the
 //! argument bootstrap, and the dispatch into `cli/`, where every noun's clap enum
@@ -17,12 +17,11 @@ pub mod cli;
 #[derive(Parser)]
 #[command(
     name = "h5i",
-    // What the product is now. It read "Disposable, confined development
-    // environments for coding agents" until 2026-09-10, which was the
-    // positioning before the pivot (docs/ROADMAP.md) and had outlived the
-    // README, the site and the skill.
-    about = "The red-teaming browser for AI agents: page automation with direct control over \
-             HTTP traffic, in sessions that stay contained and auditable",
+    // What the product is now. It read "The red-teaming browser for AI agents"
+    // until 2026-10-05, before h5i-app joined the workspace (docs/ROADMAP.md).
+    about = "The agent-native web security workspace: red-team web apps with a browser and \
+             direct HTTP control inside limits you set, and prove application logic in Lean 4 \
+             with h5i-app",
     version
 )]
 pub struct Cli {

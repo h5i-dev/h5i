@@ -1,15 +1,21 @@
 # Security policy
 
-h5i is a browser an agent drives and a human can audit. The engine is the HTTP
-client, so every request is policy-checked and written to the session log before
-the bytes move, and a fetch that cannot be recorded is refused. A box is the
-second boundary, taken on request: the code, the toolchain and the session
-itself run inside it, and work leaves through an export a human reviewed.
+h5i is an agent-native web security workspace. Agents red-team a running app
+with a browser and direct HTTP control, and h5i-app lets you prove the
+application logic in Lean 4.
 
-That makes most of h5i security-relevant, because the product is a boundary plus
-an honest account of where it stops. The Limits section of `docs/MANUAL.md` is
-the user-facing companion to this file and is specific per tier and per
-platform. Read both.
+On the red-teaming side the engine is the HTTP client, so every request is
+policy-checked and written to the session log before the bytes move, and a
+fetch that cannot be recorded is refused. A box is the second boundary, taken
+on request: the code, the toolchain and the session itself run inside it, and
+work leaves through an export a human reviewed. On the verification side the
+product is a claim about what was proven, and `docs/app/TRUST.md` says exactly
+what is proven and what is assumed.
+
+That makes most of h5i security-relevant, because the product is a boundary, a
+proof, and an honest account of where each one stops. The Limits section of
+`docs/MANUAL.md` is the user-facing companion to this file and is specific per
+tier and per platform. Read both.
 
 ## Supported versions
 
@@ -76,6 +82,25 @@ logs unless a maintainer asks for a redacted sample.
 Treat every byte out of a box or off a page as untrusted input, including a
 box's own manifest and resolved policy read back from disk.
 
+## h5i-app and proof claims
+
+- The proof gate. `h5i app check` fails on a `sorry` or `native_decide`
+  outside generated Lean, and on a hand-written theorem that uses any axiom
+  beyond `propext`, `Classical.choice` and `Quot.sound`. `h5i app extract
+  --check` fails when `proofs/generated/` is not what the kernel extracts to.
+  Anything that lets either pass when it should not is a false proof claim.
+  Charon and Aeneas are pinned in `crates/h5i-app-cli/src/pins.rs`; a change
+  there changes what is proven.
+- The structural guarantees in `docs/app/TRUST.md`: handlers reach the database
+  only through the kernel, every compiled statement is scoped to its tenant, and
+  `h5i_app_pg::lockdown` leaves the engine's role as the only one with row
+  access. A path around any of them is a security bug even when every proof
+  still checks.
+- The extracted, proven crates (`h5i-app-sql`, `h5i-app-pgsql`, `h5i-app-json`,
+  `h5i-app-token`, `h5i-app-std`) and the trusted code beside them: token
+  signing and expiry, the JSON codec, and the engine contract in
+  `crates/h5i-app-pg`.
+
 ## The claims
 
 - h5i never claims isolation it did not enforce. Everything else is subordinate
@@ -88,6 +113,8 @@ box's own manifest and resolved policy read back from disk.
   at box creation, and every receipt names the digest in force.
 - The provider token stays in the host proxy's memory. The box sees a base URL
   and a dummy, and a Claude box never gets Codex's credentials or egress.
+- h5i-app never calls a property proven that Lean did not check, and what a
+  proof rests on is listed under Assumed in `docs/app/TRUST.md`.
 
 ## Where it stops
 

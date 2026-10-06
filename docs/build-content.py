@@ -36,39 +36,39 @@ PUBLISHED = "2026-08-21"
 # without its date. Changing a page's content and forgetting the date is a
 # build error, not a silent regression.
 PAGE_HISTORY = {
-    "": ("2026-10-05", "588e5c4affacd117"),
-    "features/": ("2026-10-01", "54da30bf40f349d6"),
-    "manual/": ("2026-10-05", "a57013198cde2635"),
-    "pitch/": ("2026-10-05", "7ed35606e40edb84"),
-    "demo/": ("2026-10-05", "5b603d82bc673cec"),
-    "guides/": ("2026-09-16", "f37b211cacc1bcb3"),
-    "blog/": ("2026-09-15", "e6bef559cb5cc1b6"),
-    "guides/recon-and-idor/": ("2026-09-26", "aa9fd18b188268a1"),
-    "guides/broken-access-control/": ("2026-09-16", "0f090fab2a2d88f9"),
-    "guides/jwt-attacks/": ("2026-09-15", "0b3fc4ae463e60f9"),
-    "guides/sql-injection/": ("2026-09-15", "1347ab6ad9b35263"),
-    "guides/injection-beyond-sql/": ("2026-09-15", "58420a2d971ae3a5"),
-    "guides/browser-as-a-weapon/": ("2026-09-15", "5dbce398406589f6"),
-    "guides/ssrf-and-file-attacks/": ("2026-09-15", "0408e264337bea37"),
-    "guides/http-protocol-attacks/": ("2026-09-15", "84bfef80b24ab2b0"),
-    "guides/logic-time-and-crypto/": ("2026-09-15", "6011aec60de33ecb"),
-    "guides/exploit-chains/": ("2026-09-26", "01dfe7c1939a9cf3"),
-    "guides/cheatsheet/": ("2026-09-26", "4097d2ca91e5d8bf"),
-    "guides/drive-a-browser-session/": ("2026-09-15", "1e924e7680870af5"),
-    "guides/first-box/": ("2026-09-15", "42cb89a3f707dc02"),
-    "guides/review-a-pull-request/": ("2026-09-15", "b25f2bd2fa8efe3c"),
-    "guides/write-a-box-policy/": ("2026-09-15", "d459b41d585b5ac1"),
-    "guides/watch-the-browser/": ("2026-09-15", "18221347ce0ba55a"),
-    "guides/authorized-web-security-testing/": ("2026-09-15", "21223e318fd73f95"),
-    "blog/the-h5i-loop/": ("2026-09-13", "78a64276929d8202"),
-    "blog/the-environment-is-the-sandbox/": ("2026-09-13", "c0003c9a5de6bc53"),
-    "blog/choosing-agent-isolation/": ("2026-09-13", "0eff3260305a64d7"),
-    "blog/evidence-for-agent-work/": ("2026-09-13", "3a266f6d55c32baa"),
-    "blog/prompt-injection-is-a-boundary-problem/": ("2026-09-13", "b15f2e7954362847"),
-    "blog/ai-pentesting-tools/": ("2026-09-12", "812fe92f28bdb3ec"),
-    "blog/burp-suite-vs-h5i-for-ai-agents/": ("2026-09-13", "7d57b8ebd6dc9467"),
-    "blog/owasp-zap-vs-h5i-for-ai-agents/": ("2026-09-13", "6545e081e6a97a07"),
-    "blog/caido-vs-h5i-for-ai-agents/": ("2026-09-13", "10110eb76f38b20e"),
+    "": ("2026-10-06", "6a95f133f1923b70"),
+    "features/": ("2026-10-06", "4816d89f55c4716a"),
+    "manual/": ("2026-10-06", "0492f19d05cce051"),
+    "pitch/": ("2026-10-06", "1ad0ef3c6bad84e7"),
+    "demo/": ("2026-10-06", "199e1c8b878ee862"),
+    "guides/": ("2026-10-06", "9292f8b94d27b4a1"),
+    "blog/": ("2026-10-06", "b02d9bbc2005aff5"),
+    "guides/recon-and-idor/": ("2026-10-06", "f15e9e97fa00bcf4"),
+    "guides/broken-access-control/": ("2026-10-06", "2902db5721cdf22d"),
+    "guides/jwt-attacks/": ("2026-10-06", "1343c2bfe6e8cce9"),
+    "guides/sql-injection/": ("2026-10-06", "3f3ad035a499dea1"),
+    "guides/injection-beyond-sql/": ("2026-10-06", "4c23d98cac2cceb4"),
+    "guides/browser-as-a-weapon/": ("2026-10-06", "85d3ebe4e7d37a98"),
+    "guides/ssrf-and-file-attacks/": ("2026-10-06", "60f492a803c31500"),
+    "guides/http-protocol-attacks/": ("2026-10-06", "c2cb5bd22cb8b8d1"),
+    "guides/logic-time-and-crypto/": ("2026-10-06", "67226bd7deec901f"),
+    "guides/exploit-chains/": ("2026-10-06", "f9eff72ca9387f28"),
+    "guides/cheatsheet/": ("2026-10-06", "c81d0122ae7f51b8"),
+    "guides/drive-a-browser-session/": ("2026-10-06", "ef26e2a0df3156f5"),
+    "guides/first-box/": ("2026-10-06", "73d9a2fa806a39ad"),
+    "guides/review-a-pull-request/": ("2026-10-06", "a702137b3775ecf1"),
+    "guides/write-a-box-policy/": ("2026-10-06", "67a4900e1172472f"),
+    "guides/watch-the-browser/": ("2026-10-06", "0405a482c91cae3d"),
+    "guides/authorized-web-security-testing/": ("2026-10-06", "4a2ff6205d8cebca"),
+    "blog/the-h5i-loop/": ("2026-10-06", "a9a50a663d0b2230"),
+    "blog/the-environment-is-the-sandbox/": ("2026-10-06", "743ed66963bf8f97"),
+    "blog/choosing-agent-isolation/": ("2026-10-06", "99f53e9ccee2a0d0"),
+    "blog/evidence-for-agent-work/": ("2026-10-06", "2027d5c1912f5ded"),
+    "blog/prompt-injection-is-a-boundary-problem/": ("2026-10-06", "1ea894ecc49f1478"),
+    "blog/ai-pentesting-tools/": ("2026-10-06", "6971aed22b9edebc"),
+    "blog/burp-suite-vs-h5i-for-ai-agents/": ("2026-10-06", "b49781e696a1960a"),
+    "blog/owasp-zap-vs-h5i-for-ai-agents/": ("2026-10-06", "ee4c1beede67966f"),
+    "blog/caido-vs-h5i-for-ai-agents/": ("2026-10-06", "a35d02b426783035"),
 }
 
 # The pages this script does not write. They are fingerprinted off disk.
@@ -149,9 +149,8 @@ FOOTER = """<footer class="blog-footer"><div class="blog-footer-inner">
 # One social card for the whole generated tree, and the one sentence that
 # describes it. An og:image without an og:image:alt is an unlabelled image
 # everywhere the card is rendered.
-SOCIAL_IMAGE = "https://h5i.dev/_static/sandboxed-browser-ui.png"
-SOCIAL_ALT = ("An h5i browser session: the page an AI agent is reading, beside the "
-              "request log the engine wrote before any bytes moved")
+SOCIAL_IMAGE = "https://h5i.dev/_static/social-card.png"
+SOCIAL_ALT = "h5i: the agent-native web security workspace. Red-team for bugs. Prove correctness."
 
 
 def head(title, description, canonical, schema, kind="article", rss=False,
@@ -870,7 +869,7 @@ WEB_SECURITY_GUIDE = {
 AI_PENTESTING_TOOLS = {
     "section": "blog", "slug": "ai-pentesting-tools", "eyebrow": "Buyer guide / Web security",
     "published": "2026-09-09", "time": "7 min", "tags": "AI pentesting &middot; DAST &middot; Agent security",
-    "social_image": "https://h5i.dev/_static/ai-security-tools-map.svg",
+    "social_image": "https://h5i.dev/_static/ai-security-tools-map.png",
     "social_alt": "Burp Suite and Caido sit toward human-led investigation, OWASP ZAP toward plan-driven scanning, and h5i toward agent-led investigation with a bounded session",
     "title": "AI pentesting tools compared: Burp, ZAP, Caido, h5i",
     "h1": "AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?",
@@ -931,7 +930,7 @@ AI_PENTESTING_TOOLS = {
 BURP_COMPARISON = {
     "section": "blog", "slug": "burp-suite-vs-h5i-for-ai-agents", "eyebrow": "Comparison / Web security",
     "published": "2026-09-09",
-    "social_image": "https://h5i.dev/_static/burp-vs-h5i.svg",
+    "social_image": "https://h5i.dev/_static/burp-vs-h5i.png",
     "social_alt": "Burp Suite provides a broad browser, proxy, scanner, and extension workbench; h5i supports an external AI agent driving a penetration test end to end",
     "time": "4 min", "tags": "Burp Suite &middot; AI agents &middot; Pentesting",
     "title": "Burp Suite vs h5i for AI agents",
@@ -976,7 +975,7 @@ BURP_COMPARISON = {
 ZAP_COMPARISON = {
     "section": "blog", "slug": "owasp-zap-vs-h5i-for-ai-agents", "eyebrow": "Comparison / Web security",
     "published": "2026-09-09",
-    "social_image": "https://h5i.dev/_static/zap-vs-h5i.svg",
+    "social_image": "https://h5i.dev/_static/zap-vs-h5i.png",
     "social_alt": "OWASP ZAP automates spiders and vulnerability scans, while h5i supports an external AI agent driving browser and HTTP testing end to end",
     "time": "4 min", "tags": "OWASP ZAP &middot; AI agents &middot; DAST",
     "title": "OWASP ZAP vs h5i for AI agents",
@@ -1021,7 +1020,7 @@ ZAP_COMPARISON = {
 CAIDO_COMPARISON = {
     "section": "blog", "slug": "caido-vs-h5i-for-ai-agents", "eyebrow": "Comparison / Web security",
     "published": "2026-09-09",
-    "social_image": "https://h5i.dev/_static/caido-vs-h5i.svg",
+    "social_image": "https://h5i.dev/_static/caido-vs-h5i.png",
     "social_alt": "Caido provides a broad proxy workspace with HTTPQL, Replay, Automate, workflows, and skills, while h5i connects an agent's browser actions to captured traffic and replay",
     "time": "4 min", "tags": "Caido &middot; AI agents &middot; Pentesting",
     "title": "Caido vs h5i for AI agents",
@@ -1066,7 +1065,7 @@ CAIDO_COMPARISON = {
 LOOP = {
     "section": "blog", "slug": "the-h5i-loop", "eyebrow": "Essay / Sandboxed workflow",
     "time": "10 min", "tags": "Browse &middot; Develop &middot; Review &middot; Apply",
-    "title": "Sandbox the entire workflow: browse, develop, review, apply | h5i",
+    "title": "Sandbox the AI agent workflow: browse, develop, apply | h5i",
     "h1": "Sandbox the entire workflow: browse, develop, review, apply",
     "description": "Create one sandbox for an AI coding task, browse from inside it, develop and test there, then review the evidence before exporting or applying the patch.",
     "meta": "Keep browsing, code development, tests, and the dev server in one sandbox, then review its evidence before exporting or applying the patch.",
@@ -3682,8 +3681,8 @@ ARTICLES = [RECON, ACCESS, JWT, SQLI, INJECTION_LABS, BROWSERXSS, SSRF, PROTOCOL
 
 def index_page(section, items):
     guides = section == "guides"
-    # Both hubs lead with the browser, because that is what h5i is; the box is
-    # where a session is placed, not the headline.
+    # Both hubs lead with the browser: the guides and essays are about the
+    # red-teaming half, and the box is where a session is placed.
     title = "h5i guides: agent browsing and web security testing" if guides else "h5i essays: agent browsers, sandboxes, and web security"
     description = ("A ten-part h5i web security tutorial with runnable CTF labs, plus guides to auditable agent browsing, authorized AI pentesting, and sandboxed code review."
                    if guides else "Nine essays on auditable AI browsing, sandboxing, evidence, and comparisons of h5i with Burp Suite, OWASP ZAP, and Caido for agent testing.")
@@ -3821,15 +3820,20 @@ def build():
 
     (ROOT / "llms.txt").write_text("""# h5i
 
-> h5i ("high-five") brings professional red-teaming to every team. It is an open-source toolkit that lets your AI agent test your web application from an attacker's perspective, so you do not need to be a security expert to start. The agent drives a browser session by id, reads the page as an outline with @ref handles, and then works the traffic that session produced: read a captured message byte for byte, change one field, send it again, compare the answers. The engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused. A request that is not in the log did not happen. Replay travels that same path, so it is not a side channel around scope. Sessions run on the host by default with no containment claimed, and one flag places the same session inside a sandbox, which adds an egress allowlist enforced outside the browser. Use h5i only against systems you own or are explicitly authorized to test.
+> h5i ("high-five") is an agent-native web security workspace: build with agents, red-team for bugs, formally verify properties. Red-teaming finds the bugs nobody anticipated in a running app on any stack, and formal verification proves the rules you can state, so you do not need to be a security expert to start.
+>
+> On the red-teaming side, your AI agent drives a browser session by id, reads the page as an outline with @ref handles, and then works the traffic that session produced: read a captured message byte for byte, change one field, send it again, compare the answers. The engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused. A request that is not in the log did not happen. Replay travels that same path, so it is not a side channel around scope. Sessions run on the host by default with no containment claimed, and one flag places the same session inside a sandbox, which adds an egress allowlist enforced outside the browser. Use h5i only against systems you own or are explicitly authorized to test.
+>
+> On the verification side, h5i-app is an Axum-based Rust framework whose application logic is extracted to Lean 4 and proven there, from tenant isolation and authorization to the app's own state invariants. h5i app runs that loop.
 
 ## Start here
 
-- [Features](https://h5i.dev/features/): Product overview: automated browsing, reconnaissance, HTTP capture and editing, the limits you place around the agent, and the review surface.
+- [Features](https://h5i.dev/features/): Product overview: automated browsing, reconnaissance, HTTP capture and editing, the limits you place around the agent, the review surface, and h5i-app for Lean 4 proofs.
 - [Run an authorized web security test](https://h5i.dev/guides/authorized-web-security-testing/): Scope a session to one target, inventory its endpoints, replay one request, and close with the evidence intact.
 - [Drive a browser session](https://h5i.dev/guides/drive-a-browser-session/): Open a session, read the page, act on it, and read back what it reached.
 - [AI pentesting tools compared](https://h5i.dev/blog/ai-pentesting-tools/): Burp Suite, OWASP ZAP, Caido, and h5i, chosen by what you delegate to AI.
 - [Manual](https://h5i.dev/manual/): Authoritative command, policy, receipt, and limitation reference.
+- [h5i-app](https://github.com/h5i-dev/h5i/blob/main/crates/h5i-app/README.md): The Axum-based Rust framework whose logic is proven in Lean 4, with the kernel, the server around it, and the proof workflow.
 
 ## The web security tutorial
 
@@ -3927,6 +3931,17 @@ Ten articles that walk the 42 runnable labs in h5i-dev/h5i-tutorial, from recon 
 - h5i box export produces patch.diff, report.md, and receipt.json, and writes browser/<id>.json for each session placed in the box.
 - h5i is local-first, Apache-2.0, and requires no hosted sandbox or SaaS account.
 
+## h5i-app and formal verification
+
+- h5i-app is optional. The browser, websec, recon, and test work with existing web applications in any language.
+- An application keeps its logic in a kernel crate: one pure Rust function decides what each command does, and handlers never touch the database.
+- Charon and Aeneas translate the kernel to Lean 4, where theorems about it are ordinary Lean.
+- Proofs cover the rows loaded back from PostgreSQL and properties across requests, for every order in which they commit.
+- h5i app new, extract, check, prove, lint, mutate, and doctor run the loop. check rejects sorry, native_decide, and axioms beyond propext, Classical.choice, and Quot.sound.
+- extract --check fails when the generated Lean is not what the kernel extracts to, which is the CI gate.
+- mutate plants bugs in the kernel; one that breaks no proof is behaviour the spec does not pin down.
+- What is proven and what is assumed is written down in docs/app/TRUST.md: PostgreSQL semantics, SERIALIZABLE isolation, the engine contract, and the translation toolchain are assumed.
+
 ## Honest limits
 
 - h5i cannot grant authorization or infer scope from a URL. Record the permitted hosts, accounts, techniques, request rate, and time window before running an agent.
@@ -3936,7 +3951,7 @@ Ten articles that walk the 42 runnable labs in h5i-dev/h5i-tutorial, from recon 
 - The capture store can hold credentials and personal data in full. Treat it as sensitive test evidence and redact it before sharing an artifact.
 - With the default cross-origin refusal in force h5i cannot act as the victim, so a negative CSRF result means h5i declined, not that the target is safe.
 - A session on the host is not sandboxed and h5i does not claim it is. Containment is the --in flag.
-- The engine is not a complete browser: canvas, WebSockets, Workers, and IndexedDB are absent. Of twenty single-page applications measured, eighteen read usefully and one not at all.
+- The engine is not a complete browser. Of twenty single-page applications measured, eighteen read usefully and one not at all. Tabs, extensions, iframes, Service Workers, Web Workers, WebRTC, and WebGL are absent, and a page that needs a missing API gets it named in the snapshot.
 - For a target the engine cannot read, run Chromium inside a box and accept the tier's boundary in place of engine-level capture.
 - h5i does not classify page content. It bounds what a persuaded agent can reach rather than detecting persuasion.
 - A boxed session needs a tier that can hold a resident process, and not every tier that enforces egress can.

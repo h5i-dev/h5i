@@ -2,7 +2,7 @@
 name = "h5i-core"
 version = "0.2.8"
 edition = "2024"
-description = "h5i core domain library: disposable, confined development environments and their execution receipts."
+description = "h5i core domain library: browser sessions, boxes and their execution receipts."
 
 [features]
 # `web` compiles the `h5i ui` box console: a read-only, loopback-only HTTP
