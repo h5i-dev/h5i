@@ -62,9 +62,9 @@ h5i recon crawl --max-requests 200                        # walk it, logged in, 
 h5i recon triage --calibrate                              # fold the noise, confirm what is real
 
 # Prove correctness via Lean 4
-h5i app new counter & cd counter                          
+h5i app new counter & cd counter
+h5i app extract                                           # translate Rust implementation into Lean 4      
 h5i app prove                                             # extract to proofs/generated/, lake build, then the gate
-h5i app lint                                              # routes take an Actor; no client-set identity in Command
 h5i app mutate                                            # each [[mutant]] must break a proof
 ```
 
