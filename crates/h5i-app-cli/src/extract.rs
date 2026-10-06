@@ -32,13 +32,20 @@ fn schema_items(k: &str) -> Vec<String> {
 }
 
 pub fn extract(p: &Project, out: &Out) -> Result<()> {
-    extract_into(p, &p.generated(), out)
+    extract_into(p, &p.generated(), true, out)
+}
+
+/// `extract` without rewriting the schema's Lean. For `mutate`, whose edits
+/// never reach a `schema!` body, so the sandbox's copy is already current.
+pub fn extract_kernel(p: &Project, out: &Out) -> Result<()> {
+    extract_into(p, &p.generated(), false, out)
 }
 
 /// Extract to a scratch copy of `proofs/generated/` and fail if anything
 /// differs from what is there: the committed Lean is exactly what Charon and
-/// Aeneas make of the kernel. Leaves the project as it found it, including
-/// the `Schema.lean` that compiling the kernel rewrites through `schema!`.
+/// Aeneas make of the kernel, and the schema's Lean is what `schema!`
+/// renders. Leaves the project as it found it, including the `Schema.lean`
+/// that `schema!`'s test writes in place.
 pub fn check_fresh(p: &Project, out: &Out) -> Result<()> {
     let real = p.generated();
     let before = snapshot(&real)?;
@@ -48,8 +55,8 @@ pub fn check_fresh(p: &Project, out: &Out) -> Result<()> {
     for (name, bytes) in &before {
         std::fs::write(scratch.join(name), bytes)?;
     }
-    let result = extract_into(p, &scratch, out);
-    // Compiling the kernel may have rewritten files in the real directory.
+    let result = extract_into(p, &scratch, true, out);
+    // The schema's test writes to its own path, in the real directory.
     let touched = snapshot(&real)?;
     for (name, bytes) in &before {
         if touched.get(name) != Some(bytes) {
@@ -88,7 +95,7 @@ fn snapshot(dir: &Path) -> Result<std::collections::BTreeMap<String, Vec<u8>>> {
     Ok(m)
 }
 
-fn extract_into(p: &Project, dest: &Path, out: &Out) -> Result<()> {
+fn extract_into(p: &Project, dest: &Path, schema_lean: bool, out: &Out) -> Result<()> {
     let Some(ex) = &p.manifest.extract else {
         bail!(
             "{}: no [extract] section, so nothing to extract",
@@ -143,12 +150,31 @@ fn extract_into(p: &Project, dest: &Path, out: &Out) -> Result<()> {
     if ex.std_specs {
         std_specs(&meta, &module, &id, dest)?;
     }
+    if ex.schema && schema_lean {
+        bless_schema(&krate, out)?;
+    }
     out.note(&format!(
         "extracted {} to {}",
         pkg.name,
         crate::manifest::display_path(&dest.join(format!("{module}.lean")))
     ));
     Ok(())
+}
+
+/// Write the Lean that `schema!` renders to the path its `lean "..."` names
+/// (`Schema.lean` by convention). Only the kernel's own test knows that text,
+/// so run it with `H5I_APP_BLESS=1`. Without a `lean` path the test does not
+/// exist and nothing is written. Release, so a checkout that guards against
+/// debug builds (CLAUDE.md) can run it.
+fn bless_schema(krate: &Path, out: &Out) -> Result<()> {
+    util::run(
+        Command::new("cargo")
+            .current_dir(krate)
+            .env("H5I_APP_BLESS", "1")
+            .args(["test", "--release", "--lib", "--", "h5i_app_lean_schema_is_current"]),
+        out,
+    )
+    .context("rendering the schema's Lean (`schema!` with `lean \"...\"`)")
 }
 
 fn lean_files(dir: &Path) -> Result<Vec<PathBuf>> {

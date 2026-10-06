@@ -1525,7 +1525,7 @@ release tag; `--h5i-path <checkout>` uses a local h5i checkout instead.
 crate = "kernel"
 start-from = ["transition"]   # Charon start points, inside the crate
 include = ["h5i_app_sql"]     # crates extracted with the kernel
-schema = true                 # also start from what schema! generates
+schema = true                 # also start from what schema! generates, and write its lean "..." file
 std-specs = true              # copy h5i-app-std's specs next to the extraction
 
 [check]

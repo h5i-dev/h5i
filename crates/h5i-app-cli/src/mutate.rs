@@ -584,7 +584,7 @@ fn evaluate(
         )? {
             return Ok(Verdict::Invalid("rust"));
         }
-        if let Err(e) = crate::extract::extract(&sb.project, &out) {
+        if let Err(e) = crate::extract::extract_kernel(&sb.project, &out) {
             out.note(&format!("{e:#}"));
             return Ok(Verdict::Invalid("extraction"));
         }
