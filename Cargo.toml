@@ -24,15 +24,15 @@ sha2 = "0.10"
 # crates publish against each other. External dependencies are declared in
 # each crate, not here: a user's build of h5i-app must not inherit the h5i
 # CLI's feature choices (serde_json's `preserve_order`, for one).
-h5i-app-core = { path = "crates/h5i-app-core", version = "0.1.0" }
-h5i-app-http = { path = "crates/h5i-app-http", version = "0.1.0" }
-h5i-app-json = { path = "crates/h5i-app-json", version = "0.1.0" }
-h5i-app-pg = { path = "crates/h5i-app-pg", version = "0.1.0" }
-h5i-app-pgsql = { path = "crates/h5i-app-pgsql", version = "0.1.0" }
-h5i-app-schema = { path = "crates/h5i-app-schema", version = "0.1.0" }
-h5i-app-sql = { path = "crates/h5i-app-sql", version = "0.1.0" }
-h5i-app-std = { path = "crates/h5i-app-std", version = "0.1.0" }
-h5i-app-token = { path = "crates/h5i-app-token", version = "0.1.0" }
+h5i-app-core = { path = "crates/h5i-app-core", version = "0.1.1" }
+h5i-app-http = { path = "crates/h5i-app-http", version = "0.1.1" }
+h5i-app-json = { path = "crates/h5i-app-json", version = "0.1.1" }
+h5i-app-pg = { path = "crates/h5i-app-pg", version = "0.1.1" }
+h5i-app-pgsql = { path = "crates/h5i-app-pgsql", version = "0.1.1" }
+h5i-app-schema = { path = "crates/h5i-app-schema", version = "0.1.1" }
+h5i-app-sql = { path = "crates/h5i-app-sql", version = "0.1.1" }
+h5i-app-std = { path = "crates/h5i-app-std", version = "0.1.1" }
+h5i-app-token = { path = "crates/h5i-app-token", version = "0.1.1" }
 
 # The repo's primary product is the `h5i` binary, so it lives at the root
 # (`cargo install --path .` / `cargo run` do the obvious thing). The library it

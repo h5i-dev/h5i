@@ -3,7 +3,7 @@ name = "h5i-app-xtask"
 description = "Repository checks: `cargo app-verify`, and `cargo app` for `h5i app` without the browser build"
 edition = "2024"
 license = "Apache-2.0"
-version = "0.1.0"
+version = "0.1.1"
 publish = false
 
 [dependencies]

@@ -3,7 +3,7 @@ name = "h5i-app-cli"
 description = "`h5i app`: extract an h5i-app kernel to Lean, gate its proofs, and test the spec with mutants"
 edition = "2024"
 license = "Apache-2.0"
-version = "0.1.0"
+version = "0.1.1"
 publish = false
 
 # The whole development loop of an h5i-app application, behind one command
