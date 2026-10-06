@@ -112,13 +112,13 @@ HEAD = '''<!DOCTYPE html>
   <meta property="og:description" content="Every h5i command: browser sessions, recon and websec, the five isolation tiers, the env.toml policy, h5i app for Lean 4 proofs, and the honest limits.">
   <meta property="og:url" content="https://h5i.dev/manual/">
   <meta property="og:image" content="https://h5i.dev/_static/social-card.png">
-  <meta property="og:image:alt" content="h5i: the agent-native web security workspace. Red-team for bugs. Prove correctness.">
+  <meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
   <meta property="og:locale" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="h5i manual: CLI reference for the web security workspace">
   <meta name="twitter:description" content="Every h5i command: browser sessions, recon and websec, the five isolation tiers, the env.toml policy, h5i app for Lean 4 proofs, and the honest limits.">
   <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
-  <meta name="twitter:image:alt" content="h5i: the agent-native web security workspace. Red-team for bugs. Prove correctness.">
+  <meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
 
   <script type="application/ld+json">
   {"@context":"https://schema.org","@graph":[
