@@ -463,11 +463,11 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "h5i-app-core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "h5i-app-http"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "h5i-app-core",
@@ -481,11 +481,11 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-json"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "h5i-app-pg"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "deadpool-postgres",
@@ -499,22 +499,22 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-pgsql"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "h5i-app-sql",
 ]
 
 [[package]]
 name = "h5i-app-schema"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "h5i-app-sql"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "h5i-app-token"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "hax-lib"
