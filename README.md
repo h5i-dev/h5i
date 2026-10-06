@@ -19,8 +19,6 @@
 * **Find Bugs (Red-Teaming):** Equip your AI agents with headless browser automation and deep HTTP traffic control to explore apps, intercept requests, and uncover vulnerabilities inside a configurable sandbox. Perfect for bug bounties, penetration testing, and CI regressions.
 * **Prove Correctness (Formal Verification):** Build your backend on `h5i-app` (our Axum-based Rust framework) and use Lean 4 to formally verify your application logic, proving everything from tenant isolation and authorization to core business state invariants.
 
-**Build with agents. Red-team for bugs. Formally verify properties.**
-
 <table align="center">
   <tr>
     <td align="center">
@@ -41,6 +39,8 @@
     </td>
   </tr>
 </table>
+
+**Build with agents. Red-team for bugs. Formally verify properties.**
 
 ```bash
 # Browse, scrape, and automate.
@@ -66,6 +66,8 @@ h5i recon triage --calibrate                              # fold the noise, conf
 h5i recon endpoints --state confirmed                     # the inventory, with the message id for each
 ```
 
+<a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a>
+
 ---
 
 ## 1. Install
@@ -84,8 +86,6 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 # h5i skill install                # writes it where your runtime looks
 # h5i skill show policy            # or just read a page
 ```
-
-<a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a>
 
 ---
 
