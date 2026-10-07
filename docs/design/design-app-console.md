@@ -1,6 +1,7 @@
 # Apps in the console
 
-Status: proposed, 2026-10-06.
+Status: initial implementation, 2026-10-06. The sections below describe the
+design; the implementation notes at the end identify the current boundaries.
 
 The entry point is a user-visible guarantee, such as “bookings never overlap”,
 not a count of Lean declarations. A reviewer should be able to answer:
@@ -148,3 +149,44 @@ Port useful ideas from `improve-ui`, not its entire patch: discovery, the CLI
 workflow and the example layout have changed on main. Test stale records,
 changed indirect dependencies, missing history, invalid mutations, failed
 baselines and incomplete runs, as well as the successful path.
+
+## Implementation notes
+
+The console now discovers `h5i-app.toml` projects and provides Guarantees,
+Changes and Mutations. The booking project includes a source-fingerprinted
+explanation of four guarantees, their conditions and the clock counterexample.
+Other projects remain usable through their manifest theorem names and source
+inventory, without inferring an explanation from Lean syntax.
+
+`h5i app check` records its build/gate stages and a catalog from Lean's
+elaborated environment: types, definition bodies, direct declaration dependencies
+and axioms. `h5i app mutate` records its requested mutants, edits, baseline and
+each execution stage. Records are local, under each project's
+`.h5i/app/runs/<id>/run.json`; concurrent runs have separate IDs. The console
+reads the newest 20 records. Existing terminal output is not imported.
+
+Changes compares a working tree with a selected Git revision and scans up to
+120 first-parent commits. Source changes are deliberately conservative,
+file-level warnings, with 50-line excerpts around the first difference. Shared
+authored dependencies propagate to guarantees. Historical explanations supply
+stable identities when present; otherwise the current source map is used.
+Missing/ambiguous anchors and mismatched authored source digests are reported.
+Declaration comparison additionally needs a passing record on the clean
+baseline commit and a passing record matching the current repository inputs.
+It compares printed types/definitions and propagates recorded dependencies; it
+does not prove logical strengthening, weakening, or equivalence.
+
+Input freshness covers repository Rust, Lean, TOML, lockfiles, JSON and Lean
+toolchain files, excluding build output, the authored UI description and web
+assets. This is conservative and does not certify external path packages,
+mutable installed tools, or deployed conditions. A matching check record says
+that the recorded Lean build/gate passed, not that Rust extraction was freshly
+checked. Logs retain their final 16 KiB. A force-killed process may leave a
+running record; the UI labels it running/unfinished instead of asserting that
+the process is live. No recorded proof-stage failure is automatically assigned
+to a named theorem.
+
+The authored format and workflow are documented in
+[`app-console.md`](../app/app-console.md). Arbitrary Mermaid rendering, automatic
+symbol-rename matching, historical rebuilds and deployment attestation are not
+part of this implementation.

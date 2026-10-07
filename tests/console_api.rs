@@ -420,6 +420,49 @@ fn an_empty_repository_renders_an_empty_fleet_rather_than_failing() {
 }
 
 #[test]
+fn apps_expose_scoped_sources_and_indirect_history_without_executing_code() {
+    let repo = Repo::new();
+    std::fs::write(repo.dir.join("h5i-app.toml"), "[check]\ntheorems = [\"Booking.safe\"]\n").unwrap();
+    std::fs::write(repo.dir.join("Spec.lean"), "def Reachable := True\n").unwrap();
+    let model = serde_json::json!({"version":1,"title":"Booking","description":"Reservations","author":"test agent",
+      "nodes":[
+        {"id":"safe","kind":"guarantee","title":"No overlap","description":""},
+        {"id":"reach","kind":"assumption","title":"Reachability","description":"","sources":[{"path":"Spec.lean","anchor":"def Reachable"}]}
+      ],"edges":[{"from":"safe","to":"reach","kind":"assumes"}]});
+    std::fs::write(repo.dir.join("h5i-app.ui.json"), serde_json::to_vec(&model).unwrap()).unwrap();
+    git(&repo.dir, &["add", "."]);
+    git(&repo.dir, &["commit", "-m", "original guarantee"]);
+    std::fs::write(repo.dir.join("Spec.lean"), "def Reachable := False\n").unwrap();
+    git(&repo.dir, &["add", "."]);
+    git(&repo.dir, &["commit", "-m", "changed dependency"]);
+    std::fs::write(repo.dir.join("Spec.lean"), "def Reachable := 1 = 2\n").unwrap();
+    std::fs::write(repo.dir.join("secret.txt"), "must not be served").unwrap();
+    let console = Console::start(&repo);
+    assert_eq!(console.get("/api/apps").status, 401);
+    let apps = console.get_authed("/api/apps");
+    assert_eq!(apps.status, 200);
+    let apps: serde_json::Value = serde_json::from_slice(&apps.body).unwrap();
+    assert_eq!(apps[0]["title"], "Booking");
+    let detail = console.get_authed("/api/apps/detail?project=.");
+    assert_eq!(detail.status, 200);
+    let detail: serde_json::Value = serde_json::from_slice(&detail.body).unwrap();
+    assert_eq!(detail["required_theorems"][0], "Booking.safe");
+    assert_eq!(detail["runs"].as_array().unwrap().len(), 0);
+    let source = console.get_authed("/api/apps/source?project=.&path=Spec.lean&anchor=Reachable");
+    assert_eq!(source.status, 200);
+    assert_eq!(console.get_authed("/api/apps/source?project=.&path=secret.txt").status, 400);
+    assert_eq!(console.get_authed("/api/apps/source?project=..&path=Spec.lean").status, 400);
+    let history = console.get_authed("/api/apps/changes?project=.&baseline=HEAD");
+    assert_eq!(history.status, 200);
+    let history: serde_json::Value = serde_json::from_slice(&history.body).unwrap();
+    assert_eq!(history["comparison"][0]["affected"][0], "No overlap");
+    assert!(history["comparison"][0]["before"].as_str().unwrap().contains("False"));
+    assert!(history["revisions"].as_array().unwrap().iter().any(|r| r["message"] == "changed dependency"));
+    assert_eq!(std::fs::read_to_string(repo.dir.join("Spec.lean")).unwrap(), "def Reachable := 1 = 2\n");
+    assert!(!repo.dir.join(".h5i/app/runs").exists());
+}
+
+#[test]
 fn a_box_and_its_run_reach_the_fleet_and_the_detail_pane() {
     let repo = Repo::new();
     repo.h5i_ok(&["box", "create", "consoled"]);

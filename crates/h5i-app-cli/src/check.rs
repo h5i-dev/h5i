@@ -17,22 +17,40 @@ pub const STANDARD_AXIOMS: [&str; 3] = ["propext", "Classical.choice", "Quot.sou
 /// `refetch` discards the Lake packages and fetches them again
 /// ([`crate::packages`]).
 pub fn check(p: &Project, refetch: bool, out: &Out) -> Result<()> {
+    let mut record = crate::report::start(p, "check", p.manifest.check.targets.clone())?;
+    let result = check_recorded(p, refetch, out, &mut record);
+    if let Err(e) = &result {
+        record.run.error = Some(format!("{e:#}"));
+    }
+    record.finish(if result.is_ok() { "passed" } else { "failed" })?;
+    result
+}
+
+fn check_recorded(
+    p: &Project,
+    refetch: bool,
+    out: &Out,
+    record: &mut h5i_app_report::Recorder,
+) -> Result<()> {
     let proofs = p.proofs();
     if !proofs.join("lakefile.lean").is_file() && !proofs.join("lakefile.toml").is_file() {
         bail!("{} is not a Lake project", proofs.display());
     }
     // Held through the build, so another `h5i app` cannot discard the
     // packages under it.
-    let _packages = crate::packages::prepare(&proofs, refetch, out)?;
+    let _packages = crate::report::step(record, "packages", out, |log| {
+        crate::packages::prepare(&proofs, refetch, log)
+    })?;
     let mut build = Command::new("lake");
     build
         .arg("build")
         .args(&p.manifest.check.targets)
         .current_dir(&proofs);
-    util::run(&mut build, out)?;
+    crate::report::step(record, "lean_build", out, |log| util::run(&mut build, log))?;
 
     let mut problems = scan(&proofs)?;
     let (built, unbuilt) = hand_written_modules(&proofs, &p.manifest.check.targets)?;
+    record.run.unbuilt_modules = unbuilt.clone();
     for m in &unbuilt {
         out.note(&format!(
             "note: {m} is not built by `lake build`, so its theorems are not gated"
@@ -42,7 +60,11 @@ pub fn check(p: &Project, refetch: bool, out: &Out) -> Result<()> {
     if built.is_empty() && theorems.is_empty() {
         out.note("note: no hand-written modules built; nothing to gate");
     } else {
-        problems.extend(gate(&proofs, &built, theorems, out)?);
+        let (issues, declarations) = crate::report::step(record, "axiom_gate", out, |log| {
+            gate(&proofs, &built, theorems, log)
+        })?;
+        record.run.declarations = declarations;
+        problems.extend(issues);
     }
     if !problems.is_empty() {
         bail!(
@@ -122,18 +144,26 @@ fn hand_written_modules(proofs: &Path, targets: &[String]) -> Result<(Vec<String
             continue;
         }
         let rel = f.strip_prefix(proofs)?.with_extension("");
-        let module = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join(".");
+        let module = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(".");
         modules.insert(module, rel);
     }
     let roots = build_roots(proofs, targets);
     // Follow imports from the roots, through hand-written modules only.
     let mut reached = std::collections::BTreeSet::new();
-    let mut stack: Vec<String> = roots.into_iter().filter(|r| modules.contains_key(r)).collect();
+    let mut stack: Vec<String> = roots
+        .into_iter()
+        .filter(|r| modules.contains_key(r))
+        .collect();
     while let Some(m) = stack.pop() {
         if !reached.insert(m.clone()) {
             continue;
         }
-        let text = std::fs::read_to_string(proofs.join(&modules[&m]).with_extension("lean")).unwrap_or_default();
+        let text = std::fs::read_to_string(proofs.join(&modules[&m]).with_extension("lean"))
+            .unwrap_or_default();
         for i in imports(&text) {
             if modules.contains_key(&i) && !reached.contains(&i) {
                 stack.push(i);
@@ -142,7 +172,10 @@ fn hand_written_modules(proofs: &Path, targets: &[String]) -> Result<(Vec<String
     }
     let (mut built, mut unbuilt) = (Vec::new(), Vec::new());
     for (module, rel) in &modules {
-        let olean = proofs.join(".lake/build/lib/lean").join(rel).with_extension("olean");
+        let olean = proofs
+            .join(".lake/build/lib/lean")
+            .join(rel)
+            .with_extension("olean");
         if reached.contains(module) && olean.is_file() {
             built.push(module.clone())
         } else {
@@ -157,12 +190,21 @@ fn imports(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     for line in text.lines() {
         let l = line.trim_start();
-        let rest = ["import ", "public import ", "meta import ", "public meta import "]
-            .iter()
-            .find_map(|k| l.strip_prefix(k));
+        let rest = [
+            "import ",
+            "public import ",
+            "meta import ",
+            "public meta import ",
+        ]
+        .iter()
+        .find_map(|k| l.strip_prefix(k));
         if let Some(rest) = rest {
             let rest = rest.split("--").next().unwrap_or("");
-            out.extend(rest.split_whitespace().filter(|w| *w != "all").map(str::to_string));
+            out.extend(
+                rest.split_whitespace()
+                    .filter(|w| *w != "all")
+                    .map(str::to_string),
+            );
         }
     }
     out
@@ -174,7 +216,11 @@ fn imports(text: &str) -> Vec<String> {
 fn build_roots(proofs: &Path, targets: &[String]) -> Vec<String> {
     let libs = lean_libs(proofs);
     if targets.is_empty() {
-        return libs.into_iter().filter(|l| l.default).flat_map(|l| l.roots).collect();
+        return libs
+            .into_iter()
+            .filter(|l| l.default)
+            .flat_map(|l| l.roots)
+            .collect();
     }
     targets
         .iter()
@@ -194,13 +240,23 @@ struct LeanLib {
 /// The `lean_lib`s of a `lakefile.lean` (or `lakefile.toml`).
 fn lean_libs(proofs: &Path) -> Vec<LeanLib> {
     if let Ok(text) = std::fs::read_to_string(proofs.join("lakefile.toml")) {
-        let Ok(doc) = text.parse::<toml::Table>() else { return Vec::new() };
+        let Ok(doc) = text.parse::<toml::Table>() else {
+            return Vec::new();
+        };
         let defaults: Vec<String> = doc
             .get("defaultTargets")
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default();
-        let libs = doc.get("lean_lib").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let libs = doc
+            .get("lean_lib")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
         return libs
             .iter()
             .filter_map(|l| {
@@ -208,35 +264,66 @@ fn lean_libs(proofs: &Path) -> Vec<LeanLib> {
                 let roots = l
                     .get("roots")
                     .and_then(|r| r.as_array())
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
                     .unwrap_or_else(|| vec![name.clone()]);
-                Some(LeanLib { default: defaults.contains(&name), name, roots })
+                Some(LeanLib {
+                    default: defaults.contains(&name),
+                    name,
+                    roots,
+                })
             })
             .collect();
     }
-    let Ok(text) = std::fs::read_to_string(proofs.join("lakefile.lean")) else { return Vec::new() };
+    let Ok(text) = std::fs::read_to_string(proofs.join("lakefile.lean")) else {
+        return Vec::new();
+    };
     let mut libs = Vec::new();
     let mut rest = text.as_str();
     while let Some(i) = rest.find("lean_lib ") {
         let line_start = rest[..i].rfind('\n').map_or(0, |n| n + 1);
         let default = rest[line_start..i].contains("default_target");
         let after = &rest[i + "lean_lib ".len()..];
-        let name: String = after.chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.').collect();
+        let name: String = after
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+            .collect();
         // The declaration runs to the next top-level one.
-        let end = ["\nlean_lib ", "\n@[", "\nlean_exe ", "\nrequire ", "\npackage ", "\ntarget "]
-            .iter()
-            .filter_map(|k| after.find(k))
-            .min()
-            .unwrap_or(after.len());
+        let end = [
+            "\nlean_lib ",
+            "\n@[",
+            "\nlean_exe ",
+            "\nrequire ",
+            "\npackage ",
+            "\ntarget ",
+        ]
+        .iter()
+        .filter_map(|k| after.find(k))
+        .min()
+        .unwrap_or(after.len());
         let body = &after[..end];
-        let roots = match body.find("roots").and_then(|r| body[r..].find("#[").map(|o| r + o + 2)) {
+        let roots = match body
+            .find("roots")
+            .and_then(|r| body[r..].find("#[").map(|o| r + o + 2))
+        {
             Some(open) => {
                 let close = body[open..].find(']').map_or(body.len(), |c| open + c);
-                body[open..close].split(',').map(|r| r.trim().trim_start_matches('`').to_string()).filter(|r| !r.is_empty()).collect()
+                body[open..close]
+                    .split(',')
+                    .map(|r| r.trim().trim_start_matches('`').to_string())
+                    .filter(|r| !r.is_empty())
+                    .collect()
             }
             None => vec![name.clone()],
         };
-        libs.push(LeanLib { name, roots, default });
+        libs.push(LeanLib {
+            name,
+            roots,
+            default,
+        });
         rest = &after[end..];
     }
     libs
@@ -308,6 +395,25 @@ open Lean Elab Command in
     unless extra.isEmpty do
       bad := bad + 1
       out := out.push s!"{MARK} bad {{n}} {{extra.toList}}"
+  -- This catalog comes from the elaborated environment, including implicit
+  -- binders and definitions. It is not a source-text approximation.
+  for (n, ci) in env.constants.map₁.toList do
+    let localDecl := (env.getModuleIdxFor? n).any fun idx => mods.contains (env.header.moduleNames[idx.toNat]!)
+    if (localDecl || named.contains n) && !n.isInternal then
+      let kind := if ci.isTheorem then "theorem" else "definition"
+      let signature ← liftTermElabM do
+        withOptions (fun o => o.setBool `pp.explicit true |>.setBool `pp.fullNames true) do
+          return (← Meta.ppExpr ci.type).pretty
+      let body ← liftTermElabM do
+        match ci.value? with
+        | some v => if ci.isTheorem then pure Json.null else return toJson (← Meta.ppExpr v).pretty
+        | none => pure Json.null
+      let axs ← collectAxioms n
+      let deps := ci.getUsedConstantsAsSet.toList.map Name.toString
+      let row := Json.mkObj [("name", toJson n.toString), ("kind", toJson kind),
+        ("signature", toJson signature), ("definition", body),
+        ("dependencies", toJson deps), ("axioms", toJson (axs.toList.map Name.toString))]
+      liftIO <| IO.println ("H5I-CATALOG " ++ row.compress)
   out := out.push s!"{MARK} done {{todo.size}} {{bad}}"
   logInfo (String.intercalate "\n" out.toList)
 "#
@@ -315,7 +421,12 @@ open Lean Elab Command in
     s
 }
 
-fn gate(proofs: &Path, modules: &[String], theorems: &[String], out: &Out) -> Result<Vec<String>> {
+fn gate(
+    proofs: &Path,
+    modules: &[String],
+    theorems: &[String],
+    out: &Out,
+) -> Result<(Vec<String>, Vec<h5i_app_report::Declaration>)> {
     let dir = proofs.join(".lake/h5i");
     std::fs::create_dir_all(&dir)?;
     let file = dir.join("Gate.lean");
@@ -332,8 +443,13 @@ fn gate(proofs: &Path, modules: &[String], theorems: &[String], out: &Out) -> Re
         String::from_utf8_lossy(&o.stderr)
     );
     let mut problems = Vec::new();
+    let mut declarations = Vec::new();
     let mut done = None;
     for line in text.lines() {
+        if let Some((_, json)) = line.split_once("H5I-CATALOG ") {
+            declarations.push(serde_json::from_str(json)?);
+            continue;
+        }
         let Some(i) = line.find(MARK) else { continue };
         let mut words = line[i + MARK.len()..].trim().splitn(2, ' ');
         match (words.next(), words.next()) {
@@ -348,6 +464,9 @@ fn gate(proofs: &Path, modules: &[String], theorems: &[String], out: &Out) -> Re
             _ => {}
         }
     }
+    if !o.status.success() {
+        bail!("the axiom gate failed:\n{}", text.trim_end());
+    }
     let Some(done) = done else {
         bail!("the axiom gate did not run:\n{}", text.trim_end());
     };
@@ -357,12 +476,66 @@ fn gate(proofs: &Path, modules: &[String], theorems: &[String], out: &Out) -> Re
         modules.len(),
         STANDARD_AXIOMS.join(", ")
     ));
-    Ok(problems)
+    Ok((problems, declarations))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires the pinned Lean toolchain; run explicitly for catalog changes"]
+    fn catalog_uses_real_elaborated_hypotheses_and_dependencies() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("Fixture.lean"), "namespace Fixture\ndef Valid (n : Nat) := n > 0\ntheorem safe {n : Nat} (given : Valid n) : n > 0 := given\nend Fixture\n").unwrap();
+        let compiled = Command::new("lean")
+            .arg(format!("+{}", crate::pins::LEAN_TOOLCHAIN))
+            .args(["-o", "Fixture.olean", "Fixture.lean"])
+            .current_dir(d.path())
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stdout)
+        );
+        let program = gate_program(&["Fixture".into()], &["Fixture.safe".into()]);
+        let path = d.path().join("Catalog.lean");
+        std::fs::write(&path, program).unwrap();
+        let o = Command::new("lean")
+            .arg(format!("+{}", crate::pins::LEAN_TOOLCHAIN))
+            .arg(&path)
+            .env("LEAN_PATH", d.path())
+            .current_dir(d.path())
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&o.stdout);
+        assert!(
+            o.status.success(),
+            "{text}\n{}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let rows: Vec<h5i_app_report::Declaration> = text
+            .lines()
+            .filter_map(|l| {
+                l.split_once("H5I-CATALOG ")
+                    .map(|(_, row)| serde_json::from_str(row).unwrap())
+            })
+            .collect();
+        let d = rows
+            .iter()
+            .find(|d| d.name == "Fixture.safe")
+            .unwrap_or_else(|| panic!("catalog row absent: {text}"));
+        assert_eq!(d.name, "Fixture.safe");
+        assert!(d.signature.contains("Fixture.Valid"), "{}", d.signature);
+        assert!(d.dependencies.iter().any(|d| d == "Fixture.Valid"));
+        assert!(d.definition.is_none());
+        assert!(
+            rows.iter()
+                .any(|d| d.name == "Fixture.Valid" && d.definition.is_some())
+        );
+        assert!(text.contains("H5I-GATE done 1 0"));
+    }
 
     #[test]
     fn only_modules_the_build_reaches_are_gated() {

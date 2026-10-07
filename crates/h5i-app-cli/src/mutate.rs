@@ -558,43 +558,52 @@ fn evaluate(
     m: Option<&Mutant>,
     targets: &[String],
     keep: bool,
+    observe: &mut impl FnMut(h5i_app_report::Stage) -> Result<()>,
 ) -> Result<(Verdict, Option<PathBuf>)> {
     let name = m.map_or("baseline", |m| m.name.as_str());
-    let sb = sandbox(p, name)?;
+    let sb = measured("sandbox", None, observe, || sandbox(p, name))?;
     let out = Out::Log(sb.log.clone());
     let verdict = (|| -> Result<Verdict> {
         if let Some(m) = m {
-            let file = sb.project.root.join(&m.file);
-            let src = std::fs::read_to_string(&file)
-                .with_context(|| format!("reading {}", file.display()))?;
-            match m.apply(&src) {
-                Ok(s) => std::fs::write(&file, s)?,
-                Err(e) => {
-                    out.note(&format!("{e:#}"));
-                    return Ok(Verdict::Invalid("edit"));
-                }
+            let edit = measured("edit", Some(&sb.log), observe, || {
+                let file = sb.project.root.join(&m.file);
+                let src = std::fs::read_to_string(&file)
+                    .with_context(|| format!("reading {}", file.display()))?;
+                std::fs::write(&file, m.apply(&src)?)?;
+                Ok(())
+            });
+            if edit.is_err() {
+                return Ok(Verdict::Invalid("edit"));
             }
         }
         let krate = sb.project.krate().unwrap();
-        if !util::status(
-            Command::new("cargo")
-                .args(["check", "-q"])
-                .current_dir(&krate),
-            &out,
-        )? {
+        if !measured_status("rust_check", &sb.log, observe, || {
+            util::status(
+                Command::new("cargo")
+                    .args(["check", "--release", "-q"])
+                    .current_dir(&krate),
+                &out,
+            )
+        })? {
             return Ok(Verdict::Invalid("rust"));
         }
-        if let Err(e) = crate::extract::extract_kernel(&sb.project, &out) {
+        if let Err(e) = measured("extraction", Some(&sb.log), observe, || {
+            crate::extract::extract_kernel(&sb.project, &out)
+        }) {
             out.note(&format!("{e:#}"));
             return Ok(Verdict::Invalid("extraction"));
         }
-        let built = util::status(
-            Command::new("lake")
-                .arg("build")
-                .args(targets)
-                .current_dir(sb.project.proofs()),
-            &out,
-        )?;
+        // A failed build is reported as a proof-stage failure, not a named
+        // theorem rejecting the mutant. The diagnostics remain available.
+        let built = measured_status("lean_build", &sb.log, observe, || {
+            util::status(
+                Command::new("lake")
+                    .arg("build")
+                    .args(targets)
+                    .current_dir(sb.project.proofs()),
+                &out,
+            )
+        })?;
         Ok(match (m.is_some(), built) {
             (false, true) => Verdict::Ok,
             (false, false) => Verdict::Invalid("baseline does not build"),
@@ -604,6 +613,103 @@ fn evaluate(
     })()?;
     let kept = if keep { Some(sb._tmp.keep()) } else { None };
     Ok((verdict, kept))
+}
+
+fn measured<T>(
+    name: &str,
+    log: Option<&Path>,
+    observe: &mut impl FnMut(h5i_app_report::Stage) -> Result<()>,
+    f: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    use h5i_app_report::Stage;
+    observe(Stage {
+        name: name.into(),
+        status: "running".into(),
+        seconds: 0.0,
+        log: String::new(),
+    })?;
+    let time = Instant::now();
+    let result = f();
+    let mut text = log.map(crate::report::tail).unwrap_or_default();
+    if let Err(e) = &result {
+        text.push_str(&format!("\n{e:#}"));
+    }
+    observe(Stage {
+        name: name.into(),
+        status: if result.is_ok() { "passed" } else { "failed" }.into(),
+        seconds: time.elapsed().as_secs_f64(),
+        log: text,
+    })?;
+    result
+}
+
+/// A process that could not start is not a nonzero exit and must not count as
+/// a mutant caught by Lean. Preserve both distinctions in the persisted stage.
+fn measured_status(
+    name: &str,
+    log: &Path,
+    observe: &mut impl FnMut(h5i_app_report::Stage) -> Result<()>,
+    f: impl FnOnce() -> Result<bool>,
+) -> Result<bool> {
+    let mut final_stage = None;
+    let result = measured(
+        name,
+        Some(log),
+        &mut |stage| {
+            if stage.status == "running" {
+                observe(stage)
+            } else {
+                final_stage = Some(stage);
+                Ok(())
+            }
+        },
+        f,
+    );
+    if let Some(mut stage) = final_stage {
+        stage.status = match &result {
+            Ok(true) => "passed",
+            Ok(false) => "failed",
+            Err(_) => "error",
+        }
+        .into();
+        observe(stage)?;
+    }
+    result
+}
+
+fn record_stage(
+    record: &Arc<Mutex<h5i_app_report::Recorder>>,
+    index: usize,
+    stage: h5i_app_report::Stage,
+) -> Result<()> {
+    let mut r = record.lock().unwrap();
+    let trial = &mut r.run.trials[index];
+    trial.status = "running".into();
+    if trial.stages.last().is_some_and(|s| s.name == stage.name) {
+        trial.stages.pop();
+    }
+    trial.stages.push(stage);
+    Ok(r.save()?)
+}
+
+fn record_verdict(
+    record: &Arc<Mutex<h5i_app_report::Recorder>>,
+    index: usize,
+    verdict: Verdict,
+) -> Result<()> {
+    let mut r = record.lock().unwrap();
+    r.run.trials[index].status = match verdict {
+        Verdict::Caught => "proof_failed",
+        Verdict::Survived => "survived",
+        Verdict::Ok => "passed",
+        Verdict::Invalid("error") => "error",
+        Verdict::Invalid(_) => "invalid",
+    }
+    .into();
+    if index == 0 {
+        r.run.baseline = r.run.trials[index].status.clone();
+    }
+    Ok(r.save()?)
 }
 
 pub struct Options {
@@ -624,12 +730,71 @@ pub struct Outcome {
 /// Run `mutants` against `p`, printing one line each.
 pub fn run(p: &Project, mutants: Vec<Mutant>, opts: &Options) -> Result<Vec<Outcome>> {
     let targets = &p.manifest.mutate.targets;
+    use h5i_app_report::{Edit as RecordedEdit, Trial};
+    let mut record = crate::report::start(p, "mutation", targets.clone())?;
+    record.run.baseline = if opts.baseline { "pending" } else { "skipped" }.into();
+    record.run.trials.push(Trial {
+        name: "baseline".into(),
+        generated: false,
+        file: String::new(),
+        edits: vec![],
+        status: record.run.baseline.clone(),
+        stages: vec![],
+    });
+    for m in &mutants {
+        let edits = match &m.change {
+            Change::Replace(es) => es
+                .iter()
+                .map(|e| RecordedEdit {
+                    before: e.old.clone(),
+                    after: e.new.clone(),
+                })
+                .collect(),
+            Change::Splice { was, new, .. } => vec![RecordedEdit {
+                before: was.clone(),
+                after: new.clone(),
+            }],
+        };
+        record.run.trials.push(Trial {
+            name: m.name.clone(),
+            generated: m.what.is_some(),
+            file: m.file.to_string_lossy().into_owned(),
+            edits,
+            status: "pending".into(),
+            stages: vec![],
+        });
+    }
+    record.save()?;
+    let record = Arc::new(Mutex::new(record));
     if opts.baseline {
         eprint!("{:<48} ", "baseline (the unmodified kernel, copied)");
         let t = Instant::now();
-        let (v, kept) = evaluate(p, None, targets, opts.keep)?;
+        let baseline = evaluate(p, None, targets, opts.keep, &mut |stage| {
+            record_stage(&record, 0, stage)
+        });
+        let (v, kept) = match baseline {
+            Ok(value) => value,
+            Err(e) => {
+                let mut r = record.lock().unwrap();
+                r.run.baseline = "error".into();
+                r.run.trials[0].status = "error".into();
+                for t in &mut r.run.trials[1..] {
+                    t.status = "skipped".into();
+                }
+                r.run.error = Some(format!("{e:#}"));
+                r.finish("error")?;
+                return Err(e);
+            }
+        };
+        record_verdict(&record, 0, v)?;
         eprintln!("{v}  {:.0}s{}", t.elapsed().as_secs_f32(), kept_note(&kept));
         if v != Verdict::Ok {
+            let mut r = record.lock().unwrap();
+            for t in &mut r.run.trials[1..] {
+                t.status = "skipped".into();
+            }
+            r.run.error = Some("Baseline failed; mutations were not executed".into());
+            r.finish("failed")?;
             bail!(
                 "the unmodified project does not build in a copy, so no mutant would mean anything{}",
                 kept_note(&kept)
@@ -641,22 +806,33 @@ pub fn run(p: &Project, mutants: Vec<Mutant>, opts: &Options) -> Result<Vec<Outc
         mutants.into_iter().enumerate().collect::<VecDeque<_>>(),
     ));
     let results = Arc::new(Mutex::new(Vec::new()));
+    let recording_errors = Arc::new(Mutex::new(Vec::new()));
     std::thread::scope(|s| {
         for _ in 0..opts.jobs.max(1) {
             let (queue, results) = (queue.clone(), results.clone());
+            let (record, recording_errors) = (record.clone(), recording_errors.clone());
             s.spawn(move || {
                 loop {
                     let Some((i, m)) = queue.lock().unwrap().pop_front() else {
                         break;
                     };
                     let t = Instant::now();
-                    let (v, kept) = match evaluate(p, Some(&m), targets, opts.keep) {
+                    let (v, kept) = match evaluate(p, Some(&m), targets, opts.keep, &mut |stage| {
+                        let result = record_stage(&record, i + 1, stage);
+                        if let Err(e) = &result {
+                            recording_errors.lock().unwrap().push(e.to_string());
+                        }
+                        result
+                    }) {
                         Ok(r) => r,
                         Err(e) => {
                             eprintln!("{:<48} error: {e:#}", m.name);
                             (Verdict::Invalid("error"), None)
                         }
                     };
+                    if let Err(e) = record_verdict(&record, i + 1, v) {
+                        recording_errors.lock().unwrap().push(e.to_string());
+                    }
                     eprintln!(
                         "[{}/{total}] {:<40} {v}  {:.0}s{}",
                         i + 1,
@@ -676,6 +852,18 @@ pub fn run(p: &Project, mutants: Vec<Mutant>, opts: &Options) -> Result<Vec<Outc
     });
     let mut r = Arc::try_unwrap(results).unwrap().into_inner().unwrap();
     r.sort_by_key(|(i, _)| *i);
+    let mut record = record.lock().unwrap();
+    let errors = recording_errors.lock().unwrap();
+    if !errors.is_empty() {
+        record.run.error = Some(errors.join("\n"));
+        record.finish("error")?;
+        bail!("could not persist mutation evidence: {}", errors.join("; "));
+    }
+    record.finish(if r.iter().any(|(_, o)| o.verdict != Verdict::Caught) {
+        "completed_with_issues"
+    } else {
+        "completed"
+    })?;
     Ok(r.into_iter().map(|(_, o)| o).collect())
 }
 
@@ -688,6 +876,40 @@ fn kept_note(kept: &Option<PathBuf>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_errors_are_not_proof_failures_and_logs_survive() {
+        let log = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(log.path(), "diagnostic from Lean").unwrap();
+        let mut stages = vec![];
+        let result = measured_status(
+            "lean_build",
+            log.path(),
+            &mut |s| {
+                stages.push(s);
+                Ok(())
+            },
+            || bail!("lake not installed"),
+        );
+        assert!(result.is_err());
+        assert_eq!(stages[1].status, "error");
+        assert!(stages[1].log.contains("lake not installed"));
+        stages.clear();
+        let built = measured_status(
+            "lean_build",
+            log.path(),
+            &mut |s| {
+                stages.push(s);
+                Ok(())
+            },
+            || Ok(false),
+        )
+        .unwrap();
+        assert!(!built);
+        assert_eq!(stages[1].status, "failed");
+        drop(log);
+        assert!(stages[1].log.contains("diagnostic from Lean"));
+    }
 
     fn found(src: &str) -> Vec<(String, String, String)> {
         let ast = syn::parse_file(src).unwrap();

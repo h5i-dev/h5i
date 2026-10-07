@@ -3,6 +3,7 @@
 // a receipt is the record of what actually ran inside it. (`error` stays public
 // because `H5iError` appears in the signatures of most of them.)
 pub mod browser;
+pub mod apps;
 pub mod browser_events;
 pub mod browser_frames;
 pub mod browser_sandbox;

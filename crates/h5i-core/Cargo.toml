@@ -14,6 +14,7 @@ default = ["web"]
 web = ["dep:axum", "dep:tokio", "dep:rust-embed", "dep:mime_guess"]
 
 [dependencies]
+h5i-app-report = { path = "../h5i-app-report" }
 # The shapes h5i writes about an HTTP message and about an endpoint. The
 # console folds a recon ledger, and reading one must not mean linking a plugin.
 h5i-wire = { path = "../h5i-wire" }

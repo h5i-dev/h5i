@@ -189,7 +189,7 @@ pub fn copy_tree(from: &Path, to: &Path) -> Result<()> {
     for e in std::fs::read_dir(from).with_context(|| format!("reading {}", from.display()))? {
         let e = e?;
         let name = e.file_name();
-        if matches!(name.to_string_lossy().as_ref(), "target" | ".lake" | ".git") {
+        if matches!(name.to_string_lossy().as_ref(), "target" | ".lake" | ".git" | ".h5i") {
             continue;
         }
         let (src, dst) = (e.path(), to.join(&name));

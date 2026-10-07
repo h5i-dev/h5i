@@ -1438,6 +1438,38 @@ async fn api_probe() -> Response {
 
 /// Every route, wired to `state`. Extracted so tests can drive the surface
 /// without a socket, and so the "all of them are GETs" claim is checkable.
+#[derive(serde::Deserialize)]
+struct AppQuery {
+    project: String,
+    baseline: Option<String>,
+    path: Option<String>,
+    revision: Option<String>,
+    anchor: Option<String>,
+}
+
+async fn api_apps(State(state): State<Arc<AppState>>) -> Response {
+    let result = tokio::task::spawn_blocking(move || crate::apps::discover(&state.repo_path)).await;
+    app_response(result)
+}
+
+fn app_response<T: Serialize>(result: Result<Result<T, String>, tokio::task::JoinError>) -> Response {
+    match result {
+        Ok(Ok(value)) => Json(value).into_response(),
+        Ok(Err(message)) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": message}))).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "App reader failed").into_response(),
+    }
+}
+
+async fn api_app(State(state): State<Arc<AppState>>, axum::extract::Query(q): axum::extract::Query<AppQuery>) -> Response {
+    app_response(tokio::task::spawn_blocking(move || crate::apps::detail(&state.repo_path, &q.project)).await)
+}
+async fn api_app_changes(State(state): State<Arc<AppState>>, axum::extract::Query(q): axum::extract::Query<AppQuery>) -> Response {
+    app_response(tokio::task::spawn_blocking(move || crate::apps::history(&state.repo_path, &q.project, q.baseline.as_deref().unwrap_or("HEAD"))).await)
+}
+async fn api_app_source(State(state): State<Arc<AppState>>, axum::extract::Query(q): axum::extract::Query<AppQuery>) -> Response {
+    app_response(tokio::task::spawn_blocking(move || crate::apps::source(&state.repo_path, &q.project, q.path.as_deref().unwrap_or(""), q.revision.as_deref(), q.anchor.as_deref().unwrap_or(""))).await)
+}
+
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(index))
@@ -1448,6 +1480,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/session/:id", get(api_session))
         .route("/api/session/:id/message/:seq", get(api_message))
         .route("/api/projects", get(api_projects))
+        .route("/api/apps", get(api_apps))
+        .route("/api/apps/detail", get(api_app))
+        .route("/api/apps/changes", get(api_app_changes))
+        .route("/api/apps/source", get(api_app_source))
         .route("/api/project/:name", get(api_project))
         .route("/api/project/:name/report", get(api_project_report))
         .route("/api/project/:name/asset/:file", get(api_project_asset))

@@ -1,0 +1,421 @@
+{
+  "version": 1,
+  "title": "Booking",
+  "description": "Room reservations with authorization, time-aware cancellation and durable state.",
+  "author": "Codex · source-linked explanation",
+  "exclusions": [
+    "Authentication of the real caller and truth of supplied time are external conditions.",
+    "Delivery timing and exactly-once notification processing are not established by these guarantees.",
+    "Migrated or externally modified database states are not automatically in the modeled reachable set."
+  ],
+  "nodes": [
+    {
+      "id": "no-overlap",
+      "kind": "guarantee",
+      "title": "Bookings never overlap",
+      "description": "Two distinct bookings of the same room share no instant, in any state reachable through accepted commands.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "accept-booking",
+      "kind": "guarantee",
+      "title": "Valid bookings are accepted",
+      "description": "A future, nonempty booking of a free room is accepted when an ID is available.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "started-remains",
+      "kind": "guarantee",
+      "title": "Started bookings remain",
+      "description": "Once a booking has started, later commands by non-admins cannot remove it under monotonic time.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "database-invariant",
+      "kind": "guarantee",
+      "title": "Stored bookings keep the invariant",
+      "description": "Accepted write sets preserve the invariant in the database model and in subsequently decoded snapshots.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "no-double-booking",
+      "kind": "theorem",
+      "title": "No double booking",
+      "description": "The theorem quantifies over every booking pair and every instant. The reachability hypothesis is part of its scope.",
+      "symbol": "booking_kernel.Theorems.no_double_booking",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Theorems.lean",
+          "anchor": "theorem no_double_booking",
+          "digest": "4cc9f2b7b40422b9e382aff7fd26f8ccdf9501fa4acc6aedf6a340e5d14dbb70"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "book-accepted",
+      "kind": "theorem",
+      "title": "Acceptance of a valid booking",
+      "description": "Requires an existing room, future and nonempty interval, compatibility with every existing booking, and an available ID. The declared touching-interval mutant is relevant to this acceptance boundary; actual failure attribution requires a run.",
+      "symbol": "booking_kernel.Theorems.book_accepted",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Theorems.lean",
+          "anchor": "theorem book_accepted",
+          "digest": "4cc9f2b7b40422b9e382aff7fd26f8ccdf9501fa4acc6aedf6a340e5d14dbb70"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "started-stays",
+      "kind": "theorem",
+      "title": "Preservation after start",
+      "description": "Requires a timed reachable state, a run restricted to non-admin callers, membership of the booking, and a start time already reached.",
+      "symbol": "booking_kernel.Clock.started_stays",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Clock.lean",
+          "anchor": "theorem started_stays",
+          "digest": "d32118c8b57e2c173e834d13e26037c8e5327762256c701a50636966f4bd1058"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "db-inv",
+      "kind": "theorem",
+      "title": "Invariant on stored state",
+      "description": "For valid schema and tenant inputs, PgServed histories imply Inv and invariant-preserving decoded loads.",
+      "symbol": "booking_kernel.Storage.db_inv",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Storage.lean",
+          "anchor": "theorem db_inv",
+          "digest": "edb4c83224d009f787813dfa6da580c0392fee31bbe1364504b37ecc36cb67f3"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "reachable",
+      "kind": "assumption",
+      "title": "Reachable state",
+      "description": "The state comes from the empty initial state by accepted transitions. Arbitrarily corrupted or migrated states are not automatically reachable.",
+      "symbol": "booking_kernel.Spec.Reachable",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Spec.lean",
+          "anchor": "inductive Reachable :",
+          "digest": "b1d59e732276aa114267414cd77b5a8b9499fd3a6231084035b28c906ad4a815"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "intervals",
+      "kind": "specification",
+      "title": "Half-open intervals",
+      "description": "Intervals [start, end) can touch without overlapping. Different rooms are compatible; bookings of the same room must be apart.",
+      "symbol": "booking_kernel.Spec.Apart",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Spec.lean",
+          "anchor": "def Apart",
+          "digest": "b1d59e732276aa114267414cd77b5a8b9499fd3a6231084035b28c906ad4a815"
+        },
+        {
+          "path": "examples/app/booking/proofs/Spec.lean",
+          "anchor": "def Compatible",
+          "digest": "b1d59e732276aa114267414cd77b5a8b9499fd3a6231084035b28c906ad4a815"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "invariant",
+      "kind": "specification",
+      "title": "Booking invariant",
+      "description": "Unique keys, fresh IDs, existing rooms, nonempty intervals and pairwise compatibility.",
+      "symbol": "booking_kernel.Spec.Inv",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Spec.lean",
+          "anchor": "structure Inv",
+          "digest": "b1d59e732276aa114267414cd77b5a8b9499fd3a6231084035b28c906ad4a815"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "clock-condition",
+      "kind": "assumption",
+      "title": "Time never goes backwards",
+      "description": "ReachableT and StepsT model nondecreasing time. Applying this theorem to the running service relies on the engine's clock contract.",
+      "symbol": "booking_kernel.Spec.ReachableT",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Spec.lean",
+          "anchor": "abbrev ReachableT",
+          "digest": "b1d59e732276aa114267414cd77b5a8b9499fd3a6231084035b28c906ad4a815"
+        },
+        {
+          "path": "examples/app/booking/server/src/lib.rs",
+          "anchor": "pub fn config()",
+          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "clock-counterexample",
+      "kind": "counterexample",
+      "title": "Clock reversal permits cancellation",
+      "description": "An owner cancels at time 0 after a commit at time 5, removing a booking that started at time 1. This is a formal counterexample to dropping monotonic time.",
+      "symbol": "booking_kernel.Clock.clock_back_cancels",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Clock.lean",
+          "anchor": "theorem clock_back_cancels",
+          "digest": "d32118c8b57e2c173e834d13e26037c8e5327762256c701a50636966f4bd1058"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "kernel",
+      "kind": "implementation",
+      "title": "Rust transition",
+      "description": "Dispatches AddAdmin, CreateRoom, Book, Cancel and List into write sets and replies, or a refusal.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/kernel/src/lib.rs",
+          "anchor": "pub fn transition(",
+          "digest": "a6b7b98ce506e5aac6d96a590aaadd8cdb6dd6d27d6ec37f899ad5b6a85888c3"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "book-rust",
+      "kind": "implementation",
+      "title": "Rust booking checks",
+      "description": "Checks the room, interval, current time, availability and ID bound, then emits the booking, counter and notification writes.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/kernel/src/lib.rs",
+          "anchor": "fn book(",
+          "digest": "a6b7b98ce506e5aac6d96a590aaadd8cdb6dd6d27d6ec37f899ad5b6a85888c3"
+        },
+        {
+          "path": "examples/app/booking/kernel/src/lib.rs",
+          "anchor": "pub fn free(",
+          "digest": "a6b7b98ce506e5aac6d96a590aaadd8cdb6dd6d27d6ec37f899ad5b6a85888c3"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "shell",
+      "kind": "boundary",
+      "title": "Authenticated caller & clock",
+      "description": "The shell supplies the actor and the engine stamps the time. Theorems over these values do not establish that an external identity or clock is truthful.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/server/src/lib.rs",
+          "anchor": "pub fn principal(",
+          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
+        },
+        {
+          "path": "examples/app/booking/server/src/lib.rs",
+          "anchor": "fn stamp(",
+          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "store",
+      "kind": "implementation",
+      "title": "Commit & load",
+      "description": "The server's Store uses generated schema loads and compiled SQL writes. Effects go to the outbox.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/server/src/lib.rs",
+          "anchor": "impl Store<BookingApp>",
+          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "database-contract",
+      "kind": "assumption",
+      "title": "Database & engine contract",
+      "description": "Relies on modeled PostgreSQL semantics, serializable transactions, faithful value conversion, tenant consistency and restricted database credentials.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "docs/app/TRUST.md",
+          "anchor": "## Trusted engine contract",
+          "digest": "f00b374e59bae9dc67ed4bdecce4020bd1f10d742fb222924babb209c943a7d7"
+        }
+      ],
+      "excludes": [
+        "Live deployment conformance is not established by a Lean build."
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "no-overlap",
+      "to": "no-double-booking",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "no-double-booking",
+      "to": "reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "no-double-booking",
+      "to": "invariant",
+      "kind": "uses",
+      "view": "proof"
+    },
+    {
+      "from": "invariant",
+      "to": "intervals",
+      "kind": "defined by",
+      "view": "proof"
+    },
+    {
+      "from": "no-double-booking",
+      "to": "kernel",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "accept-booking",
+      "to": "book-accepted",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "book-accepted",
+      "to": "intervals",
+      "kind": "requires compatibility",
+      "view": "proof"
+    },
+    {
+      "from": "book-accepted",
+      "to": "book-rust",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "book-accepted",
+      "to": "shell",
+      "kind": "applies to supplied values",
+      "view": "proof"
+    },
+    {
+      "from": "started-remains",
+      "to": "started-stays",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "started-stays",
+      "to": "clock-condition",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "started-stays",
+      "to": "reachable",
+      "kind": "requires timed reachability",
+      "view": "proof"
+    },
+    {
+      "from": "started-stays",
+      "to": "clock-counterexample",
+      "kind": "condition motivated by",
+      "view": "proof"
+    },
+    {
+      "from": "started-stays",
+      "to": "kernel",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "database-invariant",
+      "to": "db-inv",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "db-inv",
+      "to": "invariant",
+      "kind": "preserves",
+      "view": "proof"
+    },
+    {
+      "from": "db-inv",
+      "to": "database-contract",
+      "kind": "application relies on",
+      "view": "proof"
+    },
+    {
+      "from": "db-inv",
+      "to": "store",
+      "kind": "connects to",
+      "view": "proof"
+    },
+    {
+      "from": "db-inv",
+      "to": "kernel",
+      "kind": "uses accepted writes",
+      "view": "proof"
+    },
+    {
+      "from": "shell",
+      "to": "kernel",
+      "kind": "supplies actor, time and command",
+      "view": "flow"
+    },
+    {
+      "from": "kernel",
+      "to": "book-rust",
+      "kind": "dispatches Book",
+      "view": "flow"
+    },
+    {
+      "from": "book-rust",
+      "to": "store",
+      "kind": "returns writes for commit",
+      "view": "flow"
+    },
+    {
+      "from": "store",
+      "to": "database-contract",
+      "kind": "relies on atomic commit",
+      "view": "flow"
+    }
+  ]
+}
