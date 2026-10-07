@@ -266,6 +266,7 @@ pub struct SourceView {
     pub start_line: usize,
     pub total_lines: usize,
     pub anchor_found: bool,
+    pub anchor_line: Option<usize>,
 }
 
 fn blob(repo: &git2::Repository, tree: &git2::Tree, path: &str) -> Option<String> {
@@ -341,6 +342,11 @@ pub fn source(
         start_line: start + 1,
         total_lines: lines.len(),
         anchor_found: found,
+        anchor_line: if matching.len() == 1 {
+            Some(matching[0] + 1)
+        } else {
+            None
+        },
     })
 }
 
@@ -745,6 +751,22 @@ mod tests {
         assert!(changes[0].before.contains("True"));
         assert!(changes[0].after.contains("False"));
     }
+    #[test]
+    fn source_reports_only_unique_anchor_lines() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("h5i-app.toml"), "").unwrap();
+        std::fs::write(d.path().join("Proof.lean"), "-- header\n-- context\ntheorem safe : True := by trivial\n-- repeated\n-- repeated\n").unwrap();
+        let view = source(d.path(), ".", "Proof.lean", None, "theorem safe").unwrap();
+        assert_eq!(view.anchor_line, Some(3));
+        assert_eq!(view.start_line, 1);
+        assert!(view.anchor_found);
+        for anchor in ["missing", "repeated", ""] {
+            let view = source(d.path(), ".", "Proof.lean", None, anchor).unwrap();
+            assert_eq!(view.anchor_line, None);
+            assert_eq!(view.anchor_found, anchor.is_empty());
+        }
+    }
+
     #[test]
     fn source_cannot_read_arbitrary_repository_or_host_files() {
         let d = tempfile::tempdir().unwrap();

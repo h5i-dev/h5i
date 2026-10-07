@@ -82,6 +82,10 @@ reviewed. The console warns when an anchor no longer resolves uniquely or the
 fingerprint no longer matches. It shows up to 160 source lines around the
 anchor; it never follows a source outside the repository. Update a digest only
 after reviewing the corresponding explanation against the changed source.
+Source links show the anchor's current working-tree line number when it resolves
+uniquely; missing or ambiguous anchors are labeled instead of showing a guessed
+line. Without a map or recorded declarations, the console offers an example
+prompt for asking a coding agent to author the map.
 
 Edges have `from`, `to`, `kind` (a readable relationship) and `view` (`proof`,
 the default, or `flow`). In proof views, point from the guarantee toward what

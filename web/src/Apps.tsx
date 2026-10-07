@@ -300,25 +300,7 @@ function Guarantees({
   if (!model || !root)
     return (
       <div className="app-pad app-scroll">
-        <Empty title="Give this app a readable guarantee map">
-          <p>
-            Its manifest and sources are available below. An agent-authored{" "}
-            <code>h5i-app.ui.json</code> connects user-visible behavior to
-            specifications, theorems and conditions.
-          </p>
-        </Empty>
-        <h3>Required theorem names</h3>
-        <p className="app-muted">
-          The manifest lists required names, not every implemented theorem.
-        </p>
-        {data.required_theorems.map((t) => (
-          <p key={t}>
-            <code>{t}</code>
-          </p>
-        ))}
-        <h3>Source inventory</h3>
-        <SourcePicker files={data.files} onSelect={setFile} />
-        {file && <SourceInspector project={data.summary.id} source={file} />}
+        <MapPrompt project={data.summary.id} />
         <Evidence view={latest} project={data.summary.id} />
       </div>
     );
@@ -507,14 +489,12 @@ function Guarantees({
               </div>
               <h3>Source</h3>
               {selected.sources.map((s, i) => (
-                <button
-                  className="app-source-link"
-                  key={i}
-                  onClick={() => setFile(s)}
-                >
-                  <code>{s.path.split("/").slice(-2).join("/")}</code>
-                  <span>{s.anchor || "Open file"} ↗</span>
-                </button>
+                <SourceLink
+                  key={`${selected.id}:${i}`}
+                  project={data.summary.id}
+                  source={s}
+                  onSelect={() => setFile(s)}
+                />
               ))}
               {!selected.sources.length && (
                 <p className="app-muted">
@@ -756,28 +736,70 @@ function wrap(s: string, width: number) {
   return lines;
 }
 
-function SourcePicker({
-  files,
+export function MapPrompt({ project }: { project: string }) {
+  return (
+    <section className="app-map-prompt">
+      <h3>Ask your agent to explain this app</h3>
+      <p className="app-muted">
+        A guarantee map connects user-visible behavior to its code, proofs and
+        conditions. Try this prompt in your coding agent:
+      </p>
+      <pre className="app-code">{`Create h5i-app.ui.json next to the manifest for ${project}.
+Use docs/app/app-console.md and examples/app/booking/h5i-app.ui.json as references.
+Read the Rust and Lean code. Explain the user-visible guarantees, their assumptions
+and exclusions, and connect them to the implemented specifications, theorems and
+Rust code. Include an application-flow view where useful.
+Use exact Lean symbols and repository-relative source paths with unique anchors.
+Lean dependency edges come from check records; do not invent proof evidence or
+claim that unverified behavior is guaranteed.`}</pre>
+    </section>
+  );
+}
+
+function SourceLink({
+  project,
+  source,
   onSelect,
 }: {
-  files: string[];
-  onSelect: (s: AppSource) => void;
+  project: string;
+  source: AppSource;
+  onSelect: () => void;
 }) {
+  const [location, setLocation] = useState<SourceView | null>(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    const c = new AbortController();
+    setLocation(null);
+    setError(false);
+    appsApi
+      .source(project, source, c.signal)
+      .then((value) => {
+        if (!c.signal.aborted) setLocation(value);
+      })
+      .catch(() => {
+        if (!c.signal.aborted) setError(true);
+      });
+    return () => c.abort();
+  }, [project, source.path, source.anchor]);
   return (
-    <select
-      aria-label="Select source file"
-      defaultValue=""
-      onChange={(e) => onSelect({ path: e.target.value, anchor: "" })}
-    >
-      <option value="" disabled>
-        Choose a source file…
-      </option>
-      {files.map((f) => (
-        <option key={f} value={f}>
-          {f}
-        </option>
-      ))}
-    </select>
+    <button className="app-source-link" onClick={onSelect} title={source.path}>
+      <code>
+        {source.path.split("/").slice(-2).join("/")}
+        {location?.anchor_line != null ? `:${location.anchor_line}` : ""}
+      </code>
+      <span>{source.anchor || "Open file"} ↗</span>
+      {source.anchor && (
+        <span>
+          {error
+            ? "Location unavailable"
+            : !location
+              ? "Locating line…"
+              : location.anchor_line == null
+                ? "Anchor missing or ambiguous"
+                : `Line ${location.anchor_line} · working tree`}
+        </span>
+      )}
+    </button>
   );
 }
 function SourceInspector({

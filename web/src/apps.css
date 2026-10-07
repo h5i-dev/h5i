@@ -222,8 +222,20 @@
   height: 100%;
   overflow: auto;
 }
+.app-map-prompt {
+  max-width: 760px;
+  margin-bottom: 28px;
+}
+.app-map-prompt p {
+  margin: 10px 0 16px;
+}
+.app-map-prompt pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
 .app-guarantee-list {
-  padding: 20px 26px;
+  padding: 12px 20px;
 }
 .app-section-heading {
   display: flex;
@@ -241,13 +253,15 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  max-height: 150px;
+  overflow-y: auto;
 }
 .app-guarantee {
   display: flex;
   align-items: flex-start;
   text-align: left;
-  gap: 13px;
-  padding: 15px;
+  gap: 9px;
+  padding: 9px 12px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -274,6 +288,7 @@
 }
 .app-guarantee > span:nth-child(2) {
   flex: 1;
+  min-width: 0;
 }
 .app-guarantee b {
   display: block;
@@ -285,16 +300,19 @@
   font-size: 11px;
   line-height: 1.6;
   color: var(--ink-3);
-  margin-top: 5px;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .app-card-arrow {
   color: var(--ink-4);
 }
 .app-explorer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 350px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   border-top: 1px solid var(--line);
-  min-height: 450px;
+  min-height: 560px;
 }
 .app-map {
   min-width: 0;
@@ -341,8 +359,8 @@
 }
 .app-graph-scroll {
   overflow: auto;
-  min-height: 260px;
-  max-height: 640px;
+  min-height: 420px;
+  max-height: 75vh;
   background-image: radial-gradient(var(--line) 0.7px, transparent 0.7px);
   background-size: 18px 18px;
 }
@@ -857,19 +875,19 @@
 }
 @media (max-width: 1300px) {
   .app-explorer {
-    grid-template-columns: minmax(0, 1fr) 290px;
+    grid-template-columns: minmax(0, 1fr) 270px;
   }
   .app-inspector {
     padding: 18px;
-  }
-  .app-cards {
-    grid-template-columns: 1fr;
   }
   .app-guarantee > span > span {
     display: none;
   }
 }
 @media (max-width: 1000px) {
+  .app-cards {
+    grid-template-columns: 1fr;
+  }
   .app-explorer {
     grid-template-columns: 1fr;
   }

@@ -128,6 +128,7 @@ export interface SourceView {
   start_line: number;
   total_lines: number;
   anchor_found: boolean;
+  anchor_line: number | null;
 }
 
 async function read<T>(

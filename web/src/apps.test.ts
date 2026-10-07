@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Graph } from "./Apps";
+import { Graph, MapPrompt } from "./Apps";
 import {
   neighborhood,
   shellQuote,
@@ -31,6 +31,15 @@ const model: AppModel = {
   ],
 };
 describe("app review navigation", () => {
+  it("offers an agent prompt instead of a source inventory when no map exists", () => {
+    const html = renderToStaticMarkup(createElement(MapPrompt, { project: "examples/app/inbox" }));
+    expect(html).toContain("examples/app/inbox");
+    expect(html).toContain("h5i-app.ui.json");
+    expect(html).toContain("unique anchors");
+    expect(html).toContain("do not invent proof evidence");
+    expect(html).not.toContain("Required theorem names");
+    expect(html).not.toContain("Source inventory");
+  });
   it("shows indirect dependencies without pulling unrelated flows into a guarantee", () => {
     expect(neighborhood(model, "g", "proof").nodes.map((n) => n.id)).toEqual([
       "g",
