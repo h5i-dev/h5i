@@ -167,7 +167,14 @@ export function ProjectsPage({
               route={route.slice(1)}
               go={go}
             />
-          ) : null
+          ) : (
+            <Empty title="Pick a project">
+              <p>
+                A project keeps an engagement's findings, the evidence they rest on, notes and reports. Its open
+                findings are counted on the rail.
+              </p>
+            </Empty>
+          )
         }
       />
     </>

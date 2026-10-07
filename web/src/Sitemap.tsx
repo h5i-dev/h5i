@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 
 import type { SessionDetail, SiteEndpoint, SiteOrigin } from "./api";
-import { Chip, Cmd, Empty, Facts, Method, Note, Split, plural } from "./ui";
+import { Chip, Cmd, Empty, Facts, Method, Note, ReqLink, Split, plural, type SessionNav } from "./ui";
 
 // What this session reached, as a tree: origin, then path segments, with the
 // counts folded upward. Refusals sit apart from hits at every level, because
@@ -99,7 +99,7 @@ function build(sitemap: SiteOrigin[]): Node[] {
   });
 }
 
-export function Sitemap({ detail }: { detail: SessionDetail }) {
+export function Sitemap({ detail, nav }: { detail: SessionDetail; nav: SessionNav }) {
   const { origins, hidden } = useMemo(() => visibleSitemap(detail), [detail]);
   const roots = useMemo(() => build(origins), [origins]);
   const [open, setOpen] = useState<Set<string>>(() => new Set(roots.slice(0, 3).map((r) => r.key)));
@@ -140,7 +140,7 @@ export function Sitemap({ detail }: { detail: SessionDetail }) {
       first={tree}
       second={
         selected ? (
-          <NodeDetail node={selected} detail={detail} />
+          <NodeDetail node={selected} detail={detail} nav={nav} />
         ) : (
           <Empty title="Pick a path">
             <p>
@@ -230,7 +230,7 @@ function TreeNode({
   );
 }
 
-function NodeDetail({ node, detail }: { node: Node; detail: SessionDetail }) {
+function NodeDetail({ node, detail, nav }: { node: Node; detail: SessionDetail; nav: SessionNav }) {
   const name = detail.name ?? detail.id;
   const leaf = node.leaf;
   const under = [...walk(node)].filter((n) => n.leaf).map((n) => n.leaf as SiteEndpoint);
@@ -265,7 +265,7 @@ function NodeDetail({ node, detail }: { node: Node; detail: SessionDetail }) {
               ["methods", <span key="m" style={{ display: "flex", gap: 8 }}>{leaf.methods.map((m) => <Method key={m} m={m} />)}</span>],
               ["statuses", leaf.statuses.length ? leaf.statuses.join(", ") : "none answered"],
               ["parameters", leaf.params.length ? <code key="p">{leaf.params.join(", ")}</code> : "none seen"],
-              ["last fetch", <code key="l">req_{leaf.last_seq}</code>],
+              ["last fetch", <ReqLink key="l" id={`req_${leaf.last_seq}`} nav={nav} />],
             ]}
           />
         ) : null}

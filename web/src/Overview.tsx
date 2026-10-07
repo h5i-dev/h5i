@@ -1,7 +1,7 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { Fleet } from "./App";
-import type { BoxRow, SessionRow } from "./api";
+import { api, type BoxRow, type SessionRow } from "./api";
 import { shownState } from "./seen";
 import { ATTENTION_LABEL, AttentionTag, Cmd, Count, ago, hostOf, plural } from "./ui";
 
@@ -28,8 +28,10 @@ export function Overview({ fleet, go }: { fleet: Fleet; go: (parts: string[]) =>
   const live = [...(byState.working ?? []), ...(byState.idle ?? []), ...(byState.unknown ?? [])];
   const pressing = (boxes ?? []).filter((b) => b.signals.verdict !== "clean");
   const refused = (sessions ?? []).reduce((n, s) => n + s.denied, 0);
-  const findings = (sessions ?? []).filter((s) => s.findings > 0);
-  const withFindings = findings.reduce((n, s) => n + s.findings, 0);
+  const findings = useFindings(fleet);
+  const projectOpen = (fleet.projects ?? []).reduce((n, p) => n + p.open_findings, 0);
+  const sessionFindings = (sessions ?? []).reduce((n, s) => n + s.findings, 0);
+  const withFindings = projectOpen + sessionFindings;
 
   const open = (s: SessionRow) => {
     fleet.look(s);
@@ -122,23 +124,41 @@ export function Overview({ fleet, go }: { fleet: Fleet; go: (parts: string[]) =>
             )}
           </Card>
 
-          <Card title="Findings" aside={withFindings ? `${withFindings} across ${findings.length} ${plural(findings.length, "session")}` : undefined}>
-            {findings.length === 0 ? (
+          <Card
+            title="Findings"
+            aside={
+              withFindings
+                ? [
+                    projectOpen ? `${projectOpen} open in projects` : "",
+                    sessionFindings ? `${sessionFindings} in sessions` : "",
+                  ]
+                    .filter(Boolean)
+                    .join(", ")
+                : undefined
+            }
+          >
+            {withFindings === 0 ? (
               <div className="card-empty">
-                No session has a finding yet. An agent writes one with{" "}
-                <Cmd text="h5i websec finding create" />.
+                No open finding. An agent writes one with <Cmd text="h5i websec finding create" />.
               </div>
+            ) : findings.length === 0 ? (
+              <div className="card-empty">reading</div>
             ) : (
-              findings.slice(0, 10).map((s) => (
-                <button key={s.id} type="button" className="card-row" onClick={() => go(["sessions", s.id, "findings"])}>
-                  <span className="card-row-name">{s.name ?? s.id}</span>
-                  <span className="card-row-aside">
-                    {s.findings} {plural(s.findings, "finding")}
+              findings.slice(0, 10).map((f) => (
+                <button key={`${f.where}/${f.id}`} type="button" className="card-row" onClick={() => go(f.route)}>
+                  <span className="card-row-name">{f.title || "(untitled)"}</span>
+                  <span className="card-row-aside">{f.tag}</span>
+                  <span className="card-row-why">
+                    {f.kind === "project" ? "project" : "session"} {f.where}
                   </span>
-                  <span className="card-row-why">{hostOf(s.url)}</span>
                 </button>
               ))
             )}
+            {findings.length > 10 ? (
+              <div className="card-row">
+                <span className="card-row-why">and {findings.length - 10} more</span>
+              </div>
+            ) : null}
           </Card>
 
           <Card title="Boxes under pressure" aside={pressing.length ? `${pressing.length} of ${boxes?.length ?? 0}` : undefined}>
@@ -160,6 +180,97 @@ export function Overview({ fleet, go }: { fleet: Fleet; go: (parts: string[]) =>
       </div>
     </>
   );
+}
+
+interface FindingLine {
+  kind: "project" | "session";
+  id: string;
+  title: string;
+  /** Severity for a project finding, the agent's state for a session one. */
+  tag: string;
+  where: string;
+  updated: string;
+  route: string[];
+}
+
+const OPEN = new Set(["", "open", "in-progress", "fix-claimed"]);
+const SEVERITY = ["critical", "high", "medium", "low", "info"];
+
+/**
+ * Finding titles, which the fleet poll does not carry. Only projects with an
+ * open finding and sessions with any are read, and each is read again only
+ * when its own count or stamp moves.
+ */
+function useFindings(fleet: Fleet): FindingLine[] {
+  const cache = useRef(new Map<string, FindingLine[]>());
+  const [, bump] = useState(0);
+  const wanted = useMemo(() => {
+    const out: { key: string; load: () => Promise<FindingLine[]> }[] = [];
+    for (const p of fleet.projects ?? []) {
+      if (p.open_findings === 0) continue;
+      out.push({
+        key: `p|${p.name}|${p.updated ?? ""}|${p.open_findings}`,
+        load: () =>
+          api.project(p.name).then((d) =>
+            d.findings
+              .filter((f) => OPEN.has(f.status))
+              .map((f) => ({
+                kind: "project" as const,
+                id: f.id,
+                title: f.title,
+                tag: f.severity || f.status || "open",
+                where: p.title || p.name,
+                updated: f.updated,
+                route: ["projects", p.name, "findings"],
+              })),
+          ),
+      });
+    }
+    const sessions = (fleet.sessions?.sessions ?? []).filter((s) => s.findings > 0).slice(0, 12);
+    for (const s of sessions) {
+      out.push({
+        key: `s|${s.id}|${s.findings}|${s.last_request_at ?? ""}`,
+        load: () =>
+          api.session(s.id).then((d) =>
+            d.findings_list.map((f) => ({
+              kind: "session" as const,
+              id: f.id,
+              title: f.title,
+              tag: f.state || "finding",
+              where: s.name ?? s.id,
+              updated: f.updated,
+              route: ["sessions", s.id, "findings"],
+            })),
+          ),
+      });
+    }
+    return out;
+  }, [fleet.projects, fleet.sessions]);
+
+  useEffect(() => {
+    let alive = true;
+    for (const w of wanted) {
+      if (cache.current.has(w.key)) continue;
+      cache.current.set(w.key, []);
+      w.load()
+        .then((lines) => {
+          cache.current.set(w.key, lines);
+          if (alive) bump((n) => n + 1);
+        })
+        .catch(() => cache.current.delete(w.key));
+    }
+    return () => {
+      alive = false;
+    };
+  }, [wanted]);
+
+  const rank = (f: FindingLine) => {
+    const i = SEVERITY.indexOf(f.tag);
+    return f.kind === "project" ? (i < 0 ? SEVERITY.length : i) : SEVERITY.length + 1;
+  };
+  return wanted
+    .flatMap((w) => cache.current.get(w.key) ?? [])
+    .sort((a, b) => rank(a) - rank(b) || b.updated.localeCompare(a.updated));
 }
 
 function BoxLine({ b, onOpen }: { b: BoxRow; onOpen: () => void }) {

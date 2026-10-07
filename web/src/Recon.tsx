@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 
 import type { EndpointRow, SessionDetail } from "./api";
-import { Chip, Cmd, Empty, Method, Note, SectionHead, clock, day, plural } from "./ui";
+import { Chip, Cmd, Empty, Method, Note, ReqLink, SectionHead, clock, day, plural, reqSeq, type SessionNav } from "./ui";
 
 // The recon ledger and the runs that filled it. Five states are the whole
 // discipline, and `confirmed` is the only one that means "this exists".
@@ -13,7 +13,7 @@ function isCalibration(e: EndpointRow): boolean {
   return e.sources.length > 0 && e.sources.every((s) => s.from === "calibration");
 }
 
-export function Recon({ detail }: { detail: SessionDetail }) {
+export function Recon({ detail, nav }: { detail: SessionDetail; nav: SessionNav }) {
   const name = detail.name ?? detail.id;
   const all = detail.endpoints;
   const [state, setState] = useState<string>("all");
@@ -121,7 +121,15 @@ export function Recon({ detail }: { detail: SessionDetail }) {
                     <td className="dim">{[...new Set(e.sources.map((s) => s.from))].join(", ")}</td>
                     <td>
                       {e.evidence.length > 0 ? (
-                        <Cmd text={`h5i websec show ${e.evidence[e.evidence.length - 1]} --session ${name}`} hint="the message that answered for this endpoint" />
+                        reqSeq(e.evidence[e.evidence.length - 1]) !== null ? (
+                          <ReqLink
+                            id={e.evidence[e.evidence.length - 1]}
+                            nav={nav}
+                            title={`the message that answered for this endpoint: open it in History\nh5i websec show ${e.evidence[e.evidence.length - 1]} --session ${name}`}
+                          />
+                        ) : (
+                          <Cmd text={`h5i websec show ${e.evidence[e.evidence.length - 1]} --session ${name}`} hint="the message that answered for this endpoint" />
+                        )
                       ) : (
                         <span className="dim">never sent</span>
                       )}
