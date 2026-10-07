@@ -3,6 +3,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Graph, MapPrompt } from "./Apps";
 import {
+  explanationDrift,
+  flowLayers,
   neighborhood,
   shellQuote,
   withLeanDependencies,
@@ -32,7 +34,9 @@ const model: AppModel = {
 };
 describe("app review navigation", () => {
   it("offers an agent prompt instead of a source inventory when no map exists", () => {
-    const html = renderToStaticMarkup(createElement(MapPrompt, { project: "examples/app/inbox" }));
+    const html = renderToStaticMarkup(
+      createElement(MapPrompt, { project: "examples/app/inbox" }),
+    );
     expect(html).toContain("examples/app/inbox");
     expect(html).toContain("h5i-app.ui.json");
     expect(html).toContain("unique anchors");
@@ -168,5 +172,47 @@ describe("Lean-derived dependency graph", () => {
     expect(neighborhood(graph, graph.nodes[79].id, "proof").nodes).toHaveLength(
       21,
     );
+  });
+  it("reads explanation drift from source issues", () => {
+    const src = (digest?: string) => ({ path: "a.rs", anchor: "fn a", digest });
+    const m: AppModel = {
+      ...model,
+      nodes: [
+        { ...model.nodes[0], id: "x", title: "Kept", sources: [src("d")] },
+        { ...model.nodes[0], id: "y", title: "Moved", sources: [src("d")] },
+        { ...model.nodes[0], id: "z", title: "Loose", sources: [src()] },
+        { ...model.nodes[0], id: "w", title: "Bare", sources: [] },
+      ],
+    };
+    const d = explanationDrift(m, [
+      "Moved: explanation's source fingerprint is stale",
+      "Moved: source anchor missing or ambiguous in a.rs",
+      "Unrelated: explanation's source fingerprint is stale",
+      "check record unreadable",
+    ]);
+    expect(d.cited).toBe(3);
+    expect(d.fingerprinted).toBe(2);
+    expect([...d.drifted.keys()]).toEqual(["Moved"]);
+    expect(d.drifted.get("Moved")).toHaveLength(2);
+    expect(explanationDrift(null, ["x"]).cited).toBe(0);
+  });
+  it("lays the flow out by step, ignoring the edge that closes a reply", () => {
+    const n = (id: string) => ({ ...model.nodes[0], id, title: id });
+    const e = (from: string, to: string) => ({
+      from,
+      to,
+      kind: "calls",
+      view: "flow" as const,
+    });
+    expect(
+      flowLayers(["store", "kernel", "route", "auth", "handler"].map(n), [
+        e("route", "auth"),
+        e("auth", "handler"),
+        e("route", "handler"),
+        e("handler", "kernel"),
+        e("kernel", "store"),
+        e("store", "route"),
+      ]),
+    ).toEqual([["route"], ["auth"], ["handler"], ["kernel"], ["store"]]);
   });
 });

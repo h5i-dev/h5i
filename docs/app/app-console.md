@@ -82,6 +82,11 @@ reviewed. The console warns when an anchor no longer resolves uniquely or the
 fingerprint no longer matches. It shows up to 160 source lines around the
 anchor; it never follows a source outside the repository. Update a digest only
 after reviewing the corresponding explanation against the changed source.
+The map is written by hand, not generated from the code, and the console says
+so above the graph. That line also counts how many explained nodes cite a
+source whose anchor or fingerprint no longer matches; each such node carries a
+warning in the inspector. Nodes whose sources have no digest are checked by
+anchor only.
 Source links show the anchor's current working-tree line number when it resolves
 uniquely; missing or ambiguous anchors are labeled instead of showing a guessed
 line. Without a map or recorded declarations, the console offers an example

@@ -304,3 +304,103 @@ export const labels: Record<string, string> = {
 };
 export const label = (s: string) => labels[s] ?? s;
 export const shellQuote = (s: string) => `'${s.replace(/'/g, `'"'"'`)}'`;
+
+export interface Drift {
+  /** Authored nodes that cite at least one source. */
+  cited: number;
+  /** Of those, nodes whose every source carries a fingerprint. */
+  fingerprinted: number;
+  /** Node title → why its explanation may no longer match its source. */
+  drifted: Map<string, string[]>;
+}
+
+const ANCHOR_ISSUE = ": source anchor missing or ambiguous in ";
+const DIGEST_ISSUE = ": explanation's source fingerprint is stale";
+
+/** How far an authored map may have fallen behind the code, from the
+ *  anchor and fingerprint issues the server already reports. */
+export function explanationDrift(
+  model: AppModel | null,
+  issues: string[],
+): Drift {
+  const nodes = (model?.nodes ?? []).filter((n) => n.sources.length);
+  const titles = new Set(nodes.map((n) => n.title));
+  const drifted = new Map<string, string[]>();
+  const add = (title: string, why: string) => {
+    if (!titles.has(title)) return;
+    drifted.set(title, [...(drifted.get(title) ?? []), why]);
+  };
+  for (const issue of issues) {
+    const a = issue.indexOf(ANCHOR_ISSUE);
+    if (a > 0)
+      add(
+        issue.slice(0, a),
+        `anchor no longer found once in ${issue.slice(a + ANCHOR_ISSUE.length)}`,
+      );
+    else if (issue.endsWith(DIGEST_ISSUE))
+      add(
+        issue.slice(0, -DIGEST_ISSUE.length),
+        "a cited file changed since this explanation was reviewed",
+      );
+  }
+  return {
+    cited: nodes.length,
+    fingerprinted: nodes.filter((n) => n.sources.every((s) => s.digest)).length,
+    drifted,
+  };
+}
+
+/** Columns for the flow lens: each node one step right of what feeds it, so
+ *  a request reads left to right. Edges that close a cycle (a reply back to
+ *  the route) are ignored for depth. */
+export function flowLayers(nodes: AppNode[], edges: AppEdge[]): string[][] {
+  const ids = nodes.map((n) => n.id);
+  const known = new Set(ids);
+  const preds = new Map<string, string[]>(ids.map((id) => [id, []]));
+  const succs = new Map<string, string[]>(ids.map((id) => [id, []]));
+  for (const e of edges)
+    if (known.has(e.from) && known.has(e.to) && e.from !== e.to) {
+      preds.get(e.to)!.push(e.from);
+      succs.get(e.from)!.push(e.to);
+    }
+  // Depth-first from the entry points; an edge back onto the current path is
+  // a cycle and does not push its target further right.
+  const depth = new Map<string, number>();
+  const onPath = new Set<string>();
+  const visit = (id: string, d: number) => {
+    if (onPath.has(id) || (depth.get(id) ?? -1) >= d) return;
+    depth.set(id, d);
+    onPath.add(id);
+    for (const s of succs.get(id)!) visit(s, d + 1);
+    onPath.delete(id);
+  };
+  const entries = ids.filter((id) => preds.get(id)!.length === 0);
+  // A flow that loops back everywhere starts where it mostly sends.
+  const lead = (id: string) => succs.get(id)!.length - preds.get(id)!.length;
+  const start = entries.length
+    ? entries
+    : ids
+        .slice()
+        .sort((a, b) => lead(b) - lead(a))
+        .slice(0, 1);
+  for (const id of start) visit(id, 0);
+  for (const id of ids) if (!depth.has(id)) visit(id, 0);
+  const layers: string[][] = [];
+  for (const id of ids) (layers[depth.get(id)!] ??= []).push(id);
+  // One barycenter pass: sit each node level with what feeds it.
+  const row = new Map<string, number>();
+  return layers.filter(Boolean).map((layer) => {
+    const at = (id: string) => {
+      const p = preds.get(id)!.filter((x) => row.has(x));
+      return p.length
+        ? p.reduce((n, x) => n + row.get(x)!, 0) / p.length
+        : Infinity;
+    };
+    const sorted = layer
+      .map((id, i) => ({ id, i, y: at(id) }))
+      .sort((a, b) => a.y - b.y || a.i - b.i)
+      .map((x) => x.id);
+    sorted.forEach((id, i) => row.set(id, i));
+    return sorted;
+  });
+}

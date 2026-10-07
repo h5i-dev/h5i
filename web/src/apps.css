@@ -154,8 +154,7 @@
 .app-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
-  margin-top: 12px;
+  gap: 12px;
   color: var(--ink-3);
   font-size: 11px;
 }
@@ -491,6 +490,9 @@
   color: var(--ink-3);
   font-size: 11px;
   margin-top: 12px;
+}
+.app-symbol + .app-button {
+  margin-top: 10px;
 }
 .app-relations button {
   display: block;
@@ -957,4 +959,70 @@
 }
 .tok-tactic {
   color: var(--tok-tactic);
+}
+.app-focus-trail {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 9px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: 11px;
+}
+.app-focus-trail ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.app-focus-trail li {
+  display: flex;
+  align-items: center;
+  color: var(--ink-3);
+}
+.app-focus-trail li + li::before {
+  content: "›";
+  margin: 0 7px;
+  color: var(--ink-4);
+}
+.app-focus-trail li button {
+  color: var(--ink-2);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 2px;
+}
+.app-focus-trail li button:hover {
+  color: var(--ink);
+}
+.app-focus-trail li b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.app-focus-reset {
+  margin-left: auto;
+  color: var(--ink-3);
+}
+.app-focus-reset:hover {
+  color: var(--ink);
+}
+.app-provenance {
+  padding: 9px 20px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.app-provenance b {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+.app-provenance.is-drifted {
+  background: var(--amber-bg);
+}
+.app-provenance.is-drifted b {
+  color: var(--amber);
 }

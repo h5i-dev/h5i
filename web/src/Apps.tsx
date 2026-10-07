@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   appsApi,
+  explanationDrift,
+  flowLayers,
   label,
   neighborhood,
   withLeanDependencies,
   shellQuote,
   type AppChange,
+  type Drift,
   type AppDetail,
   type AppHistory,
   type AppModel,
+  type AppNode,
   type AppSource,
   type AppStage,
   type AppSummary,
@@ -219,13 +223,13 @@ function AppWorkspace({
               ? `Last check: ${label(latest.run.status)}`
               : "No check recorded"}
           </Chip>
+          <div className="app-meta">
+            <code>{short(data.head)}</code>
+            <span>Working tree</span>
+            {latest && <span>{label(latest.freshness)}</span>}
+          </div>
         </div>
         <p>{data.summary.description}</p>
-        <div className="app-meta">
-          <code>{short(data.head)}</code>
-          <span>Working tree</span>
-          {latest && <span>{label(latest.freshness)}</span>}
-        </div>
       </header>
       <nav className="tabs" aria-label="App views">
         {["guarantees", "changes", "mutations"].map((t) => (
@@ -285,6 +289,8 @@ function Guarantees({
   const [filter, setFilter] = useState("");
   const [view, setView] = useState<"proof" | "flow">("proof");
   const [file, setFile] = useState<AppSource | null>(null);
+  // The roots Focus dependencies stepped through, so the reader can walk back.
+  const [trail, setTrail] = useState<string[]>([]);
   const authoredGuarantees = model.nodes.filter((n) => n.kind === "guarantee");
   const catalogNames = new Set(
     latest?.run.declarations.map((d) => d.name) ?? [],
@@ -298,6 +304,17 @@ function Guarantees({
     setFile(null);
     go(["apps", data.summary.id, "guarantees", root?.id ?? id, id]);
   };
+  const focusOn = (id: string, nextTrail: string[]) => {
+    setFile(null);
+    setTrail(nextTrail);
+    go(["apps", data.summary.id, "guarantees", id, id]);
+  };
+  // The browser's back button can land on a root already in the trail.
+  useEffect(() => {
+    if (!root) return;
+    const i = trail.indexOf(root.id);
+    if (i >= 0) setTrail(trail.slice(0, i));
+  }, [root?.id]);
   if (!model || !root)
     return (
       <div className="app-pad app-scroll">
@@ -305,6 +322,7 @@ function Guarantees({
         <Evidence view={latest} project={data.summary.id} />
       </div>
     );
+  const drift = explanationDrift(data.model, data.issues);
   const related = model.edges.filter(
     (e) => e.from === selected?.id || e.to === selected?.id,
   );
@@ -339,10 +357,7 @@ function Guarantees({
               <button
                 key={n.id}
                 className={`app-guarantee ${root.id === n.id ? "is-on" : ""}`}
-                onClick={() => {
-                  setFile(null);
-                  go(["apps", data.summary.id, "guarantees", n.id, n.id]);
-                }}
+                onClick={() => focusOn(n.id, [])}
                 aria-pressed={root.id === n.id}
               >
                 <span className="app-guarantee-index">
@@ -419,6 +434,17 @@ function Guarantees({
                   {label(latest.run.status)}.
                 </Note>
               )}
+            <FocusTrail
+              model={model}
+              trail={trail}
+              root={root}
+              home={
+                guarantees.some((g) => g.id === root.id)
+                  ? null
+                  : (guarantees[0] ?? null)
+              }
+              onGo={(id, i) => focusOn(id, trail.slice(0, i))}
+            />
             <Graph
               model={model}
               root={root.id}
@@ -431,6 +457,7 @@ function Guarantees({
               edges are direct references in recorded declaration types and
               bodies. Constants outside the catalog are leaves.
             </div>
+            <Provenance authored={data.model} drift={drift} />
             {!!model.exclusions.length && (
               <details className="app-boundaries">
                 <summary>
@@ -455,23 +482,26 @@ function Guarantees({
                 {selected.symbol && (
                   <>
                     <code className="app-symbol">{selected.symbol}</code>
-                    <button
-                      className="app-button"
-                      onClick={() => {
-                        setFile(null);
-                        go([
-                          "apps",
-                          data.summary.id,
-                          "guarantees",
-                          selected.id,
-                          selected.id,
-                        ]);
-                      }}
-                    >
-                      Focus dependencies
-                    </button>
+                    {selected.id !== root.id && (
+                      <button
+                        className="app-button"
+                        onClick={() =>
+                          focusOn(selected.id, [...trail, root.id])
+                        }
+                      >
+                        Focus dependencies
+                      </button>
+                    )}
                   </>
                 )}
+                {selected.origin === "authored" &&
+                  drift.drifted.has(selected.title) && (
+                    <Note tone="warn">
+                      This explanation may no longer match the code:{" "}
+                      {drift.drifted.get(selected.title)!.join("; ")}. Read the
+                      source before relying on the text above.
+                    </Note>
+                  )}
                 {selected.excludes.map((s) => (
                   <Note key={s} tone="warn">
                     {s}
@@ -563,6 +593,102 @@ function Guarantees({
   );
 }
 
+/** Says what the map is: a hand-written explanation that can fall behind
+ *  the code, and how much of it h5i can still check. */
+function Provenance({
+  authored,
+  drift,
+}: {
+  authored: AppModel | null;
+  drift: Drift;
+}) {
+  if (!authored) return null;
+  const unchecked = drift.cited - drift.fingerprinted;
+  return (
+    <div className={`app-provenance${drift.drifted.size ? " is-drifted" : ""}`}>
+      <b>Hand-written explanation, not generated from the code.</b> Titles,
+      descriptions and authored links in <code>h5i-app.ui.json</code> can fall
+      behind the source. Cyan Lean edges come from the check record instead.{" "}
+      {drift.cited === 0 ? (
+        "No node cites a source, so drift cannot be detected."
+      ) : drift.drifted.size ? (
+        <>
+          {drift.drifted.size} of {drift.cited} explained nodes cite a source
+          that changed or moved since review; they are marked in the inspector.
+        </>
+      ) : (
+        <>
+          The cited sources of {drift.fingerprinted} of {drift.cited} explained
+          nodes still match the reviewed version.
+        </>
+      )}
+      {unchecked > 0 && drift.cited > 0 && (
+        <>
+          {" "}
+          {unchecked} {unchecked === 1 ? "node cites" : "nodes cite"} a source
+          without a fingerprint, so only its anchor is checked.
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Where Focus dependencies has taken the graph, and the way back. */
+function FocusTrail({
+  model,
+  trail,
+  root,
+  home,
+  onGo,
+}: {
+  model: AppModel;
+  trail: string[];
+  root: AppNode;
+  /** The guarantee to return to when the trail is empty but the root is not one. */
+  home: AppNode | null;
+  onGo: (id: string, trailLength: number) => void;
+}) {
+  const crumbs = trail.length
+    ? trail.map((id) => model.nodes.find((n) => n.id === id))
+    : home
+      ? [home]
+      : [];
+  if (!crumbs.length) return null;
+  const back = crumbs[crumbs.length - 1]!;
+  return (
+    <nav className="app-focus-trail" aria-label="Focus trail">
+      <button
+        className="app-button"
+        onClick={() => onGo(back.id, trail.length ? trail.length - 1 : 0)}
+      >
+        ← Back
+      </button>
+      <ol>
+        {crumbs.map((n, i) =>
+          n ? (
+            <li key={`${n.id}:${i}`}>
+              <button onClick={() => onGo(n.id, trail.length ? i : 0)}>
+                {n.title}
+              </button>
+            </li>
+          ) : null,
+        )}
+        <li aria-current="location">
+          <b>{root.title}</b>
+        </li>
+      </ol>
+      {trail.length > 1 && (
+        <button
+          className="app-focus-reset"
+          onClick={() => onGo(crumbs[0]!.id, 0)}
+        >
+          Reset to {crumbs[0]!.title}
+        </button>
+      )}
+    </nav>
+  );
+}
+
 export function Graph({
   model,
   root,
@@ -595,16 +721,22 @@ export function Graph({
           ["implementation"],
           ["specification", "theorem", "counterexample", "guarantee"],
         ];
+  // The proof lens groups by kind; the flow lens follows the request.
+  const layout =
+    view === "flow"
+      ? flowLayers(graph.nodes, graph.edges)
+      : columns.map((kinds) =>
+          graph.nodes.filter((n) => kinds.includes(n.kind)).map((n) => n.id),
+        );
   const positions = new Map<string, { x: number; y: number }>();
   let rows = 1;
-  columns.forEach((kinds, col) => {
-    const nodes = graph.nodes.filter((n) => kinds.includes(n.kind));
-    rows = Math.max(rows, nodes.length);
-    nodes.forEach((n, row) =>
-      positions.set(n.id, { x: 24 + col * 260, y: 40 + row * 126 }),
+  layout.forEach((ids, col) => {
+    rows = Math.max(rows, ids.length);
+    ids.forEach((id, row) =>
+      positions.set(id, { x: 24 + col * 260, y: 40 + row * 126 }),
     );
   });
-  const width = columns.length * 260 + 10,
+  const width = layout.length * 260 + 10,
     height = rows * 126 + 45;
   return (
     <>
@@ -648,7 +780,13 @@ export function Graph({
               view === "proof" ? "Guarantee relationships" : "Application flow"
             }
             viewBox={`0 0 ${width} ${height}`}
-            style={{ width: `${zoom * 100}%`, minHeight: 240 }}
+            // Fit the panel, but never below a readable scale: a long
+            // flow scrolls sideways instead.
+            style={{
+              width: `${zoom * 100}%`,
+              minWidth: Math.round(width * 0.65 * zoom),
+              minHeight: 240,
+            }}
           >
             <defs>
               <marker
