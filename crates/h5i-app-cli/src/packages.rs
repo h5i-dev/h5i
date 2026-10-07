@@ -214,19 +214,25 @@ fn key(fingerprint: &str) -> String {
     format!("{name}-{h:016x}")
 }
 
+/// h5i's Lean library: small, and pinned to the h5i release, so it is left
+/// out of the key. Lake checks out the revision each project's manifest names.
+const H5I_LIB: &str = "h5i_app_lib";
+
 /// The toolchain, then each `require` of a git or Reservoir package with
 /// whitespace collapsed. A `require` of a local directory is left out: Lake
 /// clones nothing for it, so a project that requires h5i's Lean library from a
-/// checkout shares packages with the library itself.
+/// checkout shares packages with the library itself. h5i's library is left
+/// out wherever it comes from, so a new h5i release does not fetch Mathlib
+/// again.
 fn fingerprint(proofs: &Path) -> Result<String> {
     let toolchain = std::fs::read_to_string(proofs.join("lean-toolchain")).unwrap_or_default();
     let mut lines = vec![toolchain.trim().to_string()];
     if let Ok(text) = std::fs::read_to_string(proofs.join("lakefile.lean")) {
-        lines.extend(lean_requires(&text).into_iter().filter(|r| !is_path_require(r)));
+        lines.extend(lean_requires(&text).into_iter().filter(|r| !is_path_require(r) && !is_h5i_lib(r)));
     } else if let Ok(text) = std::fs::read_to_string(proofs.join("lakefile.toml")) {
         let doc: toml::Table = text.parse().context("parsing lakefile.toml")?;
         for r in doc.get("require").and_then(|r| r.as_array()).into_iter().flatten() {
-            if r.get("path").is_some() {
+            if r.get("path").is_some() || r.get("name").and_then(|n| n.as_str()) == Some(H5I_LIB) {
                 continue;
             }
             lines.push(toml::to_string(r)?.split_whitespace().collect::<Vec<_>>().join(" "));
@@ -263,6 +269,11 @@ fn lean_requires(text: &str) -> Vec<String> {
 /// `require x from "../dir"`, as opposed to `from git` or a Reservoir name.
 fn is_path_require(req: &str) -> bool {
     req.contains(" from \"")
+}
+
+/// `require h5i_app_lib ...`, from anywhere.
+fn is_h5i_lib(req: &str) -> bool {
+    req.split_whitespace().nth(1) == Some(H5I_LIB)
 }
 
 #[cfg(test)]
@@ -314,6 +325,9 @@ lean_lib Proofs where
         let k = |p: &Path| key(&fingerprint(p).unwrap());
         assert_eq!(k(&a), k(&b), "the package name and path depth do not matter");
         assert_eq!(k(&a), k(&c), "nor a local require, for which Lake clones nothing");
+        let git = "require h5i_app_lib from git\n  \"https://github.com/h5i-dev/h5i\" @ \"v0.4.9\" / \"crates/h5i-app-core/proofs\"";
+        std::fs::write(c.join("lakefile.lean"), LAKEFILE.replace(r#"require h5i_app_lib from "LIB""#, git)).unwrap();
+        assert_eq!(k(&a), k(&c), "nor h5i's library from git, at any release");
         std::fs::write(c.join("lakefile.lean"), LAKEFILE.replace("b86120db", "0123abcd")).unwrap();
         assert_ne!(k(&a), k(&c), "another Aeneas is other packages");
         assert!(k(&a).starts_with("leanprover-lean4-v4.31.0-"), "{}", k(&a));
