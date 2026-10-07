@@ -6,7 +6,7 @@
 //! | verb | does |
 //! |---|---|
 //! | `new` | lay out a project that already extracts and proves |
-//! | `extract` | kernel -> Charon -> Aeneas -> `proofs/generated/` |
+//! | `extract` | kernel -> Charon -> Aeneas -> `proofs/generated/`, plus `schema!`'s Lean |
 //! | `check` | `lake build`, then the gate: no `sorry`/`native_decide`/`axiom`, standard axioms only |
 //! | `prove` | `extract`, then `check` |
 //! | `lint` | routes take an `Actor`, no client-set identity in `Command` |
@@ -56,7 +56,8 @@ pub enum AppCommands {
     },
 
     /// Extract the kernel to Lean: Rust -> LLBC (Charon) -> Lean (Aeneas),
-    /// into proofs/generated/.
+    /// into proofs/generated/. With `schema = true`, also write the Lean
+    /// that `schema!` renders to its `lean "..."` path.
     Extract {
         #[command(flatten)]
         targets: Targets,

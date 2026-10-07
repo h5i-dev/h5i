@@ -323,7 +323,7 @@ must reject (`[[mutant]]`). `h5i app` reads it:
 | Verb | Does |
 |---|---|
 | `h5i app new <dir>` | a kernel, a Lake project that already proves it, and its `h5i-app.toml`; the Lean library is required from git at this h5i's tag |
-| `h5i app extract` | Charon and Aeneas into `proofs/generated/`, `Source:` paths made relative to the repository. `--check` changes nothing and fails if the committed Lean is not what extraction produces |
+| `h5i app extract` | Charon and Aeneas into `proofs/generated/`, `Source:` paths made relative to the repository. With `schema = true`, also the Lean `schema!` renders to its `lean "..."` path (its test, run with `H5I_APP_BLESS=1`). `--check` changes nothing and fails if the committed Lean is not what extraction produces |
 | `h5i app check` | fetch the Lake packages if needed, `lake build`, then the gate: no `sorry` or `native_decide` in hand-written Lean, no `axiom` anywhere, and every theorem of every built hand-written module (plus the named ones) on `propext`, `Classical.choice` and `Quot.sound` only. `--refetch` discards the packages and fetches them again |
 | `h5i app prove` | `extract`, then `check` |
 | `h5i app lint` | every mutating route of a server crate takes an `Actor`, no `Command` field sets identity or privilege, and a report of whether the proofs state a universal authorization theorem |

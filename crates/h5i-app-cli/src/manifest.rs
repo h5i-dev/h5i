@@ -41,7 +41,8 @@ pub struct Extract {
     #[serde(default)]
     pub start_from: Vec<String>,
     /// Also start from everything `schema!` generates, so each lemma in the
-    /// generated `Schema.lean` has its function extracted.
+    /// generated `Schema.lean` has its function extracted, and write that
+    /// file (the `lean "..."` path of `schema!`) by running its test.
     #[serde(default)]
     pub schema: bool,
     /// Crates whose items are extracted with the kernel (`--include`).
