@@ -546,6 +546,40 @@ The dispatcher's properties are proven about a model of its protocol rather
 than its code, and the registry, `Notifier` and the enqueue in `write` are
 trusted, although the tests check them.
 
+## See the guarantees in `h5i ui`
+
+`h5i-app.ui.json`, next to the manifest, explains what the theorems above
+promise to someone who uses the service. Record a check, then open the
+console:
+
+```
+h5i app check examples/app/booking
+h5i ui
+```
+
+Open **Apps** and select **Booking**. The list on the left states each
+guarantee in plain words. Select "Bookings never overlap": the guarantee map
+leads to `no_double_booking`, to the `Reachable` hypothesis that limits it to
+states the service can reach, to the half-open intervals of `Apart`, and on
+to `transition` in the kernel. Select "Started bookings remain" for the clock
+condition from the section on time. `started_stays` assumes `ReachableT` and
+a run of non-admins, and `clock_back_cancels` stands next to it as the
+counterexample that shows why time has to move forward. "Back-to-back
+bookings are both accepted" leads to `free_spec`, the theorem that caught the
+bug above.
+
+Switch to the **Application flow** lens to follow a request instead.
+`POST /rpc` checks the token and decodes the JSON, the engine reads the
+database's clock and stamps it into the principal, `transition` dispatches to
+`book` or `cancel`, and the store commits the rows and the outbox entries in
+one transaction, from which the dispatcher sends notifications to the
+registry's endpoints.
+
+The map is an explanation that someone wrote, not evidence. Whether a theorem
+holds, and on which axioms, comes from the check record that `h5i app check`
+wrote; the console shows its date and whether the inputs changed since. When
+you change a theorem, update its description in the map.
+
 ## Exercises
 
 1. Let admins change a room's destination with a `SetDest` command. Which

@@ -450,6 +450,37 @@ itself changes when other people act: Bob's `mark_read` changes Alice's view,
 by design. What a user can infer from watching their view change over many
 steps is outside the theorem.
 
+## See the guarantees in `h5i ui`
+
+`h5i-app.ui.json` maps the inbox's promises to the theorems above, the
+conditions they rest on and the Rust that implements them. Record the Lean
+declarations first, so that the dependency edges between theorems appear:
+
+```
+h5i app check examples/app/inbox
+h5i ui
+```
+
+Open **Apps** and select this project. Some places to start:
+
+- Click **Nothing about other people's mail reaches you**. It leads to
+  `noninterference`, the `view` it is stated over and the equal-view
+  hypothesis, and to the channels the theorem does not see: timing, the JSON
+  shell and the authenticated caller.
+- Click **You learn whether someone blocked you, and nothing more**.
+  `alice_sees_block` hangs off it as the counterexample: without the blocks in
+  `view`, two states would look the same to Alice and her `send` would still
+  tell them apart.
+- Click **Other people's conversations cannot be probed** for
+  `carol_cannot_delete` and `carol_cannot_tell`, and follow it to the early
+  check in `delete` that the manifest's `read_others_messages` mutant removes.
+- Switch to the application flow lens to follow a request from `POST /rpc`
+  through the token check, JSON decoding and the engine's transaction to
+  `transition`, the command functions and the store.
+
+The map is an authored explanation, not evidence. Whether each theorem is
+proven, and what it depends on, comes from the latest check record.
+
 ## Exercises
 
 1. Make a refused send look like a success: store the message with

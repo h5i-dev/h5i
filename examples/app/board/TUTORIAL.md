@@ -291,6 +291,35 @@ first tutorial, the framework runs every request through `transition` in a
 SERIALIZABLE transaction, while the JSON decoding, the store's agreement with
 `apply` (which the test checks) and the tools remain trusted.
 
+## See the guarantees in `h5i ui`
+
+`h5i-app.ui.json` maps the board's promises to the theorems above, the
+conditions they rest on and the Rust that implements them. Record the Lean
+declarations first, so that the dependency edges between theorems appear:
+
+```
+h5i app check examples/app/board
+h5i ui
+```
+
+Open **Apps** and select this project. Some places to start:
+
+- Click **Only the author or a moderator deletes a post**. It leads to
+  `authorized_reachable` and the `allowed` policy, to the `Reachable`
+  assumption, and to the authenticated caller, which no theorem can vouch for.
+  `bob_cannot_delete` hangs off it as a concrete refusal.
+- Click **The last moderator cannot be removed**. `moderator_kept` assumes
+  `Inv` and an existing moderator, and the graph shows the `demote` check that
+  the manifest's `remove_last_moderator` mutant weakens.
+- Click **PostgreSQL data keeps the invariants** for `db_inv`, the theorem
+  the manifest requires, and the schema and engine conditions it relies on.
+- Switch to the application flow lens to follow a request from `POST /rpc`
+  through the token check, JSON decoding and the engine's transaction to
+  `transition`, the command functions and the store.
+
+The map is an authored explanation, not evidence. Whether each theorem is
+proven, and what it depends on, comes from the latest check record.
+
 ## Exercises
 
 1. Let moderators edit any post, and update `allowed` and the proofs. Check

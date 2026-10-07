@@ -1,0 +1,1797 @@
+{
+  "version": 1,
+  "title": "Private inbox",
+  "description": "Messaging inside an organization: send, list, mark read, delete from your own view and block senders, with a noninterference theorem saying what each user may learn.",
+  "author": "Claude (agent-authored explanation; review before relying on it)",
+  "exclusions": [
+    "Timing, latency and SERIALIZABLE retries are channels outside the kernel's result; noninterference does not cover them.",
+    "Noninterference is about one command at a time. What a user infers from watching their view change over many steps, for example Bob's mark_read changing Alice's sent box, is outside it.",
+    "The view grants whole message rows, so the theorem allows a sender to learn whether the recipient deleted a message; the JSON happens not to print it.",
+    "Authentication, the JSON codec, HTTP status mapping and reply rendering are trusted shell code.",
+    "Isolation between organizations is a framework property, not part of these theorems.",
+    "Acceptance of valid messages, deletes and reads is shown on concrete scenarios, not proven for every state.",
+    "Migrated or externally modified rows are not automatically in the modeled reachable set."
+  ],
+  "nodes": [
+    {
+      "id": "g-nothing-leaks",
+      "kind": "guarantee",
+      "title": "Nothing about other people's mail reaches you",
+      "description": "Whatever you do, the reply, the error code and the writes depend only on the messages you sent or received and on who has blocked you. Messages between other people and other people's blocks cannot change your outcome."
+    },
+    {
+      "id": "g-existence-hidden",
+      "kind": "guarantee",
+      "title": "Other people's conversations cannot be probed",
+      "description": "A message between two other users gets exactly the same answer as one that was never sent, so you cannot learn that a conversation exists or how long it is by trying keys."
+    },
+    {
+      "id": "g-block-leak-declared",
+      "kind": "guarantee",
+      "title": "You learn whether someone blocked you, and nothing more",
+      "description": "A refused send tells you that the recipient blocked you. This is the one fact about blocks in your view: you cannot learn whom else the recipient blocked, nor anything about other people's blocks."
+    },
+    {
+      "id": "g-listings-yours",
+      "kind": "guarantee",
+      "title": "Listings show only your own messages",
+      "description": "Every message in an inbox or sent listing was sent or received by the caller."
+    },
+    {
+      "id": "g-only-your-rows",
+      "kind": "guarantee",
+      "title": "Your commands never change other people's rows",
+      "description": "A successful command writes only messages you sent or received and blocks you own. Afterwards, every message not involving you and every block owned by someone else is exactly as it was."
+    },
+    {
+      "id": "g-no-overwrite",
+      "kind": "guarantee",
+      "title": "Sending never overwrites a message",
+      "description": "A new message gets a key (sender, recipient, number) that no existing message has, with a number above every earlier one in that conversation."
+    },
+    {
+      "id": "g-history-forward",
+      "kind": "guarantee",
+      "title": "Messages only move forward",
+      "description": "No command changes a message's text or clears its read or deleted flags. A message deleted from someone's view never comes back for them."
+    },
+    {
+      "id": "g-blocked-refused",
+      "kind": "guarantee",
+      "title": "A blocked sender cannot deliver",
+      "description": "A send succeeds only when the recipient has not blocked the sender. The block applies only to that pair: the blocked user can still write to everyone else."
+    },
+    {
+      "id": "g-state-sound",
+      "kind": "guarantee",
+      "title": "Keys stay unique and texts stay valid",
+      "description": "In every state reachable from an empty inbox, message keys and block keys are unique and every stored text is 1 to 1000 bytes."
+    },
+    {
+      "id": "g-db-sound",
+      "kind": "guarantee",
+      "title": "The database keeps the invariants",
+      "description": "Accepted write sets committed to PostgreSQL, interleaved with other tenants' commits, leave rows whose state satisfies the invariants, and every later load decodes to such a state."
+    },
+    {
+      "id": "g-commit-exact",
+      "kind": "guarantee",
+      "title": "Committing does what the specification says",
+      "description": "Applying a write set in the kernel computes the specified state change, and the store holds the encoding of that state with loads decoding back to it up to row order."
+    },
+    {
+      "id": "g-no-crash",
+      "kind": "guarantee",
+      "title": "No command crashes the kernel",
+      "description": "Every command on every snapshot returns a result: the kernel never panics, overflows arithmetic or indexes out of bounds."
+    },
+    {
+      "id": "g-delivered",
+      "kind": "guarantee",
+      "title": "Messages are delivered and numbered",
+      "description": "A valid message to someone who has not blocked you is accepted and appears in their inbox; the first message of a conversation is number 0. Shown on concrete runs, not for every state."
+    },
+    {
+      "id": "g-delete-own-side",
+      "kind": "guarantee",
+      "title": "Deleting hides a message only from your side",
+      "description": "A participant can delete a message from their own view; the other side keeps their copy and its flags. A non-participant cannot delete it."
+    },
+    {
+      "id": "g-mark-read-received",
+      "kind": "guarantee",
+      "title": "Only the recipient marks a message read",
+      "description": "A successful mark_read writes a message the caller received and has not deleted, changing only its read flag."
+    },
+    {
+      "id": "t-noninterference",
+      "kind": "theorem",
+      "title": "Noninterference",
+      "description": "For any principal a, snapshots s1 and s2 and command c: if view(s1, a.user) = view(s2, a.user), then transition a s1 c = transition a s2 c, the whole result including writes, reply and error.",
+      "symbol": "inbox_kernel.Noninterference.noninterference",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Noninterference.lean",
+          "anchor": "theorem noninterference"
+        }
+      ]
+    },
+    {
+      "id": "t-is-blocked-same",
+      "kind": "theorem",
+      "title": "Block lookup is in the view",
+      "description": "With equal views for u, whether d blocks u gives the same answer in both snapshots. This is the lemma that uses the block part of the view.",
+      "symbol": "inbox_kernel.Noninterference.is_blocked_same",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Noninterference.lean",
+          "anchor": "theorem is_blocked_same"
+        }
+      ]
+    },
+    {
+      "id": "t-find-message-same",
+      "kind": "theorem",
+      "title": "Lookups naming the caller agree",
+      "description": "With equal views for u, looking up a message whose sender or recipient is u gives the same answer in both snapshots.",
+      "symbol": "inbox_kernel.Noninterference.find_message_same",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Noninterference.lean",
+          "anchor": "theorem find_message_same"
+        }
+      ]
+    },
+    {
+      "id": "t-last-seq-same",
+      "kind": "theorem",
+      "title": "Conversation numbering agrees",
+      "description": "With equal views for u, the largest number from u to d is the same in both snapshots, so the next number reveals nothing beyond the conversation.",
+      "symbol": "inbox_kernel.Noninterference.last_seq_same",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Noninterference.lean",
+          "anchor": "theorem last_seq_same"
+        }
+      ]
+    },
+    {
+      "id": "t-mailbox-same",
+      "kind": "theorem",
+      "title": "Listings agree",
+      "description": "With equal views for u, the inbox and sent listings of u are the same in both snapshots.",
+      "symbol": "inbox_kernel.Noninterference.mailbox_same",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Noninterference.lean",
+          "anchor": "theorem mailbox_same"
+        }
+      ]
+    },
+    {
+      "id": "t-reply-confined",
+      "kind": "theorem",
+      "title": "Replies are confined",
+      "description": "If a command succeeds with a Messages reply, every message in it involves the caller.",
+      "symbol": "inbox_kernel.Theorems.reply_confined",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Theorems.lean",
+          "anchor": "theorem reply_confined"
+        }
+      ]
+    },
+    {
+      "id": "t-writes-confined",
+      "kind": "theorem",
+      "title": "Writes are confined",
+      "description": "If a command succeeds, every write it returns touches only the caller's rows: a message involving the caller, or a block the caller owns.",
+      "symbol": "inbox_kernel.Theorems.writes_confined",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Theorems.lean",
+          "anchor": "theorem writes_confined"
+        }
+      ]
+    },
+    {
+      "id": "t-others-unchanged",
+      "kind": "theorem",
+      "title": "Others' rows unchanged",
+      "description": "If a command succeeds, applying its writes leaves others(s, caller), the messages not involving the caller and blocks owned by someone else, equal to what it was. No invariant is assumed.",
+      "symbol": "inbox_kernel.Theorems.others_unchanged",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Theorems.lean",
+          "anchor": "theorem others_unchanged"
+        }
+      ]
+    },
+    {
+      "id": "t-writes-of",
+      "kind": "theorem",
+      "title": "Six kinds of success",
+      "description": "Sums up the command lemmas: a successful command is a listing with no writes, a send of a fresh message, a mark_read, a delete on the caller's side, a block or an unblock of the caller's own block.",
+      "symbol": "inbox_kernel.Theorems.writes_of",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Theorems.lean",
+          "anchor": "theorem writes_of"
+        }
+      ]
+    },
+    {
+      "id": "t-transition-total",
+      "kind": "theorem",
+      "title": "Transition is total",
+      "description": "For every principal, snapshot and command there is some r with transition a s c = ok r: the extracted code never fails.",
+      "symbol": "inbox_kernel.Theorems.transition_total",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Theorems.lean",
+          "anchor": "theorem transition_total"
+        }
+      ]
+    },
+    {
+      "id": "t-send-fresh",
+      "kind": "theorem",
+      "title": "Fresh message key",
+      "description": "If a send succeeds, it writes exactly one message m and no message in the current state has msgKey equal to msgKey m.",
+      "symbol": "inbox_kernel.Theorems.send_fresh",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Theorems.lean",
+          "anchor": "theorem send_fresh"
+        }
+      ]
+    },
+    {
+      "id": "t-msg-kept",
+      "kind": "theorem",
+      "title": "Messages kept",
+      "description": "For a Reachable state and a successful command, every message after the step with the key of a message before it is Later than it: same text, flags only turn on.",
+      "symbol": "inbox_kernel.Theorems.msg_kept",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Theorems.lean",
+          "anchor": "theorem msg_kept"
+        }
+      ]
+    },
+    {
+      "id": "t-inv-preserved",
+      "kind": "theorem",
+      "title": "Invariant preserved",
+      "description": "If Inv holds before a successful command, it holds after applying the command's writes.",
+      "symbol": "inbox_kernel.Theorems.inv_preserved",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Theorems.lean",
+          "anchor": "theorem inv_preserved"
+        }
+      ]
+    },
+    {
+      "id": "t-reachable-inv",
+      "kind": "theorem",
+      "title": "Invariant on reachable states",
+      "description": "Every Reachable state satisfies Inv.",
+      "symbol": "inbox_kernel.Theorems.reachable_inv",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Theorems.lean",
+          "anchor": "theorem reachable_inv"
+        }
+      ]
+    },
+    {
+      "id": "t-send-spec",
+      "kind": "theorem",
+      "title": "What send does",
+      "description": "If send succeeds, the text is valid, the recipient has no block against the sender, and it writes one new message with a number above every earlier one from sender to recipient, replying with that number.",
+      "symbol": "inbox_kernel.Commands.send_spec",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Commands.lean",
+          "anchor": "theorem send_spec"
+        }
+      ]
+    },
+    {
+      "id": "t-mark-read-spec",
+      "kind": "theorem",
+      "title": "What mark_read does",
+      "description": "If mark_read succeeds, it found a message addressed to the caller that the caller has not deleted, and writes it back with read set.",
+      "symbol": "inbox_kernel.Commands.mark_read_spec",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Commands.lean",
+          "anchor": "theorem mark_read_spec"
+        }
+      ]
+    },
+    {
+      "id": "t-delete-spec",
+      "kind": "theorem",
+      "title": "What delete does",
+      "description": "If delete succeeds, the key names the caller as sender or recipient, the message exists, and the single write is that message hidden on the caller's side (hideFor).",
+      "symbol": "inbox_kernel.Commands.delete_spec",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Commands.lean",
+          "anchor": "theorem delete_spec"
+        }
+      ]
+    },
+    {
+      "id": "t-lastseq-bound",
+      "kind": "theorem",
+      "title": "Numbering bound",
+      "description": "Every message from f to t has a number below rank(lastSeq ms f t), which is what makes the next number fresh.",
+      "symbol": "inbox_kernel.Commands.lastSeq_bound",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Commands.lean",
+          "anchor": "theorem lastSeq_bound"
+        }
+      ]
+    },
+    {
+      "id": "t-apply-spec",
+      "kind": "theorem",
+      "title": "apply computes applyAll",
+      "description": "If total rows plus writes stay below Usize.max, the kernel's apply returns a snapshot whose list form equals applyAll of the write set.",
+      "symbol": "inbox_kernel.ApplyProofs.apply_spec",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Apply.lean",
+          "anchor": "theorem apply_spec"
+        }
+      ]
+    },
+    {
+      "id": "t-stored",
+      "kind": "theorem",
+      "title": "Store holds the applied state",
+      "description": "For a Served database, the tables hold enc of the state, and decoding a full load yields a snapshot equivalent to it up to row order.",
+      "symbol": "inbox_kernel.Storage.stored",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Storage.lean",
+          "anchor": "theorem stored"
+        }
+      ]
+    },
+    {
+      "id": "t-db-inv",
+      "kind": "theorem",
+      "title": "Invariant on the database",
+      "description": "For a valid two-table schema and an integer tenant, every PgServed database built from Accepted write sets holds a state satisfying Inv, and every later load decodes to a snapshot satisfying Inv.",
+      "symbol": "inbox_kernel.Storage.db_inv",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Storage.lean",
+          "anchor": "theorem db_inv"
+        }
+      ]
+    },
+    {
+      "id": "t-alice-sends",
+      "kind": "theorem",
+      "title": "Scenario: Alice sends",
+      "description": "On an empty snapshot, Alice's send of \"hi\" to Bob succeeds with one PutMessage and reply Sent 0.",
+      "symbol": "inbox_kernel.Scenarios.alice_sends",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Scenarios.lean",
+          "anchor": "theorem alice_sends"
+        }
+      ]
+    },
+    {
+      "id": "t-bob-reads",
+      "kind": "theorem",
+      "title": "Scenario: Bob reads",
+      "description": "After Alice's message, Bob's inbox listing is exactly that message.",
+      "symbol": "inbox_kernel.Scenarios.bob_reads",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Scenarios.lean",
+          "anchor": "theorem bob_reads"
+        }
+      ]
+    },
+    {
+      "id": "t-carol-sees-nothing",
+      "kind": "theorem",
+      "title": "Scenario: Carol sees nothing",
+      "description": "In the same state, Carol's inbox listing is empty.",
+      "symbol": "inbox_kernel.Scenarios.carol_sees_nothing",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Scenarios.lean",
+          "anchor": "theorem carol_sees_nothing"
+        }
+      ]
+    },
+    {
+      "id": "t-carol-cannot-delete",
+      "kind": "theorem",
+      "title": "Scenario: Carol cannot delete",
+      "description": "Carol's delete of Alice's message to Bob returns NotFound, the same error as a missing message.",
+      "symbol": "inbox_kernel.Scenarios.carol_cannot_delete",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Scenarios.lean",
+          "anchor": "theorem carol_cannot_delete"
+        }
+      ]
+    },
+    {
+      "id": "t-bob-deletes",
+      "kind": "theorem",
+      "title": "Scenario: Bob deletes his copy",
+      "description": "Bob's delete writes the message back with only recipient_deleted set, so Alice's side is untouched.",
+      "symbol": "inbox_kernel.Scenarios.bob_deletes",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Scenarios.lean",
+          "anchor": "theorem bob_deletes"
+        }
+      ]
+    },
+    {
+      "id": "t-block-refuses",
+      "kind": "theorem",
+      "title": "Scenario: block refuses",
+      "description": "When Bob blocks Alice, her send to Bob returns the Blocked error.",
+      "symbol": "inbox_kernel.Scenarios.block_refuses",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Scenarios.lean",
+          "anchor": "theorem block_refuses"
+        }
+      ]
+    },
+    {
+      "id": "t-block-is-narrow",
+      "kind": "theorem",
+      "title": "Scenario: block is narrow",
+      "description": "In the same state, Alice's send to Carol succeeds with number 0.",
+      "symbol": "inbox_kernel.Scenarios.block_is_narrow",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Scenarios.lean",
+          "anchor": "theorem block_is_narrow"
+        }
+      ]
+    },
+    {
+      "id": "t-carol-cannot-tell",
+      "kind": "theorem",
+      "title": "Scenario: Carol cannot tell",
+      "description": "The empty snapshot and the one with Alice's message to Bob differ, yet every command by Carol has the same result in both. This shows noninterference is not vacuous.",
+      "symbol": "inbox_kernel.Scenarios.carol_cannot_tell",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Scenarios.lean",
+          "anchor": "theorem carol_cannot_tell"
+        }
+      ]
+    },
+    {
+      "id": "cx-alice-sees-block",
+      "kind": "counterexample",
+      "title": "Without blocks in the view, send would leak",
+      "description": "Alice's view differs between the empty snapshot and one where Bob blocks her, and her send to Bob gets different results. If the block part were dropped from view, these two states would look the same to her, so noninterference would be false.",
+      "symbol": "inbox_kernel.Scenarios.alice_sees_block",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Scenarios.lean",
+          "anchor": "theorem alice_sees_block"
+        }
+      ]
+    },
+    {
+      "id": "s-view",
+      "kind": "specification",
+      "title": "What a user may learn",
+      "description": "view s u is the messages u sent or received, whole, together with the blocks naming u as sender. It excludes other people's messages and the blocks u owns.",
+      "symbol": "inbox_kernel.Spec.view",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Spec.lean",
+          "anchor": "def view"
+        }
+      ]
+    },
+    {
+      "id": "s-involves",
+      "kind": "specification",
+      "title": "Involvement",
+      "description": "involves u m holds when u is the sender or the recipient of m.",
+      "symbol": "inbox_kernel.Spec.involves",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Spec.lean",
+          "anchor": "def involves"
+        }
+      ]
+    },
+    {
+      "id": "s-others",
+      "kind": "specification",
+      "title": "Rows that are not yours",
+      "description": "others s u is the messages not involving u and the blocks not owned by u.",
+      "symbol": "inbox_kernel.Spec.others",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Spec.lean",
+          "anchor": "def others"
+        }
+      ]
+    },
+    {
+      "id": "s-touches",
+      "kind": "specification",
+      "title": "Rows a write touches",
+      "description": "A PutMessage touches u when the message involves u; PutBlock and DelBlock touch u when u owns the block.",
+      "symbol": "inbox_kernel.Spec.touches",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Spec.lean",
+          "anchor": "def touches"
+        }
+      ]
+    },
+    {
+      "id": "s-apply-all",
+      "kind": "specification",
+      "title": "Meaning of a write set",
+      "description": "applyAll folds applyWrite over the writes: upsert by key for messages and blocks, filter by key for DelBlock.",
+      "symbol": "inbox_kernel.Spec.applyAll",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Spec.lean",
+          "anchor": "def applyAll"
+        },
+        {
+          "path": "examples/app/inbox/proofs/Spec.lean",
+          "anchor": "def applyWrite"
+        }
+      ]
+    },
+    {
+      "id": "s-msg-key",
+      "kind": "specification",
+      "title": "Message key",
+      "description": "A message is keyed by (sender, recipient, seq), so an upsert can only replace a message between the same two users.",
+      "symbol": "inbox_kernel.Spec.msgKey",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Spec.lean",
+          "anchor": "def msgKey"
+        }
+      ]
+    },
+    {
+      "id": "s-inv",
+      "kind": "specification",
+      "title": "Inbox invariant",
+      "description": "Message keys are unique, every text satisfies textOk, and block keys are unique.",
+      "symbol": "inbox_kernel.Spec.Inv",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Spec.lean",
+          "anchor": "structure Inv"
+        }
+      ]
+    },
+    {
+      "id": "s-text-ok",
+      "kind": "specification",
+      "title": "Valid text",
+      "description": "A text is nonempty and at most 1000 bytes.",
+      "symbol": "inbox_kernel.Spec.textOk",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Spec.lean",
+          "anchor": "def textOk"
+        }
+      ]
+    },
+    {
+      "id": "s-later",
+      "kind": "specification",
+      "title": "Later version of a message",
+      "description": "Later m m' means the same text, and the read, sender_deleted and recipient_deleted flags only go from false to true.",
+      "symbol": "inbox_kernel.Spec.Later",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Spec.lean",
+          "anchor": "def Later"
+        }
+      ]
+    },
+    {
+      "id": "s-hide-for",
+      "kind": "specification",
+      "title": "Hiding on one side",
+      "description": "hideFor u f t m sets sender_deleted when u is the sender and recipient_deleted when u is the recipient, leaving the other flag as it was.",
+      "symbol": "inbox_kernel.Commands.hideFor",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Commands.lean",
+          "anchor": "def hideFor"
+        }
+      ]
+    },
+    {
+      "id": "s-kept",
+      "kind": "specification",
+      "title": "What a listing keeps",
+      "description": "The inbox keeps messages addressed to u that u has not deleted; the sent box keeps messages from u that u has not deleted.",
+      "symbol": "inbox_kernel.Commands.kept",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Commands.lean",
+          "anchor": "def kept"
+        }
+      ]
+    },
+    {
+      "id": "s-enc",
+      "kind": "specification",
+      "title": "Row encoding",
+      "description": "enc maps the state to table 0 (messages) and table 1 (blocks); sqlA gives the table write for each kernel write.",
+      "symbol": "inbox_kernel.Storage.enc",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Storage.lean",
+          "anchor": "def enc"
+        },
+        {
+          "path": "examples/app/inbox/proofs/Storage.lean",
+          "anchor": "def sqlA"
+        }
+      ]
+    },
+    {
+      "id": "a-same-view",
+      "kind": "assumption",
+      "title": "Equal views",
+      "description": "Noninterference compares two snapshots only under the hypothesis that the caller's view is equal in both. It says nothing about states whose views differ."
+    },
+    {
+      "id": "a-reachable",
+      "kind": "assumption",
+      "title": "Reachable state",
+      "description": "The state comes from the empty inbox by successful commands. Externally modified or migrated rows are not automatically reachable.",
+      "symbol": "inbox_kernel.Spec.Reachable",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Spec.lean",
+          "anchor": "inductive Reachable"
+        }
+      ]
+    },
+    {
+      "id": "a-inv-before",
+      "kind": "assumption",
+      "title": "Invariant before the step",
+      "description": "inv_preserved takes Inv of the starting state as a hypothesis; reachable_inv discharges it for reachable states."
+    },
+    {
+      "id": "a-success",
+      "kind": "assumption",
+      "title": "Only successful commands",
+      "description": "The one-run theorems assume transition returned Ok with a write set. A refusal commits nothing in the engine, which is part of the trusted engine contract, not of these theorems."
+    },
+    {
+      "id": "a-no-overflow",
+      "kind": "assumption",
+      "title": "Snapshot size bound",
+      "description": "apply_spec requires total rows plus the number of writes to stay below Usize.max.",
+      "symbol": "inbox_kernel.ApplyProofs.total",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Apply.lean",
+          "anchor": "def total"
+        }
+      ]
+    },
+    {
+      "id": "a-accepted",
+      "kind": "assumption",
+      "title": "Accepted write sets",
+      "description": "db_inv covers databases built only from write sets the kernel returned for some accepted command, plus valid schema, an integer tenant column and the two tables.",
+      "symbol": "inbox_kernel.Storage.Accepted",
+      "sources": [
+        {
+          "path": "examples/app/inbox/proofs/Storage.lean",
+          "anchor": "def Accepted"
+        }
+      ]
+    },
+    {
+      "id": "b-auth",
+      "kind": "boundary",
+      "title": "Authenticated caller",
+      "description": "The principal comes from an HMAC bearer token of the form v1.org.user.expiry.mac. The theorems hold for whatever principal is passed; secrecy of H5I_APP_SECRET and the expiry clock are trusted.",
+      "sources": [
+        {
+          "path": "crates/h5i-app-http/src/lib.rs",
+          "anchor": "impl<K: Kernel> Authenticator<K> for HmacAuth<K>"
+        },
+        {
+          "path": "examples/app/inbox/server/src/main.rs",
+          "anchor": "HmacAuth::<Inbox>::new"
+        },
+        {
+          "path": "examples/app/inbox/server/src/lib.rs",
+          "anchor": "pub fn principal("
+        }
+      ]
+    },
+    {
+      "id": "b-json",
+      "kind": "boundary",
+      "title": "JSON shell",
+      "description": "Decoding the command and rendering the reply and error are outside the theorem. The reply renderer prints from, to, seq, text and read, but not the deleted flags; errors become HTTP status codes as a function of the error.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/server/src/lib.rs",
+          "anchor": "enum CommandJson"
+        },
+        {
+          "path": "examples/app/inbox/server/src/lib.rs",
+          "anchor": "fn message_json("
+        },
+        {
+          "path": "examples/app/inbox/server/src/lib.rs",
+          "anchor": "fn encode_error("
+        }
+      ]
+    },
+    {
+      "id": "b-timing",
+      "kind": "boundary",
+      "title": "Timing and retry channels",
+      "description": "The engine loads the whole organization and the kernel scans every message, so latency depends on other people's traffic. SERIALIZABLE retries caused by other users' requests are also observable as latency.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/server/src/lib.rs",
+          "anchor": "async fn load("
+        }
+      ],
+      "excludes": [
+        "Noninterference covers the kernel's result only, not how long it takes."
+      ]
+    },
+    {
+      "id": "b-engine",
+      "kind": "boundary",
+      "title": "Engine and PostgreSQL contract",
+      "description": "One attempt loads one tenant, runs transition, writes and commits in a SERIALIZABLE transaction; a refusal rolls back. PostgreSQL is assumed to run the rendered SQL as modeled.",
+      "sources": [
+        {
+          "path": "docs/app/TRUST.md",
+          "anchor": "## Trusted engine contract"
+        },
+        {
+          "path": "crates/h5i-app-pg/src/lib.rs",
+          "anchor": "pub async fn execute(&self"
+        }
+      ]
+    },
+    {
+      "id": "b-idempotency",
+      "kind": "boundary",
+      "title": "Stored replies for retries",
+      "description": "With an Idempotency-Key, a repeat gets the stored reply. Replies are stored per tenant and per user scope u<user>, so the trusted ReplyCodec scope keeps one user's stored listing from another.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/server/src/lib.rs",
+          "anchor": "impl ReplyCodec<Inbox> for InboxStore"
+        },
+        {
+          "path": "crates/h5i-app-pg/src/lib.rs",
+          "anchor": "pub async fn execute_idempotent("
+        }
+      ]
+    },
+    {
+      "id": "b-tenant",
+      "kind": "boundary",
+      "title": "Tenant isolation",
+      "description": "The kernel sees one organization; the framework maps the principal's org to the tenant and filters every statement by it. Isolation between organizations is a framework property, not part of these theorems.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/server/src/lib.rs",
+          "anchor": "impl Kernel for Inbox"
+        }
+      ]
+    },
+    {
+      "id": "b-extraction",
+      "kind": "boundary",
+      "title": "Extraction fidelity",
+      "description": "Theorems are about the Lean translation of the Rust produced by Charon and Aeneas, starting from transition. Re-extract after changing the kernel; the check alone does not establish freshness.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/h5i-app.toml",
+          "anchor": "start-from = [\"transition\"]"
+        }
+      ]
+    },
+    {
+      "id": "b-deployment",
+      "kind": "boundary",
+      "title": "Deployment",
+      "description": "The engine role must not be a superuser and no other service may hold its credentials; otherwise rows can change outside the kernel.",
+      "sources": [
+        {
+          "path": "docs/app/TRUST.md",
+          "anchor": "## Deployment"
+        }
+      ]
+    },
+    {
+      "id": "b-store-tested",
+      "kind": "boundary",
+      "title": "Store conformance tested",
+      "description": "server/tests/postgres.rs runs random command sequences through PostgreSQL and the in-memory reference and checks they agree. This is a test, not a proof of PostgreSQL behavior.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/server/tests/postgres.rs",
+          "anchor": "async fn store_agrees_with_apply()"
+        }
+      ]
+    },
+    {
+      "id": "i-transition",
+      "kind": "implementation",
+      "title": "transition",
+      "description": "Dispatches Send, Inbox, Sent, MarkRead, Delete, Block and Unblock on the caller's user id, returning writes and a reply or a refusal that commits nothing.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "pub fn transition("
+        }
+      ]
+    },
+    {
+      "id": "i-send",
+      "kind": "implementation",
+      "title": "send",
+      "description": "Checks the text, refuses with Blocked if the recipient blocked the caller, then numbers the message one above the conversation's last number, refusing on overflow.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "fn send("
+        }
+      ]
+    },
+    {
+      "id": "i-mark-read",
+      "kind": "implementation",
+      "title": "mark_read",
+      "description": "Looks up the message from `from` to the caller and sets read, or answers NotFound when it is missing or deleted on the recipient's side.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "fn mark_read("
+        }
+      ]
+    },
+    {
+      "id": "i-delete",
+      "kind": "implementation",
+      "title": "delete",
+      "description": "Refuses with NotFound before any lookup when the key does not name the caller, then hides the message on the caller's side. The declared mutant read_others_messages removes this first check.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "fn delete("
+        },
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "if from != user && to != user {"
+        },
+        {
+          "path": "examples/app/inbox/h5i-app.toml",
+          "anchor": "name = \"read_others_messages\""
+        }
+      ]
+    },
+    {
+      "id": "i-mailbox",
+      "kind": "implementation",
+      "title": "mailbox",
+      "description": "Filters the messages the caller received (inbox) or sent (sent box), skipping those the caller deleted.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "pub fn mailbox("
+        }
+      ]
+    },
+    {
+      "id": "i-block",
+      "kind": "implementation",
+      "title": "Block and Unblock",
+      "description": "Write or delete the block row owned by the caller.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "Command::Block { user: u } =>"
+        },
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "Command::Unblock { user: u } =>"
+        }
+      ]
+    },
+    {
+      "id": "i-helpers",
+      "kind": "implementation",
+      "title": "Lookup helpers",
+      "description": "is_blocked, last_seq, find_message and text_ok: linear scans over the loaded lists.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "pub fn is_blocked("
+        },
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "pub fn last_seq("
+        },
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "pub fn find_message("
+        },
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "pub fn text_ok("
+        }
+      ]
+    },
+    {
+      "id": "i-schema",
+      "kind": "implementation",
+      "title": "Tables and apply",
+      "description": "schema! declares the messages and blocks tables with their keys and generates apply; apply_write and sql_write map each kernel write to a row change.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "pub struct Message in \"messages\""
+        },
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "fn apply_write("
+        },
+        {
+          "path": "examples/app/inbox/kernel/src/lib.rs",
+          "anchor": "fn sql_write("
+        }
+      ]
+    },
+    {
+      "id": "i-store",
+      "kind": "implementation",
+      "title": "InboxStore",
+      "description": "Loads both tables for a tenant with the generated schema loader and stores a write set with the generated compiled writes.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/server/src/lib.rs",
+          "anchor": "impl Store<Inbox> for InboxStore"
+        }
+      ]
+    },
+    {
+      "id": "i-kernel-impl",
+      "kind": "implementation",
+      "title": "Kernel for Inbox",
+      "description": "Connects the framework to the kernel: the tenant is the principal's org, and transition and apply call the extracted functions.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/server/src/lib.rs",
+          "anchor": "impl Kernel for Inbox"
+        }
+      ]
+    },
+    {
+      "id": "i-api",
+      "kind": "implementation",
+      "title": "JSON API",
+      "description": "decode_command parses the tagged JSON command with deny_unknown_fields; encode_reply and encode_error render the result.",
+      "sources": [
+        {
+          "path": "examples/app/inbox/server/src/lib.rs",
+          "anchor": "fn decode_command("
+        },
+        {
+          "path": "examples/app/inbox/server/src/lib.rs",
+          "anchor": "fn encode_reply("
+        }
+      ]
+    },
+    {
+      "id": "i-rpc",
+      "kind": "implementation",
+      "title": "POST /rpc",
+      "description": "rpc_router mounts POST /rpc; the handler takes the authenticated Actor, decodes the body and calls respond, which runs the engine and renders the outcome.",
+      "sources": [
+        {
+          "path": "crates/h5i-app-http/src/lib.rs",
+          "anchor": "pub fn rpc_router<K, S>"
+        },
+        {
+          "path": "crates/h5i-app-http/src/lib.rs",
+          "anchor": "async fn rpc<K, S>("
+        },
+        {
+          "path": "examples/app/inbox/server/src/main.rs",
+          "anchor": "merge(rpc_router(app))"
+        }
+      ]
+    },
+    {
+      "id": "i-engine",
+      "kind": "implementation",
+      "title": "Engine execute",
+      "description": "Runs one command for the actor's tenant: load, transition, store, commit, with retries and optional idempotency.",
+      "sources": [
+        {
+          "path": "crates/h5i-app-pg/src/lib.rs",
+          "anchor": "pub async fn execute(&self"
+        },
+        {
+          "path": "crates/h5i-app-pg/src/lib.rs",
+          "anchor": "pub async fn execute_idempotent("
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "g-nothing-leaks",
+      "to": "t-noninterference",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-nothing-leaks",
+      "to": "s-view",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-nothing-leaks",
+      "to": "a-same-view",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-nothing-leaks",
+      "to": "t-carol-cannot-tell",
+      "kind": "shown non-vacuous by",
+      "view": "proof"
+    },
+    {
+      "from": "g-nothing-leaks",
+      "to": "cx-alice-sees-block",
+      "kind": "view minimality shown by",
+      "view": "proof"
+    },
+    {
+      "from": "g-nothing-leaks",
+      "to": "b-timing",
+      "kind": "excludes channels outside the result",
+      "view": "proof"
+    },
+    {
+      "from": "g-nothing-leaks",
+      "to": "b-json",
+      "kind": "rendering trusted",
+      "view": "proof"
+    },
+    {
+      "from": "g-nothing-leaks",
+      "to": "b-auth",
+      "kind": "applies to the authenticated user",
+      "view": "proof"
+    },
+    {
+      "from": "g-nothing-leaks",
+      "to": "b-idempotency",
+      "kind": "stored replies trusted",
+      "view": "proof"
+    },
+    {
+      "from": "g-nothing-leaks",
+      "to": "b-extraction",
+      "kind": "about extracted code",
+      "view": "proof"
+    },
+    {
+      "from": "g-existence-hidden",
+      "to": "t-noninterference",
+      "kind": "follows from",
+      "view": "proof"
+    },
+    {
+      "from": "g-existence-hidden",
+      "to": "t-find-message-same",
+      "kind": "uses",
+      "view": "proof"
+    },
+    {
+      "from": "g-existence-hidden",
+      "to": "t-last-seq-same",
+      "kind": "uses",
+      "view": "proof"
+    },
+    {
+      "from": "g-existence-hidden",
+      "to": "t-carol-cannot-delete",
+      "kind": "illustrated by",
+      "view": "proof"
+    },
+    {
+      "from": "g-existence-hidden",
+      "to": "t-carol-cannot-tell",
+      "kind": "illustrated by",
+      "view": "proof"
+    },
+    {
+      "from": "g-existence-hidden",
+      "to": "b-timing",
+      "kind": "except timing",
+      "view": "proof"
+    },
+    {
+      "from": "g-existence-hidden",
+      "to": "i-delete",
+      "kind": "enforced by the early check",
+      "view": "proof"
+    },
+    {
+      "from": "g-block-leak-declared",
+      "to": "t-noninterference",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-block-leak-declared",
+      "to": "t-is-blocked-same",
+      "kind": "uses",
+      "view": "proof"
+    },
+    {
+      "from": "g-block-leak-declared",
+      "to": "s-view",
+      "kind": "leak declared in",
+      "view": "proof"
+    },
+    {
+      "from": "g-block-leak-declared",
+      "to": "cx-alice-sees-block",
+      "kind": "bounded by",
+      "view": "proof"
+    },
+    {
+      "from": "g-listings-yours",
+      "to": "t-reply-confined",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-listings-yours",
+      "to": "s-involves",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-listings-yours",
+      "to": "s-kept",
+      "kind": "filter defined by",
+      "view": "proof"
+    },
+    {
+      "from": "g-listings-yours",
+      "to": "a-success",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-listings-yours",
+      "to": "t-carol-sees-nothing",
+      "kind": "illustrated by",
+      "view": "proof"
+    },
+    {
+      "from": "g-only-your-rows",
+      "to": "t-writes-confined",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-only-your-rows",
+      "to": "t-others-unchanged",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-only-your-rows",
+      "to": "s-touches",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-only-your-rows",
+      "to": "s-others",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-only-your-rows",
+      "to": "s-msg-key",
+      "kind": "relies on key choice",
+      "view": "proof"
+    },
+    {
+      "from": "g-only-your-rows",
+      "to": "a-success",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-only-your-rows",
+      "to": "b-tenant",
+      "kind": "within one organization",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-overwrite",
+      "to": "t-send-fresh",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-overwrite",
+      "to": "t-send-spec",
+      "kind": "uses",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-overwrite",
+      "to": "t-lastseq-bound",
+      "kind": "uses",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-overwrite",
+      "to": "s-msg-key",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-history-forward",
+      "to": "t-msg-kept",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-history-forward",
+      "to": "s-later",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-history-forward",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-history-forward",
+      "to": "b-engine",
+      "kind": "applies to committed state via",
+      "view": "proof"
+    },
+    {
+      "from": "g-blocked-refused",
+      "to": "t-send-spec",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-blocked-refused",
+      "to": "t-block-refuses",
+      "kind": "illustrated by",
+      "view": "proof"
+    },
+    {
+      "from": "g-blocked-refused",
+      "to": "t-block-is-narrow",
+      "kind": "illustrated by",
+      "view": "proof"
+    },
+    {
+      "from": "g-state-sound",
+      "to": "t-reachable-inv",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-state-sound",
+      "to": "t-inv-preserved",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-state-sound",
+      "to": "s-inv",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-state-sound",
+      "to": "s-text-ok",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-state-sound",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-state-sound",
+      "to": "a-inv-before",
+      "kind": "per step assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-sound",
+      "to": "t-db-inv",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-sound",
+      "to": "s-inv",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-sound",
+      "to": "a-accepted",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-sound",
+      "to": "b-engine",
+      "kind": "relies on",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-sound",
+      "to": "b-deployment",
+      "kind": "relies on",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-sound",
+      "to": "b-store-tested",
+      "kind": "tested by",
+      "view": "proof"
+    },
+    {
+      "from": "g-commit-exact",
+      "to": "t-apply-spec",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-commit-exact",
+      "to": "t-stored",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-commit-exact",
+      "to": "s-apply-all",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-commit-exact",
+      "to": "s-enc",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-commit-exact",
+      "to": "a-no-overflow",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-commit-exact",
+      "to": "b-engine",
+      "kind": "relies on",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-crash",
+      "to": "t-transition-total",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-crash",
+      "to": "b-extraction",
+      "kind": "about extracted code",
+      "view": "proof"
+    },
+    {
+      "from": "g-delivered",
+      "to": "t-alice-sends",
+      "kind": "shown by",
+      "view": "proof"
+    },
+    {
+      "from": "g-delivered",
+      "to": "t-bob-reads",
+      "kind": "shown by",
+      "view": "proof"
+    },
+    {
+      "from": "g-delivered",
+      "to": "t-block-is-narrow",
+      "kind": "shown by",
+      "view": "proof"
+    },
+    {
+      "from": "g-delete-own-side",
+      "to": "t-bob-deletes",
+      "kind": "shown by",
+      "view": "proof"
+    },
+    {
+      "from": "g-delete-own-side",
+      "to": "t-carol-cannot-delete",
+      "kind": "shown by",
+      "view": "proof"
+    },
+    {
+      "from": "g-delete-own-side",
+      "to": "t-delete-spec",
+      "kind": "success described by",
+      "view": "proof"
+    },
+    {
+      "from": "g-delete-own-side",
+      "to": "s-hide-for",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-mark-read-received",
+      "to": "t-mark-read-spec",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-mark-read-received",
+      "to": "a-success",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "t-noninterference",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-noninterference",
+      "to": "i-delete",
+      "kind": "relies on the early check",
+      "view": "proof"
+    },
+    {
+      "from": "t-is-blocked-same",
+      "to": "i-helpers",
+      "kind": "about is_blocked",
+      "view": "proof"
+    },
+    {
+      "from": "t-find-message-same",
+      "to": "i-helpers",
+      "kind": "about find_message",
+      "view": "proof"
+    },
+    {
+      "from": "t-last-seq-same",
+      "to": "i-helpers",
+      "kind": "about last_seq",
+      "view": "proof"
+    },
+    {
+      "from": "t-mailbox-same",
+      "to": "i-mailbox",
+      "kind": "about",
+      "view": "proof"
+    },
+    {
+      "from": "t-reply-confined",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-writes-confined",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-writes-of",
+      "to": "i-transition",
+      "kind": "summarizes",
+      "view": "proof"
+    },
+    {
+      "from": "t-writes-of",
+      "to": "i-block",
+      "kind": "covers",
+      "view": "proof"
+    },
+    {
+      "from": "t-transition-total",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-send-spec",
+      "to": "i-send",
+      "kind": "specifies",
+      "view": "proof"
+    },
+    {
+      "from": "t-mark-read-spec",
+      "to": "i-mark-read",
+      "kind": "specifies",
+      "view": "proof"
+    },
+    {
+      "from": "t-delete-spec",
+      "to": "i-delete",
+      "kind": "specifies",
+      "view": "proof"
+    },
+    {
+      "from": "t-lastseq-bound",
+      "to": "i-helpers",
+      "kind": "about last_seq",
+      "view": "proof"
+    },
+    {
+      "from": "t-send-fresh",
+      "to": "i-send",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-msg-kept",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-apply-spec",
+      "to": "i-schema",
+      "kind": "about generated apply",
+      "view": "proof"
+    },
+    {
+      "from": "t-stored",
+      "to": "i-schema",
+      "kind": "about sql_write",
+      "view": "proof"
+    },
+    {
+      "from": "t-db-inv",
+      "to": "i-store",
+      "kind": "connects to",
+      "view": "proof"
+    },
+    {
+      "from": "s-kept",
+      "to": "i-mailbox",
+      "kind": "implemented by",
+      "view": "proof"
+    },
+    {
+      "from": "s-apply-all",
+      "to": "i-schema",
+      "kind": "implemented by",
+      "view": "proof"
+    },
+    {
+      "from": "s-msg-key",
+      "to": "i-schema",
+      "kind": "key declared in",
+      "view": "proof"
+    },
+    {
+      "from": "s-text-ok",
+      "to": "i-helpers",
+      "kind": "checked by text_ok",
+      "view": "proof"
+    },
+    {
+      "from": "s-hide-for",
+      "to": "i-delete",
+      "kind": "implemented by",
+      "view": "proof"
+    },
+    {
+      "from": "b-auth",
+      "to": "i-rpc",
+      "kind": "enters at",
+      "view": "proof"
+    },
+    {
+      "from": "b-json",
+      "to": "i-api",
+      "kind": "implemented by",
+      "view": "proof"
+    },
+    {
+      "from": "b-engine",
+      "to": "i-engine",
+      "kind": "implemented by",
+      "view": "proof"
+    },
+    {
+      "from": "b-idempotency",
+      "to": "i-engine",
+      "kind": "implemented by",
+      "view": "proof"
+    },
+    {
+      "from": "b-tenant",
+      "to": "i-kernel-impl",
+      "kind": "tenant chosen in",
+      "view": "proof"
+    },
+    {
+      "from": "i-rpc",
+      "to": "b-auth",
+      "kind": "authenticates bearer token",
+      "view": "flow"
+    },
+    {
+      "from": "i-rpc",
+      "to": "i-api",
+      "kind": "decodes JSON command",
+      "view": "flow"
+    },
+    {
+      "from": "i-rpc",
+      "to": "i-engine",
+      "kind": "runs command for actor",
+      "view": "flow"
+    },
+    {
+      "from": "i-engine",
+      "to": "b-idempotency",
+      "kind": "checks Idempotency-Key",
+      "view": "flow"
+    },
+    {
+      "from": "i-engine",
+      "to": "i-store",
+      "kind": "loads tenant snapshot",
+      "view": "flow"
+    },
+    {
+      "from": "i-engine",
+      "to": "i-kernel-impl",
+      "kind": "calls transition",
+      "view": "flow"
+    },
+    {
+      "from": "i-kernel-impl",
+      "to": "b-tenant",
+      "kind": "maps org to tenant",
+      "view": "flow"
+    },
+    {
+      "from": "i-kernel-impl",
+      "to": "i-transition",
+      "kind": "delegates",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-send",
+      "kind": "Send",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-mailbox",
+      "kind": "Inbox, Sent",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-mark-read",
+      "kind": "MarkRead",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-delete",
+      "kind": "Delete",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-block",
+      "kind": "Block, Unblock",
+      "view": "flow"
+    },
+    {
+      "from": "i-send",
+      "to": "i-helpers",
+      "kind": "text_ok, is_blocked, last_seq",
+      "view": "flow"
+    },
+    {
+      "from": "i-mark-read",
+      "to": "i-helpers",
+      "kind": "find_message",
+      "view": "flow"
+    },
+    {
+      "from": "i-delete",
+      "to": "i-helpers",
+      "kind": "find_message",
+      "view": "flow"
+    },
+    {
+      "from": "i-store",
+      "to": "i-schema",
+      "kind": "compiles writes with sql_write",
+      "view": "flow"
+    },
+    {
+      "from": "i-store",
+      "to": "b-engine",
+      "kind": "commits in SERIALIZABLE transaction",
+      "view": "flow"
+    },
+    {
+      "from": "i-engine",
+      "to": "i-api",
+      "kind": "encodes reply or error",
+      "view": "flow"
+    },
+    {
+      "from": "i-api",
+      "to": "b-json",
+      "kind": "renders to HTTP",
+      "view": "flow"
+    }
+  ]
+}

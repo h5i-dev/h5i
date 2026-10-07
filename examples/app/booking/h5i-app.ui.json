@@ -1,12 +1,15 @@
 {
   "version": 1,
   "title": "Booking",
-  "description": "Room reservations with authorization, time-aware cancellation and durable state.",
-  "author": "Codex · source-linked explanation",
+  "description": "Room reservations with authorization, time-aware cancellation, notifications through the outbox and durable state.",
+  "author": "Codex and Claude · source-linked explanation",
   "exclusions": [
     "Authentication of the real caller and truth of supplied time are external conditions.",
     "Delivery timing and exactly-once notification processing are not established by these guarantees.",
-    "Migrated or externally modified database states are not automatically in the modeled reachable set."
+    "Migrated or externally modified database states are not automatically in the modeled reachable set.",
+    "The registry, dispatcher and Notifier are trusted and integration-tested; the kernel theorems stop at the destination ID.",
+    "Preservation of started bookings covers runs with nondecreasing time only, and admins may remove any booking.",
+    "Refusals are not stored under idempotency keys, and replies are rendered by a trusted mapping."
   ],
   "nodes": [
     {
@@ -22,7 +25,43 @@
       "id": "accept-booking",
       "kind": "guarantee",
       "title": "Valid bookings are accepted",
-      "description": "A future, nonempty booking of a free room is accepted when an ID is available.",
+      "description": "A booking of an existing room, in the future, nonempty and apart from every booking of that room, is accepted and gets the next ID, as long as IDs are not exhausted.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "touching-accepted",
+      "kind": "guarantee",
+      "title": "Back-to-back bookings are both accepted",
+      "description": "Intervals are half-open, so a booking that starts exactly when another ends is accepted. Without this, a service that refuses too much would still satisfy every safety guarantee.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "book-rules",
+      "kind": "guarantee",
+      "title": "Bookings follow the booking rules",
+      "description": "Every booking a successful command writes is made by the caller, takes the next ID, names an existing room, starts after the engine's time, is nonempty and is apart from every existing booking of the room.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "cancel-rules",
+      "kind": "guarantee",
+      "title": "Only the owner before the start, or an admin, cancels",
+      "description": "Every deletion a successful command writes removes an existing booking, and the caller is an admin or the booking's owner at a time before its start.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "accept-cancel",
+      "kind": "guarantee",
+      "title": "Permitted cancellations are accepted",
+      "description": "In a reachable state, an admin's cancellation of any existing booking is accepted, and so is the owner's before the booking starts.",
       "symbol": null,
       "sources": [],
       "excludes": []
@@ -31,7 +70,70 @@
       "id": "started-remains",
       "kind": "guarantee",
       "title": "Started bookings remain",
-      "description": "Once a booking has started, later commands by non-admins cannot remove it under monotonic time.",
+      "description": "Once a commit has happened at or after a booking's start, later commands by non-admins cannot remove it, provided time never goes back between commits.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "admin-powers",
+      "kind": "guarantee",
+      "title": "Only admins create rooms and appoint admins",
+      "description": "A room is created only by an admin. An admin is added only by an existing admin, or by a caller adding themselves while there is no admin yet.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "notify-destination",
+      "kind": "guarantee",
+      "title": "Notifications go to the room's destination",
+      "description": "Every notification a successful command emits names the destination registered for its booking's room. Where that destination leads is decided by the operator's registry, outside the kernel.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "notify-real-change",
+      "kind": "guarantee",
+      "title": "Notifications describe the change they announce",
+      "description": "A Booked notification is about a booking that did not exist before the command and exists after its writes; a Cancelled one is about a booking that existed and is gone.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "changes-announced",
+      "kind": "guarantee",
+      "title": "Every booking and cancellation is announced",
+      "description": "A write set that stores a booking also emits Booked for it, and one that deletes a booking also emits Cancelled for the deleted booking.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "invariants-hold",
+      "kind": "guarantee",
+      "title": "Reachable states keep the invariants",
+      "description": "Unique keys, IDs below the counter, bookings of existing rooms, nonempty intervals and pairwise compatibility hold in the initial state and after every accepted command, at any time.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "kernel-total",
+      "kind": "guarantee",
+      "title": "No command crashes the kernel",
+      "description": "For every caller, state and command, the extracted transition returns a result: a write set and reply, or a refusal. No panic, arithmetic overflow or bad index is reachable in it.",
+      "symbol": null,
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "state-matches-spec",
+      "kind": "guarantee",
+      "title": "Stored rows are what the specification computes",
+      "description": "The kernel's apply computes the specification's applyAll, and in the store model the rows equal the encoding of that state; a load decodes to it up to row order.",
       "symbol": null,
       "sources": [],
       "excludes": []
@@ -40,7 +142,7 @@
       "id": "database-invariant",
       "kind": "guarantee",
       "title": "Stored bookings keep the invariant",
-      "description": "Accepted write sets preserve the invariant in the database model and in subsequently decoded snapshots.",
+      "description": "For the server's schema and any tenant, databases built from accepted write sets, interleaved with other tenants' statements, hold a state satisfying the invariant, and so does every snapshot a later load decodes.",
       "symbol": null,
       "sources": [],
       "excludes": []
@@ -49,7 +151,7 @@
       "id": "no-double-booking",
       "kind": "theorem",
       "title": "No double booking",
-      "description": "The theorem quantifies over every booking pair and every instant. The reachability hypothesis is part of its scope.",
+      "description": "For a reachable state, any two bookings with different IDs and the same room share no instant t. The reachability hypothesis is part of its scope.",
       "symbol": "booking_kernel.Theorems.no_double_booking",
       "sources": [
         {
@@ -61,10 +163,130 @@
       "excludes": []
     },
     {
+      "id": "apart-iff",
+      "kind": "theorem",
+      "title": "Apart means no shared instant",
+      "description": "For nonempty intervals, Apart holds exactly when no instant lies in both. It turns the invariant's inequalities into the statement about instants.",
+      "symbol": "booking_kernel.Theorems.apart_iff",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Theorems.lean",
+          "anchor": "theorem apart_iff",
+          "digest": "4cc9f2b7b40422b9e382aff7fd26f8ccdf9501fa4acc6aedf6a340e5d14dbb70"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "reachable-inv",
+      "kind": "theorem",
+      "title": "Invariants in every reachable state",
+      "description": "Induction over Reachable: init_inv for the empty service, inv_preserved for each accepted step.",
+      "symbol": "booking_kernel.Theorems.reachable_inv",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Theorems.lean",
+          "anchor": "theorem reachable_inv",
+          "digest": "4cc9f2b7b40422b9e382aff7fd26f8ccdf9501fa4acc6aedf6a340e5d14dbb70"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "inv-preserved",
+      "kind": "theorem",
+      "title": "Accepted commands keep the invariants",
+      "description": "If the state before a successful transition satisfies Inv, so does the result of applying its writes. No hypothesis on the time.",
+      "symbol": "booking_kernel.Theorems.inv_preserved",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Theorems.lean",
+          "anchor": "theorem inv_preserved",
+          "digest": "4cc9f2b7b40422b9e382aff7fd26f8ccdf9501fa4acc6aedf6a340e5d14dbb70"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "writes-of",
+      "kind": "theorem",
+      "title": "What a successful command writes",
+      "description": "Sums up the command lemmas in five cases: List writes nothing, AddAdmin, CreateRoom, Book and Cancel write the listed writes under the listed conditions. The later theorems split on these cases.",
+      "symbol": "booking_kernel.Theorems.writes_of",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Theorems.lean",
+          "anchor": "theorem writes_of",
+          "digest": "4cc9f2b7b40422b9e382aff7fd26f8ccdf9501fa4acc6aedf6a340e5d14dbb70"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "authorized",
+      "kind": "theorem",
+      "title": "Every write is allowed by the policy",
+      "description": "Each write of a successful command satisfies allowed, judged against the state before it, the caller's user and the time in the principal. Needs no invariant.",
+      "symbol": "booking_kernel.Theorems.authorized",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Theorems.lean",
+          "anchor": "theorem authorized",
+          "digest": "4cc9f2b7b40422b9e382aff7fd26f8ccdf9501fa4acc6aedf6a340e5d14dbb70"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "transition-total",
+      "kind": "theorem",
+      "title": "The kernel is total",
+      "description": "For every principal, snapshot and command, transition returns ok with some result. Refusals are ok results carrying an error.",
+      "symbol": "booking_kernel.Theorems.transition_total",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Theorems.lean",
+          "anchor": "theorem transition_total",
+          "digest": "4cc9f2b7b40422b9e382aff7fd26f8ccdf9501fa4acc6aedf6a340e5d14dbb70"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "effects-sound",
+      "kind": "theorem",
+      "title": "Notifications are sound",
+      "description": "Assuming Inv on the state before, every emitted effect names the room's destination, Booked effects are about a booking new in the result, and Cancelled effects about one that is removed.",
+      "symbol": "booking_kernel.Theorems.effects_sound",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Theorems.lean",
+          "anchor": "theorem effects_sound",
+          "digest": "4cc9f2b7b40422b9e382aff7fd26f8ccdf9501fa4acc6aedf6a340e5d14dbb70"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "changes-announced-thm",
+      "kind": "theorem",
+      "title": "Changes come with their notification",
+      "description": "Every PutBooking in a successful write set has a Booked effect for that booking, and every DelBooking has a Cancelled effect for a booking with that ID.",
+      "symbol": "booking_kernel.Theorems.changes_announced",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Theorems.lean",
+          "anchor": "theorem changes_announced",
+          "digest": "4cc9f2b7b40422b9e382aff7fd26f8ccdf9501fa4acc6aedf6a340e5d14dbb70"
+        }
+      ],
+      "excludes": []
+    },
+    {
       "id": "book-accepted",
       "kind": "theorem",
       "title": "Acceptance of a valid booking",
-      "description": "Requires an existing room, future and nonempty interval, compatibility with every existing booking, and an available ID. The declared touching-interval mutant is relevant to this acceptance boundary; actual failure attribution requires a run.",
+      "description": "Requires an existing room, a start after the principal's time, a nonempty interval, apartness from every booking of the room, and a counter below the maximum. Then Book returns Created with the next ID. The declared touching-interval mutant is relevant to this acceptance boundary; actual failure attribution requires a run.",
       "symbol": "booking_kernel.Theorems.book_accepted",
       "sources": [
         {
@@ -76,10 +298,70 @@
       "excludes": []
     },
     {
+      "id": "cancel-accepted",
+      "kind": "theorem",
+      "title": "Acceptance of a permitted cancellation",
+      "description": "In a reachable state, for an existing booking, an admin or the owner before the start gets Done. Reachability supplies the booking's room through the invariant.",
+      "symbol": "booking_kernel.Theorems.cancel_accepted",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Theorems.lean",
+          "anchor": "theorem cancel_accepted",
+          "digest": "4cc9f2b7b40422b9e382aff7fd26f8ccdf9501fa4acc6aedf6a340e5d14dbb70"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "free-spec",
+      "kind": "theorem",
+      "title": "Availability check is exact",
+      "description": "free returns true exactly when the interval is apart from every booking of the room. The equivalence matters: the direction that free accepts every compatible interval is what acceptance relies on.",
+      "symbol": "booking_kernel.Commands.free_spec",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Commands.lean",
+          "anchor": "theorem free_spec",
+          "digest": "e8e43f9eb0d539d80a5fb005cae766e65f6cc3b4d71951decd377c5dfb5ff47d"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "adjacent-accepted",
+      "kind": "theorem",
+      "title": "Scenario: touching booking accepted",
+      "description": "On the extracted code, with [1, 2) booked in room 0, a booking of [2, 3) by user 3 at time 0 returns Created 2 with the booking, counter and Booked notification to destination 7.",
+      "symbol": "booking_kernel.Scenarios.adjacent_accepted",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Scenarios.lean",
+          "anchor": "theorem adjacent_accepted",
+          "digest": "749c532a12a363da61bbf36807ea8fd92b491c7f817c5164c8f432aa3c6b5842"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "owner-cancels",
+      "kind": "theorem",
+      "title": "Scenario: owner cancels before the start",
+      "description": "On the extracted code, user 2 cancels booking 1 ([1, 2)) at time 0 and room 0's destination 7 receives the Cancelled notification.",
+      "symbol": "booking_kernel.Scenarios.owner_cancels",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Scenarios.lean",
+          "anchor": "theorem owner_cancels",
+          "digest": "749c532a12a363da61bbf36807ea8fd92b491c7f817c5164c8f432aa3c6b5842"
+        }
+      ],
+      "excludes": []
+    },
+    {
       "id": "started-stays",
       "kind": "theorem",
       "title": "Preservation after start",
-      "description": "Requires a timed reachable state, a run restricted to non-admin callers, membership of the booking, and a start time already reached.",
+      "description": "Requires a timed reachable state, a run with nondecreasing time restricted to non-admin callers, membership of the booking, and a start no later than the time of the latest commit.",
       "symbol": "booking_kernel.Clock.started_stays",
       "sources": [
         {
@@ -91,10 +373,40 @@
       "excludes": []
     },
     {
+      "id": "apply-spec",
+      "kind": "theorem",
+      "title": "apply computes applyAll",
+      "description": "The kernel's generated apply yields a snapshot whose list view is Spec.applyAll of the write set, as long as no vector can overflow.",
+      "symbol": "booking_kernel.ApplyProofs.apply_spec",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Apply.lean",
+          "anchor": "theorem apply_spec",
+          "digest": "e920fda37579c2d70d8c06360e42c8c74adbc156e23ba855b2225a9c438302c1"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "stored",
+      "kind": "theorem",
+      "title": "The store holds what apply computes",
+      "description": "For a database served through the modeled store, it holds the encoding of the state, and a load that lists the tables decodes to an equivalent state up to row order.",
+      "symbol": "booking_kernel.Storage.stored",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Storage.lean",
+          "anchor": "theorem stored",
+          "digest": "edb4c83224d009f787813dfa6da580c0392fee31bbe1364504b37ecc36cb67f3"
+        }
+      ],
+      "excludes": []
+    },
+    {
       "id": "db-inv",
       "kind": "theorem",
       "title": "Invariant on stored state",
-      "description": "For valid schema and tenant inputs, PgServed histories imply Inv and invariant-preserving decoded loads.",
+      "description": "For valid schema and tenant inputs, PgServed histories of accepted write sets imply Inv, and every decoded load satisfies Inv. Required by the manifest's check.",
       "symbol": "booking_kernel.Storage.db_inv",
       "sources": [
         {
@@ -106,16 +418,76 @@
       "excludes": []
     },
     {
-      "id": "reachable",
-      "kind": "assumption",
-      "title": "Reachable state",
-      "description": "The state comes from the empty initial state by accepted transitions. Arbitrarily corrupted or migrated states are not automatically reachable.",
-      "symbol": "booking_kernel.Spec.Reachable",
+      "id": "clock-counterexample",
+      "kind": "counterexample",
+      "title": "Clock reversal permits cancellation",
+      "description": "An owner cancels at time 0 after a commit at time 5, removing a booking that started at time 1. Every step is accepted; only the last goes back in time, which StepsT excludes. This is a formal counterexample to dropping monotonic time.",
+      "symbol": "booking_kernel.Clock.clock_back_cancels",
       "sources": [
         {
-          "path": "examples/app/booking/proofs/Spec.lean",
-          "anchor": "inductive Reachable :",
-          "digest": "b1d59e732276aa114267414cd77b5a8b9499fd3a6231084035b28c906ad4a815"
+          "path": "examples/app/booking/proofs/Clock.lean",
+          "anchor": "theorem clock_back_cancels",
+          "digest": "d32118c8b57e2c173e834d13e26037c8e5327762256c701a50636966f4bd1058"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "overlap-refused",
+      "kind": "counterexample",
+      "title": "Overlapping booking is refused",
+      "description": "With [1, 2) booked, a request for [1, 3) in the same room returns Taken. Acceptance does not extend to intervals that share an instant with an existing booking.",
+      "symbol": "booking_kernel.Scenarios.overlap_refused",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Scenarios.lean",
+          "anchor": "theorem overlap_refused",
+          "digest": "749c532a12a363da61bbf36807ea8fd92b491c7f817c5164c8f432aa3c6b5842"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "past-refused",
+      "kind": "counterexample",
+      "title": "Booking in the past is refused",
+      "description": "At time 5, a request for [5, 6) returns InThePast: a start equal to the engine's time is not in the future.",
+      "symbol": "booking_kernel.Scenarios.past_refused",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Scenarios.lean",
+          "anchor": "theorem past_refused",
+          "digest": "749c532a12a363da61bbf36807ea8fd92b491c7f817c5164c8f432aa3c6b5842"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "stranger-refused",
+      "kind": "counterexample",
+      "title": "A stranger cannot cancel",
+      "description": "User 3, not an admin, cancels user 2's booking and gets Forbidden.",
+      "symbol": "booking_kernel.Scenarios.stranger_refused",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Scenarios.lean",
+          "anchor": "theorem stranger_refused",
+          "digest": "749c532a12a363da61bbf36807ea8fd92b491c7f817c5164c8f432aa3c6b5842"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "started-refused",
+      "kind": "counterexample",
+      "title": "The owner cannot cancel after the start",
+      "description": "User 2 cancels booking [1, 2) at time 1 and gets Started. The owner's right to cancel ends at the start, judged by the principal's time.",
+      "symbol": "booking_kernel.Scenarios.started_refused",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Scenarios.lean",
+          "anchor": "theorem started_refused",
+          "digest": "749c532a12a363da61bbf36807ea8fd92b491c7f817c5164c8f432aa3c6b5842"
         }
       ],
       "excludes": []
@@ -156,6 +528,106 @@
       "excludes": []
     },
     {
+      "id": "policy",
+      "kind": "specification",
+      "title": "The policy",
+      "description": "allowed says which writes a user may make in a state at a time: admins, rooms, bookings, deletions, the counter, and where an effect may go.",
+      "symbol": "booking_kernel.Spec.allowed",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Spec.lean",
+          "anchor": "def allowed",
+          "digest": "b1d59e732276aa114267414cd77b5a8b9499fd3a6231084035b28c906ad4a815"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "apply-all",
+      "kind": "specification",
+      "title": "Meaning of a write set",
+      "description": "applyWrite upserts admins, rooms and bookings, filters out a deleted booking and sets the counter; Emit changes no table. applyAll folds it over a write set.",
+      "symbol": "booking_kernel.Spec.applyAll",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Spec.lean",
+          "anchor": "def applyWrite",
+          "digest": "b1d59e732276aa114267414cd77b5a8b9499fd3a6231084035b28c906ad4a815"
+        },
+        {
+          "path": "examples/app/booking/proofs/Spec.lean",
+          "anchor": "def applyAll",
+          "digest": "b1d59e732276aa114267414cd77b5a8b9499fd3a6231084035b28c906ad4a815"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "destination",
+      "kind": "specification",
+      "title": "A room's registered destination",
+      "description": "destOf is the destination ID stored on the room, if the room exists. It is a number; the registry maps it to an endpoint.",
+      "symbol": "booking_kernel.Spec.destOf",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Spec.lean",
+          "anchor": "def destOf",
+          "digest": "b1d59e732276aa114267414cd77b5a8b9499fd3a6231084035b28c906ad4a815"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "storage-encoding",
+      "kind": "specification",
+      "title": "Rows of a state",
+      "description": "enc lists the admins, rooms, bookings and counter as table rows; sqlA gives each write's table operation, and none for Emit.",
+      "symbol": "booking_kernel.Storage.enc",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Storage.lean",
+          "anchor": "def enc",
+          "digest": "edb4c83224d009f787813dfa6da580c0392fee31bbe1364504b37ecc36cb67f3"
+        },
+        {
+          "path": "examples/app/booking/proofs/Storage.lean",
+          "anchor": "def sqlA",
+          "digest": "edb4c83224d009f787813dfa6da580c0392fee31bbe1364504b37ecc36cb67f3"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "accepted-writes",
+      "kind": "specification",
+      "title": "Accepted write sets",
+      "description": "Write sets the kernel returns for some principal and command it accepts, at any time. db_inv quantifies over histories of these.",
+      "symbol": "booking_kernel.Storage.Accepted",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Storage.lean",
+          "anchor": "def Accepted",
+          "digest": "edb4c83224d009f787813dfa6da580c0392fee31bbe1364504b37ecc36cb67f3"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "reachable",
+      "kind": "assumption",
+      "title": "Reachable state",
+      "description": "The state comes from the empty initial state by accepted transitions. Arbitrarily corrupted or migrated states are not automatically reachable.",
+      "symbol": "booking_kernel.Spec.Reachable",
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Spec.lean",
+          "anchor": "inductive Reachable :",
+          "digest": "b1d59e732276aa114267414cd77b5a8b9499fd3a6231084035b28c906ad4a815"
+        }
+      ],
+      "excludes": []
+    },
+    {
       "id": "clock-condition",
       "kind": "assumption",
       "title": "Time never goes backwards",
@@ -176,16 +648,237 @@
       "excludes": []
     },
     {
-      "id": "clock-counterexample",
-      "kind": "counterexample",
-      "title": "Clock reversal permits cancellation",
-      "description": "An owner cancels at time 0 after a commit at time 5, removing a booking that started at time 1. This is a formal counterexample to dropping monotonic time.",
-      "symbol": "booking_kernel.Clock.clock_back_cancels",
+      "id": "non-admin-run",
+      "kind": "assumption",
+      "title": "A run by non-admins",
+      "description": "StepsT with the filter that the caller is not an admin in the state of each step. Admins may remove started bookings by design.",
+      "symbol": "booking_kernel.Spec.StepsT",
       "sources": [
         {
+          "path": "examples/app/booking/proofs/Spec.lean",
+          "anchor": "abbrev StepsT",
+          "digest": "b1d59e732276aa114267414cd77b5a8b9499fd3a6231084035b28c906ad4a815"
+        },
+        {
           "path": "examples/app/booking/proofs/Clock.lean",
-          "anchor": "theorem clock_back_cancels",
+          "anchor": "(h : StepsT (fun a st => ¬ isAdmin st a.user.val) st t st' t') {b : Booking}",
           "digest": "d32118c8b57e2c173e834d13e26037c8e5327762256c701a50636966f4bd1058"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "id-bound",
+      "kind": "assumption",
+      "title": "IDs not exhausted",
+      "description": "book_accepted assumes the counter is below U64.max. At the maximum, Book is refused with Overflow instead.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Theorems.lean",
+          "anchor": "(hid : s.counter.next_id.val < U64.max) :",
+          "digest": "4cc9f2b7b40422b9e382aff7fd26f8ccdf9501fa4acc6aedf6a340e5d14dbb70"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "vec-capacity",
+      "kind": "assumption",
+      "title": "No vector overflow",
+      "description": "apply_spec assumes the snapshot's rows plus the write set's length stay below the usize maximum, since each write adds at most one row.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Apply.lean",
+          "anchor": "(h : total s + ws.length < Usize.max)",
+          "digest": "e920fda37579c2d70d8c06360e42c8c74adbc156e23ba855b2225a9c438302c1"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "schema-hypotheses",
+      "kind": "assumption",
+      "title": "Server schema and tenant value",
+      "description": "db_inv assumes a valid table list with the kernel's key lengths, four tables, and a tenant value of integer kind.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/proofs/Storage.lean",
+          "anchor": "(hv : Pg.Valid ts)",
+          "digest": "edb4c83224d009f787813dfa6da580c0392fee31bbe1364504b37ecc36cb67f3"
+        },
+        {
+          "path": "examples/app/booking/proofs/Storage.lean",
+          "anchor": "(hkl : Pg.klOf ts = kl)",
+          "digest": "edb4c83224d009f787813dfa6da580c0392fee31bbe1364504b37ecc36cb67f3"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "database-contract",
+      "kind": "assumption",
+      "title": "Database & engine contract",
+      "description": "Relies on modeled PostgreSQL semantics, serializable transactions, faithful value conversion, tenant consistency and restricted database credentials.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "docs/app/TRUST.md",
+          "anchor": "## Trusted engine contract",
+          "digest": "f00b374e59bae9dc67ed4bdecce4020bd1f10d742fb222924babb209c943a7d7"
+        }
+      ],
+      "excludes": [
+        "Live deployment conformance is not established by a Lean build."
+      ]
+    },
+    {
+      "id": "shell",
+      "kind": "boundary",
+      "title": "Authenticated caller & clock",
+      "description": "The shell supplies the actor and the engine stamps the time. Theorems over these values do not establish that an external identity or clock is truthful.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/server/src/lib.rs",
+          "anchor": "pub fn principal(",
+          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
+        },
+        {
+          "path": "examples/app/booking/server/src/lib.rs",
+          "anchor": "fn stamp(",
+          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "auth",
+      "kind": "boundary",
+      "title": "Bearer token authentication",
+      "description": "HmacAuth verifies the token and passes its organization and user to principal. The key, its storage and the expiry clock are trusted.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/server/src/main.rs",
+          "anchor": "let auth = HmacAuth::<BookingApp>::new(secret, principal);",
+          "digest": "43e25e8f28143eb0dd65a15a48a16b6854ea75235565b8ff6ba58cac8267f95c"
+        }
+      ],
+      "excludes": [
+        "Who holds a valid token is outside the proofs."
+      ]
+    },
+    {
+      "id": "engine-clock",
+      "kind": "boundary",
+      "title": "Database clock, monotonic",
+      "description": "config selects the database's transaction time with monotonic on, so servers of one database agree and commit times never decrease per tenant. Nothing checks that the clock is right.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/server/src/lib.rs",
+          "anchor": "EngineConfig::default().database_time()",
+          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
+        },
+        {
+          "path": "examples/app/booking/TUTORIAL.md",
+          "anchor": "## Limits of the proofs",
+          "digest": "741efbfa952781b1b957be5b428c8dd2c52f5e6f3ae8149ea8ea4e40469987b2"
+        }
+      ],
+      "excludes": [
+        "A clock that is ahead or behind still decides what counts as the future."
+      ]
+    },
+    {
+      "id": "json-codec",
+      "kind": "boundary",
+      "title": "JSON command and reply codec",
+      "description": "Decodes the request body into a Command with unknown fields denied, so the client cannot send a time. Encodes replies and maps refusals to HTTP statuses. The mapping is trusted.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/server/src/lib.rs",
+          "anchor": "enum CommandJson {",
+          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
+        },
+        {
+          "path": "examples/app/booking/server/src/lib.rs",
+          "anchor": "impl h5i_app_http::Api<BookingApp> for BookingStore {",
+          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "extraction",
+      "kind": "boundary",
+      "title": "Extraction and the Lean checker",
+      "description": "The theorems are about the Lean that Charon and Aeneas produce from the kernel, starting at transition. Faithful translation and a sound checker are assumed; extraction freshness is a separate check.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/h5i-app.toml",
+          "anchor": "start-from = [\"transition\"]",
+          "digest": "4574ca03d50d53395ade89692f79aa73e401e2f8732a87a3153675fd7d71af08"
+        },
+        {
+          "path": "examples/app/booking/kernel/src/lib.rs",
+          "anchor": "h5i_app_schema::schema! {",
+          "digest": "a6b7b98ce506e5aac6d96a590aaadd8cdb6dd6d27d6ec37f899ad5b6a85888c3"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "delivery",
+      "kind": "boundary",
+      "title": "Notification delivery",
+      "description": "The operator's registry maps destination IDs to endpoints; the dispatcher delivers at least once with a stable key. Order across retries, deduplication by receivers and unknown destinations are outside the kernel theorems.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/server/src/lib.rs",
+          "anchor": "pub fn parse_registry(",
+          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
+        },
+        {
+          "path": "examples/app/booking/server/src/main.rs",
+          "anchor": "let registry = parse_registry(",
+          "digest": "43e25e8f28143eb0dd65a15a48a16b6854ea75235565b8ff6ba58cac8267f95c"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "rpc-route",
+      "kind": "implementation",
+      "title": "POST /rpc",
+      "description": "The framework's rpc_router: authenticates the caller, decodes the JSON command and runs it through the engine, honoring Idempotency-Key.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/server/src/main.rs",
+          "anchor": "merge(rpc_router(app))",
+          "digest": "43e25e8f28143eb0dd65a15a48a16b6854ea75235565b8ff6ba58cac8267f95c"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "engine",
+      "kind": "implementation",
+      "title": "Engine",
+      "description": "Per attempt: one SERIALIZABLE transaction that loads the tenant, reads the time, stamps it, calls transition and commits the writes. Retries reload and read a new time.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/server/src/main.rs",
+          "anchor": "let engine = Arc::new(Engine::<BookingApp, BookingStore>::new(",
+          "digest": "43e25e8f28143eb0dd65a15a48a16b6854ea75235565b8ff6ba58cac8267f95c"
         }
       ],
       "excludes": []
@@ -216,7 +909,17 @@
           "path": "examples/app/booking/kernel/src/lib.rs",
           "anchor": "fn book(",
           "digest": "a6b7b98ce506e5aac6d96a590aaadd8cdb6dd6d27d6ec37f899ad5b6a85888c3"
-        },
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "free-rust",
+      "kind": "implementation",
+      "title": "Rust availability check",
+      "description": "Scans the bookings for one of the same room with start_at < end and start < end_at. The touching-interval mutant changes these comparisons.",
+      "symbol": null,
+      "sources": [
         {
           "path": "examples/app/booking/kernel/src/lib.rs",
           "anchor": "pub fn free(",
@@ -226,21 +929,66 @@
       "excludes": []
     },
     {
-      "id": "shell",
-      "kind": "boundary",
-      "title": "Authenticated caller & clock",
-      "description": "The shell supplies the actor and the engine stamps the time. Theorems over these values do not establish that an external identity or clock is truthful.",
+      "id": "cancel-rust",
+      "kind": "implementation",
+      "title": "Rust cancellation",
+      "description": "Finds the booking, lets an admin through, otherwise requires the owner and a time before the start, then deletes it and emits Cancelled to the room's destination.",
       "symbol": null,
       "sources": [
         {
-          "path": "examples/app/booking/server/src/lib.rs",
-          "anchor": "pub fn principal(",
-          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
+          "path": "examples/app/booking/kernel/src/lib.rs",
+          "anchor": "fn cancel(",
+          "digest": "a6b7b98ce506e5aac6d96a590aaadd8cdb6dd6d27d6ec37f899ad5b6a85888c3"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "admin-rust",
+      "kind": "implementation",
+      "title": "Rust admin and room commands",
+      "description": "add_admin accepts an admin or the bootstrap case; create_room requires an admin and takes the next ID.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/kernel/src/lib.rs",
+          "anchor": "fn add_admin(",
+          "digest": "a6b7b98ce506e5aac6d96a590aaadd8cdb6dd6d27d6ec37f899ad5b6a85888c3"
         },
         {
-          "path": "examples/app/booking/server/src/lib.rs",
-          "anchor": "fn stamp(",
-          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
+          "path": "examples/app/booking/kernel/src/lib.rs",
+          "anchor": "fn create_room(",
+          "digest": "a6b7b98ce506e5aac6d96a590aaadd8cdb6dd6d27d6ec37f899ad5b6a85888c3"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "apply-rust",
+      "kind": "implementation",
+      "title": "Rust write dispatch",
+      "description": "apply_write puts or deletes rows and sets the counter; Emit changes nothing. schema! builds apply from it.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/kernel/src/lib.rs",
+          "anchor": "fn apply_write(",
+          "digest": "a6b7b98ce506e5aac6d96a590aaadd8cdb6dd6d27d6ec37f899ad5b6a85888c3"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "sql-write-rust",
+      "kind": "implementation",
+      "title": "Rust table writes",
+      "description": "sql_write gives each write its table operation through the generated schema; an effect has none.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/kernel/src/lib.rs",
+          "anchor": "fn sql_write(",
+          "digest": "a6b7b98ce506e5aac6d96a590aaadd8cdb6dd6d27d6ec37f899ad5b6a85888c3"
         }
       ],
       "excludes": []
@@ -261,21 +1009,99 @@
       "excludes": []
     },
     {
-      "id": "database-contract",
-      "kind": "assumption",
-      "title": "Database & engine contract",
-      "description": "Relies on modeled PostgreSQL semantics, serializable transactions, faithful value conversion, tenant consistency and restricted database credentials.",
+      "id": "outbox-enqueue",
+      "kind": "implementation",
+      "title": "Outbox enqueue",
+      "description": "Store::write inserts each Emit into the outbox in the request's transaction, so a notification exists exactly when its change commits. The payload omits the destination.",
       "symbol": null,
       "sources": [
         {
-          "path": "docs/app/TRUST.md",
-          "anchor": "## Trusted engine contract",
-          "digest": "f00b374e59bae9dc67ed4bdecce4020bd1f10d742fb222924babb209c943a7d7"
+          "path": "examples/app/booking/server/src/lib.rs",
+          "anchor": "outbox::enqueue(tx, t, e.dest, &effect_payload(e)).await?;",
+          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
+        },
+        {
+          "path": "examples/app/booking/server/src/lib.rs",
+          "anchor": "pub fn effect_payload(",
+          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
         }
       ],
-      "excludes": [
-        "Live deployment conformance is not established by a Lean build."
-      ]
+      "excludes": []
+    },
+    {
+      "id": "notifier",
+      "kind": "implementation",
+      "title": "Dispatcher and Notifier",
+      "description": "A loop sends committed outbox rows once a second. Notifier logs or POSTs each delivery with its Idempotency-Key and a timeout.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/server/src/main.rs",
+          "anchor": "let dispatcher = engine.dispatcher(",
+          "digest": "43e25e8f28143eb0dd65a15a48a16b6854ea75235565b8ff6ba58cac8267f95c"
+        },
+        {
+          "path": "examples/app/booking/server/src/lib.rs",
+          "anchor": "impl Deliver<Endpoint> for Notifier {",
+          "digest": "d7dd856e57fbaa5d3a020cd706a9089f1ef7c340be0e7844b2c04ad0417266b9"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "store-test",
+      "kind": "implementation",
+      "title": "PostgreSQL agreement test",
+      "description": "Runs random commands with a forward clock through PostgreSQL and the in-memory engine and compares replies, states and outbox rows. Skipped without a test database.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/server/tests/postgres.rs",
+          "anchor": "async fn store_agrees_with_apply()",
+          "digest": "46a3936d15ac42eb687a7653a7bbd9fe8637d8fc8b00c04c182db67b721b4caa"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "clock-test",
+      "kind": "implementation",
+      "title": "Clock reversal test",
+      "description": "Replays the clock_back_cancels run on PostgreSQL: without monotonic the owner's cancellation succeeds, with it the kernel answers Started.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/server/tests/postgres.rs",
+          "anchor": "async fn monotonic_time_keeps_started_bookings()",
+          "digest": "46a3936d15ac42eb687a7653a7bbd9fe8637d8fc8b00c04c182db67b721b4caa"
+        },
+        {
+          "path": "examples/app/booking/server/tests/postgres.rs",
+          "anchor": "async fn cancel_after_clock_went_back(",
+          "digest": "46a3936d15ac42eb687a7653a7bbd9fe8637d8fc8b00c04c182db67b721b4caa"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "outbox-test",
+      "kind": "implementation",
+      "title": "Outbox delivery tests",
+      "description": "Checks posting to the room's endpoint, no notification for refusals, retry with the same key, and that an unregistered destination is never contacted.",
+      "symbol": null,
+      "sources": [
+        {
+          "path": "examples/app/booking/server/tests/outbox.rs",
+          "anchor": "async fn bookings_and_cancellations_are_posted_to_the_room_endpoint()",
+          "digest": "78544d1933b9d9b67d023770918e459aab6706f457d113b212094885fde2b5d3"
+        },
+        {
+          "path": "examples/app/booking/server/tests/outbox.rs",
+          "anchor": "async fn an_unregistered_destination_is_never_contacted()",
+          "digest": "78544d1933b9d9b67d023770918e459aab6706f457d113b212094885fde2b5d3"
+        }
+      ],
+      "excludes": []
     }
   ],
   "edges": [
@@ -286,21 +1112,27 @@
       "view": "proof"
     },
     {
-      "from": "no-double-booking",
-      "to": "reachable",
-      "kind": "assumes",
+      "from": "no-overlap",
+      "to": "apart-iff",
+      "kind": "instants via",
       "view": "proof"
     },
     {
-      "from": "no-double-booking",
+      "from": "no-overlap",
       "to": "invariant",
-      "kind": "uses",
+      "kind": "follows from",
       "view": "proof"
     },
     {
-      "from": "invariant",
+      "from": "no-overlap",
       "to": "intervals",
-      "kind": "defined by",
+      "kind": "stated with",
+      "view": "proof"
+    },
+    {
+      "from": "no-overlap",
+      "to": "reachable",
+      "kind": "scoped to",
       "view": "proof"
     },
     {
@@ -310,15 +1142,45 @@
       "view": "proof"
     },
     {
+      "from": "no-double-booking",
+      "to": "extraction",
+      "kind": "applies through",
+      "view": "proof"
+    },
+    {
       "from": "accept-booking",
       "to": "book-accepted",
       "kind": "proved by",
       "view": "proof"
     },
     {
-      "from": "book-accepted",
+      "from": "accept-booking",
+      "to": "free-spec",
+      "kind": "relies on",
+      "view": "proof"
+    },
+    {
+      "from": "accept-booking",
+      "to": "policy",
+      "kind": "matches the Book clause of",
+      "view": "proof"
+    },
+    {
+      "from": "accept-booking",
       "to": "intervals",
       "kind": "requires compatibility",
+      "view": "proof"
+    },
+    {
+      "from": "accept-booking",
+      "to": "overlap-refused",
+      "kind": "bounded by",
+      "view": "proof"
+    },
+    {
+      "from": "accept-booking",
+      "to": "past-refused",
+      "kind": "bounded by",
       "view": "proof"
     },
     {
@@ -334,25 +1196,193 @@
       "view": "proof"
     },
     {
+      "from": "book-accepted",
+      "to": "id-bound",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "touching-accepted",
+      "to": "adjacent-accepted",
+      "kind": "witnessed by",
+      "view": "proof"
+    },
+    {
+      "from": "touching-accepted",
+      "to": "free-spec",
+      "kind": "relies on",
+      "view": "proof"
+    },
+    {
+      "from": "touching-accepted",
+      "to": "book-accepted",
+      "kind": "follows from",
+      "view": "proof"
+    },
+    {
+      "from": "touching-accepted",
+      "to": "intervals",
+      "kind": "stated with",
+      "view": "proof"
+    },
+    {
+      "from": "free-spec",
+      "to": "free-rust",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "adjacent-accepted",
+      "to": "book-rust",
+      "kind": "runs extracted code",
+      "view": "proof"
+    },
+    {
+      "from": "book-rules",
+      "to": "authorized",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "book-rules",
+      "to": "policy",
+      "kind": "stated with",
+      "view": "proof"
+    },
+    {
+      "from": "book-rules",
+      "to": "past-refused",
+      "kind": "illustrated by",
+      "view": "proof"
+    },
+    {
+      "from": "book-rules",
+      "to": "overlap-refused",
+      "kind": "illustrated by",
+      "view": "proof"
+    },
+    {
+      "from": "authorized",
+      "to": "kernel",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "authorized",
+      "to": "book-rust",
+      "kind": "covers Book",
+      "view": "proof"
+    },
+    {
+      "from": "authorized",
+      "to": "shell",
+      "kind": "judged at supplied actor and time",
+      "view": "proof"
+    },
+    {
+      "from": "cancel-rules",
+      "to": "authorized",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "cancel-rules",
+      "to": "policy",
+      "kind": "stated with",
+      "view": "proof"
+    },
+    {
+      "from": "cancel-rules",
+      "to": "stranger-refused",
+      "kind": "illustrated by",
+      "view": "proof"
+    },
+    {
+      "from": "cancel-rules",
+      "to": "started-refused",
+      "kind": "illustrated by",
+      "view": "proof"
+    },
+    {
+      "from": "cancel-rules",
+      "to": "engine-clock",
+      "kind": "before the start by",
+      "view": "proof"
+    },
+    {
+      "from": "authorized",
+      "to": "cancel-rust",
+      "kind": "covers Cancel",
+      "view": "proof"
+    },
+    {
+      "from": "accept-cancel",
+      "to": "cancel-accepted",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "accept-cancel",
+      "to": "owner-cancels",
+      "kind": "witnessed by",
+      "view": "proof"
+    },
+    {
+      "from": "accept-cancel",
+      "to": "reachable",
+      "kind": "scoped to",
+      "view": "proof"
+    },
+    {
+      "from": "accept-cancel",
+      "to": "policy",
+      "kind": "matches the DelBooking clause of",
+      "view": "proof"
+    },
+    {
+      "from": "accept-cancel",
+      "to": "stranger-refused",
+      "kind": "bounded by",
+      "view": "proof"
+    },
+    {
+      "from": "accept-cancel",
+      "to": "started-refused",
+      "kind": "bounded by",
+      "view": "proof"
+    },
+    {
+      "from": "cancel-accepted",
+      "to": "cancel-rust",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "owner-cancels",
+      "to": "cancel-rust",
+      "kind": "runs extracted code",
+      "view": "proof"
+    },
+    {
       "from": "started-remains",
       "to": "started-stays",
       "kind": "proved by",
       "view": "proof"
     },
     {
-      "from": "started-stays",
+      "from": "started-remains",
       "to": "clock-condition",
       "kind": "assumes",
       "view": "proof"
     },
     {
-      "from": "started-stays",
-      "to": "reachable",
-      "kind": "requires timed reachability",
+      "from": "started-remains",
+      "to": "non-admin-run",
+      "kind": "assumes",
       "view": "proof"
     },
     {
-      "from": "started-stays",
+      "from": "started-remains",
       "to": "clock-counterexample",
       "kind": "condition motivated by",
       "view": "proof"
@@ -364,15 +1394,255 @@
       "view": "proof"
     },
     {
+      "from": "started-stays",
+      "to": "engine-clock",
+      "kind": "applies to the service through",
+      "view": "proof"
+    },
+    {
+      "from": "clock-counterexample",
+      "to": "clock-test",
+      "kind": "replayed on PostgreSQL by",
+      "view": "proof"
+    },
+    {
+      "from": "admin-powers",
+      "to": "authorized",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "admin-powers",
+      "to": "policy",
+      "kind": "stated with",
+      "view": "proof"
+    },
+    {
+      "from": "admin-powers",
+      "to": "auth",
+      "kind": "admin identity from",
+      "view": "proof"
+    },
+    {
+      "from": "authorized",
+      "to": "admin-rust",
+      "kind": "covers AddAdmin and CreateRoom",
+      "view": "proof"
+    },
+    {
+      "from": "notify-destination",
+      "to": "authorized",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "notify-destination",
+      "to": "effects-sound",
+      "kind": "also by",
+      "view": "proof"
+    },
+    {
+      "from": "notify-destination",
+      "to": "destination",
+      "kind": "stated with",
+      "view": "proof"
+    },
+    {
+      "from": "notify-destination",
+      "to": "delivery",
+      "kind": "endpoint chosen by",
+      "view": "proof"
+    },
+    {
+      "from": "notify-real-change",
+      "to": "effects-sound",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "notify-real-change",
+      "to": "apply-all",
+      "kind": "stated with",
+      "view": "proof"
+    },
+    {
+      "from": "notify-real-change",
+      "to": "reachable",
+      "kind": "invariant hypothesis from",
+      "view": "proof"
+    },
+    {
+      "from": "effects-sound",
+      "to": "outbox-enqueue",
+      "kind": "enqueued in the same transaction by",
+      "view": "proof"
+    },
+    {
+      "from": "effects-sound",
+      "to": "database-contract",
+      "kind": "only when committed relies on",
+      "view": "proof"
+    },
+    {
+      "from": "changes-announced",
+      "to": "changes-announced-thm",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "changes-announced",
+      "to": "delivery",
+      "kind": "delivered at least once by",
+      "view": "proof"
+    },
+    {
+      "from": "changes-announced-thm",
+      "to": "outbox-enqueue",
+      "kind": "enqueued by",
+      "view": "proof"
+    },
+    {
+      "from": "outbox-enqueue",
+      "to": "outbox-test",
+      "kind": "exercised by",
+      "view": "proof"
+    },
+    {
+      "from": "invariants-hold",
+      "to": "reachable-inv",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "invariants-hold",
+      "to": "inv-preserved",
+      "kind": "step case",
+      "view": "proof"
+    },
+    {
+      "from": "invariants-hold",
+      "to": "invariant",
+      "kind": "stated with",
+      "view": "proof"
+    },
+    {
+      "from": "invariants-hold",
+      "to": "reachable",
+      "kind": "scoped to",
+      "view": "proof"
+    },
+    {
+      "from": "inv-preserved",
+      "to": "kernel",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "writes-of",
+      "to": "kernel",
+      "kind": "summarizes",
+      "view": "proof"
+    },
+    {
+      "from": "kernel-total",
+      "to": "transition-total",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "transition-total",
+      "to": "kernel",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "transition-total",
+      "to": "extraction",
+      "kind": "applies through",
+      "view": "proof"
+    },
+    {
+      "from": "state-matches-spec",
+      "to": "apply-spec",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "state-matches-spec",
+      "to": "stored",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "state-matches-spec",
+      "to": "apply-all",
+      "kind": "stated with",
+      "view": "proof"
+    },
+    {
+      "from": "state-matches-spec",
+      "to": "storage-encoding",
+      "kind": "stated with",
+      "view": "proof"
+    },
+    {
+      "from": "apply-spec",
+      "to": "apply-rust",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "apply-spec",
+      "to": "vec-capacity",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "stored",
+      "to": "sql-write-rust",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "stored",
+      "to": "store",
+      "kind": "connects to",
+      "view": "proof"
+    },
+    {
+      "from": "stored",
+      "to": "store-test",
+      "kind": "exercised by",
+      "view": "proof"
+    },
+    {
+      "from": "stored",
+      "to": "database-contract",
+      "kind": "application relies on",
+      "view": "proof"
+    },
+    {
       "from": "database-invariant",
       "to": "db-inv",
       "kind": "proved by",
       "view": "proof"
     },
     {
-      "from": "db-inv",
+      "from": "database-invariant",
       "to": "invariant",
       "kind": "preserves",
+      "view": "proof"
+    },
+    {
+      "from": "database-invariant",
+      "to": "accepted-writes",
+      "kind": "over histories of",
+      "view": "proof"
+    },
+    {
+      "from": "db-inv",
+      "to": "schema-hypotheses",
+      "kind": "assumes",
       "view": "proof"
     },
     {
@@ -394,9 +1664,69 @@
       "view": "proof"
     },
     {
+      "from": "db-inv",
+      "to": "sql-write-rust",
+      "kind": "about compiled writes",
+      "view": "proof"
+    },
+    {
+      "from": "rpc-route",
+      "to": "auth",
+      "kind": "verifies the bearer token",
+      "view": "flow"
+    },
+    {
+      "from": "auth",
+      "to": "shell",
+      "kind": "builds the Principal",
+      "view": "flow"
+    },
+    {
+      "from": "rpc-route",
+      "to": "json-codec",
+      "kind": "decodes the JSON command",
+      "view": "flow"
+    },
+    {
+      "from": "json-codec",
+      "to": "engine",
+      "kind": "passes the Command",
+      "view": "flow"
+    },
+    {
+      "from": "rpc-route",
+      "to": "engine",
+      "kind": "runs the command",
+      "view": "flow"
+    },
+    {
+      "from": "engine-clock",
+      "to": "engine",
+      "kind": "time for each attempt",
+      "view": "flow"
+    },
+    {
+      "from": "engine",
+      "to": "shell",
+      "kind": "stamps the time",
+      "view": "flow"
+    },
+    {
       "from": "shell",
       "to": "kernel",
       "kind": "supplies actor, time and command",
+      "view": "flow"
+    },
+    {
+      "from": "engine",
+      "to": "store",
+      "kind": "loads the tenant's snapshot",
+      "view": "flow"
+    },
+    {
+      "from": "engine",
+      "to": "kernel",
+      "kind": "calls transition",
       "view": "flow"
     },
     {
@@ -407,8 +1737,50 @@
     },
     {
       "from": "book-rust",
+      "to": "free-rust",
+      "kind": "checks availability",
+      "view": "flow"
+    },
+    {
+      "from": "kernel",
+      "to": "cancel-rust",
+      "kind": "dispatches Cancel",
+      "view": "flow"
+    },
+    {
+      "from": "kernel",
+      "to": "admin-rust",
+      "kind": "dispatches AddAdmin and CreateRoom",
+      "view": "flow"
+    },
+    {
+      "from": "book-rust",
       "to": "store",
       "kind": "returns writes for commit",
+      "view": "flow"
+    },
+    {
+      "from": "cancel-rust",
+      "to": "store",
+      "kind": "returns writes for commit",
+      "view": "flow"
+    },
+    {
+      "from": "admin-rust",
+      "to": "store",
+      "kind": "returns writes for commit",
+      "view": "flow"
+    },
+    {
+      "from": "store",
+      "to": "sql-write-rust",
+      "kind": "table writes from",
+      "view": "flow"
+    },
+    {
+      "from": "store",
+      "to": "outbox-enqueue",
+      "kind": "Emit writes to",
       "view": "flow"
     },
     {
@@ -418,10 +1790,22 @@
       "view": "flow"
     },
     {
-      "from": "started-remains",
-      "to": "clock-counterexample",
-      "kind": "condition motivated by",
-      "view": "proof"
+      "from": "outbox-enqueue",
+      "to": "notifier",
+      "kind": "committed rows read by",
+      "view": "flow"
+    },
+    {
+      "from": "notifier",
+      "to": "delivery",
+      "kind": "endpoint from",
+      "view": "flow"
+    },
+    {
+      "from": "engine",
+      "to": "json-codec",
+      "kind": "reply or refusal rendered by",
+      "view": "flow"
     }
   ]
 }

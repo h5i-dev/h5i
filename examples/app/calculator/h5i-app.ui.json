@@ -1,0 +1,1251 @@
+{
+  "version": 1,
+  "title": "Calculator",
+  "description": "One memory register per user: exact u64 arithmetic with refusals, isolation between users, the get round trip, and the PostgreSQL store.",
+  "author": "Claude (agent-authored explanation; review before relying on it)",
+  "exclusions": [
+    "That the bearer token's principal is the real caller depends on the HMAC secret and is outside the proofs.",
+    "Tenant separation, SERIALIZABLE retries and idempotent replay are framework properties, not theorems of this app.",
+    "The real PostgreSQL server and driver are trusted to behave like the Lean model; the differential test is evidence, not proof.",
+    "Databases edited by hand, migrated or created with a different schema are outside the modeled histories.",
+    "Fidelity of Charon and Aeneas extraction, the Lean kernel and rustc are trusted.",
+    "Availability, latency and concurrency throughput are not covered."
+  ],
+  "nodes": [
+    {
+      "id": "g-exact",
+      "kind": "guarantee",
+      "title": "Arithmetic results are exact",
+      "description": "When `apply` succeeds, your new memory is exactly your old memory plus, minus, times or divided by the argument, computed on natural numbers. The same value is returned and written to your own memory."
+    },
+    {
+      "id": "g-refusals",
+      "kind": "guarantee",
+      "title": "Impossible operations are refused with the right reason",
+      "description": "A result of 2^64 or more is refused as overflow, a result below zero as underflow, and division by zero as division_by_zero. A refusal carries no write."
+    },
+    {
+      "id": "g-accept",
+      "kind": "guarantee",
+      "title": "Valid operations are accepted",
+      "description": "If the true result of `memory op arg` is a natural number below 2^64, the kernel accepts the command and returns that result. It never refuses a computation the specification allows."
+    },
+    {
+      "id": "g-no-panic",
+      "kind": "guarantee",
+      "title": "The kernel never crashes",
+      "description": "For every caller, every stored state and every command, the kernel returns a reply or a refusal. No input makes it panic, overflow a machine integer or index out of bounds."
+    },
+    {
+      "id": "g-own-row",
+      "kind": "guarantee",
+      "title": "A command writes only your own memory",
+      "description": "Whatever command you send, the row the kernel asks to write belongs to you. No command can produce a write to another user's memory."
+    },
+    {
+      "id": "g-isolation",
+      "kind": "guarantee",
+      "title": "Other users' memories are unchanged",
+      "description": "After any successful command by one user is committed, every other user's memory reads exactly as before."
+    },
+    {
+      "id": "g-roundtrip",
+      "kind": "guarantee",
+      "title": "Get returns what your last command produced",
+      "description": "After a successful set, apply or get is committed, a get by the same user returns that command's result."
+    },
+    {
+      "id": "g-get-readonly",
+      "kind": "guarantee",
+      "title": "Get only reads, and an unset memory reads as 0",
+      "description": "A get always succeeds, writes nothing, and returns your stored value. A user who never stored anything reads 0."
+    },
+    {
+      "id": "g-stored",
+      "kind": "guarantee",
+      "title": "The database holds exactly the computed memories",
+      "description": "For the modeled PostgreSQL database, after any history of requests the tenant's rows are the rows of the memories the commits computed, and loading them decodes back to those memories, up to row order."
+    },
+    {
+      "id": "t-compute-spec",
+      "kind": "theorem",
+      "title": "Rust arithmetic agrees with eval",
+      "description": "For every operation and every pair of U64 values, `compute` succeeds without panicking. It returns Ok v exactly when `eval` gives v, and Err e exactly when `eval` refuses with e.",
+      "symbol": "calculator_kernel.Proofs.compute_spec",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "theorem compute_spec",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "t-mul-check",
+      "kind": "theorem",
+      "title": "Multiplication overflow check",
+      "description": "For b > 0, the Rust test `a > MAX / b` holds exactly when a * b is at least 2^64. This is the one nonlinear fact `compute_spec` needs.",
+      "symbol": "calculator_kernel.Proofs.mul_check",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "theorem mul_check",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "t-memory-of-spec",
+      "kind": "theorem",
+      "title": "Memory lookup agrees with memOf",
+      "description": "The loop in `memory_of` always terminates without error and returns `memOf` of the vector's contents for that user.",
+      "symbol": "calculator_kernel.Proofs.memory_of_spec",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "theorem memory_of_spec",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "t-transition-total",
+      "kind": "theorem",
+      "title": "transition never fails",
+      "description": "For every principal, snapshot and command, `transition` returns `ok` of some result. In the extracted model every panic is an error, so this rules out panics.",
+      "symbol": "calculator_kernel.Proofs.transition_total",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "theorem transition_total",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "t-apply-correct",
+      "kind": "theorem",
+      "title": "apply computes eval on my memory",
+      "description": "For an Apply command, `transition` succeeds. If it returns a value v, then `eval` on the caller's memory gives v and the write is the caller's row with v. If it returns an error e, `eval` gives the same error.",
+      "symbol": "calculator_kernel.Proofs.apply_correct",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "theorem apply_correct",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "t-writes-own",
+      "kind": "theorem",
+      "title": "Writes target the caller",
+      "description": "For every command, if `transition` returns Ok with a write, that row's user equals the caller's user.",
+      "symbol": "calculator_kernel.Proofs.writes_own_memory",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "theorem writes_own_memory",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "t-apply-spec",
+      "kind": "theorem",
+      "title": "Commit is an upsert",
+      "description": "Assuming the memories vector has room for one more element, `apply` succeeds and its memories are unchanged for no write, or the old list with that user's row replaced or appended.",
+      "symbol": "calculator_kernel.Proofs.apply_spec",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "theorem apply_spec",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "t-shape",
+      "kind": "theorem",
+      "title": "Every success reads or writes the result",
+      "description": "For every command, a successful reply v either comes with no write and equals the caller's memory, or comes with a write of v to the caller's row.",
+      "symbol": "calculator_kernel.Proofs.shape",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "theorem shape",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "t-get-spec",
+      "kind": "theorem",
+      "title": "Get reads memOf",
+      "description": "A Get always returns Ok with no write and the value `memOf` gives for the caller.",
+      "symbol": "calculator_kernel.Proofs.get_spec",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "theorem get_spec",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "t-get-after",
+      "kind": "theorem",
+      "title": "Round trip through commit",
+      "description": "Assuming room for one more row, a successful transition with reply v, and that `apply` committed its write into s', a Get by the same principal on s' returns v.",
+      "symbol": "calculator_kernel.Proofs.get_after",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "theorem get_after",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "t-others-unchanged",
+      "kind": "theorem",
+      "title": "Isolation between users",
+      "description": "Assuming room for one more row, a successful transition by a, and that `apply` committed its write into s', every user u different from a has the same `memOf` value in s' as in s.",
+      "symbol": "calculator_kernel.Proofs.others_unchanged",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "theorem others_unchanged",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "t-set-then-get",
+      "kind": "theorem",
+      "title": "A concrete round trip",
+      "description": "On the empty snapshot, Alice's set of 5 commits and a following get returns 5. This shows the hypotheses of `get_after` can all hold at once.",
+      "symbol": "calculator_kernel.Proofs.set_then_get",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "theorem set_then_get",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "t-sql-writes-spec",
+      "kind": "theorem",
+      "title": "SQL writes match the model",
+      "description": "For every write set, `sql_writes` succeeds and its plan is the modeled table write `sqlA`: nothing for no write, one put for a memory.",
+      "symbol": "calculator_kernel.Storage.sql_writes_spec",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Storage.lean",
+          "anchor": "theorem sql_writes_spec",
+          "digest": "1363f21862f646be95c00f9ed8949d7cadc2d7f9e72032f6d732bc824a0364b0"
+        }
+      ]
+    },
+    {
+      "id": "t-stored",
+      "kind": "theorem",
+      "title": "Store holds what commits computed",
+      "description": "For every database produced by a `Served` history, the tables hold the encoded memories, and every complete load decodes to a snapshot equivalent to them up to row order.",
+      "symbol": "calculator_kernel.Storage.stored",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Storage.lean",
+          "anchor": "theorem stored",
+          "digest": "1363f21862f646be95c00f9ed8949d7cadc2d7f9e72032f6d732bc824a0364b0"
+        }
+      ]
+    },
+    {
+      "id": "t-pg-stored",
+      "kind": "theorem",
+      "title": "The same on PostgreSQL",
+      "description": "Assuming a valid one-table schema and an integer tenant value, for every database produced by a `PgServed` history, the tenant's view holds the encoded memories and every load by the compiled SELECT decodes to them up to row order. This is the theorem `h5i app check` gates.",
+      "symbol": "calculator_kernel.Storage.pg_stored",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Storage.lean",
+          "anchor": "theorem pg_stored",
+          "digest": "1363f21862f646be95c00f9ed8949d7cadc2d7f9e72032f6d732bc824a0364b0"
+        },
+        {
+          "path": "examples/app/calculator/h5i-app.toml",
+          "anchor": "theorems = [\"calculator_kernel.Storage.pg_stored\"]",
+          "digest": "55072d975e0a0e728fc884bd63da7ecbe7a8e874a9ae39b273212fc4feb9d41f"
+        }
+      ]
+    },
+    {
+      "id": "c-sub-refused",
+      "kind": "counterexample",
+      "title": "Subtracting 1 from an empty memory is refused",
+      "description": "A concrete negative case: Alice's memory starts at 0, and Apply Sub 1 returns Err Underflow rather than wrapping around to 2^64 minus 1.",
+      "symbol": "calculator_kernel.Proofs.sub_refused",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "theorem sub_refused",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "s-eval",
+      "kind": "specification",
+      "title": "eval: the arithmetic we mean",
+      "description": "The answer to `a op b` on natural numbers, or the reason there is none below 2^64: Overflow, Underflow or DivByZero.",
+      "symbol": "calculator_kernel.Spec.eval",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Spec.lean",
+          "anchor": "def eval",
+          "digest": "341d779a92c79f78da5975e65f256dbbecf88c118f0226b54e6c31aaf85e8089"
+        }
+      ]
+    },
+    {
+      "id": "s-memof",
+      "kind": "specification",
+      "title": "memOf: a user's memory",
+      "description": "The value of the first row for user u, or 0 when there is none.",
+      "symbol": "calculator_kernel.Spec.memOf",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Spec.lean",
+          "anchor": "def memOf",
+          "digest": "341d779a92c79f78da5975e65f256dbbecf88c118f0226b54e6c31aaf85e8089"
+        }
+      ]
+    },
+    {
+      "id": "s-step",
+      "kind": "specification",
+      "title": "Committing a write set",
+      "description": "The memories after a commit: unchanged for no write, otherwise an upsert of the row keyed by user.",
+      "symbol": "calculator_kernel.Storage.step",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Storage.lean",
+          "anchor": "def step",
+          "digest": "1363f21862f646be95c00f9ed8949d7cadc2d7f9e72032f6d732bc824a0364b0"
+        }
+      ]
+    },
+    {
+      "id": "s-enc",
+      "kind": "specification",
+      "title": "Table encoding",
+      "description": "The rows of table 0 are the memories, encoded with `Memory.row`. No other table has rows.",
+      "symbol": "calculator_kernel.Storage.enc",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Storage.lean",
+          "anchor": "def enc",
+          "digest": "1363f21862f646be95c00f9ed8949d7cadc2d7f9e72032f6d732bc824a0364b0"
+        }
+      ]
+    },
+    {
+      "id": "s-app",
+      "kind": "specification",
+      "title": "The calculator as a store app",
+      "description": "Packages the encoding, the table writes `sqlA`, the commit `step` and the empty initial state for the shared `H5iAppLib.Store` theorem.",
+      "symbol": "calculator_kernel.Storage.app",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Storage.lean",
+          "anchor": "def app :",
+          "digest": "1363f21862f646be95c00f9ed8949d7cadc2d7f9e72032f6d732bc824a0364b0"
+        },
+        {
+          "path": "examples/app/calculator/proofs/Storage.lean",
+          "anchor": "def sqlA",
+          "digest": "1363f21862f646be95c00f9ed8949d7cadc2d7f9e72032f6d732bc824a0364b0"
+        }
+      ]
+    },
+    {
+      "id": "s-loads",
+      "kind": "specification",
+      "title": "A load by compiled SELECT",
+      "description": "A Rows value counts as a load when the compiled SELECT for the tenant runs on the database and returns the same rows in some order.",
+      "symbol": "calculator_kernel.Storage.Loads",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Storage.lean",
+          "anchor": "def Loads",
+          "digest": "1363f21862f646be95c00f9ed8949d7cadc2d7f9e72032f6d732bc824a0364b0"
+        }
+      ]
+    },
+    {
+      "id": "a-served",
+      "kind": "assumption",
+      "title": "Database produced by the server",
+      "description": "The database starts empty and changes only by commits in which a loaded snapshot decodes and the `sql_writes` plan is executed. Databases changed by hand or by a migration are outside this set.",
+      "symbol": "calculator_kernel.Storage.Served",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Storage.lean",
+          "anchor": "inductive Served",
+          "digest": "1363f21862f646be95c00f9ed8949d7cadc2d7f9e72032f6d732bc824a0364b0"
+        }
+      ]
+    },
+    {
+      "id": "a-pg-served",
+      "kind": "assumption",
+      "title": "PostgreSQL history produced by the server",
+      "description": "Like Served, over the PostgreSQL model with all tenants: this tenant's commits run the compiled SQL, and other tenants' statements are allowed but use a different tenant value.",
+      "symbol": "calculator_kernel.Storage.PgServed",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Storage.lean",
+          "anchor": "inductive PgServed",
+          "digest": "1363f21862f646be95c00f9ed8949d7cadc2d7f9e72032f6d732bc824a0364b0"
+        }
+      ]
+    },
+    {
+      "id": "a-room",
+      "kind": "assumption",
+      "title": "Room for one more row",
+      "description": "The memories vector is shorter than Usize.max, so appending a row cannot overflow its length. `apply_spec`, `get_after` and `others_unchanged` all take this hypothesis.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "(w : Option Memory) (hroom : s.memories.length < Usize.max) :",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "a-committed",
+      "kind": "assumption",
+      "title": "The command succeeded and was committed",
+      "description": "`get_after` and `others_unchanged` hypothesize that `transition` returned Ok and that `apply` turned its write into the next snapshot. A refused command is outside their statement.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Proofs.lean",
+          "anchor": "(ht : transition a s c = ok (.Ok (w, .Value v))) (hs : apply s w = ok s') :",
+          "digest": "63374360bf0820aaa3647d4f94012ef259914feb90f227126aa8f58f06e219f7"
+        }
+      ]
+    },
+    {
+      "id": "a-schema-valid",
+      "kind": "assumption",
+      "title": "The PostgreSQL schema is the declared one",
+      "description": "`pg_stored` assumes the table list is valid, has one table with the kernel's key lengths, and that the tenant value is an integer. Whether the deployed database has that schema is not proved.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Storage.lean",
+          "anchor": "theorem pg_stored (hv : Pg.Valid ts) (htv : valKind tv = some .int) (hkl : Pg.klOf ts = kl)",
+          "digest": "1363f21862f646be95c00f9ed8949d7cadc2d7f9e72032f6d732bc824a0364b0"
+        }
+      ]
+    },
+    {
+      "id": "b-auth",
+      "kind": "boundary",
+      "title": "HMAC token identifies the caller",
+      "description": "The server turns a bearer token signed with H5I_APP_SECRET into a Principal. Every theorem takes the principal as given; that it is the real person depends on the secret staying secret.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/server/src/main.rs",
+          "anchor": "let auth = HmacAuth::<Calc>::new(secret, principal);",
+          "digest": "7dc89c72e9ba98f91259da216b4e2fc721b2278cdf6d05a0d99516615d8e4b81"
+        },
+        {
+          "path": "examples/app/calculator/server/src/lib.rs",
+          "anchor": "pub fn principal(",
+          "digest": "469080a5829f1e1959d53c4b4f6c5906c887633d58edceacbed517cd9900f206"
+        }
+      ]
+    },
+    {
+      "id": "b-json",
+      "kind": "boundary",
+      "title": "JSON decoding",
+      "description": "`decode_command` must turn the request body into the command the client meant. Since the theorems hold for all commands, a wrong decoding can only produce a command the client could have sent.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/server/src/lib.rs",
+          "anchor": "fn decode_command(",
+          "digest": "469080a5829f1e1959d53c4b4f6c5906c887633d58edceacbed517cd9900f206"
+        },
+        {
+          "path": "examples/app/calculator/server/src/lib.rs",
+          "anchor": "enum CommandJson {",
+          "digest": "469080a5829f1e1959d53c4b4f6c5906c887633d58edceacbed517cd9900f206"
+        }
+      ]
+    },
+    {
+      "id": "b-tenant",
+      "kind": "boundary",
+      "title": "Tenant selection",
+      "description": "The framework loads the snapshot of the caller's organization, chosen by `tenant`. The kernel theorems are about one snapshot; keeping tenants apart is enforced by the framework, not by these proofs.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/server/src/lib.rs",
+          "anchor": "fn tenant(actor: &k::Principal) -> TenantId {",
+          "digest": "469080a5829f1e1959d53c4b4f6c5906c887633d58edceacbed517cd9900f206"
+        }
+      ]
+    },
+    {
+      "id": "b-engine",
+      "kind": "boundary",
+      "title": "Transaction engine",
+      "description": "Each request runs load, transition, write and commit in one SERIALIZABLE transaction with retries, so a refusal commits nothing. This engine behavior is part of the framework's trusted contract.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/server/src/main.rs",
+          "anchor": "let engine = Arc::new(Engine::<Calc, CalcStore>::new(",
+          "digest": "7dc89c72e9ba98f91259da216b4e2fc721b2278cdf6d05a0d99516615d8e4b81"
+        },
+        {
+          "path": "examples/app/calculator/TUTORIAL.md",
+          "anchor": "The engine runs each request in one SERIALIZABLE transaction: it loads the",
+          "digest": "ede4638bf97de93469ea481b3e6c4205ebf4705356adb2f28bc0a07bc8832234"
+        }
+      ]
+    },
+    {
+      "id": "b-postgres",
+      "kind": "boundary",
+      "title": "PostgreSQL semantics",
+      "description": "`pg_stored` runs the compiled SQL on a Lean model of PostgreSQL. That the real server, driver and value conversion behave like the model is trusted; the differential test exercises it.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/proofs/Storage.lean",
+          "anchor": "/-! ## On PostgreSQL",
+          "digest": "1363f21862f646be95c00f9ed8949d7cadc2d7f9e72032f6d732bc824a0364b0"
+        },
+        {
+          "path": "examples/app/calculator/TUTORIAL.md",
+          "anchor": "order. The PostgreSQL statement and `SELECT` semantics remain the trusted",
+          "digest": "ede4638bf97de93469ea481b3e6c4205ebf4705356adb2f28bc0a07bc8832234"
+        }
+      ]
+    },
+    {
+      "id": "b-extraction",
+      "kind": "boundary",
+      "title": "Extraction and toolchain fidelity",
+      "description": "The theorems are about the Lean that Charon and Aeneas produced from the kernel. That this matches the compiled Rust, and that Lean and rustc are sound, is trusted.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/h5i-app.toml",
+          "anchor": "start-from = [\"transition\", \"apply\", \"sql_writes\"]",
+          "digest": "55072d975e0a0e728fc884bd63da7ecbe7a8e874a9ae39b273212fc4feb9d41f"
+        },
+        {
+          "path": "examples/app/calculator/proofs/lakefile.lean",
+          "anchor": "-- Pinned to the Aeneas commit that generated generated/CalculatorKernel.lean.",
+          "digest": "46d84d72c53f946f8b98a7bf7bf4bb5223c18b2f39ed18b5708fdf9e4ad092cd"
+        }
+      ]
+    },
+    {
+      "id": "b-idempotency",
+      "kind": "boundary",
+      "title": "Retries with Idempotency-Key",
+      "description": "A retried request with the same key replays the stored reply instead of running again. This is a framework property, not one of these theorems.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/server/src/lib.rs",
+          "anchor": "impl ReplyCodec<Calc> for CalcStore {",
+          "digest": "469080a5829f1e1959d53c4b4f6c5906c887633d58edceacbed517cd9900f206"
+        }
+      ]
+    },
+    {
+      "id": "b-deploy",
+      "kind": "boundary",
+      "title": "Deployment configuration",
+      "description": "The database URL, the signing secret, the listen address and the schema installation come from the environment at startup. Nothing in the proofs covers them.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/server/src/main.rs",
+          "anchor": "let url = std::env::var(\"DATABASE_URL\")?;",
+          "digest": "7dc89c72e9ba98f91259da216b4e2fc721b2278cdf6d05a0d99516615d8e4b81"
+        },
+        {
+          "path": "examples/app/calculator/server/src/main.rs",
+          "anchor": "engine.install_schema().await?;",
+          "digest": "7dc89c72e9ba98f91259da216b4e2fc721b2278cdf6d05a0d99516615d8e4b81"
+        }
+      ]
+    },
+    {
+      "id": "i-route",
+      "kind": "implementation",
+      "title": "POST /rpc route",
+      "description": "The axum router merges the framework's ready-made /rpc route with a /healthz probe.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/server/src/main.rs",
+          "anchor": "let router = Router::new().route(\"/healthz\", get(|| async { \"ok\" })).merge(rpc_router(app));",
+          "digest": "7dc89c72e9ba98f91259da216b4e2fc721b2278cdf6d05a0d99516615d8e4b81"
+        }
+      ]
+    },
+    {
+      "id": "i-api",
+      "kind": "implementation",
+      "title": "JSON API codec",
+      "description": "Decodes the request into a Command, encodes a Reply as {\"value\": v}, and maps each refusal to a 422 error code.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/server/src/lib.rs",
+          "anchor": "impl h5i_app_http::Api<Calc> for CalcStore {",
+          "digest": "469080a5829f1e1959d53c4b4f6c5906c887633d58edceacbed517cd9900f206"
+        },
+        {
+          "path": "examples/app/calculator/server/src/lib.rs",
+          "anchor": "fn encode_reply(",
+          "digest": "469080a5829f1e1959d53c4b4f6c5906c887633d58edceacbed517cd9900f206"
+        },
+        {
+          "path": "examples/app/calculator/server/src/lib.rs",
+          "anchor": "fn encode_error(",
+          "digest": "469080a5829f1e1959d53c4b4f6c5906c887633d58edceacbed517cd9900f206"
+        }
+      ]
+    },
+    {
+      "id": "i-kernel-impl",
+      "kind": "implementation",
+      "title": "Kernel trait wiring",
+      "description": "Points the framework at the kernel's `transition` and `apply` without adding any decision.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/server/src/lib.rs",
+          "anchor": "impl Kernel for Calc {",
+          "digest": "469080a5829f1e1959d53c4b4f6c5906c887633d58edceacbed517cd9900f206"
+        }
+      ]
+    },
+    {
+      "id": "i-transition",
+      "kind": "implementation",
+      "title": "transition",
+      "description": "The whole application logic: Set writes the value, Apply reads the caller's memory and runs `compute`, Get reads without writing.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/kernel/src/lib.rs",
+          "anchor": "pub fn transition(",
+          "digest": "7fd72927b26e53c77ce3cabbe240235749fc0721feb9057a19465c15f27b0a48"
+        }
+      ]
+    },
+    {
+      "id": "i-compute",
+      "kind": "implementation",
+      "title": "compute",
+      "description": "The checked u64 arithmetic with explicit overflow, underflow and division by zero tests. `h5i-app.toml` declares the underflow_boundary mutant against the Sub test.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/kernel/src/lib.rs",
+          "anchor": "pub fn compute(",
+          "digest": "7fd72927b26e53c77ce3cabbe240235749fc0721feb9057a19465c15f27b0a48"
+        },
+        {
+          "path": "examples/app/calculator/h5i-app.toml",
+          "anchor": "name = \"underflow_boundary\"",
+          "digest": "55072d975e0a0e728fc884bd63da7ecbe7a8e874a9ae39b273212fc4feb9d41f"
+        }
+      ]
+    },
+    {
+      "id": "i-memory-of",
+      "kind": "implementation",
+      "title": "memory_of",
+      "description": "A while loop over the memories that returns the first value for the user, or 0.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/kernel/src/lib.rs",
+          "anchor": "pub fn memory_of(",
+          "digest": "7fd72927b26e53c77ce3cabbe240235749fc0721feb9057a19465c15f27b0a48"
+        }
+      ]
+    },
+    {
+      "id": "i-apply",
+      "kind": "implementation",
+      "title": "apply (commit)",
+      "description": "Clones the snapshot and puts the written row with the generated `Memory::put`, which replaces the user's row or appends it.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/kernel/src/lib.rs",
+          "anchor": "pub fn apply(",
+          "digest": "7fd72927b26e53c77ce3cabbe240235749fc0721feb9057a19465c15f27b0a48"
+        }
+      ]
+    },
+    {
+      "id": "i-sql-writes",
+      "kind": "implementation",
+      "title": "sql_writes",
+      "description": "Turns a write set into the table writes the server executes: one put for a memory, nothing otherwise.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/kernel/src/lib.rs",
+          "anchor": "pub fn sql_writes(",
+          "digest": "7fd72927b26e53c77ce3cabbe240235749fc0721feb9057a19465c15f27b0a48"
+        }
+      ]
+    },
+    {
+      "id": "i-schema",
+      "kind": "implementation",
+      "title": "memories table schema",
+      "description": "`schema!` declares the Memory row keyed by user and generates the row operations, SQL writes, decoder and the server's table mapping.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/kernel/src/lib.rs",
+          "anchor": "pub struct Memory in \"memories\" {",
+          "digest": "7fd72927b26e53c77ce3cabbe240235749fc0721feb9057a19465c15f27b0a48"
+        }
+      ]
+    },
+    {
+      "id": "i-store",
+      "kind": "implementation",
+      "title": "CalcStore load and write",
+      "description": "Loads a tenant's rows with the generated schema loader and writes the rows that `sql_writes` returns.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/server/src/lib.rs",
+          "anchor": "impl Store<Calc> for CalcStore {",
+          "digest": "469080a5829f1e1959d53c4b4f6c5906c887633d58edceacbed517cd9900f206"
+        },
+        {
+          "path": "examples/app/calculator/server/src/lib.rs",
+          "anchor": "async fn load(",
+          "digest": "469080a5829f1e1959d53c4b4f6c5906c887633d58edceacbed517cd9900f206"
+        },
+        {
+          "path": "examples/app/calculator/server/src/lib.rs",
+          "anchor": "async fn write(",
+          "digest": "469080a5829f1e1959d53c4b4f6c5906c887633d58edceacbed517cd9900f206"
+        }
+      ]
+    },
+    {
+      "id": "i-db-test",
+      "kind": "implementation",
+      "title": "Differential PostgreSQL test",
+      "description": "Runs 300 random commands through the PostgreSQL engine and the in-memory engine that calls `apply`, and compares replies and final state. It is a test, not a proof, and skips without a test database.",
+      "sources": [
+        {
+          "path": "examples/app/calculator/server/tests/postgres.rs",
+          "anchor": "async fn store_agrees_with_apply() {",
+          "digest": "2e4ceab2e012f1606cdc8771f9215f48d006cb31ebe86a1151ce3fb478c1e699"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "g-exact",
+      "to": "t-apply-correct",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-exact",
+      "to": "t-compute-spec",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-exact",
+      "to": "s-eval",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-exact",
+      "to": "b-json",
+      "kind": "applies to the decoded command",
+      "view": "proof"
+    },
+    {
+      "from": "g-refusals",
+      "to": "t-apply-correct",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-refusals",
+      "to": "t-compute-spec",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-refusals",
+      "to": "c-sub-refused",
+      "kind": "illustrated by",
+      "view": "proof"
+    },
+    {
+      "from": "g-refusals",
+      "to": "b-engine",
+      "kind": "nothing committed relies on",
+      "view": "proof"
+    },
+    {
+      "from": "g-accept",
+      "to": "t-apply-correct",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-accept",
+      "to": "t-transition-total",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-accept",
+      "to": "s-eval",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-panic",
+      "to": "t-transition-total",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-panic",
+      "to": "b-extraction",
+      "kind": "applies to compiled Rust via",
+      "view": "proof"
+    },
+    {
+      "from": "g-own-row",
+      "to": "t-writes-own",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-own-row",
+      "to": "b-auth",
+      "kind": "caller identity from",
+      "view": "proof"
+    },
+    {
+      "from": "g-isolation",
+      "to": "t-others-unchanged",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-isolation",
+      "to": "a-committed",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-isolation",
+      "to": "a-room",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-isolation",
+      "to": "b-auth",
+      "kind": "caller identity from",
+      "view": "proof"
+    },
+    {
+      "from": "g-isolation",
+      "to": "b-tenant",
+      "kind": "within one tenant via",
+      "view": "proof"
+    },
+    {
+      "from": "g-roundtrip",
+      "to": "t-get-after",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-roundtrip",
+      "to": "t-set-then-get",
+      "kind": "hypotheses witnessed by",
+      "view": "proof"
+    },
+    {
+      "from": "g-roundtrip",
+      "to": "a-committed",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-roundtrip",
+      "to": "a-room",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-roundtrip",
+      "to": "b-engine",
+      "kind": "commit performed by",
+      "view": "proof"
+    },
+    {
+      "from": "g-get-readonly",
+      "to": "t-get-spec",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-get-readonly",
+      "to": "t-shape",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-get-readonly",
+      "to": "s-memof",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-stored",
+      "to": "t-pg-stored",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-stored",
+      "to": "t-stored",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-stored",
+      "to": "a-pg-served",
+      "kind": "scoped to histories in",
+      "view": "proof"
+    },
+    {
+      "from": "g-stored",
+      "to": "a-schema-valid",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-stored",
+      "to": "b-postgres",
+      "kind": "relies on",
+      "view": "proof"
+    },
+    {
+      "from": "g-stored",
+      "to": "b-deploy",
+      "kind": "schema installed by",
+      "view": "proof"
+    },
+    {
+      "from": "g-stored",
+      "to": "i-db-test",
+      "kind": "exercised by",
+      "view": "proof"
+    },
+    {
+      "from": "t-apply-spec",
+      "to": "a-room",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "t-get-after",
+      "to": "a-room",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "t-get-after",
+      "to": "a-committed",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "t-others-unchanged",
+      "to": "a-room",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "t-others-unchanged",
+      "to": "a-committed",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "t-pg-stored",
+      "to": "a-schema-valid",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "t-compute-spec",
+      "to": "i-compute",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-mul-check",
+      "to": "i-compute",
+      "kind": "explains the Mul check in",
+      "view": "proof"
+    },
+    {
+      "from": "t-memory-of-spec",
+      "to": "i-memory-of",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-transition-total",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-apply-correct",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-writes-own",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-shape",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-get-spec",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-apply-spec",
+      "to": "i-apply",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-get-after",
+      "to": "i-apply",
+      "kind": "commits through",
+      "view": "proof"
+    },
+    {
+      "from": "t-others-unchanged",
+      "to": "i-apply",
+      "kind": "commits through",
+      "view": "proof"
+    },
+    {
+      "from": "t-sql-writes-spec",
+      "to": "i-sql-writes",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-stored",
+      "to": "i-schema",
+      "kind": "about generated decode and rows",
+      "view": "proof"
+    },
+    {
+      "from": "t-pg-stored",
+      "to": "i-store",
+      "kind": "models load and write of",
+      "view": "proof"
+    },
+    {
+      "from": "c-sub-refused",
+      "to": "i-compute",
+      "kind": "concrete run of",
+      "view": "proof"
+    },
+    {
+      "from": "s-eval",
+      "to": "i-compute",
+      "kind": "implemented by",
+      "view": "proof"
+    },
+    {
+      "from": "s-memof",
+      "to": "i-memory-of",
+      "kind": "implemented by",
+      "view": "proof"
+    },
+    {
+      "from": "s-step",
+      "to": "i-apply",
+      "kind": "implemented by",
+      "view": "proof"
+    },
+    {
+      "from": "s-enc",
+      "to": "i-schema",
+      "kind": "implemented by",
+      "view": "proof"
+    },
+    {
+      "from": "s-app",
+      "to": "i-sql-writes",
+      "kind": "write plan from",
+      "view": "proof"
+    },
+    {
+      "from": "s-loads",
+      "to": "i-store",
+      "kind": "models the load in",
+      "view": "proof"
+    },
+    {
+      "from": "a-served",
+      "to": "i-store",
+      "kind": "models requests through",
+      "view": "proof"
+    },
+    {
+      "from": "a-pg-served",
+      "to": "i-store",
+      "kind": "models requests through",
+      "view": "proof"
+    },
+    {
+      "from": "t-transition-total",
+      "to": "b-extraction",
+      "kind": "about the extracted model via",
+      "view": "proof"
+    },
+    {
+      "from": "b-deploy",
+      "to": "i-route",
+      "kind": "starts server with",
+      "view": "flow"
+    },
+    {
+      "from": "i-route",
+      "to": "b-auth",
+      "kind": "verifies bearer token",
+      "view": "flow"
+    },
+    {
+      "from": "b-auth",
+      "to": "i-api",
+      "kind": "principal for request",
+      "view": "flow"
+    },
+    {
+      "from": "i-route",
+      "to": "i-api",
+      "kind": "decodes JSON body",
+      "view": "flow"
+    },
+    {
+      "from": "i-api",
+      "to": "b-idempotency",
+      "kind": "replays retried keys",
+      "view": "flow"
+    },
+    {
+      "from": "i-api",
+      "to": "b-engine",
+      "kind": "command to engine",
+      "view": "flow"
+    },
+    {
+      "from": "b-engine",
+      "to": "b-tenant",
+      "kind": "chooses tenant by org",
+      "view": "flow"
+    },
+    {
+      "from": "b-engine",
+      "to": "i-store",
+      "kind": "loads snapshot, then writes the accepted write set",
+      "view": "flow"
+    },
+    {
+      "from": "i-store",
+      "to": "i-schema",
+      "kind": "decodes rows with",
+      "view": "flow"
+    },
+    {
+      "from": "b-engine",
+      "to": "i-kernel-impl",
+      "kind": "calls transition",
+      "view": "flow"
+    },
+    {
+      "from": "i-kernel-impl",
+      "to": "i-transition",
+      "kind": "delegates to",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-memory-of",
+      "kind": "reads caller's memory",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-compute",
+      "kind": "runs the operation",
+      "view": "flow"
+    },
+    {
+      "from": "i-store",
+      "to": "i-sql-writes",
+      "kind": "plans rows with",
+      "view": "flow"
+    },
+    {
+      "from": "i-sql-writes",
+      "to": "b-postgres",
+      "kind": "executes in SERIALIZABLE transaction",
+      "view": "flow"
+    },
+    {
+      "from": "i-kernel-impl",
+      "to": "i-apply",
+      "kind": "in-memory commit",
+      "view": "flow"
+    },
+    {
+      "from": "b-engine",
+      "to": "i-api",
+      "kind": "reply or refusal to encode",
+      "view": "flow"
+    }
+  ]
+}

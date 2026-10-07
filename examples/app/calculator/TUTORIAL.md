@@ -284,6 +284,36 @@ checks here. Finally, the tools (Charon, Aeneas, Lean and rustc) and PostgreSQL
 are trusted. [`docs/app/TRUST.md`](../../../docs/app/TRUST.md) lists the trusted parts
 of the framework in full.
 
+## See the guarantees in `h5i ui`
+
+`h5i-app.ui.json`, next to `h5i-app.toml`, maps the calculator's promises to
+the theorems above, the conditions they rest on and the Rust code. First
+record the Lean declarations, so that the console can draw the dependency
+edges between them:
+
+```
+h5i app check examples/app/calculator
+```
+
+Then run `h5i ui`, open **Apps** and select the calculator. A few places to
+start:
+
+- Select **Other users' memories are unchanged**. It leads to
+  `others_unchanged`, and to the hypotheses that the command succeeded, was
+  committed and had room for one more row. It also leads to the HMAC token
+  and tenant selection, which decide who "other users" are and which the
+  proofs take as given.
+- Select **Impossible operations are refused with the right reason**. Next to
+  `compute_spec` and `apply_correct` hangs `sub_refused`, the concrete case in
+  which subtracting 1 from an empty memory returns `Underflow`.
+- Switch to the **Application flow** lens to follow a request from `POST /rpc`
+  through the token check, the JSON decoder and the engine to `transition`,
+  `compute` and the `memories` table.
+
+The map is an explanation an agent wrote, and it establishes nothing by
+itself. Whether a theorem currently holds comes from the check record that
+the graph displays, with its date and status.
+
 ## Exercises
 
 1. Add `Op::Rem` for the remainder, and extend `compute`, `eval` and the proof
