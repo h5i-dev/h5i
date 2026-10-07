@@ -89,75 +89,88 @@ export function ProjectsPage({
 
   const selected = route[0] ?? null;
 
+  const topbar = (
+    <div className="topbar">
+      <span className="topbar-title">Projects</span>
+      <span className="topbar-scope">durable engagements: findings, the evidence behind them, notes and reports</span>
+    </div>
+  );
+
   if (projects && names.length === 0) {
     return (
-      <Empty title="No projects yet">
-        <p>
-          A project is the durable side of an engagement. Findings, the evidence they rest on, notes and reports
-          live in it and survive a session ending or being removed.
-        </p>
-        <Cmd text="h5i project init acme --title 'ACME web' --target https://acme.test" />
-        <p>Then open a browser session under it, and promote what you find:</p>
-        <Cmd text="h5i browser open https://acme.test --project acme --capture" />
-        <Cmd text="h5i project finding promote --all -p acme --session <name>" />
-      </Empty>
+      <>
+        {topbar}
+        <Empty title="No projects yet">
+          <p>
+            A project is the durable side of an engagement. Findings, the evidence they rest on, notes and reports
+            live in it and survive a session ending or being removed.
+          </p>
+          <Cmd text="h5i project init acme --title 'ACME web' --target https://acme.test" />
+          <p>Then open a browser session under it, and promote what you find:</p>
+          <Cmd text="h5i browser open https://acme.test --project acme --capture" />
+          <Cmd text="h5i project finding promote --all -p acme --session <name>" />
+        </Empty>
+      </>
     );
   }
 
   return (
-    <Split
-      id="projects"
-      first={
-        <div className="column">
-          <div className="column-body">
-            {error ? <Note tone="bad">{error}</Note> : null}
-            {names.map((name) => {
-              const p = (projects ?? []).find((x) => x.name === name) ?? null;
-              const sess = sessionGroups.get(name) ?? [];
-              const live = sess.filter((s) => s.state === "live").length;
-              return (
-                <button
-                  key={name}
-                  type="button"
-                  className={`srow${name === selected ? " is-on" : ""}`}
-                  onClick={() => go(["projects", name])}
-                >
-                  <div className="srow-top">
-                    <span className="srow-name">{p?.title || name}</span>
-                    <span className="srow-age">{ago(p?.updated ?? null)}</span>
-                  </div>
-                  <div className="srow-target">
-                    {p ? name : `${name} — label only, not initialised`}
-                  </div>
-                  <div className="srow-bottom">
-                    <div className="srow-counts">
-                      {p && p.findings > 0 ? (
-                        <Count n={p.findings} label={plural(p.findings, "finding")} tone={p.open_findings > 0 ? "warn" : "good"} />
-                      ) : null}
-                      {sess.length > 0 ? <Count n={sess.length} label={plural(sess.length, "session")} /> : null}
-                      {live > 0 ? <Count n={live} label="live" tone="good" /> : null}
-                      {p && p.reports > 0 ? <Count n={p.reports} label={plural(p.reports, "report")} tone="info" /> : null}
+    <>
+      {topbar}
+      <Split
+        id="projects"
+        first={
+          <div className="column">
+            <div className="column-body">
+              {error ? <Note tone="bad">{error}</Note> : null}
+              {names.map((name) => {
+                const p = (projects ?? []).find((x) => x.name === name) ?? null;
+                const sess = sessionGroups.get(name) ?? [];
+                const live = sess.filter((s) => s.state === "live").length;
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    className={`srow${name === selected ? " is-on" : ""}`}
+                    onClick={() => go(["projects", name])}
+                  >
+                    <div className="srow-top">
+                      <span className="srow-name">{p?.title || name}</span>
+                      <span className="srow-age">{ago(p?.updated ?? null)}</span>
                     </div>
-                  </div>
-                </button>
-              );
-            })}
+                    <div className="srow-target">
+                      {p ? name : `${name} — label only, not initialised`}
+                    </div>
+                    <div className="srow-bottom">
+                      <div className="srow-counts">
+                        {p && p.findings > 0 ? (
+                          <Count n={p.findings} label={plural(p.findings, "finding")} tone={p.open_findings > 0 ? "warn" : "good"} />
+                        ) : null}
+                        {sess.length > 0 ? <Count n={sess.length} label={plural(sess.length, "session")} /> : null}
+                        {live > 0 ? <Count n={live} label="live" tone="good" /> : null}
+                        {p && p.reports > 0 ? <Count n={p.reports} label={plural(p.reports, "report")} tone="info" /> : null}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      }
-      second={
-        selected ? (
-          <ProjectView
-            name={selected}
-            hasStore={(projects ?? []).some((p) => p.name === selected)}
-            sessions={sessionGroups.get(selected) ?? []}
-            fleet={fleet}
-            route={route.slice(1)}
-            go={go}
-          />
-        ) : null
-      }
-    />
+        }
+        second={
+          selected ? (
+            <ProjectView
+              name={selected}
+              hasStore={(projects ?? []).some((p) => p.name === selected)}
+              sessions={sessionGroups.get(selected) ?? []}
+              fleet={fleet}
+              route={route.slice(1)}
+              go={go}
+            />
+          ) : null
+        }
+      />
+    </>
   );
 }
 
