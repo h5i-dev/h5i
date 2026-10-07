@@ -309,8 +309,6 @@
   color: var(--ink-4);
 }
 .app-explorer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
   border-top: 1px solid var(--line);
   min-height: 560px;
 }
@@ -448,8 +446,8 @@
   color: var(--ink-3);
 }
 .app-inspector {
+  flex: 1;
   padding: 23px;
-  border-left: 1px solid var(--line);
   background: var(--surface);
   min-width: 0;
 }
@@ -874,9 +872,6 @@
   font-size: 11px;
 }
 @media (max-width: 1300px) {
-  .app-explorer {
-    grid-template-columns: minmax(0, 1fr) 270px;
-  }
   .app-inspector {
     padding: 18px;
   }
@@ -889,10 +884,13 @@
     grid-template-columns: 1fr;
   }
   .app-explorer {
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+  }
+  .app-explorer > .split-handle {
+    display: none;
   }
   .app-inspector {
-    border-left: 0;
     border-top: 1px solid var(--line);
   }
   .app-trial-grid {
@@ -916,4 +914,47 @@
   .app-section-heading {
     flex-wrap: wrap;
   }
+}
+/* Source tokens, after VS Code's Dark+ theme. */
+.app-code {
+  --tok-comment: #6a9955;
+  --tok-string: #ce9178;
+  --tok-number: #b5cea8;
+  --tok-keyword: #569cd6;
+  --tok-control: #c586c0;
+  --tok-type: #4ec9b0;
+  --tok-fn: #dcdcaa;
+  --tok-macro: #4fc1ff;
+  --tok-tactic: #9cdcfe;
+}
+.tok-comment {
+  color: var(--tok-comment);
+  font-style: italic;
+}
+.tok-string {
+  color: var(--tok-string);
+}
+.tok-number {
+  color: var(--tok-number);
+}
+.tok-keyword,
+.tok-lifetime,
+.tok-op {
+  color: var(--tok-keyword);
+}
+.tok-control {
+  color: var(--tok-control);
+}
+.tok-type {
+  color: var(--tok-type);
+}
+.tok-fn {
+  color: var(--tok-fn);
+}
+.tok-macro,
+.tok-attr {
+  color: var(--tok-macro);
+}
+.tok-tactic {
+  color: var(--tok-tactic);
 }
