@@ -309,6 +309,42 @@ function Guarantees({
     setTrail(nextTrail);
     go(["apps", data.summary.id, "guarantees", id, id]);
   };
+  // Full screen for the map and its inspector. The overlay fills the window
+  // on its own; browser fullscreen is asked for on top and may be refused.
+  const [full, setFull] = useState(false);
+  const toggleFull = () => {
+    if (full) {
+      setFull(false);
+      if (document.fullscreenElement) void document.exitFullscreen();
+    } else {
+      setFull(true);
+      void document.documentElement.requestFullscreen?.().catch(() => {});
+    }
+  };
+  useEffect(() => {
+    if (!full) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setFull(false);
+      if (document.fullscreenElement) void document.exitFullscreen();
+    };
+    const onChange = () => {
+      if (!document.fullscreenElement) setFull(false);
+    };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("fullscreenchange", onChange);
+    };
+  }, [full]);
+  // Leaving the page leaves full screen with it.
+  useEffect(
+    () => () => {
+      if (document.fullscreenElement) void document.exitFullscreen();
+    },
+    [],
+  );
   // The browser's back button can land on a root already in the trail.
   useEffect(() => {
     if (!root) return;
@@ -377,218 +413,236 @@ function Guarantees({
           </p>
         )}
       </div>
-      <Split
-        id="app-inspector"
-        className="app-explorer"
-        sized="second"
-        initial={340}
-        min={260}
-        max={760}
-        first={
-          <div className="app-map">
-            <div className="app-map-toolbar">
-              <div className="app-segment" aria-label="Graph lens">
+      <div className={`app-explore${full ? " is-full" : ""}`}>
+        <Split
+          id="app-inspector"
+          className="app-explorer"
+          sized="second"
+          initial={340}
+          min={260}
+          max={760}
+          first={
+            <div className="app-map">
+              <div className="app-map-toolbar">
+                <div className="app-segment" aria-label="Graph lens">
+                  <button
+                    className={view === "proof" ? "is-on" : ""}
+                    onClick={() => setView("proof")}
+                  >
+                    Guarantee map
+                  </button>
+                  <button
+                    className={view === "flow" ? "is-on" : ""}
+                    onClick={() => setView("flow")}
+                  >
+                    Application flow
+                  </button>
+                </div>
+                <span className="app-muted app-map-author">
+                  {model.author
+                    ? `Explanations: ${model.author}`
+                    : "Lean catalog"}
+                </span>
                 <button
-                  className={view === "proof" ? "is-on" : ""}
-                  onClick={() => setView("proof")}
+                  className="app-button"
+                  onClick={toggleFull}
+                  title={
+                    full
+                      ? "Back to the page (Esc)"
+                      : "Show only the map and inspector"
+                  }
                 >
-                  Guarantee map
-                </button>
-                <button
-                  className={view === "flow" ? "is-on" : ""}
-                  onClick={() => setView("flow")}
-                >
-                  Application flow
+                  {full ? "Exit full screen" : "Full screen"}
                 </button>
               </div>
-              <span className="app-muted">
-                {model.author
-                  ? `Explanations: ${model.author}`
-                  : "Lean catalog"}
-              </span>
-            </div>
-            <div className="app-map-caption">
-              {latest?.run.declarations.length ? (
-                <>
-                  <span className="app-lean-legend">
-                    Solid cyan: recorded Lean dependencies
-                  </span>{" "}
-                  · {date(latest.run.started)} · {label(latest.freshness)} ·
-                  Check {label(latest.run.status).toLowerCase()}
-                </>
-              ) : (
-                <>
-                  Lean dependencies have not been recorded by the latest check.
-                  Run <code>h5i app check</code> to populate them.
-                </>
-              )}
-              <br />
-              Dashed gray: authored explanations and implementation links.
-            </div>
-            {latest &&
-              (latest.freshness !== "matches_repository_inputs" ||
-                latest.run.status !== "passed") && (
-                <Note tone="warn">
-                  These dependencies describe the recorded run, not a verified
-                  current build. {label(latest.freshness)} ·{" "}
-                  {label(latest.run.status)}.
-                </Note>
-              )}
-            <FocusTrail
-              model={model}
-              trail={trail}
-              root={root}
-              home={
-                guarantees.some((g) => g.id === root.id)
-                  ? null
-                  : (guarantees[0] ?? null)
-              }
-              onGo={(id, i) => focusOn(id, trail.slice(0, i))}
-            />
-            <Graph
-              model={model}
-              root={root.id}
-              selected={selected?.id ?? root.id}
-              view={view}
-              onSelect={select}
-            />
-            <div className="app-map-caption">
-              Select a node to inspect its conditions, source and evidence. Lean
-              edges are direct references in recorded declaration types and
-              bodies. Constants outside the catalog are leaves.
-            </div>
-            <Provenance authored={data.model} drift={drift} />
-            {!!model.exclusions.length && (
-              <details className="app-boundaries">
-                <summary>
-                  Outside these guarantees · {model.exclusions.length}
-                </summary>
-                {model.exclusions.map((s) => (
-                  <p key={s}>{s}</p>
-                ))}
-              </details>
-            )}
-          </div>
-        }
-        second={
-          <aside className="app-inspector">
-            {selected && (
-              <>
-                <span className={`app-kind kind-${selected.kind}`}>
-                  {selected.kind}
-                </span>
-                <h2>{selected.title}</h2>
-                <p>{selected.description}</p>
-                {selected.symbol && (
+              <div className="app-map-caption">
+                {latest?.run.declarations.length ? (
                   <>
-                    <code className="app-symbol">{selected.symbol}</code>
-                    {selected.id !== root.id && (
-                      <button
-                        className="app-button"
-                        onClick={() =>
-                          focusOn(selected.id, [...trail, root.id])
-                        }
-                      >
-                        Focus dependencies
-                      </button>
-                    )}
+                    <span className="app-lean-legend">
+                      Solid cyan: recorded Lean dependencies
+                    </span>{" "}
+                    · {date(latest.run.started)} · {label(latest.freshness)} ·
+                    Check {label(latest.run.status).toLowerCase()}
+                  </>
+                ) : (
+                  <>
+                    Lean dependencies have not been recorded by the latest
+                    check. Run <code>h5i app check</code> to populate them.
                   </>
                 )}
-                {selected.origin === "authored" &&
-                  drift.drifted.has(selected.title) && (
-                    <Note tone="warn">
-                      This explanation may no longer match the code:{" "}
-                      {drift.drifted.get(selected.title)!.join("; ")}. Read the
-                      source before relying on the text above.
-                    </Note>
-                  )}
-                {selected.excludes.map((s) => (
-                  <Note key={s} tone="warn">
-                    {s}
+                <br />
+                Dashed gray: authored explanations and implementation links.
+              </div>
+              {latest &&
+                (latest.freshness !== "matches_repository_inputs" ||
+                  latest.run.status !== "passed") && (
+                  <Note tone="warn">
+                    These dependencies describe the recorded run, not a verified
+                    current build. {label(latest.freshness)} ·{" "}
+                    {label(latest.run.status)}.
                   </Note>
-                ))}
-                <h3>Connections</h3>
-                <div className="app-relations">
-                  {related.map((e, i) => {
-                    const other = model.nodes.find(
-                      (n) => n.id === (e.from === selected.id ? e.to : e.from),
-                    );
-                    return (
-                      <button key={i} onClick={() => other && select(other.id)}>
-                        <span>
-                          {e.from === selected.id ? "→" : "←"} {e.kind} ·{" "}
-                          {e.origin === "lean" ? "Lean record" : "authored"}
-                        </span>
-                        <b>{other?.title}</b>
-                      </button>
-                    );
-                  })}
-                  {!related.length && (
-                    <p className="app-muted">
-                      No connections available in this explanation and catalog.
-                    </p>
+                )}
+              <FocusTrail
+                model={model}
+                trail={trail}
+                root={root}
+                home={
+                  guarantees.some((g) => g.id === root.id)
+                    ? null
+                    : (guarantees[0] ?? null)
+                }
+                onGo={(id, i) => focusOn(id, trail.slice(0, i))}
+              />
+              <Graph
+                model={model}
+                root={root.id}
+                selected={selected?.id ?? root.id}
+                view={view}
+                onSelect={select}
+              />
+              <div className="app-map-caption">
+                Select a node to inspect its conditions, source and evidence.
+                Lean edges are direct references in recorded declaration types
+                and bodies. Constants outside the catalog are leaves.
+              </div>
+              <Provenance authored={data.model} drift={drift} />
+              {!!model.exclusions.length && (
+                <details className="app-boundaries">
+                  <summary>
+                    Outside these guarantees · {model.exclusions.length}
+                  </summary>
+                  {model.exclusions.map((s) => (
+                    <p key={s}>{s}</p>
+                  ))}
+                </details>
+              )}
+            </div>
+          }
+          second={
+            <aside className="app-inspector">
+              {selected && (
+                <>
+                  <span className={`app-kind kind-${selected.kind}`}>
+                    {selected.kind}
+                  </span>
+                  <h2>{selected.title}</h2>
+                  <p>{selected.description}</p>
+                  {selected.symbol && (
+                    <>
+                      <code className="app-symbol">{selected.symbol}</code>
+                      {selected.id !== root.id && (
+                        <button
+                          className="app-button"
+                          onClick={() =>
+                            focusOn(selected.id, [...trail, root.id])
+                          }
+                        >
+                          Focus dependencies
+                        </button>
+                      )}
+                    </>
                   )}
-                </div>
-                <h3>Source</h3>
-                {selected.sources.map((s, i) => (
-                  <SourceLink
-                    key={`${selected.id}:${i}`}
-                    project={data.summary.id}
-                    source={s}
-                    onSelect={() => setFile(s)}
-                  />
-                ))}
-                {!selected.sources.length && (
-                  <p className="app-muted">
-                    Follow a connection to the supporting source.
-                  </p>
-                )}
-                {file && (
-                  <SourceInspector project={data.summary.id} source={file} />
-                )}
-                {selected.symbol && (
-                  <>
-                    <h3>Recorded Lean declaration</h3>
-                    {declaration ? (
-                      <>
-                        <p className="app-muted">
-                          {date(latest!.run.started)} ·{" "}
-                          {label(latest!.freshness)}
-                        </p>
-                        <Code text={declaration.signature} lang="lean" />
-                        {declaration.definition && (
-                          <details>
-                            <summary>Definition</summary>
-                            <Code text={declaration.definition} lang="lean" />
-                          </details>
-                        )}
-                        <p className="app-muted">
-                          Axioms: {declaration.axioms.join(", ") || "none"}
-                        </p>
-                        <details>
-                          <summary>
-                            {declaration.dependencies.length} tool-observed
-                            dependencies
-                          </summary>
-                          <pre className="app-code">
-                            {declaration.dependencies.join("\n")}
-                          </pre>
-                        </details>
-                      </>
-                    ) : (
+                  {selected.origin === "authored" &&
+                    drift.drifted.has(selected.title) && (
+                      <Note tone="warn">
+                        This explanation may no longer match the code:{" "}
+                        {drift.drifted.get(selected.title)!.join("; ")}. Read
+                        the source before relying on the text above.
+                      </Note>
+                    )}
+                  {selected.excludes.map((s) => (
+                    <Note key={s} tone="warn">
+                      {s}
+                    </Note>
+                  ))}
+                  <h3>Connections</h3>
+                  <div className="app-relations">
+                    {related.map((e, i) => {
+                      const other = model.nodes.find(
+                        (n) =>
+                          n.id === (e.from === selected.id ? e.to : e.from),
+                      );
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => other && select(other.id)}
+                        >
+                          <span>
+                            {e.from === selected.id ? "→" : "←"} {e.kind} ·{" "}
+                            {e.origin === "lean" ? "Lean record" : "authored"}
+                          </span>
+                          <b>{other?.title}</b>
+                        </button>
+                      );
+                    })}
+                    {!related.length && (
                       <p className="app-muted">
-                        No declaration recorded for this symbol. An authored
-                        link is not a proof result.
+                        No connections available in this explanation and
+                        catalog.
                       </p>
                     )}
-                  </>
-                )}
-                <Evidence view={latest} project={data.summary.id} />
-              </>
-            )}
-          </aside>
-        }
-      />
+                  </div>
+                  <h3>Source</h3>
+                  {selected.sources.map((s, i) => (
+                    <SourceLink
+                      key={`${selected.id}:${i}`}
+                      project={data.summary.id}
+                      source={s}
+                      onSelect={() => setFile(s)}
+                    />
+                  ))}
+                  {!selected.sources.length && (
+                    <p className="app-muted">
+                      Follow a connection to the supporting source.
+                    </p>
+                  )}
+                  {file && (
+                    <SourceInspector project={data.summary.id} source={file} />
+                  )}
+                  {selected.symbol && (
+                    <>
+                      <h3>Recorded Lean declaration</h3>
+                      {declaration ? (
+                        <>
+                          <p className="app-muted">
+                            {date(latest!.run.started)} ·{" "}
+                            {label(latest!.freshness)}
+                          </p>
+                          <Code text={declaration.signature} lang="lean" />
+                          {declaration.definition && (
+                            <details>
+                              <summary>Definition</summary>
+                              <Code text={declaration.definition} lang="lean" />
+                            </details>
+                          )}
+                          <p className="app-muted">
+                            Axioms: {declaration.axioms.join(", ") || "none"}
+                          </p>
+                          <details>
+                            <summary>
+                              {declaration.dependencies.length} tool-observed
+                              dependencies
+                            </summary>
+                            <pre className="app-code">
+                              {declaration.dependencies.join("\n")}
+                            </pre>
+                          </details>
+                        </>
+                      ) : (
+                        <p className="app-muted">
+                          No declaration recorded for this symbol. An authored
+                          link is not a proof result.
+                        </p>
+                      )}
+                    </>
+                  )}
+                  <Evidence view={latest} project={data.summary.id} />
+                </>
+              )}
+            </aside>
+          }
+        />
+      </div>
     </div>
   );
 }

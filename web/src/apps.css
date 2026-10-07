@@ -1026,3 +1026,34 @@
 .app-provenance.is-drifted b {
   color: var(--amber);
 }
+.app-map-author {
+  margin-left: auto;
+}
+/* Full screen: the map and inspector cover the window, each scrolling on
+   its own, and the graph takes all the height it is given. */
+.app-explore.is-full {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  background: var(--ground);
+}
+.app-explore.is-full > .app-explorer {
+  flex: 1;
+  min-height: 0;
+  border-top: 0;
+}
+.app-explore.is-full .split-first,
+.app-explore.is-full .app-inspector {
+  overflow: auto;
+}
+.app-explore.is-full .app-map {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.app-explore.is-full .app-graph-scroll {
+  flex: 1;
+  max-height: none;
+}
