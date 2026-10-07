@@ -11,7 +11,7 @@ import {
   type ReportView,
   type SessionRow,
 } from "./api";
-import { AttentionTag, Chip, Cmd, Count, Empty, Note, Split, ago, plural } from "./ui";
+import { AttentionTag, Chip, Cmd, Count, Empty, Note, Split, ago, keep, plural, remember } from "./ui";
 import { shownState } from "./seen";
 
 // A project is the durable engagement: notes, findings, the evidence they rest
@@ -55,6 +55,31 @@ function sessionsByProject(sessions: SessionRow[]): Map<string, SessionRow[]> {
   return by;
 }
 
+type ProjectSort = "name" | "newest" | "oldest" | "findings";
+
+const SORT_KEY = "h5i.console.projects.sort";
+const SORTS: Record<ProjectSort, string> = {
+  name: "name",
+  newest: "newest first",
+  oldest: "oldest first",
+  findings: "most open findings",
+};
+
+/** A label a session carries without a store has no date or findings, so it
+ *  sorts after every initialised project except by name. */
+function compareProjects(a: ProjectSummary | undefined, b: ProjectSummary | undefined, sort: ProjectSort): number {
+  if (sort === "name") return 0;
+  if (!a || !b) return a ? -1 : b ? 1 : 0;
+  switch (sort) {
+    case "newest":
+      return b.created.localeCompare(a.created);
+    case "oldest":
+      return a.created.localeCompare(b.created);
+    case "findings":
+      return b.open_findings - a.open_findings || b.findings - a.findings;
+  }
+}
+
 export function ProjectsPage({
   fleet,
   route,
@@ -81,11 +106,18 @@ export function ProjectsPage({
 
   // Durable projects, plus any project label a session carries that has no
   // store yet — so a run under `--project acme` is visible before `init`.
+  const [sort, setSort] = useState<ProjectSort>(() => {
+    const s = remember<string>(SORT_KEY, "name");
+    return s in SORTS ? (s as ProjectSort) : "name";
+  });
+  useEffect(() => keep(SORT_KEY, sort), [sort]);
+
   const names = useMemo(() => {
     const set = new Set<string>((projects ?? []).map((p) => p.name));
     for (const name of sessionGroups.keys()) set.add(name);
-    return [...set].sort();
-  }, [projects, sessionGroups]);
+    const byName = new Map((projects ?? []).map((p) => [p.name, p]));
+    return [...set].sort((a, b) => compareProjects(byName.get(a), byName.get(b), sort) || a.localeCompare(b));
+  }, [projects, sessionGroups, sort]);
 
   const selected = route[0] ?? null;
 
@@ -121,6 +153,18 @@ export function ProjectsPage({
         id="projects"
         first={
           <div className="column">
+            <div className="column-tools column-sort">
+              <label>
+                <span>sort</span>
+                <select value={sort} onChange={(e) => setSort(e.target.value as ProjectSort)} aria-label="sort projects">
+                  {(Object.keys(SORTS) as ProjectSort[]).map((k) => (
+                    <option key={k} value={k}>
+                      {SORTS[k]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
             <div className="column-body">
               {error ? <Note tone="bad">{error}</Note> : null}
               {names.map((name) => {

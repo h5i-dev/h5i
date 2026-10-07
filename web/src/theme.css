@@ -2793,3 +2793,24 @@ pre.render {
 .hist-fresh:hover {
   color: var(--ink);
 }
+
+.column-sort label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+}
+.column-sort select {
+  flex: 1;
+  padding: 4px 6px;
+  color: var(--ink-2);
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+.column-sort select:hover {
+  border-color: var(--line-strong);
+}
