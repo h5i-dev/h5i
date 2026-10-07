@@ -191,13 +191,12 @@ pub struct Inputs {
 /// Conservative repository-wide input identity: no build or metadata command
 /// is run by the console. External path packages remain an explicit limit.
 pub fn inputs(root: &Path) -> Inputs {
-    let mut result = Inputs::default();
-    result.head = git2::Repository::discover(root).ok().and_then(|r| {
+    let head = git2::Repository::discover(root).ok().and_then(|r| {
         r.head()
             .ok()
             .and_then(|h| h.target().map(|id| id.to_string()))
     });
-    result.dirty = git2::Repository::discover(root)
+    let dirty = git2::Repository::discover(root)
         .ok()
         .and_then(|r| {
             let mut opts = git2::StatusOptions::new();
@@ -205,6 +204,11 @@ pub fn inputs(root: &Path) -> Inputs {
             r.statuses(Some(&mut opts)).ok().map(|s| !s.is_empty())
         })
         .unwrap_or(true);
+    let mut result = Inputs {
+        head,
+        dirty,
+        ..Inputs::default()
+    };
     match files(root) {
         Ok(files) => {
             for p in files {
