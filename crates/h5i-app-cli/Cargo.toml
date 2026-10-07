@@ -10,6 +10,7 @@ publish = false
 # (`h5i app`, and `cargo app` in this repository). It drives Charon, Aeneas and
 # Lake as subprocesses; nothing here links them.
 [dependencies]
+h5i-app-report = { path = "../h5i-app-report" }
 anyhow = "1.0"
 clap = { version = "4.5.60", features = ["derive"] }
 serde = { workspace = true }

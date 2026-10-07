@@ -70,6 +70,7 @@ export function Split({
   min = 220,
   max = 900,
   initial = 360,
+  sized = "first",
   first,
   second,
   className,
@@ -79,6 +80,8 @@ export function Split({
   min?: number;
   max?: number;
   initial?: number;
+  /** The pane whose size is held; the other one takes the rest. */
+  sized?: "first" | "second";
   first: ReactNode;
   second: ReactNode;
   className?: string;
@@ -106,22 +109,25 @@ export function Split({
   const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!dragging.current || !box.current) return;
     const rect = box.current.getBoundingClientRect();
-    setSize(clamp(dir === "row" ? e.clientX - rect.left : e.clientY - rect.top));
+    const at = dir === "row" ? e.clientX - rect.left : e.clientY - rect.top;
+    const span = dir === "row" ? rect.width : rect.height;
+    setSize(clamp(sized === "first" ? at : span - at));
   };
   const onKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const step = e.shiftKey ? 64 : 16;
     const less = dir === "row" ? "ArrowLeft" : "ArrowUp";
     const more = dir === "row" ? "ArrowRight" : "ArrowDown";
-    if (e.key === less) setSize((s) => clamp(s - step));
-    else if (e.key === more) setSize((s) => clamp(s + step));
+    const sign = sized === "first" ? 1 : -1;
+    if (e.key === less) setSize((s) => clamp(s - sign * step));
+    else if (e.key === more) setSize((s) => clamp(s + sign * step));
     else return;
     e.preventDefault();
   };
 
+  const tracks =
+    sized === "first" ? `${size}px 1px minmax(0, 1fr)` : `minmax(0, 1fr) 1px ${size}px`;
   const style: CSSProperties =
-    dir === "row"
-      ? { gridTemplateColumns: `${size}px 1px minmax(0, 1fr)` }
-      : { gridTemplateRows: `${size}px 1px minmax(0, 1fr)` };
+    dir === "row" ? { gridTemplateColumns: tracks } : { gridTemplateRows: tracks };
 
   return (
     <div ref={box} className={`split split-${dir}${className ? ` ${className}` : ""}`} style={style}>
@@ -248,7 +254,43 @@ export function Cmd({ text, hint, block }: { text: string; hint?: string; block?
       }}
     >
       <span className="cmd-prompt" aria-hidden>$</span>
-      <code>{copied ? "copied" : text}</code>
+      <code>{text}</code>
+      {copied ? <span className="cmd-copied">copied</span> : null}
+    </button>
+  );
+}
+
+/** Moves inside one session's workspace. Moving only: nothing here sends. */
+export interface SessionNav {
+  /** Open one fetch's History row. */
+  request: (seq: number) => void;
+  /** Open one verb on the Actions tab. */
+  action: (seq: number) => void;
+  /** Show History through a filter, such as `action:12`. */
+  filter: (q: string) => void;
+}
+
+/** `req_12` → 12. */
+export function reqSeq(id: string): number | null {
+  const m = /^req_(\d+)$/.exec(id);
+  return m ? Number(m[1]) : null;
+}
+
+/** A message id that opens its History row. */
+export function ReqLink({ id, nav, title }: { id: string; nav?: SessionNav; title?: string }) {
+  const seq = reqSeq(id);
+  if (seq === null || !nav) return <code title={title}>{id}</code>;
+  return (
+    <button
+      type="button"
+      className="req-link"
+      title={title ?? `open ${id} in History`}
+      onClick={(e) => {
+        e.stopPropagation();
+        nav.request(seq);
+      }}
+    >
+      {id}
     </button>
   );
 }
@@ -350,6 +392,11 @@ export function clock(ts: string): string {
 export function clockMs(ts: string): string {
   const m = ts.match(/T(\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?/);
   return m ? `${m[1]}.${(m[2] ?? "").padEnd(3, "0")}` : ts;
+}
+
+/** `HH:MM:SS` in this browser's clock. */
+export function localClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour12: false });
 }
 
 export function day(ts: string): string {

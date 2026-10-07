@@ -30,6 +30,7 @@ pub mod mutate;
 pub mod new;
 pub mod packages;
 pub mod pins;
+pub mod report;
 pub mod util;
 
 use manifest::Project;

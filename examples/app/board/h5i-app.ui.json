@@ -1,0 +1,1625 @@
+{
+  "version": 1,
+  "title": "Bulletin board",
+  "description": "An organization's bulletin board: authors edit their own posts, authors or moderators delete them, moderators appoint and remove moderators, and the board never loses its last moderator. Data in PostgreSQL keeps the invariants.",
+  "author": "Claude (agent-authored explanation; review before relying on it)",
+  "exclusions": [
+    "Who the caller really is: tokens, secret handling and the mapping from token to Principal are shell conditions.",
+    "Acceptance in general: the command lemmas say what an accepted command writes, not that every valid command is accepted. Acceptance is shown only for the concrete Scenario run.",
+    "Post id reuse after deletion is not stated as a theorem. The invariant only says live post ids are distinct and below the counter.",
+    "JSON decoding, HTTP status codes, idempotent retry replies and the health endpoint are unverified shell code.",
+    "Rows written or migrated outside the kernel are not in the modeled reachable set.",
+    "Faithfulness of the compiled Rust to its Aeneas translation, real PostgreSQL behavior, durability and deployment are trusted.",
+    "Read confidentiality is not modeled: List returns every post of the tenant to any caller in it."
+  ],
+  "nodes": [
+    {
+      "id": "g-edit-own",
+      "kind": "guarantee",
+      "title": "Only the author changes a post",
+      "description": "Every post write made by an accepted command is either a new post by the caller under the next id, or new text for a post the caller already authored. Another user's edit request writes nothing."
+    },
+    {
+      "id": "g-delete-rights",
+      "kind": "guarantee",
+      "title": "Only the author or a moderator deletes a post",
+      "description": "An accepted delete removes an existing post, and the caller is that post's author or a moderator in the state before the command."
+    },
+    {
+      "id": "g-appoint",
+      "kind": "guarantee",
+      "title": "Moderators are appointed by moderators",
+      "description": "A moderator can appoint anyone. A user who is not a moderator can only appoint themselves, and only while the board has no moderator at all."
+    },
+    {
+      "id": "g-demote-rights",
+      "kind": "guarantee",
+      "title": "Only moderators remove moderators",
+      "description": "An accepted demotion is made by a moderator, removes a current moderator, and leaves at least one other moderator in place."
+    },
+    {
+      "id": "g-last-mod",
+      "kind": "guarantee",
+      "title": "The last moderator cannot be removed",
+      "description": "Once a board has a moderator, every accepted command leaves it with at least one, for states where the invariant holds."
+    },
+    {
+      "id": "g-author-fixed",
+      "kind": "guarantee",
+      "title": "A post's author never changes",
+      "description": "Across any accepted command, a post that keeps its id keeps its author. Edits change only the text."
+    },
+    {
+      "id": "g-unique-ids",
+      "kind": "guarantee",
+      "title": "Post ids are unique and below the counter",
+      "description": "In every reachable board no two posts share an id, and every post id is smaller than the next id the counter will hand out."
+    },
+    {
+      "id": "g-valid-text",
+      "kind": "guarantee",
+      "title": "Stored posts have 1 to 280 bytes",
+      "description": "In every reachable board every post's text is nonempty and at most 280 bytes. Empty or oversized text is never stored."
+    },
+    {
+      "id": "g-unique-mods",
+      "kind": "guarantee",
+      "title": "No duplicate moderator entries",
+      "description": "In every reachable board each user appears at most once in the moderator table."
+    },
+    {
+      "id": "g-no-crash",
+      "kind": "guarantee",
+      "title": "No command crashes the kernel",
+      "description": "For every caller, state and command, the extracted kernel returns a result: an accepted write set or a refusal, never a panic, overflow or bad index."
+    },
+    {
+      "id": "g-db-inv",
+      "kind": "guarantee",
+      "title": "PostgreSQL data keeps the invariants",
+      "description": "For the server's schema, a tenant's rows reached through accepted commands, interleaved with other tenants' commits, satisfy the invariants, and so does every snapshot a later load decodes."
+    },
+    {
+      "id": "g-store-matches",
+      "kind": "guarantee",
+      "title": "The database holds what the kernel computed",
+      "description": "Committing a write set computes the specification's applyAll, the planned SQL writes leave exactly the encoded rows of that state, and a load decodes the same state up to row order."
+    },
+    {
+      "id": "g-accept-scenario",
+      "kind": "guarantee",
+      "title": "A fresh board accepts its first moderator and post",
+      "description": "On an empty board, Alice's self appointment and her post \"hi\" are accepted with the expected writes, and the resulting state is reachable. This is shown for this concrete run, not for every valid command."
+    },
+    {
+      "id": "g-refuse-scenario",
+      "kind": "guarantee",
+      "title": "Refusals happen in a real reachable state",
+      "description": "In the reachable state from the scenario, Bob's delete of Alice's post is refused as forbidden and Alice's demotion of herself, the last moderator, is refused. These show the permission hypotheses are satisfiable, not vacuous."
+    },
+    {
+      "id": "t-authorized",
+      "kind": "theorem",
+      "title": "Every write is allowed by the policy",
+      "description": "If the pre-state satisfies Inv and transition accepts a command with write set ws, every write in ws is allowed for the caller in the pre-state.",
+      "symbol": "board_kernel.Theorems.authorized",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Theorems.lean",
+          "anchor": "theorem authorized (a : Principal)",
+          "digest": "28739c0b1c9c7f7f9700a860b43855eb19ae2e57e42c6be88e805597d504690a"
+        }
+      ]
+    },
+    {
+      "id": "t-authorized-reachable",
+      "kind": "theorem",
+      "title": "Policy holds on reachable states",
+      "description": "Same conclusion as authorized, with the Inv hypothesis replaced by reachability of the pre-state.",
+      "symbol": "board_kernel.Theorems.authorized_reachable",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Theorems.lean",
+          "anchor": "theorem authorized_reachable",
+          "digest": "28739c0b1c9c7f7f9700a860b43855eb19ae2e57e42c6be88e805597d504690a"
+        }
+      ]
+    },
+    {
+      "id": "t-writes-of",
+      "kind": "theorem",
+      "title": "What an accepted command writes",
+      "description": "If transition accepts a command, its write set is one of six shapes: nothing (List), publish, edit of the caller's post, delete by author or moderator, promote, or demote with at least two moderators.",
+      "symbol": "board_kernel.Theorems.writes_of",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Theorems.lean",
+          "anchor": "theorem writes_of",
+          "digest": "28739c0b1c9c7f7f9700a860b43855eb19ae2e57e42c6be88e805597d504690a"
+        }
+      ]
+    },
+    {
+      "id": "t-total",
+      "kind": "theorem",
+      "title": "The kernel never fails",
+      "description": "For every principal, snapshot and command, transition returns ok with some outcome. Refusals are ordinary outcomes, not failures.",
+      "symbol": "board_kernel.Theorems.transition_total",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Theorems.lean",
+          "anchor": "theorem transition_total",
+          "digest": "28739c0b1c9c7f7f9700a860b43855eb19ae2e57e42c6be88e805597d504690a"
+        }
+      ]
+    },
+    {
+      "id": "t-other-mod",
+      "kind": "theorem",
+      "title": "Two moderators include another one",
+      "description": "If moderator users are distinct and there are at least two, some moderator differs from any given user t. This bridges the kernel's count check and the policy.",
+      "symbol": "board_kernel.Theorems.other_mod",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Theorems.lean",
+          "anchor": "theorem other_mod",
+          "digest": "28739c0b1c9c7f7f9700a860b43855eb19ae2e57e42c6be88e805597d504690a"
+        }
+      ]
+    },
+    {
+      "id": "t-inv-preserved",
+      "kind": "theorem",
+      "title": "Accepted commands keep the invariants",
+      "description": "If the pre-state satisfies Inv and transition accepts a command, applying its write set gives a state that satisfies Inv.",
+      "symbol": "board_kernel.Theorems.inv_preserved",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Theorems.lean",
+          "anchor": "theorem inv_preserved",
+          "digest": "28739c0b1c9c7f7f9700a860b43855eb19ae2e57e42c6be88e805597d504690a"
+        }
+      ]
+    },
+    {
+      "id": "t-init-inv",
+      "kind": "theorem",
+      "title": "The empty board satisfies the invariants",
+      "description": "Inv holds for the initial state with counter 0, no posts and no moderators.",
+      "symbol": "board_kernel.Theorems.init_inv",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Theorems.lean",
+          "anchor": "theorem init_inv",
+          "digest": "28739c0b1c9c7f7f9700a860b43855eb19ae2e57e42c6be88e805597d504690a"
+        }
+      ]
+    },
+    {
+      "id": "t-reachable-inv",
+      "kind": "theorem",
+      "title": "Reachable boards satisfy the invariants",
+      "description": "Every state in Reachable satisfies Inv: unique post ids, ids below the counter, valid texts and unique moderator users.",
+      "symbol": "board_kernel.Theorems.reachable_inv",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Theorems.lean",
+          "anchor": "theorem reachable_inv",
+          "digest": "28739c0b1c9c7f7f9700a860b43855eb19ae2e57e42c6be88e805597d504690a"
+        }
+      ]
+    },
+    {
+      "id": "t-author-kept",
+      "kind": "theorem",
+      "title": "Authors are kept across a step",
+      "description": "If the pre-state satisfies Inv and transition accepts a command, any post after the step with the same id as a post before has the same author.",
+      "symbol": "board_kernel.Theorems.author_kept",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Theorems.lean",
+          "anchor": "theorem author_kept",
+          "digest": "28739c0b1c9c7f7f9700a860b43855eb19ae2e57e42c6be88e805597d504690a"
+        }
+      ]
+    },
+    {
+      "id": "t-moderator-kept",
+      "kind": "theorem",
+      "title": "Moderation continues across a step",
+      "description": "If the pre-state satisfies Inv, has at least one moderator, and transition accepts a command, the post-state still has at least one moderator.",
+      "symbol": "board_kernel.Theorems.moderator_kept",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Theorems.lean",
+          "anchor": "theorem moderator_kept",
+          "digest": "28739c0b1c9c7f7f9700a860b43855eb19ae2e57e42c6be88e805597d504690a"
+        }
+      ]
+    },
+    {
+      "id": "t-delete-spec",
+      "kind": "theorem",
+      "title": "What delete writes",
+      "description": "If delete succeeds, the post exists and the caller is its author or a moderator, and the write set is exactly one DelPost.",
+      "symbol": "board_kernel.Commands.delete_spec",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Commands.lean",
+          "anchor": "theorem delete_spec",
+          "digest": "eef30edbad7f152bd023c7a93f559720f78bb27d376ed793c2d5fd5dcfbe3689"
+        }
+      ]
+    },
+    {
+      "id": "t-edit-spec",
+      "kind": "theorem",
+      "title": "What edit writes",
+      "description": "If edit succeeds, the text is valid, the post exists and its author is the caller, and the write set is one PutPost with the same id and author.",
+      "symbol": "board_kernel.Commands.edit_spec",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Commands.lean",
+          "anchor": "theorem edit_spec",
+          "digest": "eef30edbad7f152bd023c7a93f559720f78bb27d376ed793c2d5fd5dcfbe3689"
+        }
+      ]
+    },
+    {
+      "id": "t-publish-spec",
+      "kind": "theorem",
+      "title": "What publish writes",
+      "description": "If publish succeeds, the text is valid and the write set is a post by the caller with the current counter as id, followed by the counter plus one.",
+      "symbol": "board_kernel.Commands.publish_spec",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Commands.lean",
+          "anchor": "theorem publish_spec",
+          "digest": "eef30edbad7f152bd023c7a93f559720f78bb27d376ed793c2d5fd5dcfbe3689"
+        }
+      ]
+    },
+    {
+      "id": "t-promote-spec",
+      "kind": "theorem",
+      "title": "What promote writes",
+      "description": "If promote succeeds, the caller is a moderator, or there are no moderators and the target is the caller. The write set is one PutModerator for the target.",
+      "symbol": "board_kernel.Commands.promote_spec",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Commands.lean",
+          "anchor": "theorem promote_spec",
+          "digest": "eef30edbad7f152bd023c7a93f559720f78bb27d376ed793c2d5fd5dcfbe3689"
+        }
+      ]
+    },
+    {
+      "id": "t-demote-spec",
+      "kind": "theorem",
+      "title": "What demote writes",
+      "description": "If demote succeeds, caller and target are moderators and there are at least two moderators. The write set is one DelModerator for the target.",
+      "symbol": "board_kernel.Commands.demote_spec",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Commands.lean",
+          "anchor": "theorem demote_spec",
+          "digest": "eef30edbad7f152bd023c7a93f559720f78bb27d376ed793c2d5fd5dcfbe3689"
+        }
+      ]
+    },
+    {
+      "id": "t-apply-spec",
+      "kind": "theorem",
+      "title": "apply computes applyAll",
+      "description": "If the snapshot size plus the number of writes is below Usize.max, the kernel's apply returns a snapshot whose list view equals applyAll on the list view of the input.",
+      "symbol": "board_kernel.ApplyProofs.apply_spec",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Apply.lean",
+          "anchor": "theorem apply_spec",
+          "digest": "ee32b505d7c6beba71641390918d229ba19332d36ac7ab14c0b13e1749393744"
+        }
+      ]
+    },
+    {
+      "id": "t-apply-write-spec",
+      "kind": "theorem",
+      "title": "One write does what applyWrite says",
+      "description": "If the snapshot size is below Usize.max, apply_write produces the applyWrite state and adds at most one row.",
+      "symbol": "board_kernel.ApplyProofs.apply_write_spec",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Apply.lean",
+          "anchor": "theorem apply_write_spec",
+          "digest": "ee32b505d7c6beba71641390918d229ba19332d36ac7ab14c0b13e1749393744"
+        }
+      ]
+    },
+    {
+      "id": "t-stored",
+      "kind": "theorem",
+      "title": "The store holds the computed rows",
+      "description": "For a database served by the board's SQL writes reaching state s, the database holds the encoding of s, and decoding any listed rows yields a snapshot equivalent to s up to row order.",
+      "symbol": "board_kernel.Storage.stored",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Storage.lean",
+          "anchor": "theorem stored",
+          "digest": "d2664cc4742f65ebf330f90e60c826bb993cbc557357d35b84afe36115de2674"
+        }
+      ]
+    },
+    {
+      "id": "t-db-inv",
+      "kind": "theorem",
+      "title": "Invariants on PostgreSQL",
+      "description": "Given a valid three table schema matching the key layout and an integer tenant value, a PgServed history of Accepted write sets yields a state satisfying Inv, and every decoded load satisfies Inv. This is the theorem the manifest requires.",
+      "symbol": "board_kernel.Storage.db_inv",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Storage.lean",
+          "anchor": "theorem db_inv",
+          "digest": "d2664cc4742f65ebf330f90e60c826bb993cbc557357d35b84afe36115de2674"
+        },
+        {
+          "path": "examples/app/board/h5i-app.toml",
+          "anchor": "theorems = [\"board_kernel.Storage.db_inv\"]",
+          "digest": "a2b6febe39a67cf4c765dde0b65ed8a90b2ed10b0f370e3a608950f1e6eba239"
+        }
+      ]
+    },
+    {
+      "id": "t-promote-first",
+      "kind": "theorem",
+      "title": "Alice appoints herself",
+      "description": "On the empty snapshot s0, Alice's Promote of herself returns Done with one PutModerator write.",
+      "symbol": "board_kernel.Scenario.promote_first",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Scenario.lean",
+          "anchor": "theorem promote_first",
+          "digest": "a9efe42854ff7c1c16e808b31b38f259b7f4518bf026f9b25058ccecc71d4475"
+        }
+      ]
+    },
+    {
+      "id": "t-publish-hi",
+      "kind": "theorem",
+      "title": "Alice posts \"hi\"",
+      "description": "On s1, where Alice is the only moderator, publishing \"hi\" returns Created 0 with the post and the counter set to 1.",
+      "symbol": "board_kernel.Scenario.publish_hi",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Scenario.lean",
+          "anchor": "theorem publish_hi",
+          "digest": "a9efe42854ff7c1c16e808b31b38f259b7f4518bf026f9b25058ccecc71d4475"
+        }
+      ]
+    },
+    {
+      "id": "t-s2-reachable",
+      "kind": "theorem",
+      "title": "The scenario state is reachable",
+      "description": "The snapshot s2 with Alice as moderator and her post is in Reachable, built from the two accepted steps.",
+      "symbol": "board_kernel.Scenario.s2_reachable",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Scenario.lean",
+          "anchor": "theorem s2_reachable",
+          "digest": "a9efe42854ff7c1c16e808b31b38f259b7f4518bf026f9b25058ccecc71d4475"
+        }
+      ]
+    },
+    {
+      "id": "t-bob-cannot-delete",
+      "kind": "theorem",
+      "title": "Bob cannot delete Alice's post",
+      "description": "In s2, transition for Bob's Delete of post 0 returns the Forbidden refusal.",
+      "symbol": "board_kernel.Scenario.bob_cannot_delete",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Scenario.lean",
+          "anchor": "theorem bob_cannot_delete",
+          "digest": "a9efe42854ff7c1c16e808b31b38f259b7f4518bf026f9b25058ccecc71d4475"
+        }
+      ]
+    },
+    {
+      "id": "t-last-mod-stays",
+      "kind": "theorem",
+      "title": "Alice cannot demote herself",
+      "description": "In s2, transition for Alice's Demote of herself returns the LastModerator refusal.",
+      "symbol": "board_kernel.Scenario.last_moderator_stays",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Scenario.lean",
+          "anchor": "theorem last_moderator_stays",
+          "digest": "a9efe42854ff7c1c16e808b31b38f259b7f4518bf026f9b25058ccecc71d4475"
+        }
+      ]
+    },
+    {
+      "id": "s-allowed",
+      "kind": "specification",
+      "title": "Permission policy",
+      "description": "allowed s u w says when user u may make write w in state s: own new or existing posts with valid text, deletes by author or moderator, appointments by moderators or a lone self appointment, demotions that leave another moderator, and counter increments by one.",
+      "symbol": "board_kernel.Spec.allowed",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Spec.lean",
+          "anchor": "def allowed",
+          "digest": "ff85b561ac4211a9565747b1807b08f39da41b9769bd4c6f4e25b884f19b5372"
+        }
+      ]
+    },
+    {
+      "id": "s-inv",
+      "kind": "specification",
+      "title": "Board invariant",
+      "description": "Inv: post ids are distinct, every post id is below the counter, every text satisfies textOk, and moderator users are distinct.",
+      "symbol": "board_kernel.Spec.Inv",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Spec.lean",
+          "anchor": "structure Inv",
+          "digest": "ff85b561ac4211a9565747b1807b08f39da41b9769bd4c6f4e25b884f19b5372"
+        }
+      ]
+    },
+    {
+      "id": "s-textok",
+      "kind": "specification",
+      "title": "Valid text",
+      "description": "textOk t: the text is nonempty and at most 280 bytes long.",
+      "symbol": "board_kernel.Spec.textOk",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Spec.lean",
+          "anchor": "def textOk",
+          "digest": "ff85b561ac4211a9565747b1807b08f39da41b9769bd4c6f4e25b884f19b5372"
+        }
+      ]
+    },
+    {
+      "id": "s-applywrite",
+      "kind": "specification",
+      "title": "Meaning of a write",
+      "description": "applyWrite upserts or filters posts and moderators by key, or sets the counter. applyAll folds it over a write set.",
+      "symbol": "board_kernel.Spec.applyWrite",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Spec.lean",
+          "anchor": "def applyWrite",
+          "digest": "ff85b561ac4211a9565747b1807b08f39da41b9769bd4c6f4e25b884f19b5372"
+        },
+        {
+          "path": "examples/app/board/proofs/Spec.lean",
+          "anchor": "def applyAll",
+          "digest": "ff85b561ac4211a9565747b1807b08f39da41b9769bd4c6f4e25b884f19b5372"
+        }
+      ]
+    },
+    {
+      "id": "s-state",
+      "kind": "specification",
+      "title": "Board state as lists",
+      "description": "St holds the next id, the posts and the moderators. Snapshot.toSt reads a kernel snapshot as this list state.",
+      "symbol": "board_kernel.Spec.St",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Spec.lean",
+          "anchor": "structure St where",
+          "digest": "ff85b561ac4211a9565747b1807b08f39da41b9769bd4c6f4e25b884f19b5372"
+        },
+        {
+          "path": "examples/app/board/proofs/Spec.lean",
+          "anchor": "def Snapshot.toSt",
+          "digest": "ff85b561ac4211a9565747b1807b08f39da41b9769bd4c6f4e25b884f19b5372"
+        }
+      ]
+    },
+    {
+      "id": "s-ismod",
+      "kind": "specification",
+      "title": "Moderator membership",
+      "description": "isMod s u holds when some moderator in s has user u. findPost returns the first post with a given id.",
+      "symbol": "board_kernel.Spec.isMod",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Spec.lean",
+          "anchor": "def isMod",
+          "digest": "ff85b561ac4211a9565747b1807b08f39da41b9769bd4c6f4e25b884f19b5372"
+        },
+        {
+          "path": "examples/app/board/proofs/Spec.lean",
+          "anchor": "def findPost",
+          "digest": "ff85b561ac4211a9565747b1807b08f39da41b9769bd4c6f4e25b884f19b5372"
+        }
+      ]
+    },
+    {
+      "id": "s-dbinv",
+      "kind": "specification",
+      "title": "Database invariant",
+      "description": "DbInv s is Inv s together with the counter fitting a 64 bit BIGINT.",
+      "symbol": "board_kernel.Storage.DbInv",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Storage.lean",
+          "anchor": "def DbInv",
+          "digest": "d2664cc4742f65ebf330f90e60c826bb993cbc557357d35b84afe36115de2674"
+        }
+      ]
+    },
+    {
+      "id": "s-enc",
+      "kind": "specification",
+      "title": "Row encoding",
+      "description": "enc lays out the posts, moderators and counter tables. sqlA gives the table writes of each write.",
+      "symbol": "board_kernel.Storage.enc",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Storage.lean",
+          "anchor": "def enc",
+          "digest": "d2664cc4742f65ebf330f90e60c826bb993cbc557357d35b84afe36115de2674"
+        },
+        {
+          "path": "examples/app/board/proofs/Storage.lean",
+          "anchor": "def sqlA",
+          "digest": "d2664cc4742f65ebf330f90e60c826bb993cbc557357d35b84afe36115de2674"
+        }
+      ]
+    },
+    {
+      "id": "a-reachable",
+      "kind": "assumption",
+      "title": "Reachable state",
+      "description": "The state comes from the empty board by commands the kernel accepted. Rows inserted by hand, migrated or otherwise modified outside the kernel are not automatically reachable.",
+      "symbol": "board_kernel.Spec.Reachable",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Spec.lean",
+          "anchor": "inductive Reachable",
+          "digest": "ff85b561ac4211a9565747b1807b08f39da41b9769bd4c6f4e25b884f19b5372"
+        }
+      ]
+    },
+    {
+      "id": "a-inv-pre",
+      "kind": "assumption",
+      "title": "Invariant holds before the step",
+      "description": "authorized, inv_preserved, author_kept and moderator_kept take Inv of the pre-state as a hypothesis. reachable_inv discharges it for reachable states."
+    },
+    {
+      "id": "a-accepted",
+      "kind": "assumption",
+      "title": "Only accepted write sets are committed",
+      "description": "Accepted snap ws holds when some caller and command make transition return ws. db_inv only covers histories whose commits are Accepted.",
+      "symbol": "board_kernel.Storage.Accepted",
+      "sources": [
+        {
+          "path": "examples/app/board/proofs/Storage.lean",
+          "anchor": "def Accepted",
+          "digest": "d2664cc4742f65ebf330f90e60c826bb993cbc557357d35b84afe36115de2674"
+        }
+      ]
+    },
+    {
+      "id": "a-size",
+      "kind": "assumption",
+      "title": "Vectors do not overflow",
+      "description": "apply_spec requires the snapshot size plus the write count to be below Usize.max. Each write adds at most one row."
+    },
+    {
+      "id": "a-schema",
+      "kind": "assumption",
+      "title": "The live schema matches the model",
+      "description": "db_inv requires a valid table list of length three whose key layout equals the kernel's and an integer tenant value, and a PgServed history over modeled PostgreSQL semantics."
+    },
+    {
+      "id": "a-mod-present",
+      "kind": "assumption",
+      "title": "The board already has a moderator",
+      "description": "moderator_kept only speaks about boards with at least one moderator. Before the first appointment there is nothing to keep."
+    },
+    {
+      "id": "b-auth",
+      "kind": "boundary",
+      "title": "Authenticated caller",
+      "description": "The shell verifies an HMAC bearer token and builds the Principal. The theorems quantify over any principal, so they say nothing about whether the token holder is the real user or the secret stayed private.",
+      "sources": [
+        {
+          "path": "examples/app/board/server/src/main.rs",
+          "anchor": "let auth = HmacAuth::<Board>::new(secret, principal);",
+          "digest": "cb878a860a379a3bd55d8a5ed253caff94029c5c0051372c44e5f82d3474ba22"
+        },
+        {
+          "path": "examples/app/board/server/src/lib.rs",
+          "anchor": "pub fn principal(org: u64, user: u64)",
+          "digest": "83a5c302a6749d17ce2ea0a262e677c23871a5d29ca2806fbf6f2aa8ea2a0405"
+        }
+      ]
+    },
+    {
+      "id": "b-tenant",
+      "kind": "boundary",
+      "title": "Tenant from the organization",
+      "description": "Each organization's data is a separate tenant chosen from the principal's org. The proofs reason about one tenant's state; tenant separation itself is provided by the engine.",
+      "sources": [
+        {
+          "path": "examples/app/board/server/src/lib.rs",
+          "anchor": "fn tenant(actor: &k::Principal)",
+          "digest": "83a5c302a6749d17ce2ea0a262e677c23871a5d29ca2806fbf6f2aa8ea2a0405"
+        }
+      ]
+    },
+    {
+      "id": "b-json",
+      "kind": "boundary",
+      "title": "JSON decoding and replies",
+      "description": "Request JSON becomes a Command and replies and errors become JSON and status codes in unverified shell code. Error to status mapping is not covered by the theorems.",
+      "sources": [
+        {
+          "path": "examples/app/board/server/src/lib.rs",
+          "anchor": "fn decode_command(",
+          "digest": "83a5c302a6749d17ce2ea0a262e677c23871a5d29ca2806fbf6f2aa8ea2a0405"
+        },
+        {
+          "path": "examples/app/board/server/src/lib.rs",
+          "anchor": "fn encode_error(",
+          "digest": "83a5c302a6749d17ce2ea0a262e677c23871a5d29ca2806fbf6f2aa8ea2a0405"
+        }
+      ]
+    },
+    {
+      "id": "b-extraction",
+      "kind": "boundary",
+      "title": "Extraction fidelity",
+      "description": "The theorems are about the Lean translation that Aeneas produced from the kernel, starting from transition. That the compiled Rust behaves like the translation is trusted, and freshness is a separate h5i app extract check.",
+      "sources": [
+        {
+          "path": "examples/app/board/h5i-app.toml",
+          "anchor": "start-from = [\"transition\"]",
+          "digest": "a2b6febe39a67cf4c765dde0b65ed8a90b2ed10b0f370e3a608950f1e6eba239"
+        }
+      ]
+    },
+    {
+      "id": "b-engine",
+      "kind": "boundary",
+      "title": "Engine and PostgreSQL contract",
+      "description": "The engine runs each request in one SERIALIZABLE transaction and executes the planned SQL. Real PostgreSQL behavior, value conversion and durability are trusted, and the randomized test compares PostgreSQL with apply.",
+      "sources": [
+        {
+          "path": "examples/app/board/server/src/main.rs",
+          "anchor": "let engine = Arc::new(Engine::<Board, BoardStore>::new(",
+          "digest": "cb878a860a379a3bd55d8a5ed253caff94029c5c0051372c44e5f82d3474ba22"
+        },
+        {
+          "path": "examples/app/board/server/tests/postgres.rs",
+          "anchor": "async fn store_agrees_with_apply()",
+          "digest": "6938c72c34641899b0a1e6137cfe0dc82ba0623d6d7884fa6dddecbcd63056db"
+        }
+      ]
+    },
+    {
+      "id": "b-retry",
+      "kind": "boundary",
+      "title": "Idempotent retries",
+      "description": "Stored replies for retried requests are serialized and replayed by the shell. Their encoding and scoping per user are outside the proofs.",
+      "sources": [
+        {
+          "path": "examples/app/board/server/src/lib.rs",
+          "anchor": "impl ReplyCodec<Board> for BoardStore",
+          "digest": "83a5c302a6749d17ce2ea0a262e677c23871a5d29ca2806fbf6f2aa8ea2a0405"
+        }
+      ]
+    },
+    {
+      "id": "b-deploy",
+      "kind": "boundary",
+      "title": "Deployment configuration",
+      "description": "DATABASE_URL, H5I_APP_SECRET and the listen address come from the environment. Secret strength, database credentials and network exposure are deployment conditions.",
+      "sources": [
+        {
+          "path": "examples/app/board/server/src/main.rs",
+          "anchor": "let secret = std::env::var(\"H5I_APP_SECRET\")?;",
+          "digest": "cb878a860a379a3bd55d8a5ed253caff94029c5c0051372c44e5f82d3474ba22"
+        }
+      ]
+    },
+    {
+      "id": "i-transition",
+      "kind": "implementation",
+      "title": "transition",
+      "description": "Dispatches Publish, Edit, Delete, List, Promote and Demote to their functions. List writes nothing and returns the posts.",
+      "sources": [
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "pub fn transition(actor: &Principal",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        }
+      ]
+    },
+    {
+      "id": "i-publish",
+      "kind": "implementation",
+      "title": "publish",
+      "description": "Checks the text, refuses at the u64 limit, and writes the post with the current counter as id plus the incremented counter.",
+      "sources": [
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "fn publish(user: u64",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        }
+      ]
+    },
+    {
+      "id": "i-edit",
+      "kind": "implementation",
+      "title": "edit",
+      "description": "Looks up the post, refuses unless the caller is its author and the text is valid, and writes the new text under the same author.",
+      "sources": [
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "fn edit(user: u64",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        }
+      ]
+    },
+    {
+      "id": "i-delete",
+      "kind": "implementation",
+      "title": "delete",
+      "description": "Looks up the post and deletes it when the caller is its author or a moderator. The tutorial's wrong user bug lives on the permission line.",
+      "sources": [
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "fn delete(user: u64",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        },
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "if p.author == user || is_moderator(&s.moderators, user) {",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        }
+      ]
+    },
+    {
+      "id": "i-promote",
+      "kind": "implementation",
+      "title": "promote",
+      "description": "Appoints the target when the caller is a moderator, or when there are no moderators and the target is the caller.",
+      "sources": [
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "fn promote(user: u64",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        },
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "let bootstrap = s.moderators.len() == 0 && target == user;",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        }
+      ]
+    },
+    {
+      "id": "i-demote",
+      "kind": "implementation",
+      "title": "demote",
+      "description": "Refuses non-moderator callers, non-moderator targets and a lone moderator, then removes the target. The manifest's remove_last_moderator mutant weakens the last check.",
+      "sources": [
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "fn demote(user: u64",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        },
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "} else if s.moderators.len() <= 1 {",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        },
+        {
+          "path": "examples/app/board/h5i-app.toml",
+          "anchor": "name = \"remove_last_moderator\"",
+          "digest": "a2b6febe39a67cf4c765dde0b65ed8a90b2ed10b0f370e3a608950f1e6eba239"
+        }
+      ]
+    },
+    {
+      "id": "i-helpers",
+      "kind": "implementation",
+      "title": "text_ok, find_post, is_moderator",
+      "description": "Byte length check against MAX_TEXT and linear searches over posts and moderators.",
+      "sources": [
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "pub fn text_ok(",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        },
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "pub fn find_post(",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        },
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "pub fn is_moderator(",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        }
+      ]
+    },
+    {
+      "id": "i-apply",
+      "kind": "implementation",
+      "title": "apply_write and generated apply",
+      "description": "apply_write gives each write its effect on the snapshot. schema! builds apply, the table operations and decode from it.",
+      "sources": [
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "fn apply_write(s: &mut Snapshot, w: Write)",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        },
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "mapping board_tables for board_kernel",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        }
+      ]
+    },
+    {
+      "id": "i-sql-write",
+      "kind": "implementation",
+      "title": "sql_write",
+      "description": "Turns each write into one table upsert or delete for the store.",
+      "sources": [
+        {
+          "path": "examples/app/board/kernel/src/lib.rs",
+          "anchor": "fn sql_write(w: &Write",
+          "digest": "734012ea76deff6c30bb9fe73e6b2bea507726c2fb71ff9aa2490aa3e21483d0"
+        }
+      ]
+    },
+    {
+      "id": "i-kernel-impl",
+      "kind": "implementation",
+      "title": "Kernel for Board",
+      "description": "Connects the framework to the kernel: tenant from org, transition and apply delegated to board_kernel.",
+      "sources": [
+        {
+          "path": "examples/app/board/server/src/lib.rs",
+          "anchor": "impl Kernel for Board {",
+          "digest": "83a5c302a6749d17ce2ea0a262e677c23871a5d29ca2806fbf6f2aa8ea2a0405"
+        }
+      ]
+    },
+    {
+      "id": "i-store",
+      "kind": "implementation",
+      "title": "BoardStore load and write",
+      "description": "Loads the three tables with the generated schema_load and writes a write set with schema_store, which runs the sql_writes plan.",
+      "sources": [
+        {
+          "path": "examples/app/board/server/src/lib.rs",
+          "anchor": "impl Store<Board> for BoardStore {",
+          "digest": "83a5c302a6749d17ce2ea0a262e677c23871a5d29ca2806fbf6f2aa8ea2a0405"
+        },
+        {
+          "path": "examples/app/board/server/src/lib.rs",
+          "anchor": "schema_load(tx, t).await",
+          "digest": "83a5c302a6749d17ce2ea0a262e677c23871a5d29ca2806fbf6f2aa8ea2a0405"
+        },
+        {
+          "path": "examples/app/board/server/src/lib.rs",
+          "anchor": "schema_store(tx, t, ws).await",
+          "digest": "83a5c302a6749d17ce2ea0a262e677c23871a5d29ca2806fbf6f2aa8ea2a0405"
+        }
+      ]
+    },
+    {
+      "id": "i-api",
+      "kind": "implementation",
+      "title": "JSON API for Board",
+      "description": "decode_command parses the tagged command JSON, encode_reply and encode_error build responses.",
+      "sources": [
+        {
+          "path": "examples/app/board/server/src/lib.rs",
+          "anchor": "impl h5i_app_http::Api<Board> for BoardStore {",
+          "digest": "83a5c302a6749d17ce2ea0a262e677c23871a5d29ca2806fbf6f2aa8ea2a0405"
+        },
+        {
+          "path": "examples/app/board/server/src/lib.rs",
+          "anchor": "enum CommandJson {",
+          "digest": "83a5c302a6749d17ce2ea0a262e677c23871a5d29ca2806fbf6f2aa8ea2a0405"
+        }
+      ]
+    },
+    {
+      "id": "i-route",
+      "kind": "implementation",
+      "title": "POST /rpc route",
+      "description": "The router merges the framework's RPC router, which serves POST /rpc with bearer authentication, plus a /healthz probe.",
+      "sources": [
+        {
+          "path": "examples/app/board/server/src/main.rs",
+          "anchor": "let router = Router::new()",
+          "digest": "cb878a860a379a3bd55d8a5ed253caff94029c5c0051372c44e5f82d3474ba22"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "g-edit-own",
+      "to": "t-authorized-reachable",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-edit-own",
+      "to": "t-authorized",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-edit-own",
+      "to": "t-edit-spec",
+      "kind": "command lemma",
+      "view": "proof"
+    },
+    {
+      "from": "g-edit-own",
+      "to": "s-allowed",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-edit-own",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-edit-own",
+      "to": "b-auth",
+      "kind": "caller identity from",
+      "view": "proof"
+    },
+    {
+      "from": "g-edit-own",
+      "to": "b-extraction",
+      "kind": "about extracted code",
+      "view": "proof"
+    },
+    {
+      "from": "g-delete-rights",
+      "to": "t-authorized-reachable",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-delete-rights",
+      "to": "s-ismod",
+      "kind": "moderator test",
+      "view": "proof"
+    },
+    {
+      "from": "g-delete-rights",
+      "to": "t-delete-spec",
+      "kind": "command lemma",
+      "view": "proof"
+    },
+    {
+      "from": "g-delete-rights",
+      "to": "t-bob-cannot-delete",
+      "kind": "illustrated by",
+      "view": "proof"
+    },
+    {
+      "from": "g-delete-rights",
+      "to": "s-allowed",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-delete-rights",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-delete-rights",
+      "to": "b-auth",
+      "kind": "caller identity from",
+      "view": "proof"
+    },
+    {
+      "from": "g-appoint",
+      "to": "t-authorized-reachable",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-appoint",
+      "to": "t-promote-spec",
+      "kind": "command lemma",
+      "view": "proof"
+    },
+    {
+      "from": "g-appoint",
+      "to": "s-allowed",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-appoint",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-appoint",
+      "to": "b-auth",
+      "kind": "caller identity from",
+      "view": "proof"
+    },
+    {
+      "from": "g-demote-rights",
+      "to": "t-authorized-reachable",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-demote-rights",
+      "to": "t-demote-spec",
+      "kind": "command lemma",
+      "view": "proof"
+    },
+    {
+      "from": "g-demote-rights",
+      "to": "t-other-mod",
+      "kind": "bridged by",
+      "view": "proof"
+    },
+    {
+      "from": "g-demote-rights",
+      "to": "s-allowed",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-demote-rights",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-last-mod",
+      "to": "t-moderator-kept",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-last-mod",
+      "to": "t-last-mod-stays",
+      "kind": "illustrated by",
+      "view": "proof"
+    },
+    {
+      "from": "g-last-mod",
+      "to": "a-inv-pre",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-last-mod",
+      "to": "a-mod-present",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-last-mod",
+      "to": "a-reachable",
+      "kind": "invariant discharged for",
+      "view": "proof"
+    },
+    {
+      "from": "g-author-fixed",
+      "to": "t-author-kept",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-author-fixed",
+      "to": "a-inv-pre",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-author-fixed",
+      "to": "a-reachable",
+      "kind": "invariant discharged for",
+      "view": "proof"
+    },
+    {
+      "from": "g-unique-ids",
+      "to": "t-reachable-inv",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-unique-ids",
+      "to": "t-init-inv",
+      "kind": "base case",
+      "view": "proof"
+    },
+    {
+      "from": "g-unique-ids",
+      "to": "s-inv",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-unique-ids",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-valid-text",
+      "to": "t-reachable-inv",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-valid-text",
+      "to": "s-textok",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-valid-text",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-unique-mods",
+      "to": "t-reachable-inv",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-unique-mods",
+      "to": "s-inv",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-unique-mods",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-crash",
+      "to": "t-total",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-crash",
+      "to": "b-extraction",
+      "kind": "about extracted code",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-inv",
+      "to": "t-db-inv",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-inv",
+      "to": "s-dbinv",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-inv",
+      "to": "a-accepted",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-inv",
+      "to": "a-schema",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-inv",
+      "to": "b-engine",
+      "kind": "application relies on",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-inv",
+      "to": "b-tenant",
+      "kind": "per tenant",
+      "view": "proof"
+    },
+    {
+      "from": "g-store-matches",
+      "to": "t-stored",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-store-matches",
+      "to": "s-state",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-store-matches",
+      "to": "t-apply-spec",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-store-matches",
+      "to": "s-enc",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-store-matches",
+      "to": "a-size",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-store-matches",
+      "to": "b-engine",
+      "kind": "application relies on",
+      "view": "proof"
+    },
+    {
+      "from": "g-accept-scenario",
+      "to": "t-promote-first",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-accept-scenario",
+      "to": "t-publish-hi",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-accept-scenario",
+      "to": "t-s2-reachable",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-refuse-scenario",
+      "to": "t-bob-cannot-delete",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-refuse-scenario",
+      "to": "t-last-mod-stays",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-refuse-scenario",
+      "to": "t-s2-reachable",
+      "kind": "in state",
+      "view": "proof"
+    },
+    {
+      "from": "t-authorized",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-writes-of",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-total",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-inv-preserved",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-author-kept",
+      "to": "i-edit",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-moderator-kept",
+      "to": "i-demote",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-delete-spec",
+      "to": "i-delete",
+      "kind": "describes",
+      "view": "proof"
+    },
+    {
+      "from": "t-edit-spec",
+      "to": "i-edit",
+      "kind": "describes",
+      "view": "proof"
+    },
+    {
+      "from": "t-publish-spec",
+      "to": "i-publish",
+      "kind": "describes",
+      "view": "proof"
+    },
+    {
+      "from": "t-promote-spec",
+      "to": "i-promote",
+      "kind": "describes",
+      "view": "proof"
+    },
+    {
+      "from": "t-demote-spec",
+      "to": "i-demote",
+      "kind": "describes",
+      "view": "proof"
+    },
+    {
+      "from": "t-delete-spec",
+      "to": "i-helpers",
+      "kind": "uses helper specs",
+      "view": "proof"
+    },
+    {
+      "from": "t-apply-spec",
+      "to": "i-apply",
+      "kind": "describes",
+      "view": "proof"
+    },
+    {
+      "from": "t-apply-write-spec",
+      "to": "i-apply",
+      "kind": "describes",
+      "view": "proof"
+    },
+    {
+      "from": "t-stored",
+      "to": "i-sql-write",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-stored",
+      "to": "i-store",
+      "kind": "connects to",
+      "view": "proof"
+    },
+    {
+      "from": "t-db-inv",
+      "to": "i-store",
+      "kind": "connects to",
+      "view": "proof"
+    },
+    {
+      "from": "t-db-inv",
+      "to": "b-engine",
+      "kind": "application relies on",
+      "view": "proof"
+    },
+    {
+      "from": "t-db-inv",
+      "to": "b-tenant",
+      "kind": "quantifies over tenants via",
+      "view": "proof"
+    },
+    {
+      "from": "s-textok",
+      "to": "i-helpers",
+      "kind": "implemented by",
+      "view": "proof"
+    },
+    {
+      "from": "s-ismod",
+      "to": "i-helpers",
+      "kind": "implemented by",
+      "view": "proof"
+    },
+    {
+      "from": "s-state",
+      "to": "i-kernel-impl",
+      "kind": "reads the Snapshot of",
+      "view": "proof"
+    },
+    {
+      "from": "s-applywrite",
+      "to": "i-apply",
+      "kind": "implemented by",
+      "view": "proof"
+    },
+    {
+      "from": "s-enc",
+      "to": "i-sql-write",
+      "kind": "implemented by",
+      "view": "proof"
+    },
+    {
+      "from": "s-allowed",
+      "to": "i-transition",
+      "kind": "checked against",
+      "view": "proof"
+    },
+    {
+      "from": "a-reachable",
+      "to": "i-transition",
+      "kind": "built from accepted steps of",
+      "view": "proof"
+    },
+    {
+      "from": "a-accepted",
+      "to": "i-transition",
+      "kind": "defined over",
+      "view": "proof"
+    },
+    {
+      "from": "t-total",
+      "to": "b-extraction",
+      "kind": "about the translation",
+      "view": "proof"
+    },
+    {
+      "from": "b-deploy",
+      "to": "i-route",
+      "kind": "configures secret and database",
+      "view": "flow"
+    },
+    {
+      "from": "i-route",
+      "to": "b-auth",
+      "kind": "verifies bearer token",
+      "view": "flow"
+    },
+    {
+      "from": "b-auth",
+      "to": "i-api",
+      "kind": "supplies Principal",
+      "view": "flow"
+    },
+    {
+      "from": "i-api",
+      "to": "b-json",
+      "kind": "decodes command JSON",
+      "view": "flow"
+    },
+    {
+      "from": "i-api",
+      "to": "b-engine",
+      "kind": "hands command to engine",
+      "view": "flow"
+    },
+    {
+      "from": "b-engine",
+      "to": "b-retry",
+      "kind": "replays stored reply on retry",
+      "view": "flow"
+    },
+    {
+      "from": "b-engine",
+      "to": "i-store",
+      "kind": "loads tenant snapshot",
+      "view": "flow"
+    },
+    {
+      "from": "b-engine",
+      "to": "i-kernel-impl",
+      "kind": "runs transition in a transaction",
+      "view": "flow"
+    },
+    {
+      "from": "i-kernel-impl",
+      "to": "b-tenant",
+      "kind": "maps org to tenant",
+      "view": "flow"
+    },
+    {
+      "from": "i-kernel-impl",
+      "to": "i-transition",
+      "kind": "calls",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-publish",
+      "kind": "dispatches Publish",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-edit",
+      "kind": "dispatches Edit",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-delete",
+      "kind": "dispatches Delete",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-promote",
+      "kind": "dispatches Promote",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-demote",
+      "kind": "dispatches Demote",
+      "view": "flow"
+    },
+    {
+      "from": "i-edit",
+      "to": "i-helpers",
+      "kind": "find_post, text_ok",
+      "view": "flow"
+    },
+    {
+      "from": "i-delete",
+      "to": "i-helpers",
+      "kind": "find_post, is_moderator",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-store",
+      "kind": "returns write set for commit",
+      "view": "flow"
+    },
+    {
+      "from": "i-store",
+      "to": "i-sql-write",
+      "kind": "plans table writes",
+      "view": "flow"
+    },
+    {
+      "from": "i-kernel-impl",
+      "to": "i-apply",
+      "kind": "apply for the reference engine",
+      "view": "flow"
+    },
+    {
+      "from": "i-store",
+      "to": "b-engine",
+      "kind": "commits in SERIALIZABLE transaction",
+      "view": "flow"
+    },
+    {
+      "from": "i-api",
+      "to": "b-json",
+      "kind": "encodes reply or error",
+      "view": "flow"
+    }
+  ]
+}

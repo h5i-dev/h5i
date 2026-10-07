@@ -1,0 +1,1059 @@
+/* Apps uses the console's surface and type system. Amber asks for review;
+   filled red remains reserved for a host refusal. */
+.apps-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.apps-page > .split {
+  flex: 1;
+  min-height: 0;
+}
+.apps-page input,
+.apps-page select {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 4px;
+  font: inherit;
+  padding: 8px 10px;
+  min-width: 0;
+}
+.apps-page select {
+  max-width: 100%;
+}
+.apps-page input:focus,
+.apps-page select:focus {
+  outline: 1px solid var(--accent);
+}
+.app-button {
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  padding: 7px 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.app-button:hover {
+  background: var(--raised);
+  color: var(--ink);
+}
+.app-pad {
+  padding: 24px;
+}
+.app-scroll {
+  overflow: auto;
+  height: 100%;
+}
+.app-muted {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.65;
+}
+.app-warning {
+  color: var(--amber);
+  font-size: 12px;
+}
+.app-eyebrow {
+  color: var(--ink-3);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.6px;
+}
+.app-projects {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+.app-search {
+  padding: 15px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.app-search input {
+  width: 100%;
+}
+.app-project-list {
+  overflow-y: auto;
+  flex: 1;
+}
+.app-project {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  width: 100%;
+  padding: 18px 16px;
+  border-bottom: 1px solid var(--line);
+  border-left: 2px solid transparent;
+}
+.app-project:hover {
+  background: var(--surface-2);
+}
+.app-project.is-on {
+  background: var(--surface-2);
+  border-left-color: var(--accent);
+}
+.app-project-title {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+}
+.app-count {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 400;
+}
+.app-project-description {
+  font-size: 12px;
+  color: var(--ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.app-project code {
+  color: var(--ink-3);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.app-project-footer {
+  color: var(--ink-3);
+  padding: 12px 16px;
+  font-size: 11px;
+  border-top: 1px solid var(--line);
+}
+.app-workspace {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+.app-heading {
+  padding: 25px 28px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.app-heading h1 {
+  font-size: 26px;
+  font-weight: 550;
+  letter-spacing: -0.7px;
+}
+.app-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 15px;
+  margin: 8px 0;
+}
+.app-heading > p {
+  max-width: 850px;
+  color: var(--ink-2);
+}
+.app-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--ink-3);
+  font-size: 11px;
+}
+.app-meta code {
+  font-size: 11px;
+}
+.app-workspace > .tabs {
+  padding-left: 28px;
+  flex-shrink: 0;
+}
+.app-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.app-issues {
+  padding: 10px 28px;
+  background: var(--amber-bg);
+  color: var(--amber);
+  max-height: 140px;
+  overflow: auto;
+}
+.app-issues p {
+  padding-top: 5px;
+}
+.apps-page summary {
+  cursor: pointer;
+}
+.app-welcome {
+  padding: 72px 48px;
+  max-width: 950px;
+  overflow: auto;
+  height: 100%;
+}
+.app-welcome h1 {
+  margin: 12px 0 18px;
+  font-size: 36px;
+  font-weight: 500;
+  letter-spacing: -1.2px;
+}
+.app-welcome > p {
+  color: var(--ink-2);
+  max-width: 560px;
+  font-size: 15px;
+  line-height: 1.8;
+}
+.app-welcome-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 28px;
+  margin: 42px 0;
+  border-top: 1px solid var(--line-strong);
+  padding-top: 24px;
+}
+.app-welcome-grid b {
+  font-weight: 500;
+  color: var(--ink);
+}
+.app-welcome-grid p {
+  color: var(--ink-3);
+  margin-top: 10px;
+}
+.app-guarantees {
+  height: 100%;
+  overflow: auto;
+}
+.app-map-prompt {
+  max-width: 760px;
+  margin-bottom: 28px;
+}
+.app-map-prompt p {
+  margin: 10px 0 16px;
+}
+.app-map-prompt pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.app-guarantee-list {
+  padding: 12px 20px;
+}
+.app-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.app-section-heading input {
+  padding: 5px 9px;
+  font-size: 11px;
+  width: 190px;
+}
+.app-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+.app-guarantee {
+  display: flex;
+  align-items: flex-start;
+  text-align: left;
+  gap: 9px;
+  padding: 9px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
+}
+.app-guarantee:hover {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+}
+.app-guarantee.is-on {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+.app-guarantee-index {
+  font: 11px var(--font-mono);
+  color: var(--ink-4);
+  padding-top: 2px;
+}
+.app-guarantee.is-on .app-guarantee-index,
+.app-guarantee.is-on .app-card-arrow {
+  color: var(--accent);
+}
+.app-guarantee > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+.app-guarantee b {
+  display: block;
+  font-size: 13px;
+  font-weight: 550;
+}
+.app-guarantee > span > span {
+  display: block;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink-3);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app-card-arrow {
+  color: var(--ink-4);
+}
+.app-explorer {
+  border-top: 1px solid var(--line);
+  min-height: 560px;
+}
+.app-map {
+  min-width: 0;
+}
+.app-map-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 15px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.app-segment {
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 3px;
+  border-radius: 5px;
+}
+.app-segment button {
+  padding: 5px 9px;
+  color: var(--ink-3);
+  font-size: 11px;
+  border-radius: 3px;
+}
+.app-segment .is-on {
+  background: var(--raised);
+  color: var(--ink);
+}
+.app-graph-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  color: var(--ink-3);
+  font-size: 10px;
+}
+.app-graph-actions button {
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  margin-left: 3px;
+  border-radius: 3px;
+}
+.app-graph-scroll {
+  overflow: auto;
+  min-height: 420px;
+  max-height: 75vh;
+  background-image: radial-gradient(var(--line) 0.7px, transparent 0.7px);
+  background-size: 18px 18px;
+}
+.app-graph {
+  display: block;
+}
+.app-graph-edge {
+  color: var(--line-strong);
+}
+.app-graph-edge path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2px;
+}
+.app-graph-edge.is-active {
+  color: var(--ink-3);
+}
+.app-graph-edge.is-authored path {
+  stroke-dasharray: 5 4;
+}
+.app-graph-edge.is-lean {
+  color: var(--cyan);
+  opacity: 0.55;
+}
+.app-graph-edge.is-lean.is-active {
+  opacity: 1;
+}
+.app-lean-legend {
+  color: var(--cyan);
+}
+.app-graph-node {
+  cursor: pointer;
+  outline: none;
+}
+.app-graph-node rect {
+  fill: var(--surface);
+  stroke: var(--line-strong);
+  stroke-width: 1px;
+}
+.app-graph-node:hover rect {
+  fill: var(--raised);
+}
+.app-graph-node.is-on rect,
+.app-graph-node:focus-visible rect {
+  stroke: var(--accent);
+  stroke-width: 2px;
+  fill: var(--surface-2);
+}
+.app-node-kind {
+  fill: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.6px;
+}
+.kind-theorem .app-node-kind {
+  fill: var(--violet);
+}
+.kind-specification .app-node-kind {
+  fill: var(--cyan);
+}
+.kind-assumption .app-node-kind,
+.kind-boundary .app-node-kind,
+.kind-counterexample .app-node-kind {
+  fill: var(--amber);
+}
+.app-node-title {
+  fill: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+.app-map-caption {
+  padding: 14px 20px;
+  font-size: 11px;
+  color: var(--ink-3);
+  border-top: 1px solid var(--line);
+}
+.app-boundaries {
+  padding: 14px 20px;
+  color: var(--ink-2);
+  font-size: 12px;
+  border-top: 1px solid var(--line);
+}
+.app-boundaries p {
+  margin: 8px 0;
+  color: var(--ink-3);
+}
+.app-inspector {
+  flex: 1;
+  padding: 23px;
+  background: var(--surface);
+  min-width: 0;
+}
+.app-kind {
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 10px;
+}
+.app-kind.kind-assumption,
+.app-kind.kind-boundary,
+.app-kind.kind-counterexample {
+  color: var(--amber);
+}
+.app-kind.kind-theorem {
+  color: var(--violet);
+}
+.app-inspector h2 {
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 1.35;
+  margin: 8px 0 12px;
+}
+.app-inspector > p {
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.8;
+}
+.app-inspector h3,
+.app-evidence h3 {
+  color: var(--ink-3);
+  text-transform: uppercase;
+  font-weight: 500;
+  letter-spacing: 0.8px;
+  font-size: 10px;
+  margin: 23px 0 10px;
+}
+.app-symbol {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--ink-3);
+  font-size: 11px;
+  margin-top: 12px;
+}
+.app-symbol + .app-button {
+  margin-top: 10px;
+}
+.app-relations button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.app-relations span {
+  display: block;
+  color: var(--ink-3);
+  font-size: 10px;
+  margin-bottom: 3px;
+}
+.app-relations b {
+  font-size: 12px;
+  font-weight: 400;
+}
+.app-relations button:hover b {
+  color: var(--accent-hi);
+}
+.app-source-link {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  width: 100%;
+  text-align: left;
+  padding: 9px;
+  margin: 6px 0;
+}
+.app-source-link code {
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.app-source-link span {
+  display: block;
+  color: var(--ink-3);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+  margin-top: 3px;
+}
+.app-source {
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.app-source-heading {
+  padding: 10px;
+  background: var(--surface-2);
+  overflow-wrap: anywhere;
+}
+.app-source-heading code {
+  font-size: 10px;
+}
+.app-source-heading span {
+  display: block;
+  color: var(--ink-3);
+  font-size: 10px;
+  margin-top: 4px;
+}
+.app-code {
+  background: var(--ground);
+  color: var(--ink-2);
+  padding: 12px;
+  overflow: auto;
+  max-height: 420px;
+  font-size: 11px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 8px 0;
+}
+.app-numbered {
+  margin: 0;
+  white-space: pre;
+}
+.app-numbered i {
+  display: inline-block;
+  font-style: normal;
+  color: var(--ink-4);
+  width: 4em;
+  user-select: none;
+}
+.app-view-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 4px 0 25px;
+}
+.app-view-heading h2 {
+  font-size: 23px;
+  font-weight: 500;
+  margin: 6px 0;
+  letter-spacing: -0.5px;
+}
+.app-view-heading form label {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-bottom: 6px;
+}
+.app-view-heading form > div {
+  display: flex;
+  gap: 6px;
+}
+.app-view-heading input {
+  width: 180px;
+}
+.app-comparison-head,
+.app-history-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin: 20px 0 12px;
+}
+.app-comparison-head h3,
+.app-history-heading h3 {
+  font-size: 13px;
+  font-weight: 500;
+}
+.app-empty-inline {
+  padding: 22px;
+  color: var(--ink-3);
+  background: var(--surface);
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.app-change {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+.app-change > summary {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 13px 15px;
+}
+.app-change-marker {
+  color: var(--amber);
+  font: 15px var(--font-mono);
+}
+.app-change b {
+  font-weight: 500;
+  font-size: 12px;
+}
+.app-change small {
+  display: block;
+  color: var(--ink-3);
+  font-size: 11px;
+  margin-top: 3px;
+}
+.app-affected {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--amber);
+  white-space: nowrap;
+}
+.app-change-body {
+  padding: 0 15px 15px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.app-change-body > code {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.app-change-body > p {
+  padding: 8px 0;
+}
+.app-diff {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 12px;
+}
+.app-diff > div {
+  background: var(--ground);
+  min-width: 0;
+}
+.app-diff > div > span {
+  display: block;
+  padding: 8px 12px;
+  color: var(--ink-3);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border-bottom: 1px solid var(--line);
+}
+.app-diff pre {
+  font-size: 11px;
+  color: var(--ink-2);
+  padding: 12px;
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+.app-revision {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+}
+.app-revision > summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.app-revision b {
+  font-weight: 400;
+  flex: 1;
+}
+.app-revision code {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+.app-revision time,
+.app-revision summary > span {
+  color: var(--ink-3);
+  font-size: 10px;
+}
+.app-reading-notes {
+  padding-top: 20px;
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-3);
+  font-size: 11px;
+}
+.app-reading-notes p {
+  margin: 6px 0;
+}
+.app-run-banner {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--ink-3);
+  padding: 13px 0;
+  border-top: 1px solid var(--line);
+}
+.app-mutation-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 24px;
+}
+.app-mutation-counts button {
+  min-width: 105px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  text-align: left;
+  background: var(--surface);
+}
+.app-mutation-counts button.is-on {
+  border-color: var(--accent);
+}
+.app-mutation-counts b {
+  display: block;
+  font: 24px var(--font-mono);
+  margin-bottom: 4px;
+}
+.app-mutation-counts span {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.app-trial-grid {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.7fr) minmax(0, 1.5fr);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.app-trial-list {
+  border-right: 1px solid var(--line);
+}
+.app-trial-list .app-section-heading {
+  padding: 14px;
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+}
+.app-trial-list h3 {
+  font-weight: 500;
+  font-size: 11px;
+}
+.app-trial {
+  width: 100%;
+  text-align: left;
+  padding: 14px;
+  border-bottom: 1px solid var(--line);
+  border-left: 2px solid transparent;
+  overflow-wrap: anywhere;
+}
+.app-trial.is-on {
+  border-left-color: var(--accent);
+  background: var(--surface-2);
+}
+.app-trial b {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  margin-bottom: 5px;
+}
+.app-trial-detail {
+  padding: 22px;
+  min-width: 0;
+}
+.app-trial-detail h3 {
+  font-size: 16px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.app-text-button {
+  color: var(--ink-3);
+  font-size: 10px;
+}
+.app-text-button:hover {
+  color: var(--ink);
+}
+.app-stages {
+  margin: 16px 0;
+}
+.app-stages > details {
+  border-bottom: 1px solid var(--line);
+}
+.app-stages summary {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 10px 0;
+  font-size: 11px;
+}
+.app-stages b {
+  font-weight: 400;
+  flex: 1;
+}
+.app-stages time,
+.app-stages summary > span:not(.app-stage-dot) {
+  color: var(--ink-3);
+  font-size: 10px;
+}
+.app-stage-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ink-4);
+}
+.app-stage-dot.is-warn {
+  background: var(--amber);
+}
+.app-stage-dot.is-pass {
+  background: var(--green);
+}
+.app-record-meta {
+  margin: 20px 0;
+  padding: 14px;
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.app-record-meta p {
+  margin-top: 8px;
+}
+.app-record-meta code {
+  font-size: 11px;
+}
+@media (max-width: 1300px) {
+  .app-inspector {
+    padding: 18px;
+  }
+  .app-guarantee > span > span {
+    display: none;
+  }
+}
+@media (max-width: 1000px) {
+  .app-cards {
+    grid-template-columns: 1fr;
+  }
+  .app-explorer {
+    display: flex;
+    flex-direction: column;
+  }
+  .app-explorer > .split-handle {
+    display: none;
+  }
+  .app-inspector {
+    border-top: 1px solid var(--line);
+  }
+  .app-trial-grid {
+    grid-template-columns: 1fr;
+  }
+  .app-trial-list {
+    border-right: 0;
+  }
+  .app-welcome {
+    padding: 35px 25px;
+  }
+  .app-welcome-grid {
+    grid-template-columns: 1fr;
+  }
+  .app-view-heading h2 {
+    font-size: 19px;
+  }
+  .app-diff {
+    grid-template-columns: 1fr;
+  }
+  .app-section-heading {
+    flex-wrap: wrap;
+  }
+}
+/* Source tokens, after VS Code's Dark+ theme. */
+.app-code {
+  --tok-comment: #6a9955;
+  --tok-string: #ce9178;
+  --tok-number: #b5cea8;
+  --tok-keyword: #569cd6;
+  --tok-control: #c586c0;
+  --tok-type: #4ec9b0;
+  --tok-fn: #dcdcaa;
+  --tok-macro: #4fc1ff;
+  --tok-tactic: #9cdcfe;
+}
+.tok-comment {
+  color: var(--tok-comment);
+  font-style: italic;
+}
+.tok-string {
+  color: var(--tok-string);
+}
+.tok-number {
+  color: var(--tok-number);
+}
+.tok-keyword,
+.tok-lifetime,
+.tok-op {
+  color: var(--tok-keyword);
+}
+.tok-control {
+  color: var(--tok-control);
+}
+.tok-type {
+  color: var(--tok-type);
+}
+.tok-fn {
+  color: var(--tok-fn);
+}
+.tok-macro,
+.tok-attr {
+  color: var(--tok-macro);
+}
+.tok-tactic {
+  color: var(--tok-tactic);
+}
+.app-focus-trail {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 9px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: 11px;
+}
+.app-focus-trail ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.app-focus-trail li {
+  display: flex;
+  align-items: center;
+  color: var(--ink-3);
+}
+.app-focus-trail li + li::before {
+  content: "›";
+  margin: 0 7px;
+  color: var(--ink-4);
+}
+.app-focus-trail li button {
+  color: var(--ink-2);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 2px;
+}
+.app-focus-trail li button:hover {
+  color: var(--ink);
+}
+.app-focus-trail li b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.app-focus-reset {
+  margin-left: auto;
+  color: var(--ink-3);
+}
+.app-focus-reset:hover {
+  color: var(--ink);
+}
+.app-provenance {
+  padding: 9px 20px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.app-provenance b {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+.app-provenance.is-drifted {
+  background: var(--amber-bg);
+}
+.app-provenance.is-drifted b {
+  color: var(--amber);
+}
+.app-map-author {
+  margin-left: auto;
+}
+/* Full screen: the map and inspector cover the window, each scrolling on
+   its own, and the graph takes all the height it is given. */
+.app-explore.is-full {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  background: var(--ground);
+}
+.app-explore.is-full > .app-explorer {
+  flex: 1;
+  min-height: 0;
+  border-top: 0;
+}
+.app-explore.is-full .split-first,
+.app-explore.is-full .app-inspector {
+  overflow: auto;
+}
+.app-explore.is-full .app-map {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.app-explore.is-full .app-graph-scroll {
+  flex: 1;
+  max-height: none;
+}

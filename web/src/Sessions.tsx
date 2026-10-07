@@ -4,7 +4,7 @@ import type { Fleet } from "./App";
 import { api, type SessionDetail, type SessionRow, type SessionStub } from "./api";
 import { Actions } from "./Actions";
 import { Findings } from "./Findings";
-import { History } from "./History";
+import { History, setSessionFilter } from "./History";
 import { Recon } from "./Recon";
 import { Sitemap, visibleSitemap } from "./Sitemap";
 import { shownState } from "./seen";
@@ -20,6 +20,7 @@ import {
   Note,
   Spin,
   Split,
+  type SessionNav,
   ago,
   day,
   hostOf,
@@ -54,6 +55,26 @@ export function SessionsPage({
   const tab: Tab = (TABS.find((t) => t.key === route[1])?.key ?? "history") as Tab;
   const sessions = fleet.sessions?.sessions ?? null;
   const row = sessions?.find((s) => s.id === id) ?? null;
+  // The third segment is what the tab has open: a fetch seq on History, a
+  // verb seq on Actions.
+  const arg = route[2] !== undefined && /^\d+$/.test(route[2]) ? Number(route[2]) : null;
+  // A filter link remounts History, which reads its filter when it mounts.
+  const [filterGen, setFilterGen] = useState(0);
+  const nav: SessionNav | null = useMemo(
+    () =>
+      id
+        ? {
+            request: (seq) => go(["sessions", id, "history", String(seq)]),
+            action: (seq) => go(["sessions", id, "actions", String(seq)]),
+            filter: (q) => {
+              setSessionFilter(id, q);
+              setFilterGen((n) => n + 1);
+              go(["sessions", id, "history"]);
+            },
+          }
+        : null,
+    [id, go],
+  );
 
   return (
     <>
@@ -98,8 +119,12 @@ export function SessionsPage({
                 row={row}
                 seen={fleet.seen}
                 tab={tab}
+                arg={arg}
+                nav={nav!}
+                gen={filterGen}
                 tick={fleet.tick}
                 onTab={(t) => go(["sessions", id, t], true)}
+                onArg={(n) => go(["sessions", id, tab, ...(n === null ? [] : [String(n)])], true)}
               />
             ) : (
               <Empty title="Pick a session">
@@ -247,7 +272,7 @@ function SessionList({
             ))}
             {stubs.length > 0 ? (
               <>
-                <div className="group-head">not read by this poll: open one to fold it</div>
+                <div className="group-head">older sessions, not loaded yet: open one to read it</div>
                 {stubs.map((s) => (
                   <button
                     key={s.id}
@@ -324,17 +349,26 @@ function Workspace({
   row,
   seen,
   tab,
+  arg,
+  nav,
+  gen,
   tick,
   onTab,
+  onArg,
 }: {
   id: string;
   row: SessionRow | null;
   seen: Record<string, string>;
   tab: Tab;
+  arg: number | null;
+  nav: SessionNav;
+  gen: number;
   tick: number;
   onTab: (t: Tab) => void;
+  onArg: (n: number | null) => void;
 }) {
   const [detail, setDetail] = useState<SessionDetail | null>(null);
+  const [readAt, setReadAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The detail is re-read only when something the row is made of moved. An
   // ended session is read once; a live one refetches exactly when the fleet
@@ -356,7 +390,11 @@ function Workspace({
     let alive = true;
     api
       .session(id)
-      .then((d) => alive && setDetail(d))
+      .then((d) => {
+        if (!alive) return;
+        setDetail(d);
+        setReadAt(Date.now());
+      })
       .catch((e: Error) => alive && setError(e.message));
     return () => {
       alive = false;
@@ -431,15 +469,15 @@ function Workspace({
       </div>
       <div className="work-body">
         {tab === "history" ? (
-          <History detail={detail} />
+          <History key={gen} detail={detail} selected={arg} onSelect={onArg} nav={nav} readAt={readAt} />
         ) : tab === "sitemap" ? (
-          <Sitemap detail={detail} />
+          <Sitemap detail={detail} nav={nav} />
         ) : tab === "actions" ? (
-          <Actions detail={detail} />
+          <Actions detail={detail} open={arg} onOpen={onArg} nav={nav} />
         ) : tab === "findings" ? (
-          <Findings detail={detail} />
+          <Findings detail={detail} nav={nav} />
         ) : tab === "recon" ? (
-          <Recon detail={detail} />
+          <Recon detail={detail} nav={nav} />
         ) : (
           <About detail={detail} />
         )}

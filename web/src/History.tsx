@@ -14,7 +14,9 @@ import {
   clockMs,
   fmtBytes,
   fmtMs,
+  localClock,
   plural,
+  type SessionNav,
 } from "./ui";
 
 // The HTTP history: every fetch this session made, with the one column no
@@ -34,12 +36,26 @@ const PRESETS: { label: string; q: string; title: string }[] = [
 
 type SortKey = "seq" | "method" | "host" | "path" | "status" | "bytes" | "duration_ms" | "ttfb_ms" | "initiator" | "verb";
 
-export function History({ detail }: { detail: SessionDetail }) {
+export function History({
+  detail,
+  selected,
+  onSelect,
+  nav,
+  readAt,
+}: {
+  detail: SessionDetail;
+  selected: number | null;
+  onSelect: (seq: number | null) => void;
+  nav: SessionNav;
+  readAt: number | null;
+}) {
   const name = detail.name ?? detail.id;
   const [query, setQuery] = useState<string>(() => sessionFilter(detail.id));
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "seq", desc: true });
-  const [selected, setSelected] = useState<number | null>(null);
   const [help, setHelp] = useState(false);
+  // While the reader is scrolled or has a row open, fetches newer than this
+  // seq wait behind a count instead of pushing the rows they are reading.
+  const [held, setHeld] = useState<number | null>(null);
 
   useEffect(() => {
     try {
@@ -49,7 +65,10 @@ export function History({ detail }: { detail: SessionDetail }) {
     }
   }, [query, detail.id]);
 
-  const rows = useMemo(() => fold(detail.requests_log, detail.actions), [detail]);
+  const all = useMemo(() => fold(detail.requests_log, detail.actions), [detail]);
+  const latest = useMemo(() => all.reduce((n, r) => Math.max(n, r.seq), 0), [all]);
+  const rows = useMemo(() => (held === null ? all : all.filter((r) => r.seq <= held)), [all, held]);
+  const waiting = all.length - rows.length;
   const parsed = useMemo(() => parse(query), [query]);
   const shown = useMemo(() => {
     const out = rows.filter((r) => matches(r, parsed.terms));
@@ -58,26 +77,50 @@ export function History({ detail }: { detail: SessionDetail }) {
     return out;
   }, [rows, parsed, sort]);
 
-  const selectedRow = selected === null ? null : rows.find((r) => r.seq === selected) ?? null;
+  const selectedRow = selected === null ? null : all.find((r) => r.seq === selected) ?? null;
   const refused = shown.filter((r) => !r.allowed).length;
-  const omitted = detail.requests_total - rows.length;
+  const omitted = detail.requests_total - all.length;
+
+  const tableRef = useRef<HTMLDivElement>(null);
+  const hold = () => setHeld((h) => h ?? latest);
+  const release = () => {
+    setHeld(null);
+    tableRef.current?.scrollTo({ top: 0 });
+  };
+  const onScroll = () => {
+    const top = tableRef.current?.scrollTop ?? 0;
+    if (top > 4) hold();
+    else if (selected === null) setHeld(null);
+  };
+
+  // An open row, from a click or a link elsewhere, is held in place, in view,
+  // and has the keyboard.
+  useEffect(() => {
+    if (selected === null) {
+      if ((tableRef.current?.scrollTop ?? 0) <= 4) setHeld(null);
+      return;
+    }
+    hold();
+    const tr = tableRef.current?.querySelector<HTMLElement>(`tr[data-seq="${selected}"]`);
+    tr?.scrollIntoView({ block: "nearest" });
+    tableRef.current?.focus({ preventScroll: true });
+  }, [selected]);
 
   // Keyboard: the arrows walk the visible rows, Escape closes the inspector.
-  const tableRef = useRef<HTMLDivElement>(null);
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Escape") return;
     if (e.key === "Escape") {
-      setSelected(null);
+      onSelect(null);
       return;
     }
     e.preventDefault();
     const i = shown.findIndex((r) => r.seq === selected);
     const next = e.key === "ArrowDown" ? Math.min(shown.length - 1, i + 1) : Math.max(0, i - 1);
-    if (shown[next]) setSelected(shown[next].seq);
+    if (shown[next]) onSelect(shown[next].seq);
   };
 
   const table = (
-    <div className="hist" style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+    <div className={`hist${selectedRow ? " is-split" : ""}`} style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
       <div className="hist-bar">
         <div className="filter">
           <label className="search">
@@ -102,6 +145,12 @@ export function History({ detail }: { detail: SessionDetail }) {
             {help ? <FilterHelp onClose={() => setHelp(false)} /> : null}
           </div>
         </div>
+        {selected !== null && !selectedRow ? (
+          <div className="filter-errors">
+            req_{selected} is older than the {all.length.toLocaleString()} fetches loaded here.{" "}
+            <code>h5i websec show req_{selected} --session {name}</code> reads it.
+          </div>
+        ) : null}
         {parsed.errors.length > 0 ? (
           <div className="filter-errors">{parsed.errors.join(". ")}</div>
         ) : null}
@@ -137,12 +186,17 @@ export function History({ detail }: { detail: SessionDetail }) {
         </div>
       </div>
 
-      {rows.length === 0 ? (
+      {waiting > 0 ? (
+        <button type="button" className="hist-fresh" onClick={release}>
+          {waiting.toLocaleString()} new {plural(waiting, "fetch", "fetches")} held while you read: show
+        </button>
+      ) : null}
+      {all.length === 0 ? (
         <Empty title="This session has fetched nothing">
           <p>The request log is written before the wire, so an empty log means no bytes left.</p>
         </Empty>
       ) : (
-        <div className="table-wrap" ref={tableRef} tabIndex={0} onKeyDown={onKey}>
+        <div className="table-wrap" ref={tableRef} tabIndex={0} onKeyDown={onKey} onScroll={onScroll}>
           <table className="grid">
             <thead>
               <tr>
@@ -154,15 +208,19 @@ export function History({ detail }: { detail: SessionDetail }) {
                 <Th k="status" sort={sort} setSort={setSort} className="num">status</Th>
                 <Th k="bytes" sort={sort} setSort={setSort} className="num">size</Th>
                 <Th k="duration_ms" sort={sort} setSort={setSort} className="num">time</Th>
-                <Th k="initiator" sort={sort} setSort={setSort}>initiator</Th>
+                <Th k="initiator" sort={sort} setSort={setSort} className="col-init">initiator</Th>
               </tr>
             </thead>
             <tbody>
               {shown.map((r) => (
                 <tr
                   key={r.seq}
+                  data-seq={r.seq}
                   className={`${r.seq === selected ? "is-on" : ""}${!r.allowed ? " is-refused" : ""}`}
-                  onClick={() => setSelected(r.seq === selected ? null : r.seq)}
+                  onClick={() => {
+                    tableRef.current?.focus({ preventScroll: true });
+                    onSelect(r.seq === selected ? null : r.seq);
+                  }}
                 >
                   <td className="num dim">{r.seq}</td>
                   <td className="cell-verb">{r.verb ?? ""}</td>
@@ -180,7 +238,7 @@ export function History({ detail }: { detail: SessionDetail }) {
                   </td>
                   <td className="num dim">{r.bytes !== undefined ? fmtBytes(r.bytes) : ""}</td>
                   <td className="num dim">{r.duration_ms !== undefined ? fmtMs(r.duration_ms) : ""}</td>
-                  <td className="dim">{r.initiator}</td>
+                  <td className="dim col-init">{r.initiator}</td>
                 </tr>
               ))}
             </tbody>
@@ -198,20 +256,25 @@ export function History({ detail }: { detail: SessionDetail }) {
             the oldest {omitted.toLocaleString()} are not shown; <code>h5i websec requests --session {name}</code> has them all
           </span>
         ) : null}
-        <span style={{ marginLeft: "auto" }}>arrows move, Esc closes</span>
+        <span style={{ marginLeft: "auto" }}>
+          {detail.state === "live" && readAt !== null ? `read at ${localClock(readAt)} · ` : ""}arrows move, Esc closes
+        </span>
       </div>
     </div>
   );
 
   if (!selectedRow) return table;
+  // The inspector holds its own width, so opening it takes a fixed slice and
+  // the table keeps the rest instead of a share of the window.
   return (
     <Split
-      id="history"
-      initial={Math.max(360, Math.round(window.innerWidth * 0.42))}
-      min={280}
-      max={1400}
+      id="history-inspector"
+      sized="second"
+      initial={460}
+      min={320}
+      max={1000}
       first={table}
-      second={<Inspector row={selectedRow} detail={detail} onClose={() => setSelected(null)} />}
+      second={<Inspector row={selectedRow} detail={detail} nav={nav} onClose={() => onSelect(null)} />}
     />
   );
 }
@@ -285,6 +348,15 @@ function compare(a: HistoryRow, b: HistoryRow, key: SortKey): number {
   if (y === undefined) return 1;
   if (typeof x === "number" && typeof y === "number") return x - y || a.seq - b.seq;
   return String(x).localeCompare(String(y)) || a.seq - b.seq;
+}
+
+/** Sets the filter History opens with, for a link from another tab. */
+export function setSessionFilter(id: string, q: string) {
+  try {
+    window.sessionStorage.setItem(`${FILTER_KEY}.${id}`, q);
+  } catch {
+    // The link still opens History, unfiltered.
+  }
 }
 
 function sessionFilter(id: string): string {
@@ -364,7 +436,17 @@ function FilterHelp({ onClose }: { onClose: () => void }) {
  * console never renders it (design C2); what it renders instead is the chain
  * of decisions that produced the fetch, which is the part a proxy cannot show.
  */
-function Inspector({ row, detail, onClose }: { row: HistoryRow; detail: SessionDetail; onClose: () => void }) {
+function Inspector({
+  row,
+  detail,
+  nav,
+  onClose,
+}: {
+  row: HistoryRow;
+  detail: SessionDetail;
+  nav: SessionNav;
+  onClose: () => void;
+}) {
   const name = detail.name ?? detail.id;
   const action = row.action_seq !== undefined ? detail.actions.find((a) => a.seq === row.action_seq) : undefined;
   const kept = detail.captured !== null;
@@ -412,7 +494,13 @@ function Inspector({ row, detail, onClose }: { row: HistoryRow; detail: SessionD
                   <span className="trace-when">{clockMs(action.at)}</span>
                   <br />
                   <span className="count">
-                    action #{action.seq}, which spent {action.requests.length} {plural(action.requests.length, "fetch", "fetches")}
+                    <button type="button" className="req-link is-text" onClick={() => nav.action(action.seq)}>
+                      action #{action.seq}
+                    </button>
+                    , which spent{" "}
+                    <button type="button" className="req-link is-text" onClick={() => nav.filter(`action:${action.seq}`)}>
+                      {action.requests.length} {plural(action.requests.length, "fetch", "fetches")}
+                    </button>
                   </span>
                 </span>
               </div>

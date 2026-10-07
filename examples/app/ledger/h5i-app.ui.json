@@ -1,0 +1,1981 @@
+{
+  "version": 1,
+  "title": "Ledger",
+  "description": "Accounts owned by the users of an organization: deposits, withdrawals and transfers that never create or lose money, with only the owner able to debit an account.",
+  "author": "Claude (agent-authored explanation; review before relying on it)",
+  "exclusions": [
+    "Who the caller really is: the theorems take the principal HmacAuth produces as given.",
+    "JSON decoding, reply rendering and HTTP status mapping are trusted shell code.",
+    "Faithfulness of the Charon and Aeneas translation and of the compiled Rust is trusted.",
+    "PostgreSQL semantics, SERIALIZABLE isolation, durability and the engine contract are assumptions; db_inv covers states produced through them.",
+    "Migrated, hand-edited or otherwise unreachable database states are outside the reachable set.",
+    "Deposits are refused once the lifetime deposit total would pass u64::MAX; no theorem promises deposits beyond that.",
+    "Idempotent retries, connection loss during COMMIT and token expiry are framework behavior, not ledger theorems.",
+    "Ownership never changing and sequences of commands as a whole are not stated (see the tutorial's exercises)."
+  ],
+  "nodes": [
+    {
+      "id": "g-conservation",
+      "kind": "guarantee",
+      "title": "Money is never created or lost",
+      "description": "In every state the ledger can reach, the balances of all accounts add up to exactly the total ever deposited minus the total ever withdrawn.",
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "g-command-effect",
+      "kind": "guarantee",
+      "title": "Each command moves the total by exactly its amount",
+      "description": "A successful deposit raises the sum of all balances by its amount, a successful withdrawal lowers it by its amount, and opening, transferring and listing leave it unchanged.",
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "g-total-fits",
+      "kind": "guarantee",
+      "title": "All balances together fit in a u64",
+      "description": "In every reachable state the sum of all balances is below 2^64, so any one balance, and any two balances added together, fit in a u64.",
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "g-no-overdraft",
+      "kind": "guarantee",
+      "title": "No account is overdrawn",
+      "description": "A withdrawal or transfer that succeeds never takes more than the debited account holds, so a balance never has to go below zero.",
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "g-owner-debits",
+      "kind": "guarantee",
+      "title": "Only the owner takes money out",
+      "description": "In every reachable state, if a successful command lowers an account's balance, the caller is that account's owner.",
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "g-distinct-transfer",
+      "kind": "guarantee",
+      "title": "A transfer moves money between two different accounts",
+      "description": "A successful transfer has different source and destination accounts, debits the caller's source by the amount and credits the destination by the same amount.",
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "g-new-account",
+      "kind": "guarantee",
+      "title": "New accounts start empty and belong to the caller",
+      "description": "Opening an account writes an account with the next id, owned by the caller, with balance 0, and moves the id counter past it. In a state satisfying the invariant, no existing account already has that id.",
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "g-no-crash",
+      "kind": "guarantee",
+      "title": "No command makes the kernel crash",
+      "description": "For every caller, snapshot and command, the extracted kernel returns a reply or a refusal: no panic, arithmetic overflow or bad index.",
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "g-withdraw-accepted",
+      "kind": "guarantee",
+      "title": "Owners can withdraw up to their balance",
+      "description": "In a reachable state, the owner of an existing account can withdraw any amount up to its balance. The kernel's overflow check on total withdrawals never refuses it.",
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "g-transfer-accepted",
+      "kind": "guarantee",
+      "title": "Owners can transfer up to their balance",
+      "description": "In a reachable state, the owner of an existing account can transfer any amount up to its balance to any other existing account. The overflow check on the destination never refuses it.",
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "g-deposit-accepted",
+      "kind": "guarantee",
+      "title": "Owners can deposit until the lifetime ceiling",
+      "description": "In a reachable state, the owner of an existing account can deposit any amount, as long as the total ever deposited stays below 2^64. The check on the account's own balance never refuses it.",
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "g-commit-matches-spec",
+      "kind": "guarantee",
+      "title": "Committing a write set does what the specification says",
+      "description": "The kernel's apply turns a snapshot and a write set into exactly the state Spec.applyAll describes, as long as the accounts vector cannot overflow its index type.",
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "g-db-invariant",
+      "kind": "guarantee",
+      "title": "Stored ledgers keep the invariant",
+      "description": "For a ledger stored in PostgreSQL through accepted commands, interleaved with other tenants' commits, the stored state satisfies the invariant, and so does every snapshot a later load decodes.",
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "g-session-runs",
+      "kind": "guarantee",
+      "title": "The tutorial session runs as shown",
+      "description": "The tutorial's session (Alice and Bob open accounts, Alice deposits 100 and sends 30 to Bob) is accepted by the extracted kernel and ends in a reachable state holding 70 + 30 with 100 deposited.",
+      "sources": [],
+      "excludes": []
+    },
+    {
+      "id": "t-conservation",
+      "kind": "theorem",
+      "title": "Conservation",
+      "description": "If a state is reachable, the total of all balances plus the total withdrawn equals the total deposited.",
+      "symbol": "ledger_kernel.Theorems.conservation",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem conservation",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-reachable-inv",
+      "kind": "theorem",
+      "title": "Invariant in every reachable state",
+      "description": "Every reachable state satisfies Inv: ids below the counter, conservation, and total deposits below 2^64. Proved by induction on Reachable.",
+      "symbol": "ledger_kernel.Theorems.reachable_inv",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem reachable_inv",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-init-inv",
+      "kind": "theorem",
+      "title": "The empty ledger satisfies the invariant",
+      "description": "The initial state, with no accounts and all counters 0, satisfies Inv.",
+      "symbol": "ledger_kernel.Theorems.init_inv",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem init_inv",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-inv-preserved",
+      "kind": "theorem",
+      "title": "Successful commands keep the invariant",
+      "description": "If the snapshot satisfies Inv and transition accepts a command with write set ws, then the state applyAll computes from ws satisfies Inv.",
+      "symbol": "ledger_kernel.Theorems.inv_preserved",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem inv_preserved",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-total-after",
+      "kind": "theorem",
+      "title": "Effect of a command on the total",
+      "description": "If the snapshot satisfies Inv and a command succeeds, a deposit adds its amount to the total, a withdrawal removes its amount, and every other command keeps the total.",
+      "symbol": "ledger_kernel.Theorems.total_after",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem total_after",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-total-fits",
+      "kind": "theorem",
+      "title": "Total fits in a u64",
+      "description": "If a state is reachable, the total of all balances is below 2^64.",
+      "symbol": "ledger_kernel.Theorems.total_fits",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem total_fits",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-total-put",
+      "kind": "theorem",
+      "title": "Writing one account changes the total by the difference",
+      "description": "After writing account a, the new total plus the balance of the account it replaced (0 if none) equals the old total plus a's balance. No subtraction appears.",
+      "symbol": "ledger_kernel.Theorems.total_put",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem total_put",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-findacc-put",
+      "kind": "theorem",
+      "title": "Looking up an account after a write",
+      "description": "After writing account a, looking up id n returns a if a has id n, and the earlier result otherwise.",
+      "symbol": "ledger_kernel.Theorems.findAcc_put",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem findAcc_put",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-findacc-fresh",
+      "kind": "theorem",
+      "title": "The next id is unused",
+      "description": "If a state satisfies Inv, no account has the id held by the counter.",
+      "symbol": "ledger_kernel.Theorems.findAcc_fresh",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem findAcc_fresh",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-balance-le",
+      "kind": "theorem",
+      "title": "One balance is bounded by what is left",
+      "description": "If a state satisfies Inv, any one account's balance plus the total withdrawn is at most the total deposited.",
+      "symbol": "ledger_kernel.Theorems.balance_le",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem balance_le",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-two-balances-fit",
+      "kind": "theorem",
+      "title": "Two balances fit together",
+      "description": "If a state satisfies Inv and two lookups with different ids find accounts, their balances add up to less than 2^64.",
+      "symbol": "ledger_kernel.Theorems.two_balances_fit",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem two_balances_fit",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-writes-of",
+      "kind": "theorem",
+      "title": "What a successful command writes",
+      "description": "If transition accepts a command, it is one of five cases: List writes nothing, Open adds a new empty account, and Deposit, Withdraw and Transfer write the accounts and counters the command lemmas describe.",
+      "symbol": "ledger_kernel.Theorems.writes_of",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem writes_of",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-transition-total",
+      "kind": "theorem",
+      "title": "The kernel always returns",
+      "description": "For every principal, snapshot and command, transition returns ok with some outcome. It holds on any snapshot, reachable or not.",
+      "symbol": "ledger_kernel.Theorems.transition_total",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem transition_total",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-debit-by-owner",
+      "kind": "theorem",
+      "title": "A lowered balance belongs to the caller",
+      "description": "If the snapshot satisfies Inv, a command succeeds, and account n's balance after its writes is lower than before, the account's owner is the caller.",
+      "symbol": "ledger_kernel.Theorems.debit_by_owner",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem debit_by_owner",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-only-owner-debits",
+      "kind": "theorem",
+      "title": "Only the owner debits",
+      "description": "The same statement as debit_by_owner, with the hypothesis Inv replaced by reachability of the snapshot.",
+      "symbol": "ledger_kernel.Theorems.only_owner_debits",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem only_owner_debits",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-withdraw-succeeds",
+      "kind": "theorem",
+      "title": "Withdrawals within the balance succeed",
+      "description": "If the snapshot is reachable, account id exists, the caller owns it and the amount is at most its balance, then the withdrawal is accepted with some write set and reply.",
+      "symbol": "ledger_kernel.Theorems.withdraw_succeeds",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem withdraw_succeeds",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-transfer-succeeds",
+      "kind": "theorem",
+      "title": "Transfers within the balance succeed",
+      "description": "If the snapshot is reachable, source and destination differ and both exist, the caller owns the source and the amount is at most its balance, then the transfer is accepted.",
+      "symbol": "ledger_kernel.Theorems.transfer_succeeds",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem transfer_succeeds",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-deposit-succeeds",
+      "kind": "theorem",
+      "title": "Deposits below the ceiling succeed",
+      "description": "If the snapshot is reachable, the account exists, the caller owns it, and total deposits plus the amount stay below 2^64, then the deposit is accepted.",
+      "symbol": "ledger_kernel.Theorems.deposit_succeeds",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem deposit_succeeds",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-open-spec",
+      "kind": "theorem",
+      "title": "What opening an account writes",
+      "description": "If open succeeds, it writes an account with id next_id, the caller as owner and balance 0, then the ledger row with next_id increased by one.",
+      "symbol": "ledger_kernel.Commands.open_spec",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Commands.lean",
+          "anchor": "theorem open_spec",
+          "digest": "4dd46e0285c6aa5d3e49ac7e64856368caf4aaa6188a0270c3b0d9219a061ae8"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-deposit-spec",
+      "kind": "theorem",
+      "title": "What a deposit writes",
+      "description": "If deposit succeeds, the account exists and the caller owns it, and it writes the account with its balance raised by the amount and the ledger row with deposits raised by the amount.",
+      "symbol": "ledger_kernel.Commands.deposit_spec",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Commands.lean",
+          "anchor": "theorem deposit_spec",
+          "digest": "4dd46e0285c6aa5d3e49ac7e64856368caf4aaa6188a0270c3b0d9219a061ae8"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-withdraw-spec",
+      "kind": "theorem",
+      "title": "What a withdrawal writes",
+      "description": "If withdraw succeeds, the account exists, the caller owns it and the amount is at most its balance, and it writes the lowered balance and the raised withdrawal total.",
+      "symbol": "ledger_kernel.Commands.withdraw_spec",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Commands.lean",
+          "anchor": "theorem withdraw_spec",
+          "digest": "4dd46e0285c6aa5d3e49ac7e64856368caf4aaa6188a0270c3b0d9219a061ae8"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-transfer-spec",
+      "kind": "theorem",
+      "title": "What a transfer writes",
+      "description": "If transfer succeeds, source and destination differ, both exist, the caller owns the source and the amount is at most its balance, and it writes the source lowered and the destination raised by the amount.",
+      "symbol": "ledger_kernel.Commands.transfer_spec",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Commands.lean",
+          "anchor": "theorem transfer_spec",
+          "digest": "4dd46e0285c6aa5d3e49ac7e64856368caf4aaa6188a0270c3b0d9219a061ae8"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-deposit-ok",
+      "kind": "theorem",
+      "title": "When a deposit succeeds",
+      "description": "If the caller owns an existing account, total deposits plus the amount fit below 2^64, and the account's balance is at most total deposits, deposit returns Ok.",
+      "symbol": "ledger_kernel.Commands.deposit_ok",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Commands.lean",
+          "anchor": "theorem deposit_ok",
+          "digest": "4dd46e0285c6aa5d3e49ac7e64856368caf4aaa6188a0270c3b0d9219a061ae8"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-withdraw-ok",
+      "kind": "theorem",
+      "title": "When a withdrawal succeeds",
+      "description": "If the caller owns an existing account, the amount is at most its balance, and total withdrawals plus that balance fit below 2^64, withdraw returns Ok.",
+      "symbol": "ledger_kernel.Commands.withdraw_ok",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Commands.lean",
+          "anchor": "theorem withdraw_ok",
+          "digest": "4dd46e0285c6aa5d3e49ac7e64856368caf4aaa6188a0270c3b0d9219a061ae8"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-transfer-ok",
+      "kind": "theorem",
+      "title": "When a transfer succeeds",
+      "description": "If the accounts differ and exist, the caller owns the source, the amount is covered, and the two balances add up to less than 2^64, transfer returns Ok.",
+      "symbol": "ledger_kernel.Commands.transfer_ok",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Commands.lean",
+          "anchor": "theorem transfer_ok",
+          "digest": "4dd46e0285c6aa5d3e49ac7e64856368caf4aaa6188a0270c3b0d9219a061ae8"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-find-account-spec",
+      "kind": "theorem",
+      "title": "Account lookup is a list search",
+      "description": "find_account returns the first account in the vector whose id equals the requested id, as List.find? does.",
+      "symbol": "ledger_kernel.Commands.find_account_spec",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Commands.lean",
+          "anchor": "theorem find_account_spec",
+          "digest": "4dd46e0285c6aa5d3e49ac7e64856368caf4aaa6188a0270c3b0d9219a061ae8"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-apply-spec",
+      "kind": "theorem",
+      "title": "apply computes applyAll",
+      "description": "If the accounts vector length plus the write set length is below Usize.max, the kernel's apply returns a snapshot whose abstract state is applyAll of the old state and the writes.",
+      "symbol": "ledger_kernel.ApplyProofs.apply_spec",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Apply.lean",
+          "anchor": "theorem apply_spec",
+          "digest": "6570ab28bbc96962381df606cb0edad0bf26b3d02b8188750cf051c672a88f20"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-stored",
+      "kind": "theorem",
+      "title": "The store holds what apply computes",
+      "description": "For any database history Served by the ledger's encoding, the database holds the rows of the modeled state, and decoding any rows a load lists gives a snapshot equal to that state up to row order.",
+      "symbol": "ledger_kernel.Storage.stored",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Storage.lean",
+          "anchor": "theorem stored",
+          "digest": "d37091c73553962acd4c9950b580744b7fd1061094fb30bfc041939e984b1cc7"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-db-inv",
+      "kind": "theorem",
+      "title": "Invariant on the database",
+      "description": "For a valid two-table schema with integer tenant ids and a PgServed history of Accepted write sets, the state satisfies Inv, and every snapshot decoded from a load satisfies Inv. This is the theorem the manifest requires.",
+      "symbol": "ledger_kernel.Storage.db_inv",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Storage.lean",
+          "anchor": "theorem db_inv",
+          "digest": "d37091c73553962acd4c9950b580744b7fd1061094fb30bfc041939e984b1cc7"
+        },
+        {
+          "path": "examples/app/ledger/h5i-app.toml",
+          "anchor": "theorems = [\"ledger_kernel.Storage.db_inv\"]",
+          "digest": "defbcc84cb20bf08bcb845a85565c8acf45d8823648fc72b5991dfbca896fd6f"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-transfer-alice",
+      "kind": "theorem",
+      "title": "Alice's transfer runs",
+      "description": "On the extracted kernel, Alice transferring 30 from account 0 to account 1 in state s3 is accepted and leads to s4. It shows only_owner_debits covers a debit that happens.",
+      "symbol": "ledger_kernel.Scenarios.transfer_alice",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Scenarios.lean",
+          "anchor": "theorem transfer_alice",
+          "digest": "4d4cfb1a5a52ad97fee775d84b9ca4e1755b9efe00219cd9f599957e3d84e81d"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-reachable-s4",
+      "kind": "theorem",
+      "title": "The session's final state is reachable",
+      "description": "s4 is reachable from the empty ledger through Alice's open, Bob's open, Alice's deposit and Alice's transfer, so every reachable-state theorem applies to it.",
+      "symbol": "ledger_kernel.Scenarios.reachable_s4",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Scenarios.lean",
+          "anchor": "theorem reachable_s4",
+          "digest": "4d4cfb1a5a52ad97fee775d84b9ca4e1755b9efe00219cd9f599957e3d84e81d"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-transfer-succeeds-s3",
+      "kind": "theorem",
+      "title": "transfer_succeeds applied to a concrete state",
+      "description": "Instantiates transfer_succeeds in state s3. It shows the theorem's hypotheses can all hold at once.",
+      "symbol": "ledger_kernel.Scenarios.transfer_succeeds_s3",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Scenarios.lean",
+          "anchor": "theorem transfer_succeeds_s3",
+          "digest": "4d4cfb1a5a52ad97fee775d84b9ca4e1755b9efe00219cd9f599957e3d84e81d"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "t-s4-conserved",
+      "kind": "theorem",
+      "title": "Session totals",
+      "description": "In s4 the accounts hold 100 in total and the ledger records 100 deposited, a concrete instance of conservation.",
+      "symbol": "ledger_kernel.Scenarios.s4_conserved",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Scenarios.lean",
+          "anchor": "theorem s4_conserved",
+          "digest": "4d4cfb1a5a52ad97fee775d84b9ca4e1755b9efe00219cd9f599957e3d84e81d"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "spec-state",
+      "kind": "specification",
+      "title": "Abstract ledger state",
+      "description": "St holds the id counter, total deposited and total withdrawn as natural numbers, plus the list of accounts. Snapshot.toSt reads a kernel snapshot into it.",
+      "symbol": "ledger_kernel.Spec.St",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Spec.lean",
+          "anchor": "structure St where",
+          "digest": "52ba3c19a07101971a53cd6a582f2a306e30ab7acb5096ef3d71e384e0626fd9"
+        },
+        {
+          "path": "examples/app/ledger/proofs/Spec.lean",
+          "anchor": "def Snapshot.toSt",
+          "digest": "52ba3c19a07101971a53cd6a582f2a306e30ab7acb5096ef3d71e384e0626fd9"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "spec-findacc",
+      "kind": "specification",
+      "title": "Account lookup",
+      "description": "findAcc returns the first account in the state whose id equals n.",
+      "symbol": "ledger_kernel.Spec.findAcc",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Spec.lean",
+          "anchor": "def findAcc",
+          "digest": "52ba3c19a07101971a53cd6a582f2a306e30ab7acb5096ef3d71e384e0626fd9"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "spec-total",
+      "kind": "specification",
+      "title": "Total money",
+      "description": "total is the sum of all account balances, as a natural number, so it cannot overflow.",
+      "symbol": "ledger_kernel.Spec.total",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Spec.lean",
+          "anchor": "def total",
+          "digest": "52ba3c19a07101971a53cd6a582f2a306e30ab7acb5096ef3d71e384e0626fd9"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "spec-applywrite",
+      "kind": "specification",
+      "title": "Meaning of one write",
+      "description": "PutAccount upserts the account by id; SetLedger replaces the three counters.",
+      "symbol": "ledger_kernel.Spec.applyWrite",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Spec.lean",
+          "anchor": "def applyWrite",
+          "digest": "52ba3c19a07101971a53cd6a582f2a306e30ab7acb5096ef3d71e384e0626fd9"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "spec-applyall",
+      "kind": "specification",
+      "title": "Meaning of a write set",
+      "description": "applyAll folds applyWrite over the writes in order.",
+      "symbol": "ledger_kernel.Spec.applyAll",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Spec.lean",
+          "anchor": "def applyAll",
+          "digest": "52ba3c19a07101971a53cd6a582f2a306e30ab7acb5096ef3d71e384e0626fd9"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "spec-inv",
+      "kind": "specification",
+      "title": "Ledger invariant",
+      "description": "Inv has three fields: every account id is below the counter, total plus withdrawn equals deposited, and deposited is below 2^64. Several theorems take it as a hypothesis on the snapshot before a command.",
+      "symbol": "ledger_kernel.Spec.Inv",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Spec.lean",
+          "anchor": "structure Inv",
+          "digest": "52ba3c19a07101971a53cd6a582f2a306e30ab7acb5096ef3d71e384e0626fd9"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "spec-init",
+      "kind": "specification",
+      "title": "Empty ledger",
+      "description": "init has counter 0, nothing deposited or withdrawn, and no accounts.",
+      "symbol": "ledger_kernel.Spec.init",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Spec.lean",
+          "anchor": "def init",
+          "digest": "52ba3c19a07101971a53cd6a582f2a306e30ab7acb5096ef3d71e384e0626fd9"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "spec-storage-app",
+      "kind": "specification",
+      "title": "Ledger encoding for the store",
+      "description": "app ties the abstract state to tables: enc lays out the accounts table and the single ledger row, and sqlA turns each write into one table upsert.",
+      "symbol": "ledger_kernel.Storage.app",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Storage.lean",
+          "anchor": "def app",
+          "digest": "d37091c73553962acd4c9950b580744b7fd1061094fb30bfc041939e984b1cc7"
+        },
+        {
+          "path": "examples/app/ledger/proofs/Storage.lean",
+          "anchor": "def enc",
+          "digest": "d37091c73553962acd4c9950b580744b7fd1061094fb30bfc041939e984b1cc7"
+        },
+        {
+          "path": "examples/app/ledger/proofs/Storage.lean",
+          "anchor": "def sqlA",
+          "digest": "d37091c73553962acd4c9950b580744b7fd1061094fb30bfc041939e984b1cc7"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "spec-accepted",
+      "kind": "specification",
+      "title": "Accepted write sets",
+      "description": "A write set is Accepted for a snapshot when some principal and command make transition return it with Ok. db_inv is stated over histories of such write sets.",
+      "symbol": "ledger_kernel.Storage.Accepted",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Storage.lean",
+          "anchor": "def Accepted",
+          "digest": "d37091c73553962acd4c9950b580744b7fd1061094fb30bfc041939e984b1cc7"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "spec-dbinv",
+      "kind": "specification",
+      "title": "Database invariant",
+      "description": "DbInv is Inv together with the id counter fitting in 2^64, the bound the BIGINT column needs.",
+      "symbol": "ledger_kernel.Storage.DbInv",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Storage.lean",
+          "anchor": "def DbInv",
+          "digest": "d37091c73553962acd4c9950b580744b7fd1061094fb30bfc041939e984b1cc7"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "spec-runs",
+      "kind": "specification",
+      "title": "A scenario step",
+      "description": "Runs s a c s' says transition by a on c in s succeeds and its writes turn s into s'.",
+      "symbol": "ledger_kernel.Scenarios.Runs",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Scenarios.lean",
+          "anchor": "def Runs",
+          "digest": "4d4cfb1a5a52ad97fee775d84b9ca4e1755b9efe00219cd9f599957e3d84e81d"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "a-reachable",
+      "kind": "assumption",
+      "title": "Reachable state",
+      "description": "The state comes from the empty ledger through write sets the kernel accepted. A snapshot edited by hand, migrated or corrupted is not automatically reachable.",
+      "symbol": "ledger_kernel.Spec.Reachable",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Spec.lean",
+          "anchor": "inductive Reachable",
+          "digest": "52ba3c19a07101971a53cd6a582f2a306e30ab7acb5096ef3d71e384e0626fd9"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "a-inv-before",
+      "kind": "assumption",
+      "title": "The invariant holds before the command",
+      "description": "total_after, inv_preserved and debit_by_owner assume Inv on the snapshot the command runs on. Reachability supplies it through reachable_inv.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem total_after",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        },
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "theorem inv_preserved",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "a-deposit-ceiling",
+      "kind": "assumption",
+      "title": "Deposits stay below the ceiling",
+      "description": "deposit_succeeds keeps the hypothesis that total deposits plus the amount are below 2^64. Unlike the other overflow checks, this one can fire in a reachable state.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Theorems.lean",
+          "anchor": "(ho : q.owner = a.user) (hd : s.ledger.deposited.val + amt.val < 2 ^ 64) :",
+          "digest": "e0053320fbaa6d6fd635b936dfe3ffc48a50e390405c70018cc08710acc9878e"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "a-usize",
+      "kind": "assumption",
+      "title": "The accounts vector does not overflow",
+      "description": "apply_spec assumes the accounts vector length plus the write set length is below Usize.max, since each write can append one row.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Apply.lean",
+          "anchor": "(h : s.accounts.length + ws.length < Usize.max)",
+          "digest": "6570ab28bbc96962381df606cb0edad0bf26b3d02b8188750cf051c672a88f20"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "a-pg-history",
+      "kind": "assumption",
+      "title": "Valid schema and served history",
+      "description": "db_inv assumes a valid schema of two tables matching the key layout, integer tenant values, and a database produced by PgServed: commits of Accepted write sets through the compiled SQL. These are H5iAppLib definitions, outside the hand-written files.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Storage.lean",
+          "anchor": "(hkl : Pg.klOf ts = kl) (hlen : ts.length = 2)",
+          "digest": "d37091c73553962acd4c9950b580744b7fd1061094fb30bfc041939e984b1cc7"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "x-no-overdraft",
+      "kind": "counterexample",
+      "title": "Overdraft is refused",
+      "description": "In s3, Alice withdrawing 101 from her balance of 100 returns Insufficient.",
+      "symbol": "ledger_kernel.Scenarios.no_overdraft",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Scenarios.lean",
+          "anchor": "theorem no_overdraft",
+          "digest": "4d4cfb1a5a52ad97fee775d84b9ca4e1755b9efe00219cd9f599957e3d84e81d"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "x-bob-withdraw",
+      "kind": "counterexample",
+      "title": "Bob cannot withdraw from Alice's account",
+      "description": "In s3, Bob withdrawing 5 from Alice's account 0 returns Forbidden.",
+      "symbol": "ledger_kernel.Scenarios.bob_cannot_withdraw",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Scenarios.lean",
+          "anchor": "theorem bob_cannot_withdraw",
+          "digest": "4d4cfb1a5a52ad97fee775d84b9ca4e1755b9efe00219cd9f599957e3d84e81d"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "x-bob-transfer",
+      "kind": "counterexample",
+      "title": "Bob cannot transfer out of Alice's account",
+      "description": "In s3, Bob transferring 5 from Alice's account 0 to account 1 returns Forbidden.",
+      "symbol": "ledger_kernel.Scenarios.bob_cannot_transfer",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Scenarios.lean",
+          "anchor": "theorem bob_cannot_transfer",
+          "digest": "4d4cfb1a5a52ad97fee775d84b9ca4e1755b9efe00219cd9f599957e3d84e81d"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "x-self-transfer",
+      "kind": "counterexample",
+      "title": "Self transfer is refused",
+      "description": "In s3, Alice transferring 5 from account 0 to account 0 returns SameAccount. Without this refusal the account would gain the amount, as the tutorial's bug section shows.",
+      "symbol": "ledger_kernel.Scenarios.no_self_transfer",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Scenarios.lean",
+          "anchor": "theorem no_self_transfer",
+          "digest": "4d4cfb1a5a52ad97fee775d84b9ca4e1755b9efe00219cd9f599957e3d84e81d"
+        },
+        {
+          "path": "examples/app/ledger/kernel/src/lib.rs",
+          "anchor": "if src == dst {",
+          "digest": "67847cd77bc1f6cba26ea91cf637295b924637a85de8d7b3c967c550a99cb6e4"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "x-deposit-overflow",
+      "kind": "counterexample",
+      "title": "The deposit ceiling is real",
+      "description": "In reachable state s3, Alice depositing u64::MAX returns Overflow. The acceptance guarantee for deposits cannot drop its ceiling hypothesis.",
+      "symbol": "ledger_kernel.Scenarios.deposit_overflow",
+      "sources": [
+        {
+          "path": "examples/app/ledger/proofs/Scenarios.lean",
+          "anchor": "theorem deposit_overflow",
+          "digest": "4d4cfb1a5a52ad97fee775d84b9ca4e1755b9efe00219cd9f599957e3d84e81d"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "b-auth",
+      "kind": "boundary",
+      "title": "Authenticated caller",
+      "description": "HmacAuth turns a bearer token into the principal (org, user) the kernel receives. The theorems hold for whatever principal arrives; they do not establish that it is the person who sent the request or that the signing secret stays private.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/server/src/main.rs",
+          "anchor": "HmacAuth::<Ledger>::new(secret, principal)",
+          "digest": "784163a31193ddc1c5bb85d1eaf759bcf3547584e7b843957d8aea4d50435bdd"
+        },
+        {
+          "path": "examples/app/ledger/server/src/lib.rs",
+          "anchor": "pub fn principal(",
+          "digest": "a22179291d51d95677570860482938752921487b11e468a4673ac121aca8e9ce"
+        }
+      ],
+      "excludes": [
+        "Token theft, secret leakage and expiry clock correctness."
+      ]
+    },
+    {
+      "id": "b-tenant",
+      "kind": "boundary",
+      "title": "Tenant is the organization",
+      "description": "Each organization is a separate ledger: the engine loads and writes the tenant Kernel::tenant returns, here the principal's org. Theorems speak about one tenant's state.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/server/src/lib.rs",
+          "anchor": "fn tenant(actor",
+          "digest": "a22179291d51d95677570860482938752921487b11e468a4673ac121aca8e9ce"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "b-json",
+      "kind": "boundary",
+      "title": "JSON command decoding",
+      "description": "The shell decodes a tagged JSON command with unknown fields denied and renames from/to to src/dst. That this mapping matches what the client meant is trusted, not proven.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/server/src/lib.rs",
+          "anchor": "enum CommandJson",
+          "digest": "a22179291d51d95677570860482938752921487b11e468a4673ac121aca8e9ce"
+        },
+        {
+          "path": "examples/app/ledger/server/src/lib.rs",
+          "anchor": "fn decode_command(",
+          "digest": "a22179291d51d95677570860482938752921487b11e468a4673ac121aca8e9ce"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "b-extraction",
+      "kind": "boundary",
+      "title": "Extraction fidelity",
+      "description": "The theorems are about the Lean translation of the kernel produced by Charon and Aeneas. That the compiled Rust behaves like that translation, and that Lean's checker is sound, is trusted.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/h5i-app.toml",
+          "anchor": "start-from = [\"transition\"]",
+          "digest": "defbcc84cb20bf08bcb845a85565c8acf45d8823648fc72b5991dfbca896fd6f"
+        },
+        {
+          "path": "examples/app/ledger/TUTORIAL.md",
+          "anchor": "The theorems cover the kernel as translated by Aeneas",
+          "digest": "87067dea4708b38ddac205acaeff09af23345948a2f061a72b70bd1ff4441540"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "b-u64",
+      "kind": "boundary",
+      "title": "u64 counters",
+      "description": "Balances and counters are u64. Total deposits are a lifetime counter, so once it nears 2^64 every deposit is refused even if much was withdrawn. A wider counter type would move the limit.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/TUTORIAL.md",
+          "anchor": "## Limits of the proofs",
+          "digest": "87067dea4708b38ddac205acaeff09af23345948a2f061a72b70bd1ff4441540"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "b-serializable",
+      "kind": "boundary",
+      "title": "Serializable commits and the engine contract",
+      "description": "The framework runs every request through transition in one SERIALIZABLE PostgreSQL transaction, so two concurrent transfers from one account cannot both see the old balance. Reachable-state theorems apply to the running service only through this contract and PostgreSQL behaving as modeled.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/TUTORIAL.md",
+          "anchor": "`transition` in a SERIALIZABLE transaction",
+          "digest": "87067dea4708b38ddac205acaeff09af23345948a2f061a72b70bd1ff4441540"
+        }
+      ],
+      "excludes": [
+        "Database migrations and externally edited rows."
+      ]
+    },
+    {
+      "id": "b-deployment",
+      "kind": "boundary",
+      "title": "Deployment and credentials",
+      "description": "The server reads DATABASE_URL and H5I_APP_SECRET from its environment and installs the schema at startup. Restricting who else can write the tables is a deployment matter.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/server/src/main.rs",
+          "anchor": "let url = std::env::var(\"DATABASE_URL\")?;",
+          "digest": "784163a31193ddc1c5bb85d1eaf759bcf3547584e7b843957d8aea4d50435bdd"
+        },
+        {
+          "path": "examples/app/ledger/server/src/main.rs",
+          "anchor": "engine.install_schema().await?;",
+          "digest": "784163a31193ddc1c5bb85d1eaf759bcf3547584e7b843957d8aea4d50435bdd"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "b-idempotency",
+      "kind": "boundary",
+      "title": "Idempotent retries",
+      "description": "Stored replies for retries with an Idempotency-Key are keyed by the user and fingerprinted with the command's Debug text. Their correctness is trusted framework behavior, not a ledger theorem.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/server/src/lib.rs",
+          "anchor": "impl ReplyCodec<Ledger> for LedgerStore",
+          "digest": "a22179291d51d95677570860482938752921487b11e468a4673ac121aca8e9ce"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "b-reply",
+      "kind": "boundary",
+      "title": "Reply and error rendering",
+      "description": "The shell maps kernel replies to JSON and refusals to HTTP status codes, for example Insufficient to 409 insufficient_funds. The mapping itself is trusted.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/server/src/lib.rs",
+          "anchor": "fn encode_reply(",
+          "digest": "a22179291d51d95677570860482938752921487b11e468a4673ac121aca8e9ce"
+        },
+        {
+          "path": "examples/app/ledger/server/src/lib.rs",
+          "anchor": "fn encode_error(",
+          "digest": "a22179291d51d95677570860482938752921487b11e468a4673ac121aca8e9ce"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "i-transition",
+      "kind": "implementation",
+      "title": "Kernel transition",
+      "description": "Dispatches Open, Deposit, Withdraw, Transfer and List to their functions, returning writes and a reply, or a refusal that commits nothing.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/kernel/src/lib.rs",
+          "anchor": "pub fn transition(",
+          "digest": "67847cd77bc1f6cba26ea91cf637295b924637a85de8d7b3c967c550a99cb6e4"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "i-open",
+      "kind": "implementation",
+      "title": "open",
+      "description": "Refuses with Overflow when next_id is u64::MAX, otherwise writes the new empty account and the advanced counter.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/kernel/src/lib.rs",
+          "anchor": "fn open(user",
+          "digest": "67847cd77bc1f6cba26ea91cf637295b924637a85de8d7b3c967c550a99cb6e4"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "i-deposit",
+      "kind": "implementation",
+      "title": "deposit",
+      "description": "Looks up the account, refuses non-owners, checks total deposits and the balance for overflow, then writes the raised balance and deposit total.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/kernel/src/lib.rs",
+          "anchor": "fn deposit(user",
+          "digest": "67847cd77bc1f6cba26ea91cf637295b924637a85de8d7b3c967c550a99cb6e4"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "i-withdraw",
+      "kind": "implementation",
+      "title": "withdraw",
+      "description": "Looks up the account, refuses non-owners and amounts above the balance, checks the withdrawal total for overflow, then writes the lowered balance and withdrawal total. The manifest's mutant removes its owner check.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/kernel/src/lib.rs",
+          "anchor": "fn withdraw(user",
+          "digest": "67847cd77bc1f6cba26ea91cf637295b924637a85de8d7b3c967c550a99cb6e4"
+        },
+        {
+          "path": "examples/app/ledger/h5i-app.toml",
+          "anchor": "name = \"withdraw_from_others_account\"",
+          "digest": "defbcc84cb20bf08bcb845a85565c8acf45d8823648fc72b5991dfbca896fd6f"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "i-transfer",
+      "kind": "implementation",
+      "title": "transfer",
+      "description": "Refuses equal accounts, a missing or foreign source, an uncovered amount, a missing destination, and destination overflow, then writes both accounts.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/kernel/src/lib.rs",
+          "anchor": "fn transfer(user",
+          "digest": "67847cd77bc1f6cba26ea91cf637295b924637a85de8d7b3c967c550a99cb6e4"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "i-find-account",
+      "kind": "implementation",
+      "title": "find_account",
+      "description": "Linear search of the accounts vector by id.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/kernel/src/lib.rs",
+          "anchor": "pub fn find_account(",
+          "digest": "67847cd77bc1f6cba26ea91cf637295b924637a85de8d7b3c967c550a99cb6e4"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "i-schema",
+      "kind": "implementation",
+      "title": "Schema and generated apply",
+      "description": "schema! declares the Snapshot, the accounts and ledger tables, and generates apply, decode and the table writes from them.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/kernel/src/lib.rs",
+          "anchor": "h5i_app_schema::schema! {",
+          "digest": "67847cd77bc1f6cba26ea91cf637295b924637a85de8d7b3c967c550a99cb6e4"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "i-apply-write",
+      "kind": "implementation",
+      "title": "apply_write and sql_write",
+      "description": "apply_write upserts an account or replaces the ledger row in memory; sql_write emits the matching table upsert for the store.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/kernel/src/lib.rs",
+          "anchor": "fn apply_write(",
+          "digest": "67847cd77bc1f6cba26ea91cf637295b924637a85de8d7b3c967c550a99cb6e4"
+        },
+        {
+          "path": "examples/app/ledger/kernel/src/lib.rs",
+          "anchor": "fn sql_write(",
+          "digest": "67847cd77bc1f6cba26ea91cf637295b924637a85de8d7b3c967c550a99cb6e4"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "i-kernel-tests",
+      "kind": "implementation",
+      "title": "Kernel unit test",
+      "description": "Replays the tutorial session in Rust, including the refusals and a conservation check. A test, not a proof.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/kernel/src/lib.rs",
+          "anchor": "fn deposits_transfers_and_refusals()",
+          "digest": "67847cd77bc1f6cba26ea91cf637295b924637a85de8d7b3c967c550a99cb6e4"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "s-kernel-impl",
+      "kind": "implementation",
+      "title": "Server Kernel binding",
+      "description": "Wires the framework's Kernel trait to ledger_kernel: tenant from the org, transition and apply delegated unchanged.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/server/src/lib.rs",
+          "anchor": "impl Kernel for Ledger",
+          "digest": "a22179291d51d95677570860482938752921487b11e468a4673ac121aca8e9ce"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "s-store",
+      "kind": "implementation",
+      "title": "PostgreSQL store",
+      "description": "Loads a tenant's snapshot with the generated schema_load and writes a write set with schema_store, which runs the compiled table writes.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/server/src/lib.rs",
+          "anchor": "impl Store<Ledger> for LedgerStore",
+          "digest": "a22179291d51d95677570860482938752921487b11e468a4673ac121aca8e9ce"
+        },
+        {
+          "path": "examples/app/ledger/server/src/lib.rs",
+          "anchor": "async fn load(",
+          "digest": "a22179291d51d95677570860482938752921487b11e468a4673ac121aca8e9ce"
+        },
+        {
+          "path": "examples/app/ledger/server/src/lib.rs",
+          "anchor": "async fn write(",
+          "digest": "a22179291d51d95677570860482938752921487b11e468a4673ac121aca8e9ce"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "s-router",
+      "kind": "implementation",
+      "title": "HTTP routes",
+      "description": "Builds the axum router: GET /healthz, and POST /rpc from rpc_router, which authenticates the caller, decodes the JSON command and runs it through the engine.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/server/src/main.rs",
+          "anchor": "merge(rpc_router(app))",
+          "digest": "784163a31193ddc1c5bb85d1eaf759bcf3547584e7b843957d8aea4d50435bdd"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "s-engine",
+      "kind": "implementation",
+      "title": "PostgreSQL engine",
+      "description": "Creates the Engine over a connection pool in the ledger schema. It loads, runs transition, writes and commits each request in one transaction.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/server/src/main.rs",
+          "anchor": "Engine::<Ledger, LedgerStore>::new",
+          "digest": "784163a31193ddc1c5bb85d1eaf759bcf3547584e7b843957d8aea4d50435bdd"
+        }
+      ],
+      "excludes": []
+    },
+    {
+      "id": "s-pg-test",
+      "kind": "implementation",
+      "title": "Store agreement test",
+      "description": "Runs 400 random commands, some near u64::MAX, through PostgreSQL and the in-memory engine, compares replies and final states, and checks conservation. Needs a test database and skips without one.",
+      "sources": [
+        {
+          "path": "examples/app/ledger/server/tests/postgres.rs",
+          "anchor": "async fn store_agrees_with_apply()",
+          "digest": "62545b9bad91c2f70f2f9eca4cdc683dab17790fb840a06e9738d3535e5b2394"
+        }
+      ],
+      "excludes": []
+    }
+  ],
+  "edges": [
+    {
+      "from": "g-conservation",
+      "to": "t-conservation",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-conservation",
+      "to": "t-reachable-inv",
+      "kind": "via the invariant",
+      "view": "proof"
+    },
+    {
+      "from": "g-conservation",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-conservation",
+      "to": "spec-total",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-conservation",
+      "to": "b-serializable",
+      "kind": "applies to the service through",
+      "view": "proof"
+    },
+    {
+      "from": "g-conservation",
+      "to": "b-extraction",
+      "kind": "about the translated kernel",
+      "view": "proof"
+    },
+    {
+      "from": "g-command-effect",
+      "to": "t-total-after",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-command-effect",
+      "to": "a-inv-before",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-command-effect",
+      "to": "spec-total",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-command-effect",
+      "to": "t-total-put",
+      "kind": "key step",
+      "view": "proof"
+    },
+    {
+      "from": "g-total-fits",
+      "to": "t-total-fits",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-total-fits",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-total-fits",
+      "to": "spec-inv",
+      "kind": "bound from the fits field",
+      "view": "proof"
+    },
+    {
+      "from": "g-total-fits",
+      "to": "b-u64",
+      "kind": "about u64 counters",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-overdraft",
+      "to": "t-withdraw-spec",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-overdraft",
+      "to": "t-transfer-spec",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-overdraft",
+      "to": "x-no-overdraft",
+      "kind": "illustrated by refusal",
+      "view": "proof"
+    },
+    {
+      "from": "g-owner-debits",
+      "to": "t-only-owner-debits",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-owner-debits",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-owner-debits",
+      "to": "b-auth",
+      "kind": "caller identity from",
+      "view": "proof"
+    },
+    {
+      "from": "g-owner-debits",
+      "to": "x-bob-withdraw",
+      "kind": "illustrated by refusal",
+      "view": "proof"
+    },
+    {
+      "from": "g-owner-debits",
+      "to": "x-bob-transfer",
+      "kind": "illustrated by refusal",
+      "view": "proof"
+    },
+    {
+      "from": "g-owner-debits",
+      "to": "t-transfer-alice",
+      "kind": "nonvacuous: a debit that happens",
+      "view": "proof"
+    },
+    {
+      "from": "g-distinct-transfer",
+      "to": "t-transfer-spec",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-distinct-transfer",
+      "to": "x-self-transfer",
+      "kind": "illustrated by refusal",
+      "view": "proof"
+    },
+    {
+      "from": "g-distinct-transfer",
+      "to": "b-json",
+      "kind": "from and to decoded by",
+      "view": "proof"
+    },
+    {
+      "from": "g-new-account",
+      "to": "t-open-spec",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-new-account",
+      "to": "t-findacc-fresh",
+      "kind": "id is unused",
+      "view": "proof"
+    },
+    {
+      "from": "g-new-account",
+      "to": "a-inv-before",
+      "kind": "freshness assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-new-account",
+      "to": "b-u64",
+      "kind": "refused when the counter is u64::MAX",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-crash",
+      "to": "t-transition-total",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-no-crash",
+      "to": "b-extraction",
+      "kind": "about the translated kernel",
+      "view": "proof"
+    },
+    {
+      "from": "g-withdraw-accepted",
+      "to": "t-withdraw-succeeds",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-withdraw-accepted",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-withdraw-accepted",
+      "to": "t-balance-le",
+      "kind": "overflow bound from",
+      "view": "proof"
+    },
+    {
+      "from": "g-withdraw-accepted",
+      "to": "x-no-overdraft",
+      "kind": "bounded by",
+      "view": "proof"
+    },
+    {
+      "from": "g-withdraw-accepted",
+      "to": "x-bob-withdraw",
+      "kind": "bounded by",
+      "view": "proof"
+    },
+    {
+      "from": "g-transfer-accepted",
+      "to": "t-transfer-succeeds",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-transfer-accepted",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-transfer-accepted",
+      "to": "t-two-balances-fit",
+      "kind": "overflow bound from",
+      "view": "proof"
+    },
+    {
+      "from": "g-transfer-accepted",
+      "to": "t-transfer-succeeds-s3",
+      "kind": "hypotheses satisfiable",
+      "view": "proof"
+    },
+    {
+      "from": "g-transfer-accepted",
+      "to": "x-self-transfer",
+      "kind": "bounded by",
+      "view": "proof"
+    },
+    {
+      "from": "g-transfer-accepted",
+      "to": "x-bob-transfer",
+      "kind": "bounded by",
+      "view": "proof"
+    },
+    {
+      "from": "g-deposit-accepted",
+      "to": "t-deposit-succeeds",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-deposit-accepted",
+      "to": "a-reachable",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-deposit-accepted",
+      "to": "a-deposit-ceiling",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-deposit-accepted",
+      "to": "x-deposit-overflow",
+      "kind": "ceiling shown by",
+      "view": "proof"
+    },
+    {
+      "from": "g-deposit-accepted",
+      "to": "b-u64",
+      "kind": "limit from",
+      "view": "proof"
+    },
+    {
+      "from": "g-commit-matches-spec",
+      "to": "t-apply-spec",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-commit-matches-spec",
+      "to": "a-usize",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-commit-matches-spec",
+      "to": "spec-applyall",
+      "kind": "stated over",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-invariant",
+      "to": "t-db-inv",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-invariant",
+      "to": "t-stored",
+      "kind": "store holds the modeled state",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-invariant",
+      "to": "a-pg-history",
+      "kind": "assumes",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-invariant",
+      "to": "b-serializable",
+      "kind": "relies on",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-invariant",
+      "to": "b-deployment",
+      "kind": "relies on",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-invariant",
+      "to": "b-tenant",
+      "kind": "per tenant",
+      "view": "proof"
+    },
+    {
+      "from": "g-db-invariant",
+      "to": "s-pg-test",
+      "kind": "tested against PostgreSQL by",
+      "view": "proof"
+    },
+    {
+      "from": "g-session-runs",
+      "to": "t-reachable-s4",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-session-runs",
+      "to": "t-s4-conserved",
+      "kind": "proved by",
+      "view": "proof"
+    },
+    {
+      "from": "g-session-runs",
+      "to": "spec-runs",
+      "kind": "stated with",
+      "view": "proof"
+    },
+    {
+      "from": "g-session-runs",
+      "to": "i-kernel-tests",
+      "kind": "also replayed in Rust by",
+      "view": "proof"
+    },
+    {
+      "from": "t-open-spec",
+      "to": "i-open",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-deposit-spec",
+      "to": "i-deposit",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-withdraw-spec",
+      "to": "i-withdraw",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-transfer-spec",
+      "to": "i-transfer",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-deposit-ok",
+      "to": "i-deposit",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-withdraw-ok",
+      "to": "i-withdraw",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-transfer-ok",
+      "to": "i-transfer",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-find-account-spec",
+      "to": "i-find-account",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-writes-of",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-transition-total",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-inv-preserved",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-only-owner-debits",
+      "to": "i-transition",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-apply-spec",
+      "to": "i-schema",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "t-apply-spec",
+      "to": "i-apply-write",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "spec-applywrite",
+      "to": "i-apply-write",
+      "kind": "models",
+      "view": "proof"
+    },
+    {
+      "from": "spec-state",
+      "to": "i-schema",
+      "kind": "models",
+      "view": "proof"
+    },
+    {
+      "from": "t-stored",
+      "to": "s-store",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "spec-storage-app",
+      "to": "i-apply-write",
+      "kind": "models",
+      "view": "proof"
+    },
+    {
+      "from": "t-db-inv",
+      "to": "s-store",
+      "kind": "about extracted behavior",
+      "view": "proof"
+    },
+    {
+      "from": "spec-accepted",
+      "to": "i-transition",
+      "kind": "models",
+      "view": "proof"
+    },
+    {
+      "from": "t-conservation",
+      "to": "s-pg-test",
+      "kind": "checked on the final state by",
+      "view": "proof"
+    },
+    {
+      "from": "t-conservation",
+      "to": "i-kernel-tests",
+      "kind": "checked in a test by",
+      "view": "proof"
+    },
+    {
+      "from": "s-router",
+      "to": "b-auth",
+      "kind": "POST /rpc: bearer token to principal",
+      "view": "flow"
+    },
+    {
+      "from": "b-auth",
+      "to": "b-json",
+      "kind": "authenticated request body",
+      "view": "flow"
+    },
+    {
+      "from": "b-json",
+      "to": "s-engine",
+      "kind": "decoded command",
+      "view": "flow"
+    },
+    {
+      "from": "s-engine",
+      "to": "b-tenant",
+      "kind": "picks tenant from org",
+      "view": "flow"
+    },
+    {
+      "from": "b-tenant",
+      "to": "s-store",
+      "kind": "load tenant snapshot",
+      "view": "flow"
+    },
+    {
+      "from": "s-store",
+      "to": "s-kernel-impl",
+      "kind": "snapshot",
+      "view": "flow"
+    },
+    {
+      "from": "s-kernel-impl",
+      "to": "i-transition",
+      "kind": "actor, snapshot, command",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-open",
+      "kind": "Open",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-deposit",
+      "kind": "Deposit",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-withdraw",
+      "kind": "Withdraw",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "i-transfer",
+      "kind": "Transfer",
+      "view": "flow"
+    },
+    {
+      "from": "i-deposit",
+      "to": "i-find-account",
+      "kind": "looks up accounts",
+      "view": "flow"
+    },
+    {
+      "from": "i-withdraw",
+      "to": "i-find-account",
+      "kind": "looks up accounts",
+      "view": "flow"
+    },
+    {
+      "from": "i-transfer",
+      "to": "i-find-account",
+      "kind": "looks up accounts",
+      "view": "flow"
+    },
+    {
+      "from": "i-transition",
+      "to": "s-engine",
+      "kind": "write set and reply, or refusal",
+      "view": "flow"
+    },
+    {
+      "from": "s-engine",
+      "to": "i-apply-write",
+      "kind": "write set to table writes",
+      "view": "flow"
+    },
+    {
+      "from": "i-apply-write",
+      "to": "s-store",
+      "kind": "schema_store commits",
+      "view": "flow"
+    },
+    {
+      "from": "s-store",
+      "to": "b-serializable",
+      "kind": "one SERIALIZABLE transaction",
+      "view": "flow"
+    },
+    {
+      "from": "s-engine",
+      "to": "b-idempotency",
+      "kind": "keyed retries",
+      "view": "flow"
+    },
+    {
+      "from": "s-engine",
+      "to": "b-reply",
+      "kind": "reply or refusal",
+      "view": "flow"
+    },
+    {
+      "from": "b-deployment",
+      "to": "s-engine",
+      "kind": "DATABASE_URL and schema install",
+      "view": "flow"
+    },
+    {
+      "from": "b-deployment",
+      "to": "b-auth",
+      "kind": "H5I_APP_SECRET",
+      "view": "flow"
+    },
+    {
+      "from": "i-schema",
+      "to": "i-apply-write",
+      "kind": "generates apply and decode",
+      "view": "flow"
+    }
+  ]
+}

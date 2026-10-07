@@ -220,6 +220,15 @@ a {
   padding: 0 6px;
   border-radius: 9px;
 }
+.rail-badge.is-warn {
+  color: var(--amber);
+  background: var(--amber-bg);
+  padding: 0 6px;
+  border-radius: 9px;
+}
+.rail-foot-bad {
+  color: var(--accent-hi);
+}
 
 .rail-foot {
   margin-top: auto;
@@ -1015,6 +1024,19 @@ button.chip:hover {
   min-height: 0;
   overflow: auto;
 }
+/* The open row already says where the keyboard is. */
+.table-wrap:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+/* With the inspector open, the path keeps the room: the trace names the
+   initiator, and the host is in the inspector's URL. */
+.hist.is-split .col-init {
+  display: none;
+}
+.hist.is-split .grid .cell-host {
+  max-width: 120px;
+}
 table.grid {
   width: 100%;
   border-collapse: collapse;
@@ -1083,6 +1105,7 @@ table.grid {
 }
 .grid .cell-path {
   max-width: 0;
+  min-width: 140px;
   width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1361,6 +1384,18 @@ tr.is-refused .path-dir {
 }
 .tl-row:hover {
   background: var(--hover);
+}
+.tl-row {
+  cursor: pointer;
+}
+.tl-spent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
+}
+.tl-spent > .req-link:last-child {
+  margin-left: 6px;
 }
 .tl-row.is-on {
   background: var(--raised);
@@ -2723,4 +2758,59 @@ pre.render {
   margin: 6px 0 0;
   font-size: var(--fs-sm);
   color: var(--ink-2);
+}
+
+.cmd-copied {
+  flex-shrink: 0;
+  color: var(--green);
+  font-size: var(--fs-xs);
+}
+.req-link {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--cyan);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--cyan) 40%, transparent);
+  text-underline-offset: 2px;
+}
+.req-link.is-text {
+  font-family: var(--font-ui);
+}
+.req-link:hover {
+  text-decoration-color: var(--cyan);
+}
+
+.hist-fresh {
+  display: block;
+  width: 100%;
+  padding: 5px 12px;
+  font-size: var(--fs-xs);
+  color: var(--cyan);
+  background: var(--raised);
+  border-bottom: 1px solid var(--line);
+  text-align: center;
+}
+.hist-fresh:hover {
+  color: var(--ink);
+}
+
+.column-sort label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+}
+.column-sort select {
+  flex: 1;
+  padding: 4px 6px;
+  color: var(--ink-2);
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+.column-sort select:hover {
+  border-color: var(--line-strong);
 }

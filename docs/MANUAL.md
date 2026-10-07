@@ -163,7 +163,7 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 | [`h5i browser`](#h5i-browser) | Browser sessions: open one, drive it, capture what it fetched. |
 | [`h5i websec`](#h5i-websec) | Read, edit, resend and compare what a session sent. A plugin. |
 | [`h5i recon`](#h5i-recon) | What a target exposes, and how h5i knows. A plugin. |
-| [`h5i test`](#h5i-test) | Replay portable attack flows and check them with your own oracles. A plugin. |
+| [`h5i test`](#h5i-test) | Replay portable attack flows and check them with an `expect` verdict or your own oracle. A plugin. |
 | [`h5i project`](#h5i-project) | The durable engagement: notes, findings, evidence, checklists and reports. |
 | [`h5i box`](#boxes) | Create, run, inspect and export boxes. Optional containment. |
 | [`h5i ui`](#the-console) | The console: every session and box on this machine, read-only. |
@@ -809,6 +809,7 @@ h5i websec diff res_42 res_43                    # compare two answers
 h5i websec match res_43 --status 200 --contains ok
 h5i websec experiment ./plan.json                # many sends, folded to clusters
 h5i websec finding create --title … --evidence req_42
+h5i websec import-nuclei template.yaml           # print an h5i test; sends nothing
 ```
 
 Every verb prints text by default: the HTTP message itself under one line of
@@ -888,6 +889,10 @@ turn 300. The title, state and repro replace; notes and evidence accumulate.
 h5i asserts one thing here, that every message id cited is a message this
 session holds. Whether the claim is true is the agent's to say. Findings live
 beside the message store, owner-only, and are never in an export.
+
+`import-nuclei` does not send the template. It prints an [`h5i test`](#h5i-test)
+file; [Importing a Nuclei template](#importing-a-nuclei-template) says what that
+keeps and what it refuses.
 
 `h5i browser rpc --stdio` is the same verbs over one process: one JSON object
 per line in, one per line out, ids matched. A loop that sends hundreds of
@@ -1000,17 +1005,36 @@ terms.
 ## h5i test
 
 A finding that is fixed and never tested again comes back. `h5i test` replays a
-flow you wrote and asks *your* oracle whether the property still holds.
+flow you wrote and checks that a property you stated still holds.
 
 ```bash
 h5i plugin install test
 h5i test --target https://staging.example --openapi openapi.json
 ```
 
-It does not decide what a secure response means. There is no assertion
-language: `jq`, `grep`, `diff` or your application's own test client may be the
-oracle. Exit 0 means the property held, 1 means it did not, and anything else
-means the test could not decide. That third answer is never silently a pass.
+It does not decide what a secure response means. A test needs a verdict, and
+there are two. A step may carry `expect`, data over that step's response: one
+of `status`, `body`, `header`, `headers`, `response` or `dsl`, combined with
+`all`, `any` and `not`. A text value is a literal substring, or a regular
+expression written `regex:`. A `header` clause may add `contains` or `regex`.
+When the file names no oracle, exit 0 means every step `expect` held, 1 means
+one did not, and anything else means the test could not decide. That third
+answer is never silently a pass.
+
+`expect` reads the responses in the flow. It does not call out, and a clause it
+cannot express does not belong in it. Name an oracle for that property: `jq`,
+`grep`, `diff`, or the application's own test client. If the file names an
+oracle, the oracle decides, and a step `expect` does not replace it. A file
+with neither is refused, because nothing would decide.
+
+```yaml
+flow:
+  - send: probe
+    expect:
+      all:
+        - status: 200
+        - body: "regex:role.*admin"
+```
 
 ### Where tests live
 
@@ -1026,11 +1050,30 @@ Actors name isolated sessions and cookie jars, which is what makes a
 two-identity authorisation test portable. A step sends a template as an actor,
 may apply the websec edit language, saves its response under a stable name, and
 may extract a regex, JSON field, header or status for later steps. Cleanup runs
-after the oracle even when it fails.
+after the verdict even when it fails. A passing verdict with a failed cleanup
+is an error, not a pass.
+
+### Importing a Nuclei template
+
+`h5i websec import-nuclei template.yaml` reads one Nuclei template and prints
+an `h5i.test/v1` document. It sends nothing. Matchers become `expect`, and the
+command never writes an oracle. Save the document under `.h5i-tests/tests` and
+run it with `h5i test`, on the target and under the policy you would use for a
+test you wrote.
+
+A template that cannot be said as data is refused, and the refusal is the
+result. A `code`, `javascript`, `headless` or `flow` block runs code, so the
+command will not keep its HTTP requests and drop the rest. An `unsafe` raw
+request, an out-of-band matcher such as `interactsh`, a payload list stored in
+a file, and a path that is not relative to `{{BaseURL}}` are refused the same
+way: the printed file would not mean what the template means. An inline payload
+list becomes a sweep on that step, which passes if `expect` held for one
+combination.
 
 ### What the oracle is given
 
-The oracle runs with its working directory set to the test file's directory:
+The oracle runs with its working directory set to the test file's directory.
+This is the path taken when the file names an oracle.
 
 | Variable | What it holds |
 |---|---|
@@ -1041,17 +1084,18 @@ The oracle runs with its working directory set to the test file's directory:
 ### Coverage, and what it counts
 
 A send may declare the OpenAPI operation and mutation class it exercises. It
-counts only when the flow completed *and* the oracle returned 0 or 1; setup and
-cleanup sends without `covers` never count.
+counts only when the flow completed and the verdict decided: every `expect`
+held or one did not, or the oracle exited 0 or 1. Setup and cleanup sends
+without `covers` never count. An error is not a covered operation.
 
-With `--openapi`, h5i reports oracle-checked operation coverage, report-only
-unless `--min-coverage` is given. Without an OpenAPI denominator it reports no
-percentage and refuses a minimum rather than inventing one.
+With `--openapi`, h5i reports that coverage, report-only unless `--min-coverage`
+is given. Without an OpenAPI denominator it reports no percentage and refuses a
+minimum rather than inventing one.
 
 Every run writes `result.json`, `junit.xml` and per-response artifacts, into an
 owner-only directory because response bodies are evidence. Credential request
-headers are redacted from exported request JSON; response bodies stay exact for
-the oracle and are never uploaded.
+headers are redacted from exported request JSON; response bodies stay exact and
+are never uploaded.
 
 ---
 

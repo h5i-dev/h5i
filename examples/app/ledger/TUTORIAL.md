@@ -477,6 +477,38 @@ concurrent transfers from the same account must not both see the old
 balance. The JSON decoding, the store's agreement with `apply` (which the
 test checks) and the tools remain trusted.
 
+## See the guarantees in `h5i ui`
+
+`h5i-app.ui.json`, next to the manifest, maps what the ledger promises to the
+theorems above, the conditions they rest on and the Rust code. Record a check
+first, so that the console has the Lean declaration catalog and can draw the
+dependency edges between theorems:
+
+```
+h5i app check examples/app/ledger
+h5i ui
+```
+
+Open **Apps**, then this project. Some places to start:
+
+- **Money is never created or lost** leads to `conservation`, then through
+  `reachable_inv` to `inv_preserved` and `total_after`. Its conditions are a
+  reachable state, the SERIALIZABLE engine contract and the Aeneas
+  translation.
+- **Owners can deposit until the lifetime ceiling** rests on
+  `deposit_succeeds`, which keeps the hypothesis `deposited + amt < 2^64`.
+  The counterexample `deposit_overflow` sits next to it and shows why that
+  hypothesis cannot be dropped. Compare **Owners can transfer up to their
+  balance**, whose theorem needs no such bound.
+- The **Application flow** lens follows a request from `POST /rpc` through
+  `HmacAuth`, where the caller's identity enters, the JSON decoding and the
+  store's load, to `transition` and the per-command functions, and back to
+  the commit.
+
+The map is an explanation written by an agent and is worth reviewing like
+any other document. Whether a theorem is proven, and what it depends on,
+comes from the check record, not from the map.
+
 ## Exercises
 
 1. Add a `Close { account }` command that deletes an empty account owned by
