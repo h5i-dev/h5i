@@ -585,11 +585,18 @@ fn the_binary_carries_a_real_console_and_not_the_build_scripts_stub() {
          H5I_SKIP_WEB_BUILD.\n{html}"
     );
 
-    let asset = html
-        .split_once("/assets/")
-        .map(|(_, rest)| rest.split(['"', '\'']).next().unwrap_or("").to_string())
-        .expect("the page should reference a bundled asset");
-    assert!(asset.ends_with(".js"), "expected a script asset, got {asset}");
+    // The page references more than its script (the tab icon too), so each
+    // asset is checked by kind rather than by order.
+    let assets: Vec<String> = html
+        .split("/assets/")
+        .skip(1)
+        .map(|rest| rest.split(['"', '\'']).next().unwrap_or("").to_string())
+        .collect();
+    let asset = assets
+        .iter()
+        .find(|a| a.ends_with(".js"))
+        .unwrap_or_else(|| panic!("the page should reference a bundled script, got {assets:?}"))
+        .clone();
 
     let served = ui.get_authed(&format!("/assets/{asset}"));
     assert_eq!(served.status, 200, "the referenced asset must be embedded");
@@ -599,6 +606,16 @@ fn the_binary_carries_a_real_console_and_not_the_build_scripts_stub() {
         served.headers
     );
     assert!(!served.body.is_empty());
+
+    if let Some(icon) = assets.iter().find(|a| a.ends_with(".png")) {
+        let served = ui.get_authed(&format!("/assets/{icon}"));
+        assert_eq!(served.status, 200, "the tab icon must be embedded");
+        assert!(
+            served.headers.contains("content-type: image/png"),
+            "the tab icon needs its media type:\n{}",
+            served.headers
+        );
+    }
 
     assert_eq!(
         ui.get_authed("/assets/does-not-exist.js").status,
