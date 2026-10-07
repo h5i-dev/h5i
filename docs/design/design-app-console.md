@@ -155,6 +155,13 @@ baselines and incomplete runs, as well as the successful path.
 The console now discovers `h5i-app.toml` projects and provides Guarantees,
 Changes and Mutations. The booking project includes a source-fingerprinted
 explanation of four guarantees, their conditions and the clock counterexample.
+Lean dependency edges now come from the latest check catalog, reusing authored
+nodes by symbol and generating missing declaration/dependency nodes. Solid cyan
+lines identify recorded dependencies; dashed gray lines identify authored
+relationships. Without a catalog, authored Lean-to-Lean proof edges are not
+used as substitutes. The run's status, date and freshness stay visible. A
+neighborhood is bounded to 80 nodes and can be refocused on any selected
+declaration. Projects without an explanation can explore recorded declarations.
 Other projects remain usable through their manifest theorem names and source
 inventory, without inferring an explanation from Lean syntax.
 

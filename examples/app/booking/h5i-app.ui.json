@@ -416,6 +416,12 @@
       "to": "database-contract",
       "kind": "relies on atomic commit",
       "view": "flow"
+    },
+    {
+      "from": "started-remains",
+      "to": "clock-counterexample",
+      "kind": "condition motivated by",
+      "view": "proof"
     }
   ]
 }

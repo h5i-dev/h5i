@@ -360,6 +360,19 @@
 .app-graph-edge.is-active {
   color: var(--ink-3);
 }
+.app-graph-edge.is-authored path {
+  stroke-dasharray: 5 4;
+}
+.app-graph-edge.is-lean {
+  color: var(--cyan);
+  opacity: 0.55;
+}
+.app-graph-edge.is-lean.is-active {
+  opacity: 1;
+}
+.app-lean-legend {
+  color: var(--cyan);
+}
 .app-graph-node {
   cursor: pointer;
   outline: none;

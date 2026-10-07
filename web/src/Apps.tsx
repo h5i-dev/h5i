@@ -3,6 +3,7 @@ import {
   appsApi,
   label,
   neighborhood,
+  withLeanDependencies,
   shellQuote,
   type AppChange,
   type AppDetail,
@@ -275,18 +276,27 @@ function Guarantees({
   route: string[];
   go: Go;
 }) {
-  const model = data.model;
+  const latest = data.runs.find((v) => v.run.kind === "check");
+  const model = useMemo(
+    () => withLeanDependencies(data.model, latest?.run.declarations ?? []),
+    [data.model, latest],
+  );
   const [filter, setFilter] = useState("");
   const [view, setView] = useState<"proof" | "flow">("proof");
   const [file, setFile] = useState<AppSource | null>(null);
-  const guarantees = model?.nodes.filter((n) => n.kind === "guarantee") ?? [];
-  const root = guarantees.find((n) => n.id === route[0]) ?? guarantees[0];
+  const authoredGuarantees = model.nodes.filter((n) => n.kind === "guarantee");
+  const catalogNames = new Set(
+    latest?.run.declarations.map((d) => d.name) ?? [],
+  );
+  const guarantees = authoredGuarantees.length
+    ? authoredGuarantees
+    : model.nodes.filter((n) => n.symbol && catalogNames.has(n.symbol));
+  const root = model.nodes.find((n) => n.id === route[0]) ?? guarantees[0];
   const selected = model?.nodes.find((n) => n.id === route[1]) ?? root;
   const select = (id: string) => {
     setFile(null);
     go(["apps", data.summary.id, "guarantees", root?.id ?? id, id]);
   };
-  const latest = data.runs.find((v) => v.run.kind === "check");
   if (!model || !root)
     return (
       <div className="app-pad app-scroll">
@@ -322,10 +332,14 @@ function Guarantees({
     <div className="app-guarantees">
       <div className="app-guarantee-list">
         <div className="app-section-heading">
-          <span className="app-eyebrow">Promises & conditions</span>
+          <span className="app-eyebrow">
+            {authoredGuarantees.length
+              ? "Promises & conditions"
+              : "Recorded Lean declarations"}
+          </span>
           <input
-            aria-label="Search guarantees"
-            placeholder="Search guarantees…"
+            aria-label="Search guarantees or theorems"
+            placeholder="Search guarantees or theorems…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
@@ -333,10 +347,11 @@ function Guarantees({
         <div className="app-cards">
           {guarantees
             .filter((n) =>
-              `${n.title} ${n.description}`
+              `${n.title} ${n.symbol ?? ""} ${n.description}`
                 .toLowerCase()
                 .includes(filter.toLowerCase()),
             )
+            .slice(0, 40)
             .map((n, i) => (
               <button
                 key={n.id}
@@ -358,6 +373,11 @@ function Guarantees({
               </button>
             ))}
         </div>
+        {guarantees.length > 40 && (
+          <p className="app-muted">
+            Showing up to 40 matches. Search by theorem name to narrow the list.
+          </p>
+        )}
       </div>
       <div className="app-explorer">
         <div className="app-map">
@@ -376,8 +396,37 @@ function Guarantees({
                 Application flow
               </button>
             </div>
-            <span className="app-muted">Authored by {model.author}</span>
+            <span className="app-muted">
+              {model.author ? `Explanations: ${model.author}` : "Lean catalog"}
+            </span>
           </div>
+          <div className="app-map-caption">
+            {latest?.run.declarations.length ? (
+              <>
+                <span className="app-lean-legend">
+                  Solid cyan: recorded Lean dependencies
+                </span>{" "}
+                · {date(latest.run.started)} · {label(latest.freshness)} · Check{" "}
+                {label(latest.run.status).toLowerCase()}
+              </>
+            ) : (
+              <>
+                Lean dependencies have not been recorded by the latest check.
+                Run <code>h5i app check</code> to populate them.
+              </>
+            )}
+            <br />
+            Dashed gray: authored explanations and implementation links.
+          </div>
+          {latest &&
+            (latest.freshness !== "matches_repository_inputs" ||
+              latest.run.status !== "passed") && (
+              <Note tone="warn">
+                These dependencies describe the recorded run, not a verified
+                current build. {label(latest.freshness)} ·{" "}
+                {label(latest.run.status)}.
+              </Note>
+            )}
           <Graph
             model={model}
             root={root.id}
@@ -386,8 +435,9 @@ function Guarantees({
             onSelect={select}
           />
           <div className="app-map-caption">
-            Select a node to inspect its conditions, source and evidence.
-            Connections are authored explanations.
+            Select a node to inspect its conditions, source and evidence. Lean
+            edges are direct references in recorded declaration types and
+            bodies. Constants outside the catalog are leaves.
           </div>
           {!!model.exclusions.length && (
             <details className="app-boundaries">
@@ -409,7 +459,24 @@ function Guarantees({
               <h2>{selected.title}</h2>
               <p>{selected.description}</p>
               {selected.symbol && (
-                <code className="app-symbol">{selected.symbol}</code>
+                <>
+                  <code className="app-symbol">{selected.symbol}</code>
+                  <button
+                    className="app-button"
+                    onClick={() => {
+                      setFile(null);
+                      go([
+                        "apps",
+                        data.summary.id,
+                        "guarantees",
+                        selected.id,
+                        selected.id,
+                      ]);
+                    }}
+                  >
+                    Focus dependencies
+                  </button>
+                </>
               )}
               {selected.excludes.map((s) => (
                 <Note key={s} tone="warn">
@@ -425,14 +492,17 @@ function Guarantees({
                   return (
                     <button key={i} onClick={() => other && select(other.id)}>
                       <span>
-                        {e.from === selected.id ? "→" : "←"} {e.kind}
+                        {e.from === selected.id ? "→" : "←"} {e.kind} ·{" "}
+                        {e.origin === "lean" ? "Lean record" : "authored"}
                       </span>
                       <b>{other?.title}</b>
                     </button>
                   );
                 })}
                 {!related.length && (
-                  <p className="app-muted">No authored connections.</p>
+                  <p className="app-muted">
+                    No connections available in this explanation and catalog.
+                  </p>
                 )}
               </div>
               <h3>Source</h3>
@@ -501,7 +571,7 @@ function Guarantees({
   );
 }
 
-function Graph({
+export function Graph({
   model,
   root,
   selected,
@@ -548,7 +618,8 @@ function Graph({
     <>
       <div className="app-graph-actions">
         <span>
-          {graph.nodes.length} nodes · {graph.edges.length} connections
+          {graph.nodes.length} of {graph.total} nodes · {graph.edges.length}{" "}
+          connections
         </span>
         <div>
           <button
@@ -566,6 +637,12 @@ function Graph({
           </button>
         </div>
       </div>
+      {graph.total > graph.nodes.length && (
+        <Note>
+          Showing the nearest 80 nodes. Select a connection in the inspector and
+          use Focus dependencies to explore further.
+        </Note>
+      )}
       <div className="app-graph-scroll">
         {!graph.nodes.length ? (
           <Empty title="No application flow authored">
@@ -607,9 +684,11 @@ function Graph({
               return (
                 <g
                   key={i}
-                  className={`app-graph-edge ${e.from === selected || e.to === selected ? "is-active" : ""}`}
+                  className={`app-graph-edge ${e.origin === "lean" ? "is-lean" : "is-authored"} ${e.from === selected || e.to === selected ? "is-active" : ""}`}
                 >
-                  <title>{e.kind}</title>
+                  <title>
+                    {`${e.kind} · ${e.origin === "lean" ? "recorded Lean dependency" : "authored relationship"}`}
+                  </title>
                   <path
                     d={
                       same
@@ -667,7 +746,9 @@ function Graph({
 }
 function wrap(s: string, width: number) {
   const lines = [""];
-  for (const word of s.split(" ")) {
+  for (const word of s
+    .split(" ")
+    .flatMap((w) => w.match(new RegExp(`.{1,${width}}`, "gu")) ?? [])) {
     const last = lines.length - 1;
     if ((lines[last] + word).length > width && lines[last]) lines.push(word);
     else lines[last] += `${lines[last] ? " " : ""}${word}`;

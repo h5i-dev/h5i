@@ -89,6 +89,26 @@ it depends on; this direction also drives changed-dependency propagation.
 Authored relationships do not establish proof status. Actual declaration types,
 dependencies and axioms come from the check record.
 
+Lean-to-Lean proof edges are generated automatically from the latest check's
+declaration catalog. Authored proof edges between two Lean-symbol nodes
+(`theorem`, `specification`, `assumption`, `counterexample`) are ignored, even
+when no catalog is available. You do not need to maintain those dependency
+edges in JSON. Keep writing guarantee-to-theorem, Rust, flow and deployment
+relationships; attach explanatory counterexamples directly to a guarantee.
+Existing node descriptions and source anchors are reused by exact `symbol`.
+Unmapped declarations get nodes automatically; referenced constants outside
+the catalog are explicitly labeled leaves with no invented signature.
+
+Solid cyan edges are tool-recorded dependencies; dashed gray edges are authored
+relationships. The graph displays the check's date, status and input freshness.
+A stale or unsuccessful record remains a labeled historical observation, not
+a verified current graph. A newer check with no catalog does not silently fall
+back to an older one. Projects without an explanation can explore recorded
+theorems directly. Neighborhoods show up to 80 nodes; use **Focus dependencies**
+in the inspector to explore further. Dependency edges combine references in
+declaration types and bodies; they do not distinguish a hypothesis from a proof
+helper or establish that a particular hypothesis is necessary.
+
 Represent logical hypotheses, referenced definitions and real-world conditions
 separately. Include acceptance guarantees alongside safety guarantees, and
 counterexamples where removing a condition changes the result. For example,
