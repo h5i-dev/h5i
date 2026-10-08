@@ -90,72 +90,22 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 
 ---
 
-## 2. Find bugs: red-team with agents
+## 2. Find Bugs: Red-Team with Agents
 
-### 2.1. Drive the browser
+Let AI agents explore, attack, and test web applications using h5i's integrated security toolkit.
 
-A **session** combines one page state, cookie jar, network policy, and request
-record. Agents read pages, interact with elements, and extract structured data
-through one CLI:
+- **Browser automation:** Navigate applications, interact with forms, and test authenticated workflows using a lightweight Rust browser or Chromium.
+- **HTTP security testing:** Capture, modify, replay, and compare requests to investigate vulnerabilities such as broken access control and injection flaws.
+- **Reconnaissance:** Discover endpoints, parameters, and attack surfaces through crawling and JavaScript analysis.
+- **Reproducible testing:** Save confirmed attack flows and replay them in CI/CD to prevent regressions.
 
-```bash
-h5i browser open https://docs.rs/ --allow docs.rs
-h5i browser snapshot                        # page outline with @ref handles
-h5i browser click @e3
-h5i browser extract '{"titles": ["h2"]}'    # structured extraction
-h5i browser read https://docs.rs/           # one page, no persistent session
-```
-
-### 2.2. Capture, replay, and compare traffic
-
-The native browser owns its network layer, so agents capture, inspect, edit,
-replay, and compare HTTP traffic directly. Sites that need
-full Chromium go through the same workbench via `h5i browser proxy`.
-
-```bash
-h5i browser open https://target.example --capture --allow target.example
-h5i websec requests                                  # list messages and IDs
-h5i websec replay req_42 --set query.id=456          # edit and resend one
-h5i websec diff res_42 res_43                        # compare responses
-h5i websec sequence flow.json                        # run a multi-step test
-h5i recon endpoints --state confirmed                # discovery, each row names its evidence
-```
-
-### 2.3. Replay confirmed flows in CI
-
-We can replay confirmed attack flows in CI. See
-[`examples/security-regression-ci`](examples/security-regression-ci) for the
-GitHub Actions template:
-
-```yaml
-- uses: h5i-dev/h5i@v1
-  with:
-    target: http://localhost:3000
-    tests: .h5i-tests/tests
-```
-
-### 2.4. Sandbox and audit the agent
-
-Since AI agnets might run out of control and perform dangerous actions,
-h5i offers an auditable sandbox, where `h5i browser requests` and
-`h5i browser audit` show the full logs. For stronger isolation, a profile
-in `.h5i/env.toml` picks a tier (`workspace`, `process`, `supervised`,
-`container`, or `microvm`) and limits network egress and filesystem access.
-
-```bash
-h5i box create alpha --profile agent-claude   # sandboxed git worktree
-h5i box shell alpha                           # interactive confined session
-h5i browser open https://docs.rs/ --in alpha  # browser inside the box
-h5i box propose alpha                         # reviewable snapshot
-h5i box apply alpha                           # merge approved changes
-h5i box rm alpha                              # discard it
-```
-
-Watch it all from the host with `h5i ui`:
+Agents interact with all these capabilities through a unified CLI, while you can inspect their activity through the local dashboard (`h5i ui`).
 
 <p align="center">
   <img src="./docs/_static/sandbox-ui-demo.png" alt="Watching a sandboxed browser session from the host" width="99%" />
 </p>
+
+For additional isolation, h5i also offers optional sandboxed execution with configurable filesystem and network restrictions. See the [manual](docs/MANUAL.md) for CLI details and [CI example](examples/security-regression-ci) for automated regression testing.
 
 ---
 
