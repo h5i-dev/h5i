@@ -126,11 +126,10 @@ h5i-app = { version = "0.1", features = ["http", "postgres"] }
 - Prove that invariants hold for the rows loaded back from the database.
 - Prove properties across requests, for every order in which clients' requests commit.
 
-The kernel is one function that decides what a command does. This one, from the
-[calculator tutorial](examples/app/calculator/TUTORIAL.md), keeps one
-number per user:
+You can write your web application in Rust:
 
 ```rust
+// example from examples/app/calculator
 pub fn transition(actor: &Principal, snap: &Snapshot, cmd: &Command) -> Result<(Option<Memory>, Reply), Error> {
     match cmd {
         Command::Set { value } => Ok((Some(Memory { user: actor.user, value: *value }), Reply::Value(*value))),
@@ -146,7 +145,7 @@ pub fn transition(actor: &Principal, snap: &Snapshot, cmd: &Command) -> Result<(
 }
 ```
 
-Aeneas translates it to Lean, where theorems about it are ordinary Lean:
+We then translates it to Lean, where theorems about it are ordinary Lean:
 
 ```lean
 theorem get_after (a : Principal) (s s' : Snapshot) (c : Command) (w : Option Memory) (v : U64)
@@ -155,9 +154,8 @@ theorem get_after (a : Principal) (s s' : Snapshot) (c : Command) (w : Option Me
     transition a s' .Get = ok (.Ok (none, .Value v))
 ```
 
-See [crates/h5i-app](crates/h5i-app/README.md) for the full kernel, the axum
-server around it, and the proof workflow, and [TRUST.md](docs/app/TRUST.md)
-for exactly what is proven and what is assumed.
+See [crates/h5i-app/README.md](crates/h5i-app/README.md) for the detail, the axum
+server around it, and the proof workflow.
 
 ---
 
