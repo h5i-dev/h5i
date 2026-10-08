@@ -105,10 +105,6 @@ For additional isolation, h5i also offers optional sandboxed execution with conf
 
 Agents interact with all these capabilities through a unified CLI, while you can inspect their activity through the local dashboard (`h5i ui`).
 
-```bash
-h5i ui
-```
-
 <p align="center">
   <img src="./docs/_static/sandbox-ui-demo.png" alt="Watching a sandboxed browser session from the host" width="99%" />
 </p>
