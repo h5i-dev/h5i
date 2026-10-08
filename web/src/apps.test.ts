@@ -5,6 +5,7 @@ import { Graph, MapPrompt } from "./Apps";
 import {
   explanationDrift,
   flowLayers,
+  focusGap,
   neighborhood,
   shellQuote,
   withLeanDependencies,
@@ -136,6 +137,18 @@ describe("Lean-derived dependency graph", () => {
     const graph = withLeanDependencies(authored(), []);
     expect(graph.edges.filter((e) => e.origin === "lean")).toHaveLength(0);
     expect(graph.edges.some((e) => e.from === "t" && e.to === "a")).toBe(false);
+  });
+  it("says why Focus dependencies has nothing to follow", () => {
+    const missing = withLeanDependencies(authored(), []);
+    expect(focusGap(missing, "g", [], "p")).toBeNull();
+    expect(focusGap(missing, "t", [], "p")).toContain("h5i app check p");
+    const decls = [declaration("App.safe", ["Nat.add"])];
+    const graph = withLeanDependencies(authored(), decls);
+    expect(focusGap(graph, "t", decls, "p")).toBeNull();
+    const leaf = graph.nodes.find((n) => n.symbol === "Nat.add")!.id;
+    expect(focusGap(graph, leaf, decls, "p")).toContain(
+      "outside the recorded catalog",
+    );
   });
   it("works without an authored explanation and terminates on cycles", () => {
     const graph = withLeanDependencies(null, [

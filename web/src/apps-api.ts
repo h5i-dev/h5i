@@ -245,6 +245,24 @@ export function withLeanDependencies(
   return { ...model, nodes, edges };
 }
 
+/** Why Focus dependencies would show `id` alone, or null when it has proof
+ *  dependencies to follow. */
+export function focusGap(
+  model: AppModel,
+  id: string,
+  declarations: Declaration[],
+  project: string,
+): string | null {
+  if (model.edges.some((e) => e.view === "proof" && e.from === id)) return null;
+  const symbol = model.nodes.find((n) => n.id === id)?.symbol;
+  const arg = /^[\w./-]+$/.test(project) ? project : shellQuote(project);
+  if (!declarations.length)
+    return `No check has recorded Lean dependencies yet. Run h5i app check ${arg} to record them.`;
+  if (symbol && !declarations.some((d) => d.name === symbol))
+    return "This constant is outside the recorded catalog, so its dependencies were not recorded.";
+  return "No dependencies are recorded for this node.";
+}
+
 /** Edges point from a guarantee to the things it relies on. Keep this local
  * neighborhood stable while the inspector selection changes. Cycles terminate. */
 export function neighborhood(

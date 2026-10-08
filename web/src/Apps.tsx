@@ -3,6 +3,7 @@ import {
   appsApi,
   explanationDrift,
   flowLayers,
+  focusGap,
   label,
   neighborhood,
   withLeanDependencies,
@@ -362,6 +363,11 @@ function Guarantees({
   const related = model.edges.filter(
     (e) => e.from === selected?.id || e.to === selected?.id,
   );
+  const declarations = latest?.run.declarations ?? [];
+  const gap = (id: string) =>
+    focusGap(model, id, declarations, data.summary.id);
+  const rootGap = view === "proof" ? gap(root.id) : null;
+  const selectedGap = selected ? gap(selected.id) : null;
   const declaration = selected?.symbol
     ? latest?.run.declarations.find((d) => d.name === selected.symbol)
     : undefined;
@@ -494,6 +500,7 @@ function Guarantees({
                 }
                 onGo={(id, i) => focusOn(id, trail.slice(0, i))}
               />
+              {rootGap && <Note>{rootGap}</Note>}
               <Graph
                 model={model}
                 root={root.id}
@@ -532,14 +539,20 @@ function Guarantees({
                     <>
                       <code className="app-symbol">{selected.symbol}</code>
                       {selected.id !== root.id && (
-                        <button
-                          className="app-button"
-                          onClick={() =>
-                            focusOn(selected.id, [...trail, root.id])
-                          }
-                        >
-                          Focus dependencies
-                        </button>
+                        <>
+                          <button
+                            className="app-button"
+                            disabled={!!selectedGap}
+                            onClick={() =>
+                              focusOn(selected.id, [...trail, root.id])
+                            }
+                          >
+                            Focus dependencies
+                          </button>
+                          {selectedGap && (
+                            <p className="app-muted">{selectedGap}</p>
+                          )}
+                        </>
                       )}
                     </>
                   )}
