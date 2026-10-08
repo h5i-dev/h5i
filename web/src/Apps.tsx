@@ -472,6 +472,7 @@ function Guarantees({
                 )}
                 <br />
                 Dashed gray: authored explanations and implementation links.
+                Arrows point from what a node depends on to the node.
               </div>
               {latest &&
                 (latest.freshness !== "matches_repository_inputs" ||
@@ -879,7 +880,14 @@ export function Graph({
                         ? `M ${from.x + 218} ${y1} C ${from.x + 253} ${y1}, ${to.x + 253} ${y2}, ${to.x + 218} ${y2}`
                         : `M ${x1} ${y1} C ${(x1 + x2) / 2} ${y1}, ${(x1 + x2) / 2} ${y2}, ${x2} ${y2}`
                     }
-                    markerEnd={`url(#arrow-${view})`}
+                    // A proof edge means `from` depends on `to`; the arrow
+                    // runs from the dependency to its dependent.
+                    markerStart={
+                      view === "proof" ? `url(#arrow-${view})` : undefined
+                    }
+                    markerEnd={
+                      view === "flow" ? `url(#arrow-${view})` : undefined
+                    }
                   />
                 </g>
               );
@@ -952,7 +960,9 @@ export function MapPrompt({ project }: { project: string }) {
 Use docs/app/app-console.md and examples/app/booking/h5i-app.ui.json as references.
 Read the Rust and Lean code. Explain the user-visible guarantees, their assumptions
 and exclusions, and connect them to the implemented specifications, theorems and
-Rust code. Include an application-flow view where useful.
+Rust code. A proof edge means "from depends on to"; put out-of-scope behavior
+in excludes or exclusions, not in an edge. Include an application-flow view
+where useful.
 Use exact Lean symbols and repository-relative source paths with unique anchors.
 Lean dependency edges come from check records; do not invent proof evidence or
 claim that unverified behavior is guaranteed.`}</pre>

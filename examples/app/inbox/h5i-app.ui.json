@@ -17,13 +17,19 @@
       "id": "g-nothing-leaks",
       "kind": "guarantee",
       "title": "Nothing about other people's mail reaches you",
-      "description": "Whatever you do, the reply, the error code and the writes depend only on the messages you sent or received and on who has blocked you. Messages between other people and other people's blocks cannot change your outcome."
+      "description": "Whatever you do, the reply, the error code and the writes depend only on the messages you sent or received and on who has blocked you. Messages between other people and other people's blocks cannot change your outcome.",
+      "excludes": [
+        "Covers the kernel's result only, not how long it takes: the engine loads the whole organization and the kernel scans every message, so latency and SERIALIZABLE retries depend on other people's traffic."
+      ]
     },
     {
       "id": "g-existence-hidden",
       "kind": "guarantee",
       "title": "Other people's conversations cannot be probed",
-      "description": "A message between two other users gets exactly the same answer as one that was never sent, so you cannot learn that a conversation exists or how long it is by trying keys."
+      "description": "A message between two other users gets exactly the same answer as one that was never sent, so you cannot learn that a conversation exists or how long it is by trying keys.",
+      "excludes": [
+        "Timing is not covered: the kernel scans every message, so a probe's latency can still depend on other people's conversations."
+      ]
     },
     {
       "id": "g-block-leak-declared",
@@ -755,21 +761,6 @@
       ]
     },
     {
-      "id": "b-timing",
-      "kind": "boundary",
-      "title": "Timing and retry channels",
-      "description": "The engine loads the whole organization and the kernel scans every message, so latency depends on other people's traffic. SERIALIZABLE retries caused by other users' requests are also observable as latency.",
-      "sources": [
-        {
-          "path": "examples/app/inbox/server/src/lib.rs",
-          "anchor": "async fn load("
-        }
-      ],
-      "excludes": [
-        "Noninterference covers the kernel's result only, not how long it takes."
-      ]
-    },
-    {
       "id": "b-engine",
       "kind": "boundary",
       "title": "Engine and PostgreSQL contract",
@@ -1087,12 +1078,6 @@
     },
     {
       "from": "g-nothing-leaks",
-      "to": "b-timing",
-      "kind": "excludes channels outside the result",
-      "view": "proof"
-    },
-    {
-      "from": "g-nothing-leaks",
       "to": "b-json",
       "kind": "rendering trusted",
       "view": "proof"
@@ -1143,12 +1128,6 @@
       "from": "g-existence-hidden",
       "to": "t-carol-cannot-tell",
       "kind": "illustrated by",
-      "view": "proof"
-    },
-    {
-      "from": "g-existence-hidden",
-      "to": "b-timing",
-      "kind": "except timing",
       "view": "proof"
     },
     {
@@ -1641,36 +1620,6 @@
       "from": "s-hide-for",
       "to": "i-delete",
       "kind": "implemented by",
-      "view": "proof"
-    },
-    {
-      "from": "b-auth",
-      "to": "i-rpc",
-      "kind": "enters at",
-      "view": "proof"
-    },
-    {
-      "from": "b-json",
-      "to": "i-api",
-      "kind": "implemented by",
-      "view": "proof"
-    },
-    {
-      "from": "b-engine",
-      "to": "i-engine",
-      "kind": "implemented by",
-      "view": "proof"
-    },
-    {
-      "from": "b-idempotency",
-      "to": "i-engine",
-      "kind": "implemented by",
-      "view": "proof"
-    },
-    {
-      "from": "b-tenant",
-      "to": "i-kernel-impl",
-      "kind": "tenant chosen in",
       "view": "proof"
     },
     {

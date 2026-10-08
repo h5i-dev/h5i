@@ -93,8 +93,13 @@ line. Without a map or recorded declarations, the console offers an example
 prompt for asking a coding agent to author the map.
 
 Edges have `from`, `to`, `kind` (a readable relationship) and `view` (`proof`,
-the default, or `flow`). In proof views, point from the guarantee toward what
-it depends on; this direction also drives changed-dependency propagation.
+the default, or `flow`). A proof edge means `from` depends on `to`: if `to`
+changes, `from` needs review. Changes uses exactly this to find affected
+guarantees. Proofs, assumptions, illustrating scenarios, counterexamples,
+trusted boundaries and the code a theorem talks about all fit; something a
+guarantee leaves out of scope does not. Write that in the node's `excludes` or
+in `exclusions`, not as an edge. Point a boundary at the code that realizes it
+with its `sources`; a source change already flags the boundary.
 Authored relationships do not establish proof status. Actual declaration types,
 dependencies and axioms come from the check record.
 
@@ -109,7 +114,9 @@ Unmapped declarations get nodes automatically; referenced constants outside
 the catalog are explicitly labeled leaves with no invented signature.
 
 Solid cyan edges are tool-recorded dependencies; dashed gray edges are authored
-relationships. The graph displays the check's date, status and input freshness.
+relationships. The proof lens draws each arrow from a dependency to the node
+that depends on it, the reverse of the JSON direction. The graph displays the
+check's date, status and input freshness.
 A stale or unsuccessful record remains a labeled historical observation, not
 a verified current graph. A newer check with no catalog does not silently fall
 back to an older one. Projects without an explanation can explore recorded
