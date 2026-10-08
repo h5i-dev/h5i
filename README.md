@@ -161,13 +161,7 @@ for exactly what is proven and what is assumed.
 
 ---
 
-## 4. Tutorial
-
-- [Web Security Tutorial with h5i — Part 1: HTTP Request Tampering](https://medium.com/@Koukyosyumei/web-security-tutorial-with-h5i-part-1-http-request-tampering-39c4a0857b85)
-
----
-
-## 5. Documentation
+## 4. Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
 - [MANUAL.md](docs/MANUAL.md) / `man h5i`: full command reference
@@ -176,13 +170,13 @@ for exactly what is proven and what is assumed.
 
 ---
 
-## 6. License
+## 5. License
 
 Apache-2.0. See [LICENSE](LICENSE).
 
 ---
 
-## 7. Contributors
+## 6. Contributors
 
 <a href="https://github.com/h5i-dev/h5i/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=h5i-dev/h5i" alt="h5i contributors" />
