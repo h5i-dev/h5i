@@ -27,7 +27,6 @@ export interface EnvManifest {
   status: string;
   captures: string[];
   service_digest?: string;
-  persona_digest?: string;
   pr?: number;
   pr_head_ref?: string;
 }

@@ -26,7 +26,7 @@ const GUEST_SCRIPTS_DIR: &str = "/.msb/scripts";
 const PRELOAD_SCRIPT_NAME: &str = "h5i-env";
 
 /// The workspace mountpoint inside the guest. Same as the container tier, so a
-/// profile, a hook, and a persona file all mean the same path on both.
+/// profile and a hook both mean the same path on both.
 const WORK_MOUNT: &str = "/work";
 
 /// Capture spool for in-box `h5i capture run`. Identical to the container

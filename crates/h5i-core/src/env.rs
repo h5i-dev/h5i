@@ -52,9 +52,6 @@ const STATUS_FILE: &str = "status";
 const WORK_DIR: &str = "work";
 /// Per-env live-session registry dir (`live/<pid>.json`). See [`LiveSession`].
 const LIVE_DIR: &str = "live";
-/// Worktree-root file the persona sources are baked into at create; loaded by
-/// the agent via `@PERSONA.md` (Claude) or a read instruction (Codex).
-const PERSONA_FILE: &str = "PERSONA.md";
 
 pub const H5I_ENV_ID_VAR: &str = "H5I_ENV_ID";
 pub const H5I_ENV_POLICY_DIGEST_VAR: &str = "H5I_ENV_POLICY_DIGEST";
@@ -361,12 +358,6 @@ pub struct EnvManifest {
     /// a different long-lived command than the reviewer approved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_digest: Option<String>,
-    /// sha256 of the `PERSONA.md` baked from the profile's `persona = [...]`
-    /// sources at create. Provenance for the agent's standing working style.
-    /// `None` when the profile declares no persona. The content lives in the
-    /// worktree (git-excluded, so it never enters the agent's diff/commit).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub persona_digest: Option<String>,
     /// GitHub PR number this env tracks (`env create --pr`): the base is the
     /// PR's head, `parent_branch` its local `pr/<n>` tracking branch, and
     /// apply prints a push-back hint. Absent for ordinary envs.
@@ -1930,9 +1921,9 @@ pub fn create(
     // From here on the worktree, the branch and `<env>/` all exist, but the
     // manifest, the thing `list`/`find`/`rm` resolve an env *through*, does
     // not yet. Several fail-closed steps sit in between (a malformed
-    // `[service.*]` table, a persona source missing at the base revision), and
-    // without a rollback their failure left a registered+locked worktree and a
-    // branch that `create` refuses to reuse and `rm` cannot see, recoverable
+    // `[service.*]` table, say), and without a rollback their failure left a
+    // registered+locked worktree and a branch that `create` refuses to reuse
+    // and `rm` cannot see, recoverable
     // only by hand with `git worktree prune` and `git branch -D`. `rollback`,
     // armed above, undoes exactly what has been built so far unless it is
     // disarmed once the manifest lands.
@@ -1940,13 +1931,6 @@ pub fn create(
     // Pin service declarations from the base worktree into an env-local, box-immutable
     // manifest, recording its digest (review #1).
     let service_digest = Some(pin_services_at_create(&work_path, &dir)?);
-
-    // Bake the profile's persona sources into a single PERSONA.md at the
-    // worktree root (the agent loads it via `@PERSONA.md`). Git-excluded so it
-    // never enters the agent's diff/commit. Fail-closed: a missing source
-    // aborts create rather than launching an agent with a silently-empty
-    // persona.
-    let persona_digest = materialize_persona(&work_path, &profile.persona)?;
 
     // The viewer token, minted before anything inside the box has run. Minting
     // it lazily on the first `h5i box view` would mean minting it after an
@@ -1982,7 +1966,6 @@ pub fn create(
         status: ST_CREATED.to_string(),
         captures: Vec::new(),
         service_digest,
-        persona_digest,
         pr: opts.pr,
         pr_head_ref: opts.pr_head_ref.clone(),
     };
@@ -2111,10 +2094,6 @@ fn fs_overlap_with_boxes(_h5i_root: &Path, _m: &EnvManifest) -> Vec<String> {
     Vec::new()
 }
 
-/// Bake the profile's `persona = [...]` sources into a single `PERSONA.md` at the worktree
-/// root.
-const MAX_PERSONA_BYTES: u64 = 1024 * 1024;
-
 /// Read `rel` under `work` without following a symlink at any component.
 fn resolve_within_work(work: &Path, rel: &str) -> std::io::Result<PathBuf> {
     let mut cur = work.to_path_buf();
@@ -2137,78 +2116,6 @@ fn resolve_within_work(work: &Path, rel: &str) -> std::io::Result<PathBuf> {
         }
     }
     Ok(cur)
-}
-
-fn read_within_work(work: &Path, rel: &str) -> std::io::Result<String> {
-    use std::io::Read;
-    let cur = resolve_within_work(work, rel)?;
-    // `O_NOFOLLOW` as well as the walk: the walk is a check and this is the
-    // open, and between them is a window a repo's own build step could use.
-    let mut opts = std::fs::OpenOptions::new();
-    opts.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.custom_flags(libc::O_NOFOLLOW);
-    }
-    let f = opts.open(&cur)?;
-    if !f.metadata()?.file_type().is_file() {
-        return Err(std::io::Error::other("not a regular file"));
-    }
-    let mut buf = String::new();
-    f.take(MAX_PERSONA_BYTES).read_to_string(&mut buf)?;
-    Ok(buf)
-}
-
-fn materialize_persona(work: &Path, persona: &[String]) -> Result<Option<String>, H5iError> {
-    if persona.is_empty() {
-        return Ok(None);
-    }
-    let mut body = String::new();
-    for src in persona {
-        let path = work.join(src);
-        let text = read_within_work(work, src).map_err(|e| {
-            H5iError::Metadata(format!(
-                "persona source '{src}' is not readable in the worktree ({}): {e} — commit it \
-                 at the base revision or fix `persona` in .h5i/env.toml (fail-closed)",
-                path.display()
-            ))
-        })?;
-        if !body.is_empty() {
-            body.push('\n');
-        }
-        body.push_str(&format!("<!-- persona: {src} -->\n"));
-        body.push_str(text.trim_end());
-        body.push('\n');
-    }
-    let persona_md = work.join(PERSONA_FILE);
-    std::fs::write(&persona_md, &body).map_err(|e| H5iError::with_path(e, &persona_md))?;
-    exclude_in_worktree(work, PERSONA_FILE)?;
-    Ok(Some(crate::refstore::sha256_hex(body.as_bytes())))
-}
-
-/// Idempotently add `pattern` to the worktree's git exclude file so a
-/// machine-managed, untracked file (e.g. `PERSONA.md`) never shows as dirty.
-/// Writes to the *common* `info/exclude` (what git actually consults for
-/// excludes: shared across worktrees), so it holds even when the base commit's
-/// tracked `.gitignore` predates the file.
-fn exclude_in_worktree(work: &Path, pattern: &str) -> Result<(), H5iError> {
-    let wt_repo = Repository::open(work)?;
-    let info = wt_repo.commondir().join("info");
-    std::fs::create_dir_all(&info).map_err(|e| H5iError::with_path(e, &info))?;
-    let exclude = info.join("exclude");
-    let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
-    let line = format!("/{pattern}");
-    if existing.lines().any(|l| l.trim() == line) {
-        return Ok(());
-    }
-    let mut next = existing;
-    if !next.is_empty() && !next.ends_with('\n') {
-        next.push('\n');
-    }
-    next.push_str(&format!("{line}\n"));
-    std::fs::write(&exclude, next).map_err(|e| H5iError::with_path(e, &exclude))?;
-    Ok(())
 }
 
 // ─── run (§9): capture-wrapped, policy-enforced ─────────────────────────────
@@ -5723,11 +5630,10 @@ fn resolve_work_rcfile(work: &Path, rel: &str) -> Result<String, H5iError> {
             "[shell] rcfile '{rel}' must not escape the worktree with '..'"
         )));
     }
-    // Resolved, not just validated. The two checks above are the same pair the
-    // persona sources get, and they have the same blind spot: a repo shipping
-    // this path as a symlink puts a file from outside the worktree in front of
-    // `bash --rcfile`, which *sources* it. `is_file()` follows links and would
-    // have said yes.
+    // Resolved, not just validated. The two checks above have a blind spot: a
+    // repo shipping this path as a symlink puts a file from outside the
+    // worktree in front of `bash --rcfile`, which *sources* it. `is_file()`
+    // follows links and would have said yes.
     let full = resolve_within_work(work, rel).map_err(|e| {
         H5iError::Metadata(format!(
             "[shell] rcfile '{rel}' is not readable in the worktree: {e}"
@@ -9473,8 +9379,8 @@ mod tests {
         assert!(user_allow_list_at(Some(&dir.path().join("absent"))).is_empty());
     }
 
-    /// The rcfile path gets the same pair of checks the persona sources get
-    /// (not absolute, no `..`) and had the same blind spot: neither resolves.
+    /// The rcfile path gets two checks (not absolute, no `..`) and had a blind
+    /// spot: neither resolves.
     /// A repo shipping this path as a symlink puts a file from outside the
     /// worktree in front of `bash --rcfile`, which *sources* it. `is_file()`
     /// follows links and said yes.
@@ -9837,7 +9743,6 @@ mod tests {
             status: ST_IDLE.into(),
             captures: vec![],
             service_digest: None,
-            persona_digest: None,
             pr: None,
             pr_head_ref: None,
         }
@@ -10186,51 +10091,6 @@ mod tests {
         assert_eq!(out, b"a [redacted secret] b [redacted secret]");
         assert_eq!(crate::secrets::scrub_exact(b"abc", &["".to_string()]), b"abc");
         assert_eq!(crate::secrets::scrub_exact(b"abc", &[]), b"abc");
-    }
-
-    /// `validate_profile` pins a persona source inside `$WORK` (relative, no
-    /// `..`) and cannot resolve it. Both the entry and the worktree are
-    /// repo-supplied, so a branch shipping `notes.md` as a symlink to a host
-    /// file turned a valid-looking entry into a read of it, concatenated into
-    /// `PERSONA.md` *inside the box*, which the agent is told to open.
-    ///
-    /// `private_paths` has the same shape and got `create_dirs_within` for
-    /// exactly this reason. This is the read side of that argument.
-    #[test]
-    #[cfg(unix)]
-    fn a_persona_source_will_not_follow_a_symlink_out_of_the_worktree() {
-        let dir = tempfile::tempdir().unwrap();
-        let work = dir.path().join("work");
-        std::fs::create_dir_all(work.join("docs")).unwrap();
-
-        let secret = dir.path().join("id_rsa");
-        std::fs::write(&secret, "PRIVATE KEY MATERIAL").unwrap();
-
-        // The ordinary case still reads.
-        std::fs::write(work.join("docs").join("style.md"), "be brief").unwrap();
-        assert_eq!(
-            read_within_work(&work, "docs/style.md").unwrap(),
-            "be brief"
-        );
-
-        // A symlinked leaf is refused.
-        std::os::unix::fs::symlink(&secret, work.join("docs").join("notes.md")).unwrap();
-        let err = read_within_work(&work, "docs/notes.md").unwrap_err().to_string();
-        assert!(err.contains("symlink"), "{err}");
-
-        // And a symlinked *ancestor*, which the leaf check alone would miss.
-        std::os::unix::fs::symlink(dir.path(), work.join("out")).unwrap();
-        assert!(read_within_work(&work, "out/id_rsa").is_err());
-
-        // The whole bake fails closed rather than baking part of a persona.
-        let err = materialize_persona(&work, &["docs/notes.md".to_string()])
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("fail-closed"), "{err}");
-        assert!(
-            !work.join(PERSONA_FILE).exists(),
-            "a refused source must not leave a partial PERSONA.md"
-        );
     }
 
     /// Two readers of `services.json`, one digest check between them.
@@ -11898,7 +11758,6 @@ mod tests {
             status: ST_CREATED.into(),
             captures: vec!["cap1".into()],
             service_digest: None,
-            persona_digest: None,
             pr: None,
             pr_head_ref: None,
         };
@@ -12022,7 +11881,6 @@ mod tests {
                 status: ST_CREATED.into(),
                 captures: Vec::new(),
                 service_digest: None,
-                persona_digest: None,
                 pr: None,
                 pr_head_ref: None,
             };
@@ -12134,48 +11992,6 @@ mod tests {
         assert!(build_branch_scoped_merge(&repo, "feature", None)
             .unwrap()
             .is_none());
-    }
-
-    #[test]
-    fn materialize_persona_concatenates_excludes_and_digests() {
-        let dir = tempfile::tempdir().unwrap();
-        let work = dir.path();
-        git2::Repository::init(work).unwrap();
-        std::fs::create_dir_all(work.join("plugin/persona")).unwrap();
-        std::fs::write(
-            work.join("plugin/persona/architect.md"),
-            "# Architect\nThink first.\n",
-        )
-        .unwrap();
-        std::fs::write(work.join("plugin/persona/careful.md"), "Be careful.\n").unwrap();
-
-        // Empty list → no file, no digest.
-        assert_eq!(materialize_persona(work, &[]).unwrap(), None);
-        assert!(!work.join(PERSONA_FILE).exists());
-
-        // Two sources → concatenated in order with per-source headers.
-        let sources = vec![
-            "plugin/persona/architect.md".to_string(),
-            "plugin/persona/careful.md".to_string(),
-        ];
-        let digest = materialize_persona(work, &sources)
-            .unwrap()
-            .expect("a digest");
-        let body = std::fs::read_to_string(work.join(PERSONA_FILE)).unwrap();
-        assert!(body.contains("<!-- persona: plugin/persona/architect.md -->"));
-        assert!(body.contains("# Architect"));
-        // Order is preserved: architect appears before careful.
-        assert!(body.find("# Architect").unwrap() < body.find("Be careful.").unwrap());
-        assert_eq!(digest, crate::refstore::sha256_hex(body.as_bytes()));
-
-        // PERSONA.md is git-excluded so it never shows as a worktree change.
-        let exclude = std::fs::read_to_string(work.join(".git/info/exclude")).unwrap_or_default();
-        assert!(exclude.lines().any(|l| l.trim() == "/PERSONA.md"));
-        let wt = Repository::open(work).unwrap();
-        assert!(wt.status_should_ignore(Path::new(PERSONA_FILE)).unwrap());
-
-        // A missing source fails closed.
-        assert!(materialize_persona(work, &["plugin/persona/nope.md".to_string()]).is_err());
     }
 
     /// The per-env HOME copy must not be more permissive than the original. A
@@ -12345,7 +12161,6 @@ mod tests {
             status: ST_CREATED.into(),
             captures: Vec::new(),
             service_digest: None,
-            persona_digest: None,
             pr: None,
             pr_head_ref: None,
         }
