@@ -1596,7 +1596,6 @@ mod tests {
             status: "idle".into(),
             captures: vec![],
             service_digest: None,
-            persona_digest: None,
             pr: None,
             pr_head_ref: None,
         }

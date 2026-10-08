@@ -37,7 +37,6 @@ target
 /web/dist
 /web/.vite
 /web/tsconfig.tsbuildinfo
-/PERSONA.md
 
 # Python bytecode from the WPT harness.
 __pycache__/

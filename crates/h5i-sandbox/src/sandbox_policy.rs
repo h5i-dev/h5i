@@ -424,13 +424,6 @@ pub struct Profile {
     /// set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_rcfile: Option<String>,
-    /// Persona source files (`[profile.X] persona = [...]`), each relative to
-    /// `$WORK`. At `env create` their contents are concatenated in order into a
-    /// single `PERSONA.md` at the worktree root: the agent's standing working
-    /// style, loaded via `@PERSONA.md` in `CLAUDE.md` or a read instruction in
-    /// `AGENTS.md`. Serialized only when non-empty.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub persona: Vec<String>,
     /// Allow `AF_UNIX` sockets (`[profile.X.net] unix = true`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unix_sockets: bool,
@@ -765,7 +758,6 @@ impl Profile {
             private_paths: Vec::new(),
             allow_command_extractors: false,
             shell_rcfile: None,
-            persona: Vec::new(),
             unix_sockets: false,
             mach_iokit: false,
             loopback_ports: Vec::new(),
