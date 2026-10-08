@@ -38,6 +38,12 @@
   background: var(--raised);
   color: var(--ink);
 }
+.app-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: none;
+  color: var(--ink-2);
+}
 .app-pad {
   padding: 24px;
 }

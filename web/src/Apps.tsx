@@ -3,6 +3,7 @@ import {
   appsApi,
   explanationDrift,
   flowLayers,
+  focusGap,
   label,
   neighborhood,
   withLeanDependencies,
@@ -362,6 +363,11 @@ function Guarantees({
   const related = model.edges.filter(
     (e) => e.from === selected?.id || e.to === selected?.id,
   );
+  const declarations = latest?.run.declarations ?? [];
+  const gap = (id: string) =>
+    focusGap(model, id, declarations, data.summary.id);
+  const rootGap = view === "proof" ? gap(root.id) : null;
+  const selectedGap = selected ? gap(selected.id) : null;
   const declaration = selected?.symbol
     ? latest?.run.declarations.find((d) => d.name === selected.symbol)
     : undefined;
@@ -472,6 +478,7 @@ function Guarantees({
                 )}
                 <br />
                 Dashed gray: authored explanations and implementation links.
+                Arrows point from what a node depends on to the node.
               </div>
               {latest &&
                 (latest.freshness !== "matches_repository_inputs" ||
@@ -493,6 +500,7 @@ function Guarantees({
                 }
                 onGo={(id, i) => focusOn(id, trail.slice(0, i))}
               />
+              {rootGap && <Note>{rootGap}</Note>}
               <Graph
                 model={model}
                 root={root.id}
@@ -531,14 +539,20 @@ function Guarantees({
                     <>
                       <code className="app-symbol">{selected.symbol}</code>
                       {selected.id !== root.id && (
-                        <button
-                          className="app-button"
-                          onClick={() =>
-                            focusOn(selected.id, [...trail, root.id])
-                          }
-                        >
-                          Focus dependencies
-                        </button>
+                        <>
+                          <button
+                            className="app-button"
+                            disabled={!!selectedGap}
+                            onClick={() =>
+                              focusOn(selected.id, [...trail, root.id])
+                            }
+                          >
+                            Focus dependencies
+                          </button>
+                          {selectedGap && (
+                            <p className="app-muted">{selectedGap}</p>
+                          )}
+                        </>
                       )}
                     </>
                   )}
@@ -879,7 +893,14 @@ export function Graph({
                         ? `M ${from.x + 218} ${y1} C ${from.x + 253} ${y1}, ${to.x + 253} ${y2}, ${to.x + 218} ${y2}`
                         : `M ${x1} ${y1} C ${(x1 + x2) / 2} ${y1}, ${(x1 + x2) / 2} ${y2}, ${x2} ${y2}`
                     }
-                    markerEnd={`url(#arrow-${view})`}
+                    // A proof edge means `from` depends on `to`; the arrow
+                    // runs from the dependency to its dependent.
+                    markerStart={
+                      view === "proof" ? `url(#arrow-${view})` : undefined
+                    }
+                    markerEnd={
+                      view === "flow" ? `url(#arrow-${view})` : undefined
+                    }
                   />
                 </g>
               );
@@ -952,7 +973,9 @@ export function MapPrompt({ project }: { project: string }) {
 Use docs/app/app-console.md and examples/app/booking/h5i-app.ui.json as references.
 Read the Rust and Lean code. Explain the user-visible guarantees, their assumptions
 and exclusions, and connect them to the implemented specifications, theorems and
-Rust code. Include an application-flow view where useful.
+Rust code. A proof edge means "from depends on to"; put out-of-scope behavior
+in excludes or exclusions, not in an edge. Include an application-flow view
+where useful.
 Use exact Lean symbols and repository-relative source paths with unique anchors.
 Lean dependency edges come from check records; do not invent proof evidence or
 claim that unverified behavior is guaranteed.`}</pre>
