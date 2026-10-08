@@ -92,6 +92,8 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 
 ## 2. Find Bugs: Red-Team with Agents
 
+> h5i works with existing web services and applications, regardless of their framework. No migration to h5i-app is required.
+
 Let AI agents explore, attack, and test web applications using h5i's integrated security toolkit.
 
 - **Browser automation:** Navigate applications, interact with forms, and test authenticated workflows using a lightweight Rust browser or Chromium.
@@ -100,8 +102,6 @@ Let AI agents explore, attack, and test web applications using h5i's integrated 
 - **Reproducible testing:** Save confirmed attack flows and replay them in CI/CD to prevent regressions.
 
 For additional isolation, h5i also offers optional sandboxed execution with configurable filesystem and network restrictions. See the [manual](docs/MANUAL.md) for CLI details and [CI example](examples/security-regression-ci) for automated regression testing.
-
-> h5i works with existing web services and applications, regardless of their framework. No migration to h5i-app is required.
 
 Agents interact with all these capabilities through a unified CLI, while you can inspect their activity through the local dashboard (`h5i ui`).
 
