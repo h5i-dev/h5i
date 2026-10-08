@@ -171,11 +171,3 @@ server around it, and the proof workflow.
 ## 5. License
 
 Apache-2.0. See [LICENSE](LICENSE).
-
----
-
-## 6. Contributors
-
-<a href="https://github.com/h5i-dev/h5i/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=h5i-dev/h5i" alt="h5i contributors" />
-</a>
