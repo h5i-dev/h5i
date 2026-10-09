@@ -65,6 +65,7 @@ Let AI agents explore, attack, and test web applications using h5i's integrated 
 - **HTTP security testing:** Capture, modify, replay, and compare HTTP requests to investigate broken access control, injection flaws, and other vulnerabilities.
 - **Reconnaissance:** Discover endpoints, parameters, and hidden attack surfaces through crawling and JavaScript analysis.
 - **Reproducible testing:** Save confirmed attack flows and replay them in CI/CD to catch security regressions.
+- **Sandboxed workflow**: Run agents in isolated environments with configurable filesystem and network restrictions.
 
 Agents access these capabilities through a unified CLI. You can also monitor their activity and inspect sessions through the local dashboard:
 
