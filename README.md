@@ -93,49 +93,18 @@ See the [CLI manual](docs/MANUAL.md) for complete documentation and the [CI regr
 - **Prove in Lean 4:** Translate Rust implementations using [Aeneas](https://github.com/AeneasVerif/aeneas) into Lean 4.
 - **Prove specifications:** Prove various properties like authorization, isolation, business logics, and more.
 
+Add `h5i-app` to your Rust project:
+
 ```toml
 [dependencies]
 h5i-app = { version = "0.1.1", features = ["http", "postgres"] }
 ```
 
-For example, the following Rust function defines the state transition of calculator:
-
-```rust
-// Simplified example from examples/app/calculator
-pub fn transition(actor: &Principal, snap: &Snapshot, cmd: &Command) -> Result<(Option<Memory>, Reply), Error> {
-    match cmd {
-        Command::Set { value } => Ok((Some(Memory { user: actor.user, value: *value }), Reply::Value(*value))),
-        Command::Apply { op, arg } => {
-            let v = compute(*op, memory_of(&snap.memories, actor.user), *arg); 
-            Ok((Some(Memory { user: actor.user, value: v }), Reply::Value(v))),
-        }
-        Command::Get => Ok((None, Reply::Value(memory_of(&snap.memories, actor.user)))),
-    }
-}
-```
-
-Aeneas translates it to Lean, where theorems about it are ordinary Lean:
-
-```lean
-theorem get_after (a : Principal) (s s' : Snapshot) (c : Command) (w : Option Memory) (v : U64)
-    (hroom : s.memories.length < Usize.max)
-    (ht : transition a s c = ok (.Ok (w, .Value v))) (hs : apply s w = ok s') :
-    transition a s' .Get = ok (.Ok (none, .Value v))
-```
-
-To get started:
-
-```bash
-h5i app new counter && cd counter      # Create a new verifiable Rust application
-h5i app extract                        # Generate Lean 4 representations of Rust logic
-h5i app prove                          # Check the proofs against the implementation
-```
-
-See the [h5i-app documentation](crates/h5i-app/README.md) for a complete example, the Axum integration, and the formal verification workflow.
-
 <p align="center">
   <img src="./docs/_static/calculator-rust-lean-proof.svg" alt="Watching a sandboxed browser session from the host" width="99%" />
 </p>
+
+See the [h5i-app documentation](crates/h5i-app/README.md) for a complete example, the Axum integration, and the formal verification workflow.
 
 ---
 
