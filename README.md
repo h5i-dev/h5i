@@ -208,6 +208,10 @@ See [crates/h5i-app](crates/h5i-app/README.md) for the full kernel, the axum
 server around it, and the proof workflow, and [TRUST.md](docs/app/TRUST.md)
 for exactly what is proven and what is assumed.
 
+<p align="center">
+  <img src="./docs/_static/calculator-rust-lean-proof.svg" alt="Watching a sandboxed browser session from the host" width="99%" />
+</p>
+
 ---
 
 ## 4. Tutorial
