@@ -89,9 +89,9 @@ Red-teaming discovers vulnerabilities through testing. Formal verification takes
 
 `h5i-app` is an Axum-based Rust web framework that makes application logic amenable to Lean 4.
 
-- **Write in Rust:** Define application logic as pure Rust functions, separating state transitions from HTTP handlers and database operations.
-- **Prove in Lean 4:** Translate Rust implementations using [Aeneas](https://github.com/AeneasVerif/aeneas) and verify authorization, tenant isolation, and business invariants.
-- **Reason across requests:** Prove properties of state transitions and sequences of committed requests, not just individual functions.
+- **Write in Rust:** Write your web applications in Rust using `h5i-app`, an Axum-based web framework.
+- **Prove in Lean 4:** Translate Rust implementations using [Aeneas](https://github.com/AeneasVerif/aeneas) into Lean 4.
+- **Prove specifications:** Prove various properties like authorization, isolation, business logics, and more.
 - **Test your proofs:** Use mutation testing to check whether intentionally introduced implementation changes invalidate the relevant proofs.
 
 Add `h5i-app` to your Rust project:
