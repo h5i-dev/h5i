@@ -158,6 +158,11 @@ Watch it all from the host with `h5i ui`:
   <img src="./docs/_static/sandbox-ui-demo.png" alt="Watching a sandboxed browser session from the host" width="99%" />
 </p>
 
+<p align="center">
+  <img src="./docs/_static/calculator-rust-lean-proof.svg" alt="Watching a sandboxed browser session from the host" width="99%" />
+</p>
+
+
 ---
 
 ## 3. Prove correctness: build on h5i-app
