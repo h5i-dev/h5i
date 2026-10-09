@@ -39,25 +39,18 @@ h5i app mutate                                          # Test proof sensitivity
 
 ## 1. Install
 
-Install h5i and its security testing plugins:
-
 ```bash
-curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test   # Install h5i with optional security plugins
-h5i plugin list                                                           # Show installed plugins
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test         # `websec`, `recon`, and `test` are optional plugins
+# curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh  # if you would rather not add a domain to the chain:
+# cargo install --path .                                                         # build from source
+# h5i plugin list                                                                # says what is installed
 ```
 
-Alternatively, install from [GitHub](https://github.com/h5i-dev/h5i) or build from source:
+The agent-facing interface is a skill, and the binary carries it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh   # Install directly from GitHub
-cargo install --path .                                                         # Build from a local source checkout
-```
-
-**Using h5i with AI agents?** Install the agent skill so your agent can discover and use h5i's commands directly:
-
-```bash
-npx skills add h5i-dev/h5i                 # Add the h5i skill to your AI agent
-# h5i skill install                        # Alternatively, install the skill using the h5i CLI
+npx skills add h5i-dev/h5i         # if you do not have the binary yet
+# h5i skill install                # writes it where your runtime looks
 ```
 
 ---
