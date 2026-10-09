@@ -79,9 +79,7 @@ h5i ui    # Open the local dashboard
   <img src="./docs/_static/sandbox-ui-demo.png" alt="h5i local dashboard showing browser and session activity" width="99%" />
 </p>
 
-For additional isolation, h5i also supports **optional sandboxed execution** with configurable filesystem and network restrictions.
-
-See the [CLI manual](docs/MANUAL.md) for complete command documentation and the [CI regression example](examples/security-regression-ci) for automated security testing.
+See the [CLI manual](docs/MANUAL.md) for complete documentation and the [CI regression example](examples/security-regression-ci) for automated security testing.
 
 ---
 
