@@ -118,12 +118,9 @@ pub fn transition(actor: &Principal, snap: &Snapshot, cmd: &Command) -> Result<(
 Aeneas translates it to Lean, where theorems about it are ordinary Lean:
 
 ```lean
-theorem get_after
-    (a : Principal) (s s' : Snapshot)
-    (c : Command) (w : Option Memory) (v : U64)
+theorem get_after (a : Principal) (s s' : Snapshot) (c : Command) (w : Option Memory) (v : U64)
     (hroom : s.memories.length < Usize.max)
-    (ht : transition a s c = ok (.Ok (w, .Value v)))
-    (hs : apply s w = ok s') :
+    (ht : transition a s c = ok (.Ok (w, .Value v))) (hs : apply s w = ok s') :
     transition a s' .Get = ok (.Ok (none, .Value v))
 ```
 
