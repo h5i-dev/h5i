@@ -59,7 +59,9 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 
 ## 2. Find Bugs: Red-Team with Agents
 
-Let AI agents explore, attack, and test web applications using h5i's integrated security toolkit. **h5i works with existing applications regardless of their framework**—no migration to `h5i-app` is required.
+Let AI agents explore, attack, and test web applications using h5i's integrated security toolkit. 
+
+> **h5i works with any web services and applications regardless of their framework**, and no migration to `h5i-app` is required.
 
 - **Browser automation:** Navigate applications, interact with forms, and test authenticated workflows.
 - **HTTP security testing:** Capture, modify, replay, and compare HTTP requests to investigate broken access control, injection flaws, and other vulnerabilities.
