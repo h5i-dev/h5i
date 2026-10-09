@@ -93,17 +93,11 @@ See the [CLI manual](docs/MANUAL.md) for complete documentation and the [CI regr
 - **Prove in Lean 4:** Translate Rust implementations using [Aeneas](https://github.com/AeneasVerif/aeneas) into Lean 4.
 - **Prove specifications:** Prove various properties like authorization, isolation, business logics, and more.
 
+Add `h5i-app` to your Rust project:
+
 ```toml
 [dependencies]
 h5i-app = { version = "0.1.1", features = ["http", "postgres"] }
-```
-
-To get started:
-
-```bash
-h5i app new counter && cd counter      # Create a new verifiable Rust application
-h5i app extract                        # Generate Lean 4 representations of Rust logic
-h5i app prove                          # Check the proofs against the implementation
 ```
 
 <p align="center">
