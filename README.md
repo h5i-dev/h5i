@@ -129,7 +129,6 @@ To get started:
 h5i app new counter && cd counter      # Create a new verifiable Rust application
 h5i app extract                        # Generate Lean 4 representations of Rust logic
 h5i app prove                          # Check the proofs against the implementation
-h5i app mutate                         # Introduce mutations and check proof sensitivity
 ```
 
 See the [h5i-app documentation](crates/h5i-app/README.md) for a complete example, the Axum integration, and the formal verification workflow.
