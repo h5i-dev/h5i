@@ -69,7 +69,7 @@ Let AI agents explore, attack, and test web applications using h5i's integrated 
 - **Reproducible testing:** Save confirmed attack flows and replay them in CI/CD to catch security regressions.
 - **Sandboxed workflow**: Run agents in isolated environments with configurable filesystem and network restrictions.
 
-Agents access these capabilities through a unified CLI. You can also monitor their activity and inspect sessions through the local dashboard:
+Agents access these capabilities through a unified CLI, while human can monitor their activity through the intuitive dashboard:
 
 ```bash
 h5i ui    # Open the local dashboard
