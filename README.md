@@ -85,9 +85,9 @@ See the [CLI manual](docs/MANUAL.md) for complete documentation and the [CI regr
 
 ## 3. Prove Correctness: Build on h5i-app
 
-Red-teaming discovers vulnerabilities through testing. Formal verification takes a complementary approach: **proving that specified properties hold for all possible inputs and behaviors covered by the model and assumptions.**
-
 `h5i-app` is an Axum-based Rust web framework that makes application logic amenable to Lean 4.
+
+> Red-teaming discovers vulnerabilities through testing. Formal verification takes a complementary approach: **proving that specified properties hold for all possible inputs and behaviors covered by the model and assumptions.**
 
 - **Write in Rust:** Write your web applications in Rust using `h5i-app`, an Axum-based web framework.
 - **Prove in Lean 4:** Translate Rust implementations using [Aeneas](https://github.com/AeneasVerif/aeneas) into Lean 4.
