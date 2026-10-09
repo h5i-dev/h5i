@@ -22,7 +22,7 @@
 
 ```bash
 # Find bugs in web applications
-h5i browser open https://example.com                   # Open a website in the browser
+h5i browser open https://example.com                    # Open a website in the browser
 h5i browser click @e3                                   # Interact with page elements
 h5i websec requests                                     # Inspect captured HTTP traffic
 h5i websec replay req_42 --set query.id=456             # Modify and replay a request
