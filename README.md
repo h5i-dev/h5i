@@ -105,8 +105,6 @@ Add `h5i-app` to your Rust project:
 h5i-app = { version = "0.1", features = ["http", "postgres"] }
 ```
 
-### From Rust Implementation to Mathematical Proof
-
 For example, the following Rust function defines how a calculator application's state changes in response to a command:
 
 ```rust
