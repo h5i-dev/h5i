@@ -87,7 +87,7 @@ See the [CLI manual](docs/MANUAL.md) for complete documentation and the [CI regr
 
 Red-teaming discovers vulnerabilities through testing. Formal verification takes a complementary approach: **proving that specified properties hold for all possible inputs and behaviors covered by the model and assumptions.**
 
-`h5i-app` is an Axum-based Rust web framework that makes application logic amenable to formal verification in Lean 4.
+`h5i-app` is an Axum-based Rust web framework that makes application logic amenable to Lean 4.
 
 - **Write in Rust:** Define application logic as pure Rust functions, separating state transitions from HTTP handlers and database operations.
 - **Prove in Lean 4:** Translate Rust implementations using [Aeneas](https://github.com/AeneasVerif/aeneas) and verify authorization, tenant isolation, and business invariants.
