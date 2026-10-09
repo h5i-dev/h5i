@@ -106,8 +106,7 @@ pub fn transition(actor: &Principal, snap: &Snapshot, cmd: &Command) -> Result<(
     match cmd {
         Command::Set { value } => Ok((Some(Memory { user: actor.user, value: *value }), Reply::Value(*value))),
         Command::Apply { op, arg } => {
-            let m = memory_of(&snap.memories, actor.user);
-            let v = compute(*op, m, *arg); 
+            let v = compute(*op, memory_of(&snap.memories, actor.user), *arg); 
             Ok((Some(Memory { user: actor.user, value: v }), Reply::Value(v))),
         }
         Command::Get => Ok((None, Reply::Value(memory_of(&snap.memories, actor.user)))),
