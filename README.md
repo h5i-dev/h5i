@@ -61,7 +61,7 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 
 Let AI agents explore, attack, and test web applications using h5i's integrated security toolkit. **h5i works with existing applications regardless of their framework**—no migration to `h5i-app` is required.
 
-- **Browser automation:** Navigate applications, interact with forms, and test authenticated workflows using a lightweight Rust browser or Chromium.
+- **Browser automation:** Navigate applications, interact with forms, and test authenticated workflows.
 - **HTTP security testing:** Capture, modify, replay, and compare HTTP requests to investigate broken access control, injection flaws, and other vulnerabilities.
 - **Reconnaissance:** Discover endpoints, parameters, and hidden attack surfaces through crawling and JavaScript analysis.
 - **Reproducible testing:** Save confirmed attack flows and replay them in CI/CD to catch security regressions.
