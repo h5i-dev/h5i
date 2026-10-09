@@ -117,9 +117,7 @@ pub fn transition(actor: &Principal, snap: &Snapshot, cmd: &Command) -> Result<(
 }
 ```
 
-Because the logic is expressed as a pure function, it can be translated into Lean 4 and reasoned about mathematically.
-
-For example, we can prove that **after a successful state-changing command, reading the user's state returns the value produced by that command**:
+Aeneas translates it to Lean, where theorems about it are ordinary Lean:
 
 ```lean
 theorem get_after
