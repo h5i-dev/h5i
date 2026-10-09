@@ -89,16 +89,13 @@ See the [CLI manual](docs/MANUAL.md) for complete documentation and the [CI regr
 
 > Red-teaming discovers bugs through testing. Formal verification takes a complementary approach: proving that specified properties hold for all possible inputs and behaviors.
 
-- **Write in Rust:** Write your web applications in Rust using `h5i-app`, an Axum-based web framework.
-- **Prove in Lean 4:** Translate Rust implementations using [Aeneas](https://github.com/AeneasVerif/aeneas) into Lean 4.
-- **Prove specifications:** Prove various properties like authorization, isolation, business logics, and more.
-
-Add `h5i-app` to your Rust project:
-
 ```toml
 [dependencies]
 h5i-app = { version = "0.1.1", features = ["http", "postgres"] }
 ```
+
+We can write web applications in Rust, translate them into Lean 4 via [Aeneas](https://github.com/AeneasVerif/aeneas), and prove various properties like authorization, 
+isolation, business logics, and more.
 
 <p align="center">
   <img src="./docs/_static/calculator-rust-lean-proof.svg" alt="Watching a sandboxed browser session from the host" width="99%" />
