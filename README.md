@@ -95,7 +95,7 @@ Red-teaming discovers vulnerabilities through testing. Formal verification takes
 
 ```toml
 [dependencies]
-h5i-app = { version = "0.1", features = ["http", "postgres"] }
+h5i-app = { version = "0.1.1", features = ["http", "postgres"] }
 ```
 
 For example, the following Rust function defines the state transition of calculator:
