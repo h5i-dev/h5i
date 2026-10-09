@@ -7,25 +7,19 @@ main() {
   REPO="h5i-dev/h5i"
 
   # ── where it goes ──────────────────────────────────────────────────────────
-  # /usr/local/bin whenever it can be had, because a root-owned binary is the
-  # one an agent sharing this uid cannot rewrite (see the install step below).
-  # A machine with no sudo — a container, a locked-down shared host, CI as a
-  # non-root user — gets the user directory instead of a failed install.
-  # So does a machine where `sudo` exists but this user may not use it; that
-  # cannot be told from here without a prompt, so the install step finds out
-  # by trying (see below).
-  # H5I_INSTALL_DIR always wins: naming a directory is already the decision.
-  USER_BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
-  if [ -n "${H5I_INSTALL_DIR:-}" ]; then
-    INSTALL_DIR="$H5I_INSTALL_DIR"
-  elif [ -w /usr/local/bin ] || command -v sudo >/dev/null 2>&1; then
-    INSTALL_DIR="/usr/local/bin"
-  else
-    INSTALL_DIR="$USER_BIN_DIR"
-  fi
-  # Set once sudo has been tried and refused, so the warnings below stop
-  # offering a sudo-backed install this user has just been shown not to have.
-  SUDO_REFUSED=0
+  # The user's own bin directory, with no sudo and no prompt, as the Claude
+  # Code and Codex installers do. A root-owned binary was once the default on
+  # the theory that an agent sharing this uid could not rewrite it, but the
+  # tier that shares the uid unconfined (`isolation=workspace`) can as easily
+  # edit the shell profile or shadow `h5i` earlier on the PATH, and the tiers
+  # that confine the filesystem keep ~/.local/bin out of reach either way.
+  # Asking for a password to protect against neither was all cost: on a host
+  # where sudo refuses this user it meant three failed prompts before anything
+  # was installed.
+  # H5I_INSTALL_DIR always wins: naming a directory is already the decision,
+  # and naming one this user cannot write is how to ask for a root-owned
+  # install (see the install step below).
+  INSTALL_DIR="${H5I_INSTALL_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}"
 
   # ── what to install ────────────────────────────────────────────────────────
   # One binary by default. The rendering engine used to ship as a second file
@@ -76,8 +70,9 @@ main() {
         echo
         echo "Environment: H5I_INSTALL_DIR, H5I_VERSION, H5I_SKIP_CHECKSUM"
         echo
-        echo "Installs into /usr/local/bin, or into \${XDG_BIN_HOME:-~/.local/bin}"
-        echo "when that would need root and sudo is missing or refuses you."
+        echo "Installs into \${XDG_BIN_HOME:-~/.local/bin} without sudo. For a"
+        echo "root-owned install, name a root-owned directory:"
+        echo "  curl -fsSL https://h5i.dev/install.sh | H5I_INSTALL_DIR=/opt/h5i/bin sh"
         exit 0
         ;;
       *)
@@ -164,9 +159,9 @@ main() {
     exit 1
   fi
 
-  # A directory that does not exist yet is the common case for the user-area
-  # fallback. Create it as this user where that works, and only reach for sudo
-  # for a path under a root-owned parent.
+  # A directory that does not exist yet is the common case for a fresh
+  # ~/.local/bin. Create it as this user where that works, and only reach for
+  # sudo for an H5I_INSTALL_DIR under a root-owned parent.
   if [ ! -d "$INSTALL_DIR" ]; then
     mkdir -p "$INSTALL_DIR" 2>/dev/null \
       || { command -v sudo >/dev/null 2>&1 && sudo mkdir -p "$INSTALL_DIR"; } \
@@ -250,66 +245,22 @@ main() {
     esac
 
     # `install` rather than `mv`: `mv` preserves the *invoking user's* ownership,
-    # which under sudo leaves a user-writable h5i sitting in a root-owned PATH
-    # directory. Anything running as that user — including an agent in a
-    # workspace-tier box, which shares the uid — could then replace the binary
-    # that enforces every box's confinement, and `sudo h5i` would run it as root.
+    # which under sudo would leave a user-writable h5i in a root-owned
+    # directory, undoing the one thing the root-owned install was asked for.
     #
-    # `command -v sudo` only says sudo exists, not that this user may use it:
-    # on a shared host it is installed for the admins and refuses everyone
-    # else. Asking first (`sudo -n true`) does not tell those apart either — it
-    # fails just the same for an admin whose sudo wants a password — so the
-    # install itself is the test. A refusal sends the binary to the user
-    # directory, which is what a machine with no sudo at all gets; a directory
-    # named in H5I_INSTALL_DIR is never swapped for another one.
-    if [ ! -w "$INSTALL_DIR" ] && command -v sudo >/dev/null 2>&1; then
-      if sudo install -o root -g 0 -m 755 "${TMP}/${BINARY}" "${INSTALL_DIR}/${BINARY}"; then
-        echo "✔  ${BINARY} ${VERSION} installed: run ${BINARY} --help"
-        continue
-      fi
-      SUDO_REFUSED=1
-      if [ -n "${H5I_INSTALL_DIR:-}" ]; then
-        echo "Could not install into ${INSTALL_DIR} with sudo." >&2
-        echo "Name a directory you own instead:" >&2
-        echo "  H5I_INSTALL_DIR=\"\$HOME/.local/bin\" sh install.sh" >&2
-        exit 1
-      fi
-      echo "!  sudo did not succeed, so ${BINARY} goes into ${USER_BIN_DIR} instead of ${INSTALL_DIR}." >&2
-      INSTALL_DIR="$USER_BIN_DIR"
-      mkdir -p "$INSTALL_DIR" \
-        || { echo "Could not create ${INSTALL_DIR}." >&2; exit 1; }
-    fi
-
+    # sudo is reached only through H5I_INSTALL_DIR: the default directory is
+    # the user's own, so a prompt here is one the operator asked for.
     if [ -w "$INSTALL_DIR" ]; then
       install -m 755 "${TMP}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
-      # The ownership fix above only helps on the sudo branch. Here the
-      # *directory* is writable by this user, so the file's owner and mode are
-      # beside the point: anything running as this user can replace or unlink the
-      # binary whatever it is set to — and on a Homebrew macOS, a user-owned
-      # /usr/local/bin is the default rather than the exception.
-      #
-      # That is the same actor the comment above is about. An agent in a
-      # workspace-tier box shares this uid by design, so it can rewrite the
-      # binary that enforces every other box's confinement, and `sudo h5i` would
-      # then run it as root. h5i cannot fix this from inside an install script —
-      # where the operator keeps their binaries is theirs to decide — so it says
-      # so rather than leaving it to be discovered.
-      echo "!  ${INSTALL_DIR} is writable by this user, so anything running as you can replace" >&2
-      echo "   ${INSTALL_DIR}/${BINARY} — including an agent in an isolation=workspace box, which" >&2
-      echo "   shares your uid." >&2
-      if [ "$SUDO_REFUSED" = "1" ]; then
-        echo "   sudo is not available to this user, so a root-owned install is not available to close it." >&2
-      elif command -v sudo >/dev/null 2>&1; then
-        echo "   For a root-owned install: H5I_INSTALL_DIR=/opt/h5i/bin sh install.sh" >&2
-      else
-        echo "   There is no sudo here, so a root-owned install is not available to close it." >&2
+    elif command -v sudo >/dev/null 2>&1; then
+      if ! sudo install -o root -g 0 -m 755 "${TMP}/${BINARY}" "${INSTALL_DIR}/${BINARY}"; then
+        echo "Could not install into ${INSTALL_DIR} with sudo." >&2
+        echo "Leave H5I_INSTALL_DIR unset to install into ~/.local/bin." >&2
+        exit 1
       fi
     else
-      # Only reachable through H5I_INSTALL_DIR: the directory chosen above is
-      # either writable or backed by a sudo the step above would have tried.
       echo "Cannot write to ${INSTALL_DIR}, and sudo is not available." >&2
-      echo "Name a directory you own instead:" >&2
-      echo "  H5I_INSTALL_DIR=\"\$HOME/.local/bin\" sh install.sh" >&2
+      echo "Leave H5I_INSTALL_DIR unset to install into ~/.local/bin." >&2
       exit 1
     fi
 
@@ -326,6 +277,16 @@ main() {
       echo "     export PATH=\"${INSTALL_DIR}:\$PATH\"" >&2
       ;;
   esac
+
+  # Installs before this one went to /usr/local/bin. Whichever of the two the
+  # PATH reaches first is the h5i that runs, so an old one left there can
+  # silently stay the one in use, or outlive this one unnoticed.
+  found="$(command -v h5i 2>/dev/null || true)"
+  if [ -n "$found" ] && [ "$found" != "${INSTALL_DIR}/h5i" ]; then
+    echo
+    echo "!  \`h5i\` on your PATH is ${found}, not ${INSTALL_DIR}/h5i." >&2
+    echo "   Remove the older one, or put ${INSTALL_DIR} first on your PATH." >&2
+  fi
 }
 
 main "$@"
