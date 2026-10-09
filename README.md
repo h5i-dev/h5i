@@ -98,7 +98,7 @@ Red-teaming discovers vulnerabilities through testing. Formal verification takes
 h5i-app = { version = "0.1", features = ["http", "postgres"] }
 ```
 
-For example, the following Rust function defines how a calculator application's state changes in response to a command:
+For example, the following Rust function defines the state transition of calculator:
 
 ```rust
 // Simplified example from examples/app/calculator
