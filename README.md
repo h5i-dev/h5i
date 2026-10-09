@@ -147,16 +147,6 @@ theorem get_after
     transition a s' .Get = ok (.Ok (none, .Value v))
 ```
 
-Unlike ordinary testing, this theorem establishes the property for every state and command satisfying its assumptions—not just selected test cases.
-
-The same approach can be used to prove security-critical properties such as:
-
-- **Authorization:** Unauthorized operations cannot modify protected state.
-- **Tenant isolation:** Operations by one tenant cannot access or modify another tenant's data.
-- **Business invariants:** Application-specific constraints are preserved across state transitions.
-
-Proofs establish the stated properties under their assumptions; they do not automatically guarantee the security of every component of the deployed application.
-
 To get started:
 
 ```bash
