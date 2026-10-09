@@ -137,14 +137,14 @@ belong here rather than there:
   Chromium trusts only the session CA. On macOS the printed command passes
   `--ignore-https-errors`, so Chromium accepts every certificate error for the
   launch.
-- A user-writable install directory is a user-writable h5i. Homebrew on macOS is
-  the common case, and so is a machine where sudo is missing or refuses this
-  user, where `install.sh` falls back to `~/.local/bin` rather than refusing to
-  install. An
-  `isolation=workspace` box shares your uid, so it can rewrite the binary that
-  confines every other box, and a later `sudo h5i` runs that binary as root.
-  `H5I_INSTALL_DIR=/opt/h5i/bin` closes it where root is available at all; the
-  installer says so at install time either way.
+- A user-writable install directory is a user-writable h5i. `install.sh`
+  installs into `~/.local/bin` without sudo, as Homebrew on macOS does into
+  `/usr/local/bin`. An `isolation=workspace` box shares your uid unconfined, so
+  it can rewrite that binary, and a later `sudo h5i` runs it as root; it could
+  as easily edit your shell profile, so a root-owned binary alone does not close
+  this. The confining tiers keep the install directory out of reach.
+  `H5I_INSTALL_DIR=/opt/h5i/bin` gives a root-owned install where root is
+  available.
 
 Secret detection and redaction are guards, not guarantees, and h5i does not
 claim a hostile repository cannot exploit your editor, build tools or OS on the
