@@ -11,14 +11,21 @@ main() {
   # one an agent sharing this uid cannot rewrite (see the install step below).
   # A machine with no sudo — a container, a locked-down shared host, CI as a
   # non-root user — gets the user directory instead of a failed install.
+  # So does a machine where `sudo` exists but this user may not use it; that
+  # cannot be told from here without a prompt, so the install step finds out
+  # by trying (see below).
   # H5I_INSTALL_DIR always wins: naming a directory is already the decision.
+  USER_BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
   if [ -n "${H5I_INSTALL_DIR:-}" ]; then
     INSTALL_DIR="$H5I_INSTALL_DIR"
   elif [ -w /usr/local/bin ] || command -v sudo >/dev/null 2>&1; then
     INSTALL_DIR="/usr/local/bin"
   else
-    INSTALL_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
+    INSTALL_DIR="$USER_BIN_DIR"
   fi
+  # Set once sudo has been tried and refused, so the warnings below stop
+  # offering a sudo-backed install this user has just been shown not to have.
+  SUDO_REFUSED=0
 
   # ── what to install ────────────────────────────────────────────────────────
   # One binary by default. The rendering engine used to ship as a second file
@@ -70,7 +77,7 @@ main() {
         echo "Environment: H5I_INSTALL_DIR, H5I_VERSION, H5I_SKIP_CHECKSUM"
         echo
         echo "Installs into /usr/local/bin, or into \${XDG_BIN_HOME:-~/.local/bin}"
-        echo "when that would need root and sudo is not available."
+        echo "when that would need root and sudo is missing or refuses you."
         exit 0
         ;;
       *)
@@ -247,6 +254,32 @@ main() {
     # directory. Anything running as that user — including an agent in a
     # workspace-tier box, which shares the uid — could then replace the binary
     # that enforces every box's confinement, and `sudo h5i` would run it as root.
+    #
+    # `command -v sudo` only says sudo exists, not that this user may use it:
+    # on a shared host it is installed for the admins and refuses everyone
+    # else. Asking first (`sudo -n true`) does not tell those apart either — it
+    # fails just the same for an admin whose sudo wants a password — so the
+    # install itself is the test. A refusal sends the binary to the user
+    # directory, which is what a machine with no sudo at all gets; a directory
+    # named in H5I_INSTALL_DIR is never swapped for another one.
+    if [ ! -w "$INSTALL_DIR" ] && command -v sudo >/dev/null 2>&1; then
+      if sudo install -o root -g 0 -m 755 "${TMP}/${BINARY}" "${INSTALL_DIR}/${BINARY}"; then
+        echo "✔  ${BINARY} ${VERSION} installed: run ${BINARY} --help"
+        continue
+      fi
+      SUDO_REFUSED=1
+      if [ -n "${H5I_INSTALL_DIR:-}" ]; then
+        echo "Could not install into ${INSTALL_DIR} with sudo." >&2
+        echo "Name a directory you own instead:" >&2
+        echo "  H5I_INSTALL_DIR=\"\$HOME/.local/bin\" sh install.sh" >&2
+        exit 1
+      fi
+      echo "!  sudo did not succeed, so ${BINARY} goes into ${USER_BIN_DIR} instead of ${INSTALL_DIR}." >&2
+      INSTALL_DIR="$USER_BIN_DIR"
+      mkdir -p "$INSTALL_DIR" \
+        || { echo "Could not create ${INSTALL_DIR}." >&2; exit 1; }
+    fi
+
     if [ -w "$INSTALL_DIR" ]; then
       install -m 755 "${TMP}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
       # The ownership fix above only helps on the sudo branch. Here the
@@ -264,16 +297,16 @@ main() {
       echo "!  ${INSTALL_DIR} is writable by this user, so anything running as you can replace" >&2
       echo "   ${INSTALL_DIR}/${BINARY} — including an agent in an isolation=workspace box, which" >&2
       echo "   shares your uid." >&2
-      if command -v sudo >/dev/null 2>&1; then
+      if [ "$SUDO_REFUSED" = "1" ]; then
+        echo "   sudo is not available to this user, so a root-owned install is not available to close it." >&2
+      elif command -v sudo >/dev/null 2>&1; then
         echo "   For a root-owned install: H5I_INSTALL_DIR=/opt/h5i/bin sh install.sh" >&2
       else
         echo "   There is no sudo here, so a root-owned install is not available to close it." >&2
       fi
-    elif command -v sudo >/dev/null 2>&1; then
-      sudo install -o root -g 0 -m 755 "${TMP}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
     else
       # Only reachable through H5I_INSTALL_DIR: the directory chosen above is
-      # either writable or backed by a sudo this branch has just failed to find.
+      # either writable or backed by a sudo the step above would have tried.
       echo "Cannot write to ${INSTALL_DIR}, and sudo is not available." >&2
       echo "Name a directory you own instead:" >&2
       echo "  H5I_INSTALL_DIR=\"\$HOME/.local/bin\" sh install.sh" >&2

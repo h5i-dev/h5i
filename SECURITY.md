@@ -138,8 +138,9 @@ belong here rather than there:
   `--ignore-https-errors`, so Chromium accepts every certificate error for the
   launch.
 - A user-writable install directory is a user-writable h5i. Homebrew on macOS is
-  the common case, and so is a machine with no sudo, where `install.sh` falls
-  back to `~/.local/bin` rather than refusing to install. An
+  the common case, and so is a machine where sudo is missing or refuses this
+  user, where `install.sh` falls back to `~/.local/bin` rather than refusing to
+  install. An
   `isolation=workspace` box shares your uid, so it can rewrite the binary that
   confines every other box, and a later `sudo h5i` runs that binary as root.
   `H5I_INSTALL_DIR=/opt/h5i/bin` closes it where root is available at all; the
