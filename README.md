@@ -93,8 +93,6 @@ Red-teaming discovers vulnerabilities through testing. Formal verification takes
 - **Prove in Lean 4:** Translate Rust implementations using [Aeneas](https://github.com/AeneasVerif/aeneas) into Lean 4.
 - **Prove specifications:** Prove various properties like authorization, isolation, business logics, and more.
 
-Add `h5i-app` to your Rust project:
-
 ```toml
 [dependencies]
 h5i-app = { version = "0.1", features = ["http", "postgres"] }
@@ -104,30 +102,17 @@ For example, the following Rust function defines how a calculator application's 
 
 ```rust
 // Simplified example from examples/app/calculator
-pub fn transition(
-    actor: &Principal,
-    snap: &Snapshot,
-    cmd: &Command,
-) -> Result<(Option<Memory>, Reply), Error> {
+pub fn transition(actor: &Principal, snap: &Snapshot, cmd: &Command) -> Result<(Option<Memory>, Reply), Error> {
     match cmd {
-        Command::Set { value } => Ok((
-            Some(Memory { user: actor.user, value: *value }),
-            Reply::Value(*value),
-        )),
+        Command::Set { value } => Ok((Some(Memory { user: actor.user, value: *value }), Reply::Value(*value))),
         Command::Apply { op, arg } => {
             let m = memory_of(&snap.memories, actor.user);
             match compute(*op, m, *arg) {
-                Ok(v) => Ok((
-                    Some(Memory { user: actor.user, value: v }),
-                    Reply::Value(v),
-                )),
+                Ok(v) => Ok((Some(Memory { user: actor.user, value: v }), Reply::Value(v))),
                 Err(e) => Err(e),
             }
         }
-        Command::Get => Ok((
-            None,
-            Reply::Value(memory_of(&snap.memories, actor.user)),
-        )),
+        Command::Get => Ok((None, Reply::Value(memory_of(&snap.memories, actor.user)))),
     }
 }
 ```
