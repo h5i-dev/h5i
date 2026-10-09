@@ -171,11 +171,10 @@ See the [h5i-app documentation](crates/h5i-app/README.md) for a complete example
 
 ## 4. Documentation
 
-- [Official website](https://h5i.dev/) — Project overview and [presentation slides](https://h5i.dev/pitch/)
-- [CLI manual](docs/MANUAL.md) / `man h5i` — Complete command reference
-- [h5i-app](crates/h5i-app/README.md) — Rust framework and Lean 4 verification
-- [Security regression CI example](examples/security-regression-ci) — Reproducible security tests
-- [Contributing](CONTRIBUTING.md) — Development guide and contribution instructions
+- [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
+- [MANUAL.md](docs/MANUAL.md) / `man h5i`: full command reference
+- [CONTRIBUTING.md](CONTRIBUTING.md): we welcome contributions of any kind
+- `curl -fsSL https://h5i.dev/man/man1/h5i.1 -o ~/.local/share/man/man1/h5i.1`: install the man page
 
 ---
 
