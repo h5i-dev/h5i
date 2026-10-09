@@ -186,8 +186,6 @@ h5i is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
 
 ## 6. Contributors
 
-Contributions of all kinds are welcome!
-
 <a href="https://github.com/h5i-dev/h5i/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=h5i-dev/h5i" alt="h5i contributors" />
 </a>
