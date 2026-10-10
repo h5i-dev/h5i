@@ -6,6 +6,7 @@ import H5iAppLib.Iter
 import H5iAppLib.Bytes
 import H5iAppLib.Text
 import H5iAppLib.Sets
+import H5iAppLib.Buckets
 import H5iAppLib.Lists
 import H5iAppLib.Tables
 import H5iAppLib.Tactics

@@ -189,6 +189,7 @@ Aeneas translates a subset of Rust. What falls outside it has a replacement:
 | `str` methods (`starts_with`, `trim`, `split`, ...) | `h5i_app_std::bytes` | its specs, over lists (`<+:`, `trimB`, `splitB`) |
 | `HashSet`, `BTreeSet` | a `Vec<T>` and `h5i_app_std::set` | its specs: `∈`, `⊆`, `SetEq` |
 | `HashMap`, `BTreeMap` | a `Vec<(K, V)>` and `h5i_app_std::map` | its specs: `mapGet`, `mapInsert`, `mapRemove` |
+| `HashMap` with many lookups | `h5i_app_std::hashmap::HashMap` (keys implement `KeyHash`) | its specs: `hashmap.lookup`, the same model |
 | recursion over a graph (role inheritance) | `h5i_app_std::graph::reachable` | its spec: exactly the `Reach` set |
 | `exp < now - leeway` | `h5i_app_std::time`, which cannot overflow | its specs, over `Nat` |
 | `held.contains(required)` on bitflags | `held & required == required` | `Covers`, `covers_iff_testBit` in `H5iAppLib.Bits` |
@@ -220,6 +221,17 @@ checks. Every function has a `@[step]` spec in
 `crates/h5i-app-std/proofs/StdSpecs.lean`, stated over lists with the models
 of `H5iAppLib.Text`, `Sets` and `Graph`, so `step*` goes through a call and
 the proof reasons about `<+:`, `⊆` or `Reach`, never about the loop.
+
+`hashmap::HashMap` is a hash map written in the subset (`Vec<Vec<(K, V)>>`
+buckets, sized once by `with_capacity` or `from_vec`), so it is proven like
+the rest, without a trusted model of `std`'s. Its specs state each operation
+over `hashmap.lookup m`, the `mapGet` of its entries, under `hashmap.Inv f m`,
+which every operation keeps. A key type implements `KeyHash` instead of
+`Hash`; the specs ask only that `key_hash` never fail (`HashModel`), never
+that it avoid collisions, which cost time and not correctness. Composite keys
+are structs with a derived `PartialEq` and a `KeyHash` combining the fields':
+Aeneas has no model of the tuple `==`. Such an impl gets its `HashModel` from
+`HashModel.ofTotal _ fun k => by unfold ...; step*`.
 
 A kernel uses it like `h5i-app-sql`: extract with `--include h5i_app_std`,
 have `h5i app extract` copy the specs next to the extracted Lean, and add

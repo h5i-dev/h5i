@@ -1,6 +1,8 @@
 import StdSpecs
 /-! Every spec in `StdSpecs` exists here (none was skipped by its `h5i_when` guard) and
 uses only the standard axioms. Not copied into kernels. -/
+#print axioms h5i_app_std.Specs.HashModel.spec
+#print axioms h5i_app_std.Specs.bool_key_hash_spec
 #print axioms h5i_app_std.Specs.bytes.concat_spec
 #print axioms h5i_app_std.Specs.bytes.contains_byte_spec
 #print axioms h5i_app_std.Specs.bytes.contains_spec
@@ -28,6 +30,27 @@ uses only the standard axioms. Not copied into kernels. -/
 #print axioms h5i_app_std.Specs.graph.reachable_loop1_spec
 #print axioms h5i_app_std.Specs.graph.reachable_spec
 #print axioms h5i_app_std.Specs.graph.reachable_visit_spec
+#print axioms h5i_app_std.Specs.hashmap.Inv.bucket_le
+#print axioms h5i_app_std.Specs.hashmap.Inv.insert_at
+#print axioms h5i_app_std.Specs.hashmap.Inv.lookup_at
+#print axioms h5i_app_std.Specs.hashmap.Inv.lookup_eq
+#print axioms h5i_app_std.Specs.hashmap.Inv.nodup
+#print axioms h5i_app_std.Specs.hashmap.Inv.remove_at
+#print axioms h5i_app_std.Specs.hashmap.Inv.update
+#print axioms h5i_app_std.Specs.hashmap.bucket_of_spec
+#print axioms h5i_app_std.Specs.hashmap.contains_key_spec
+#print axioms h5i_app_std.Specs.hashmap.default_spec
+#print axioms h5i_app_std.Specs.hashmap.empty_inv
+#print axioms h5i_app_std.Specs.hashmap.find_spec
+#print axioms h5i_app_std.Specs.hashmap.from_vec_spec
+#print axioms h5i_app_std.Specs.hashmap.get_spec
+#print axioms h5i_app_std.Specs.hashmap.insert_spec
+#print axioms h5i_app_std.Specs.hashmap.is_empty_spec
+#print axioms h5i_app_std.Specs.hashmap.len_spec
+#print axioms h5i_app_std.Specs.hashmap.new_spec
+#print axioms h5i_app_std.Specs.hashmap.remove_spec
+#print axioms h5i_app_std.Specs.hashmap.with_capacity_loop_spec
+#print axioms h5i_app_std.Specs.hashmap.with_capacity_spec
 #print axioms h5i_app_std.Specs.map.contains_key_spec
 #print axioms h5i_app_std.Specs.map.get_spec
 #print axioms h5i_app_std.Specs.map.insert_spec
@@ -43,3 +66,8 @@ uses only the standard axioms. Not copied into kernels. -/
 #print axioms h5i_app_std.Specs.time.not_yet_valid_spec
 #print axioms h5i_app_std.Specs.time.secs_ceil_spec
 #print axioms h5i_app_std.Specs.time.within_spec
+#print axioms h5i_app_std.Specs.u32_key_hash_spec
+#print axioms h5i_app_std.Specs.u64_key_hash_spec
+#print axioms h5i_app_std.Specs.u8_key_hash_spec
+#print axioms h5i_app_std.Specs.usize_key_hash_spec
+#print axioms h5i_app_std.Specs.vec_u8_key_hash_spec

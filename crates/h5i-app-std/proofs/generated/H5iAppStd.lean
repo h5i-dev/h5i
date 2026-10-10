@@ -868,6 +868,502 @@ def graph.reachable
   graph.reachable_loop1 corecmpPartialEqInst corecloneCloneInst edges out
     0#usize
 
+/-- Trait declaration: [h5i_app_std::hashmap::KeyHash]
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 21:0-23:1
+    Visibility: public -/
+structure hashmap.KeyHash (Self : Type) where
+  key_hash : Self → Result Std.U64
+
+/-- [h5i_app_std::hashmap::{impl h5i_app_std::hashmap::KeyHash for u8}::key_hash]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 26:4-28:5
+    Visibility: public -/
+def U8.Insts.H5i_app_stdHashmapKeyHash.key_hash
+  (self : Std.U8) : Result Std.U64 := do
+  ok (UScalar.cast .U64 self)
+
+/-- Trait implementation: [h5i_app_std::hashmap::{impl h5i_app_std::hashmap::KeyHash for u8}]
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 25:0-29:1 -/
+@[reducible]
+def U8.Insts.H5i_app_stdHashmapKeyHash : hashmap.KeyHash Std.U8 := {
+  key_hash := U8.Insts.H5i_app_stdHashmapKeyHash.key_hash
+}
+
+/-- [h5i_app_std::hashmap::{impl h5i_app_std::hashmap::KeyHash for u32}::key_hash]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 32:4-34:5
+    Visibility: public -/
+def U32.Insts.H5i_app_stdHashmapKeyHash.key_hash
+  (self : Std.U32) : Result Std.U64 := do
+  ok (UScalar.cast .U64 self)
+
+/-- Trait implementation: [h5i_app_std::hashmap::{impl h5i_app_std::hashmap::KeyHash for u32}]
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 31:0-35:1 -/
+@[reducible]
+def U32.Insts.H5i_app_stdHashmapKeyHash : hashmap.KeyHash Std.U32 := {
+  key_hash := U32.Insts.H5i_app_stdHashmapKeyHash.key_hash
+}
+
+/-- [h5i_app_std::hashmap::{impl h5i_app_std::hashmap::KeyHash for u64}::key_hash]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 38:4-40:5
+    Visibility: public -/
+def U64.Insts.H5i_app_stdHashmapKeyHash.key_hash
+  (self : Std.U64) : Result Std.U64 := do
+  ok self
+
+/-- Trait implementation: [h5i_app_std::hashmap::{impl h5i_app_std::hashmap::KeyHash for u64}]
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 37:0-41:1 -/
+@[reducible]
+def U64.Insts.H5i_app_stdHashmapKeyHash : hashmap.KeyHash Std.U64 := {
+  key_hash := U64.Insts.H5i_app_stdHashmapKeyHash.key_hash
+}
+
+/-- [h5i_app_std::hashmap::{impl h5i_app_std::hashmap::KeyHash for usize}::key_hash]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 44:4-46:5
+    Visibility: public -/
+def Usize.Insts.H5i_app_stdHashmapKeyHash.key_hash
+  (self : Std.Usize) : Result Std.U64 := do
+  ok (UScalar.cast .U64 self)
+
+/-- Trait implementation: [h5i_app_std::hashmap::{impl h5i_app_std::hashmap::KeyHash for usize}]
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 43:0-47:1 -/
+@[reducible]
+def Usize.Insts.H5i_app_stdHashmapKeyHash : hashmap.KeyHash Std.Usize := {
+  key_hash := Usize.Insts.H5i_app_stdHashmapKeyHash.key_hash
+}
+
+/-- [h5i_app_std::hashmap::{impl h5i_app_std::hashmap::KeyHash for bool}::key_hash]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 50:4-52:5
+    Visibility: public -/
+def Bool.Insts.H5i_app_stdHashmapKeyHash.key_hash
+  (self : Bool) : Result Std.U64 := do
+  if self
+  then ok 1#u64
+  else ok 0#u64
+
+/-- Trait implementation: [h5i_app_std::hashmap::{impl h5i_app_std::hashmap::KeyHash for bool}]
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 49:0-53:1 -/
+@[reducible]
+def Bool.Insts.H5i_app_stdHashmapKeyHash : hashmap.KeyHash Bool := {
+  key_hash := Bool.Insts.H5i_app_stdHashmapKeyHash.key_hash
+}
+
+/-- [h5i_app_std::hashmap::{impl h5i_app_std::hashmap::KeyHash for alloc::vec::Vec<u8>}::key_hash]: loop body 0:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 60:8-63:9
+    Visibility: public -/
+@[rust_loop_body]
+def alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash.key_hash_loop.body
+  (self : alloc.vec.Vec Std.U8) (h : Std.U64) (i : Std.Usize) :
+  Result (ControlFlow (Std.U64 × Std.Usize) Std.U64)
+  := do
+  let i1 := alloc.vec.Vec.len self
+  if i < i1
+  then
+    let i2 ←
+      alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice Std.U8) self i
+    let i3 ← lift (UScalar.cast .U64 i2)
+    let i4 ← lift (h ^^^ i3)
+    let h1 ← lift (core.num.U64.wrapping_mul i4 1099511628211#u64)
+    let i5 ← i + 1#usize
+    ok (cont (h1, i5))
+  else ok (done h)
+
+/-- [h5i_app_std::hashmap::{impl h5i_app_std::hashmap::KeyHash for alloc::vec::Vec<u8>}::key_hash]: loop 0:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 60:8-63:9
+    Visibility: public -/
+@[rust_loop]
+def alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash.key_hash_loop
+  (self : alloc.vec.Vec Std.U8) (h : Std.U64) (i : Std.Usize) :
+  Result Std.U64
+  := do
+  loop
+    (fun (h1, i1) =>
+      alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash.key_hash_loop.body self
+      h1 i1)
+    (h, i)
+
+/-- [h5i_app_std::hashmap::{impl h5i_app_std::hashmap::KeyHash for alloc::vec::Vec<u8>}::key_hash]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 57:4-65:5
+    Visibility: public -/
+@[reducible]
+def alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash.key_hash
+  (self : alloc.vec.Vec Std.U8) : Result Std.U64 := do
+  alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash.key_hash_loop self
+    14695981039346656037#u64 0#usize
+
+/-- Trait implementation: [h5i_app_std::hashmap::{impl h5i_app_std::hashmap::KeyHash for alloc::vec::Vec<u8>}]
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 56:0-66:1 -/
+@[reducible]
+def alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash : hashmap.KeyHash
+  (alloc.vec.Vec Std.U8) := {
+  key_hash := alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash.key_hash
+}
+
+/-- [h5i_app_std::hashmap::DEFAULT_BUCKETS]
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 69:0-69:38
+    Visibility: public -/
+@[global_simps, irreducible]
+def hashmap.DEFAULT_BUCKETS : Std.Usize := 16#usize
+
+/-- [h5i_app_std::hashmap::HashMap]
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 71:0-74:1
+    Visibility: public -/
+structure hashmap.HashMap (K : Type) (V : Type) where
+  buckets : alloc.vec.Vec (alloc.vec.Vec (K × V))
+  len : Std.Usize
+
+/-- [h5i_app_std::hashmap::bucket_of]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 77:0-79:1 -/
+def hashmap.bucket_of
+  {K : Type} (KeyHashInst : hashmap.KeyHash K) (n : Std.Usize) (k : K) :
+  Result Std.Usize
+  := do
+  let i ← KeyHashInst.key_hash k
+  let i1 ← lift (UScalar.cast .U64 n)
+  let i2 ← i % i1
+  ok (UScalar.cast .Usize i2)
+
+/-- [h5i_app_std::hashmap::find]: loop body 0:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 84:4-91:1 -/
+@[rust_loop_body]
+def hashmap.find_loop.body
+  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
+  (b : alloc.vec.Vec (K × V)) (k : K) (i : Std.Usize) :
+  Result (ControlFlow Std.Usize (Option Std.Usize))
+  := do
+  let i1 := alloc.vec.Vec.len b
+  if i < i1
+  then
+    let (t, _) ←
+      alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice (K × V)) b i
+    let b1 ← corecmpPartialEqInst.eq t k
+    if b1
+    then ok (done (some i))
+    else let i2 ← i + 1#usize
+         ok (cont i2)
+  else ok (done none)
+
+/-- [h5i_app_std::hashmap::find]: loop 0:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 84:4-91:1 -/
+@[rust_loop]
+def hashmap.find_loop
+  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
+  (b : alloc.vec.Vec (K × V)) (k : K) (i : Std.Usize) :
+  Result (Option Std.Usize)
+  := do
+  loop
+    (fun i1 => hashmap.find_loop.body corecmpPartialEqInst b k i1)
+    i
+
+/-- [h5i_app_std::hashmap::find]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 82:0-91:1 -/
+@[reducible]
+def hashmap.find
+  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
+  (b : alloc.vec.Vec (K × V)) (k : K) :
+  Result (Option Std.Usize)
+  := do
+  hashmap.find_loop corecmpPartialEqInst b k 0#usize
+
+/-- [h5i_app_std::hashmap::{h5i_app_std::hashmap::HashMap<K, V>}::with_capacity]: loop body 0:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 104:8-107:9
+    Visibility: public -/
+@[rust_loop_body]
+def hashmap.HashMap.with_capacity_loop.body
+  {K : Type} {V : Type} (nb : Std.Usize)
+  (buckets : alloc.vec.Vec (alloc.vec.Vec (K × V))) (i : Std.Usize) :
+  Result (ControlFlow ((alloc.vec.Vec (alloc.vec.Vec (K × V))) × Std.Usize)
+    (alloc.vec.Vec (alloc.vec.Vec (K × V))))
+  := do
+  if i < nb
+  then
+    let buckets1 ← alloc.vec.Vec.push buckets (alloc.vec.Vec.new (K × V))
+    let i1 ← i + 1#usize
+    ok (cont (buckets1, i1))
+  else ok (done buckets)
+
+/-- [h5i_app_std::hashmap::{h5i_app_std::hashmap::HashMap<K, V>}::with_capacity]: loop 0:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 104:8-107:9
+    Visibility: public -/
+@[rust_loop]
+def hashmap.HashMap.with_capacity_loop
+  {K : Type} {V : Type} (nb : Std.Usize)
+  (buckets : alloc.vec.Vec (alloc.vec.Vec (K × V))) (i : Std.Usize) :
+  Result (alloc.vec.Vec (alloc.vec.Vec (K × V)))
+  := do
+  loop
+    (fun (buckets1, i1) => hashmap.HashMap.with_capacity_loop.body nb buckets1
+      i1)
+    (buckets, i)
+
+/-- [h5i_app_std::hashmap::{h5i_app_std::hashmap::HashMap<K, V>}::with_capacity]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 100:4-109:5
+    Visibility: public -/
+def hashmap.HashMap.with_capacity
+  (K : Type) (V : Type) (n : Std.Usize) : Result (hashmap.HashMap K V) := do
+  let nb ← if n = 0#usize
+             then ok 1#usize
+             else ok n
+  let buckets ←
+    hashmap.HashMap.with_capacity_loop nb (alloc.vec.Vec.new (alloc.vec.Vec (K
+      × V))) 0#usize
+  ok { buckets, len := 0#usize }
+
+/-- [h5i_app_std::hashmap::{h5i_app_std::hashmap::HashMap<K, V>}::new]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 95:4-97:5
+    Visibility: public -/
+def hashmap.HashMap.new
+  (K : Type) (V : Type) : Result (hashmap.HashMap K V) := do
+  hashmap.HashMap.with_capacity K V hashmap.DEFAULT_BUCKETS
+
+/-- [h5i_app_std::hashmap::{h5i_app_std::hashmap::HashMap<K, V>}::len]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 111:4-113:5
+    Visibility: public -/
+def hashmap.HashMap.impl.len
+  {K : Type} {V : Type} (self : hashmap.HashMap K V) : Result Std.Usize := do
+  ok self.len
+
+/-- [h5i_app_std::hashmap::{h5i_app_std::hashmap::HashMap<K, V>}::is_empty]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 115:4-117:5
+    Visibility: public -/
+def hashmap.HashMap.is_empty
+  {K : Type} {V : Type} (self : hashmap.HashMap K V) : Result Bool := do
+  ok (self.len = 0#usize)
+
+/-- [h5i_app_std::hashmap::{impl core::default::Default for h5i_app_std::hashmap::HashMap<K, V>}::default]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 121:4-123:5
+    Visibility: public -/
+def hashmap.HashMap.Insts.CoreDefaultDefault.default
+  (K : Type) (V : Type) : Result (hashmap.HashMap K V) := do
+  hashmap.HashMap.new K V
+
+/-- Trait implementation: [h5i_app_std::hashmap::{impl core::default::Default for h5i_app_std::hashmap::HashMap<K, V>}]
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 120:0-124:1 -/
+@[reducible]
+def hashmap.HashMap.Insts.CoreDefaultDefault (K : Type) (V : Type) :
+  core.default.Default (hashmap.HashMap K V) := {
+  default := hashmap.HashMap.Insts.CoreDefaultDefault.default K V
+}
+
+/-- [h5i_app_std::hashmap::{h5i_app_std::hashmap::HashMap<K, V>}::get]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 128:4-134:5
+    Visibility: public -/
+def hashmap.HashMap.get
+  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
+  (KeyHashInst : hashmap.KeyHash K) (self : hashmap.HashMap K V) (k : K) :
+  Result (Option V)
+  := do
+  let i := alloc.vec.Vec.len self.buckets
+  let i1 ← hashmap.bucket_of KeyHashInst i k
+  let b ←
+    alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice (alloc.vec.Vec
+      (K × V))) self.buckets i1
+  let o ← hashmap.find corecmpPartialEqInst b k
+  match o with
+  | none => ok none
+  | some i2 =>
+    let (_, t) ←
+      alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice (K × V)) b i2
+    ok (some t)
+
+/-- [h5i_app_std::hashmap::{h5i_app_std::hashmap::HashMap<K, V>}::contains_key]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 137:4-139:5
+    Visibility: public -/
+def hashmap.HashMap.contains_key
+  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
+  (KeyHashInst : hashmap.KeyHash K) (self : hashmap.HashMap K V) (k : K) :
+  Result Bool
+  := do
+  let i := alloc.vec.Vec.len self.buckets
+  let i1 ← hashmap.bucket_of KeyHashInst i k
+  let v ←
+    alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice (alloc.vec.Vec
+      (K × V))) self.buckets i1
+  let o ← hashmap.find corecmpPartialEqInst v k
+  ok (core.option.Option.is_some o)
+
+/-- [h5i_app_std::hashmap::{h5i_app_std::hashmap::HashMap<K, V>}::insert]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 142:4-155:5
+    Visibility: public -/
+def hashmap.HashMap.insert
+  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
+  (KeyHashInst : hashmap.KeyHash K) (self : hashmap.HashMap K V) (k : K)
+  (v : V) :
+  Result ((Option V) × (hashmap.HashMap K V))
+  := do
+  let i := alloc.vec.Vec.len self.buckets
+  let b ← hashmap.bucket_of KeyHashInst i k
+  let v1 ←
+    alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice (alloc.vec.Vec
+      (K × V))) self.buckets b
+  let o ← hashmap.find corecmpPartialEqInst v1 k
+  match o with
+  | none =>
+    let (v2, index_mut_back) ←
+      alloc.vec.Vec.index_mut (core.slice.index.SliceIndexUsizeSlice
+        (alloc.vec.Vec (K × V))) self.buckets b
+    let v3 ← alloc.vec.Vec.push v2 (k, v)
+    let i1 ← self.len + 1#usize
+    let v4 := index_mut_back v3
+    ok (none, { buckets := v4, len := i1 })
+  | some i1 =>
+    let (v2, index_mut_back) ←
+      alloc.vec.Vec.index_mut (core.slice.index.SliceIndexUsizeSlice
+        (alloc.vec.Vec (K × V))) self.buckets b
+    let (p, index_mut_back1) ←
+      alloc.vec.Vec.index_mut (core.slice.index.SliceIndexUsizeSlice (K × V))
+        v2 i1
+    let ((_, t), p1) := core.mem.replace p (k, v)
+    let v3 := index_mut_back1 p1
+    let v4 := index_mut_back v3
+    ok (some t, { self with buckets := v4 })
+
+/-- [h5i_app_std::map::remove]: loop body 0:
+    Source: 'crates/h5i-app-std/src/map.rs', lines 47:4-52:5
+    Visibility: public -/
+@[rust_loop_body]
+def map.remove_loop.body
+  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
+  (corecloneCloneInst : core.clone.Clone K) (corecloneCloneInst1 :
+  core.clone.Clone V) (m : alloc.vec.Vec (K × V)) (k : K)
+  (out : alloc.vec.Vec (K × V)) (i : Std.Usize) :
+  Result (ControlFlow ((alloc.vec.Vec (K × V)) × Std.Usize) (alloc.vec.Vec (K
+    × V)))
+  := do
+  let i1 := alloc.vec.Vec.len m
+  if i < i1
+  then
+    let (t, t1) ←
+      alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice (K × V)) m i
+    let b ← corecmpPartialEqInst.ne t k
+    let out1 ←
+      if b
+      then
+        do
+        let t2 ← corecloneCloneInst.clone t
+        let t3 ← corecloneCloneInst1.clone t1
+        alloc.vec.Vec.push out (t2, t3)
+      else ok out
+    let i2 ← i + 1#usize
+    ok (cont (out1, i2))
+  else ok (done out)
+
+/-- [h5i_app_std::map::remove]: loop 0:
+    Source: 'crates/h5i-app-std/src/map.rs', lines 47:4-52:5
+    Visibility: public -/
+@[rust_loop]
+def map.remove_loop
+  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
+  (corecloneCloneInst : core.clone.Clone K) (corecloneCloneInst1 :
+  core.clone.Clone V) (m : alloc.vec.Vec (K × V)) (k : K)
+  (out : alloc.vec.Vec (K × V)) (i : Std.Usize) :
+  Result (alloc.vec.Vec (K × V))
+  := do
+  loop
+    (fun (out1, i1) => map.remove_loop.body corecmpPartialEqInst
+      corecloneCloneInst corecloneCloneInst1 m k out1 i1)
+    (out, i)
+
+/-- [h5i_app_std::map::remove]:
+    Source: 'crates/h5i-app-std/src/map.rs', lines 44:0-54:1
+    Visibility: public -/
+@[reducible]
+def map.remove
+  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
+  (corecloneCloneInst : core.clone.Clone K) (corecloneCloneInst1 :
+  core.clone.Clone V) (m : alloc.vec.Vec (K × V)) (k : K) :
+  Result (alloc.vec.Vec (K × V))
+  := do
+  map.remove_loop corecmpPartialEqInst corecloneCloneInst corecloneCloneInst1 m
+    k (alloc.vec.Vec.new (K × V)) 0#usize
+
+/-- [h5i_app_std::hashmap::{h5i_app_std::hashmap::HashMap<K, V>}::remove]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 160:4-172:5
+    Visibility: public -/
+def hashmap.HashMap.remove
+  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
+  (KeyHashInst : hashmap.KeyHash K) (corecloneCloneInst : core.clone.Clone K)
+  (corecloneCloneInst1 : core.clone.Clone V) (self : hashmap.HashMap K V)
+  (k : K) :
+  Result ((Option V) × (hashmap.HashMap K V))
+  := do
+  let i := alloc.vec.Vec.len self.buckets
+  let b ← hashmap.bucket_of KeyHashInst i k
+  let v ←
+    alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice (alloc.vec.Vec
+      (K × V))) self.buckets b
+  let o ← hashmap.find corecmpPartialEqInst v k
+  match o with
+  | none => ok (none, self)
+  | some i1 =>
+    let (_, t) ←
+      alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice (K × V)) v i1
+    let old ← corecloneCloneInst1.clone t
+    let out ←
+      map.remove corecmpPartialEqInst corecloneCloneInst corecloneCloneInst1 v
+        k
+    let (_, index_mut_back) ←
+      alloc.vec.Vec.index_mut (core.slice.index.SliceIndexUsizeSlice
+        (alloc.vec.Vec (K × V))) self.buckets b
+    let i2 ← self.len - 1#usize
+    let v1 := index_mut_back out
+    ok (some old, { buckets := v1, len := i2 })
+
+/-- [h5i_app_std::hashmap::{h5i_app_std::hashmap::HashMap<K, V>}::from_vec]: loop body 0:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 179:8-182:9
+    Visibility: public -/
+@[rust_loop_body]
+def hashmap.HashMap.from_vec_loop.body
+  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
+  (KeyHashInst : hashmap.KeyHash K) (corecloneCloneInst : core.clone.Clone K)
+  (corecloneCloneInst1 : core.clone.Clone V) (entries : alloc.vec.Vec (K × V))
+  (m : hashmap.HashMap K V) (i : Std.Usize) :
+  Result (ControlFlow ((hashmap.HashMap K V) × Std.Usize) (hashmap.HashMap K
+    V))
+  := do
+  let i1 := alloc.vec.Vec.len entries
+  if i < i1
+  then
+    let (t, t1) ←
+      alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice (K × V))
+        entries i
+    let t2 ← corecloneCloneInst.clone t
+    let t3 ← corecloneCloneInst1.clone t1
+    let (_, m1) ←
+      hashmap.HashMap.insert corecmpPartialEqInst KeyHashInst m t2 t3
+    let i2 ← i + 1#usize
+    ok (cont (m1, i2))
+  else ok (done m)
+
+/-- [h5i_app_std::hashmap::{h5i_app_std::hashmap::HashMap<K, V>}::from_vec]: loop 0:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 179:8-182:9
+    Visibility: public -/
+@[rust_loop]
+def hashmap.HashMap.from_vec_loop
+  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
+  (KeyHashInst : hashmap.KeyHash K) (corecloneCloneInst : core.clone.Clone K)
+  (corecloneCloneInst1 : core.clone.Clone V) (entries : alloc.vec.Vec (K × V))
+  (m : hashmap.HashMap K V) (i : Std.Usize) :
+  Result (hashmap.HashMap K V)
+  := do
+  loop
+    (fun (m1, i1) => hashmap.HashMap.from_vec_loop.body corecmpPartialEqInst
+      KeyHashInst corecloneCloneInst corecloneCloneInst1 entries m1 i1)
+    (m, i)
+
+/-- [h5i_app_std::hashmap::{h5i_app_std::hashmap::HashMap<K, V>}::from_vec]:
+    Source: 'crates/h5i-app-std/src/hashmap.rs', lines 176:4-184:5
+    Visibility: public -/
+def hashmap.HashMap.from_vec
+  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
+  (KeyHashInst : hashmap.KeyHash K) (corecloneCloneInst : core.clone.Clone K)
+  (corecloneCloneInst1 : core.clone.Clone V) (entries : alloc.vec.Vec (K × V))
+  :
+  Result (hashmap.HashMap K V)
+  := do
+  let i := alloc.vec.Vec.len entries
+  let m ← hashmap.HashMap.with_capacity K V i
+  hashmap.HashMap.from_vec_loop corecmpPartialEqInst KeyHashInst
+    corecloneCloneInst corecloneCloneInst1 entries m 0#usize
+
 /-- [h5i_app_std::map::get]: loop body 0:
     Source: 'crates/h5i-app-std/src/map.rs', lines 7:4-14:1
     Visibility: public -/
@@ -1026,65 +1522,6 @@ def map.insert
   let out ← alloc.vec.CloneVec.clone (BuiltinClone (K × V)) m
   map.insert_loop corecmpPartialEqInst corecloneCloneInst corecloneCloneInst1 k
     v out 0#usize
-
-/-- [h5i_app_std::map::remove]: loop body 0:
-    Source: 'crates/h5i-app-std/src/map.rs', lines 47:4-52:5
-    Visibility: public -/
-@[rust_loop_body]
-def map.remove_loop.body
-  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
-  (corecloneCloneInst : core.clone.Clone K) (corecloneCloneInst1 :
-  core.clone.Clone V) (m : alloc.vec.Vec (K × V)) (k : K)
-  (out : alloc.vec.Vec (K × V)) (i : Std.Usize) :
-  Result (ControlFlow ((alloc.vec.Vec (K × V)) × Std.Usize) (alloc.vec.Vec (K
-    × V)))
-  := do
-  let i1 := alloc.vec.Vec.len m
-  if i < i1
-  then
-    let (t, t1) ←
-      alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice (K × V)) m i
-    let b ← corecmpPartialEqInst.ne t k
-    let out1 ←
-      if b
-      then
-        do
-        let t2 ← corecloneCloneInst.clone t
-        let t3 ← corecloneCloneInst1.clone t1
-        alloc.vec.Vec.push out (t2, t3)
-      else ok out
-    let i2 ← i + 1#usize
-    ok (cont (out1, i2))
-  else ok (done out)
-
-/-- [h5i_app_std::map::remove]: loop 0:
-    Source: 'crates/h5i-app-std/src/map.rs', lines 47:4-52:5
-    Visibility: public -/
-@[rust_loop]
-def map.remove_loop
-  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
-  (corecloneCloneInst : core.clone.Clone K) (corecloneCloneInst1 :
-  core.clone.Clone V) (m : alloc.vec.Vec (K × V)) (k : K)
-  (out : alloc.vec.Vec (K × V)) (i : Std.Usize) :
-  Result (alloc.vec.Vec (K × V))
-  := do
-  loop
-    (fun (out1, i1) => map.remove_loop.body corecmpPartialEqInst
-      corecloneCloneInst corecloneCloneInst1 m k out1 i1)
-    (out, i)
-
-/-- [h5i_app_std::map::remove]:
-    Source: 'crates/h5i-app-std/src/map.rs', lines 44:0-54:1
-    Visibility: public -/
-@[reducible]
-def map.remove
-  {K : Type} {V : Type} (corecmpPartialEqInst : core.cmp.PartialEq K K)
-  (corecloneCloneInst : core.clone.Clone K) (corecloneCloneInst1 :
-  core.clone.Clone V) (m : alloc.vec.Vec (K × V)) (k : K) :
-  Result (alloc.vec.Vec (K × V))
-  := do
-  map.remove_loop corecmpPartialEqInst corecloneCloneInst corecloneCloneInst1 m
-    k (alloc.vec.Vec.new (K × V)) 0#usize
 
 /-- [h5i_app_std::set::subset]: loop body 0:
     Source: 'crates/h5i-app-std/src/set.rs', lines 22:4-29:1

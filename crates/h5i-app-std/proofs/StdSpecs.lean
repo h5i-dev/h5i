@@ -531,6 +531,498 @@ h5i_when h5i_app_std.map.insert =>
 end Maps
 
 
+/-! ## Hash maps
+
+A `HashMap` stands for the map `hashmap.lookup`, read off its entries
+(`hashmap.entries`) with the list-map model above. `hashmap.Inv f m` says
+each key sits once, in bucket `key_hash k % n`; every operation keeps it.
+`HashModel f` says the extracted `key_hash` never fails, and is all a spec
+asks of the hash: nothing about collisions, which only make buckets longer. -/
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+/-- The extracted hash `f` never fails, and computes `hash`. -/
+class HashModel {K : Type} (f : h5i_app_std.hashmap.KeyHash K) where
+  hash : K → U64
+  ok : ∀ k, f.key_hash k = ok (hash k)
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+/-- The hash of `k` as a number. -/
+abbrev hashOf {K : Type} (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] (k : K) : Nat :=
+  (HashModel.hash f k).val
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+@[step] theorem HashModel.spec {K : Type} (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] (k : K) :
+    f.key_hash k ⦃ h => h = HashModel.hash f k ⦄ := by
+  rw [HashModel.ok]; simp
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+/-- A `HashModel` for any `key_hash` that never fails. For a kernel's own
+`impl KeyHash`: `instance : HashModel T.Insts.H5i_app_stdHashmapKeyHash :=
+HashModel.ofTotal _ fun k => by unfold ...; step*`. -/
+@[reducible] noncomputable def HashModel.ofTotal {K : Type} (f : h5i_app_std.hashmap.KeyHash K)
+    (h : ∀ k, f.key_hash k ⦃ _ => True ⦄) : HashModel f where
+  hash k := Classical.choose ((WP.spec_equiv_exists _ _).1 (h k))
+  ok k := (Classical.choose_spec ((WP.spec_equiv_exists _ _).1 (h k))).1
+
+h5i_when U8.Insts.H5i_app_stdHashmapKeyHash =>
+instance : HashModel U8.Insts.H5i_app_stdHashmapKeyHash := ⟨fun x => UScalar.cast .U64 x, fun _ => rfl⟩
+h5i_when U8.Insts.H5i_app_stdHashmapKeyHash =>
+@[step] theorem u8_key_hash_spec (x : U8) :
+    U8.Insts.H5i_app_stdHashmapKeyHash.key_hash x ⦃ h => h = UScalar.cast .U64 x ⦄ := by
+  simp [U8.Insts.H5i_app_stdHashmapKeyHash.key_hash]
+h5i_when U32.Insts.H5i_app_stdHashmapKeyHash =>
+instance : HashModel U32.Insts.H5i_app_stdHashmapKeyHash := ⟨fun x => UScalar.cast .U64 x, fun _ => rfl⟩
+h5i_when U32.Insts.H5i_app_stdHashmapKeyHash =>
+@[step] theorem u32_key_hash_spec (x : U32) :
+    U32.Insts.H5i_app_stdHashmapKeyHash.key_hash x ⦃ h => h = UScalar.cast .U64 x ⦄ := by
+  simp [U32.Insts.H5i_app_stdHashmapKeyHash.key_hash]
+h5i_when U64.Insts.H5i_app_stdHashmapKeyHash =>
+instance : HashModel U64.Insts.H5i_app_stdHashmapKeyHash := ⟨fun x => x, fun _ => rfl⟩
+h5i_when U64.Insts.H5i_app_stdHashmapKeyHash =>
+@[step] theorem u64_key_hash_spec (x : U64) :
+    U64.Insts.H5i_app_stdHashmapKeyHash.key_hash x ⦃ h => h = x ⦄ := by
+  simp [U64.Insts.H5i_app_stdHashmapKeyHash.key_hash]
+h5i_when Usize.Insts.H5i_app_stdHashmapKeyHash =>
+instance : HashModel Usize.Insts.H5i_app_stdHashmapKeyHash := ⟨fun x => UScalar.cast .U64 x, fun _ => rfl⟩
+h5i_when Usize.Insts.H5i_app_stdHashmapKeyHash =>
+@[step] theorem usize_key_hash_spec (x : Usize) :
+    Usize.Insts.H5i_app_stdHashmapKeyHash.key_hash x ⦃ h => h = UScalar.cast .U64 x ⦄ := by
+  simp [Usize.Insts.H5i_app_stdHashmapKeyHash.key_hash]
+h5i_when Bool.Insts.H5i_app_stdHashmapKeyHash =>
+instance : HashModel Bool.Insts.H5i_app_stdHashmapKeyHash :=
+  ⟨fun b => if b then 1#u64 else 0#u64, fun b => by cases b <;> rfl⟩
+h5i_when Bool.Insts.H5i_app_stdHashmapKeyHash =>
+@[step] theorem bool_key_hash_spec (b : Bool) :
+    Bool.Insts.H5i_app_stdHashmapKeyHash.key_hash b ⦃ h => h = if b then 1#u64 else 0#u64 ⦄ := by
+  cases b <;> simp [Bool.Insts.H5i_app_stdHashmapKeyHash.key_hash]
+
+/-- FNV-1a over `l`, from `h`: what `Vec<u8>`'s `key_hash` computes. -/
+def fnv1a (h : U64) (l : List U8) : U64 :=
+  l.foldl (fun h x => core.num.U64.wrapping_mul (h ^^^ UScalar.cast .U64 x) 1099511628211#u64) h
+
+h5i_when alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash =>
+@[step] theorem vec_u8_key_hash_spec (v : alloc.vec.Vec U8) :
+    alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash.key_hash v ⦃ h => h = fnv1a 14695981039346656037#u64 v.val ⦄ := by
+  unfold alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash.key_hash
+    alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash.key_hash_loop
+  apply WP.spec_mono (loop_fold v.val id
+    (fun h x => core.num.U64.wrapping_mul (h ^^^ UScalar.cast .U64 x) 1099511628211#u64) (fun _ _ => True)
+    (fun st => alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash.key_hash_loop.body v st.1 st.2) ?_
+    14695981039346656037#u64 0#usize (by simp) trivial)
+  · intro h hh; simpa [fnv1a] using hh
+  · intro h i hi _
+    unfold alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash.key_hash_loop.body
+    h5i_step
+    refine ⟨by scalar_tac, ?_⟩
+    congr 1
+    apply UScalar.eq_of_val_eq
+    rw [i4_post]
+    simp [UScalar.cast_val_eq]
+    apply (Nat.mod_eq_of_lt _).symm
+    have := (v.val[i.val]'(by scalar_tac)).hBounds; simp at this; omega
+
+h5i_when alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash =>
+instance : HashModel alloc.vec.VecU8.Insts.H5i_app_stdHashmapKeyHash :=
+  ⟨fun v => fnv1a 14695981039346656037#u64 v.val, fun v => eq_ok_of_spec (vec_u8_key_hash_spec v)⟩
+
+section HashMap
+variable {K V : Type} [DecidableEq K] (inst : core.cmp.PartialEq K K) [EqLaw inst]
+
+h5i_when h5i_app_std.hashmap.bucket_of =>
+omit [DecidableEq K] in
+@[step] theorem hashmap.bucket_of_spec (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] (n : Usize) (k : K) (hn : 0 < n.val) :
+    h5i_app_std.hashmap.bucket_of f n k ⦃ r => r.val = hashOf f k % n.val ⦄ := by
+  unfold h5i_app_std.hashmap.bucket_of
+  have hn' : (UScalar.cast .U64 n).val = n.val := usize_cast_u64 n
+  step*
+  subst i_post i1_post
+  rw [hn'] at i2_post
+  have hlt : i2.val < n.val := by rw [i2_post]; exact Nat.mod_lt _ hn
+  rw [u64_cast_usize i2 (by scalar_tac), i2_post]
+
+h5i_when h5i_app_std.hashmap.find =>
+@[step] theorem hashmap.find_spec (b : alloc.vec.Vec (K × V)) (k : K) :
+    h5i_app_std.hashmap.find inst b k ⦃ r => r.map (·.val) = b.val.findIdx? (fun e => decide (e.1 = k)) ⦄ := by
+  unfold h5i_app_std.hashmap.find h5i_app_std.hashmap.find_loop
+  apply WP.spec_mono (loop_search b.val (fun e => decide (e.1 = k)) (fun r : Option Usize => r.map (·.val))
+    (fun i _ => some i) none _ ?_ 0#usize (by simp))
+  · intro r hr; exact hr.trans (search_findIdx _ _ _ rfl)
+  · intro j hj; unfold h5i_app_std.hashmap.find_loop.body; h5i_step [Prod.ext_iff]
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+/-- The entries of `m`, bucket after bucket. -/
+def hashmap.entries (m : h5i_app_std.hashmap.HashMap K V) : List (K × V) :=
+  (m.buckets.val.map (·.val)).flatten
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+/-- `m.get(q)`: the map `m` stands for. -/
+abbrev hashmap.lookup (m : h5i_app_std.hashmap.HashMap K V) (q : K) : Option V :=
+  mapGet q (hashmap.entries m)
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+/-- The bucket each key of `m` belongs in, by hash `f`. -/
+abbrev hashmap.slot (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] (m : h5i_app_std.hashmap.HashMap K V) (k : K) : Nat :=
+  hashOf f k % m.buckets.val.length
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+/-- `m` is a map built with hash `f`: each key sits once, in its bucket, and
+`len` counts the entries. -/
+structure hashmap.Inv (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] (m : h5i_app_std.hashmap.HashMap K V) : Prop where
+  pos : 0 < m.buckets.val.length
+  buckets : BucketsInv (hashmap.slot f m) (m.buckets.val.map (·.val))
+  len : m.len.val = (hashmap.entries m).length
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+theorem hashmap.Inv.lookup_eq (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] {m : h5i_app_std.hashmap.HashMap K V} (hm : hashmap.Inv f m) (q : K) :
+    hashmap.lookup m q = mapGet q (m.buckets.val[hashmap.slot f m q]'(Nat.mod_lt _ hm.pos)).val := by
+  have := hm.buckets.mapGet_flatten q (by simpa using Nat.mod_lt (hashOf f q) hm.pos)
+  simpa [hashmap.lookup, hashmap.entries] using this
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+/-- Bucket `i` is the slot of `k`: looking `k` up reads only that bucket. -/
+theorem hashmap.Inv.lookup_at (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] {m : h5i_app_std.hashmap.HashMap K V} (hm : hashmap.Inv f m) {k : K} {i : Usize}
+    (hi : i.val = hashOf f k % m.buckets.val.length) :
+    ∃ h : i.val < m.buckets.val.length, hashmap.lookup m k = mapGet k (m.buckets.val[i.val]).val := by
+  have h : i.val < m.buckets.val.length := by rw [hi]; exact Nat.mod_lt _ hm.pos
+  refine ⟨h, ?_⟩
+  rw [hm.lookup_eq]; simp only [hashmap.slot, ← hi]
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+h5i_when h5i_app_std.hashmap.HashMap.get =>
+@[step] theorem hashmap.get_spec (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] (m : h5i_app_std.hashmap.HashMap K V) (k : K) (hm : hashmap.Inv f m) :
+    h5i_app_std.hashmap.HashMap.get inst f m k ⦃ r => r = hashmap.lookup m k ⦄ := by
+  unfold h5i_app_std.hashmap.HashMap.get
+  have hpos := hm.pos
+  step*
+  all_goals
+    subst_vars
+    obtain ⟨_, hl⟩ := hm.lookup_at f (k := k) (i := i1) (by simpa using i1_post)
+  · obtain ⟨hg, -⟩ := mapGet_of_findIdx_none (by simpa using o_post.symm)
+    rw [hl, hg]
+  · obtain ⟨hi, -⟩ := mapGet_of_findIdx (by simpa using o_post.symm); exact hi
+  · obtain ⟨hi, -, hg, -⟩ := mapGet_of_findIdx (by simpa using o_post.symm)
+    rw [hl, hg]; simp [← __post]
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+omit [DecidableEq K] in
+/-- A bucket holds at most `len` entries. -/
+theorem hashmap.Inv.bucket_le (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] {m : h5i_app_std.hashmap.HashMap K V} (hm : hashmap.Inv f m) (i : Nat)
+    (hi : i < m.buckets.val.length) : (m.buckets.val[i]).val.length ≤ m.len.val := by
+  have h := congrArg List.length (flatten_split (m.buckets.val.map (·.val)) i (by simpa using hi))
+  have h2 := hm.len
+  simp only [hashmap.entries] at h2
+  simp only [List.length_append, List.getElem_map] at h
+  omega
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+/-- Replacing the bucket of `k` by `x`, which keeps the bucket's slot and its
+entries at other keys, keeps the invariant and changes the map only at `k`. -/
+theorem hashmap.Inv.update (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] {m : h5i_app_std.hashmap.HashMap K V} (hm : hashmap.Inv f m) {k : K} {b : Usize}
+    (hb : b.val = hashOf f k % m.buckets.val.length) (hbl : b.val < m.buckets.val.length)
+    (x : alloc.vec.Vec (K × V)) (hx : ∀ e ∈ x.val, hashOf f e.1 % m.buckets.val.length = b.val)
+    (hnd : (x.val.map Prod.fst).Nodup)
+    (hother : ∀ q, q ≠ k → mapGet q x.val = mapGet q (m.buckets.val[b.val]).val)
+    (len' : Usize) (hlen' : len'.val + (m.buckets.val[b.val]).val.length = m.len.val + x.val.length) :
+    hashmap.Inv f ⟨m.buckets.set b x, len'⟩ ∧
+      ∀ q, hashmap.lookup ⟨m.buckets.set b x, len'⟩ q = if q = k then mapGet k x.val else hashmap.lookup m q := by
+  have hset : (m.buckets.set b x).val.map (·.val) = (m.buckets.val.map (·.val)).set b.val x.val := by
+    simp [List.map_set]
+  have hn : (m.buckets.set b x).val.length = m.buckets.val.length := by simp
+  have hbB : b.val < (m.buckets.val.map (·.val)).length := by simpa using hbl
+  have hent : hashmap.entries ⟨m.buckets.set b x, len'⟩ = ((m.buckets.val.map (·.val)).set b.val x.val).flatten := by
+    simp only [hashmap.entries, hset]
+  refine ⟨⟨by rw [hn]; exact hm.pos, ?_, ?_⟩, ?_⟩
+  · have hs : hashmap.slot f (⟨m.buckets.set b x, len'⟩ : h5i_app_std.hashmap.HashMap K V) = hashmap.slot f m := by
+      funext q; simp only [hashmap.slot, hn]
+    rw [hs, hset]; exact hm.buckets.set x.val hx hnd
+  · rw [hent]
+    have h1 := length_flatten_set _ _ hbB x.val
+    have h2 := hm.len
+    simp only [hashmap.entries] at h2
+    have h3 : ((m.buckets.val.map (fun y : alloc.vec.Vec (K × V) => y.val))[b.val]'hbB).length =
+        (m.buckets.val[b.val]).val.length := by simp
+    show len'.val = _
+    omega
+  · intro q
+    simp only [hashmap.lookup] at *
+    rw [hent, hm.buckets.mapGet_flatten_set hbB x.val hx q]
+    by_cases hq : hashmap.slot f m q = b.val
+    · rw [if_pos hq]
+      by_cases hqk : q = k
+      · subst hqk; simp
+      · rw [if_neg hqk, hother q hqk]
+        have := hm.lookup_eq f q
+        simp only [hashmap.lookup, hashmap.entries] at this ⊢
+        rw [this]; simp only [hq]
+    · rw [if_neg hq]
+      have hqk : q ≠ k := by rintro rfl; exact hq hb.symm
+      rw [if_neg hqk]; rfl
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+/-- `update` with `x` the bucket after `mapInsert k v`. -/
+theorem hashmap.Inv.insert_at (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] {m : h5i_app_std.hashmap.HashMap K V} (hm : hashmap.Inv f m) {k : K} {b : Usize}
+    (hb : b.val = hashOf f k % m.buckets.val.length) (v : V) (x : alloc.vec.Vec (K × V))
+    (hx : x.val = mapInsert k v (m.buckets.val[b.val]'(by rw [hb]; exact Nat.mod_lt _ hm.pos)).val)
+    (len' : Usize) (hlen' : len'.val = m.len.val + if (hashmap.lookup m k).isSome then 0 else 1) :
+    hashmap.Inv f ⟨m.buckets.set b x, len'⟩ ∧
+      ∀ q, hashmap.lookup ⟨m.buckets.set b x, len'⟩ q = if q = k then some v else hashmap.lookup m q := by
+  obtain ⟨hbl, hl⟩ := hm.lookup_at f hb
+  have hI := hm.buckets
+  have hslot : ∀ e ∈ (m.buckets.val[b.val]).val, hashOf f e.1 % m.buckets.val.length = b.val := by
+    intro e he; have := hI.slot b.val (by simpa using hbl) e (by simpa using he); simpa using this
+  have hnd : ((m.buckets.val[b.val]).val.map Prod.fst).Nodup := by
+    have := hI.nodup b.val (by simpa using hbl); simpa using this
+  have := hm.update f hb hbl x ?_ ?_ ?_ len' ?_
+  · refine ⟨this.1, fun q => ?_⟩; rw [this.2 q, hx]; simp
+  · intro e he; rw [hx] at he
+    rcases mem_mapInsert he with rfl | he
+    · exact hb.symm
+    · exact hslot e he
+  · rw [hx]; exact nodup_keys_mapInsert hnd
+  · intro q hq; rw [hx]; simp [hq]
+  · rw [hlen', hx, hl]
+    have hk := congrArg List.length (keys_mapInsert k v (m.buckets.val[b.val]).val)
+    simp only [List.length_map] at hk
+    rw [hk]
+    have := mapGet_isSome_iff (m.buckets.val[b.val]).val k
+    by_cases hin : k ∈ (m.buckets.val[b.val]).val.map Prod.fst
+    · have : (mapGet k (m.buckets.val[b.val]).val).isSome := this.2 (by simpa using hin)
+      simp [hin, this]
+    · have : (mapGet k (m.buckets.val[b.val]).val).isSome = false := by
+        rw [Bool.eq_false_iff]; intro h; exact hin (by simpa using this.1 h)
+      simp [hin, this]; omega
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+h5i_when h5i_app_std.hashmap.HashMap.insert =>
+@[step] theorem hashmap.insert_spec (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] (m : h5i_app_std.hashmap.HashMap K V) (k : K) (v : V)
+    (hm : hashmap.Inv f m) (hlen : m.len.val < Usize.max) :
+    h5i_app_std.hashmap.HashMap.insert inst f m k v ⦃ r =>
+      r.1 = hashmap.lookup m k ∧ hashmap.Inv f r.2 ∧
+      (∀ q, hashmap.lookup r.2 q = if q = k then some v else hashmap.lookup m q) ∧
+      r.2.len.val = m.len.val + (if (hashmap.lookup m k).isSome then 0 else 1) ⦄ := by
+  unfold h5i_app_std.hashmap.HashMap.insert
+  have hpos := hm.pos
+  have hbl := fun i hi => hm.bucket_le f i hi
+  step*
+  all_goals subst_vars
+  all_goals have hb' : b.val = hashOf f k % m.buckets.val.length := by simpa using b_post
+  all_goals obtain ⟨hbl', hl⟩ := hm.lookup_at f hb'
+  · obtain ⟨hg, hu⟩ := mapGet_of_findIdx_none (by simpa using o_post.symm)
+    have := hm.insert_at f hb' v v3 (by rw [v3_post, hu]) i1 (by rw [i1_post, hl, hg]; simp)
+    exact ⟨by rw [hl, hg], this.1, this.2, by rw [i1_post, hl, hg]; simp⟩
+  · obtain ⟨hi, -⟩ := mapGet_of_findIdx (ν := V) (by simpa using o_post.symm); exact hi
+  · obtain ⟨hi, hk, hg, hu⟩ := mapGet_of_findIdx (by simpa using o_post.symm)
+    have ht : t = ((m.buckets.val[b.val]).val[i1.val]).2 := by rw [← __post]
+    have := hm.insert_at f hb' v ((m.buckets.val[b.val]).set i1 (k, v)) (by simp [hu]) m.len (by rw [hl, hg]; simp)
+    exact ⟨by rw [hl, hg, ht], this.1, this.2, by rw [hl, hg]; simp⟩
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+h5i_when h5i_app_std.hashmap.HashMap.contains_key =>
+@[step] theorem hashmap.contains_key_spec (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] (m : h5i_app_std.hashmap.HashMap K V) (k : K) (hm : hashmap.Inv f m) :
+    h5i_app_std.hashmap.HashMap.contains_key inst f m k ⦃ r => r = (hashmap.lookup m k).isSome ⦄ := by
+  unfold h5i_app_std.hashmap.HashMap.contains_key
+  have hpos := hm.pos
+  step*
+  subst_vars
+  obtain ⟨_, hl⟩ := hm.lookup_at f (k := k) (i := i1) (by simpa using i1_post)
+  rw [hl]
+  rcases o with _ | j
+  · obtain ⟨hg, -⟩ := mapGet_of_findIdx_none (by simpa using o_post.symm)
+    rw [hg]; rfl
+  · obtain ⟨hi, -, hg, -⟩ := mapGet_of_findIdx (by simpa using o_post.symm)
+    rw [hg]; rfl
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+/-- `update` with `x` the bucket after `mapRemove k`, when `k` is there. -/
+theorem hashmap.Inv.remove_at (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] {m : h5i_app_std.hashmap.HashMap K V} (hm : hashmap.Inv f m) {k : K} {b : Usize}
+    (hb : b.val = hashOf f k % m.buckets.val.length) (hk : (hashmap.lookup m k).isSome) (x : alloc.vec.Vec (K × V))
+    (hx : x.val = mapRemove k (m.buckets.val[b.val]'(by rw [hb]; exact Nat.mod_lt _ hm.pos)).val)
+    (len' : Usize) (hlen' : len'.val + 1 = m.len.val) :
+    hashmap.Inv f ⟨m.buckets.set b x, len'⟩ ∧
+      ∀ q, hashmap.lookup ⟨m.buckets.set b x, len'⟩ q = if q = k then none else hashmap.lookup m q := by
+  obtain ⟨hbl, hl⟩ := hm.lookup_at f hb
+  have hI := hm.buckets
+  have hslot : ∀ e ∈ (m.buckets.val[b.val]).val, hashOf f e.1 % m.buckets.val.length = b.val := by
+    intro e he; have := hI.slot b.val (by simpa using hbl) e (by simpa using he); simpa using this
+  have hnd : ((m.buckets.val[b.val]).val.map Prod.fst).Nodup := by
+    have := hI.nodup b.val (by simpa using hbl); simpa using this
+  have := hm.update f hb hbl x ?_ ?_ ?_ len' ?_
+  · refine ⟨this.1, fun q => ?_⟩; rw [this.2 q, hx]; simp
+  · intro e he; rw [hx] at he; exact hslot e (List.mem_of_mem_filter he)
+  · rw [hx]; exact nodup_keys_mapRemove hnd
+  · intro q hq; rw [hx]; simp [hq]
+  · rw [hl] at hk
+    have := length_mapRemove_of_nodup hnd hk
+    rw [hx]; omega
+
+variable (kinst : core.clone.Clone K) [CloneLaw kinst] (vinst : core.clone.Clone V) [CloneLaw vinst]
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+h5i_when h5i_app_std.hashmap.HashMap.remove =>
+@[step] theorem hashmap.remove_spec (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] (m : h5i_app_std.hashmap.HashMap K V) (k : K) (hm : hashmap.Inv f m) :
+    h5i_app_std.hashmap.HashMap.remove inst f kinst vinst m k ⦃ r =>
+      r.1 = hashmap.lookup m k ∧ hashmap.Inv f r.2 ∧
+      (∀ q, hashmap.lookup r.2 q = if q = k then none else hashmap.lookup m q) ∧
+      r.2.len.val + (if (hashmap.lookup m k).isSome then 1 else 0) = m.len.val ⦄ := by
+  unfold h5i_app_std.hashmap.HashMap.remove
+  have hpos := hm.pos
+  have hbl := fun i hi => hm.bucket_le f i hi
+  step*
+  all_goals
+    try simp only [Prod.ext_iff] at *
+    try casesm* _ ∧ _
+    subst_vars
+    have hb' : b.val = hashOf f k % m.buckets.val.length := by simpa using b_post
+    obtain ⟨hbl', hl⟩ := hm.lookup_at f hb'
+  · obtain ⟨hg, -⟩ := mapGet_of_findIdx_none (by simpa using o_post.symm)
+    refine ⟨by rw [hl, hg], hm, fun q => ?_, by simp [hl, hg]⟩
+    split <;> simp_all
+  · obtain ⟨hi, -⟩ := mapGet_of_findIdx (ν := V) (by simpa using o_post.symm); exact hi
+  · obtain ⟨hi, -⟩ := mapGet_of_findIdx (ν := V) (by simpa using o_post.symm)
+    have h1 := hbl b.val hbl'
+    have : (1#usize).val = 1 := rfl
+    omega
+  · obtain ⟨hi, -, hg, -⟩ := mapGet_of_findIdx (by simpa using o_post.symm)
+    have hlk := hl.trans hg
+    have hk : (hashmap.lookup m k).isSome := by rw [hlk]; rfl
+    have := hm.remove_at f hb' hk out (by rw [out_post]) i2 (by omega)
+    exact ⟨hlk.symm, this.1, this.2, by simp [hk]; omega⟩
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+omit [DecidableEq K] in
+/-- Empty buckets, at least one: an empty map for every hash. -/
+theorem hashmap.empty_inv (m : h5i_app_std.hashmap.HashMap K V) (n : Nat) (hn : 0 < n)
+    (hb : m.buckets.val = List.replicate n (alloc.vec.Vec.new (K × V))) (hl : m.len.val = 0) :
+    (∀ (g : h5i_app_std.hashmap.KeyHash K) [HashModel g], hashmap.Inv g m) ∧ hashmap.entries m = [] ∧
+      m.len.val = 0 := by
+  have he : hashmap.entries m = [] := by simp [hashmap.entries, hb]
+  refine ⟨fun g _ => ⟨by simp [hb, hn], ⟨fun i hi e he => ?_, fun i hi => ?_⟩, by rw [he, hl]; rfl⟩, he, hl⟩
+  · simp [hb] at he
+  · simp [hb]
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+h5i_when h5i_app_std.hashmap.HashMap.with_capacity =>
+omit [DecidableEq K] in
+@[step] theorem hashmap.with_capacity_loop_spec (nb : Usize) :
+    h5i_app_std.hashmap.HashMap.with_capacity_loop (K := K) (V := V) nb (alloc.vec.Vec.new _) 0#usize ⦃ bs =>
+      bs.val = List.replicate nb.val (alloc.vec.Vec.new (K × V)) ⦄ := by
+  unfold h5i_app_std.hashmap.HashMap.with_capacity_loop
+  apply WP.spec_mono (loop_fold (List.replicate nb.val ()) (fun o : alloc.vec.Vec (alloc.vec.Vec (K × V)) => o.val)
+    (fun acc _ => acc ++ [alloc.vec.Vec.new (K × V)]) (fun o j => o.val.length = j)
+    (fun st => h5i_app_std.hashmap.HashMap.with_capacity_loop.body nb st.1 st.2) ?_ (alloc.vec.Vec.new _) 0#usize
+    (by simp) (by simp))
+  · intro bs h; rw [h, foldl_map (fun _ => alloc.vec.Vec.new (K × V))]; simp
+  · intro o i hi hinv
+    unfold h5i_app_std.hashmap.HashMap.with_capacity_loop.body
+    h5i_step
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+h5i_when h5i_app_std.hashmap.HashMap.with_capacity =>
+omit [DecidableEq K] in
+@[step] theorem hashmap.with_capacity_spec (n : Usize) :
+    h5i_app_std.hashmap.HashMap.with_capacity K V n ⦃ m =>
+      (∀ (g : h5i_app_std.hashmap.KeyHash K) [HashModel g], hashmap.Inv g m) ∧ hashmap.entries m = [] ∧
+        m.len.val = 0 ⦄ := by
+  unfold h5i_app_std.hashmap.HashMap.with_capacity
+  h5i_steps
+  all_goals exact hashmap.empty_inv _ _ (by scalar_tac) buckets_post rfl
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+h5i_when h5i_app_std.hashmap.HashMap.new =>
+omit [DecidableEq K] in
+@[step] theorem hashmap.new_spec :
+    h5i_app_std.hashmap.HashMap.new K V ⦃ m =>
+      (∀ (g : h5i_app_std.hashmap.KeyHash K) [HashModel g], hashmap.Inv g m) ∧ hashmap.entries m = [] ∧
+        m.len.val = 0 ⦄ := by
+  unfold h5i_app_std.hashmap.HashMap.new; step*
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+h5i_when h5i_app_std.hashmap.HashMap.Insts.CoreDefaultDefault.default =>
+omit [DecidableEq K] in
+@[step] theorem hashmap.default_spec :
+    h5i_app_std.hashmap.HashMap.Insts.CoreDefaultDefault.default K V ⦃ m =>
+      (∀ (g : h5i_app_std.hashmap.KeyHash K) [HashModel g], hashmap.Inv g m) ∧ hashmap.entries m = [] ∧
+        m.len.val = 0 ⦄ := by
+  unfold h5i_app_std.hashmap.HashMap.Insts.CoreDefaultDefault.default; step*
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+h5i_when h5i_app_std.hashmap.HashMap.impl.len =>
+omit [DecidableEq K] in
+@[step] theorem hashmap.len_spec (m : h5i_app_std.hashmap.HashMap K V) :
+    h5i_app_std.hashmap.HashMap.impl.len m ⦃ r => r = m.len ⦄ := by
+  unfold h5i_app_std.hashmap.HashMap.impl.len; simp
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+omit [DecidableEq K] in
+/-- No key appears twice among the entries, so `len` counts the keys. -/
+theorem hashmap.Inv.nodup (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] {m : h5i_app_std.hashmap.HashMap K V} (hm : hashmap.Inv f m) :
+    ((hashmap.entries m).map Prod.fst).Nodup :=
+  hm.buckets.nodup_keys
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+h5i_when h5i_app_std.hashmap.HashMap.is_empty =>
+omit [DecidableEq K] in
+@[step] theorem hashmap.is_empty_spec (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] (m : h5i_app_std.hashmap.HashMap K V) (hm : hashmap.Inv f m) :
+    h5i_app_std.hashmap.HashMap.is_empty m ⦃ r => r = decide (hashmap.entries m = []) ⦄ := by
+  unfold h5i_app_std.hashmap.HashMap.is_empty
+  have := hm.len
+  simp only [WP.spec_ok, decide_eq_decide, ← List.length_eq_zero_iff, ← this]
+  constructor
+  · intro h; rw [h]; rfl
+  · intro h; scalar_tac
+
+h5i_when h5i_app_std.hashmap.KeyHash =>
+h5i_when h5i_app_std.hashmap.HashMap =>
+h5i_when h5i_app_std.hashmap.HashMap.from_vec =>
+@[step] theorem hashmap.from_vec_spec (f : h5i_app_std.hashmap.KeyHash K) [HashModel f] (entries : alloc.vec.Vec (K × V)) :
+    h5i_app_std.hashmap.HashMap.from_vec inst f kinst vinst entries ⦃ m =>
+      hashmap.Inv f m ∧ ∀ q, hashmap.lookup m q = mapGet q entries.val.reverse ⦄ := by
+  unfold h5i_app_std.hashmap.HashMap.from_vec h5i_app_std.hashmap.HashMap.from_vec_loop
+  step*
+  rename_i hm0
+  apply loop_idx_spec _ (fun x => x.2) entries.val.length
+    (fun x => hashmap.Inv f x.1 ∧ x.1.len.val ≤ x.2.val ∧ ∀ q, hashmap.lookup x.1 q = mapGet q (entries.val.take x.2.val).reverse)
+    _ ?_ _ ⟨m_post f, by simp [m_post2],
+      fun q => by simp [hashmap.lookup, m_post1]⟩ (by simp)
+  rintro ⟨mm, i⟩ ⟨hI, hle, hlk⟩ hi
+  unfold h5i_app_std.hashmap.HashMap.from_vec_loop.body
+  step*
+  · simp only at hI hle hlk hi
+    have hil : i.val < entries.val.length := by scalar_tac
+    subst t2_post t3_post
+    refine ⟨__post1, ?_, fun q => ?_, by omega, by scalar_tac⟩
+    · rw [__post3, i2_post]; split <;> omega
+    · rw [__post2, i2_post, List.take_add_one, List.getElem?_eq_getElem hil, ← t_post]
+      by_cases hq : q = t2
+      · subst hq; simp [mapGet_cons]
+      · simp [hq, mapGet_cons, Ne.symm hq, hlk]
+  · simp only at hI hle hlk hi
+    have : i.val = entries.val.length := by scalar_tac
+    refine ⟨hI, fun q => ?_⟩
+    rw [hlk, this, List.take_length]
+
+end HashMap
+
 /-! ## Graphs -/
 
 section Graph
