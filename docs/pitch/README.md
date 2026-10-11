@@ -20,9 +20,9 @@ Do not imply that the PhD credential establishes universal product guarantees;
 proof scope and assumptions remain explicit.
 
 Present exactly two product pillars: AI-led red-teaming and formal verification.
-CLI and dashboard are the two complementary interfaces of the red-teaming
-workflow, not extra product pillars. Keep that operation/oversight flow inside
-the red-teaming column; it must not span both product pillars.
+The product overview places those in two boxes, above a shared box for the
+human dashboard and isolated sandbox. Both workflows use the dashboard;
+CLI-based browsing, traffic capture, recon and CI/CD explain red-teaming.
 
 For h5i websec, lead with the AI-friendly CLI and the dashboard that lets a
 human understand and manage the agent's work. Capture, editing and replay are
@@ -62,8 +62,10 @@ size, phone widths, keyboard/deep-link navigation and print output.
 ## Visuals
 
 Keep slides readable at a glance. Use short labels and diagrams instead of
-paragraphs. Slide 5 uses the vector `assets/rust-lean-proof.svg` to show Rust
-logic translated into Lean 4, a security specification, and checked proofs.
+paragraphs. Slide 5 shows the actual Rust delete function and the Lean `authorized`
+theorem statement from the board tutorial. The proof body is explicitly
+omitted. Its Apps panel is a static capture of the actual `.app-map` guarantee graph
+component. No successful check or proof-run status has been fabricated.
 Slide 4 embeds `assets/h5i-ui.html`: the actual UI DOM and CSS captured from
 `target/release/h5i ui` (binary built October 8, capture October 11, 2026).
 
@@ -72,3 +74,12 @@ local HTTP demo with orders 1041/Alice and 1042/Bob. Actual browser navigation,
 a replay changing the ID, and a finding populated the UI. It represents a
 demonstration, not customer evidence. Runtime scripts and the UI access token
 are excluded from the artifact; the iframe is sandboxed and static.
+
+Slide 4 pairs an illustrative shell transcript with the actual session
+workspace (`assets/h5i-ui-session.html`). The same captured session populates
+the history. Slide 5 uses `assets/h5i-app-ui.html` from the real board Apps view.
+
+The Apps graph panel focuses the captured SVG on its guarantee, theorem and
+specification columns (viewBox 0 0 780 270), labeled as an excerpt. The node
+labels and connections come from the actual UI; they are not invented proof
+check results.

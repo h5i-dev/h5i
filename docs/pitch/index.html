@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>h5i — Security for software built with AI</title>
+<title>h5i — Is the Web App Your AI Built Really Secure?</title>
 <meta name="description" content="The h5i OSS pitch deck: an AI-friendly security CLI, a human oversight dashboard, and formal verification. Product, technical depth, early traction, and next steps.">
 <meta name="author" content="h5i-dev">
 <meta name="theme-color" content="#D21C1C">
@@ -16,13 +16,13 @@
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="h5i">
-<meta property="og:title" content="h5i — Security for software built with AI">
+<meta property="og:title" content="h5i — Is the Web App Your AI Built Really Secure?">
 <meta property="og:description" content="Find vulnerabilities. Prove critical logic. The product, technical depth, early traction, and next steps.">
 <meta property="og:url" content="https://h5i.dev/pitch/">
 <meta property="og:image" content="https://h5i.dev/_static/social-card.png">
 <meta property="og:image:alt" content="h5i — Agent-Native Web Security">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="h5i — Security for software built with AI">
+<meta name="twitter:title" content="h5i — Is the Web App Your AI Built Really Secure?">
 <meta name="twitter:description" content="Find vulnerabilities. Prove critical logic. The product, technical depth, early traction, and next steps.">
 <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
 <meta name="twitter:image:alt" content="h5i — Agent-Native Web Security">
@@ -32,14 +32,14 @@
 <body>
 <main class="deck" id="deck" aria-label="h5i OSS pitch presentation">
 <section class="slide cover" id="slide-1" aria-labelledby="title-1">
-<div class="content"><div class="eyebrow">01 / The thesis</div><h1 id="title-1">Security for<br>software built<br><em>with AI.</em></h1><div class="hero-side"><p class="lead">Find bugs.<br>Prove correctness.</p></div><div class="hero-strip"><span>01 / AI-LED RED-TEAMING</span><span>02 / FORMAL VERIFICATION</span></div></div>
+<div class="content"><div class="eyebrow">01 / The problem</div><h1 id="title-1">Is the Web App Your AI Built<br><em>Really Secure?</em></h1><div class="hero-side"><p class="lead">Find bugs.<br>Prove correctness.</p></div><div class="hero-strip"><span>01 / AI-LED RED-TEAMING</span><span>02 / FORMAL VERIFICATION</span></div></div>
 <footer class="folio"><span>h5i / secure web development</span><span>01</span></footer>
 </section>
 
 <section class="slide " id="slide-2" aria-labelledby="title-2">
 <div class="content">
   <div class="eyebrow">02 / The founding insight</div>
-  <h2 id="title-2">Two sides of<br><em>software security.</em></h2>
+  <h2 id="title-2">Software security has two sides</h2>
   <p class="lead">A lesson from my PhD: we need both.</p>
   <div class="security-pair">
     <article><span class="index">01 / RED-TEAMING</span><h3 class="quantified-heading">Find Bugs <span class="quantifier" role="img" aria-label="Exists">∃</span></h3><p>Uncover whether vulnerabilities exist.</p></article>
@@ -53,32 +53,70 @@
 <section class="slide " id="slide-3" aria-labelledby="title-3">
 <div class="content">
   <div class="eyebrow">03 / The product</div>
-  <h2 id="title-3">One workspace.<br><em>Both sides of web security.</em></h2>
-  <div class="product-visuals">
-    <article><span class="index">01 / AI-LED RED-TEAMING</span><h3>AI tests. You oversee.</h3><div class="mini-diagram"><span>AI agent<br><b>CLI</b></span><i aria-hidden="true">↔</i><span>Human<br><b>Dashboard</b></span></div><p>Test existing web apps in any language.</p></article>
-    <article><span class="index">02 / FORMAL VERIFICATION</span><h3>A Rust-based Web Framework</h3><div class="mini-diagram"><span><b>Rust</b></span><i aria-hidden="true">→</i><span><b>Lean 4</b></span></div><p>Prove application correctness in Lean 4.</p></article>
+  <h2 id="title-3" class="product-title">h5i solves both sides of web security</h2>
+  <div class="product-map">
+    <article><span class="index">01 / AI-LED RED-TEAMING</span><h3>CLI-based Red-teaming</h3><ul><li>Browsing</li><li>Traffic capture</li><li>Recon</li><li>CI/CD</li></ul></article>
+    <article><span class="index">02 / FORMAL VERIFICATION</span><h3>A Rust-based Web Framework</h3><div class="mini-diagram"><span><b>Rust</b></span><i aria-hidden="true">→</i><span><b>Lean 4</b></span></div></article>
   </div>
+  <div class="shared-capabilities"><h3>the agent-native workspace for web security</h3><ul><li>Intuitive dashboard for humans</li><li>Sandbox isolation for dangerous operations</li></ul></div>
 </div>
 
 <footer class="folio"><span>h5i / secure web development</span><span>03</span></footer>
 </section>
 
 <section class="slide " id="slide-4" aria-labelledby="title-4">
-<div class="content dashboard-slide">
+<div class="content">
   <div class="eyebrow">04 / AI-led red-teaming</div>
   <h2 id="title-4">AI operates. <em>You oversee.</em></h2>
-  <figure class="dashboard-figure"><div class="native-ui-frame"><iframe src="assets/h5i-ui.html" title="Actual h5i ui: a local demonstration session, shown as a static HTML view" sandbox loading="eager" tabindex="-1"></iframe></div><figcaption><span>AI-friendly CLI ↔ Human dashboard</span><span>Actions · Traffic · Findings</span></figcaption></figure>
+  <div class="shell-dashboard">
+    <div class="agent-shell"><div class="editor-bar">AI agent / shell</div><pre><span class="prompt">$</span> h5i browser snapshot
+<span class="terminal-result">  @e7 Order 1041</span>
+
+<span class="prompt">$</span> h5i websec replay req_3 \
+    --set query.id=1042
+<span class="terminal-result">  → req_4 · HTTP 200</span>
+
+<span class="prompt">$</span> h5i websec diff res_3 res_4
+<span class="terminal-result">  owner: Alice → Bob</span></pre></div>
+    <div class="shell-link" aria-label="Same session">↔</div>
+    <div class="session-ui-frame"><iframe src="assets/h5i-ui-session.html" title="Actual h5i ui session workspace, static local demonstration" sandbox tabindex="-1"></iframe></div>
+  </div>
 </div>
 
-<footer class="folio"><span>Actual h5i ui / local demonstration app</span><span>04</span></footer>
+<footer class="folio"><span>Illustrative shell + actual h5i ui / local demo</span><span>04</span></footer>
 </section>
 
 <section class="slide " id="slide-5" aria-labelledby="title-5">
 <div class="content">
   <div class="eyebrow">05 / Formal verification</div>
-  <h2 id="title-5">Prove Correctness.<br><em>With Lean 4.</em></h2>
-  <figure class="proof-figure"><img src="assets/rust-lean-proof.svg" alt="h5i-app Rust logic → Lean 4 extracted code and a security specification → machine-checked correctness proofs."></figure>
-  <div class="proof-caption"><p>Example: only an author or moderator can delete a post.</p><a href="https://github.com/h5i-dev/h5i/blob/main/examples/app/board/proofs/Commands.lean">See the proof ↗</a></div>
+  <h2 id="title-5">Prove correctness with Lean 4</h2>
+  <div class="proof-examples">
+    <div class="rust-example"><div class="editor-bar">Rust / kernel/src/lib.rs</div><pre><span class="syntax-keyword">fn</span> delete(user: u64, s: &amp;Snapshot,
+          id: u64) -&gt; Outcome {
+    <span class="syntax-keyword">match</span> find_post(&amp;s.posts, id) {
+        None =&gt; Err(Error::NotFound),
+        Some(p) =&gt; {
+            <span class="syntax-keyword">if</span> p.author == user
+                || is_moderator(&amp;s.moderators, user) {
+                Ok((one(Write::DelPost(id)),
+                    Reply::Done))
+            } <span class="syntax-keyword">else</span> {
+                Err(Error::Forbidden)
+            }
+        }
+    }
+}</pre></div>
+    <div class="code-arrow"><span>Charon<br>Aeneas</span><b aria-hidden="true">→</b></div>
+    <div class="lean-and-ui">
+      <div class="lean-example"><div class="editor-bar">Lean 4 / Theorems.lean · excerpt</div><pre><span class="syntax-keyword">theorem</span> authorized (a : Principal) (s : Snapshot)
+    (c : Command) ws r
+    (hinv : Inv (Snapshot.toSt s))
+    (h : transition a s c = .ok (.Ok (ws, r))) :
+    ∀ w ∈ ws.val, allowed (Snapshot.toSt s) a.user.val w := <span class="syntax-keyword">by</span> -- proof body omitted</pre></div>
+      <div class="app-ui-label">h5i ui / theorem–spec dependency graph · excerpt</div>
+      <div class="app-ui-frame"><iframe src="assets/h5i-app-ui.html" title="Actual h5i ui graph excerpt showing the board authorization guarantee, theorems, and specifications" sandbox tabindex="-1"></iframe></div>
+    </div>
+  </div>
 </div>
 
 <footer class="folio"><span>Proofs apply to stated properties under documented assumptions</span><span>05</span></footer>
@@ -87,7 +125,7 @@
 <section class="slide " id="slide-6" aria-labelledby="title-6">
 <div class="content">
   <div class="eyebrow">06 / Both are necessary</div>
-  <h2 id="title-6">Test the app.<br><em>Prove the logic.</em></h2>
+  <h2 id="title-6">Red-Teaming for Every Team<br><em>Formal Verification for Every Team</em></h2>
   <figure class="complement-diagram" aria-label="Red-teaming finds vulnerabilities in a running web app. Formal verification proves security rules of application logic. Both contribute to software security.">
     <div><span class="index">AI-LED RED-TEAMING</span><h3>Running app</h3><span class="diagram-result">Vulnerabilities found</span></div>
     <div><span class="index">FORMAL VERIFICATION</span><h3>Application logic</h3><span class="diagram-result">Security rules proven</span></div>
