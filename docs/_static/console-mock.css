@@ -32,7 +32,7 @@
   --cm-cyan: #7db8d3;
   --cm-violet: #b08ad6;
   --cm-green-bg: rgba(92, 191, 136, 0.13);
-  --cm-mono: "Space Mono", "SFMono-Regular", "Menlo", "Consolas", monospace;
+  --cm-mono: "Space Mono", "IBM Plex Mono", "SFMono-Regular", "Menlo", "Consolas", monospace;
 
   border: 1px solid var(--cm-line);
   border-radius: 10px;
@@ -525,7 +525,7 @@
 }
 .cm-verb {
   color: var(--cm-violet);
-  font-family: "Space Grotesk", sans-serif;
+  font-family: "Space Grotesk", "Archivo", sans-serif;
   font-size: 11px;
 }
 .cm-method {
@@ -564,7 +564,7 @@
   background: var(--cm-red);
   padding: 1px 6px;
   border-radius: 3px;
-  font-family: "Space Grotesk", sans-serif;
+  font-family: "Space Grotesk", "Archivo", sans-serif;
   font-size: 10.5px;
   font-weight: 600;
 }

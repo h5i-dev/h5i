@@ -1,0 +1,254 @@
+/* h5i manual — a docs page, not a blog post.
+ *
+ * Three columns ruled off from each other: grouped, numbered chapters on the
+ * left; the text in the middle at its measure; on the right the sections of
+ * the chapter being read and the page's own facts. Both side columns are as
+ * tall as the viewport and scroll on their own.
+ */
+
+.manual-wrap {
+  display: grid;
+  grid-template-columns: 272px minmax(0, 1fr) 248px;
+  align-items: start;
+  border-bottom: 1px solid var(--line2);
+}
+
+/* ── Left: chapters ──────────────────────────────────────────── */
+.manual-nav,
+.manual-aside {
+  position: sticky; top: 60px;
+  height: calc(100vh - 60px); overflow-y: auto;
+  overscroll-behavior: contain; scrollbar-width: thin;
+}
+.manual-nav {
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--line2);
+}
+.mn-group { padding: 18px 0 14px; border-bottom: 1px solid var(--line2); }
+.mn-head,
+.ma-head {
+  margin: 0 0 8px; padding: 0 22px;
+  font-family: var(--mono); font-size: 10.5px; font-weight: 500;
+  letter-spacing: 0.24em; text-transform: uppercase; color: var(--faint);
+}
+.manual-nav a {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 6px 22px; font-size: 14px; line-height: 1.45; color: var(--dim);
+  transition: color 0.15s, background-color 0.15s;
+}
+.manual-nav a:hover { color: var(--ink); background: var(--panel); }
+.mn-n {
+  flex: 0 0 auto; font-family: var(--mono); font-size: 11px;
+  letter-spacing: 0.06em; color: var(--faint); transition: color 0.15s;
+}
+.manual-nav a.active {
+  color: var(--ink); background: var(--panel2);
+  box-shadow: inset 2px 0 var(--spot-solid);
+}
+.manual-nav a.active .mn-n { color: var(--spot); }
+.mn-foot {
+  margin-top: auto; padding: 14px 0; border-top: 1px solid var(--line2);
+}
+.mn-foot a { font-family: var(--mono); font-size: 12px; letter-spacing: 0.04em; }
+.mn-foot a::after { content: ' \2197'; color: var(--faint); }
+
+/* ── Middle: the text ────────────────────────────────────────── */
+.manual-main { min-width: 0; padding: 56px clamp(28px, 4vw, 64px) 96px; }
+.manual-body {
+  min-width: 0; max-width: var(--measure); margin: 0 auto;
+  font-size: 16px; line-height: 1.75; color: var(--text);
+  overflow-wrap: break-word;
+}
+
+.manual-head { padding-bottom: 30px; margin-bottom: 34px; border-bottom: 1px solid var(--line2); }
+.crumbs {
+  display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 30px;
+  font-family: var(--mono); font-size: 11.5px; color: var(--faint);
+}
+.manual-body .crumbs a { color: var(--dim); text-decoration: none; transition: color 0.15s; }
+.manual-body .crumbs a:hover { color: var(--ink); }
+.crumbs span { color: var(--ink); }
+.crumbs i, .manual-meta i { font-style: normal; color: var(--line2); }
+.manual-head h1 {
+  margin: 16px 0 0; font-family: var(--disp); font-weight: 700;
+  font-size: clamp(34px, 4vw, 52px); letter-spacing: -0.035em; line-height: 1;
+  color: var(--ink);
+}
+.manual-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  margin: 18px 0 0; font-family: var(--mono); font-size: 11.5px; color: var(--dim);
+}
+.manual-meta .ok { color: var(--green); }
+.manual-meta .ok::before {
+  content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 8px;
+  border-radius: 50%; background: currentColor; vertical-align: 1px;
+}
+
+/* the opening paragraphs are the standfirst */
+.manual-head + p,
+.manual-head + p + p { font-size: 18px; line-height: 1.7; color: var(--ink); }
+
+.manual-body h2 {
+  margin: 76px 0 18px; padding-top: 30px; border-top: 1px solid var(--line);
+  font-family: var(--disp); font-weight: 650; font-size: 28px;
+  letter-spacing: -0.025em; line-height: 1.15; color: var(--ink);
+  scroll-margin-top: 84px;
+}
+.manual-body h2::before {
+  content: attr(data-n); display: block; margin-bottom: 12px;
+  font-family: var(--mono); font-size: 12px; font-weight: 500;
+  letter-spacing: 0.1em; color: var(--spot);
+}
+.manual-body hr + h2 { border-top: 0; padding-top: 0; margin-top: 40px; }
+.manual-body h3 {
+  margin: 44px 0 12px; font-family: var(--disp); font-weight: 600; font-size: 19px;
+  letter-spacing: -0.01em; line-height: 1.3; color: var(--ink);
+  scroll-margin-top: 84px;
+}
+.manual-body h4 {
+  margin: 28px 0 8px; font-family: var(--mono); font-weight: 500; font-size: 11.5px;
+  letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim);
+  scroll-margin-top: 84px;
+}
+.manual-body h3 code, .manual-body h2 code {
+  font-size: 0.9em; background: none; border: 0; padding: 0; color: inherit;
+}
+.manual-body p { margin: 0 0 18px; }
+.manual-body strong { color: var(--ink); font-weight: 600; }
+.manual-body em { color: var(--ink); }
+.manual-body ul, .manual-body ol { margin: 0 0 20px; padding-left: 22px; }
+.manual-body li { margin: 7px 0; }
+.manual-body ul > li::marker { color: var(--faint); }
+/* numbered steps sit in square cells, the way the chapter numbers do */
+.manual-body ol { list-style: none; padding-left: 0; counter-reset: step; }
+.manual-body ol > li {
+  position: relative; padding-left: 40px; counter-increment: step;
+}
+.manual-body ol > li::before {
+  content: counter(step);
+  position: absolute; left: 0; top: 2px; width: 24px; height: 24px;
+  display: grid; place-items: center;
+  border: 1px solid var(--line2); background: var(--panel);
+  font-family: var(--mono); font-size: 11px; line-height: 1; color: var(--spot);
+}
+.manual-body a {
+  color: var(--spot); text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--spot) 40%, transparent);
+  text-underline-offset: 3px; transition: text-decoration-color 0.15s;
+}
+.manual-body a:hover { text-decoration-color: currentColor; }
+.manual-body a code { color: var(--spot); }
+.manual-body code {
+  font-family: var(--mono); font-size: 0.86em; color: var(--ink);
+  background: var(--panel); border: 1px solid var(--line2); padding: 1px 5px;
+}
+.manual-body hr { border: 0; border-top: 1px solid var(--line); margin: 34px 0; }
+
+/* a quote in the manual is a note: rule, ground, and the first line set heavier */
+.manual-body blockquote {
+  margin: 26px 0; padding: 16px 20px;
+  border-left: 2px solid var(--spot-solid); background: var(--panel);
+}
+.manual-body blockquote p { margin: 0 0 8px; color: var(--text); }
+.manual-body blockquote p:last-child { margin-bottom: 0; }
+.manual-body blockquote p:first-child { color: var(--ink); font-weight: 600; }
+
+/* ── Code: a label strip and a copy cell over the block ──────── */
+.codeblock { margin: 0 0 24px; border: 1px solid var(--line2); background: var(--panel); }
+.codeblock-head {
+  display: flex; align-items: stretch; justify-content: space-between;
+  min-height: 34px; padding-left: 14px; border-bottom: 1px solid var(--line2);
+  font-family: var(--mono); font-size: 10.5px; font-weight: 500;
+  letter-spacing: 0.2em; text-transform: uppercase; color: var(--faint);
+}
+.codeblock-head span { align-self: center; }
+.codeblock .copy-btn {
+  padding: 0 14px; border: 0; border-left: 1px solid var(--line2);
+  background: none; cursor: pointer; color: var(--dim);
+  font: inherit; letter-spacing: 0.16em; text-transform: uppercase;
+  transition: color 0.15s, background-color 0.15s;
+}
+.codeblock .copy-btn:hover { color: var(--ink); background: var(--panel2); }
+.codeblock .copy-btn.done { color: var(--spot); }
+.manual-body .codeblock pre { margin: 0; padding: 15px 18px; overflow-x: auto; }
+.manual-body pre code {
+  display: block; background: none; border: 0; padding: 0;
+  font-size: 13px; line-height: 1.75; color: var(--text); white-space: pre;
+}
+
+.manual-body table {
+  display: block; overflow-x: auto; width: 100%; margin: 0 0 24px;
+  border-collapse: collapse; font-size: 14px; line-height: 1.6;
+}
+.manual-body th, .manual-body td {
+  padding: 10px 13px; border: 1px solid var(--line);
+  text-align: left; vertical-align: top; font-weight: 400;
+}
+.manual-body th {
+  background: var(--panel); color: var(--faint); white-space: nowrap;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase;
+}
+.manual-body td { color: var(--text); }
+
+/* ── Right: this chapter, and the page's facts ───────────────── */
+.manual-aside { padding: 26px 0 30px; border-left: 1px solid var(--line2); }
+.ma-toc { margin: 0 0 34px 22px; border-left: 1px solid var(--line2); }
+.ma-sec { display: none; }
+.ma-sec.current, .ma-toc:not(.live) .ma-sec:first-child { display: block; }
+.ma-toc a {
+  display: block; margin-left: -1px; padding: 6px 14px;
+  border-left: 1px solid transparent;
+  font-size: 13.5px; line-height: 1.45; color: var(--dim);
+  transition: color 0.15s, border-color 0.15s;
+}
+.ma-toc a:first-child { color: var(--text); }
+.ma-toc a:hover { color: var(--ink); }
+.ma-toc a.active { color: var(--ink); border-left-color: var(--spot-solid); }
+.ma-sec.current { animation: ma-in 0.35s var(--ease); }
+@keyframes ma-in { from { opacity: 0; transform: translateY(4px); } }
+
+.ma-meta { margin: 0; padding: 0 22px; }
+.ma-meta div {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 7px 0; font-size: 13.5px;
+}
+.ma-meta dt { color: var(--dim); }
+.ma-meta dd { margin: 0; color: var(--ink); text-align: right; }
+.ma-meta code {
+  font-family: var(--mono); font-size: 12px; color: var(--ink);
+  background: var(--panel); border: 1px solid var(--line2); padding: 1px 5px;
+}
+.ma-meta a { color: var(--spot); }
+.ma-meta a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* ── Narrow ──────────────────────────────────────────────────── */
+.manual-mobile-toc { display: none; }
+@media (max-width: 1180px) {
+  .manual-wrap { grid-template-columns: 248px minmax(0, 1fr); }
+  .manual-aside { display: none; }
+}
+@media (max-width: 860px) {
+  .manual-wrap { grid-template-columns: minmax(0, 1fr); }
+  .manual-nav { display: none; }
+  .manual-main { padding: 36px var(--gut) 72px; }
+  .manual-mobile-toc {
+    display: block; margin-top: 24px; border: 1px solid var(--line2);
+  }
+  .manual-mobile-toc summary {
+    padding: 11px 14px; cursor: pointer; list-style: none;
+    font-family: var(--mono); font-size: 11px; font-weight: 500;
+    letter-spacing: 0.2em; text-transform: uppercase; color: var(--dim);
+  }
+  .manual-mobile-toc summary::-webkit-details-marker { display: none; }
+  .manual-mobile-toc summary::after { content: ' +'; color: var(--spot); }
+  .manual-mobile-toc[open] summary::after { content: ' \2212'; }
+  .manual-mobile-toc .mn-group { border-bottom: 0; border-top: 1px solid var(--line2); }
+  .manual-mobile-toc a {
+    display: flex; gap: 12px; padding: 6px 22px; font-size: 14px; color: var(--dim);
+  }
+  .manual-body h2 { font-size: 24px; margin-top: 56px; }
+  .manual-head + p, .manual-head + p + p { font-size: 17px; }
+  .manual-meta i { display: none; }
+  .manual-body code { white-space: normal; overflow-wrap: anywhere; }
+  .manual-body pre code { white-space: pre; overflow-wrap: normal; }
+}

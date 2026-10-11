@@ -74,21 +74,97 @@ def link_out(body):
 
 body = link_out(body)
 
-# Build sidebar TOC from the heading tokens (levels 2 and 3)
-def render_toc(tokens):
-    out = []
+# The page is three columns, after a docs site rather than a blog post: the
+# chapters on the left (grouped, numbered), the text in the middle, and on the
+# right the sections of whichever chapter is being read plus the page's facts.
+GROUPS = [
+    ("Start here", ["what-h5i-is", "the-engagement", "install", "command-groups",
+                    "scope-and-identity"]),
+    ("Red-teaming", ["h5i-recon", "h5i-browser", "h5i-websec", "h5i-project", "h5i-test"]),
+    ("Workspace", ["containment-optional", "the-console", "h5i-app", "h5i-skill",
+                   "h5i-plugin"]),
+    ("Reference", []),  # policy, receipts, limits, files, and anything new
+]
+
+chapters = []
+def collect(tokens):
     for t in tokens:
         if t["level"] == 2:
-            out.append(f'<a class="t2" href="#{t["id"]}">{t["name"]}</a>')
-            kids = [c for c in t.get("children", []) if c["level"] == 3]
-            if kids:
-                out.append('<div class="t3group">')
-                for c in kids:
-                    out.append(f'<a class="t3" href="#{c["id"]}">{c["name"]}</a>')
-                out.append('</div>')
-        out.extend(render_toc(t.get("children", [])) if t["level"] < 2 else [])
-    return out
-toc_html = "\n".join(render_toc(md.toc_tokens))
+            chapters.append(t)
+        elif t["level"] < 2:
+            collect(t.get("children", []))
+collect(md.toc_tokens)
+num = {t["id"]: f"{i + 1:02d}" for i, t in enumerate(chapters)}
+
+def group_of(cid):
+    for name, ids in GROUPS:
+        if cid in ids:
+            return name
+    return GROUPS[-1][0]
+
+nav_html = []
+for name, _ in GROUPS:
+    members = [t for t in chapters if group_of(t["id"]) == name]
+    if not members:
+        continue
+    nav_html.append(f'<div class="mn-group"><p class="mn-head">{name}</p>')
+    for t in members:
+        nav_html.append(f'<a href="#{t["id"]}"><span class="mn-n">{num[t["id"]]}</span>'
+                        f'<span>{t["name"]}</span></a>')
+    nav_html.append('</div>')
+nav_html = "\n".join(nav_html)
+
+page_toc = []
+for t in chapters:
+    kids = [c for c in t.get("children", []) if c["level"] == 3]
+    page_toc.append(f'<div class="ma-sec" data-sec="{t["id"]}">'
+                    f'<a href="#{t["id"]}">{t["name"]}</a>')
+    page_toc.extend(f'<a class="t3" href="#{c["id"]}">{c["name"]}</a>' for c in kids)
+    page_toc.append('</div>')
+page_toc = "\n".join(page_toc)
+
+# The chapter number sits above each heading, the same number the left column shows.
+body = re.sub(r'<h2 id="([^"]+)">',
+              lambda m: f'<h2 id="{m.group(1)}" data-n="{num.get(m.group(1), "")}">', body)
+# The title moves into the page head, which carries the facts beside it.
+body = re.sub(r'<h1[^>]*>.*?</h1>\s*', '', body, count=1, flags=re.S)
+
+# Every block gets a label strip and a copy button, rendered here rather than
+# injected by script so the page does not shift once it loads.
+LABELS = {"bash": "terminal", "console": "terminal", "sh": "terminal", "text": "output"}
+def codeblock(m):
+    lang = m.group(1) or ""
+    label = LABELS.get(lang, lang or "text")
+    return (f'<div class="codeblock"><div class="codeblock-head"><span>{label}</span>'
+            f'<button class="copy-btn" type="button">Copy</button></div>'
+            f'<pre><code{m.group(0)[len("<pre><code"):]}')
+body = re.sub(r'<pre><code(?: class="language-(\w+)")?>', codeblock, body)
+body = body.replace('</code></pre>', '</code></pre></div>')
+
+# Facts for the head and the right column. The date is the one build-content.py
+# records for this page; fingerprints ignore dates, so this does not feed back.
+_hist = Path("docs/build-content.py").read_text(encoding="utf-8")
+updated = re.search(r'"manual/": \("(\d{4}-\d{2}-\d{2})"', _hist).group(1)
+minutes = round(len(re.findall(r"\w+", src)) / 230)
+
+HEADER = f'''<header class="manual-head">
+      <p class="crumbs"><a href="/">h5i</a><i>/</i><a href="/guides/">docs</a><i>/</i><span>manual</span></p>
+      <p class="post-eyebrow">CLI reference</p>
+      <h1>h5i Manual</h1>
+      <p class="manual-meta"><span>Updated <time datetime="{updated}">{updated}</time></span><i>|</i><span>{minutes} min read</span><i>|</i><span class="ok">{len(chapters)} chapters</span></p>
+      <details class="manual-mobile-toc"><summary>Chapters</summary>
+{nav_html}
+      </details>
+    </header>'''
+
+META = f'''<p class="ma-head">Metadata</p>
+    <dl class="ma-meta">
+      <div><dt>Updated</dt><dd>{updated}</dd></div>
+      <div><dt>Chapters</dt><dd>{len(chapters)}</dd></div>
+      <div><dt>Reading</dt><dd>{minutes} min</dd></div>
+      <div><dt>Flags</dt><dd><code>--help</code></dd></div>
+      <div><dt>Source</dt><dd><a href="{REPO}/blob/main/docs/MANUAL.md">MANUAL.md &#8599;</a></dd></div>
+    </dl>'''
 
 HEAD = '''<!DOCTYPE html>
 <html lang="en">
@@ -141,22 +217,33 @@ HEAD = '''<!DOCTYPE html>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-  <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet"></noscript>
 __STYLE__
 </head>
 <body>
 __NAV__
 <main class="manual-wrap">
-  <aside class="manual-toc" aria-label="Manual contents">
-    <div class="toc-head">CLI Reference</div>
-    <nav>
-__TOC__
-    </nav>
+  <aside class="manual-nav" aria-label="Manual chapters">
+__NAV_TOC__
+    <div class="mn-foot">
+      <a href="/guides/">Guides</a>
+      <a href="/guides/cheatsheet/">Cheatsheet</a>
+    </div>
   </aside>
+  <div class="manual-main">
   <article class="manual-body">
+    __HEADER__
 __BODY__
   </article>
+  </div>
+  <aside class="manual-aside" aria-label="On this page">
+    <p class="ma-head">On this page</p>
+    <nav class="ma-toc">
+__PAGE_TOC__
+    </nav>
+    __META__
+  </aside>
 </main>
 __FOOTER__
 __SCRIPT__
@@ -165,78 +252,8 @@ __SCRIPT__
 '''
 
 STYLE = '''  <link rel="stylesheet" href="/_static/blog.css">
-  <style>
-    /* The manual is the site's article layout with a two-level index: the
-       measure sits beside a sticky section list, both hung off the sheet's
-       own gutter. Everything else comes from the chassis. */
-    .manual-wrap{
-      display:grid;grid-template-columns:250px minmax(0,var(--measure));
-      gap:60px;justify-content:center;align-items:start;
-      padding:54px var(--gut) 78px;border-bottom:1px solid var(--line2);
-    }
-    .manual-toc{position:sticky;top:84px;align-self:start;
-      max-height:calc(100vh - 120px);overflow-y:auto;min-width:0;}
-    .manual-toc .toc-head{margin:0 0 12px;font-family:var(--mono);font-size:10px;
-      letter-spacing:.2em;text-transform:uppercase;color:var(--faint);}
-    .manual-toc nav{display:flex;flex-direction:column;}
-    .manual-toc a{display:block;padding:6px 0 6px 13px;
-      border-left:1px solid var(--line2);color:var(--dim);
-      font-size:13px;line-height:1.45;transition:color .15s,border-color .15s;}
-    .manual-toc a:hover{color:var(--ink);}
-    .manual-toc a.t2{font-family:var(--mono);font-size:12px;color:var(--text);}
-    .manual-toc a.t3{padding-left:26px;font-size:12.5px;}
-    .manual-toc a.active{color:var(--spot);border-left-color:var(--spot);}
-    .manual-toc .t3group{display:flex;flex-direction:column;}
-    .manual-toc::-webkit-scrollbar{width:6px;}
-
-    .manual-body{min-width:0;max-width:var(--measure);font-size:16px;color:var(--dim);
-      overflow-wrap:break-word;}
-    .manual-body h1{font-family:var(--disp);font-weight:900;
-      font-size:clamp(32px,4vw,58px);letter-spacing:-.05em;line-height:.95;
-      color:var(--ink);margin:0 0 22px;}
-    .manual-body h2{font-family:var(--disp);font-weight:800;font-size:25px;
-      letter-spacing:-.035em;line-height:1.15;color:var(--ink);
-      margin:46px 0 16px;padding-top:18px;border-top:1px solid var(--line);
-      scroll-margin-top:84px;}
-    .manual-body hr+h2{border-top:0;padding-top:0;margin-top:26px;}
-    .manual-body h3{font-family:var(--disp);font-weight:700;font-size:18px;
-      letter-spacing:-.02em;color:var(--ink);margin:32px 0 12px;scroll-margin-top:84px;}
-    .manual-body h4{font-family:var(--disp);font-weight:700;font-size:15px;
-      color:var(--text);margin:24px 0 8px;scroll-margin-top:84px;}
-    .manual-body h3 code{font-size:1em;background:none;border:0;padding:0;color:var(--ink);}
-    .manual-body p{margin:0 0 18px;}
-    .manual-body ul,.manual-body ol{margin:0 0 18px;padding-left:22px;}
-    .manual-body li{margin:6px 0;}
-    .manual-body li::marker{color:var(--faint);}
-    .manual-body strong{color:var(--ink);font-weight:500;}
-    .manual-body a{color:var(--spot);text-decoration:underline;
-      text-decoration-color:color-mix(in srgb,var(--spot) 45%,transparent);
-      text-underline-offset:3px;}
-    .manual-body a:hover{text-decoration-color:currentColor;}
-    .manual-body a code{color:var(--spot);}
-    .manual-body code{font-family:var(--mono);font-size:13.5px;color:var(--ink);
-      background:var(--panel);border:1px solid var(--line2);padding:1px 6px;}
-    .manual-body pre{background:var(--panel);border:1px solid var(--line2);
-      padding:16px 18px;margin:0 0 22px;overflow-x:auto;}
-    .manual-body pre code{background:none;border:0;padding:0;
-      font-size:13.5px;line-height:1.7;color:var(--text);white-space:pre;}
-    .manual-body blockquote{margin:26px 0;padding-left:18px;
-      border-left:2px solid var(--spot-solid);color:var(--ink);}
-    .manual-body blockquote p{color:var(--ink);margin:0 0 8px;}
-    .manual-body hr{border:0;border-top:1px solid var(--line);margin:34px 0;}
-    .manual-body table{width:100%;border-collapse:collapse;margin:0 0 22px;
-      font-family:var(--mono);font-size:12.5px;display:block;overflow-x:auto;}
-    .manual-body th,.manual-body td{border:1px solid var(--line);
-      padding:10px 13px;text-align:left;vertical-align:top;font-weight:400;}
-    .manual-body th{background:var(--panel);color:var(--faint);
-      font-size:10px;letter-spacing:.16em;text-transform:uppercase;white-space:nowrap;}
-    .manual-body td{color:var(--dim);}
-
-    @media (max-width:1100px){
-      .manual-wrap{grid-template-columns:minmax(0,1fr);gap:0;}
-      .manual-toc{display:none;}
-    }
-  </style>'''
+  <link rel="stylesheet" href="/_static/highlight.css">
+  <link rel="stylesheet" href="/_static/manual.css">'''
 
 NAV = '''<nav>
   <a class="nav-logo" href="/">
@@ -273,26 +290,11 @@ FOOTER = '''<footer>
 
 SCRIPT = '''<script src="/_static/blog.js" defer></script>
 <script src="/_static/highlight.js" defer></script>
-<script>
-  // scrollspy: highlight the current section in the sidebar
-  (function(){
-    var links=[].slice.call(document.querySelectorAll('.manual-toc a'));
-    var map={};links.forEach(function(a){map[a.getAttribute('href').slice(1)]=a;});
-    var heads=[].slice.call(document.querySelectorAll('.manual-body h2[id],.manual-body h3[id]'));
-    var obs=new IntersectionObserver(function(es){
-      es.forEach(function(e){
-        if(e.isIntersecting){
-          links.forEach(function(a){a.classList.remove('active');});
-          var a=map[e.target.id];if(a){a.classList.add('active');a.scrollIntoView({block:'nearest'});}
-        }
-      });
-    },{rootMargin:'-80px 0px -70% 0px'});
-    heads.forEach(function(h){obs.observe(h);});
-  })();
-</script>'''
+<script src="/_static/manual.js" defer></script>'''
 
 page = (HEAD.replace("__STYLE__", STYLE).replace("__NAV__", NAV)
-        .replace("__TOC__", toc_html).replace("__BODY__", body)
+        .replace("__NAV_TOC__", nav_html).replace("__PAGE_TOC__", page_toc)
+        .replace("__HEADER__", HEADER).replace("__META__", META).replace("__BODY__", body)
         .replace("__FOOTER__", FOOTER).replace("__SCRIPT__", SCRIPT))
 open("docs/manual/index.html", "w", encoding="utf-8").write(page)
 print("wrote docs/manual/index.html  bytes:", len(page))
