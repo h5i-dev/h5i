@@ -18,6 +18,7 @@
     window.scrollTo(0, 0);
   }
   function fit() {
+    document.documentElement.style.setProperty('--ui-scale', Math.max(1, innerWidth - 48) / 1440);
     document.documentElement.style.setProperty('--deck-scale', Math.min(innerWidth / 1280, Math.max(1, innerHeight - 64) / 720));
   }
   prev.addEventListener('click', () => show(current - 1));

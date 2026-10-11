@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>h5i — Security for software built with AI</title>
-<meta name="description" content="The h5i investor deck: an AI-friendly security CLI, a human oversight dashboard, and formal verification. Product, technical depth, early traction, and next steps.">
+<meta name="description" content="The h5i OSS pitch deck: an AI-friendly security CLI, a human oversight dashboard, and formal verification. Product, technical depth, early traction, and next steps.">
 <meta name="author" content="h5i-dev">
 <meta name="theme-color" content="#D21C1C">
 <meta name="color-scheme" content="dark">
@@ -26,112 +26,86 @@
 <meta name="twitter:description" content="Find vulnerabilities. Prove critical logic. The product, technical depth, early traction, and next steps.">
 <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
 <meta name="twitter:image:alt" content="h5i — Agent-Native Web Security">
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i investor deck", "description": "Security for software built with AI. Product, technical depth, early traction, and next steps.", "url": "https://h5i.dev/pitch/", "dateModified": "2026-10-11", "inLanguage": "en", "author": {"@type": "Organization", "name": "h5i-dev", "url": "https://github.com/h5i-dev/h5i"}, "about": {"@id": "https://h5i.dev/#app"}}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i OSS Pitch Deck", "description": "Security for software built with AI. Product, technical depth, early traction, and next steps.", "url": "https://h5i.dev/pitch/", "dateModified": "2026-10-11", "inLanguage": "en", "author": {"@type": "Organization", "name": "h5i-dev", "url": "https://github.com/h5i-dev/h5i"}, "about": {"@id": "https://h5i.dev/#app"}}</script>
 <link rel="stylesheet" href="deck.css">
 </head>
 <body>
-<main class="deck" id="deck" aria-label="h5i investor presentation">
+<main class="deck" id="deck" aria-label="h5i OSS pitch presentation">
 <section class="slide cover" id="slide-1" aria-labelledby="title-1">
-<header class="running"><a href="/" aria-label="h5i home">h<span>5</span>i</a><span>INVESTOR DECK / The thesis</span><span>2026</span></header>
-<div class="content"><div class="eyebrow">01 / The thesis</div><h1 id="title-1">Security for<br>software built<br><em>with AI.</em></h1><div class="hero-side"><div class="cross" aria-hidden="true">+</div><p class="lead">Find bugs.<br>Prove correctness.</p><p>A CLI for AI agents.<br>A dashboard for humans.</p><a class="text-link" href="https://h5i.dev">h5i.dev ↗</a></div><div class="hero-strip"><span>01 / AI-LED RED-TEAMING</span><span>02 / FORMAL VERIFICATION</span></div></div>
+<div class="content"><div class="eyebrow">01 / The thesis</div><h1 id="title-1">Security for<br>software built<br><em>with AI.</em></h1><div class="hero-side"><p class="lead">Find bugs.<br>Prove correctness.</p></div><div class="hero-strip"><span>01 / AI-LED RED-TEAMING</span><span>02 / FORMAL VERIFICATION</span></div></div>
 <footer class="folio"><span>h5i / secure web development</span><span>01</span></footer>
 </section>
 
 <section class="slide " id="slide-2" aria-labelledby="title-2">
-<header class="running"><a href="/" aria-label="h5i home">h<span>5</span>i</a><span>INVESTOR DECK / The founding insight</span><span>2026</span></header>
 <div class="content">
   <div class="eyebrow">02 / The founding insight</div>
-  <h2 id="title-2">Find bugs. Prove correctness.<br><em>Two sides of the same coin.</em></h2>
-  <p class="lead">A lesson from my PhD: secure software needs both.</p>
-  <div class="columns two">
-    <article>
-      <span class="index">01 / FIND BUGS</span>
-      <h3>Discover what we missed.</h3>
-      <p>Explore the running app to uncover vulnerabilities, including cases the specification never anticipated.</p>
-      <div class="output">FINDINGS REVEAL GAPS IN OUR RULES</div>
-    </article>
-    <article>
-      <span class="index">02 / PROVE CORRECTNESS</span>
-      <h3>Establish what must hold.</h3>
-      <p>Prove stated properties for every case covered by the model, under explicit assumptions.</p>
-      <div class="output">PROOFS ESTABLISH THE RULES WE STATE</div>
-    </article>
+  <h2 id="title-2">Two sides of<br><em>software security.</em></h2>
+  <p class="lead">A lesson from my PhD: we need both.</p>
+  <div class="security-pair">
+    <article><span class="index">01 / RED-TEAMING</span><h3 class="quantified-heading">Find Bugs <span class="quantifier" role="img" aria-label="Exists">∃</span></h3><p>Uncover whether vulnerabilities exist.</p></article>
+    <article><span class="index">02 / FORMAL VERIFICATION</span><h3 class="quantified-heading">Prove Correctness <span class="quantifier" role="img" aria-label="For all">∀</span></h3><p>Prove the security rules hold for all inputs.</p></article>
   </div>
-  <div class="takeaway">Find bugs to challenge our understanding. Prove correctness to make it precise. We need both.</div>
 </div>
+
 <footer class="folio"><span>h5i / the insight behind the two product pillars</span><span>02</span></footer>
 </section>
 
 <section class="slide " id="slide-3" aria-labelledby="title-3">
-<header class="running"><a href="/" aria-label="h5i home">h<span>5</span>i</a><span>INVESTOR DECK / The product</span><span>2026</span></header>
-<div class="content"><div class="eyebrow">03 / The product</div><h2 id="title-3">One workspace.<br><em>Both sides of web security.</em></h2><div class="columns two product"><article><span class="index">01 / AI-LED RED-TEAMING</span><h3>AI tests. You stay in control.</h3><p>An AI-friendly CLI runs the tests. A dashboard lets you follow the agent, review findings and manage browser sessions.</p><div class="output">AI OPERATES THE CLI ↔ YOU OVERSEE THE DASHBOARD</div></article><article><span class="index">02 / FORMAL VERIFICATION</span><h3>Prove the critical rules.</h3><p>Use h5i-app and Lean 4 to check stated properties of extracted application logic.</p><div class="output">OUTPUT → THEOREMS + RECEIPT</div></article></div><p class="small">Testing works with existing apps. The Rust framework is optional. Proofs apply to stated properties under documented assumptions.</p></div>
+<div class="content">
+  <div class="eyebrow">03 / The product</div>
+  <h2 id="title-3">One workspace.<br><em>Both sides of web security.</em></h2>
+  <div class="product-visuals">
+    <article><span class="index">01 / AI-LED RED-TEAMING</span><h3>AI tests. You oversee.</h3><div class="mini-diagram"><span>AI agent<br><b>CLI</b></span><i aria-hidden="true">↔</i><span>Human<br><b>Dashboard</b></span></div><p>Test existing web apps in any language.</p></article>
+    <article><span class="index">02 / FORMAL VERIFICATION</span><h3>A Rust-based Web Framework</h3><div class="mini-diagram"><span><b>Rust</b></span><i aria-hidden="true">→</i><span><b>Lean 4</b></span></div><p>Prove application correctness in Lean 4.</p></article>
+  </div>
+</div>
+
 <footer class="folio"><span>h5i / secure web development</span><span>03</span></footer>
 </section>
 
 <section class="slide " id="slide-4" aria-labelledby="title-4">
-<header class="running"><a href="/" aria-label="h5i home">h<span>5</span>i</a><span>INVESTOR DECK / A concrete workflow</span><span>2026</span></header>
-<div class="content">
-  <div class="eyebrow">04 / Find vulnerabilities</div>
-  <h2 id="title-4">The agent runs the tests.<br><em>You see and manage the work.</em></h2>
-  <p class="lead">Two interfaces to the same session: commands for the AI, oversight for you.</p>
-  <div class="operator-pair">
-    <article class="agent-pane">
-      <div class="pane-label"><span>AI AGENT / CLI</span><span>01</span></div>
-      <h3>Easy for the agent to operate.</h3>
-      <p>Focused commands, compact output and reusable evidence IDs.</p>
-      <pre><span class="prompt">$</span> h5i websec replay req_42 \
-    --set query.id=1042
-<span class="terminal-result">  → res_43 · HTTP 200</span>
-<span class="prompt">$</span> h5i websec diff res_42 res_43
-<span class="terminal-result">  owner: Alice → Bob</span></pre>
-    </article>
-    <div class="session-link" aria-label="Shared session"><span>same<br>session</span><b>↔</b></div>
-    <article class="human-pane">
-      <div class="pane-label"><span>HUMAN / DASHBOARD</span><span>02</span></div>
-      <h3>Easy for you to oversee.</h3>
-      <div class="session-heading"><b>checkout-idor</b><span>working</span></div>
-      <div class="activity-row"><span>01 / BROWSE</span><span>Agent opened Alice’s orders</span></div>
-      <div class="activity-row"><span>02 / REPLAY</span><span>Agent changed the order ID</span></div>
-      <div class="finding-note"><span>FINDING / AUTHORIZATION</span><b>Alice can read Bob’s order.</b><span>Evidence: req_42 · res_43</span></div>
-      <div class="mock-controls" aria-label="Illustrated browser controls"><span>Take browser control</span><span>Stop browser</span></div>
-    </article>
-  </div>
+<div class="content dashboard-slide">
+  <div class="eyebrow">04 / AI-led red-teaming</div>
+  <h2 id="title-4">AI operates. <em>You oversee.</em></h2>
+  <figure class="dashboard-figure"><div class="native-ui-frame"><iframe src="assets/h5i-ui.html" title="Actual h5i ui: a local demonstration session, shown as a static HTML view" sandbox loading="eager" tabindex="-1"></iframe></div><figcaption><span>AI-friendly CLI ↔ Human dashboard</span><span>Actions · Traffic · Findings</span></figcaption></figure>
 </div>
-<footer class="folio"><span>Illustrative CLI output and dashboard / synthetic session</span><span>04</span></footer>
+
+<footer class="folio"><span>Actual h5i ui / local demonstration app</span><span>04</span></footer>
 </section>
 
 <section class="slide " id="slide-5" aria-labelledby="title-5">
-<header class="running"><a href="/" aria-label="h5i home">h<span>5</span>i</a><span>INVESTOR DECK / Technical depth</span><span>2026</span></header>
-<div class="content"><div class="eyebrow">05 / Technical depth</div><h2 id="title-5">Confidence comes<br><em>with a chain of evidence.</em></h2><div class="columns two"><article><span class="index">BOUNDED EXECUTION</span><h3>Set the agent’s reach.</h3><p>Optional boxes constrain files, network access and runtime. Receipts distinguish host observations from box claims.</p><div class="mini-flow">POLICY → EXECUTION → RECEIPT</div><p class="small">Network enforcement depends on the tier. Only microvm provides a separate guest kernel.</p></article><article><span class="index">CHECKED PROPERTIES</span><h3>Tie proofs to the logic.</h3><p>Charon and Aeneas extract Rust into Lean. Verification gates check proof builds, extraction drift, axioms and mutations.</p><div class="mini-flow">RUST → LEAN → VERIFICATION</div><p class="small">The specification, translation and runtime assumptions define the guarantee.</p></article></div><div class="source-line"><a href="/guides/write-a-box-policy/">Box policies ↗</a><a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/TRUST.md">Proof scope &amp; assumptions ↗</a></div></div>
-<footer class="folio"><span>h5i / secure web development</span><span>05</span></footer>
+<div class="content">
+  <div class="eyebrow">05 / Formal verification</div>
+  <h2 id="title-5">Prove Correctness.<br><em>With Lean 4.</em></h2>
+  <figure class="proof-figure"><img src="assets/rust-lean-proof.svg" alt="h5i-app Rust logic → Lean 4 extracted code and a security specification → machine-checked correctness proofs."></figure>
+  <div class="proof-caption"><p>Example: only an author or moderator can delete a post.</p><a href="https://github.com/h5i-dev/h5i/blob/main/examples/app/board/proofs/Commands.lean">See the proof ↗</a></div>
+</div>
+
+<footer class="folio"><span>Proofs apply to stated properties under documented assumptions</span><span>05</span></footer>
 </section>
 
 <section class="slide " id="slide-6" aria-labelledby="title-6">
-<header class="running"><a href="/" aria-label="h5i home">h<span>5</span>i</a><span>INVESTOR DECK / Positioning</span><span>2026</span></header>
 <div class="content">
-  <div class="eyebrow">06 / Why h5i</div>
-  <h2 id="title-6">Built for AI to operate.<br><em>Built for humans to oversee.</em></h2>
-  <p class="lead">h5i’s advantage is the connection between an agent-friendly CLI and a dashboard for human understanding and control.</p>
-  <div class="comparison" role="table" aria-label="h5i websec product strengths">
-    <div class="comparison-row table-head" role="row"><span role="columnheader">DESIGNED FOR</span><span role="columnheader">WHAT THIS MAKES POSSIBLE</span></div>
-    <div class="comparison-row" role="row"><b role="cell">The AI doing the work</b><span role="cell">Run focused commands and use compact results to choose the next test.</span></div>
-    <div class="comparison-row" role="row"><b role="cell">The human overseeing it</b><span role="cell">Follow actions, inspect findings, and take control of or stop the browser.</span></div>
-    <div class="comparison-row" role="row"><b role="cell">Their shared workflow</b><span role="cell">Connect the agent’s actions to the session and evidence you review.</span></div>
-  </div>
-  <div class="takeaway">The product value: AI can work through the tests, and you can understand and manage what it does.</div>
+  <div class="eyebrow">06 / Both are necessary</div>
+  <h2 id="title-6">Test the app.<br><em>Prove the logic.</em></h2>
+  <figure class="complement-diagram" aria-label="Red-teaming finds vulnerabilities in a running web app. Formal verification proves security rules of application logic. Both contribute to software security.">
+    <div><span class="index">AI-LED RED-TEAMING</span><h3>Running app</h3><span class="diagram-result">Vulnerabilities found</span></div>
+    <div><span class="index">FORMAL VERIFICATION</span><h3>Application logic</h3><span class="diagram-result">Security rules proven</span></div>
+    <div class="join-lines" aria-hidden="true"><span></span><span></span></div>
+    <div class="security-outcome">Software security</div>
+  </figure>
 </div>
-<footer class="folio"><span>h5i websec / AI operation + human oversight</span><span>06</span></footer>
+
+<footer class="folio"><span>h5i / two sides of software security</span><span>06</span></footer>
 </section>
 
 <section class="slide " id="slide-7" aria-labelledby="title-7">
-<header class="running"><a href="/" aria-label="h5i home">h<span>5</span>i</a><span>INVESTOR DECK / Early traction</span><span>2026</span></header>
-<div class="content"><div class="eyebrow">07 / Early traction</div><h2 id="title-7">Built in the open.<br><em>Early developer interest.</em></h2><div class="metrics"><div><strong>1.6k<span>+</span></strong><span>RELEASE DOWNLOADS</span></div><div><strong>700<span>+</span></strong><span>GITHUB STARS</span></div></div><div class="traction-bottom"><p>Open-source interest is the starting signal.<br>The next milestone is repeated use on real applications.</p><div><span class="index">OPEN DEVELOPMENT</span><p>Apache 2.0 · CLI + review console<br>Browser testing + Rust verification</p></div></div><div class="source-line"><span>Maintainer-reported · October 11, 2026</span><a href="https://github.com/h5i-dev/h5i">Repository ↗</a><a href="https://github.com/h5i-dev/h5i/releases">Releases ↗</a></div></div>
-<footer class="folio"><span>Downloads and stars measure interest, not active users or revenue</span><span>07</span></footer>
+<div class="content"><div class="eyebrow">07 / Early traction</div><h2 id="title-7">Open-source traction</h2><div class="metrics"><div><strong>1.6k<span>+</span></strong><span>RELEASE DOWNLOADS</span></div><div><strong>700<span>+</span></strong><span>GITHUB STARS</span></div></div><div class="source-line"><span>Maintainer-reported · October 11, 2026</span><a href="https://github.com/h5i-dev/h5i">Repository ↗</a><a href="https://github.com/h5i-dev/h5i/releases">Releases ↗</a></div></div>
+<footer class="folio"><span>Open-source interest / downloads and stars</span><span>07</span></footer>
 </section>
 
 <section class="slide close" id="slide-8" aria-labelledby="title-8">
-<header class="running"><a href="/" aria-label="h5i home">h<span>5</span>i</a><span>INVESTOR DECK / What comes next</span><span>2026</span></header>
-<div class="content"><div class="eyebrow">08 / What comes next</div><h2 id="title-8">Find bugs.<br>Prove correctness.<br><em>Build trust.</em></h2><div class="closing"><p class="lead">Next: work with design partners on real applications, improve the workflow, and build toward the first paid pilots.</p><div class="closing-links"><a class="button primary" href="https://github.com/h5i-dev/h5i/discussions">Start a conversation ↗</a><a class="button" href="https://h5i.dev">Explore h5i ↗</a></div></div></div>
+<div class="content"><div class="eyebrow">08 / What comes next</div><h2 id="title-8">Find bugs.<br>Prove correctness.<br><em>Build trust.</em></h2><div class="closing"><div class="next-steps"><p class="index">NEXT</p><ul><li>Work with design partners on real applications</li><li>Improve the workflow</li><li>Build toward the first paid pilots</li></ul></div><div class="closing-links"><a class="button primary" href="https://github.com/h5i-dev/h5i/discussions">Start a conversation ↗</a><a class="button" href="https://h5i.dev">Explore h5i ↗</a></div></div></div>
 <footer class="folio"><span>h5i.dev / github.com/h5i-dev/h5i</span><span>08</span></footer>
 </section>
 </main>

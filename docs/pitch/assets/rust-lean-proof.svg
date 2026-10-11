@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1152" height="350" viewBox="0 0 1152 350" role="img" aria-labelledby="title desc">
+<title id="title">Rust application logic becomes Lean 4 code whose correctness is proven</title>
+<desc id="desc">h5i-app Rust logic is translated by Charon and Aeneas into Lean 4. Security specifications and proofs are checked against that extracted code.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10" fill="#ff6258"/></marker></defs>
+<g fill="#0e0e0d" stroke="#2a2a27"><rect x="1" y="25" width="300" height="225"/><rect x="426" y="25" width="300" height="225"/><rect x="851" y="25" width="300" height="225"/></g>
+<g fill="#f1ede4" font-family="Arial,sans-serif" font-weight="700" font-size="48" text-anchor="middle"><text x="151" y="103">Rust</text><text x="576" y="103">Lean 4</text><text x="1001" y="103">Correctness</text></g>
+<g fill="#a5a198" font-family="monospace" font-size="16" text-anchor="middle"><text x="151" y="55">h5i-app</text><text x="576" y="55">EXTRACTED CODE</text><text x="1001" y="55">MACHINE-CHECKED</text></g>
+<g stroke="#ff6258" stroke-width="3" fill="none"><path d="M85 141L60 163L85 185M217 141L242 163L217 185M170 133L132 193"/><path d="M526 153H626M550 153L576 190L602 153M576 190V212"/><path d="M979 170L996 188L1028 149"/><circle cx="1001" cy="171" r="45" stroke="#2a2a27"/><path d="M315 137H413" marker-end="url(#arrow)"/><path d="M740 137H837" marker-end="url(#arrow)"/></g>
+<g fill="#a5a198" font-family="Arial,sans-serif" font-size="17" text-anchor="middle"><text x="364" y="173">Charon</text><text x="364" y="195">Aeneas</text><text x="789" y="173">Proof</text><text x="789" y="195">checking</text></g>
+<rect x="426" y="293" width="300" height="49" fill="#0e0e0d" stroke="#2a2a27"/>
+<text x="576" y="324" fill="#f1ede4" font-family="Arial,sans-serif" font-size="21" text-anchor="middle">Security specification</text>
+<path d="M576 292V264" stroke="#ff6258" stroke-width="2" marker-end="url(#arrow)"/>
+<g fill="#a5a198" font-family="Arial,sans-serif" font-size="19" text-anchor="middle"><text x="151" y="232">Web application logic</text><text x="1001" y="232">Proofs of the stated rules</text></g>
+</svg>
