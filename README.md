@@ -93,7 +93,7 @@ isolation, business logics, and more.
 
 See the [h5i-app documentation](crates/h5i-app/README.md) for a complete example, the Axum integration, and the formal verification workflow.
 
-## 4. UI
+## 4. Dashboard
 
 While agents access these capabilities through a unified CLI, you can also monitor their activity through the dashboard:
 
