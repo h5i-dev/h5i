@@ -493,10 +493,11 @@
 
     /* ── Hero: the title over a copy column and the replaying terminal ── */
     #hero { padding: 64px var(--gut) 56px; }
-    .hero-title { max-width: none; }
+    /* the replay is the hero now, so the title gives it the fold */
+    .hero-title { max-width: none; font-weight: 700; font-size: clamp(36px, 4.6vw, 64px); letter-spacing: -.035em; line-height: .98; }
     .hero-grid {
       display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-      gap: 48px; align-items: start; margin-top: 44px;
+      gap: 48px; align-items: start; margin-top: 40px;
     }
     .hero-grid .hero-sub { margin-top: 0; }
     .hero-facts {
