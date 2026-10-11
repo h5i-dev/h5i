@@ -162,11 +162,107 @@
     return v;
   }
 
+  /* ── wires ───────────────────────────────────────────────────
+   * What h5i records is evidence that points at something, so the stage draws
+   * the pointing: a wire from the command or the theorem to the line of code it
+   * reached, with the request riding along it. A finding pins its wire red; a
+   * proof that stops building breaks its wire. One SVG, moved only on events.
+   */
+  var wires = (function () {
+    var NS = 'http://www.w3.org/2000/svg', host = $('.stage-panes');
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('class', 'wires'); svg.setAttribute('aria-hidden', 'true');
+    host.appendChild(svg);
+    function el(name, attrs, parent) {
+      var n = document.createElementNS(NS, name);
+      for (var k in attrs) n.setAttribute(k, attrs[k]);
+      (parent || svg).appendChild(n);
+      return n;
+    }
+    function box(node) {
+      var h = host.getBoundingClientRect(), r = node.getBoundingClientRect();
+      return { l: r.left - h.left, r: r.right - h.left, y: (r.top + r.bottom) / 2 - h.top };
+    }
+    // where a code row's text ends, so the wire lands on the code and not the gutter
+    function textEnd(row) {
+      var sx = row.querySelector('.sx') || row, rg = document.createRange();
+      rg.selectNodeContents(sx);
+      var h = host.getBoundingClientRect(), r = rg.getBoundingClientRect();
+      if (!r.width) r = sx.getBoundingClientRect();
+      return { x: Math.min(r.right - h.left + 8, host.clientWidth / 2 - 8), y: (r.top + r.bottom) / 2 - h.top };
+    }
+    function textStart(row) {
+      var b = box(row);
+      return { x: b.l + 1, y: b.y };
+    }
+    function curve(f, t) {
+      var dx = Math.max(40, Math.abs(f.x - t.x) * 0.45);
+      return 'M' + f.x.toFixed(1) + ' ' + f.y.toFixed(1) + 'C' + (f.x - dx).toFixed(1) + ' ' + f.y.toFixed(1) + ' ' +
+        (t.x + dx).toFixed(1) + ' ' + t.y.toFixed(1) + ' ' + t.x.toFixed(1) + ' ' + t.y.toFixed(1);
+    }
+    // stacked panes (a phone) and reduced motion get no wires; the code still lights up
+    var NONE = { to: function () {}, set: function () {}, fade: function () {} };
+    function wire(f, t, tag, cls) {
+      if (fast || host.clientWidth < 760) return NONE;
+      var gr = el('g', { class: 'wire-g ' + (cls || '') });
+      var path = el('path', { class: 'wire', d: curve(f, t), pathLength: 1 }, gr);
+      var end = el('circle', { class: 'wire-end', cx: t.x, cy: t.y, r: 2.5 }, gr);
+      // the tag sits on the middle of the wire, in the gutter between the panes, off the code
+      var label = el('text', { class: 'wire-tag', 'text-anchor': 'middle' }, gr);
+      label.textContent = tag || '';
+      function place() { var m = path.getPointAtLength(path.getTotalLength() / 2); label.setAttribute('x', m.x); label.setAttribute('y', m.y - 6); }
+      place();
+      requestAnimationFrame(function () { path.classList.add('on'); });
+      // the request rides the wire from the shell to the code
+      var dot = el('circle', { class: 'packet', r: 3 }, gr), len = path.getTotalLength(), t0 = performance.now();
+      (function ride(now) {
+        var k = Math.min(1, (now - t0) / 650), p = path.getPointAtLength(len * (1 - Math.pow(1 - k, 3)));
+        dot.setAttribute('cx', p.x); dot.setAttribute('cy', p.y);
+        if (k < 1) requestAnimationFrame(ride); else dot.remove();
+      })(t0);
+      var w = {
+        to: function (t2, tag2) {
+          path.setAttribute('d', curve(f, t2)); end.setAttribute('cx', t2.x); end.setAttribute('cy', t2.y);
+          place();
+          if (tag2 !== undefined) label.textContent = tag2;
+          len = path.getTotalLength();
+        },
+        set: function (c, tag2) { gr.setAttribute('class', 'wire-g ' + c); if (tag2 !== undefined) label.textContent = tag2; },
+        fade: function (ms) { setTimeout(function () { gr.classList.add('gone'); setTimeout(function () { gr.remove(); }, 700); }, ms || 0); }
+      };
+      return w;
+    }
+    return {
+      // from the shell line that sent it to the code row that served it
+      request: function (shLine, row, tag, cls) {
+        if (fast || host.clientWidth < 760) return NONE;
+        var b = box(shLine);
+        return wire({ x: b.l - 6, y: b.y }, textEnd(row), tag, cls);
+      },
+      // from a theorem's text to the code row it covers
+      proof: function (thmRow, row, tag, cls) {
+        if (fast || host.clientWidth < 760) return NONE;
+        return wire(textStart(thmRow), textEnd(row), tag, cls);
+      },
+      end: textEnd,
+      clear: function () { while (svg.firstChild) svg.removeChild(svg.firstChild); }
+    };
+  })();
+  function lastCmd() {
+    // the newest command line on screen: one that starts with a prompt and has a command after it
+    for (var k = shBuf.children.length - 1; k >= 0; k--) {
+      var d = shBuf.children[k];
+      if (d.querySelector('.tp') && d.querySelector('.tc')) return d;
+    }
+    return shBuf;
+  }
+
   /* ── act 1: find vulnerabilities ────────────────────────── */
   var TS = [
     "import { Router } from 'express';",
     "import { db } from '../db';",
     "import { requireLogin } from '../auth';",
+    "import { pay } from '../billing';",
     'export const router = Router();',
     '',
     "router.get('/checkout', requireLogin, async (req, res) => {",
@@ -182,10 +278,18 @@
     '  });',
     '  if (!order) return res.status(404).end();',
     '  res.json(order);',
+    '});',
+    '',
+    "router.post('/api/order/:id/pay', requireLogin, async (req, res) => {",
+    '  const order = await db.order.findFirst({',
+    '    where: { id: Number(req.params.id), userId: req.user.id },',
+    '  });',
+    '  if (!order) return res.status(404).end();',
+    '  res.json(await pay(order));',
     '});'
   ];
   async function find() {
-    stage.dataset.act = 'find';
+    stage.dataset.act = 'find'; wires.clear();
     codeSt.textContent = 'routes/orders.ts'; codeMode.textContent = 'NORMAL'; codePos.textContent = 'ts · 1:1';
     shLabel.textContent = 'agent@box: ~/shop-audit';
     var rs = pane(codeBuf, TS, 'ts', 1);
@@ -198,12 +302,14 @@
 
     await type('h5i browser open https://shop.example.test --capture --session checkout-idor');
     await spin(700);
-    heat([6, 7, 8, 9, 10].map(L)); rec(2);
+    heat([7, 8, 9, 10, 11].map(L)); rec(2);
+    wires.request(lastCmd(), L(7), 'GET /checkout').fade(1800);
     await out([[['o', '  '], ['k', 'checkout-idor'], ['d', '  live · engine h5i · capture on']]]);
     prompt(); await sleep(900);
 
     await type('h5i browser click @e7', '# open order #1041');
-    heat([13, 14, 15, 16, 17, 18].map(L)); rec(3);
+    heat([14, 15, 16, 17, 18, 19].map(L)); rec(3);
+    wires.request(lastCmd(), L(14), 'req_108  GET /api/order/1041').fade(1800);
     await out([[['o', '  → /checkout?order=1041  '], ['d', '200 · 3 requests']]]);
     prompt(); await sleep(900);
 
@@ -215,7 +321,8 @@
 
     await type('h5i websec replay req_108 --set path=/api/order/1042');
     await spin(500);
-    heat([13, 14, 15, 16, 17, 18].map(L)); rec(1);
+    heat([14, 15, 16, 17, 18, 19].map(L)); rec(1);
+    var probe = wires.request(lastCmd(), L(16), 'req_109  id = 1042');
     await out([[['o', '  res_109  200  1.9 kB']]]);
     prompt(); await sleep(800);
 
@@ -223,21 +330,25 @@
     await out([[['o', '  status : 200 → 200']], [['o', '  bytes  : 1412 → 1903 (+491)']]]);
     await sleep(500);
     await out([[['o', '  owner  : u_17 → '], ['r', 'u_23'], ['d', '   another customer\'s order']]]);
+    // the wire that carried the replay is pinned red: this is the line that answered it
+    probe.set('red', 'u_23 ≠ u_17');
+    await sleep(900);
     // the reveal: the query that never asked whose order it was
     codeMode.textContent = 'FINDING'; stage.classList.add('alarm');
-    var bad = L(15); bad.classList.add('bad'); focusRow(bad); codePos.textContent = 'ts · 15:12';
+    var bad = L(16); bad.classList.add('bad'); focusRow(bad); codePos.textContent = 'ts · 16:12';
     var g = grab(bad, 'where: { id: Number(req.params.id) }');
     if (g) g.classList.add('under');
     sign(bad, '✗', 'no');
     await sleep(500);
-    await virt(bad, '  ◀ any logged-in user reads any order', 'no');
+    await virt(bad, '   ◀ any logged-in user reads any order', 'no');
     await sleep(700);
-    var good = L(8), gg = grab(good, 'userId: req.user.id');
+    var good = L(9), gg = grab(good, 'userId: req.user.id');
     if (gg) gg.classList.add('ok');
     sign(good, '✓', 'ok');
-    await virt(good, '  ◀ this route asks whose it is', 'ok');
+    await virt(good, '   ◀ this route asks whose it is', 'ok');
     prompt(); await sleep(1400);
 
+    probe.fade();
     await type('h5i websec finding create --title "cross-user order read" --evidence req_108,res_109');
     await out([[['o', '  '], ['k', 'finding_1'], ['o', '  recorded · cites req_108, res_109']]]);
     prompt();
@@ -264,6 +375,15 @@
     'fn list_orders(user: u64, s: &Snapshot) -> Outcome {',
     '    let mine = s.orders.iter().filter(|o| o.owner == user);',
     '    Ok((none(), Reply::Orders(mine.cloned().collect())))',
+    '}',
+    '',
+    'fn cancel_order(user: u64, s: &Snapshot, id: u64) -> Outcome {',
+    '    match find_order(&s.orders, id) {',
+    '        Some(o) if o.owner == user && o.state == State::Open =>',
+    '            Ok((one(Write::Cancel(id)), Reply::Done)),',
+    '        Some(_) => Err(Error::Forbidden),',
+    '        None => Err(Error::NotFound),',
+    '    }',
     '}'
   ];
   var LEAN = [
@@ -277,7 +397,7 @@
     '+-- 14 lines: rcases reply_of a s c ws r h with ·····'
   ];
   async function prove() {
-    stage.dataset.act = 'prove';
+    stage.dataset.act = 'prove'; wires.clear();
     codeSt.textContent = 'kernel/src/lib.rs'; codeMode.textContent = 'NORMAL';
     shLabel.textContent = 'agent@box: ~/shop';
     var rs = pane(codeBuf, RS, 'rs', 38);
@@ -302,12 +422,15 @@
     await out([[['d', '  extract  kernel → proofs/generated/']], [['d', '  lake     build Theorems']]], 220);
     // the proof walks the kernel; every line it covers is signed
     codeMode.textContent = 'PROVING';
+    var pw = wires.proof(thm[0], rs[2], 'owner_only', 'ok');
+    await sleep(500);
     for (var n = 2; n < 14; n++) {
-      rs[n].classList.add('scan'); sign(rs[n], '✓', 'ok');
-      await sleep(110);
+      rs[n].classList.add('scan'); sign(rs[n], '✓', 'ok'); pw.to(wires.end(rs[n]));
+      await sleep(150);
       rs[n].classList.remove('scan');
     }
     thm.forEach(function (r) { sign(r, '✓', 'ok'); });
+    pw.fade(900);
     codeMode.textContent = 'NORMAL';
     await out([[['o', '  owner_only          '], ['g', 'proven']], [['o', '  inv_preserved       '], ['g', 'proven']]], 160);
     prompt(); await sleep(1800);
@@ -317,18 +440,21 @@
     codeMode.textContent = 'MUTANT'; stage.classList.add('alarm'); focusRow(line);
     rs.forEach(function (r) { sign(r, ''); });
     await scramble(g, 'true', 'mut');
-    await virt(line, '  ◀ any user reads any order', 'no');
+    await virt(line, '   ◀ any user reads any order', 'no');
     await out([[['o', '  mutant   if '], ['k', 'o.owner == user'], ['d', '  →  '], ['r', 'if true']]]);
     await spin(900);
     await out([[['d', '  lake     build Theorems']]]);
     await sleep(600);
     thm.forEach(function (r) { sign(r, '✗', 'no'); r.classList.add('bad'); });
+    // the proof no longer reaches the kernel: its wire comes back broken
+    var bw = wires.proof(thm[0], line, 'owner_only  ✗', 'red broken');
     sign(line, '✗', 'no');
     await out([[['o', '  owner_only          '], ['r', 'fails'], ['d', '   the bug cannot hide']],
                [['o', '  mutant   '], ['g', 'caught']]], 300);
     await sleep(1800);
     // the kernel comes back, and so do the proofs
     line.querySelector('.virt').remove();
+    bw.fade();
     await scramble(g, 'o.owner == user', '');
     g.className = 'grab';
     stage.classList.remove('alarm'); codeMode.textContent = 'NORMAL';

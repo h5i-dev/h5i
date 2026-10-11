@@ -517,9 +517,30 @@
     .hero-facts b { font-weight: 500; color: var(--ink); }
 
     /* the stage: panes with vim status lines, under one tmux bar */
-    .stage { margin: 36px 0 0; border: 1px solid var(--line2); background: #0b0b0a; font-family: var(--mono); font-size: 12.5px; line-height: 1.65; }
-    .stage-panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); height: 436px; }
+    .stage { margin: 36px 0 0; border: 1px solid var(--line2); background: #0b0b0a; font-family: var(--mono); font-size: 11.5px; line-height: 1.22; }
+    .stage-panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); height: 440px; }
     .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .stage-panes { position: relative; }
+    /* wires: from what h5i sent, or from a theorem, to the line of code it reached */
+    .wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 3; }
+    .wire {
+      fill: none; stroke: var(--ink); stroke-opacity: .6; stroke-width: 1;
+      stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset .6s var(--ease), stroke .3s, stroke-opacity .3s;
+    }
+    .wire.on { stroke-dashoffset: 0; }
+    .wire-end { fill: var(--ink); fill-opacity: .7; transition: fill .3s; }
+    .packet { fill: var(--spot); }
+    .wire-tag {
+      font-family: var(--mono); font-size: 10px; fill: var(--ink); fill-opacity: .8;
+      paint-order: stroke; stroke: #0b0b0a; stroke-width: 4px; stroke-linejoin: round;
+    }
+    .wire-g.ok .wire { stroke: var(--green); stroke-opacity: .8; }
+    .wire-g.ok .wire-end, .wire-g.ok .wire-tag { fill: var(--green); }
+    .wire-g.red .wire { stroke: var(--spot); stroke-opacity: 1; stroke-width: 1.4; }
+    .wire-g.red .wire-end, .wire-g.red .wire-tag { fill: var(--spot); fill-opacity: 1; }
+    /* broken: the middle of the wire is missing */
+    .wire-g.broken .wire.on { stroke-dasharray: .44 .12 .44; stroke-dashoffset: 0; }
+    .wire-g.gone { opacity: 0; transition: opacity .6s; }
     .pane-right { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--line2); }
     .pane-right .pane { flex: 1; }
     .pane-lean { display: none; }
@@ -540,7 +561,7 @@
     .stage.alarm .pane-code .pane-mode { background: var(--spot-solid); color: #fff; }
 
     /* code rows: sign column, number, text; tinted by ink weight */
-    .sl { display: grid; grid-template-columns: 2.2ch 4.5ch minmax(0, 1fr); min-height: 1.65em; white-space: pre; transition: background-color .5s; }
+    .sl { display: grid; grid-template-columns: 2.2ch 4.5ch minmax(0, 1fr); min-height: 1.22em; white-space: pre; transition: background-color .5s; }
     .sl > i { font-style: normal; padding-right: 1.5ch; text-align: right; color: color-mix(in srgb, var(--ink) 24%, transparent); transition: color .5s; }
     .sl > .sx { overflow: hidden; color: color-mix(in srgb, var(--ink) 66%, transparent); }
     .ss { text-align: center; font-weight: 500; }
@@ -657,7 +678,7 @@
       .pane-lean .pane-buf { height: auto; }
     }
     @media (max-width: 620px) {
-      .stage { font-size: 11px; }
+      .stage { font-size: 10.5px; }
       /* a phone clips a long command rather than wrapping it out of its columns */
       .pane-sh .pane-buf { white-space: pre; overflow-wrap: normal; font-size: 10px; padding: 10px 12px; }
       .tmux-info { display: none; }
@@ -722,24 +743,33 @@
 <div class="sl"><b class="ss"></b><i>1</i><span class="sx">import { Router } from &#x27;express&#x27;;</span></div>
 <div class="sl"><b class="ss"></b><i>2</i><span class="sx">import { db } from &#x27;../db&#x27;;</span></div>
 <div class="sl"><b class="ss"></b><i>3</i><span class="sx">import { requireLogin } from &#x27;../auth&#x27;;</span></div>
-<div class="sl"><b class="ss"></b><i>4</i><span class="sx">export const router = Router();</span></div>
-<div class="sl"><b class="ss"></b><i>5</i><span class="sx"></span></div>
-<div class="sl"><b class="ss"></b><i>6</i><span class="sx">router.get(&#x27;/checkout&#x27;, requireLogin, async (req, res) =&gt; {</span></div>
-<div class="sl"><b class="ss"></b><i>7</i><span class="sx">  const orders = await db.order.findMany({</span></div>
-<div class="sl"><b class="ss"></b><i>8</i><span class="sx">    where: { userId: req.user.id },</span></div>
-<div class="sl"><b class="ss"></b><i>9</i><span class="sx">  });</span></div>
-<div class="sl"><b class="ss"></b><i>10</i><span class="sx">  res.render(&#x27;checkout&#x27;, { orders });</span></div>
-<div class="sl"><b class="ss"></b><i>11</i><span class="sx">});</span></div>
-<div class="sl"><b class="ss"></b><i>12</i><span class="sx"></span></div>
-<div class="sl"><b class="ss"></b><i>13</i><span class="sx">router.get(&#x27;/api/order/:id&#x27;, requireLogin, async (req, res) =&gt; {</span></div>
-<div class="sl"><b class="ss"></b><i>14</i><span class="sx">  const order = await db.order.findUnique({</span></div>
-<div class="sl"><b class="ss"></b><i>15</i><span class="sx">    where: { id: Number(req.params.id) },</span></div>
-<div class="sl"><b class="ss"></b><i>16</i><span class="sx">  });</span></div>
-<div class="sl"><b class="ss"></b><i>17</i><span class="sx">  if (!order) return res.status(404).end();</span></div>
-<div class="sl"><b class="ss"></b><i>18</i><span class="sx">  res.json(order);</span></div>
-<div class="sl"><b class="ss"></b><i>19</i><span class="sx">});</span></div>
+<div class="sl"><b class="ss"></b><i>4</i><span class="sx">import { pay } from &#x27;../billing&#x27;;</span></div>
+<div class="sl"><b class="ss"></b><i>5</i><span class="sx">export const router = Router();</span></div>
+<div class="sl"><b class="ss"></b><i>6</i><span class="sx"></span></div>
+<div class="sl"><b class="ss"></b><i>7</i><span class="sx">router.get(&#x27;/checkout&#x27;, requireLogin, async (req, res) =&gt; {</span></div>
+<div class="sl"><b class="ss"></b><i>8</i><span class="sx">  const orders = await db.order.findMany({</span></div>
+<div class="sl"><b class="ss"></b><i>9</i><span class="sx">    where: { userId: req.user.id },</span></div>
+<div class="sl"><b class="ss"></b><i>10</i><span class="sx">  });</span></div>
+<div class="sl"><b class="ss"></b><i>11</i><span class="sx">  res.render(&#x27;checkout&#x27;, { orders });</span></div>
+<div class="sl"><b class="ss"></b><i>12</i><span class="sx">});</span></div>
+<div class="sl"><b class="ss"></b><i>13</i><span class="sx"></span></div>
+<div class="sl"><b class="ss"></b><i>14</i><span class="sx">router.get(&#x27;/api/order/:id&#x27;, requireLogin, async (req, res) =&gt; {</span></div>
+<div class="sl"><b class="ss"></b><i>15</i><span class="sx">  const order = await db.order.findUnique({</span></div>
+<div class="sl"><b class="ss"></b><i>16</i><span class="sx">    where: { id: Number(req.params.id) },</span></div>
+<div class="sl"><b class="ss"></b><i>17</i><span class="sx">  });</span></div>
+<div class="sl"><b class="ss"></b><i>18</i><span class="sx">  if (!order) return res.status(404).end();</span></div>
+<div class="sl"><b class="ss"></b><i>19</i><span class="sx">  res.json(order);</span></div>
+<div class="sl"><b class="ss"></b><i>20</i><span class="sx">});</span></div>
+<div class="sl"><b class="ss"></b><i>21</i><span class="sx"></span></div>
+<div class="sl"><b class="ss"></b><i>22</i><span class="sx">router.post(&#x27;/api/order/:id/pay&#x27;, requireLogin, async (req, res) =&gt; {</span></div>
+<div class="sl"><b class="ss"></b><i>23</i><span class="sx">  const order = await db.order.findFirst({</span></div>
+<div class="sl"><b class="ss"></b><i>24</i><span class="sx">    where: { id: Number(req.params.id), userId: req.user.id },</span></div>
+<div class="sl"><b class="ss"></b><i>25</i><span class="sx">  });</span></div>
+<div class="sl"><b class="ss"></b><i>26</i><span class="sx">  if (!order) return res.status(404).end();</span></div>
+<div class="sl"><b class="ss"></b><i>27</i><span class="sx">  res.json(await pay(order));</span></div>
+<div class="sl"><b class="ss"></b><i>28</i><span class="sx">});</span></div>
           </div>
-          <div class="pane-st"><b class="pane-mode">NORMAL</b><span>routes/orders.ts</span><em class="r">ts · 15:12</em></div>
+          <div class="pane-st"><b class="pane-mode">NORMAL</b><span>routes/orders.ts</span><em class="r">ts · 16:12</em></div>
         </div>
         <div class="pane-right">
           <div class="pane pane-lean">
@@ -1233,7 +1263,7 @@ document.querySelectorAll('.cta-film').forEach(function (fig) {
   toggle.addEventListener('click', play);
 });
 </script>
-<script src="/_static/replay.js?v=8def79a3c0" defer></script>
+<script src="/_static/replay.js?v=d3521a209a" defer></script>
 </body>
 </html>
 
