@@ -151,6 +151,7 @@ figure { margin:0; }
 .shared-capabilities ul { margin-top:16px; column-gap:35px; }
 .shared-capabilities p { color:var(--ink); font-size:23px; line-height:1.3; }
 #slide-3 .content { padding-top:84px; padding-bottom:16px; }
+#slide-6 .content { padding-top:84px; padding-bottom:16px; }
 .editor-bar { padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel2,#151513); font:11px var(--mono); color:var(--dim); }
 .shell-dashboard { display:grid; grid-template-columns:360px 50px minmax(0,1fr); margin-top:26px; }
 .agent-shell { border:1px solid var(--line); background:var(--panel); }
@@ -171,7 +172,7 @@ figure { margin:0; }
 .app-ui-frame iframe { display:block; width:1440px; height:502px; transform:scale(.467); transform-origin:top left; border:0; pointer-events:none; }
 @media screen and (max-width:700px) {
   .enhanced body { overflow:auto; }
-  #slide-3 .content { padding:30px 0; }
+  #slide-3 .content, #slide-6 .content { padding:30px 0; }
   .shell-dashboard,.proof-examples { grid-template-columns:1fr; gap:16px; }
   .shell-link { transform:rotate(90deg); }
   .code-arrow { flex-direction:row; justify-content:center; padding:0; }
