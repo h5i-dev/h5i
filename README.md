@@ -69,16 +69,6 @@ Let AI agents explore, attack, and test web applications using h5i's integrated 
 - **Reproducible testing:** Save confirmed attack flows and replay them in CI/CD to catch security regressions.
 - **Sandboxed workflow**: Run agents in isolated environments with configurable filesystem and network restrictions.
 
-Agents access these capabilities through a unified CLI. You can also monitor their activity through the dashboard:
-
-```bash
-h5i ui    # Open the local dashboard
-```
-
-<p align="center">
-  <img src="./docs/_static/sandbox-ui-demo.png" alt="h5i local dashboard showing browser and session activity" width="99%" />
-</p>
-
 See the [CLI manual](docs/MANUAL.md) for complete documentation and the [CI regression example](examples/security-regression-ci) for automated security testing.
 
 ---
@@ -103,9 +93,21 @@ isolation, business logics, and more.
 
 See the [h5i-app documentation](crates/h5i-app/README.md) for a complete example, the Axum integration, and the formal verification workflow.
 
+## 4. UI
+
+While agents access these capabilities through a unified CLI, you can also monitor their activity through the dashboard:
+
+```bash
+h5i ui    # Open the local dashboard
+```
+
+<p align="center">
+  <img src="./docs/_static/sandbox-ui-demo.png" alt="h5i local dashboard showing browser and session activity" width="99%" />
+</p>
+
 ---
 
-## 4. Documentation
+## 5. Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
 - [MANUAL.md](docs/MANUAL.md) / `man h5i`: full command reference
@@ -114,13 +116,13 @@ See the [h5i-app documentation](crates/h5i-app/README.md) for a complete example
 
 ---
 
-## 5. License
+## 6. License
 
 h5i is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
 
 ---
 
-## 6. Contributors
+## 7. Contributors
 
 <a href="https://github.com/h5i-dev/h5i/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=h5i-dev/h5i" alt="h5i contributors" />
