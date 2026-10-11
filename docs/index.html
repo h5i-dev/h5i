@@ -491,45 +491,84 @@
       .vim-buf { overflow-x: auto; }
     }
 
-    /* ── Hero: the title over a copy column and the replaying terminal ── */
-    #hero { padding: 64px var(--gut) 56px; }
-    /* the replay is the hero now, so the title gives it the fold */
+    /* ── Hero: the title and its copy, then the stage at full width ── */
+    #hero { padding: 60px var(--gut) 52px; }
+    .hero-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 540px); gap: 48px; align-items: end; }
+    /* the stage is the hero now, so the title gives it the fold */
     .hero-title { max-width: none; font-weight: 700; font-size: clamp(36px, 4.6vw, 64px); letter-spacing: -.035em; line-height: .98; }
-    .hero-grid {
-      display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-      gap: 48px; align-items: start; margin-top: 40px;
+    .hero-lead .hero-sub { margin-top: 22px; max-width: 60ch; }
+    .hero-side .hero-install { margin-top: 0; display: flex; }
+    .hero-side .hero-install code { flex: 1; min-width: 0; font-size: 12.5px; }
+    /* the phrase for the act on the stage is ruled in red; the rule draws in
+       from the left and leaves to the right when the act changes */
+    .act-line {
+      padding-bottom: 2px;
+      background: linear-gradient(var(--spot-solid), var(--spot-solid)) no-repeat right bottom / 0 2px;
+      transition: background-size .7s var(--ease), color .3s;
     }
-    .hero-grid .hero-sub { margin-top: 0; }
+    .act-line.on { background-position: left bottom; background-size: 100% 2px; }
+    .act-line:hover { color: var(--spot); }
     .hero-facts {
-      display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 30px 0 0; padding: 18px 0 0;
-      list-style: none; border-top: 1px solid var(--line);
-      font-family: var(--mono); font-size: 11.5px; color: var(--faint);
+      display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 18px 0 0; padding: 0;
+      list-style: none; font-family: var(--mono); font-size: 11.5px; color: var(--faint);
     }
     .hero-facts a { transition: color .15s; }
     .hero-facts a:hover { color: var(--ink); }
     .hero-facts b { font-weight: 500; color: var(--ink); }
 
-    /* the terminal: a label strip, the screen, and a tmux-style status line */
-    .tty { margin: 0; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--line2); background: #0b0b0a; }
-    .tty-head {
-      display: flex; align-items: stretch; justify-content: space-between; min-height: 34px; padding-left: 14px;
-      border-bottom: 1px solid var(--line2);
-      font-family: var(--mono); font-size: 10.5px; font-weight: 500; letter-spacing: .14em; color: var(--faint);
+    /* the stage: panes with vim status lines, under one tmux bar */
+    .stage { margin: 36px 0 0; border: 1px solid var(--line2); background: #0b0b0a; font-family: var(--mono); font-size: 12.5px; line-height: 1.65; }
+    .stage-panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); height: 436px; }
+    .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .pane-right { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--line2); }
+    .pane-right .pane { flex: 1; }
+    .pane-lean { display: none; }
+    .stage[data-act="prove"] .pane-lean { display: flex; flex: 0 0 auto; border-bottom: 1px solid var(--line2); }
+    .pane-buf { flex: 1; min-height: 0; padding: 10px 0; overflow: hidden; }
+    /* what scrolls off the top fades rather than being cut through a line */
+    .pane-sh .pane-buf, .pane-code .pane-buf { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18px); mask-image: linear-gradient(to bottom, transparent, #000 18px); }
+    .pane-sh .pane-buf { padding: 10px 16px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+    /* the status line heads its pane, so the file is named before it is read */
+    .pane-st {
+      order: -1; display: flex; align-items: stretch; height: 24px; line-height: 24px; flex: none; overflow: hidden; white-space: nowrap;
+      background: var(--panel2); border-bottom: 1px solid var(--line2); font-size: 11px; color: var(--dim);
     }
-    .tty-label { align-self: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .tty-toggle {
-      padding: 0 14px; border: 0; border-left: 1px solid var(--line2); background: none; cursor: pointer;
-      font: inherit; letter-spacing: .16em; text-transform: uppercase; color: var(--dim);
-      transition: color .15s, background-color .15s;
-    }
-    .tty-toggle:hover { color: var(--ink); background: var(--panel2); }
-    .tty-screen {
-      height: 380px; padding: 14px 18px; overflow: hidden;
-      font-family: var(--mono); font-size: 12.5px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere;
-      color: var(--text);
-    }
-    .tty-screen > div { min-height: 1.75em; }
-    /* ink by weight, after hancore: the command is full ink, the rest fades */
+    .pane-st span { padding: 0 10px; overflow: hidden; text-overflow: ellipsis; }
+    .pane-st .r { margin-left: auto; padding: 0 10px; font-style: normal; color: var(--faint); }
+    .pane-mode { padding: 0 9px; background: var(--ink); color: var(--bg); font-weight: 500; letter-spacing: .1em; transition: background-color .2s, color .2s; }
+    .pane-mode.dim { background: var(--line2); color: var(--dim); }
+    .stage.alarm .pane-code .pane-mode { background: var(--spot-solid); color: #fff; }
+
+    /* code rows: sign column, number, text; tinted by ink weight */
+    .sl { display: grid; grid-template-columns: 2.2ch 4.5ch minmax(0, 1fr); min-height: 1.65em; white-space: pre; transition: background-color .5s; }
+    .sl > i { font-style: normal; padding-right: 1.5ch; text-align: right; color: color-mix(in srgb, var(--ink) 24%, transparent); transition: color .5s; }
+    .sl > .sx { overflow: hidden; color: color-mix(in srgb, var(--ink) 66%, transparent); }
+    .ss { text-align: center; font-weight: 500; }
+    .ss.ok { color: var(--green); }
+    .ss.no { color: var(--spot); }
+    .sfold > .sx { color: color-mix(in srgb, var(--ink) 40%, transparent); background: color-mix(in srgb, var(--ink) 4%, transparent); }
+    .sl.hot { background: color-mix(in srgb, var(--ink) 9%, transparent); transition: none; }
+    .sl.hot > i { color: var(--ink); transition: none; }
+    .sl.scan { background: color-mix(in srgb, var(--green) 12%, transparent); }
+    .sl.bad { background: color-mix(in srgb, var(--spot-solid) 10%, transparent); }
+    .sl.bad > i { color: var(--spot); }
+    .vk { color: var(--ink); font-weight: 500; }
+    .vt { color: color-mix(in srgb, var(--ink) 80%, transparent); }
+    .vi { color: color-mix(in srgb, var(--ink) 66%, transparent); }
+    .vs { color: color-mix(in srgb, var(--ink) 52%, transparent); }
+    .vn { color: var(--ink); }
+    .vp { color: color-mix(in srgb, var(--ink) 34%, transparent); }
+    .vc { color: color-mix(in srgb, var(--ink) 40%, transparent); }
+    .grab.under { background: color-mix(in srgb, var(--spot-solid) 28%, transparent); box-shadow: 0 1px 0 var(--spot); }
+    .grab.under span { color: var(--ink); }
+    .grab.ok { background: color-mix(in srgb, var(--green) 16%, transparent); }
+    .grab.ok span { color: var(--ink); }
+    .grab.mut { background: var(--spot-solid); color: #fff; }
+    .virt { font-style: italic; }
+    .virt.no { color: var(--spot); }
+    .virt.ok { color: var(--green); }
+
+    /* shell runs: the command is full ink, the rest fades */
     .tp { color: var(--spot); }
     .tc { color: var(--ink); font-weight: 500; }
     .ta { color: color-mix(in srgb, var(--ink) 82%, transparent); }
@@ -540,22 +579,31 @@
     .tk { color: var(--ink); }
     .tr { color: var(--spot); }
     .tg { color: var(--green); }
-    .tty .cur {
+    .stage .cur {
       display: inline-block; width: .62em; height: 1.2em; margin-left: 1px; vertical-align: -.22em;
       background: var(--spot); animation: caret 1.1s steps(1) infinite;
     }
-    .tty.typing .cur { animation: none; }
-    .tty-status {
-      display: flex; align-items: stretch; height: 26px; border-top: 1px solid var(--line2); background: var(--panel);
-      font-family: var(--mono); font-size: 11px; line-height: 26px; white-space: nowrap; overflow: hidden;
+    .stage.typing .cur { animation: none; }
+
+    .tmux {
+      display: flex; align-items: stretch; height: 28px; border-top: 1px solid var(--line2); background: var(--panel);
+      font-size: 11px; line-height: 28px; white-space: nowrap; overflow: hidden;
     }
-    .tty-mode {
-      padding: 0 11px; background: var(--spot-solid); color: #fff;
-      font-weight: 500; letter-spacing: .14em; text-transform: uppercase;
+    .tmux-sess { padding: 0 11px; background: var(--spot-solid); color: #fff; font-weight: 500; }
+    .tmux-win {
+      padding: 0 12px; border: 0; background: none; cursor: pointer; font: inherit; color: var(--dim);
+      transition: color .15s, background-color .15s;
     }
-    .tty-where { padding: 0 12px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
-    .tty-right { margin-left: auto; padding: 0 12px; color: var(--dim); }
-    .tty.paused .tty-mode { background: var(--line2); color: var(--dim); }
+    .tmux-win:hover { color: var(--ink); }
+    .tmux-win.on { color: var(--ink); background: var(--panel2); }
+    .tmux-win.on::after { content: '*'; color: var(--spot); }
+    .tmux-info { margin-left: auto; padding: 0 12px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; }
+    .tmux-pause {
+      padding: 0 14px; border: 0; border-left: 1px solid var(--line2); background: none; cursor: pointer;
+      font: inherit; letter-spacing: .16em; text-transform: uppercase; color: var(--dim);
+    }
+    .tmux-pause:hover { color: var(--ink); background: var(--panel2); }
+    .stage.paused .tmux-sess { background: var(--line2); color: var(--dim); }
 
     /* ── The problem: two ruled rows that are also the way into the page ── */
     #problem { padding-bottom: 0; }
@@ -595,15 +643,24 @@
     #faq .faq-list { margin-top: 0; }
 
     @media (max-width: 1100px) {
-      .hero-grid { grid-template-columns: minmax(0, 1fr); gap: 36px; }
+      .hero-top { grid-template-columns: minmax(0, 1fr); gap: 28px; align-items: start; }
       .half { grid-template-columns: 54px minmax(0, 1fr); gap: 0 18px; }
       .half-cmd { grid-column: 2; justify-self: start; margin-top: 18px; }
       #faq .container { grid-template-columns: minmax(0, 1fr); gap: 30px; }
       #faq .section-head { position: static; }
     }
+    @media (max-width: 860px) {
+      .stage-panes { grid-template-columns: minmax(0, 1fr); height: auto; }
+      .pane-code .pane-buf { height: 230px; flex: none; }
+      .pane-right { border-left: 0; border-top: 1px solid var(--line2); }
+      .pane-sh .pane-buf { height: 260px; flex: none; }
+      .pane-lean .pane-buf { height: auto; }
+    }
     @media (max-width: 620px) {
-      .tty-screen { height: 290px; font-size: 11px; padding: 12px 12px; }
-      .tty-right { display: none; }
+      .stage { font-size: 11px; }
+      /* a phone clips a long command rather than wrapping it out of its columns */
+      .pane-sh .pane-buf { white-space: pre; overflow-wrap: normal; font-size: 10px; padding: 10px 12px; }
+      .tmux-info { display: none; }
       .half h3 { font-size: 22px; }
     }
   </style>
@@ -632,45 +689,78 @@
 <!-- ── Hero ─────────────────────────────────────────────────── -->
 <section id="hero" tabindex="-1">
   <div class="hero-inner">
-    <div class="hero-badge">Build &middot; Test &middot; Verify</div>
-    <h1 class="hero-title"><em>Secure Web Development</em><br>for Every Team</h1>
-    <div class="hero-grid">
-      <div class="hero-copy">
+    <div class="hero-top">
+      <div class="hero-lead">
+        <div class="hero-badge">Build &middot; Test &middot; Verify</div>
+        <h1 class="hero-title"><em>Secure Web Development</em><br>for Every Team</h1>
         <p class="hero-sub">
-        <strong>Build with agents. Red-team for bugs. Formally verify properties.</strong> Bring security into your development workflow, from application logic to the running web app.
+        <strong>Build with agents. <a class="act-line" data-act="find" href="#what-you-get">Red-team for bugs.</a> <a class="act-line" data-act="prove" href="#framework">Formally verify properties.</a></strong> Bring security into your development workflow, from application logic to the running web app.
         </p>
+      </div>
+      <div class="hero-side">
         <div class="hero-install" id="quickstart">
           <code id="install-cmd">curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --test</code>
           <button class="copy-btn" type="button">copy</button>
         </div>
-        <div class="hero-actions">
-          <a href="#what-you-get" class="btn btn-primary">Find vulnerabilities</a>
-          <a href="#framework" class="btn btn-ghost">Prove correctness</a>
-        </div>
         <!-- Floor values, not live counts: the page is static, so each number is
              rounded down from the real one and stays true as the repository grows. -->
         <ul class="hero-facts">
-          <li><a href="https://github.com/h5i-dev/h5i/stargazers"><b>600+</b> stars</a></li>
+          <li><a href="https://github.com/h5i-dev/h5i"><b>600+</b> stars</a></li>
           <li><a href="https://github.com/h5i-dev/h5i/forks"><b>60+</b> forks</a></li>
           <li><a href="https://github.com/h5i-dev/h5i/graphs/contributors"><b>20+</b> contributors</a></li>
           <li><a href="https://github.com/h5i-dev/h5i/tree/main/examples/security-regression-ci">runs in <b>CI</b></a></li>
           <li><a href="https://github.com/h5i-dev/h5i/blob/main/LICENSE"><b>Apache 2.0</b></a></li>
         </ul>
       </div>
-      <!-- The replay: one engagement typed out by _static/replay.js. The lines
-           below are the frame shown without script. -->
-      <figure class="tty" aria-labelledby="tty-cap">
-        <div class="tty-head">
-          <span class="tty-label">agent@box: ~/shop-audit</span>
-          <button class="tty-toggle" type="button" aria-pressed="false">Pause</button>
-        </div>
-        <div class="tty-screen" aria-hidden="true"><div><span class="tp">$ </span><span class="tc">h5i browser open</span> <span class="ta">https://shop.example.test</span> <span class="tf">--capture</span></div><div><span class="tp">$ </span><span class="tc">h5i websec replay</span> <span class="ta">req_108</span> <span class="tf">--set</span> <span class="ta">path=/api/order/1042</span></div><div><span class="to">  res_109  200  1.9 kB</span></div><div><span class="tp">$ </span><span class="tc">h5i websec diff</span> <span class="ta">res_108 res_109</span> <span class="tf">--human</span></div><div><span class="to">  owner  : u_17 &#8594; </span><span class="tr">u_23</span><span class="td">   another customer's order</span></div><div><span class="tp">$ </span><span class="cur"></span></div></div>
-        <div class="tty-status" aria-hidden="true">
-          <span class="tty-mode">websec</span><span class="tty-where">checkout-idor</span><span class="tty-right">214 recorded</span>
-        </div>
-        <figcaption id="tty-cap" class="sr-only">An agent opens a captured browser session against a shop, replays an order request with another order id, sees a different customer's order come back, and records the finding. Then the proofs of an application kernel are checked in Lean 4 and every mutant is caught.</figcaption>
-      </figure>
     </div>
+    <!-- The stage: _static/replay.js plays two acts on it, in a random order.
+         What is here without script is the first act's code and its verdict. -->
+    <figure class="stage" data-act="find" aria-labelledby="stage-cap">
+      <div class="stage-panes" aria-hidden="true">
+        <div class="pane pane-code">
+          <div class="pane-buf">
+<div class="sl"><b class="ss"></b><i>1</i><span class="sx">import { Router } from &#x27;express&#x27;;</span></div>
+<div class="sl"><b class="ss"></b><i>2</i><span class="sx">import { db } from &#x27;../db&#x27;;</span></div>
+<div class="sl"><b class="ss"></b><i>3</i><span class="sx">import { requireLogin } from &#x27;../auth&#x27;;</span></div>
+<div class="sl"><b class="ss"></b><i>4</i><span class="sx">export const router = Router();</span></div>
+<div class="sl"><b class="ss"></b><i>5</i><span class="sx"></span></div>
+<div class="sl"><b class="ss"></b><i>6</i><span class="sx">router.get(&#x27;/checkout&#x27;, requireLogin, async (req, res) =&gt; {</span></div>
+<div class="sl"><b class="ss"></b><i>7</i><span class="sx">  const orders = await db.order.findMany({</span></div>
+<div class="sl"><b class="ss"></b><i>8</i><span class="sx">    where: { userId: req.user.id },</span></div>
+<div class="sl"><b class="ss"></b><i>9</i><span class="sx">  });</span></div>
+<div class="sl"><b class="ss"></b><i>10</i><span class="sx">  res.render(&#x27;checkout&#x27;, { orders });</span></div>
+<div class="sl"><b class="ss"></b><i>11</i><span class="sx">});</span></div>
+<div class="sl"><b class="ss"></b><i>12</i><span class="sx"></span></div>
+<div class="sl"><b class="ss"></b><i>13</i><span class="sx">router.get(&#x27;/api/order/:id&#x27;, requireLogin, async (req, res) =&gt; {</span></div>
+<div class="sl"><b class="ss"></b><i>14</i><span class="sx">  const order = await db.order.findUnique({</span></div>
+<div class="sl"><b class="ss"></b><i>15</i><span class="sx">    where: { id: Number(req.params.id) },</span></div>
+<div class="sl"><b class="ss"></b><i>16</i><span class="sx">  });</span></div>
+<div class="sl"><b class="ss"></b><i>17</i><span class="sx">  if (!order) return res.status(404).end();</span></div>
+<div class="sl"><b class="ss"></b><i>18</i><span class="sx">  res.json(order);</span></div>
+<div class="sl"><b class="ss"></b><i>19</i><span class="sx">});</span></div>
+          </div>
+          <div class="pane-st"><b class="pane-mode">NORMAL</b><span>routes/orders.ts</span><em class="r">ts · 15:12</em></div>
+        </div>
+        <div class="pane-right">
+          <div class="pane pane-lean">
+            <div class="pane-buf"></div>
+            <div class="pane-st"><b class="pane-mode dim">NORMAL</b><span>proofs/Theorems.lean</span><em class="r">lean</em></div>
+          </div>
+          <div class="pane pane-sh">
+            <div class="pane-buf"><div><span class="tp">$ </span><span class="tc">h5i websec replay</span> <span class="ta">req_108</span> <span class="tf">--set</span> <span class="ta">path=/api/order/1042</span></div><div><span class="to">  res_109  200  1.9 kB</span></div><div><span class="tp">$ </span><span class="tc">h5i websec diff</span> <span class="ta">res_108 res_109</span> <span class="tf">--human</span></div><div><span class="to">  owner  : u_17 &#8594; </span><span class="tr">u_23</span><span class="td">   another customer's order</span></div><div><span class="tp">$ </span><span class="cur"></span></div></div>
+            <div class="pane-st"><b class="pane-mode dim">ZSH</b><span>agent@box: ~/shop-audit</span><em class="r">214 recorded</em></div>
+          </div>
+        </div>
+      </div>
+      <div class="tmux">
+        <span class="tmux-sess">[h5i]</span>
+        <button class="tmux-win" type="button" data-act="find">0:find vulnerabilities</button>
+        <button class="tmux-win" type="button" data-act="prove">1:prove correctness</button>
+        <span class="tmux-info">shop.example.test</span>
+        <button class="tmux-pause" type="button" aria-pressed="false">Pause</button>
+      </div>
+      <figcaption id="stage-cap" class="sr-only">Two scenes. In one, an agent drives a shop through h5i, replays an order request with another order id, gets a different customer's order back, and the shop's code shows the query that never checked the owner. In the other, the same rule is written in Lean 4 for a Rust kernel and proven; then the owner check is removed on purpose and the proof fails, so the mutant is caught.</figcaption>
+    </figure>
   </div>
 </section>
 
@@ -1143,7 +1233,7 @@ document.querySelectorAll('.cta-film').forEach(function (fig) {
   toggle.addEventListener('click', play);
 });
 </script>
-<script src="/_static/replay.js?v=619cdae46a" defer></script>
+<script src="/_static/replay.js?v=8def79a3c0" defer></script>
 </body>
 </html>
 
