@@ -519,6 +519,50 @@
     .stage-panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); height: 440px; }
     .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
     .stage-panes { position: relative; }
+    /* the eye: a line drawing over the code. Opening, gazing, blinking and the
+       lock are transitions; the aperture turns on its own, and stops with the stage */
+    .eye-svg { position: absolute; left: 0; width: 100%; overflow: visible; pointer-events: none; z-index: 2; opacity: 0; transition: opacity .35s; }
+    .eye-svg.open { opacity: 1; }
+    .eye-lid { transform: scaleY(.04); transition: transform .5s var(--ease); }
+    .eye-svg.open .eye-lid { transform: scaleY(1); }
+    .eye-svg.open.blink .eye-lid { transform: scaleY(.06); transition-duration: .07s; }
+    .eye-bg { fill: #0b0b0a; fill-opacity: .86; }
+    .eye-lid-text { font-family: var(--mono); font-size: 9px; letter-spacing: .02em; fill: url(#eye-fade); }
+    .eye-lid-text.eye-brow { font-size: 8px; opacity: .45; }
+    .eye-lid-text.eye-up { font-weight: 500; }
+    .eye-lid-text.eye-lo { opacity: .7; }
+    .eye-stop { stop-color: var(--ink); transition: stop-color .3s; }
+    .eye-svg.lock .eye-stop { stop-color: var(--spot); }
+    .eye-iris-text { font-family: var(--mono); font-size: 7.5px; letter-spacing: .08em; fill: var(--ink); fill-opacity: .7; transition: fill .3s; }
+    .eye-svg.lock .eye-iris-text { fill: var(--spot); fill-opacity: 1; }
+    .eye-iris { transition: transform .32s var(--ease); }
+    /* the lens: the code under the eye, larger, scrolled to the line being read */
+    .eye-lens { transition: transform .45s var(--ease); }
+    .eye-lens text { font-family: var(--mono); font-size: 12.5px; white-space: pre; fill: var(--ink); fill-opacity: .26; transition: fill .3s, fill-opacity .3s; }
+    .eye-lens text.cur { fill-opacity: 1; font-weight: 500; }
+    .eye-svg.lock .eye-lens text.cur { fill: var(--spot); fill-opacity: 1; }
+    .eye-disc { fill: #0b0b0a; fill-opacity: .45; }
+    .eye-ticks { animation: eye-turn 40s linear infinite; }
+    .eye-ring { fill: none; stroke: var(--ink); stroke-opacity: .85; transition: stroke .3s; }
+    .eye-ring.inner { stroke-opacity: .35; }
+    .eye-pupil { fill: var(--spot); transform-box: fill-box; transform-origin: center; transition: transform .3s var(--ease); }
+    .eye-glint { fill: var(--ink); }
+    .eye-pulse { fill: none; stroke: var(--spot); stroke-width: 1.2; opacity: 0; transform-box: fill-box; transform-origin: center; }
+    @keyframes eye-turn { to { transform: rotate(360deg); } }
+    @keyframes eye-pulse { from { opacity: 1; transform: scale(.5); } to { opacity: 0; transform: scale(2.4); } }
+    .eye-svg.lock .eye-ticks { animation-duration: 6s; }
+    .eye-svg.lock .eye-ring { stroke: var(--spot); }
+    .eye-svg.lock .eye-pupil { transform: scale(1.55); }
+    .eye-svg.lock .eye-pulse { animation: eye-pulse .9s var(--ease) 2; }
+    .eye-ray { fill: none; stroke: var(--spot); stroke-width: 1; stroke-dasharray: 1; stroke-dashoffset: 1; opacity: 0; }
+    .eye-svg.lock.nosight .eye-ray { opacity: 0; }
+    .eye-svg.lock .eye-ray { opacity: 1; stroke-dashoffset: 0; transition: stroke-dashoffset .45s var(--ease) .15s; }
+    .eye-tag {
+      font-family: var(--mono); font-size: 10px; text-anchor: middle; fill: var(--spot); opacity: 0;
+      paint-order: stroke; stroke: #0b0b0a; stroke-width: 4px; stroke-linejoin: round;
+    }
+    .eye-svg.lock .eye-tag { opacity: 1; transition: opacity .3s .5s; }
+    .stage.paused .eye-ticks { animation-play-state: paused; }
     /* wires: from what h5i sent, or from a theorem, to the line of code it reached */
     .wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 3; }
     .wire {
@@ -807,16 +851,16 @@
       <div class="half-body">
         <h3>Find vulnerabilities <span class="arw">&#8594;</span></h3>
         <p class="half-pain">Expert hackers are expensive. Red-teaming AI can go rogue.</p>
-        <p>Professional red teams are expensive, and AI agents can run out of control. Effective security testing needs both the right tools and enforceable limits on what agents can do.</p>
+        <p>Professional red teams are expensive, and AI agents can run out of control. Effective security testing needs both the right tools and enforceable limits on what agents can do, and a confirmed finding should run again in CI/CD so that a fixed bug stays fixed.</p>
       </div>
-      <code class="half-cmd">h5i browser<br>h5i websec<br>h5i box</code>
+      <code class="half-cmd">h5i recon<br>h5i browser<br>h5i websec<br>h5i test<br>h5i box</code>
     </a>
     <a class="half" href="#framework">
       <span class="half-n">02</span>
       <div class="half-body">
         <h3>Prove correctness <span class="arw">&#8594;</span></h3>
         <p class="half-pain">Proving correctness is hard.</p>
-        <p>Writing code is easier than proving it correct. Ruling out bugs requires precise specifications, explicit assumptions, and proofs that the implementation satisfies them.</p>
+        <p>Writing code is easier than proving it correct with a theorem prover like Lean 4. Ruling out bugs requires precise specifications, explicit assumptions, and proofs that the implementation satisfies them.</p>
       </div>
       <code class="half-cmd">h5i app prove<br>h5i app mutate<br>Lean 4</code>
     </a>
@@ -1334,7 +1378,7 @@ document.querySelectorAll('.proof-diagram .ed-tab').forEach(function (t) {
   t.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
 });
 </script>
-<script src="/_static/replay.js?v=3c21df66fd" defer></script>
+<script src="/_static/replay.js?v=2fe1f05b1e" defer></script>
 </body>
 </html>
 

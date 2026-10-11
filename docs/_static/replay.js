@@ -257,7 +257,177 @@
     return shBuf;
   }
 
+  /* ── the eye ────────────────────────────────────────────────
+   * A line drawing, not a picture: two lids, an aperture of hairlines for an
+   * iris, and the red dot of the h5i mark for a pupil. It opens when h5i starts
+   * looking, turns toward the line being exercised, and locks red on a bug.
+   * Everything that moves is a CSS transition; the script only says where.
+   */
+  var eye = (function () {
+    var NS = 'http://www.w3.org/2000/svg', host = $('.pane-code'), buf = codeBuf;
+    var W = 250, H = 122, A = W * 0.47, RI = 35;
+    function el(name, attrs, parent) {
+      var n = document.createElementNS(NS, name);
+      for (var k in attrs) n.setAttribute(k, attrs[k]);
+      if (parent) parent.appendChild(n);
+      return n;
+    }
+    // the lids, as two strokes: a heavy upper one and a light lower one
+    function lidD(upper, from, to) {
+      var d = '';
+      for (var i = from; from <= to ? i <= to : i >= to; i += from <= to ? 1 : -1) {
+        var u = i / 12 - 1, y = upper ? -H * 0.47 * Math.pow(1 - u * u, 0.8) : H * 0.37 * Math.pow(1 - u * u, 1.15);
+        d += (d ? 'L' : 'M') + (u * A).toFixed(1) + ' ' + y.toFixed(1);
+      }
+      return d;
+    }
+    var upperD = lidD(true, 0, 24), lowerD = lidD(false, 24, 0);
+    var almond = upperD + lowerD.replace(/^M/, 'L') + 'Z';
+    var svg = el('svg', { class: 'eye-svg', 'aria-hidden': 'true' });
+    var defs = el('defs', {}, svg), clip = el('clipPath', { id: 'eye-clip' }, defs);
+    el('path', { d: almond }, clip);
+    // the lids are lines of code bent to the eye's contour, fading out at the corners into the code around them
+    var fade = el('linearGradient', { id: 'eye-fade', gradientUnits: 'userSpaceOnUse', x1: -A - 10, x2: A + 10, y1: 0, y2: 0 }, defs);
+    [[0, 0], [0.22, 0.85], [0.78, 0.85], [1, 0]].forEach(function (st) {
+      el('stop', { class: 'eye-stop', offset: st[0], 'stop-opacity': st[1] }, fade);
+    });
+    el('path', { id: 'eye-up', d: upperD }, defs);
+    el('path', { id: 'eye-brow', d: upperD.replace(/(-?[\d.]+) (-?[\d.]+)/g, function (m, x, y) { return x + ' ' + (+y * 1.12 - 7).toFixed(1); }) }, defs);
+    el('path', { id: 'eye-lo', d: lidD(false, 0, 24) }, defs);
+    el('path', { id: 'eye-iris-path', d: 'M0 ' + (-(RI - 5)) + 'a' + (RI - 5) + ' ' + (RI - 5) + ' 0 1 1 -0.01 0' }, defs);
+    var ray = el('path', { class: 'eye-ray', pathLength: 1 }, svg);
+    var tag = el('text', { class: 'eye-tag' }, svg);
+    var at = el('g', { class: 'eye-at' }, svg);
+    var lid = el('g', { class: 'eye-lid' }, at);
+    el('path', { class: 'eye-bg', d: almond }, lid);
+    var inner = el('g', { 'clip-path': 'url(#eye-clip)' }, lid);
+    // the lens: the pane's code, magnified, scrolled so the line being read sits in the middle
+    var lensRows = [], STEP = 16;
+    var iris = el('g', { class: 'eye-iris' }, inner);
+    el('circle', { class: 'eye-disc', r: RI }, iris);
+    // the iris spells what the eye is checking, and turns
+    var ticks = el('g', { class: 'eye-ticks' }, iris);
+    var ringText = el('textPath', { href: '#eye-iris-path' }, el('text', { class: 'eye-iris-text' }, ticks));
+    el('circle', { class: 'eye-ring', r: RI }, iris);
+    var pulse = el('circle', { class: 'eye-pulse', r: RI }, iris);
+    el('circle', { class: 'eye-ring inner', r: 11 }, iris);
+    el('circle', { class: 'eye-pupil', r: 8 }, iris);
+    el('circle', { class: 'eye-glint', r: 2, cx: -11, cy: -12 }, iris);
+    // the line being read is drawn over the iris, so the eye reads it whole
+    var lens = el('g', { class: 'eye-lens' }, inner);
+    var lidText = ['eye-brow', 'eye-up', 'eye-lo'].map(function (id) {
+      return el('textPath', { href: '#' + id }, el('text', { class: 'eye-lid-text ' + id }, lid));
+    });
+    host.appendChild(svg);
+
+    var cx = 0, cy = 0, target = null, timer = 0, on = false, lensKind = 'code';
+    function place(fy) {
+      var top = buf.offsetTop, w = host.clientWidth;
+      svg.style.top = top + 'px'; svg.style.height = buf.clientHeight + 'px';
+      cx = w - W / 2 - 44; cy = buf.clientHeight * fy;
+      at.setAttribute('transform', 'translate(' + cx.toFixed(1) + ' ' + cy.toFixed(1) + ')');
+    }
+    function rowPoint(r) {
+      var sx = r.querySelector('.sx'), rg = document.createRange();
+      rg.selectNodeContents(sx);
+      var b = rg.getBoundingClientRect(), h = svg.getBoundingClientRect();
+      if (!b.width) b = sx.getBoundingClientRect();
+      return [b.right - h.left + 6, (b.top + b.bottom) / 2 - h.top];
+    }
+    function gaze(p) {
+      var dx = p ? p[0] - cx : 0, dy = p ? p[1] - cy : 0, n = Math.hypot(dx, dy) || 1;
+      var k = Math.min(1, n / 160);
+      iris.style.transform = 'translate(' + (dx / n * 38 * k).toFixed(1) + 'px,' + (dy / n * 9 * k).toFixed(1) + 'px)';
+    }
+    // the lens shows the code under the eye, or whatever it is handed: a raw request and its response
+    function fill(lines) {
+      while (lens.firstChild) lens.removeChild(lens.firstChild);
+      lines = lines || [].map.call(buf.children, function (r) { return (r.querySelector('.sx') || r).textContent; });
+      lensRows = lines.map(function (line, i) {
+        var t = el('text', { x: -A + 14, y: i * STEP + 4 }, lens);
+        t.textContent = line;
+        return t;
+      });
+    }
+    function read(i) {
+      if (!lensRows[i]) return;
+      lensRows.forEach(function (t, k) { t.classList.toggle('cur', k === i); });
+      // indentation is scrolled away, so the line being read starts near the corner and runs across the eye
+      var indent = (lensRows[i].textContent.match(/^ */) || [''])[0].length;
+      var tx = 8 - indent * 7.5;
+      lens.style.transform = 'translate(' + tx.toFixed(1) + 'px,' + (-i * STEP) + 'px)';
+    }
+    function rowIndex(r) { return [].indexOf.call(buf.children, r); }
+    // when there is nothing to follow it reads around, in short glances
+    function glance() {
+      clearTimeout(timer);
+      if (!on) return;
+      if (!target && !svg.classList.contains('lock') && !(paused || !visible || document.hidden)) {
+        gaze([cx + (Math.random() * 2 - 1) * 200, cy + (Math.random() * 2 - 1) * 120]);
+        if (lensKind === 'code' && lensRows.length) read(Math.floor(Math.random() * lensRows.length));
+        if (Math.random() < 0.15) blink();
+      }
+      timer = setTimeout(glance, 700 + Math.random() * 900);
+    }
+    function blink() {
+      svg.classList.add('blink');
+      setTimeout(function () { svg.classList.remove('blink'); }, 140);
+    }
+    var off = !!(fast || matchMedia('(prefers-reduced-motion: reduce)').matches);
+    return {
+      show: function (fy, ring) {
+        if (off || host.clientWidth < 520) return;
+        place(fy || 0.72); on = true; target = null;
+        svg.classList.remove('lock'); svg.classList.add('open');
+        lensKind = 'code'; fill(); gaze(null); glance();
+        var src = [].map.call(buf.querySelectorAll('.sx'), function (x) { return x.textContent.trim(); }).filter(Boolean).join('  '), at0 = Math.floor(Math.random() * Math.max(1, src.length - 200));
+        lidText.forEach(function (t, k) { t.textContent = (src + ' ' + src).slice(at0 + k * 61, at0 + k * 61 + 70); });
+        ringText.textContent = ring || '';
+      },
+      look: function (r) {
+        if (!on) return;
+        target = r || null;
+        gaze(r ? rowPoint(r) : null);
+        if (r && lensKind === 'code') read(rowIndex(r));
+        if (!r) glance();
+      },
+      // hand the lens something to read: a request and its response, at line i
+      feed: function (lines, i) {
+        if (!on) return;
+        lensKind = 'feed'; fill(lines); read(i || 0);
+      },
+      read: function (i) { if (on) read(i); },
+      // lock red: on a code row (with a sight line to it), or on line i of what the lens was fed
+      lock: function (r, text, i) {
+        if (!on) return;
+        target = r;
+        tag.textContent = text || '';
+        if (r) {
+          var p = rowPoint(r), q = [cx, cy];
+          gaze(p);
+          lensKind = 'code'; fill(); read(rowIndex(r));
+          ray.setAttribute('d', 'M' + q[0].toFixed(1) + ' ' + q[1].toFixed(1) + 'L' + p[0].toFixed(1) + ' ' + p[1].toFixed(1));
+          tag.setAttribute('x', ((p[0] + q[0]) / 2).toFixed(1)); tag.setAttribute('y', ((p[1] + q[1]) / 2 - 7).toFixed(1));
+          svg.classList.remove('lock', 'nosight');
+        } else {
+          read(i || 0);
+          tag.setAttribute('x', cx.toFixed(1)); tag.setAttribute('y', (cy - H * 0.47 - 10).toFixed(1));
+          svg.classList.remove('lock'); svg.classList.add('nosight');
+        }
+        void svg.getBBox(); svg.classList.add('lock');
+      },
+      unlock: function () { svg.classList.remove('lock'); target = null; glance(); },
+      hide: function () { on = false; clearTimeout(timer); svg.classList.remove('open', 'lock'); },
+      reset: function () { on = false; clearTimeout(timer); svg.classList.remove('open', 'lock', 'blink'); }
+    };
+  })();
+
   /* ── act 1: find vulnerabilities ────────────────────────── */
+  // what the lens reads in the first act: the order request, then its replay
+  function traffic(id, owner, total) {
+    return ['GET /api/order/' + id + ' HTTP/1.1', 'host: shop.example.test', 'cookie: sid=9f2c…  (u_17)', '',
+            'HTTP/1.1 200 OK', '{ "id": ' + id + ',', '  "owner": "' + owner + '",', '  "total": ' + total + ' }'];
+  }
   var TS = [
     "import { Router } from 'express';",
     "import { db } from '../db';",
@@ -289,7 +459,7 @@
     '});'
   ];
   async function find() {
-    stage.dataset.act = 'find'; wires.clear();
+    stage.dataset.act = 'find'; wires.clear(); eye.reset();
     codeSt.textContent = 'routes/orders.ts'; codeMode.textContent = 'NORMAL'; codePos.textContent = 'ts · 1:1';
     shLabel.textContent = 'agent@box: ~/shop-audit';
     var rs = pane(codeBuf, TS, 'ts', 1);
@@ -310,7 +480,9 @@
     await type('h5i browser click @e7', '# open order #1041');
     heat([14, 15, 16, 17, 18, 19].map(L)); rec(3);
     wires.request(lastCmd(), L(14), 'req_108  GET /api/order/1041').fade(1800);
+    eye.show(0.74, 'req_108 · res_109 · owner · cookie u_17 · '); eye.feed(traffic(1041, 'u_17', '42.00'), 0);
     await out([[['o', '  → /checkout?order=1041  '], ['d', '200 · 3 requests']]]);
+    eye.read(6);
     prompt(); await sleep(900);
 
     await type('h5i websec requests --human', '# what the session sent');
@@ -323,7 +495,9 @@
     await spin(500);
     heat([14, 15, 16, 17, 18, 19].map(L)); rec(1);
     var probe = wires.request(lastCmd(), L(16), 'req_109  id = 1042');
+    eye.feed(traffic(1042, 'u_23', '118.50'), 0);
     await out([[['o', '  res_109  200  1.9 kB']]]);
+    eye.read(6);
     prompt(); await sleep(800);
 
     await type('h5i websec diff res_108 res_109 --human');
@@ -332,6 +506,10 @@
     await out([[['o', '  owner  : u_17 → '], ['r', 'u_23'], ['d', '   another customer\'s order']]]);
     // the wire that carried the replay is pinned red: this is the line that answered it
     probe.set('red', 'u_23 ≠ u_17');
+    // what came back first, in the traffic; then why, in the code
+    eye.lock(null, 'u_23 is not the caller', 6);
+    await sleep(1600);
+    eye.lock(L(16), 'no owner in the query');
     await sleep(900);
     // the reveal: the query that never asked whose order it was
     codeMode.textContent = 'FINDING'; stage.classList.add('alarm');
@@ -348,7 +526,7 @@
     await virt(good, '   ◀ this route asks whose it is', 'ok');
     prompt(); await sleep(1400);
 
-    probe.fade();
+    probe.fade(); eye.hide();
     await type('h5i websec finding create --title "cross-user order read" --evidence req_108,res_109');
     await out([[['o', '  '], ['k', 'finding_1'], ['o', '  recorded · cites req_108, res_109']]]);
     prompt();
@@ -397,7 +575,7 @@
     '+-- 14 lines: rcases reply_of a s c ws r h with ·····'
   ];
   async function prove() {
-    stage.dataset.act = 'prove'; wires.clear();
+    stage.dataset.act = 'prove'; wires.clear(); eye.reset();
     codeSt.textContent = 'kernel/src/lib.rs'; codeMode.textContent = 'NORMAL';
     shLabel.textContent = 'agent@box: ~/shop';
     var rs = pane(codeBuf, RS, 'rs', 38);
@@ -423,14 +601,15 @@
     // the proof walks the kernel; every line it covers is signed
     codeMode.textContent = 'PROVING';
     var pw = wires.proof(thm[0], rs[2], 'owner_only', 'ok');
+    eye.show(0.8, 'owner_only · inv_preserved · read_order · ');
     await sleep(500);
     for (var n = 2; n < 14; n++) {
-      rs[n].classList.add('scan'); sign(rs[n], '✓', 'ok'); pw.to(wires.end(rs[n]));
+      rs[n].classList.add('scan'); sign(rs[n], '✓', 'ok'); pw.to(wires.end(rs[n])); eye.look(rs[n]);
       await sleep(150);
       rs[n].classList.remove('scan');
     }
     thm.forEach(function (r) { sign(r, '✓', 'ok'); });
-    pw.fade(900);
+    pw.fade(900); eye.look(null);
     codeMode.textContent = 'NORMAL';
     await out([[['o', '  owner_only          '], ['g', 'proven']], [['o', '  inv_preserved       '], ['g', 'proven']]], 160);
     prompt(); await sleep(1800);
@@ -440,6 +619,7 @@
     codeMode.textContent = 'MUTANT'; stage.classList.add('alarm'); focusRow(line);
     rs.forEach(function (r) { sign(r, ''); });
     await scramble(g, 'true', 'mut');
+    eye.lock(line, 'if true');
     await virt(line, '   ◀ any user reads any order', 'no');
     await out([[['o', '  mutant   if '], ['k', 'o.owner == user'], ['d', '  →  '], ['r', 'if true']]]);
     await spin(900);
@@ -454,13 +634,14 @@
     await sleep(1800);
     // the kernel comes back, and so do the proofs
     line.querySelector('.virt').remove();
-    bw.fade();
+    bw.fade(); eye.unlock();
     await scramble(g, 'o.owner == user', '');
     g.className = 'grab';
     stage.classList.remove('alarm'); codeMode.textContent = 'NORMAL';
     thm.forEach(function (r) { sign(r, '✓', 'ok'); r.classList.remove('bad'); });
     rs.slice(2, 14).forEach(function (r) { sign(r, '✓', 'ok'); });
     await out([[['k', '  14 of 14 mutants caught']]]);
+    eye.hide();
     prompt();
     await sleep(6000);
   }
