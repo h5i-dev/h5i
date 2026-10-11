@@ -88,12 +88,15 @@ const executablePath = findHeadlessShell() ?? undefined;
 const browser = await chromium.launch({ executablePath });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 await page.goto(base + '/pitch/', { waitUntil: 'networkidle' });
-// force lazy images (e.g. the team SVG on slide 9) to load before printing
+// Wait for the display font and any images before printing.
+await page.evaluate(() => document.fonts.ready);
+// Force lazy images to load before printing.
 await page.evaluate(() => Promise.all([...document.images].map(img => {
   img.loading = 'eager';
   return img.complete || new Promise(done => { img.onload = img.onerror = done; });
 })));
 await page.emulateMedia({ media: 'print' });
+await page.evaluate(() => document.querySelectorAll('.slide').forEach(slide => { slide.inert = false; }));
 await page.pdf({ path: OUT, preferCSSPageSize: true, printBackground: true });
 await browser.close();
 server.close();

@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>h5i pitch deck (PDF): is your AI-built web app secure?</title>
-<meta name="description" content="The h5i pitch deck as a PDF. Eight slides: agent-led red-teaming, evidence-backed findings, and formal verification with Rust and Lean 4.">
+<title>h5i pitch deck (PDF): security for software built with AI</title>
+<meta name="description" content="The h5i pitch deck as a PDF. Eight slides: the problem, product, technical depth, early traction, and next steps.">
 <meta name="author" content="h5i-dev">
-<meta name="theme-color" content="#D21C1C">
+<meta name="theme-color" content="#e0241b">
 <meta name="color-scheme" content="dark">
 <!-- A print rendering of /pitch/, kept out of the index so the two do not
      compete as near-duplicates; the canonical points at the deck itself. -->
@@ -18,34 +18,34 @@
 <!-- Open Graph -->
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="h5i">
-<meta property="og:title" content="h5i pitch deck (PDF): is your AI-built web app secure?">
-<meta property="og:description" content="The h5i pitch deck as a PDF. Eight slides: agent-led red-teaming, evidence-backed findings, and formal verification with Rust and Lean 4.">
+<meta property="og:title" content="h5i pitch deck (PDF): security for software built with AI">
+<meta property="og:description" content="The h5i pitch deck as a PDF. Eight slides: the problem, product, technical depth, early traction, and next steps.">
 <meta property="og:url" content="https://h5i.dev/pitch/pdf/">
 <meta property="og:image" content="https://h5i.dev/_static/social-card.png">
 <meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
 <meta property="og:locale" content="en_US">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="h5i pitch deck (PDF): is your AI-built web app secure?">
-<meta name="twitter:description" content="The h5i pitch deck as a PDF. Eight slides: agent-led red-teaming, evidence-backed findings, and formal verification with Rust and Lean 4.">
+<meta name="twitter:title" content="h5i pitch deck (PDF): security for software built with AI">
+<meta name="twitter:description" content="The h5i pitch deck as a PDF. Eight slides: the problem, product, technical depth, early traction, and next steps.">
 <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
 <meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #08080B;
-    --bg-card: #101014;
+    --bg: #070707;
+    --bg-card: #0e0e0d;
     --border: rgba(255,255,255,0.09);
     --border-hi: rgba(255,255,255,0.18);
-    --ink: #F2F0EB;
-    --text: #C9C7C1;
-    --text-dim: #8A8884;
-    --red: #D21C1C;
-    --red-text: #FF5C4D;
-    --sans: 'Space Grotesk', system-ui, sans-serif;
-    --mono: 'Space Mono', monospace;
+    --ink: #f1ede4;
+    --text: #d3cfc6;
+    --text-dim: #a5a198;
+    --red: #e0241b;
+    --red-text: #ff6258;
+    --sans: 'Archivo', system-ui, sans-serif;
+    --mono: 'IBM Plex Mono', monospace;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; }
@@ -69,7 +69,7 @@
     display: inline-flex; align-items: center; gap: 0.45rem;
     font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em;
     color: var(--text-dim); text-decoration: none;
-    border: 1px solid var(--border-hi); border-radius: 6px;
+    border: 1px solid var(--border-hi); border-radius: 0;
     padding: 0.45rem 0.95rem; transition: color 0.18s, border-color 0.18s;
     white-space: nowrap;
   }
@@ -85,7 +85,7 @@
   }
   .fallback p { color: var(--text-dim); max-width: 46ch; line-height: 1.6; }
   @media (max-width: 640px) {
-    /* Phones arrive here from the deck's redirect, so the title keeps its
+    /* On phones the title keeps its
        own line and the buttons wrap under it instead of squeezing it out. */
     header { padding: 10px 14px; flex-wrap: wrap; row-gap: 10px; }
     header h1 .dim { display: none; }
