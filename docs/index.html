@@ -429,67 +429,65 @@
     }
     .film-play::after { content: ""; position: absolute; left: 21px; top: 17px; border-style: solid; border-width: 10px 0 10px 16px; border-color: transparent transparent transparent #fff; }
     .film-poster:hover .film-play { transform: scale(1.08); }
-    /* ── The proof, in a vim split: three buffers, a sign column, a cmdline ── */
-    .vim { margin: 36px 0 0; }
-    .vim-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 0; }
-    .vim-lbl {
-      margin: 0 0 10px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--faint);
-    }
-    .vim-lbl b { margin-right: 10px; font-weight: 500; color: var(--spot); }
-    .vim-frame { border: 1px solid var(--line2); background: #0b0b0a; font-family: var(--mono); font-size: 12.5px; line-height: 1.75; }
-    .vim-panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); }
-    .vim-col { display: flex; flex-direction: column; border-left: 1px solid var(--line2); min-width: 0; }
-    .vim-win { display: flex; flex-direction: column; min-width: 0; }
-    .vim-col .vim-win { flex: 1; }
-    .vim-buf { flex: 1; padding: 10px 0; overflow: hidden; }
-    .vl { display: grid; grid-template-columns: 2ch 4.5ch minmax(0, 1fr); white-space: pre; }
-    .vl > i { grid-column: 2; font-style: normal; padding-right: 1.5ch; text-align: right; color: color-mix(in srgb, var(--ink) 26%, transparent); }
-    .vl > span { grid-column: 3; overflow: hidden; text-overflow: clip; }
-    .vl.vcur > i { color: var(--ink); }
-    .vl.vcur { background: color-mix(in srgb, var(--ink) 4%, transparent); }
-    .vfold > span { color: color-mix(in srgb, var(--ink) 40%, transparent); background: color-mix(in srgb, var(--ink) 4%, transparent); }
-    .vsign { grid-column: 1; grid-row: 1; text-align: center; font-weight: 500; color: var(--green); }
-    .vk { color: var(--ink); font-weight: 500; }
-    .vt { color: color-mix(in srgb, var(--ink) 80%, transparent); }
-    .vi { color: color-mix(in srgb, var(--ink) 66%, transparent); }
-    .vn { color: var(--ink); }
-    .vp { color: color-mix(in srgb, var(--ink) 34%, transparent); }
-    .vc { color: color-mix(in srgb, var(--ink) 40%, transparent); }
-    /* the two halves of one rule, in the code and in the spec */
-    .vpair, .vmut { transition: background-color .3s, box-shadow .3s; }
-    .vim.pair .vpair { background: color-mix(in srgb, var(--spot-solid) 22%, transparent); box-shadow: 0 1px 0 var(--spot); }
-    .vim.pair .vpair span { color: var(--ink); }
-    .vim.mutant .vmut { background: var(--spot-solid); }
-    .vim.mutant .vmut span { color: #fff; }
-    .vim.broken .vsign { color: var(--spot); }
-    .vim-st {
-      display: flex; align-items: stretch; height: 24px; line-height: 24px; overflow: hidden; white-space: nowrap;
-      background: var(--panel2); border-top: 1px solid var(--line2); font-size: 11px; color: var(--dim);
-    }
-    .vim-st span { padding: 0 10px; overflow: hidden; text-overflow: ellipsis; }
-    .vim-st .r { margin-left: auto; color: var(--faint); }
-    .vim-mode { padding: 0 9px; background: var(--ink); color: var(--bg); font-weight: 500; letter-spacing: .1em; transition: background-color .2s, color .2s; }
-    .vim-mode.dim { background: var(--line2); color: var(--dim); }
-    .vim-mode.red { background: var(--spot-solid); color: #fff; }
-    .vim-out {
-      height: calc(5 * 1.75em + 16px); padding: 8px 14px; overflow: hidden; border-top: 1px solid var(--line2);
-      display: flex; flex-direction: column; justify-content: flex-end; white-space: pre;
-    }
-    .vim-cmd { height: 1.75em; padding: 0 14px 4px; white-space: pre; color: var(--ink); }
-    .vim-cmd .cur {
-      display: inline-block; width: .62em; height: 1.2em; vertical-align: -.22em; background: var(--spot);
-      animation: caret 1.1s steps(1) infinite;
-    }
-    .vim figcaption { margin: 14px 0 0; max-width: 84ch; color: var(--faint); font-size: 13.5px; line-height: 1.7; }
-    .vim figcaption a { color: var(--spot); }
-    .vim figcaption code { font-family: var(--mono); font-size: .9em; color: var(--dim); }
-    @media (max-width: 1000px) {
-      .vim-cols { display: none; }
-      .vim-panes { grid-template-columns: minmax(0, 1fr); }
-      .vim-col { border-left: 0; border-top: 1px solid var(--line2); }
-      .vim-frame { font-size: 11px; }
-      .vim-buf { overflow-x: auto; }
-    }
+    .proof-flow { margin: 36px 0 0; overflow-x: auto; position: relative; }
+    /* the Apps view inside the proof diagram: the console's own tokens, drawn small */
+    .pd-stage { position: relative; min-width: 880px; }
+    /* 452,176 648x236 in the svg's 1100x424 viewBox; the script keeps --pd-s at the svg's scale */
+    .pd-overlay { position: absolute; left: 41.0909%; top: 41.5094%; width: 648px; height: 236px; transform-origin: 0 0; transform: scale(var(--pd-s, .8)); }
+    .pd-win { height: 236px; border-radius: 8px; }
+    .pd-win .win-bar { height: 32px; padding-top: 6px; font-size: 10.5px; }
+    .pd-win .win-tab { padding: 4px 10px 5px; }
+    .pd-win .bw-url { padding: 4px 8px; font-size: 10px; }
+    .pd-win .bw-addr { padding: 2px 8px; }
+    .pd-ui { flex: 1; min-height: 0; border: 0; border-radius: 0; background: var(--cm-ground); font-family: var(--sans); font-size: 10.5px; line-height: 1.35; color: var(--cm-ink); overflow: hidden; box-shadow: none; }
+    .pu-app { display: grid; grid-template-columns: 110px minmax(0, 1fr); height: 100%; }
+    .pu-rail { background: var(--cm-surface); border-right: 1px solid var(--cm-line); padding: 10px 6px; display: flex; flex-direction: column; gap: 2px; color: var(--cm-ink-3); font-size: 10.5px; }
+    .pu-rail > div { padding: 5px 8px; border-radius: 4px; }
+    .pu-rail .on { background: var(--cm-raised); color: var(--cm-ink); box-shadow: inset 2px 0 0 var(--cm-accent); }
+    .pu-brand { font-family: var(--cm-mono); font-weight: 700; font-size: 13px; color: var(--cm-ink); padding-bottom: 10px !important; }
+    .pu-brand b { color: var(--cm-accent); }
+    .pu-main { display: flex; flex-direction: column; min-width: 0; }
+    .pu-head { display: flex; align-items: baseline; gap: 8px; padding: 12px 12px 0; background: var(--cm-surface); }
+    .pu-head b { font-size: 13px; }
+    .pu-head code { font-family: var(--cm-mono); font-size: 9.5px; color: var(--cm-ink-3); background: none; border: 0; padding: 0; }
+    .pu-pill { font-size: 9.5px; padding: 0 6px; border-radius: 3px; color: var(--cm-green); background: var(--cm-green-bg); }
+    .pu-tabs { display: flex; gap: 2px; margin-top: 4px; padding: 0 8px; border-bottom: 1px solid var(--cm-line); background: var(--cm-surface); }
+    .pu-tabs span { padding: 5px 8px; color: var(--cm-ink-3); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+    .pu-tabs span.on { color: var(--cm-ink); border-bottom-color: var(--cm-accent); }
+    .pu-tabs i { font-style: normal; font-family: var(--cm-mono); font-size: 9.5px; color: var(--cm-ink-3); margin-left: 3px; }
+    .pu-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .pu-table th { text-align: left; padding: 5px 10px; color: var(--cm-ink-3); font-weight: 400; font-size: 9.5px; border-bottom: 1px solid var(--cm-line); background: var(--cm-surface); }
+    .pu-table td { padding: 4px 10px; border-bottom: 1px solid var(--cm-line); color: var(--cm-ink-2); vertical-align: middle; }
+    .pu-table td code { font-family: var(--cm-mono); font-size: 10px; color: var(--cm-violet); background: none; border: 0; padding: 0; }
+    .pu-table td small { display: block; font-family: var(--cm-mono); font-size: 8.5px; color: var(--cm-ink-4); margin-top: 2px; }
+    .pu-ok { font-family: var(--cm-mono); font-size: 9.5px; padding: 0 6px; border-radius: 3px; color: var(--cm-green); background: var(--cm-green-bg); white-space: nowrap; }
+    .pu-foot { margin-top: auto; padding: 7px 12px; border-top: 1px solid var(--cm-line); background: var(--cm-surface); color: var(--cm-ink-3); font-family: var(--cm-mono); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .proof-flow .tabpick { position: absolute; opacity: 0; pointer-events: none; }
+    .proof-diagram .ed-tab { cursor: pointer; outline: none; }
+    .proof-diagram .ed-tab rect { fill: transparent; }
+    .proof-diagram .ed-tab .ed-tab-top { stroke: transparent; stroke-width: 2; }
+    .proof-diagram .ed-tab circle { fill: var(--line2); }
+    .proof-diagram .ed-tab text { font-size: 13px; fill: var(--dim); }
+    .proof-diagram .ed-tab:hover text { fill: var(--ink); }
+    .proof-diagram .ed-tab:focus-visible rect { stroke: var(--spot); stroke-width: 1; }
+    #ed-lib:checked ~ .pd-stage .ed-tab-lib rect, #ed-cargo:checked ~ .pd-stage .ed-tab-cargo rect { fill: var(--panel); }
+    #ed-lib:checked ~ .pd-stage .ed-tab-lib .ed-tab-top, #ed-cargo:checked ~ .pd-stage .ed-tab-cargo .ed-tab-top { stroke: var(--spot); }
+    #ed-lib:checked ~ .pd-stage .ed-tab-lib circle, #ed-cargo:checked ~ .pd-stage .ed-tab-cargo circle { fill: var(--spot); }
+    #ed-lib:checked ~ .pd-stage .ed-tab-lib text, #ed-cargo:checked ~ .pd-stage .ed-tab-cargo text { fill: var(--ink); }
+    .proof-diagram .ed-pane, .proof-diagram .ed-crumb { display: none; }
+    #ed-lib:checked ~ .pd-stage .ed-lib, #ed-cargo:checked ~ .pd-stage .ed-cargo { display: inline; }
+    .proof-diagram { display: block; width: 100%; min-width: 880px; height: auto; }
+    .proof-diagram text { font-family: var(--mono); }
+    .proof-diagram .pd-title { font-family: var(--disp); font-size: 22px; font-weight: 800; fill: var(--ink); }
+    .proof-diagram .pd-label { font-size: 11px; letter-spacing: 1.2px; fill: var(--dim); }
+    .proof-diagram .pd-text { font-size: 13px; fill: var(--ink); }
+    .proof-diagram .pd-code { font-size: 13px; fill: var(--dim); }
+    .proof-diagram .pd-accent { fill: var(--spot); }
+    .proof-diagram .pd-src text { font-size: 10px; fill: var(--ink); white-space: pre; }
+    .proof-diagram .pd-ln text { font-size: 9.5px; fill: var(--faint); }
+    .proof-diagram .pd-kw { fill: var(--spot); }
+    .proof-diagram .pd-cm { fill: var(--dim); }
+    .proof-diagram .pd-note { font-size: 10.5px; fill: var(--dim); }
 
     /* ── Hero: the title and its copy, then the stage at full width ── */
     #hero { padding: 60px var(--gut) 52px; }
@@ -843,8 +841,8 @@
         <p class="duet-lbl"><b>01</b> what the agent runs</p>
         <ol class="verbs">
           <li><code>h5i browser</code><b>Explore your app automatically</b><p>Your agent can read pages, click, type, and extract data through compact snapshots.</p></li>
-          <li><code>h5i websec</code><b>Test HTTP requests directly</b><p>Your agent can capture traffic, inspect and edit requests, replay them, and compare responses.</p></li>
-          <li><code>h5i box</code><b>Sandboxed workflow</b><p>Sandbox the browser or the entire AI agent workflow, with configurable network and filesystem limits.</p></li>
+          <li><code>h5i websec</code><b>Test HTTP requests directly</b><p>Your agent can capture traffic, inspect and edit requests, and replay them.</p></li>
+          <li><code>h5i box</code><b>Sandboxed workflow</b><p>Sandbox the entire AI agent workflow, with configurable network and filesystem limits.</p></li>
           <li><code>h5i test</code><b>Keep it fixed</b><p>Replay a confirmed finding as a flow in CI, so a fixed issue stays fixed.</p></li>
         </ol>
       </div>
@@ -1078,60 +1076,123 @@
       <p class="section-sub">Build on Axum with a Rust application kernel that can be extracted into Lean 4.
         State the rules your app must preserve, then check proofs against that logic.</p>
     </div>
-    <!-- The kernel, the rule and the proof, from examples/app/board, in a vim
-         split. _static/replay.js plays it: the two halves of the delete rule
-         light up together, the proofs go through, then a mutant flips == to !=
-         and the proof of `authorized` stops building. -->
-    <figure class="vim" aria-labelledby="vim-cap">
-      <div class="vim-cols">
-        <p class="vim-lbl"><b>Rust</b> the logic your app runs</p>
-        <p class="vim-lbl"><b>Lean 4</b> the rule you state, and the proof you supply</p>
-      </div>
-      <div class="vim-frame" aria-hidden="true">
-        <div class="vim-panes">
-          <div class="vim-win vim-rs">
-            <div class="vim-buf">
-<div class="vl"><i>149</i><span><span class="vk">fn</span> <span class="vi">delete</span><span class="vp">(</span><span class="vi">user</span><span class="vp">:</span> <span class="vi">u64</span><span class="vp">,</span> <span class="vi">s</span><span class="vp">:</span> <span class="vp">&amp;</span><span class="vt">Snapshot</span><span class="vp">,</span> <span class="vi">id</span><span class="vp">:</span> <span class="vi">u64</span><span class="vp">)</span> <span class="vp">-</span><span class="vp">&gt;</span> <span class="vt">Outcome</span> <span class="vp">{</span></span></div>
-<div class="vl"><i>150</i><span>    <span class="vk">match</span> <span class="vi">find_post</span><span class="vp">(</span><span class="vp">&amp;</span><span class="vi">s.posts</span><span class="vp">,</span> <span class="vi">id</span><span class="vp">)</span> <span class="vp">{</span></span></div>
-<div class="vl"><i>151</i><span>        <span class="vt">None</span> <span class="vp">=</span><span class="vp">&gt;</span> <span class="vt">Err</span><span class="vp">(</span><span class="vt">Error</span><span class="vp">:</span><span class="vp">:</span><span class="vt">NotFound</span><span class="vp">)</span><span class="vp">,</span></span></div>
-<div class="vl"><i>152</i><span>        <span class="vt">Some</span><span class="vp">(</span><span class="vi">p</span><span class="vp">)</span> <span class="vp">=</span><span class="vp">&gt;</span> <span class="vp">{</span></span></div>
-<div class="vl vcur"><i>153</i><span>            <span class="vk">if</span> <span class="vmut" data-alt="p.author != user"><span class="vi">p.author</span> <span class="vp">=</span><span class="vp">=</span> <span class="vi">user</span></span> <span class="vp">|</span><span class="vp">|</span> <span class="vpair"><span class="vi">is_moderator</span><span class="vp">(</span><span class="vp">&amp;</span><span class="vi">s.moderators</span><span class="vp">,</span> <span class="vi">user</span><span class="vp">)</span></span> <span class="vp">{</span></span></div>
-<div class="vl"><i>154</i><span>                <span class="vt">Ok</span><span class="vp">(</span><span class="vp">(</span><span class="vi">one</span><span class="vp">(</span><span class="vt">Write</span><span class="vp">:</span><span class="vp">:</span><span class="vt">DelPost</span><span class="vp">(</span><span class="vi">id</span><span class="vp">)</span><span class="vp">)</span><span class="vp">,</span> <span class="vt">Reply</span><span class="vp">:</span><span class="vp">:</span><span class="vt">Done</span><span class="vp">)</span><span class="vp">)</span></span></div>
-<div class="vl"><i>155</i><span>            <span class="vp">}</span> <span class="vk">else</span> <span class="vp">{</span></span></div>
-<div class="vl"><i>156</i><span>                <span class="vt">Err</span><span class="vp">(</span><span class="vt">Error</span><span class="vp">:</span><span class="vp">:</span><span class="vt">Forbidden</span><span class="vp">)</span></span></div>
-<div class="vl"><i>157</i><span>            <span class="vp">}</span></span></div>
-<div class="vl"><i>158</i><span>        <span class="vp">}</span></span></div>
-<div class="vl"><i>159</i><span>    <span class="vp">}</span></span></div>
-<div class="vl"><i>160</i><span><span class="vp">}</span></span></div>
-            </div>
-            <div class="vim-st"><b class="vim-mode">NORMAL</b><span>kernel/src/lib.rs</span><span class="r">rust · 153:16</span></div>
-          </div>
-          <div class="vim-col">
-            <div class="vim-win">
-              <div class="vim-buf">
-<div class="vl"><i>33</i><span><span class="vk">def</span> <span class="vi">allowed</span> <span class="vp">(</span><span class="vi">s</span> <span class="vp">:</span> <span class="vt">St</span><span class="vp">)</span> <span class="vp">(</span><span class="vi">u</span> <span class="vp">:</span> <span class="vt">Nat</span><span class="vp">)</span> <span class="vp">:</span> <span class="vt">Write</span> <span class="vp">→</span> <span class="vt">Prop</span></span></div>
-<div class="vl vfold"><i>34</i><span>+--  4 lines: | .PutPost p =&gt; ····· </span></div>
-<div class="vl"><i>38</i><span>  <span class="vp">|</span> <span class="vp">.</span><span class="vt">DelPost</span> <span class="vi">id</span> <span class="vp">=</span><span class="vp">&gt;</span></span></div>
-<div class="vl"><i>39</i><span>    <span class="vc">-- The author or a moderator deletes an existing post.</span></span></div>
-<div class="vl"><i>40</i><span>    <span class="vp">∃</span> <span class="vi">q</span><span class="vp">,</span> <span class="vi">findPost</span> <span class="vi">s</span> <span class="vi">id.val</span> <span class="vp">=</span> <span class="vi">some</span> <span class="vi">q</span> <span class="vp">∧</span> <span class="vp">(</span><span class="vi">q.author.val</span> <span class="vp">=</span> <span class="vi">u</span> <span class="vp">∨</span> <span class="vpair"><span class="vi">isMod</span> <span class="vi">s</span> <span class="vi">u</span></span><span class="vp">)</span></span></div>
+    <figure class="proof-flow">
+      <input class="tabpick" type="radio" name="edtab" id="ed-lib" checked>
+      <input class="tabpick" type="radio" name="edtab" id="ed-cargo">
+      <div class="pd-stage">
+      <svg class="proof-diagram" viewBox="0 0 1100 424" role="img" aria-labelledby="proof-title proof-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="proof-title">From Rust application logic to Lean-checked properties</title>
+        <desc id="proof-desc">Aeneas extracts the Rust kernel of the bulletin board tutorial into Lean definitions. Developers supply theorems such as authorized, and the console's Apps view shows each theorem as proven, with the mutants its proof caught, over the latest verification receipt.</desc>
+        <defs>
+          <marker id="proof-arrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="currentColor" stroke-width="1.5"/></marker>
+          <pattern id="proof-grid" width="18" height="18" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".7" fill="currentColor" opacity=".14"/></pattern>
+        </defs>
+        <!-- Source: the delete command of examples/app/board, drawn as an editor. -->
+        <text x="0" y="28" class="pd-label">RUST / APPLICATION KERNEL</text>
+        <rect x="0" y="44" width="376" height="376" rx="6" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M0 50a6 6 0 0 1 6-6h364a6 6 0 0 1 6 6v22H0z" fill="var(--bg)"/>
+        <path d="M0 72H376" stroke="var(--line2)"/>
+        <!-- Drawn in SVG, not a foreignObject: iOS Safari misplaces HTML inside one. The script below flips the radios. -->
+        <g class="ed-tabs" role="tablist">
+          <g class="ed-tab ed-tab-lib" data-tab="ed-lib" role="tab" tabindex="0"><rect x="1" y="45" width="87" height="27"/><path class="ed-tab-top" d="M1 46H88"/><circle cx="16" cy="58.5" r="3"/><text x="27" y="63">lib.rs</text></g>
+          <g class="ed-tab ed-tab-cargo" data-tab="ed-cargo" role="tab" tabindex="0"><rect x="88" y="45" width="118" height="27"/><path class="ed-tab-top" d="M88 46H206"/><circle cx="103" cy="58.5" r="3"/><text x="114" y="63">Cargo.toml</text></g>
+          <path d="M88 45V72M206 45V72" stroke="var(--line2)"/>
+        </g>
+        <text x="14" y="89" class="pd-note ed-crumb ed-lib">board &#x203A; kernel &#x203A; src &#x203A; lib.rs</text>
+        <text x="14" y="89" class="pd-note ed-crumb ed-cargo">board &#x203A; kernel &#x203A; Cargo.toml</text>
+        <path d="M0 96H376" stroke="var(--line2)"/>
+        <g class="ed-pane ed-lib">
+        <g class="pd-ln" text-anchor="end">
+          <text x="30" y="120">149</text><text x="30" y="139">150</text><text x="30" y="158">151</text><text x="30" y="177">152</text>
+          <text x="30" y="196">153</text><text x="30" y="215">154</text><text x="30" y="234">155</text><text x="30" y="253">156</text>
+          <text x="30" y="272">157</text><text x="30" y="291">158</text><text x="30" y="310">159</text><text x="30" y="329">160</text>
+          <text x="30" y="348">161</text><text x="30" y="367">162</text>
+        </g>
+        <g class="pd-src" xml:space="preserve">
+          <text x="44" y="120"><tspan class="pd-kw">fn</tspan> delete(user: u64, s: &amp;Snapshot, id: u64)</text>
+          <text x="44" y="139">  -&gt; Outcome {</text>
+          <text x="44" y="158">  <tspan class="pd-kw">match</tspan> find_post(&amp;s.posts, id) {</text>
+          <text x="44" y="177">    None =&gt; Err(Error::NotFound),</text>
+          <text x="44" y="196">    Some(p) =&gt; {</text>
+          <text x="44" y="215">      <tspan class="pd-kw">if</tspan> p.author == user</text>
+          <text x="44" y="234">        || is_moderator(&amp;s.moderators, user) {</text>
+          <text x="44" y="253">        Ok((one(Write::DelPost(id)), Reply::Done))</text>
+          <text x="44" y="272">      } <tspan class="pd-kw">else</tspan> {</text>
+          <text x="44" y="291">        Err(Error::Forbidden)</text>
+          <text x="44" y="310">      }</text>
+          <text x="44" y="329">    }</text>
+          <text x="44" y="348">  }</text>
+          <text x="44" y="367">}</text>
+        </g>
+        </g>
+        <g class="ed-pane ed-cargo">
+        <g class="pd-ln" text-anchor="end">
+          <text x="30" y="120">1</text><text x="30" y="139">2</text><text x="30" y="158">3</text><text x="30" y="177">4</text>
+          <text x="30" y="196">5</text><text x="30" y="215">6</text><text x="30" y="234">7</text><text x="30" y="253">8</text>
+          <text x="30" y="272">9</text><text x="30" y="291">10</text><text x="30" y="310">11</text><text x="30" y="329">12</text>
+        </g>
+        <g class="pd-src" xml:space="preserve">
+          <text x="44" y="120"><tspan class="pd-kw">[package]</tspan></text>
+          <text x="44" y="139">name = "board-kernel"</text>
+          <text x="44" y="158">description = "Tutorial 2: a verified bulletin board"</text>
+          <text x="44" y="177">edition = "2024"</text>
+          <text x="44" y="196">license = "Apache-2.0"</text>
+          <text x="44" y="215">version = "0.1.0"</text>
+          <text x="44" y="234">publish = false</text>
+          <text x="44" y="253"></text>
+          <text x="44" y="272" class="pd-cm"># Extracted to Lean by Charon + Aeneas.</text>
+          <text x="44" y="291"><tspan class="pd-kw">[dependencies]</tspan></text>
+          <text x="44" y="310"><tspan class="pd-kw">h5i-app-schema</tspan> = { path = "&#x2026;/crates/h5i-app-schema" }</text>
+          <text x="44" y="329"><tspan class="pd-kw">h5i-app-sql</tspan>    = { path = "&#x2026;/crates/h5i-app-sql" }</text>
+        </g>
+        </g>
+        <!-- Extraction connection. -->
+        <g style="color:var(--spot)">
+          <path d="M388 101H442" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
+        </g>
+        <text x="415" y="81" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
+        <text x="415" y="127" class="pd-note" text-anchor="middle">extract</text>
+        <!-- The proof you supply, in an editor of its own. -->
+        <text x="452" y="28" class="pd-label pd-accent">LEAN 4 / THE PROOF YOU SUPPLY</text>
+        <rect x="452" y="44" width="648" height="114" rx="6" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M452 50a6 6 0 0 1 6-6h636a6 6 0 0 1 6 6v22H452z" fill="var(--bg)"/>
+        <path d="M452 72H1100" stroke="var(--line2)"/>
+        <path d="M452 72V44h132v28" fill="var(--panel)" stroke="var(--line2)"/>
+        <path d="M453 44.5H583" stroke="var(--spot)" stroke-width="2"/>
+        <circle cx="466" cy="58" r="3" fill="var(--spot)"/>
+        <text x="478" y="62" class="pd-text">Theorems.lean</text>
+        <g class="pd-ln" text-anchor="end"><text x="482" y="94">79</text><text x="482" y="111">80</text><text x="482" y="128">81</text><text x="482" y="145">82</text></g>
+        <g class="pd-src" xml:space="preserve">
+          <text x="496" y="94"><tspan class="pd-kw">theorem</tspan> authorized (a : Principal) (s : Snapshot) (c : Command) ws r</text>
+          <text x="496" y="111">    (hinv : Inv (Snapshot.toSt s)) (h : transition a s c = .ok (.Ok (ws, r))) :</text>
+          <text x="496" y="128">    &#x2200; w &#x2208; ws.val, allowed (Snapshot.toSt s) a.user.val w</text>
+          <text x="496" y="145"><tspan class="pd-kw">    := by</tspan> &#x2026;</text>
+        </g>
+      </svg>
+      <!-- The console, in a browser window: the Apps view reading this kernel's receipt.
+           HTML over the svg, not a foreignObject: iOS Safari misplaces HTML inside one. -->
+      <div class="pd-overlay">
+          <div class="browser-win pd-win">
+            <div class="win-bar"><span class="win-tab on"><i class="fav"></i>h5i console &#183; apps</span><span class="win-plus">+</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
+            <div class="bw-url"><span class="bw-nav">&#8592;</span><span class="bw-nav dim">&#8594;</span><span class="bw-nav">&#8635;</span><span class="bw-addr"><i class="lock"></i><span class="bw-text">localhost:8765/#/apps/board/theorems</span></span></div>
+            <div class="console-plate pd-ui">
+              <div class="pu-app">
+                <div class="pu-rail"><div class="pu-brand">h<b>5</b>i</div><div>Overview</div><div>Sessions</div><div>Sandboxes</div><div class="on">Apps</div><div>Host</div></div>
+                <div class="pu-main">
+                  <div class="pu-head"><b>board</b><code>examples/app/board</code><span class="pu-pill">receipt &#183; just now</span></div>
+                  <div class="pu-tabs"><span>Spec</span><span class="on">Theorems <i>3</i></span><span>Trust boundary</span><span>Evidence</span></div>
+                  <table class="pu-table">
+                    <tr><th>theorem</th><th>status</th><th>mutants</th><th>axioms</th></tr>
+                    <tr><td><code>authorized</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">4 of 4 caught</span></td><td>standard</td></tr>
+                    <tr><td><code>inv_preserved</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">5 of 5 caught</span></td><td>standard</td></tr>
+                    <tr><td><code>transition_total</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">3 of 3 caught</span></td><td>standard</td></tr>
+                  </table>
+                </div>
               </div>
-              <div class="vim-st"><b class="vim-mode dim">NORMAL</b><span>proofs/Spec.lean</span><span class="r">lean · 40:44</span></div>
-            </div>
-            <div class="vim-win vim-thm">
-              <div class="vim-buf">
-<div class="vl"><b class="vsign"></b><i>79</i><span><span class="vk">theorem</span> <span class="vi">authorized</span> <span class="vp">(</span><span class="vi">a</span> <span class="vp">:</span> <span class="vt">Principal</span><span class="vp">)</span> <span class="vp">(</span><span class="vi">s</span> <span class="vp">:</span> <span class="vt">Snapshot</span><span class="vp">)</span> <span class="vp">(</span><span class="vi">c</span> <span class="vp">:</span> <span class="vt">Command</span><span class="vp">)</span> <span class="vi">ws</span> <span class="vi">r</span></span></div>
-<div class="vl"><b class="vsign"></b><i>80</i><span>    <span class="vp">(</span><span class="vi">hinv</span> <span class="vp">:</span> <span class="vt">Inv</span> <span class="vp">(</span><span class="vt">Snapshot.toSt</span> <span class="vi">s</span><span class="vp">)</span><span class="vp">)</span> <span class="vp">(</span><span class="vi">h</span> <span class="vp">:</span> <span class="vi">transition</span> <span class="vi">a</span> <span class="vi">s</span> <span class="vi">c</span> <span class="vp">=</span> <span class="vp">.</span><span class="vi">ok</span> <span class="vp">(</span><span class="vp">.</span><span class="vt">Ok</span> <span class="vp">(</span><span class="vi">ws</span><span class="vp">,</span> <span class="vi">r</span><span class="vp">)</span><span class="vp">)</span><span class="vp">)</span> <span class="vp">:</span></span></div>
-<div class="vl"><b class="vsign"></b><i>81</i><span>    <span class="vp">∀</span> <span class="vi">w</span> <span class="vp">∈</span> <span class="vi">ws.val</span><span class="vp">,</span> <span class="vi">allowed</span> <span class="vp">(</span><span class="vt">Snapshot.toSt</span> <span class="vi">s</span><span class="vp">)</span> <span class="vi">a.user.val</span> <span class="vi">w</span> <span class="vp">:</span><span class="vp">=</span> <span class="vk">by</span></span></div>
-<div class="vl vfold"><i>82</i><span>+-- 31 lines: rcases writes_of a s c ws r h with ····· </span></div>
-              </div>
-              <div class="vim-st"><b class="vim-mode dim">NORMAL</b><span>proofs/Theorems.lean</span><span class="r">lean · 79:9</span></div>
             </div>
           </div>
-        </div>
-        <div class="vim-out"><div><span class="td">extract  kernel → proofs/generated/</span></div><div><span class="to">authorized          </span><span class="tg">proven</span></div><div><span class="to">inv_preserved       </span><span class="tg">proven</span></div><div><span class="to">transition_total    </span><span class="tg">proven</span></div></div>
-        <div class="vim-cmd"><span class="vim-cmdline">:!h5i app prove</span><span class="cur"></span></div>
       </div>
-      <figcaption id="vim-cap">The delete rule of the <a href="https://github.com/h5i-dev/h5i/tree/main/examples/app/board">board example</a>: the Rust kernel, the rule it must obey, and <code>authorized</code>, the theorem that every write it makes is allowed. <code>h5i app mutate</code> breaks the kernel on purpose; a proof that still builds would prove nothing.</figcaption>
+      </div>
     </figure>
     <div class="hero-actions">
       <a href="https://github.com/h5i-dev/h5i/tree/main/examples/app" class="btn btn-primary">Explore the Rust tutorials</a>
@@ -1262,8 +1323,18 @@ document.querySelectorAll('.cta-film').forEach(function (fig) {
   fig.querySelector('.film-poster').addEventListener('click', play);
   toggle.addEventListener('click', play);
 });
+document.querySelectorAll('.pd-stage').forEach(function (st) {
+  function fit() { st.style.setProperty('--pd-s', st.clientWidth / 1100); }
+  fit();
+  if (window.ResizeObserver) new ResizeObserver(fit).observe(st); else addEventListener('resize', fit);
+});
+document.querySelectorAll('.proof-diagram .ed-tab').forEach(function (t) {
+  function pick() { document.getElementById(t.getAttribute('data-tab')).checked = true; }
+  t.addEventListener('click', pick);
+  t.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+});
 </script>
-<script src="/_static/replay.js?v=d3521a209a" defer></script>
+<script src="/_static/replay.js?v=3c21df66fd" defer></script>
 </body>
 </html>
 
