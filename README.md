@@ -69,6 +69,10 @@ Let AI agents explore, attack, and test web applications using h5i's integrated 
 - **Reproducible testing:** Save confirmed attack flows and replay them in CI/CD to catch security regressions.
 - **Sandboxed workflow**: Run agents in isolated environments with configurable filesystem and network restrictions.
 
+<p align="center">
+  <img src="./docs/_static/agent-audit-target.svg" alt="A coding agent auditing target.com with h5i commands while the browser captures its traffic" width="99%" />
+</p>
+
 See the [CLI manual](docs/MANUAL.md) for complete documentation and the [CI regression example](examples/security-regression-ci) for automated security testing.
 
 ---

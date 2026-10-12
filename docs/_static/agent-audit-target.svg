@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="680" viewBox="0 0 1500 680" role="img" aria-labelledby="title desc">
+<title id="title">An agent auditing target.com with h5i</title>
+<desc id="desc">Dark two-panel illustration. On the left, the target web app in a browser: an order page for alice with a View invoice button tagged @e3, and a capture strip listing the requests h5i recorded, including a replayed request that returned another user's order. On the right, a coding agent harness: the prompt "Audit target.com with h5i", followed by h5i commands that open a capturing browser, crawl, click @e3, replay the order request with a different id, diff the responses, and file an IDOR finding.</desc>
+<rect width="1500" height="680" fill="#0a0a0c"/>
+<rect x="20" y="28" width="700" height="624" rx="4" fill="#101013"/>
+<path d="M20 120V32a4 4 0 0 1 4-4H716a4 4 0 0 1 4 4V120Z" fill="#16161a"/>
+<path d="M20 120.5H720" stroke="#24242a"/>
+<rect x="20.5" y="28.5" width="699" height="623" rx="4" fill="none" stroke="#24242a"/>
+<rect x="40" y="50" width="30" height="20" rx="3" fill="#e0241b" fill-opacity="0.14"/>
+<text x="55" y="64" text-anchor="middle" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="11.5" font-weight="600" fill="#ff6258">01</text>
+<text x="82" y="68" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="21" font-weight="500" letter-spacing="-0.4" fill="#ededf0">Target</text>
+<text x="82" y="92" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="12.5" fill="#75757f">target.com · any framework, no changes</text>
+<rect x="760" y="28" width="720" height="624" rx="4" fill="#101013"/>
+<path d="M760 120V32a4 4 0 0 1 4-4H1476a4 4 0 0 1 4 4V120Z" fill="#16161a"/>
+<path d="M760 120.5H1480" stroke="#24242a"/>
+<rect x="760.5" y="28.5" width="719" height="623" rx="4" fill="none" stroke="#24242a"/>
+<rect x="780" y="50" width="30" height="20" rx="3" fill="#e0241b" fill-opacity="0.14"/>
+<text x="795" y="64" text-anchor="middle" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="11.5" font-weight="600" fill="#ff6258">02</text>
+<text x="822" y="68" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="21" font-weight="500" letter-spacing="-0.4" fill="#ededf0">Agent harness</text>
+<text x="822" y="92" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="12.5" fill="#75757f">Claude Code, Codex, any coding agent</text>
+<path d="M754 70h-20m6-6-6 6 6 6" fill="none" stroke="#4e4e57" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="40" y="140" width="660" height="492" rx="6" fill="#16161a" stroke="#24242a"/>
+<circle cx="58" cy="158" r="5" fill="#3a3a42"/>
+<circle cx="74" cy="158" r="5" fill="#3a3a42"/>
+<circle cx="90" cy="158" r="5" fill="#3a3a42"/>
+<rect x="112" y="147" width="570" height="22" rx="4" fill="#0e0e11" stroke="#24242a"/>
+<path d="M124 156.5v-2a3 3 0 0 1 6 0v2" fill="none" stroke="#75757f" stroke-width="1.3"/><rect x="122.5" y="156.5" width="9" height="7" rx="1.2" fill="#75757f"/>
+<text x="140" y="163" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12"><tspan fill="#4e4e57">https://</tspan><tspan fill="#ededf0">target.com</tspan><tspan fill="#a8a8b2">/account/orders/1041</tspan></text>
+<text x="594" y="163" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="11"><tspan fill="#ff6258">● </tspan><tspan fill="#75757f">capturing</tspan></text>
+<rect x="41" y="176" width="658" height="300" fill="#f3f2ee"/>
+<rect x="41" y="176" width="658" height="44" fill="#ffffff"/><path d="M41 220.5H699" stroke="#e2e0da"/>
+<rect x="61" y="189" width="18" height="18" rx="4" fill="#1d1d22"/>
+<text x="87" y="203" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="16" fill="#1d1d22" font-weight="700" letter-spacing="-0.4">acme</text>
+<text x="161" y="203" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13" fill="#8a8880">Shop</text>
+<text x="231" y="203" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13" fill="#1d1d22" font-weight="600">Orders</text>
+<text x="301" y="203" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13" fill="#8a8880">Account</text>
+<text x="679" y="203" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="12.5" fill="#5f5d57" text-anchor="end">alice@target.com</text>
+<text x="65" y="256" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="22" fill="#1d1d22" font-weight="600" letter-spacing="-0.5">Order #1041</text>
+<text x="65" y="277" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="12.5" fill="#8a8880">Placed Oct 2 · shipping to 12 Elm St</text>
+<rect x="595" y="242" width="80" height="22" rx="11" fill="#e6f2e9"/>
+<text x="635" y="257" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="11.5" fill="#2f7a46" text-anchor="middle" font-weight="600">Delivered</text>
+<rect x="65" y="296" width="610" height="112" rx="6" fill="#ffffff" stroke="#e2e0da"/>
+<text x="85" y="326" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13.5" fill="#1d1d22">Wireless keyboard</text>
+<text x="519" y="326" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13" fill="#8a8880">× 1</text>
+<text x="655" y="326" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13.5" fill="#1d1d22" text-anchor="end">$89.00</text>
+<path d="M85 339.5H655" stroke="#eeece6"/>
+<text x="85" y="360" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13.5" fill="#1d1d22">USB-C cable, 2 m</text>
+<text x="519" y="360" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13" fill="#8a8880">× 2</text>
+<text x="655" y="360" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13.5" fill="#1d1d22" text-anchor="end">$24.00</text>
+<path d="M85 373.5H655" stroke="#eeece6"/>
+<text x="85" y="394" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13.5" fill="#1d1d22" font-weight="600">Total</text>
+<text x="655" y="394" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13.5" fill="#1d1d22" text-anchor="end" font-weight="600">$113.00</text>
+<rect x="65" y="424" width="132" height="34" rx="6" fill="#1d1d22"/>
+<text x="131" y="446" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13" fill="#ffffff" text-anchor="middle" font-weight="600">View invoice</text>
+<rect x="60.5" y="419.5" width="141" height="43" rx="8" fill="none" stroke="#c586c0" stroke-width="1.5" stroke-dasharray="4 3"/>
+<rect x="207" y="431" width="36" height="20" rx="3" fill="#c586c0"/>
+<text x="225" y="445.5" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="11.5" fill="#ffffff" text-anchor="middle" font-weight="600">@e3</text>
+<text x="213" y="445" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14" fill="#75757f"></text>
+<rect x="255" y="424" width="120" height="34" rx="6" fill="none" stroke="#d6d4cd"/>
+<text x="315" y="446" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13" fill="#1d1d22" text-anchor="middle">Track parcel</text>
+<path d="M40 476.5H700" stroke="#24242a"/>
+<text x="56" y="498" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="10.5" fill="#75757f" letter-spacing="1">CAPTURED BY h5i</text>
+<text x="684" y="498" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="10.5" fill="#4e4e57" text-anchor="end">41 requests</text>
+<text x="60" y="529.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#dcdcaa">req_17</tspan><tspan fill="#a8a8b2">  </tspan><tspan fill="#569cd6">GET </tspan><tspan fill="#a8a8b2">  </tspan><tspan fill="#a8a8b2">/account/orders/1041</tspan></text>
+<text x="450" y="529.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#4ec9b0">200</tspan></text>
+<text x="680" y="529.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12" text-anchor="end"><tspan fill="#4e4e57">html</tspan></text>
+<text x="60" y="559.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#dcdcaa">req_31</tspan><tspan fill="#a8a8b2">  </tspan><tspan fill="#569cd6">GET </tspan><tspan fill="#a8a8b2">  </tspan><tspan fill="#a8a8b2">/api/me</tspan></text>
+<text x="450" y="559.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#4ec9b0">200</tspan></text>
+<text x="680" y="559.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12" text-anchor="end"><tspan fill="#4e4e57">json</tspan></text>
+<rect x="48" y="572" width="644" height="26" rx="3" fill="#569cd6" fill-opacity="0.10"/>
+<text x="60" y="589.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#dcdcaa">req_42</tspan><tspan fill="#a8a8b2">  </tspan><tspan fill="#569cd6">GET </tspan><tspan fill="#a8a8b2">  </tspan><tspan fill="#a8a8b2">/api/orders?id=1041</tspan></text>
+<text x="450" y="589.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#4ec9b0">200</tspan></text>
+<text x="680" y="589.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12" text-anchor="end"><tspan fill="#a8a8b2">owner: alice</tspan></text>
+<rect x="48" y="602" width="644" height="26" rx="3" fill="#e0241b" fill-opacity="0.14"/>
+<rect x="48" y="602" width="2.5" height="26" fill="#ff6258"/>
+<text x="60" y="619.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#dcdcaa">req_43</tspan><tspan fill="#a8a8b2">  </tspan><tspan fill="#569cd6">GET </tspan><tspan fill="#a8a8b2">  </tspan><tspan fill="#a8a8b2">/api/orders?id=1042</tspan></text>
+<text x="450" y="619.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#4ec9b0">200</tspan></text>
+<text x="680" y="619.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12" text-anchor="end"><tspan fill="#ff6258">owner: bob </tspan><tspan fill="#75757f">≠ alice</tspan></text>
+<rect x="780" y="142" width="680" height="40" rx="6" fill="#1c1c21"/>
+<text x="798" y="167" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14.5"><tspan fill="#75757f">&gt; </tspan><tspan fill="#ededf0">Audit target.com with h5i</tspan></text>
+<circle cx="789" cy="207.5" r="4" fill="#ededf0"/>
+<text x="804" y="212" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="14" fill="#ededf0">I&#x27;ll open a capturing session and map the surface first.</text>
+<circle cx="789" cy="234.5" r="4" fill="#6a9955"/>
+<text x="804" y="239" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="13"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">browser open </tspan><tspan fill="#a8a8b2">https://target.com </tspan><tspan fill="#9cdcfe">--capture</tspan><tspan fill="#75757f">)</tspan></text>
+<text x="804" y="260" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#4e4e57">⎿  </tspan><tspan fill="#a8a8b2">session br_7k2xqa · logged in as alice · capturing</tspan></text>
+<circle cx="789" cy="282.5" r="4" fill="#6a9955"/>
+<text x="804" y="287" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="13"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">recon crawl </tspan><tspan fill="#9cdcfe">--max-requests </tspan><tspan fill="#4ec9b0">200 </tspan><tspan fill="#9cdcfe">--rate </tspan><tspan fill="#4ec9b0">4</tspan><tspan fill="#75757f">)</tspan></text>
+<text x="804" y="308" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#4e4e57">⎿  </tspan><tspan fill="#a8a8b2">38 endpoints · 4 take an object id</tspan></text>
+<circle cx="789" cy="330.5" r="4" fill="#6a9955"/>
+<text x="804" y="335" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="13"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">browser click </tspan><tspan fill="#c586c0">@e3</tspan><tspan fill="#75757f">)</tspan></text>
+<text x="804" y="356" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#4e4e57">⎿  </tspan><tspan fill="#a8a8b2">GET /api/orders?id=1041 → 200  req_42</tspan></text>
+<circle cx="789" cy="378.5" r="4" fill="#ededf0"/>
+<text x="804" y="383" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="14" fill="#ededf0">Order ids look sequential. Checking whether they are scoped to alice.</text>
+<circle cx="789" cy="405.5" r="4" fill="#ff6258"/>
+<text x="804" y="410" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="13"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">websec replay </tspan><tspan fill="#a8a8b2">req_42 </tspan><tspan fill="#9cdcfe">--set </tspan><tspan fill="#4ec9b0">query.id=1042</tspan><tspan fill="#75757f">)</tspan></text>
+<text x="804" y="431" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#4e4e57">⎿  </tspan><tspan fill="#ff6258">200 · owner bob@target.com  req_43</tspan></text>
+<circle cx="789" cy="453.5" r="4" fill="#6a9955"/>
+<text x="804" y="458" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="13"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">websec diff </tspan><tspan fill="#a8a8b2">res_42 res_43</tspan><tspan fill="#75757f">)</tspan></text>
+<text x="804" y="479" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#4e4e57">⎿  </tspan><tspan fill="#a8a8b2">owner, address, items, total differ</tspan></text>
+<circle cx="789" cy="501.5" r="4" fill="#6a9955"/>
+<text x="804" y="506" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="13"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">websec finding create </tspan><tspan fill="#9cdcfe">--title </tspan><tspan fill="#ce9178">&#x27;IDOR on /api/orders&#x27;</tspan></text>
+<text x="804" y="527" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="13"><tspan fill="#a8a8b2">      </tspan><tspan fill="#9cdcfe">--evidence </tspan><tspan fill="#a8a8b2">req_42,res_43</tspan><tspan fill="#75757f">)</tspan></text>
+<text x="804" y="548" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#4e4e57">⎿  </tspan><tspan fill="#a8a8b2">fnd_01 · high · evidence linked</tspan></text>
+<circle cx="789" cy="570.5" r="4" fill="#ededf0"/>
+<text x="804" y="575" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="14" fill="#ededf0">alice can read bob&#x27;s order. Logged as fnd_01 with the evidence.</text>
+<rect x="780.5" y="592.5" width="679" height="39" rx="6" fill="none" stroke="#3a3a42"/>
+<text x="798" y="617" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14.5"><tspan fill="#75757f">&gt; </tspan></text>
+<rect x="818" y="604" width="8" height="17" fill="#75757f"/>
+<text x="1444" y="617" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="11.5" fill="#4e4e57" text-anchor="end">fnd_01 high · 1 finding</text>
+</svg>
