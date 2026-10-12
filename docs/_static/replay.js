@@ -632,9 +632,7 @@
     await out([[['d', '  aeneas   shop_kernel.llbc → proofs/generated/']]], 200);
     stage.classList.remove('nolean');
     leanSt.textContent = 'proofs/generated/ShopKernel.lean';
-    // one buffer: the generated definitions, then the rule written under them
-    var gs = pane(leanBuf, GEN.concat(['']).concat(LEAN).map(function () { return ''; }), 'lean', 214);
-    gs.slice(GEN.length).forEach(function (r) { r.style.display = 'none'; });
+    var gs = pane(leanBuf, GEN.map(function () { return ''; }), 'lean', 214);
     var aw;
     for (var i = 0; i < GEN.length; i++) {
       gs[i].querySelector('.sx').innerHTML = tint(GEN[i], 'lean');
@@ -648,13 +646,13 @@
     aw.fade();
     prompt(); await sleep(700);
 
-    // scroll down past them and state the rule, as it is stated
-    gs[GEN.length].style.display = '';
-    var ls = gs.slice(GEN.length + 1);
-    await sleep(300);
+    // the rule, written as it is stated
+    leanSt.textContent = 'proofs/Theorems.lean';
+    var ls = pane(leanBuf, LEAN.map(function () { return ''; }), 'lean', 12);
+    leanBuf.scrollTop = 0;
+    await sleep(600);
     for (var i = 0; i < LEAN.length; i++) {
       var sx = ls[i].querySelector('.sx'), t = LEAN[i];
-      ls[i].style.display = ''; leanBuf.scrollTop = leanBuf.scrollHeight;
       if (/^\+--/.test(t)) { ls[i].classList.add('sfold'); sx.textContent = t; continue; }
       for (var j = 1; j <= t.length; j += 2) { sx.innerHTML = tint(t.slice(0, j), 'lean'); await sleep(14); }
       sx.innerHTML = tint(t, 'lean');
