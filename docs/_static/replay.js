@@ -2,9 +2,9 @@
  *
  * Two acts, played in a random order. In one, an agent attacks a running shop
  * from the shell on the right while the code that serves it, on the left, lights
- * up line by line until the missing check shows. In the other, a Rust kernel's
- * rule is stated in Lean and proven, then the same bug is put back on purpose
- * and the proof refuses it. The tmux window list switches acts; the stage stops
+ * up line by line until the missing check shows. In the other, a Rust kernel is
+ * written, extracted to Lean, its rule stated and proven, then the same bug is
+ * put back on purpose and the proof refuses it. The tmux window list switches acts; the stage stops
  * when off screen, when the tab is hidden or when paused, and with reduced
  * motion it shows one act's last frame.
  */
@@ -14,7 +14,7 @@
   var $ = function (sel) { return stage.querySelector(sel); };
   var codeBuf = $('.pane-code .pane-buf'), codeSt = $('.pane-code .pane-st span');
   var codePos = $('.pane-code .pane-st .r'), codeMode = $('.pane-code .pane-mode');
-  var leanBuf = $('.pane-lean .pane-buf'), shBuf = $('.pane-sh .pane-buf');
+  var leanBuf = $('.pane-lean .pane-buf'), leanSt = $('.pane-lean .pane-st span'), shBuf = $('.pane-sh .pane-buf');
   var shLabel = $('.pane-sh .pane-st span'), shRight = $('.pane-sh .pane-st .r');
   var wins = [].slice.call(stage.querySelectorAll('.tmux-win'));
   var toggle = $('.tmux-pause'), info = $('.tmux-info');
@@ -23,7 +23,7 @@
   var KW = {
     ts: 'import from export const async await return if new',
     rs: 'fn match if else let return true false',
-    lean: 'def theorem by fun'
+    lean: 'def theorem by fun do let match with if then else'
   };
   for (var k in KW) KW[k] = KW[k].split(' ');
   function esc(s) { return s.replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
@@ -196,7 +196,7 @@
       return { x: b.l + 1, y: b.y };
     }
     function curve(f, t) {
-      var dx = Math.max(40, Math.abs(f.x - t.x) * 0.45);
+      var dx = Math.max(40, Math.abs(f.x - t.x) * 0.45) * (f.x > t.x ? 1 : -1);
       return 'M' + f.x.toFixed(1) + ' ' + f.y.toFixed(1) + 'C' + (f.x - dx).toFixed(1) + ' ' + f.y.toFixed(1) + ' ' +
         (t.x + dx).toFixed(1) + ' ' + t.y.toFixed(1) + ' ' + t.x.toFixed(1) + ' ' + t.y.toFixed(1);
     }
@@ -243,6 +243,11 @@
       proof: function (thmRow, row, tag, cls) {
         if (fast || host.clientWidth < 760) return NONE;
         return wire(textStart(thmRow), textEnd(row), tag, cls);
+      },
+      // from a Rust row to the Lean it was extracted into
+      extract: function (row, genRow, tag) {
+        if (fast || host.clientWidth < 760) return NONE;
+        return wire(textEnd(row), textStart(genRow), tag);
       },
       end: textEnd,
       clear: function () { while (svg.firstChild) svg.removeChild(svg.firstChild); }
@@ -535,7 +540,7 @@
 
   /* ── act 2: prove correctness ───────────────────────────── */
   var RS = [
-    '/// One order, to its owner and to no one else.',
+    'use h5i_app::schema::schema;',
     '',
     'fn read_order(user: u64, s: &Snapshot, id: u64) -> Outcome {',
     '    match find_order(&s.orders, id) {',
@@ -564,6 +569,26 @@
     '    }',
     '}'
   ];
+  // what Aeneas writes for read_order: nothing here is by hand
+  var GEN = [
+    '/-- [shop_kernel::read_order]:',
+    "    Source: 'kernel/src/lib.rs', lines 3:0-14:1 -/",
+    'def read_order',
+    '  (user : Std.U64) (s : Snapshot) (id : Std.U64) :',
+    '  Result (core.result.Result ((alloc.vec.Vec Write) × Reply) Error)',
+    '  := do',
+    '  let o ← find_order s.orders id',
+    '  match o with',
+    '  | none => ok (core.result.Result.Err Error.NotFound)',
+    '  | some o1 =>',
+    '    if o1.owner = user',
+    '    then',
+    '      let o2 ← Order.Insts.CoreCloneClone.clone o1',
+    '      ok (core.result.Result.Ok (alloc.vec.Vec.new Write, Reply.Order o2))',
+    '    else ok (core.result.Result.Err Error.Forbidden)'
+  ];
+  // the Rust line each generated line comes from, as an index into RS
+  var GEN_FROM = [0, 0, 2, 2, 2, 2, 3, 3, 4, 5, 6, 7, 7, 7, 9];
   var LEAN = [
     'def visible (s : St) (u : Nat) : Reply → Prop',
     '  | .Order o => o.owner.val = u',
@@ -578,13 +603,53 @@
     stage.dataset.act = 'prove'; wires.clear(); eye.reset();
     codeSt.textContent = 'kernel/src/lib.rs'; codeMode.textContent = 'NORMAL';
     shLabel.textContent = 'agent@box: ~/shop';
-    var rs = pane(codeBuf, RS, 'rs', 38);
-    codePos.textContent = 'rs · 44:16';
-    rs.forEach(function (r) { r.dataset.lang = 'rs'; });
+    stage.classList.add('nolean');
+    var rs = pane(codeBuf, RS, 'rs', 1);
+    rs.forEach(function (r) { r.dataset.lang = 'rs'; r.style.display = 'none'; });
     shRight.textContent = 'lean 4'; info.textContent = 'kernel · proofs';
     sh.lines = []; prompt();
+    // the kernel pours in, as an agent writes it
+    await sleep(500);
+    codeMode.textContent = 'INSERT';
+    for (var i = 0; i < RS.length; i++) {
+      var sx = rs[i].querySelector('.sx'), t = RS[i];
+      rs[i].style.display = '';
+      for (var j = 1; j <= t.length; j += 6) {
+        sx.innerHTML = tint(t.slice(0, j), 'rs');
+        codePos.textContent = 'rs · ' + (1 + i) + ':' + j;
+        await sleep(12);
+      }
+      sx.innerHTML = t ? tint(t, 'rs') : '';
+      codeBuf.scrollTop = codeBuf.scrollHeight;
+      await sleep(30);
+    }
+    codeMode.textContent = 'NORMAL'; codePos.textContent = 'rs · 7:16';
+    await sleep(700);
+
+    // Charon and Aeneas turn the kernel into Lean definitions
+    await type('h5i app extract', '# Rust → Lean, nothing by hand');
+    await out([[['d', '  charon   kernel → shop_kernel.llbc']]], 300);
+    await out([[['d', '  aeneas   shop_kernel.llbc → proofs/generated/']]], 200);
+    stage.classList.remove('nolean');
+    leanSt.textContent = 'proofs/generated/ShopKernel.lean';
+    var gs = pane(leanBuf, GEN.map(function () { return ''; }), 'lean', 214);
+    var aw;
+    for (var i = 0; i < GEN.length; i++) {
+      gs[i].querySelector('.sx').innerHTML = tint(GEN[i], 'lean');
+      heat([rs[GEN_FROM[i]]]);
+      if (i === 2) aw = wires.extract(rs[2], gs[2], 'aeneas');
+      leanBuf.scrollTop = leanBuf.scrollHeight;
+      await sleep(70);
+    }
+    await out([[['o', '  extracted '], ['k', 'shop-kernel'], ['o', ' to proofs/generated/ShopKernel.lean']]]);
+    await sleep(1600);
+    aw.fade();
+    prompt(); await sleep(700);
+
     // the rule, written as it is stated
+    leanSt.textContent = 'proofs/Theorems.lean';
     var ls = pane(leanBuf, LEAN.map(function () { return ''; }), 'lean', 12);
+    leanBuf.scrollTop = 0;
     await sleep(600);
     for (var i = 0; i < LEAN.length; i++) {
       var sx = ls[i].querySelector('.sx'), t = LEAN[i];

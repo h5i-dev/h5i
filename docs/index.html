@@ -594,6 +594,8 @@
     .pane-right .pane { flex: 1; }
     .pane-lean { display: none; }
     .stage[data-act="prove"] .pane-lean { display: flex; flex: 0 0 auto; border-bottom: 1px solid var(--line2); }
+    .stage.nolean .pane-lean { display: none; }
+    .pane-lean .pane-buf { max-height: calc(16 * 1.22em + 20px); }
     .pane-buf { flex: 1; min-height: 0; padding: 10px 0; overflow: hidden; }
     /* what scrolls off the top fades rather than being cut through a line */
     .pane-sh .pane-buf, .pane-code .pane-buf { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18px); mask-image: linear-gradient(to bottom, transparent, #000 18px); }
@@ -837,7 +839,7 @@
         <span class="tmux-info">shop.example.test</span>
         <button class="tmux-pause" type="button" aria-pressed="false">Pause</button>
       </div>
-      <figcaption id="stage-cap" class="sr-only">Two scenes. In one, an agent drives a shop through h5i, replays an order request with another order id, gets a different customer's order back, and the shop's code shows the query that never checked the owner. In the other, the same rule is written in Lean 4 for a Rust kernel and proven; then the owner check is removed on purpose and the proof fails, so the mutant is caught.</figcaption>
+      <figcaption id="stage-cap" class="sr-only">Two scenes. In one, an agent drives a shop through h5i, replays an order request with another order id, gets a different customer's order back, and the shop's code shows the query that never checked the owner. In the other, a Rust kernel is written and h5i app extract translates it into Lean 4 definitions; the same rule is stated in Lean and proven; then the owner check is removed on purpose and the proof fails, so the mutant is caught.</figcaption>
     </figure>
   </div>
 </section>
@@ -1375,7 +1377,7 @@ document.querySelectorAll('.proof-diagram .ed-tab').forEach(function (t) {
   t.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
 });
 </script>
-<script src="/_static/replay.js?v=2fe1f05b1e" defer></script>
+<script src="/_static/replay.js?v=d2b914b49b" defer></script>
 </body>
 </html>
 
