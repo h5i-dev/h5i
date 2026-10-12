@@ -80,39 +80,33 @@
 <circle cx="810" cy="46" r="5" fill="#3a3a42"/>
 <text x="1120.0" y="50.5" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="11.5" fill="#75757f" text-anchor="middle">agent — ~/audit — zsh</text>
 <rect x="772.5" y="78.5" width="695" height="46" rx="5" fill="none" stroke="#d97757" stroke-opacity="0.75"/>
-<text x="786" y="98" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#d97757">✻ </tspan><tspan fill="#ededf0" font-weight="600">Welcome to your coding agent</tspan></text>
-<text x="786" y="115" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="11.5"><tspan fill="#75757f">cwd: ~/audit · skill: h5i · allowed: Bash(h5i *)</tspan></text>
-<rect x="772" y="138" width="696" height="28" rx="3" fill="#1c1c21"/>
-<text x="786" y="157" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="13.5"><tspan fill="#75757f">&gt; </tspan><tspan fill="#ededf0">Audit target.com with h5i</tspan></text>
-<circle cx="781" cy="189.5" r="3.6" fill="#ededf0"/>
-<text x="794" y="194" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13.5" fill="#ededf0">I&#x27;ll open a capturing session and map the surface first.</text>
-<circle cx="781" cy="216.0" r="3.6" fill="#6a9955"/>
-<text x="794" y="220.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">browser open </tspan><tspan fill="#a8a8b2">https://target.com </tspan><tspan fill="#9cdcfe">--capture</tspan><tspan fill="#75757f">)</tspan></text>
-<text x="794" y="240.0" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12"><tspan fill="#4e4e57">  ⎿  </tspan><tspan fill="#a8a8b2">session br_7k2xqa · logged in as alice · capturing</tspan></text>
-<circle cx="781" cy="262.0" r="3.6" fill="#6a9955"/>
-<text x="794" y="266.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">recon crawl </tspan><tspan fill="#9cdcfe">--max-requests </tspan><tspan fill="#4ec9b0">200 </tspan><tspan fill="#9cdcfe">--rate </tspan><tspan fill="#4ec9b0">4</tspan><tspan fill="#75757f">)</tspan></text>
-<text x="794" y="286.0" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12"><tspan fill="#4e4e57">  ⎿  </tspan><tspan fill="#a8a8b2">38 endpoints · 4 take an object id</tspan></text>
-<circle cx="781" cy="308.0" r="3.6" fill="#6a9955"/>
-<text x="794" y="312.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">browser click </tspan><tspan fill="#c586c0">@e3</tspan><tspan fill="#75757f">)</tspan></text>
-<text x="794" y="332.0" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12"><tspan fill="#4e4e57">  ⎿  </tspan><tspan fill="#a8a8b2">GET /api/orders?id=1041 → 200  req_42</tspan></text>
-<circle cx="781" cy="354.0" r="3.6" fill="#ededf0"/>
-<text x="794" y="358.5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13.5" fill="#ededf0">Order ids look sequential. Checking whether they are scoped to alice.</text>
-<circle cx="781" cy="380.5" r="3.6" fill="#ff6258"/>
-<text x="794" y="385.0" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">websec replay </tspan><tspan fill="#a8a8b2">req_42 </tspan><tspan fill="#9cdcfe">--set-each </tspan><tspan fill="#4ec9b0">query.id=./ids.txt</tspan><tspan fill="#75757f">)</tspan></text>
-<text x="794" y="404.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12"><tspan fill="#4e4e57">  ⎿  </tspan><tspan fill="#ff6258">200 · owner bob@target.com    req_43</tspan></text>
-<text x="794" y="424.0" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12"><tspan fill="#4e4e57">  ⎿  </tspan><tspan fill="#ff6258">200 · owner carol@target.com  req_44</tspan></text>
-<circle cx="781" cy="446.0" r="3.6" fill="#6a9955"/>
-<text x="794" y="450.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">websec diff </tspan><tspan fill="#a8a8b2">res_42 res_43</tspan><tspan fill="#75757f">)</tspan></text>
-<text x="794" y="470.0" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12"><tspan fill="#4e4e57">  ⎿  </tspan><tspan fill="#a8a8b2">owner, address, items, total differ</tspan></text>
-<circle cx="781" cy="492.0" r="3.6" fill="#6a9955"/>
-<text x="794" y="496.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">websec finding create </tspan><tspan fill="#9cdcfe">--title </tspan><tspan fill="#ce9178">&#x27;IDOR on /api/orders&#x27;</tspan></text>
-<text x="794" y="516.0" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#a8a8b2">     </tspan><tspan fill="#9cdcfe">--evidence </tspan><tspan fill="#a8a8b2">req_42,res_43,res_44</tspan><tspan fill="#75757f">)</tspan></text>
-<text x="794" y="535.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12"><tspan fill="#4e4e57">  ⎿  </tspan><tspan fill="#a8a8b2">fnd_01 · high · evidence linked</tspan></text>
-<circle cx="781" cy="557.5" r="3.6" fill="#ededf0"/>
-<text x="794" y="562.0" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13.5" fill="#ededf0">alice can read any order by id. Logged as fnd_01 with the evidence.</text>
+<text x="786" y="98" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="13.5"><tspan fill="#d97757">✻ </tspan><tspan fill="#ededf0" font-weight="600">Welcome to your coding agent</tspan></text>
+<text x="786" y="115" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#75757f">cwd: ~/audit · skill: h5i · allowed: Bash(h5i *)</tspan></text>
+<rect x="772" y="136" width="696" height="32" rx="3" fill="#1c1c21"/>
+<text x="786" y="158" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="15.5"><tspan fill="#75757f">&gt; </tspan><tspan fill="#ededf0">Audit target.com with h5i</tspan></text>
+<circle cx="781" cy="195" r="4" fill="#ededf0"/>
+<text x="796" y="200" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="15" fill="#ededf0">I&#x27;ll open a capturing session and look at the orders page.</text>
+<circle cx="781" cy="229" r="4" fill="#6a9955"/>
+<text x="796" y="234" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14.5"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">browser open </tspan><tspan fill="#a8a8b2">https://target.com </tspan><tspan fill="#9cdcfe">--capture</tspan><tspan fill="#75757f">)</tspan></text>
+<text x="796" y="258" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14"><tspan fill="#4e4e57">  ⎿  </tspan><tspan fill="#a8a8b2">session br_7k2xqa · logged in as alice</tspan></text>
+<circle cx="781" cy="287" r="4" fill="#6a9955"/>
+<text x="796" y="292" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14.5"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">browser click </tspan><tspan fill="#c586c0">@e3</tspan><tspan fill="#75757f">)</tspan></text>
+<text x="796" y="316" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14"><tspan fill="#4e4e57">  ⎿  </tspan><tspan fill="#a8a8b2">GET /api/orders?id=1041 → 200  req_42</tspan></text>
+<circle cx="781" cy="345" r="4" fill="#ededf0"/>
+<text x="796" y="350" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="15" fill="#ededf0">Order ids look sequential. Are they scoped to alice?</text>
+<circle cx="781" cy="379" r="4" fill="#ff6258"/>
+<text x="796" y="384" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14.5"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">websec replay </tspan><tspan fill="#a8a8b2">req_42 </tspan><tspan fill="#9cdcfe">--set-each </tspan><tspan fill="#4ec9b0">query.id=./ids.txt</tspan><tspan fill="#75757f">)</tspan></text>
+<text x="796" y="408" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14"><tspan fill="#4e4e57">  ⎿  </tspan><tspan fill="#ff6258">200 · owner bob@target.com    req_43</tspan></text>
+<text x="796" y="432" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14"><tspan fill="#4e4e57">  ⎿  </tspan><tspan fill="#ff6258">200 · owner carol@target.com  req_44</tspan></text>
+<circle cx="781" cy="461" r="4" fill="#6a9955"/>
+<text x="796" y="466" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14.5"><tspan fill="#ededf0" font-weight="600">Bash</tspan><tspan fill="#75757f">(</tspan><tspan fill="#ff6258">h5i </tspan><tspan fill="#dcdcaa">websec finding create </tspan><tspan fill="#9cdcfe">--title </tspan><tspan fill="#ce9178">&#x27;IDOR on /api/orders&#x27;</tspan></text>
+<text x="796" y="490" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14.5"><tspan fill="#a8a8b2">     </tspan><tspan fill="#9cdcfe">--evidence </tspan><tspan fill="#a8a8b2">req_42,res_43,res_44</tspan><tspan fill="#75757f">)</tspan></text>
+<text x="796" y="514" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14"><tspan fill="#4e4e57">  ⎿  </tspan><tspan fill="#a8a8b2">fnd_01 · high · evidence linked</tspan></text>
+<circle cx="781" cy="543" r="4" fill="#ededf0"/>
+<text x="796" y="548" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="15" fill="#ededf0">alice can read any order by id. Logged as fnd_01.</text>
 <rect x="772.5" y="588.5" width="695" height="32" rx="5" fill="none" stroke="#3a3a42"/>
-<text x="786" y="609.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="13.5"><tspan fill="#75757f">&gt; </tspan></text>
+<text x="786" y="610" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="15.5"><tspan fill="#75757f">&gt; </tspan></text>
 <rect x="804" y="597" width="8" height="16" fill="#75757f"/>
-<text x="786" y="639" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="11"><tspan fill="#d97757">⏵⏵ </tspan><tspan fill="#75757f">sandboxed · </tspan><tspan fill="#4e4e57">? for shortcuts</tspan></text>
-<text x="1458" y="639" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="11" fill="#4e4e57" text-anchor="end">1 finding · 41 requests captured</text>
+<text x="786" y="639" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12"><tspan fill="#d97757">⏵⏵ </tspan><tspan fill="#75757f">sandboxed · </tspan><tspan fill="#4e4e57">? for shortcuts</tspan></text>
+<text x="1458" y="639" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12" fill="#4e4e57" text-anchor="end">1 finding · 41 requests captured</text>
 </svg>
