@@ -70,7 +70,7 @@
 <text x="40" y="620.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#dcdcaa">req_44</tspan><tspan fill="#a8a8b2">  </tspan><tspan fill="#569cd6">GET </tspan><tspan fill="#a8a8b2">  </tspan><tspan fill="#a8a8b2">/api/orders?id=1043</tspan></text>
 <text x="470" y="620.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12.5"><tspan fill="#4ec9b0">200</tspan></text>
 <text x="700" y="620.5" xml:space="preserve" font-family="SFMono-Regular, Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="12" text-anchor="end"><tspan fill="#ff6258">owner: carol </tspan><tspan fill="#75757f">≠ alice</tspan></text>
-<path d="M752 340h-24m7-7-7 7 7 7" fill="none" stroke="#4e4e57" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M752 340h-24m7-7-7 7 7 7" fill="none" stroke="#ff6258" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 <rect x="760" y="28" width="720" height="624" rx="6" fill="#0c0c0e"/>
 <path d="M760 64V34a6 6 0 0 1 6-6H1474a6 6 0 0 1 6 6V64Z" fill="#16161a"/>
 <path d="M760 64.5H1480" stroke="#24242a"/>
