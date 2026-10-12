@@ -79,7 +79,7 @@ See the [CLI manual](docs/MANUAL.md) for complete documentation and the [CI regr
 
 ## 3. Prove Correctness: Build on h5i-app
 
-`h5i-app` is an Axum-based Rust web framework that makes application logic amenable to Lean 4.
+[`h5i-app`](crates/h5i-app/README.md) is an Axum-based Rust web framework that makes application logic amenable to Lean 4.
 
 > Red-teaming discovers bugs through testing. Formal verification takes a complementary approach: proving that specified properties hold for all possible inputs and behaviors.
 
@@ -94,8 +94,6 @@ isolation, business logics, and more.
 <p align="center">
   <img src="./docs/_static/calculator-rust-lean-proof.svg" alt="Watching a sandboxed browser session from the host" width="99%" />
 </p>
-
-See the [h5i-app documentation](crates/h5i-app/README.md) for a complete example, the Axum integration, and the formal verification workflow.
 
 ## 4. Dashboard
 
