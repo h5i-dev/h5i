@@ -562,7 +562,9 @@ macro_rules! __mapping_snap {
             tenant: ::h5i_app_core::TenantId,
         ) -> ::std::result::Result<$krate::$snap, ::h5i_app_pg::DbError> {
             let spec = schema_spec();
-            let rows = $krate::Rows { $($f: ::h5i_app_pg::load_table(tx, tenant, &spec, $krate::$t::TABLE, None).await?,)* };
+            // Every table's SELECT is sent before any result is awaited.
+            let mut got = ::h5i_app_pg::load_tables(tx, tenant, &spec, &[$($krate::$t::TABLE),*]).await?.into_iter();
+            let rows = $krate::Rows { $($f: got.next().unwrap_or_default(),)* };
             $krate::decode(&rows).ok_or_else(|| ::h5i_app_pg::DbError::Decode("stored rows do not decode".into()))
         }
 
@@ -575,10 +577,17 @@ macro_rules! __mapping_snap {
             plan: &::std::vec::Vec<::h5i_app_pg::sql::Read>,
         ) -> ::std::result::Result<$krate::$snap, ::h5i_app_pg::DbError> {
             let spec = schema_spec();
-            let rows = $krate::Rows { $($f: match plan.iter().find(|q| q.table == $krate::$t::TABLE) {
-                Some(q) => ::h5i_app_pg::load_read(tx, tenant, &spec, q).await?,
-                None => ::std::vec::Vec::new(),
-            },)* };
+            // The read of each table, in field order; all of them are sent
+            // before any result is awaited.
+            let reads: ::std::vec::Vec<::std::option::Option<&::h5i_app_pg::sql::Read>> =
+                ::std::vec![$(plan.iter().find(|q| q.table == $krate::$t::TABLE)),*];
+            let wanted: ::std::vec::Vec<&::h5i_app_pg::sql::Read> = reads.iter().filter_map(|q| *q).collect();
+            let mut got = ::h5i_app_pg::load_reads(tx, tenant, &spec, &wanted).await?.into_iter();
+            let mut each = reads.iter().map(|q| match q {
+                ::std::option::Option::Some(_) => got.next().unwrap_or_default(),
+                ::std::option::Option::None => ::std::vec::Vec::new(),
+            });
+            let rows = $krate::Rows { $($f: { let _ = $krate::$t::TABLE; each.next().unwrap_or_default() },)* };
             $krate::decode(&rows).ok_or_else(|| ::h5i_app_pg::DbError::Decode("stored rows do not decode".into()))
         }
 

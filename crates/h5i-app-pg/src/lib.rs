@@ -32,7 +32,7 @@ mod table;
 mod reads_test;
 
 pub use roles::{lockdown, lockdown_sql};
-pub use table::{column_of, count_read, create_index, create_tables, load_read, load_table, spec, store_writes, ColumnDef, Kind, PgField, Table, Value};
+pub use table::{column_of, count_read, create_index, create_tables, load_read, load_reads, load_table, load_tables, spec, store_writes, ColumnDef, Kind, PgField, Table, Value};
 pub use h5i_app_core::Timestamp;
 pub use h5i_app_sql as sql;
 pub use h5i_app_pgsql as pgsql;
@@ -48,7 +48,8 @@ use tokio_postgres::error::SqlState;
 use tokio_postgres::{IsolationLevel, NoTls, Transaction};
 
 /// The transaction a `Store` works in. Offers only this crate's table operations.
-pub struct Tx<'a>(pub(crate) &'a Transaction<'a>);
+/// Its statements are prepared once per connection (deadpool's statement cache).
+pub struct Tx<'a>(pub(crate) &'a deadpool_postgres::Transaction<'a>);
 
 impl Tx<'_> {
     /// Backend process id, so fault tests can kill this connection.

@@ -151,14 +151,14 @@ shared the CPUs with a Lean build, so it understates the throughput.
 | favorite | 16 | 529.6 | 26.58 | 79.15 | 0 | 5449 | 134 | 5315 |
 | favorite | 64 | 991.2 | 60.29 | 143.37 | 0 | 10327 | 320 | 10007 |
 
-| scenario, concurrency 64 | baseline | step 1 | step 2 | steps 3+5 | final |
-|---|---:|---:|---:|---:|---:|
-| get-article (req/s) | 13.0 | 122.2 | 113.1 | 1991.4 | 3831.4 |
-| list | 12.4 | 124.2 | 108.7 | 1557.1 | 3862.9 |
-| list-tag | 5.1 | 65.9 | 72.0 | 1519.1 | 3894.2 |
-| feed | 13.0 | 120.2 | 108.6 | 1573.4 | 3063.6 |
-| favorite | 12.5 | 11.3 | 7.6 | 991.2 | 2440.1 |
-| favorite retries / attempts | 0 / 188 | 0 / 175 | 1366 / 1448 | 320 / 10327 | 533 / 25000 |
+| scenario, concurrency 64 | baseline | step 1 | step 2 | steps 3+5 | final | step 6 |
+|---|---:|---:|---:|---:|---:|---:|
+| get-article (req/s) | 13.0 | 122.2 | 113.1 | 1991.4 | 3831.4 | 15246.7 |
+| list | 12.4 | 124.2 | 108.7 | 1557.1 | 3862.9 | 8027.6 |
+| list-tag | 5.1 | 65.9 | 72.0 | 1519.1 | 3894.2 | 7519.7 |
+| feed | 13.0 | 120.2 | 108.6 | 1573.4 | 3063.6 | 5474.5 |
+| favorite | 12.5 | 11.3 | 7.6 | 991.2 | 2440.1 | 4371.1 |
+| favorite retries / attempts | 0 / 188 | 0 / 175 | 1366 / 1448 | 320 / 10327 | 533 / 25000 | 624 / 44404 |
 
 A single request takes 8-26 ms instead of ~80 ms, and throughput now grows
 with concurrency. Favorites of different articles still retry about 3% of
@@ -196,6 +196,64 @@ Against the baseline, at concurrency 64: get-article 13 → 3,831 requests/s,
 listing 12 → 3,863, listing by tag 5 → 3,894, feed 13 → 3,064, favorite 12
 → 2,440 (2% retries); single requests take 6-9 ms instead of ~80 ms.
 
+## Step 6: prepared statements and pipelined plans
+
+Every statement of a `Store` (reads, plan reads, writes, outbox rows) is
+now prepared once per connection (deadpool's statement cache) and reused,
+instead of being sent as text to be parsed and planned again. The reads of a
+plan, and the per-table `SELECT`s of a whole-tenant load, are all sent on
+the transaction's connection before any result is awaited (tokio-postgres
+pipelines them), so an article view costs about one round trip instead of
+five. The SQL text, its parameters and the transaction are the same, so
+each read returns the same rows from the same snapshot; nothing in the
+proofs changed. The differential test also runs each case's reads
+pipelined.
+
+Before (HEAD of step 5, rerun right before the change, host load ~7):
+
+| scenario | conc | req/s | p50 ms | p99 ms | non-2xx | attempts | retries | commits |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| get-article | 1 | 193.9 | 5.50 | 6.24 | 0 | 1939 | 0 | 1939 |
+| get-article | 16 | 2275.3 | 6.98 | 9.04 | 0 | 22773 | 0 | 22773 |
+| get-article | 64 | 4102.6 | 15.40 | 19.12 | 0 | 41112 | 0 | 41112 |
+| list | 1 | 162.5 | 5.71 | 9.27 | 0 | 1625 | 0 | 1625 |
+| list | 16 | 1954.7 | 8.14 | 10.94 | 0 | 19565 | 0 | 19565 |
+| list | 64 | 3780.7 | 16.84 | 20.03 | 0 | 37888 | 0 | 37888 |
+| list-tag | 1 | 113.7 | 8.95 | 11.05 | 0 | 1138 | 0 | 1138 |
+| list-tag | 16 | 1922.7 | 8.03 | 11.72 | 0 | 19244 | 0 | 19244 |
+| list-tag | 64 | 3902.4 | 16.27 | 19.67 | 0 | 39097 | 0 | 39097 |
+| feed | 1 | 155.7 | 6.08 | 9.35 | 0 | 1557 | 0 | 1557 |
+| feed | 16 | 1613.9 | 10.01 | 12.61 | 0 | 16158 | 0 | 16158 |
+| feed | 64 | 3176.3 | 20.07 | 24.12 | 0 | 31837 | 0 | 31837 |
+| favorite | 1 | 111.5 | 9.00 | 12.01 | 0 | 1115 | 0 | 1115 |
+| favorite | 16 | 1282.4 | 12.16 | 24.83 | 0 | 13104 | 265 | 12839 |
+| favorite | 64 | 2375.5 | 26.26 | 53.39 | 0 | 24356 | 529 | 23827 |
+
+After (load ~13):
+
+| scenario | conc | req/s | p50 ms | p99 ms | non-2xx | attempts | retries | commits |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| get-article | 1 | 696.5 | 1.43 | 1.69 | 0 | 6966 | 0 | 6966 |
+| get-article | 16 | 7266.6 | 2.16 | 3.10 | 0 | 72693 | 0 | 72693 |
+| get-article | 64 | 15246.7 | 4.14 | 5.20 | 0 | 152642 | 0 | 152642 |
+| list | 1 | 223.3 | 4.60 | 5.96 | 0 | 2233 | 0 | 2233 |
+| list | 16 | 3202.2 | 5.12 | 7.39 | 0 | 32046 | 0 | 32046 |
+| list | 64 | 8027.6 | 7.84 | 11.16 | 0 | 80380 | 0 | 80380 |
+| list-tag | 1 | 428.9 | 2.09 | 5.63 | 0 | 4290 | 0 | 4290 |
+| list-tag | 16 | 4070.4 | 3.79 | 7.07 | 0 | 40721 | 0 | 40721 |
+| list-tag | 64 | 7519.7 | 8.28 | 13.26 | 0 | 75262 | 0 | 75262 |
+| feed | 1 | 262.7 | 3.52 | 6.41 | 0 | 2628 | 0 | 2628 |
+| feed | 16 | 3092.6 | 5.01 | 8.88 | 0 | 30942 | 0 | 30942 |
+| feed | 64 | 5474.5 | 11.41 | 17.53 | 0 | 54806 | 0 | 54806 |
+| favorite | 1 | 258.4 | 3.82 | 6.74 | 0 | 2585 | 0 | 2585 |
+| favorite | 16 | 2896.6 | 5.32 | 11.23 | 0 | 29423 | 437 | 28986 |
+| favorite | 64 | 4371.1 | 14.03 | 28.24 | 0 | 44404 | 624 | 43780 |
+
+At concurrency 64: get-article 4,103 → 15,247 requests/s, listing 3,781 →
+8,028, listing by tag 3,902 → 7,520, feed 3,176 → 5,475, favorite 2,376 →
+4,371. A single get-article takes 1.4 ms instead of 5.5 ms. Retries per
+favorite stay about the same (1.4% of attempts, was 2.2%).
+
 ## What remains slow or open
 
 - Sign-up, login, new, edited and deleted articles and the tag list have no
@@ -203,5 +261,6 @@ listing 12 → 3,863, listing by tag 5 → 3,894, feed 13 → 3,064, favorite 12
   locks, as read-only commands).
 - Favorites retry about 2% of the time under SERIALIZABLE page-level
   predicate locks.
-- Each read is its own round trip with an unprepared statement; an article
-  view is five reads.
+- The statement cache has no bound: an app whose plans produce unboundedly
+  many distinct SQL texts (not values, which are parameters) would grow it
+  per connection. Conduit's plans have a few dozen shapes.

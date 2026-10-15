@@ -255,6 +255,30 @@ fn refs(vals: &[Value]) -> Vec<&(dyn ToSql + Sync)> {
     vals.iter().map(|v| v as &(dyn ToSql + Sync)).collect()
 }
 
+/// Runs `sql` as a statement prepared once per connection. The server
+/// prepares the same text with the same parameter values as an unprepared
+/// query would, so types and results do not change.
+async fn query(tx: &Tx<'_>, sql: &str, vals: &[Value]) -> Result<Vec<Row>, DbError> {
+    let st = tx.0.prepare_cached(sql).await?;
+    Ok(tx.0.query(&st, &refs(vals)).await?)
+}
+
+async fn execute(tx: &Tx<'_>, sql: &str, vals: &[Value]) -> Result<u64, DbError> {
+    let st = tx.0.prepare_cached(sql).await?;
+    Ok(tx.0.execute(&st, &refs(vals)).await?)
+}
+
+/// A compiled read's text, driver values and column kinds.
+fn compiled_read(schema: &Vec<Spec>, tenant: TenantId, q: &h5i_app_sql::Read, count: bool) -> Result<(String, Vec<Value>, Vec<Kind>), DbError> {
+    let Some(c) = h5i_app_pgsql::compile_read(schema, tenant_param(tenant)?, q, count) else {
+        return Err(DbError::Decode(format!("read does not fit the schema: {q:?}")));
+    };
+    let sql = String::from_utf8(c.text).map_err(|e| DbError::Decode(e.to_string()))?;
+    let vals = c.params.iter().map(from_val).collect::<Result<Vec<_>, _>>()?;
+    let kinds: Vec<Kind> = schema[q.table as usize].columns.iter().map(|c| c.kind).collect();
+    Ok((sql, vals, kinds))
+}
+
 /// Plan (`h5i_app_sql::plan`), compile (`h5i_app_pgsql::compile`) and run each write in
 /// order. A statement that does not fit the schema fails the transaction.
 pub async fn store_writes(tx: &Tx<'_>, tenant: TenantId, schema: &Vec<Spec>, ws: &Vec<SqlWrite>) -> Result<(), DbError> {
@@ -264,7 +288,7 @@ pub async fn store_writes(tx: &Tx<'_>, tenant: TenantId, schema: &Vec<Spec>, ws:
             return Err(DbError::Decode(format!("statement does not fit the schema: {stmt:?}")));
         };
         let (sql, vals) = bind(&q)?;
-        tx.0.execute(&sql, &refs(&vals)).await?;
+        execute(tx, &sql, &vals).await?;
     }
     Ok(())
 }
@@ -284,31 +308,43 @@ pub async fn load_table(
     };
     let (sql, vals) = bind(&q)?;
     let kinds: Vec<Kind> = schema[table as usize].columns.iter().map(|c| c.kind).collect();
-    let rows = tx.0.query(&sql, &refs(&vals)).await?;
+    let rows = query(tx, &sql, &vals).await?;
     rows.iter().map(|r| read_row(&kinds, r)).collect()
+}
+
+/// `load_table` of each table in `tables` (no filter), all sent before any
+/// result is awaited: one round trip instead of one per table.
+pub async fn load_tables(tx: &Tx<'_>, tenant: TenantId, schema: &Vec<Spec>, tables: &[u32]) -> Result<Vec<Vec<Vec<Val>>>, DbError> {
+    futures_util::future::try_join_all(tables.iter().map(|t| load_table(tx, tenant, schema, *t, None))).await
 }
 
 /// The tenant's rows `q` returns (`H5iAppLib.Query.Read.rows`), without
 /// `tenant_id`, in ascending key order. The SQL is `h5i_app_pgsql::compile_read`.
 pub async fn load_read(tx: &Tx<'_>, tenant: TenantId, schema: &Vec<Spec>, q: &h5i_app_sql::Read) -> Result<Vec<Vec<Val>>, DbError> {
-    let Some(c) = h5i_app_pgsql::compile_read(schema, tenant_param(tenant)?, q, false) else {
-        return Err(DbError::Decode(format!("read does not fit the schema: {q:?}")));
-    };
-    let sql = String::from_utf8(c.text).map_err(|e| DbError::Decode(e.to_string()))?;
-    let vals = c.params.iter().map(from_val).collect::<Result<Vec<_>, _>>()?;
-    let kinds: Vec<Kind> = schema[q.table as usize].columns.iter().map(|c| c.kind).collect();
-    let rows = tx.0.query(&sql, &refs(&vals)).await?;
+    let (sql, vals, kinds) = compiled_read(schema, tenant, q, false)?;
+    let rows = query(tx, &sql, &vals).await?;
     rows.iter().map(|r| read_row(&kinds, r)).collect()
+}
+
+/// `load_read` of each read, in order, pipelined: every query is sent on
+/// the transaction's connection before any result is awaited, so a plan
+/// costs about one round trip. Each read sees the transaction's snapshot,
+/// as when they run one after the other.
+pub async fn load_reads(
+    tx: &Tx<'_>,
+    tenant: TenantId,
+    schema: &Vec<Spec>,
+    reads: &[&h5i_app_sql::Read],
+) -> Result<Vec<Vec<Vec<Val>>>, DbError> {
+    futures_util::future::try_join_all(reads.iter().map(|q| load_read(tx, tenant, schema, q))).await
 }
 
 /// How many rows `q` returns (`H5iAppLib.Query.Read.count`).
 pub async fn count_read(tx: &Tx<'_>, tenant: TenantId, schema: &Vec<Spec>, q: &h5i_app_sql::Read) -> Result<u64, DbError> {
-    let Some(c) = h5i_app_pgsql::compile_read(schema, tenant_param(tenant)?, q, true) else {
-        return Err(DbError::Decode(format!("read does not fit the schema: {q:?}")));
-    };
-    let sql = String::from_utf8(c.text).map_err(|e| DbError::Decode(e.to_string()))?;
-    let vals = c.params.iter().map(from_val).collect::<Result<Vec<_>, _>>()?;
-    let n: i64 = tx.0.query_one(&sql, &refs(&vals)).await?.try_get(0)?;
+    let (sql, vals, _) = compiled_read(schema, tenant, q, true)?;
+    let rows = query(tx, &sql, &vals).await?;
+    let row = rows.first().ok_or_else(|| DbError::Decode("count returned no row".into()))?;
+    let n: i64 = row.try_get(0)?;
     Ok(n.max(0) as u64)
 }
 

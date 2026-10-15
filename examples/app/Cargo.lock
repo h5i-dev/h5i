@@ -516,6 +516,7 @@ version = "0.1.1"
 dependencies = [
  "bytes",
  "deadpool-postgres",
+ "futures-util",
  "h5i-app-core",
  "h5i-app-pgsql",
  "h5i-app-sql",

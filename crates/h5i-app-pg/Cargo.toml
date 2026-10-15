@@ -16,6 +16,7 @@ testing = []
 h5i-app-core.workspace = true
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
 tokio-postgres = "0.7"
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 deadpool-postgres = { version = "0.14", features = ["rt_tokio_1"] }
 bytes = "1"
 tracing = "0.1"

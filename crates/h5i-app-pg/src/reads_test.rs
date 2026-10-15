@@ -4,7 +4,7 @@
 //! `H5iAppLib.Query`, clause by clause) says. Needs
 //! H5I_APP_TEST_DATABASE_URL; skips otherwise.
 
-use crate::{count_read, create_tables, load_read, pool, store_writes, Tx};
+use crate::{count_read, create_tables, load_read, load_reads, pool, store_writes, Tx};
 use h5i_app_core::TenantId;
 use h5i_app_pgsql::{Column, Kind, Table};
 use h5i_app_sql::eval::{self, cases};
@@ -68,12 +68,14 @@ async fn reads_match_the_reference() {
             }
             store_writes(&t, tid, &schema, &ws).await.unwrap();
         }
+        let mut batch = Vec::new();
         for _ in 0..8 {
             let q = cases::read(&mut r);
             if h5i_app_pgsql::compile_read(&schema, 1, &q, false).is_none() {
                 rejected += 1;
                 continue;
             }
+            batch.push(q.clone());
             let want = eval::rows(&tabs, &q);
             let got = load_read(&t, tenant, &schema, &q).await.unwrap();
             assert_eq!(got, want, "case {case}: {q:?}\ntables: {tabs:?}");
@@ -82,6 +84,11 @@ async fn reads_match_the_reference() {
             ran += 1;
             nonempty += usize::from(!want.is_empty());
         }
+        // The same reads pipelined, as `schema_load_plan` runs a plan.
+        let refs: Vec<&h5i_app_sql::Read> = batch.iter().collect();
+        let got = load_reads(&t, tenant, &schema, &refs).await.unwrap();
+        let want: Vec<_> = batch.iter().map(|q| eval::rows(&tabs, q)).collect();
+        assert_eq!(got, want, "pipelined, case {case}");
         tx.rollback().await.unwrap();
     }
     eprintln!("{ran} reads compared ({nonempty} nonempty), {rejected} rejected by compile_read");
