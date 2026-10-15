@@ -16,3 +16,10 @@ Every tutorial runs with one PostgreSQL container and `cargo run`, and its
 proofs are checked by `h5i app prove` and CI in the same way as the rest of
 the repository. `examples/app/` is its own Cargo workspace, so run the `cargo`
 commands from there.
+
+## Further examples
+
+[Conduit](conduit/README.md) is a port of the RealWorld API
+(realworld-axum-sqlx) with proofs about its replies and invariants. All its
+users share one tenant; it is the benchmark of
+[docs/app/PERFORMANCE.md](../../docs/app/PERFORMANCE.md).

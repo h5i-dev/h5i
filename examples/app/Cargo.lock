@@ -275,6 +275,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
+name = "conduit-kernel"
+version = "0.1.0"
+dependencies = [
+ "h5i-app-schema",
+ "h5i-app-sql",
+]
+
+[[package]]
+name = "conduit-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "conduit-kernel",
+ "h5i-app-core",
+ "h5i-app-http",
+ "h5i-app-json",
+ "h5i-app-pg",
+ "libcrux-hmac",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
