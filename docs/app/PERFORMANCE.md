@@ -86,3 +86,38 @@ Reads now run in parallel: about 120 requests/s at concurrency 64 (10x),
 bounded by the CPU cost of loading the whole site for each request. A
 single request is as slow as before, and favorites, still serialized on the
 tenant lock, stay at 12/s.
+
+## Step 2: per-key advisory locks
+
+`Store::lock_for` names the advisory locks of a write: the whole tenant (the
+default), the tenant shared plus exclusive per-key locks, or none. Conduit
+locks an article's slug for favorite, unfavorite, edit and delete, a
+(follower, name) pair for follow, the user for account edits, and the id
+counter for sign-up, new articles and comments. Loads are still of the whole
+site.
+
+| scenario | conc | req/s | p50 ms | p99 ms | non-2xx | attempts | retries | commits |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| get-article | 1 | 8.9 | 110.28 | 155.39 | 0 | 90 | 0 | 90 |
+| get-article | 16 | 91.7 | 168.44 | 266.97 | 0 | 929 | 0 | 929 |
+| get-article | 64 | 113.1 | 553.45 | 702.25 | 0 | 1198 | 0 | 1198 |
+| list | 1 | 8.1 | 121.69 | 165.35 | 0 | 81 | 0 | 81 |
+| list | 16 | 84.7 | 184.67 | 272.80 | 0 | 861 | 0 | 861 |
+| list | 64 | 108.7 | 579.29 | 752.00 | 0 | 1151 | 0 | 1151 |
+| list-tag | 1 | 4.3 | 235.17 | 282.88 | 0 | 44 | 0 | 44 |
+| list-tag | 16 | 56.6 | 278.01 | 355.92 | 0 | 580 | 0 | 580 |
+| list-tag | 64 | 72.0 | 868.53 | 1067.78 | 0 | 779 | 0 | 779 |
+| feed | 1 | 8.8 | 112.68 | 147.31 | 0 | 88 | 0 | 88 |
+| feed | 16 | 88.2 | 175.93 | 265.30 | 0 | 900 | 0 | 900 |
+| feed | 64 | 108.6 | 582.38 | 724.01 | 0 | 1146 | 0 | 1146 |
+| favorite | 1 | 7.3 | 138.46 | 178.95 | 0 | 73 | 0 | 73 |
+| favorite | 16 | 7.5 | 1196.21 | 5610.68 | 13 | 752 | 675 | 77 |
+| favorite | 64 | 7.6 | 6341.49 | 12394.94 | 33 | 1448 | 1366 | 82 |
+
+Reads are unchanged (the single-request rows are lower than in step 1 only
+because other builds shared the CPUs). Favorites get worse: two favorites
+of different articles no longer queue, but each still reads every table, so
+under SERIALIZABLE each commit conflicts with the others' reads; 675 of 752
+attempts at concurrency 16 were retries, and 13 requests ran out of
+retries. Finer locks only help once a command reads what it needs and no
+more, which is step 3.

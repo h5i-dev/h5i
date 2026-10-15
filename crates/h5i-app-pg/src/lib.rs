@@ -9,7 +9,9 @@
 //! A command the kernel declares read-only ([`Kernel::read_only`]) runs in a
 //! `SERIALIZABLE READ ONLY DEFERRABLE` transaction instead, without advisory
 //! locks: such a transaction waits for a snapshot that no serialization
-//! failure can invalidate, so it is never retried for one.
+//! failure can invalidate, so it is never retried for one. Writes take the
+//! advisory locks [`Store::lock_for`] names before `BEGIN`; they only reduce
+//! retries, SERIALIZABLE alone makes the outcome serial.
 //!
 //! Stores see only an opaque [`Tx`], so app code cannot run its own SQL. Each
 //! attempt reads the [`Clock`] inside its transaction.
@@ -153,8 +155,53 @@ pub trait Store<K: Kernel>: Send + Sync + 'static {
         Self::load(tx, tenant)
     }
 
+    /// Advisory locks to hold while `cmd` runs, to queue conflicting writes
+    /// instead of retrying them. Only a performance hint: SERIALIZABLE makes
+    /// any choice correct. The default locks the whole tenant.
+    fn lock_for(actor: &K::Principal, cmd: &K::Command) -> Lock {
+        let _ = (actor, cmd);
+        Lock::Tenant
+    }
+
     /// A later `load` must return `K::apply(before, ws)`.
     fn write(tx: &Tx<'_>, tenant: TenantId, ws: &K::WriteSet) -> impl Future<Output = Result<(), DbError>> + Send;
+}
+
+/// Advisory locks an engine takes before a write's `BEGIN` ([`Store::lock_for`]).
+///
+/// `Tenant` takes the tenant's lock exclusively. `Keys` takes it shared and
+/// then one exclusive lock per key (hashed with the tenant, sorted), so two
+/// commands queue only if they share a key or one of them locks the tenant.
+/// `None` takes nothing. Locks are always taken in that order, so they never
+/// deadlock. Without `EngineConfig::tenant_lock` nothing is locked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Lock {
+    Tenant,
+    Keys(Vec<u64>),
+    None,
+}
+
+impl Lock {
+    /// A lock key from a tag (say, a table) and the bytes of a value.
+    pub fn key(tag: &str, value: &[u8]) -> u64 {
+        // FNV-1a: stable across processes and builds, unlike `DefaultHasher`.
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in tag.as_bytes().iter().chain([0u8].iter()).chain(value.iter()) {
+            h ^= u64::from(*b);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        h
+    }
+}
+
+/// The bigint advisory lock of `key` in `tenant`: negative, so it never
+/// meets a tenant's own lock (the tenant id).
+fn key_lock(tenant: TenantId, key: u64) -> i64 {
+    let mut x = tenant.0 ^ key.rotate_left(17) ^ 0x9e37_79b9_7f4a_7c15;
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^= x >> 31;
+    (x | (1 << 63)) as i64
 }
 
 /// Needed to replay stored replies for idempotency keys.
@@ -219,8 +266,8 @@ impl ManualClock {
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
     pub max_attempts: u32,
-    /// Advisory lock per tenant for writes (read-only commands take none).
-    /// Only reduces retries; SERIALIZABLE gives correctness.
+    /// Advisory locks for writes, as [`Store::lock_for`] names them. Only
+    /// reduces retries; SERIALIZABLE gives correctness. Off: no locks at all.
     pub tenant_lock: bool,
     /// Where each attempt reads the time.
     pub clock: Clock,
@@ -374,16 +421,20 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
             return self.run_read(actor, cmd).await;
         }
         let tenant = K::tenant(actor);
+        let lock = if self.config.tenant_lock { S::lock_for(actor, cmd) } else { Lock::None };
         for attempt in 0..self.config.max_attempts {
             self.stats.attempts.fetch_add(1, Ordering::Relaxed);
             let mut client = self.pool.0.get().await.map_err(|e| DbError::Pool(e.to_string()))?;
-            let result = match self.lock(&client, tenant).await {
+            let result = match self.lock(&client, tenant, &lock).await {
                 Ok(()) => {
                     let r = self.attempt(&mut client, tenant, actor, cmd, idem.as_ref()).await;
-                    self.unlock(&client, tenant).await;
+                    self.unlock(&client, &lock).await;
                     r
                 }
-                Err(e) => Err(e),
+                Err(e) => {
+                    self.unlock(&client, &lock).await;
+                    Err(e)
+                }
             };
             match result {
                 Ok(Attempt::Done(r)) => {
@@ -412,19 +463,31 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
         Err(DbError::RetriesExhausted)
     }
 
-    /// Taken before BEGIN so the snapshot is read after the wait.
-    async fn lock(&self, client: &deadpool_postgres::Object, tenant: TenantId) -> Result<(), DbError> {
-        if self.config.tenant_lock {
-            client.execute("SELECT pg_advisory_lock($1)", &[&table::tenant_param(tenant)?]).await?;
+    /// Taken before BEGIN so the snapshot is read after the wait. Tenant
+    /// first, then keys in ascending order: one global order, so no deadlock.
+    async fn lock(&self, client: &deadpool_postgres::Object, tenant: TenantId, lock: &Lock) -> Result<(), DbError> {
+        match lock {
+            Lock::None => {}
+            Lock::Tenant => {
+                client.execute("SELECT pg_advisory_lock($1)", &[&table::tenant_param(tenant)?]).await?;
+            }
+            Lock::Keys(keys) => {
+                client.execute("SELECT pg_advisory_lock_shared($1)", &[&table::tenant_param(tenant)?]).await?;
+                let mut ids: Vec<i64> = keys.iter().map(|k| key_lock(tenant, *k)).collect();
+                ids.sort_unstable();
+                ids.dedup();
+                for id in ids {
+                    client.execute("SELECT pg_advisory_lock($1)", &[&id]).await?;
+                }
+            }
         }
         Ok(())
     }
 
-    async fn unlock(&self, client: &deadpool_postgres::Object, tenant: TenantId) {
-        if self.config.tenant_lock
-            && let Ok(tid) = table::tenant_param(tenant)
-        {
-            let _ = client.execute("SELECT pg_advisory_unlock($1)", &[&tid]).await;
+    /// Releases every session-level advisory lock this connection holds.
+    async fn unlock(&self, client: &deadpool_postgres::Object, lock: &Lock) {
+        if *lock != Lock::None {
+            let _ = client.execute("SELECT pg_advisory_unlock_all()", &[]).await;
         }
     }
 
@@ -586,4 +649,28 @@ fn backoff(attempt: u32) -> Duration {
     let cap_ms = 1u64 << attempt.min(8);
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
     Duration::from_micros(u64::from(nanos) % (cap_ms * 1000) + 100)
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+
+    #[test]
+    fn key_locks_stay_out_of_tenant_locks() {
+        for t in [0u64, 1, 7, u64::MAX] {
+            for k in [0u64, 1, Lock::key("article", b"a"), u64::MAX] {
+                // Tenant locks are the (non-negative) tenant ids.
+                assert!(key_lock(TenantId(t), k) < 0);
+            }
+        }
+        assert_ne!(key_lock(TenantId(1), 5), key_lock(TenantId(2), 5));
+        assert_ne!(key_lock(TenantId(1), 5), key_lock(TenantId(1), 6));
+    }
+
+    #[test]
+    fn lock_keys_are_stable() {
+        // Two servers must agree on a key, so it may not depend on the process.
+        assert_eq!(Lock::key("article", b"hello"), 0xe58c_2868_5d42_b9e9);
+        assert_ne!(Lock::key("article", b"x"), Lock::key("articlex", b""));
+    }
 }

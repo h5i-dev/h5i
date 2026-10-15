@@ -6,7 +6,7 @@ pub mod api;
 
 use conduit_kernel as k;
 use h5i_app_core::{Kernel, TenantId};
-use h5i_app_pg::{DbError, EngineConfig, ReplyCodec, Store, Tx};
+use h5i_app_pg::{DbError, EngineConfig, Lock, ReplyCodec, Store, Tx};
 use serde::{Deserialize, Serialize};
 
 /// Conduit is one site, so every caller is in this tenant.
@@ -68,6 +68,29 @@ impl Store<Conduit> for ConduitStore {
     // `Storage.lean`: stored `sql_writes` load back as what `apply` computes.
     async fn load(tx: &Tx<'_>, t: TenantId) -> Result<k::Snapshot, DbError> {
         schema_load(tx, t).await
+    }
+
+    /// Writes queue on what they change, not on the whole site: an
+    /// article's slug, a follow pair, a user, the id counters. Only fewer
+    /// retries ride on this; SERIALIZABLE orders the rest.
+    fn lock_for(actor: &k::Principal, cmd: &k::Command) -> Lock {
+        let user = actor.user.to_be_bytes();
+        match cmd {
+            k::Command::Favorite { slug }
+            | k::Command::Unfavorite { slug }
+            | k::Command::UpdateArticle { slug, .. }
+            | k::Command::DeleteArticle { slug } => Lock::Keys(vec![Lock::key("article", slug)]),
+            k::Command::Follow { username } | k::Command::Unfollow { username } => {
+                Lock::Keys(vec![Lock::key("follow", &[&user[..], username].concat())])
+            }
+            k::Command::UpdateUser { .. } => Lock::Keys(vec![Lock::key("user", &user)]),
+            // Each takes the next id from the counter row.
+            k::Command::Register { .. } | k::Command::CreateArticle { .. } | k::Command::AddComment { .. } => {
+                Lock::Keys(vec![Lock::key("counter", &[])])
+            }
+            k::Command::DeleteComment { id, .. } => Lock::Keys(vec![Lock::key("comment", &id.to_be_bytes())]),
+            _ => Lock::Tenant,
+        }
     }
 
     async fn write(tx: &Tx<'_>, t: TenantId, ws: &Vec<k::Write>) -> Result<(), DbError> {
