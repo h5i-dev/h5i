@@ -151,14 +151,14 @@ shared the CPUs with a Lean build, so it understates the throughput.
 | favorite | 16 | 529.6 | 26.58 | 79.15 | 0 | 5449 | 134 | 5315 |
 | favorite | 64 | 991.2 | 60.29 | 143.37 | 0 | 10327 | 320 | 10007 |
 
-| scenario, concurrency 64 | baseline | step 1 | step 2 | steps 3+5 |
-|---|---:|---:|---:|---:|
-| get-article (req/s) | 13.0 | 122.2 | 113.1 | 1991.4 |
-| list | 12.4 | 124.2 | 108.7 | 1557.1 |
-| list-tag | 5.1 | 65.9 | 72.0 | 1519.1 |
-| feed | 13.0 | 120.2 | 108.6 | 1573.4 |
-| favorite | 12.5 | 11.3 | 7.6 | 991.2 |
-| favorite retries / attempts | 0 / 188 | 0 / 175 | 1366 / 1448 | 320 / 10327 |
+| scenario, concurrency 64 | baseline | step 1 | step 2 | steps 3+5 | final |
+|---|---:|---:|---:|---:|---:|
+| get-article (req/s) | 13.0 | 122.2 | 113.1 | 1991.4 | 3831.4 |
+| list | 12.4 | 124.2 | 108.7 | 1557.1 | 3862.9 |
+| list-tag | 5.1 | 65.9 | 72.0 | 1519.1 | 3894.2 |
+| feed | 13.0 | 120.2 | 108.6 | 1573.4 | 3063.6 |
+| favorite | 12.5 | 11.3 | 7.6 | 991.2 | 2440.1 |
+| favorite retries / attempts | 0 / 188 | 0 / 175 | 1366 / 1448 | 320 / 10327 | 533 / 25000 |
 
 A single request takes 8-26 ms instead of ~80 ms, and throughput now grows
 with concurrency. Favorites of different articles still retry about 3% of
@@ -167,3 +167,41 @@ two favorites whose reads and writes touch the same page of the favorites
 index can conflict although their rows differ. Read-only commands take no
 predicate locks (a deferrable read-only transaction runs on a safe
 snapshot) and never retry.
+
+## Final run
+
+The same code as steps 3+5 (plus the generated proof support of item 4,
+which changes no Rust), rerun when the host was quieter (load average ~20 of
+128 CPUs):
+
+| scenario | conc | req/s | p50 ms | p99 ms | non-2xx | attempts | retries | commits |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| get-article | 1 | 178.7 | 5.60 | 6.47 | 0 | 1787 | 0 | 1787 |
+| get-article | 16 | 2082.0 | 7.64 | 9.33 | 0 | 20841 | 0 | 20841 |
+| get-article | 64 | 3831.4 | 16.59 | 20.02 | 0 | 38399 | 0 | 38399 |
+| list | 1 | 145.9 | 6.83 | 9.24 | 0 | 1460 | 0 | 1460 |
+| list | 16 | 1842.0 | 8.68 | 10.99 | 0 | 18440 | 0 | 18440 |
+| list | 64 | 3862.9 | 16.49 | 19.53 | 0 | 38716 | 0 | 38716 |
+| list-tag | 1 | 119.5 | 8.64 | 11.23 | 0 | 1195 | 0 | 1195 |
+| list-tag | 16 | 1855.1 | 8.30 | 12.13 | 0 | 18568 | 0 | 18568 |
+| list-tag | 64 | 3894.2 | 16.26 | 19.82 | 0 | 39027 | 0 | 39027 |
+| feed | 1 | 145.9 | 7.07 | 9.42 | 0 | 1460 | 0 | 1460 |
+| feed | 16 | 1469.4 | 10.90 | 13.39 | 0 | 14709 | 0 | 14709 |
+| feed | 64 | 3063.6 | 20.85 | 24.48 | 0 | 30701 | 0 | 30701 |
+| favorite | 1 | 141.5 | 7.21 | 10.32 | 0 | 1416 | 0 | 1416 |
+| favorite | 16 | 1320.6 | 11.85 | 24.22 | 0 | 13486 | 265 | 13221 |
+| favorite | 64 | 2440.1 | 25.51 | 52.18 | 0 | 25000 | 533 | 24467 |
+
+Against the baseline, at concurrency 64: get-article 13 → 3,831 requests/s,
+listing 12 → 3,863, listing by tag 5 → 3,894, feed 13 → 3,064, favorite 12
+→ 2,440 (2% retries); single requests take 6-9 ms instead of ~80 ms.
+
+## What remains slow or open
+
+- Sign-up, login, new, edited and deleted articles and the tag list have no
+  read plan and still load the whole site (login and the tag list without
+  locks, as read-only commands).
+- Favorites retry about 2% of the time under SERIALIZABLE page-level
+  predicate locks.
+- Each read is its own round trip with an unprepared statement; an article
+  view is five reads.
