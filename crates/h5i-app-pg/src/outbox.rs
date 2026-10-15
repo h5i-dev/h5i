@@ -26,7 +26,7 @@ pub(crate) const OUTBOX_DDL: &str = "CREATE TABLE IF NOT EXISTS h5i_outbox (
 pub async fn enqueue(tx: &Tx<'_>, tenant: TenantId, dest: u64, payload: &[u8]) -> Result<(), DbError> {
     let tid = crate::table::tenant_param(tenant)?;
     let dest = i64::try_from(dest).map_err(|_| DbError::Decode(format!("destination {dest} out of range")))?;
-    let st = tx.0.prepare_cached("INSERT INTO h5i_outbox (tenant_id, dest, payload) VALUES ($1, $2, $3)").await?;
+    let st = crate::table::prepare(tx, "INSERT INTO h5i_outbox (tenant_id, dest, payload) VALUES ($1, $2, $3)").await?;
     tx.0.execute(&st, &[&tid, &dest, &payload]).await?;
     Ok(())
 }

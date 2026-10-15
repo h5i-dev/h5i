@@ -11,7 +11,13 @@
 use super::{has_kind, push_lit, push_name, tenant_col, valid, Kind, Table};
 use h5i_app_sql::{Pred, Read, Val, Window};
 
-/// A read's text and its parameters, `$1` (the tenant) first.
+/// A read's text and its parameters, `$1` (the tenant) first. Every value,
+/// limit and offset is a parameter, so the text depends only on the read's
+/// shape and on whether its window has a limit and a non-zero offset: at
+/// most four texts per shape, whatever the numbers. `OFFSET 0` is left out
+/// on purpose: with an `OFFSET` parameter PostgreSQL estimates a generic plan
+/// as dearer than the custom ones and never reuses it, re-planning on every
+/// execution of the prepared statement.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadQuery {
     pub text: Vec<u8>,
@@ -259,6 +265,10 @@ mod tests {
              q1.\"tag\" = $2) ORDER BY q0.\"id\" DESC LIMIT $3) AS w ORDER BY \"id\""
         );
         assert_eq!(c.params, vec![Val::Int(7), Val::Bytes(b"rust".to_vec()), Val::Int(20)]);
+        // Another page size, same text: one prepared statement serves both.
+        let mut other = q.clone();
+        other.window.limit = Some(50);
+        assert_eq!(compile_read(&schema(), 9, &other, false).unwrap().text, c.text);
         let n = compile_read(&schema(), 7, &q, true).unwrap();
         assert!(text(&n).starts_with("SELECT count(*) FROM (SELECT q0."));
     }

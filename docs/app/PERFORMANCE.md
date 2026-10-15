@@ -151,14 +151,14 @@ shared the CPUs with a Lean build, so it understates the throughput.
 | favorite | 16 | 529.6 | 26.58 | 79.15 | 0 | 5449 | 134 | 5315 |
 | favorite | 64 | 991.2 | 60.29 | 143.37 | 0 | 10327 | 320 | 10007 |
 
-| scenario, concurrency 64 | baseline | step 1 | step 2 | steps 3+5 | final | step 6 |
-|---|---:|---:|---:|---:|---:|---:|
-| get-article (req/s) | 13.0 | 122.2 | 113.1 | 1991.4 | 3831.4 | 15246.7 |
-| list | 12.4 | 124.2 | 108.7 | 1557.1 | 3862.9 | 8027.6 |
-| list-tag | 5.1 | 65.9 | 72.0 | 1519.1 | 3894.2 | 7519.7 |
-| feed | 13.0 | 120.2 | 108.6 | 1573.4 | 3063.6 | 5474.5 |
-| favorite | 12.5 | 11.3 | 7.6 | 991.2 | 2440.1 | 4371.1 |
-| favorite retries / attempts | 0 / 188 | 0 / 175 | 1366 / 1448 | 320 / 10327 | 533 / 25000 | 624 / 44404 |
+| scenario, concurrency 64 | baseline | step 1 | step 2 | steps 3+5 | final | step 6 | step 7 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| get-article (req/s) | 13.0 | 122.2 | 113.1 | 1991.4 | 3831.4 | 15246.7 | 14657.0 |
+| list | 12.4 | 124.2 | 108.7 | 1557.1 | 3862.9 | 8027.6 | 8203.0 |
+| list-tag | 5.1 | 65.9 | 72.0 | 1519.1 | 3894.2 | 7519.7 | 8071.1 |
+| feed | 13.0 | 120.2 | 108.6 | 1573.4 | 3063.6 | 5474.5 | 5941.7 |
+| favorite | 12.5 | 11.3 | 7.6 | 991.2 | 2440.1 | 4371.1 | 4705.9 |
+| favorite retries / attempts | 0 / 188 | 0 / 175 | 1366 / 1448 | 320 / 10327 | 533 / 25000 | 624 / 44404 | 641 / 47764 |
 
 A single request takes 8-26 ms instead of ~80 ms, and throughput now grows
 with concurrency. Favorites of different articles still retry about 3% of
@@ -254,6 +254,50 @@ At concurrency 64: get-article 4,103 → 15,247 requests/s, listing 3,781 →
 4,371. A single get-article takes 1.4 ms instead of 5.5 ms. Retries per
 favorite stay about the same (1.4% of attempts, was 2.2%).
 
+## Step 7: a bounded statement cache
+
+Each connection now keeps at most `EngineConfig::statement_cache` prepared
+statements (default 256). Beyond that the least recently used one is
+removed from the connection's cache, and dropping it closes it on the
+server, so `pg_prepared_statements` stays bounded too. A test runs about
+300 random read shapes through one connection with room for 8 and checks
+the cache, the server's count and the rows after every read.
+
+The SQL text of a read was already independent of its values: every value,
+limit and offset is a parameter. It varies only with the read's shape and
+with whether its window has a limit and a non-zero offset (at most four
+texts per shape). Rendering `OFFSET $n` always, to make that one text, was
+tried and dropped: PostgreSQL then estimates the generic plan as dearer
+than the custom plans for offset 0, never switches to it, and re-plans the
+statement on every execution (`pg_prepared_statements` showed 0 generic and
+8 custom plans after 8 executions); the tag listing lost a third of its
+throughput. Writes and filtered loads have one text per table and column.
+
+| scenario | conc | req/s | p50 ms | p99 ms | non-2xx | attempts | retries | commits |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| get-article | 1 | 709.5 | 1.41 | 1.72 | 0 | 7097 | 0 | 7097 |
+| get-article | 16 | 7007.7 | 2.24 | 3.20 | 0 | 70112 | 0 | 70112 |
+| get-article | 64 | 14657.0 | 4.31 | 5.50 | 0 | 146725 | 0 | 146725 |
+| list | 1 | 221.2 | 4.50 | 5.85 | 0 | 2213 | 0 | 2213 |
+| list | 16 | 3755.2 | 4.23 | 5.85 | 0 | 37573 | 0 | 37573 |
+| list | 64 | 8203.0 | 7.73 | 10.18 | 0 | 82097 | 0 | 82097 |
+| list-tag | 1 | 294.2 | 3.26 | 5.90 | 0 | 2943 | 0 | 2943 |
+| list-tag | 16 | 3718.8 | 4.26 | 5.99 | 0 | 37203 | 0 | 37203 |
+| list-tag | 64 | 8071.1 | 7.86 | 10.31 | 0 | 80802 | 0 | 80802 |
+| feed | 1 | 201.6 | 5.00 | 6.68 | 0 | 2017 | 0 | 2017 |
+| feed | 16 | 2704.6 | 5.90 | 8.27 | 0 | 27061 | 0 | 27061 |
+| feed | 64 | 5941.7 | 10.61 | 14.79 | 0 | 59486 | 0 | 59486 |
+| favorite | 1 | 232.0 | 4.22 | 7.58 | 0 | 2321 | 0 | 2321 |
+| favorite | 16 | 2522.2 | 6.16 | 12.98 | 0 | 25604 | 367 | 25237 |
+| favorite | 64 | 4705.9 | 13.27 | 26.90 | 0 | 47764 | 641 | 47123 |
+
+Within noise of step 6 (a 256-statement cache holds all of Conduit's few
+dozen shapes, so nothing is evicted here).
+
+## Done since the first report
+
+- The statement cache is bounded (step 7); it was unbounded in step 6.
+
 ## What remains slow or open
 
 - Sign-up, login, new, edited and deleted articles and the tag list have no
@@ -261,6 +305,3 @@ favorite stay about the same (1.4% of attempts, was 2.2%).
   locks, as read-only commands).
 - Favorites retry about 2% of the time under SERIALIZABLE page-level
   predicate locks.
-- The statement cache has no bound: an app whose plans produce unboundedly
-  many distinct SQL texts (not values, which are parameters) would grow it
-  per connection. Conduit's plans have a few dozen shapes.

@@ -80,7 +80,7 @@ EXISTS` on `tenant_id` and given columns), which change no result.
 
 ## Trusted engine contract
 
-- One attempt loads one tenant, calls `transition`, writes and commits in one SERIALIZABLE transaction. Its statements are the compiled text, prepared once per connection and reused; the reads of a load are pipelined on the transaction's connection. Neither changes the text, the parameters or the snapshot a statement runs on.
+- One attempt loads one tenant, calls `transition`, writes and commits in one SERIALIZABLE transaction. Its statements are the compiled text, prepared once per connection and reused (at most `EngineConfig::statement_cache` per connection, least recently used closed first); the reads of a load are pipelined on the transaction's connection. Neither changes the text, the parameters or the snapshot a statement runs on.
 - A command `Kernel::read_only` declares runs in one `SERIALIZABLE READ ONLY DEFERRABLE` transaction, without advisory locks and without an idempotency key (a keyed request takes the write path, which stores its reply). It is retried only when the connection drops; a deferrable read-only transaction is never cancelled for serialization. Its write set is passed to `Store::write` inside that transaction, so a non-empty one fails the request (PostgreSQL refuses writes in a READ ONLY transaction) instead of being dropped.
 - Each retry opens a new transaction, reloads, reads a new time and reruns `transition`.
 - A refused transition rolls back and writes no app or framework rows.

@@ -27,6 +27,7 @@
 pub mod migrate;
 pub mod outbox;
 mod roles;
+mod statements;
 mod table;
 #[cfg(test)]
 mod reads_test;
@@ -48,8 +49,9 @@ use tokio_postgres::error::SqlState;
 use tokio_postgres::{IsolationLevel, NoTls, Transaction};
 
 /// The transaction a `Store` works in. Offers only this crate's table operations.
-/// Its statements are prepared once per connection (deadpool's statement cache).
-pub struct Tx<'a>(pub(crate) &'a deadpool_postgres::Transaction<'a>);
+/// Its statements are prepared once per connection (deadpool's statement
+/// cache), at most `EngineConfig::statement_cache` of them.
+pub struct Tx<'a>(pub(crate) &'a deadpool_postgres::Transaction<'a>, pub(crate) &'a statements::Statements);
 
 impl Tx<'_> {
     /// Backend process id, so fault tests can kill this connection.
@@ -61,7 +63,7 @@ impl Tx<'_> {
 
 /// Opaque connection pool, so app code cannot take a raw connection.
 #[derive(Clone)]
-pub struct Pool(pub(crate) deadpool_postgres::Pool);
+pub struct Pool(pub(crate) deadpool_postgres::Pool, pub(crate) Arc<statements::Statements>);
 
 #[derive(Debug)]
 pub enum DbError {
@@ -275,11 +277,21 @@ pub struct EngineConfig {
     /// Never let time go back in commit order within a tenant (via `h5i_clock`).
     /// Costs a read per attempt and a write per commit.
     pub monotonic: bool,
+    /// Prepared statements kept per connection; the least recently used is
+    /// closed beyond this. Applies to the engine's pool (shared with every
+    /// engine on a clone of it).
+    pub statement_cache: usize,
 }
 
 impl Default for EngineConfig {
     fn default() -> Self {
-        EngineConfig { max_attempts: 20, tenant_lock: true, clock: Clock::System, monotonic: false }
+        EngineConfig {
+            max_attempts: 20,
+            tenant_lock: true,
+            clock: Clock::System,
+            monotonic: false,
+            statement_cache: statements::DEFAULT_CAPACITY,
+        }
     }
 }
 
@@ -319,7 +331,9 @@ pub fn pool(url: &str, max_size: usize) -> Result<Pool, DbError> {
     let mut cfg = Config::new();
     cfg.url = Some(url.to_string());
     cfg.pool = Some(deadpool_postgres::PoolConfig::new(max_size));
-    cfg.create_pool(Some(Runtime::Tokio1), NoTls).map(Pool).map_err(|e| DbError::Pool(e.to_string()))
+    cfg.create_pool(Some(Runtime::Tokio1), NoTls)
+        .map(|p| Pool(p, Arc::new(statements::Statements::new(statements::DEFAULT_CAPACITY))))
+        .map_err(|e| DbError::Pool(e.to_string()))
 }
 
 struct Idem<'a, K: Kernel> {
@@ -336,6 +350,7 @@ enum Attempt<K: Kernel> {
 
 impl<K: Kernel, S: Store<K>> Engine<K, S> {
     pub fn new(pool: Pool, config: EngineConfig) -> Self {
+        pool.1.set_capacity(config.statement_cache);
         Engine { pool, config, stats: EngineStats::default(), _marker: PhantomData }
     }
 
@@ -376,7 +391,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
     pub async fn snapshot(&self, tenant: TenantId) -> Result<K::Snapshot, DbError> {
         let mut client = self.pool.0.get().await.map_err(|e| DbError::Pool(e.to_string()))?;
         let tx = client.build_transaction().isolation_level(IsolationLevel::Serializable).read_only(true).deferrable(true).start().await?;
-        let snap = S::load(&Tx(&tx), tenant).await?;
+        let snap = S::load(&Tx(&tx, &self.pool.1), tenant).await?;
         tx.commit().await?;
         Ok(snap)
     }
@@ -386,7 +401,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
         let tenant = K::tenant(actor);
         let mut client = self.pool.0.get().await.map_err(|e| DbError::Pool(e.to_string()))?;
         let tx = client.build_transaction().isolation_level(IsolationLevel::Serializable).read_only(true).deferrable(true).start().await?;
-        let snap = S::load_for(&Tx(&tx), tenant, actor, cmd).await?;
+        let snap = S::load_for(&Tx(&tx, &self.pool.1), tenant, actor, cmd).await?;
         tx.commit().await?;
         Ok(snap)
     }
@@ -535,7 +550,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
             .start()
             .await?;
         let now = self.read_clock(&tx, tid).await?;
-        let snap = S::load_for(&Tx(&tx), tenant, actor, cmd).await?;
+        let snap = S::load_for(&Tx(&tx, &self.pool.1), tenant, actor, cmd).await?;
         let mut actor = actor.clone();
         K::stamp(&mut actor, now);
         match K::transition(&actor, &snap, cmd) {
@@ -547,7 +562,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
                 // Empty by `H5iAppLib.ReadOnly.Sound`. Were it not, PostgreSQL
                 // refuses the write in this READ ONLY transaction and the
                 // request fails rather than losing it.
-                S::write(&Tx(&tx), tenant, &ws).await?;
+                S::write(&Tx(&tx, &self.pool.1), tenant, &ws).await?;
                 tx.commit().await?;
                 Ok(Ok(reply))
             }
@@ -580,7 +595,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
                 return Ok(Attempt::Replayed(reply));
             }
         }
-        let snap = S::load_for(&Tx(&tx), tenant, actor, cmd).await?;
+        let snap = S::load_for(&Tx(&tx, &self.pool.1), tenant, actor, cmd).await?;
         let mut actor = actor.clone();
         K::stamp(&mut actor, now);
         let decision = K::transition(&actor, &snap, cmd);
@@ -595,7 +610,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
                 Ok(Attempt::Done(Err(refusal)))
             }
             Ok((ws, reply)) => {
-                S::write(&Tx(&tx), tenant, &ws).await?;
+                S::write(&Tx(&tx, &self.pool.1), tenant, &ws).await?;
                 if let (Some(idem), Some(bytes)) = (idem, &encoded) {
                     tx.execute(
                         "INSERT INTO h5i_idempotency (tenant_id, key, fingerprint, reply) VALUES ($1, $2, $3, $4)",

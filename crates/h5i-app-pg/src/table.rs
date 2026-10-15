@@ -259,13 +259,20 @@ fn refs(vals: &[Value]) -> Vec<&(dyn ToSql + Sync)> {
 /// prepares the same text with the same parameter values as an unprepared
 /// query would, so types and results do not change.
 async fn query(tx: &Tx<'_>, sql: &str, vals: &[Value]) -> Result<Vec<Row>, DbError> {
-    let st = tx.0.prepare_cached(sql).await?;
+    let st = prepare(tx, sql).await?;
     Ok(tx.0.query(&st, &refs(vals)).await?)
 }
 
 async fn execute(tx: &Tx<'_>, sql: &str, vals: &[Value]) -> Result<u64, DbError> {
-    let st = tx.0.prepare_cached(sql).await?;
+    let st = prepare(tx, sql).await?;
     Ok(tx.0.execute(&st, &refs(vals)).await?)
+}
+
+/// The connection's prepared statement for `sql`, kept in its bounded cache.
+pub(crate) async fn prepare(tx: &Tx<'_>, sql: &str) -> Result<tokio_postgres::Statement, DbError> {
+    let st = tx.0.prepare_cached(sql).await?;
+    tx.1.touch(&tx.0.statement_cache, sql);
+    Ok(st)
 }
 
 /// A compiled read's text, driver values and column kinds.
