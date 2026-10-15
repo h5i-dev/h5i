@@ -150,6 +150,47 @@ theorem holds_isIn (tabs : Tables V) (i t j : Nat) (p : Pred V) (w : Window) (r 
 
 end Enc
 
+/-! ## What a plan loads, table by table -/
+
+section Pick
+variable {V : Type} [DecidableEq V] {α : Type}
+
+/-- The rows of table `t` (the list `l`, encoded by `row`) that `plan`
+loads from `tabs`: its read's window of the rows its predicate keeps, or
+none if the plan has no read of `t`. -/
+def pickRows (plan : List (Read V)) (tabs : Tables V) (t : Nat) (row : α → List V) (l : List α) : List α :=
+  match plan.find? (fun q => decide (q.table = t)) with
+  | some q => q.window.apply (l.filter (fun x => q.pred.holds tabs (row x)))
+  | none => []
+
+theorem pickRows_sublist (plan : List (Read V)) (tabs : Tables V) (t : Nat) (row : α → List V) (l : List α) :
+    List.Sublist (pickRows plan tabs t row l) l := by
+  unfold pickRows; split
+  · exact (Window.apply_sublist _ _).trans List.filter_sublist
+  · exact List.nil_sublist _
+
+theorem pickRows_length (plan : List (Read V)) (tabs : Tables V) (t : Nat) (row : α → List V) (l : List α) :
+    (pickRows plan tabs t row l).length ≤ l.length :=
+  (pickRows_sublist plan tabs t row l).length_le
+
+/-- `load` of a table that encodes `l` is the encoding of what `pickRows` keeps. -/
+theorem load_pick (plan : List (Read V)) (tabs : Tables V) (t : Nat) (row : α → List V) (l : List α)
+    (h : tabs t = l.map row) : load plan tabs t = (pickRows plan tabs t row l).map row := by
+  unfold load pickRows
+  cases hq : plan.find? (fun q => decide (q.table = t)) with
+  | none => rfl
+  | some q =>
+    have ht : q.table = t := by simpa using (List.find?_some hq)
+    exact rows_enc tabs q row l (by rw [ht]; exact h)
+
+/-- A read without a window, as a filter. -/
+theorem pickRows_filter (plan : List (Read V)) (tabs : Tables V) (t : Nat) (row : α → List V) (l : List α)
+    (q : Read V) (hq : plan.find? (fun q => decide (q.table = t)) = some q) (hw : q.window = {}) :
+    pickRows plan tabs t row l = l.filter (fun x => q.pred.holds tabs (row x)) := by
+  simp [pickRows, hq, hw]
+
+end Pick
+
 /-! ## Lookups on a slice -/
 
 section Lookups

@@ -274,6 +274,60 @@ theorem decode_spec (r : Rows) (E : Tables Val)
   | 0 => simp only [Snapshot.enc, hv0]; rw [← e0]; exact h0
   | t + 1 => simp only [Snapshot.enc, hnil (t + 1) (by omega)]; exact .refl _
 
+/-! ## Partial loads
+
+`Store::load_for` may load each table by one declarative read of a plan
+(`schema_load_plan`). `Snapshot.load plan s` is what loading `plan` from the
+tables of `s` decodes to (`decode_load`); an app's frame theorem shows
+`transition` gives the same result on it as on `s`. Values compare by
+classical equality, as everywhere in this file. -/
+
+section PartialLoads
+open H5iAppLib.Query
+
+/-- A vector's rows that the plan loads. -/
+noncomputable def pickVec {α : Type} (plan : List (Query.Read Val)) (tabs : Tables Val) (t : Nat) (row : α → List Val)
+    (v : alloc.vec.Vec α) : alloc.vec.Vec α :=
+  .from (pickRows plan tabs t row v.val) ((pickRows_length plan tabs t row v.val).trans v.len_ineq)
+
+/-- What loading `plan` from the tables of `s` decodes to: each table's rows its read keeps, none if the plan
+does not read it; a singleton table reads as fresh unless its read keeps its row. -/
+noncomputable def Snapshot.load (plan : List (Query.Read Val)) (s : Snapshot) : Snapshot :=
+  { memories := pickVec plan (Snapshot.enc s) 0 Memory.row s.memories }
+
+@[simp] theorem Snapshot.load_memories (plan : List (Query.Read Val)) (s : Snapshot) :
+    (Snapshot.load plan s).memories.val = pickRows plan (Snapshot.enc s) 0 Memory.row s.memories.val :=
+  alloc.vec.Vec.from_val _ _
+
+
+/-- Rows holding, for each table, what `plan` loads from the tables of `s` decode to `Snapshot.load plan s`. -/
+theorem decode_load (plan : List (Query.Read Val)) (s : Snapshot) (r : Rows)
+    (h : ∀ t, t < 1 → Rows.tabs r t = load plan (Snapshot.enc s) t) :
+    decode r = ok (some (Snapshot.load plan s)) := by
+  have e0 := h 0 (by omega)
+  rw [load_pick plan _ 0 Memory.row s.memories.val rfl] at e0
+  simp only [Rows.tabs] at *
+  apply eq_ok_of_spec
+  unfold decode
+  step with Memory.from_rows_spec r.memories _ e0 as ⟨ o0, v0, ho0, hv0 ⟩
+  subst ho0; dsimp only
+  simp only [WP.spec_ok, Option.some.injEq, Snapshot.load]
+  congr 1 <;> apply alloc.vec.Vec.ext <;> simp [pickVec, *]
+
+/-- `IN` a column of a read of table 0, as a test on the snapshot's rows. -/
+theorem holds_in_0 (s : Snapshot) (i j : Nat) (p : Query.Pred Val) (w : Query.Window) (r : List Val) :
+    (Query.Pred.isIn i 0 p j w).holds (Snapshot.enc s) r =
+      match r[i]? with
+      | none => false
+      | some x => (w.apply ((s.memories.val).filter (fun y => p.holds (Snapshot.enc s) (Memory.row y)))).any
+          (fun y => decide ((Memory.row y)[j]? = some x)) := by
+  rw [Query.holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 0) (j := j) (p := p) (w := w) (r := r) (f := Memory.row)
+    (l := s.memories.val) (h := rfl)]
+  cases r[i]? <;> rfl
+
+
+end PartialLoads
+
 /-- Rows in a snapshot's keyed tables; a write adds at most one. -/
 def Snapshot.size (s : Snapshot) : Nat := s.memories.length
 

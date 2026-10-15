@@ -1073,6 +1073,171 @@ theorem decode_spec (r : Rows) (E : Tables Val)
   | 6 => simp only [Snapshot.enc, f6]; exact .refl _
   | t + 7 => simp only [Snapshot.enc, hnil (t + 7) (by omega)]; exact .refl _
 
+/-! ## Partial loads
+
+`Store::load_for` may load each table by one declarative read of a plan
+(`schema_load_plan`). `Snapshot.load plan s` is what loading `plan` from the
+tables of `s` decodes to (`decode_load`); an app's frame theorem shows
+`transition` gives the same result on it as on `s`. Values compare by
+classical equality, as everywhere in this file. -/
+
+section PartialLoads
+open H5iAppLib.Query
+
+/-- A vector's rows that the plan loads. -/
+noncomputable def pickVec {α : Type} (plan : List (Query.Read Val)) (tabs : Tables Val) (t : Nat) (row : α → List Val)
+    (v : alloc.vec.Vec α) : alloc.vec.Vec α :=
+  .from (pickRows plan tabs t row v.val) ((pickRows_length plan tabs t row v.val).trans v.len_ineq)
+
+/-- What loading `plan` from the tables of `s` decodes to: each table's rows its read keeps, none if the plan
+does not read it; a singleton table reads as fresh unless its read keeps its row. -/
+noncomputable def Snapshot.load (plan : List (Query.Read Val)) (s : Snapshot) : Snapshot :=
+  { counter := (pickRows plan (Snapshot.enc s) 6 Counter.row [s.counter]).headD Counter.zero, users := pickVec plan (Snapshot.enc s) 0 User.row s.users, follows := pickVec plan (Snapshot.enc s) 1 Follow.row s.follows, articles := pickVec plan (Snapshot.enc s) 2 Article.row s.articles, tags := pickVec plan (Snapshot.enc s) 3 Tag.row s.tags, favorites := pickVec plan (Snapshot.enc s) 4 Favorite.row s.favorites, comments := pickVec plan (Snapshot.enc s) 5 Comment.row s.comments }
+
+@[simp] theorem Snapshot.load_users (plan : List (Query.Read Val)) (s : Snapshot) :
+    (Snapshot.load plan s).users.val = pickRows plan (Snapshot.enc s) 0 User.row s.users.val :=
+  alloc.vec.Vec.from_val _ _
+
+@[simp] theorem Snapshot.load_follows (plan : List (Query.Read Val)) (s : Snapshot) :
+    (Snapshot.load plan s).follows.val = pickRows plan (Snapshot.enc s) 1 Follow.row s.follows.val :=
+  alloc.vec.Vec.from_val _ _
+
+@[simp] theorem Snapshot.load_articles (plan : List (Query.Read Val)) (s : Snapshot) :
+    (Snapshot.load plan s).articles.val = pickRows plan (Snapshot.enc s) 2 Article.row s.articles.val :=
+  alloc.vec.Vec.from_val _ _
+
+@[simp] theorem Snapshot.load_tags (plan : List (Query.Read Val)) (s : Snapshot) :
+    (Snapshot.load plan s).tags.val = pickRows plan (Snapshot.enc s) 3 Tag.row s.tags.val :=
+  alloc.vec.Vec.from_val _ _
+
+@[simp] theorem Snapshot.load_favorites (plan : List (Query.Read Val)) (s : Snapshot) :
+    (Snapshot.load plan s).favorites.val = pickRows plan (Snapshot.enc s) 4 Favorite.row s.favorites.val :=
+  alloc.vec.Vec.from_val _ _
+
+@[simp] theorem Snapshot.load_comments (plan : List (Query.Read Val)) (s : Snapshot) :
+    (Snapshot.load plan s).comments.val = pickRows plan (Snapshot.enc s) 5 Comment.row s.comments.val :=
+  alloc.vec.Vec.from_val _ _
+
+
+/-- Rows holding, for each table, what `plan` loads from the tables of `s` decode to `Snapshot.load plan s`. -/
+theorem decode_load (plan : List (Query.Read Val)) (s : Snapshot) (r : Rows)
+    (h : ∀ t, t < 7 → Rows.tabs r t = load plan (Snapshot.enc s) t) :
+    decode r = ok (some (Snapshot.load plan s)) := by
+  have e6 := h 6 (by omega)
+  rw [load_pick plan _ 6 Counter.row [s.counter] rfl] at e6
+  have hl6 := pickRows_length plan (Snapshot.enc s) 6 Counter.row [s.counter]
+  have e0 := h 0 (by omega)
+  rw [load_pick plan _ 0 User.row s.users.val rfl] at e0
+  have e1 := h 1 (by omega)
+  rw [load_pick plan _ 1 Follow.row s.follows.val rfl] at e1
+  have e2 := h 2 (by omega)
+  rw [load_pick plan _ 2 Article.row s.articles.val rfl] at e2
+  have e3 := h 3 (by omega)
+  rw [load_pick plan _ 3 Tag.row s.tags.val rfl] at e3
+  have e4 := h 4 (by omega)
+  rw [load_pick plan _ 4 Favorite.row s.favorites.val rfl] at e4
+  have e5 := h 5 (by omega)
+  rw [load_pick plan _ 5 Comment.row s.comments.val rfl] at e5
+  simp only [Rows.tabs] at *
+  apply eq_ok_of_spec
+  unfold decode
+  step with Counter.from_one_spec r.counter _ hl6 e6 as ⟨ o6, h6 ⟩
+  subst h6; dsimp only
+  step with User.from_rows_spec r.users _ e0 as ⟨ o0, v0, ho0, hv0 ⟩
+  subst ho0; dsimp only
+  step with Follow.from_rows_spec r.follows _ e1 as ⟨ o1, v1, ho1, hv1 ⟩
+  subst ho1; dsimp only
+  step with Article.from_rows_spec r.articles _ e2 as ⟨ o2, v2, ho2, hv2 ⟩
+  subst ho2; dsimp only
+  step with Tag.from_rows_spec r.tags _ e3 as ⟨ o3, v3, ho3, hv3 ⟩
+  subst ho3; dsimp only
+  step with Favorite.from_rows_spec r.favorites _ e4 as ⟨ o4, v4, ho4, hv4 ⟩
+  subst ho4; dsimp only
+  step with Comment.from_rows_spec r.comments _ e5 as ⟨ o5, v5, ho5, hv5 ⟩
+  subst ho5; dsimp only
+  simp only [WP.spec_ok, Option.some.injEq, Snapshot.load]
+  congr 1 <;> apply alloc.vec.Vec.ext <;> simp [pickVec, *]
+
+/-- `IN` a column of a read of table 0, as a test on the snapshot's rows. -/
+theorem holds_in_0 (s : Snapshot) (i j : Nat) (p : Query.Pred Val) (w : Query.Window) (r : List Val) :
+    (Query.Pred.isIn i 0 p j w).holds (Snapshot.enc s) r =
+      match r[i]? with
+      | none => false
+      | some x => (w.apply ((s.users.val).filter (fun y => p.holds (Snapshot.enc s) (User.row y)))).any
+          (fun y => decide ((User.row y)[j]? = some x)) := by
+  rw [Query.holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 0) (j := j) (p := p) (w := w) (r := r) (f := User.row)
+    (l := s.users.val) (h := rfl)]
+  cases r[i]? <;> rfl
+
+/-- `IN` a column of a read of table 1, as a test on the snapshot's rows. -/
+theorem holds_in_1 (s : Snapshot) (i j : Nat) (p : Query.Pred Val) (w : Query.Window) (r : List Val) :
+    (Query.Pred.isIn i 1 p j w).holds (Snapshot.enc s) r =
+      match r[i]? with
+      | none => false
+      | some x => (w.apply ((s.follows.val).filter (fun y => p.holds (Snapshot.enc s) (Follow.row y)))).any
+          (fun y => decide ((Follow.row y)[j]? = some x)) := by
+  rw [Query.holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 1) (j := j) (p := p) (w := w) (r := r) (f := Follow.row)
+    (l := s.follows.val) (h := rfl)]
+  cases r[i]? <;> rfl
+
+/-- `IN` a column of a read of table 2, as a test on the snapshot's rows. -/
+theorem holds_in_2 (s : Snapshot) (i j : Nat) (p : Query.Pred Val) (w : Query.Window) (r : List Val) :
+    (Query.Pred.isIn i 2 p j w).holds (Snapshot.enc s) r =
+      match r[i]? with
+      | none => false
+      | some x => (w.apply ((s.articles.val).filter (fun y => p.holds (Snapshot.enc s) (Article.row y)))).any
+          (fun y => decide ((Article.row y)[j]? = some x)) := by
+  rw [Query.holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 2) (j := j) (p := p) (w := w) (r := r) (f := Article.row)
+    (l := s.articles.val) (h := rfl)]
+  cases r[i]? <;> rfl
+
+/-- `IN` a column of a read of table 3, as a test on the snapshot's rows. -/
+theorem holds_in_3 (s : Snapshot) (i j : Nat) (p : Query.Pred Val) (w : Query.Window) (r : List Val) :
+    (Query.Pred.isIn i 3 p j w).holds (Snapshot.enc s) r =
+      match r[i]? with
+      | none => false
+      | some x => (w.apply ((s.tags.val).filter (fun y => p.holds (Snapshot.enc s) (Tag.row y)))).any
+          (fun y => decide ((Tag.row y)[j]? = some x)) := by
+  rw [Query.holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 3) (j := j) (p := p) (w := w) (r := r) (f := Tag.row)
+    (l := s.tags.val) (h := rfl)]
+  cases r[i]? <;> rfl
+
+/-- `IN` a column of a read of table 4, as a test on the snapshot's rows. -/
+theorem holds_in_4 (s : Snapshot) (i j : Nat) (p : Query.Pred Val) (w : Query.Window) (r : List Val) :
+    (Query.Pred.isIn i 4 p j w).holds (Snapshot.enc s) r =
+      match r[i]? with
+      | none => false
+      | some x => (w.apply ((s.favorites.val).filter (fun y => p.holds (Snapshot.enc s) (Favorite.row y)))).any
+          (fun y => decide ((Favorite.row y)[j]? = some x)) := by
+  rw [Query.holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 4) (j := j) (p := p) (w := w) (r := r) (f := Favorite.row)
+    (l := s.favorites.val) (h := rfl)]
+  cases r[i]? <;> rfl
+
+/-- `IN` a column of a read of table 5, as a test on the snapshot's rows. -/
+theorem holds_in_5 (s : Snapshot) (i j : Nat) (p : Query.Pred Val) (w : Query.Window) (r : List Val) :
+    (Query.Pred.isIn i 5 p j w).holds (Snapshot.enc s) r =
+      match r[i]? with
+      | none => false
+      | some x => (w.apply ((s.comments.val).filter (fun y => p.holds (Snapshot.enc s) (Comment.row y)))).any
+          (fun y => decide ((Comment.row y)[j]? = some x)) := by
+  rw [Query.holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 5) (j := j) (p := p) (w := w) (r := r) (f := Comment.row)
+    (l := s.comments.val) (h := rfl)]
+  cases r[i]? <;> rfl
+
+/-- `IN` a column of a read of table 6, as a test on the snapshot's rows. -/
+theorem holds_in_6 (s : Snapshot) (i j : Nat) (p : Query.Pred Val) (w : Query.Window) (r : List Val) :
+    (Query.Pred.isIn i 6 p j w).holds (Snapshot.enc s) r =
+      match r[i]? with
+      | none => false
+      | some x => (w.apply (([s.counter]).filter (fun y => p.holds (Snapshot.enc s) (Counter.row y)))).any
+          (fun y => decide ((Counter.row y)[j]? = some x)) := by
+  rw [Query.holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 6) (j := j) (p := p) (w := w) (r := r) (f := Counter.row)
+    (l := [s.counter]) (h := rfl)]
+  cases r[i]? <;> rfl
+
+
+end PartialLoads
+
 /-- Rows in a snapshot's keyed tables; a write adds at most one. -/
 def Snapshot.size (s : Snapshot) : Nat := s.users.length + s.follows.length + s.articles.length + s.tags.length + s.favorites.length + s.comments.length
 

@@ -490,6 +490,95 @@ theorem decode_spec (r : Rows) (E : Tables Val)
   | 2 => simp only [Snapshot.enc, f2]; exact .refl _
   | t + 3 => simp only [Snapshot.enc, hnil (t + 3) (by omega)]; exact .refl _
 
+/-! ## Partial loads
+
+`Store::load_for` may load each table by one declarative read of a plan
+(`schema_load_plan`). `Snapshot.load plan s` is what loading `plan` from the
+tables of `s` decodes to (`decode_load`); an app's frame theorem shows
+`transition` gives the same result on it as on `s`. Values compare by
+classical equality, as everywhere in this file. -/
+
+section PartialLoads
+open H5iAppLib.Query
+
+/-- A vector's rows that the plan loads. -/
+noncomputable def pickVec {α : Type} (plan : List (Query.Read Val)) (tabs : Tables Val) (t : Nat) (row : α → List Val)
+    (v : alloc.vec.Vec α) : alloc.vec.Vec α :=
+  .from (pickRows plan tabs t row v.val) ((pickRows_length plan tabs t row v.val).trans v.len_ineq)
+
+/-- What loading `plan` from the tables of `s` decodes to: each table's rows its read keeps, none if the plan
+does not read it; a singleton table reads as fresh unless its read keeps its row. -/
+noncomputable def Snapshot.load (plan : List (Query.Read Val)) (s : Snapshot) : Snapshot :=
+  { counter := (pickRows plan (Snapshot.enc s) 2 Counter.row [s.counter]).headD Counter.zero, posts := pickVec plan (Snapshot.enc s) 0 Post.row s.posts, moderators := pickVec plan (Snapshot.enc s) 1 Moderator.row s.moderators }
+
+@[simp] theorem Snapshot.load_posts (plan : List (Query.Read Val)) (s : Snapshot) :
+    (Snapshot.load plan s).posts.val = pickRows plan (Snapshot.enc s) 0 Post.row s.posts.val :=
+  alloc.vec.Vec.from_val _ _
+
+@[simp] theorem Snapshot.load_moderators (plan : List (Query.Read Val)) (s : Snapshot) :
+    (Snapshot.load plan s).moderators.val = pickRows plan (Snapshot.enc s) 1 Moderator.row s.moderators.val :=
+  alloc.vec.Vec.from_val _ _
+
+
+/-- Rows holding, for each table, what `plan` loads from the tables of `s` decode to `Snapshot.load plan s`. -/
+theorem decode_load (plan : List (Query.Read Val)) (s : Snapshot) (r : Rows)
+    (h : ∀ t, t < 3 → Rows.tabs r t = load plan (Snapshot.enc s) t) :
+    decode r = ok (some (Snapshot.load plan s)) := by
+  have e2 := h 2 (by omega)
+  rw [load_pick plan _ 2 Counter.row [s.counter] rfl] at e2
+  have hl2 := pickRows_length plan (Snapshot.enc s) 2 Counter.row [s.counter]
+  have e0 := h 0 (by omega)
+  rw [load_pick plan _ 0 Post.row s.posts.val rfl] at e0
+  have e1 := h 1 (by omega)
+  rw [load_pick plan _ 1 Moderator.row s.moderators.val rfl] at e1
+  simp only [Rows.tabs] at *
+  apply eq_ok_of_spec
+  unfold decode
+  step with Counter.from_one_spec r.counter _ hl2 e2 as ⟨ o2, h2 ⟩
+  subst h2; dsimp only
+  step with Post.from_rows_spec r.posts _ e0 as ⟨ o0, v0, ho0, hv0 ⟩
+  subst ho0; dsimp only
+  step with Moderator.from_rows_spec r.moderators _ e1 as ⟨ o1, v1, ho1, hv1 ⟩
+  subst ho1; dsimp only
+  simp only [WP.spec_ok, Option.some.injEq, Snapshot.load]
+  congr 1 <;> apply alloc.vec.Vec.ext <;> simp [pickVec, *]
+
+/-- `IN` a column of a read of table 0, as a test on the snapshot's rows. -/
+theorem holds_in_0 (s : Snapshot) (i j : Nat) (p : Query.Pred Val) (w : Query.Window) (r : List Val) :
+    (Query.Pred.isIn i 0 p j w).holds (Snapshot.enc s) r =
+      match r[i]? with
+      | none => false
+      | some x => (w.apply ((s.posts.val).filter (fun y => p.holds (Snapshot.enc s) (Post.row y)))).any
+          (fun y => decide ((Post.row y)[j]? = some x)) := by
+  rw [Query.holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 0) (j := j) (p := p) (w := w) (r := r) (f := Post.row)
+    (l := s.posts.val) (h := rfl)]
+  cases r[i]? <;> rfl
+
+/-- `IN` a column of a read of table 1, as a test on the snapshot's rows. -/
+theorem holds_in_1 (s : Snapshot) (i j : Nat) (p : Query.Pred Val) (w : Query.Window) (r : List Val) :
+    (Query.Pred.isIn i 1 p j w).holds (Snapshot.enc s) r =
+      match r[i]? with
+      | none => false
+      | some x => (w.apply ((s.moderators.val).filter (fun y => p.holds (Snapshot.enc s) (Moderator.row y)))).any
+          (fun y => decide ((Moderator.row y)[j]? = some x)) := by
+  rw [Query.holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 1) (j := j) (p := p) (w := w) (r := r) (f := Moderator.row)
+    (l := s.moderators.val) (h := rfl)]
+  cases r[i]? <;> rfl
+
+/-- `IN` a column of a read of table 2, as a test on the snapshot's rows. -/
+theorem holds_in_2 (s : Snapshot) (i j : Nat) (p : Query.Pred Val) (w : Query.Window) (r : List Val) :
+    (Query.Pred.isIn i 2 p j w).holds (Snapshot.enc s) r =
+      match r[i]? with
+      | none => false
+      | some x => (w.apply (([s.counter]).filter (fun y => p.holds (Snapshot.enc s) (Counter.row y)))).any
+          (fun y => decide ((Counter.row y)[j]? = some x)) := by
+  rw [Query.holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 2) (j := j) (p := p) (w := w) (r := r) (f := Counter.row)
+    (l := [s.counter]) (h := rfl)]
+  cases r[i]? <;> rfl
+
+
+end PartialLoads
+
 /-- Rows in a snapshot's keyed tables; a write adds at most one. -/
 def Snapshot.size (s : Snapshot) : Nat := s.posts.length + s.moderators.length
 

@@ -4,7 +4,7 @@ import Commands
 # Frame theorem: the read plans load enough
 
 `frame`: for every command with a read plan (`reads a c = some plan`),
-`transition` on `loadSnap plan s` (what the server loads, `Plan.decode_load`)
+`transition` on `Snapshot.load plan s` (what the server loads, `Plan.decode_load`)
 gives exactly the result it gives on the whole site `s`. The only fact about
 `s` it needs is that usernames are unique (`Inv.usernames`), for the
 listing's author and `favorited` filters, which the plan resolves with
@@ -16,7 +16,7 @@ kernel can return (`H5iAppLib.Query.find?_slice`, `any_slice`,
 `offset + limit` matching articles, which hold the page
 (`H5iAppLib.Query.page_of_newest`).
 -/
-open Aeneas Aeneas.Std Result conduit_kernel conduit_kernel.Spec conduit_kernel.Helpers
+open Classical Aeneas Aeneas.Std Result conduit_kernel conduit_kernel.Spec conduit_kernel.Helpers
   conduit_kernel.Commands conduit_kernel.Schema conduit_kernel.Plan H5iAppLib H5iAppLib.Query
 
 namespace conduit_kernel.Frame
@@ -163,7 +163,7 @@ end Slice
 /-! ## What a plan keeps -/
 
 /-- The rows of table `t` the plan keeps, for a read without a window. -/
-def keepOf {α : Type} (plan : List (Read Val)) (tabs : H5iAppLib.Sql.Tables Val) (t : Nat) (row : α → List Val)
+noncomputable def keepOf {α : Type} (plan : List (Read Val)) (tabs : H5iAppLib.Sql.Tables Val) (t : Nat) (row : α → List Val)
     (x : α) : Bool :=
   match plan.find? (fun q => decide (q.table = t)) with
   | some q => q.pred.holds tabs (row x)
@@ -174,8 +174,8 @@ def Unwindowed (plan : List (Read Val)) : Prop := ∀ q ∈ plan, q.table ≠ 2 
 
 theorem pick_eq {α : Type} {plan : List (Read Val)} (hw : Unwindowed plan) (tabs : H5iAppLib.Sql.Tables Val)
     (t : Nat) (ht : t ≠ 2) (row : α → List Val) (l : List α) :
-    pick plan tabs t row l = l.filter (keepOf plan tabs t row) := by
-  unfold pick keepOf
+    pickRows plan tabs t row l = l.filter (keepOf plan tabs t row) := by
+  unfold pickRows keepOf
   cases hq : plan.find? (fun q => decide (q.table = t)) with
   | none => simp
   | some q =>
@@ -184,22 +184,22 @@ theorem pick_eq {α : Type} {plan : List (Read Val)} (hw : Unwindowed plan) (tab
     simp only [hw q hm (hqt ▸ ht), Window.apply_default]
 
 theorem keeps {plan : List (Read Val)} (hw : Unwindowed plan) (s : Snapshot) :
-    Keeps (Snapshot.toSt s) (Snapshot.toSt (loadSnap plan s)) (keepOf plan (Snapshot.enc s) 0 User.row)
+    Keeps (Snapshot.toSt s) (Snapshot.toSt (Snapshot.load plan s)) (keepOf plan (Snapshot.enc s) 0 User.row)
       (keepOf plan (Snapshot.enc s) 1 Follow.row) (keepOf plan (Snapshot.enc s) 3 Tag.row)
       (keepOf plan (Snapshot.enc s) 4 Favorite.row) (keepOf plan (Snapshot.enc s) 5 Comment.row) where
-  users := by simp [Snapshot.toSt, loadSnap, pick_eq hw]
-  follows := by simp [Snapshot.toSt, loadSnap, pick_eq hw]
-  tags := by simp [Snapshot.toSt, loadSnap, pick_eq hw]
-  favs := by simp [Snapshot.toSt, loadSnap, pick_eq hw]
-  comments := by simp [Snapshot.toSt, loadSnap, pick_eq hw]
+  users := by simp [Snapshot.toSt, pick_eq hw]
+  follows := by simp [Snapshot.toSt, pick_eq hw]
+  tags := by simp [Snapshot.toSt, pick_eq hw]
+  favs := by simp [Snapshot.toSt, pick_eq hw]
+  comments := by simp [Snapshot.toSt, pick_eq hw]
 
 /-- The articles a plan loads. -/
-def artsOf (plan : List (Read Val)) (s : Snapshot) : List Article :=
-  pick plan (Snapshot.enc s) 2 Article.row s.articles.val
+noncomputable def artsOf (plan : List (Read Val)) (s : Snapshot) : List Article :=
+  pickRows plan (Snapshot.enc s) 2 Article.row s.articles.val
 
 @[simp] theorem toSt_articles (plan : List (Read Val)) (s : Snapshot) :
-    (Snapshot.toSt (loadSnap plan s)).articles = artsOf plan s := by
-  simp [Snapshot.toSt, loadSnap, artsOf]
+    (Snapshot.toSt (Snapshot.load plan s)).articles = artsOf plan s := by
+  simp [Snapshot.toSt, artsOf]
 
 /-! ## Predicates on encoded rows -/
 
@@ -214,71 +214,10 @@ def artsOf (plan : List (Read Val)) (s : Snapshot) : List Article :=
 @[simp] theorem holds_and (tabs : H5iAppLib.Sql.Tables Val) (p q : Pred Val) (r : List Val) :
     (Pred.and p q).holds tabs r = (p.holds tabs r && q.holds tabs r) := rfl
 
-/-- `IN (SELECT ... FROM articles ...)`, as a test on the decoded articles. -/
-theorem holds_in_articles (s : Snapshot) (i j : Nat) (p : Pred Val) (w : Window) (r : List Val) :
-    (Pred.isIn i 2 p j w).holds (Snapshot.enc s) r =
-      match r[i]? with
-      | none => false
-      | some x => (w.apply (s.articles.val.filter (fun y => p.holds (Snapshot.enc s) (Article.row y)))).any
-          (fun y => decide ((Article.row y)[j]? = some x)) := by
-  rw [holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 2) (j := j) (p := p) (w := w) (r := r) (f := Article.row)
-    (l := s.articles.val) (h := rfl)]
-  cases r[i]? <;> rfl
-
-theorem holds_in_users (s : Snapshot) (i j : Nat) (p : Pred Val) (w : Window) (r : List Val) :
-    (Pred.isIn i 0 p j w).holds (Snapshot.enc s) r =
-      match r[i]? with
-      | none => false
-      | some x => (w.apply (s.users.val.filter (fun y => p.holds (Snapshot.enc s) (User.row y)))).any
-          (fun y => decide ((User.row y)[j]? = some x)) := by
-  rw [holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 0) (j := j) (p := p) (w := w) (r := r) (f := User.row)
-    (l := s.users.val) (h := rfl)]
-  cases r[i]? <;> rfl
-
-theorem holds_in_follows (s : Snapshot) (i j : Nat) (p : Pred Val) (w : Window) (r : List Val) :
-    (Pred.isIn i 1 p j w).holds (Snapshot.enc s) r =
-      match r[i]? with
-      | none => false
-      | some x => (w.apply (s.follows.val.filter (fun y => p.holds (Snapshot.enc s) (Follow.row y)))).any
-          (fun y => decide ((Follow.row y)[j]? = some x)) := by
-  rw [holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 1) (j := j) (p := p) (w := w) (r := r) (f := Follow.row)
-    (l := s.follows.val) (h := rfl)]
-  cases r[i]? <;> rfl
-
-theorem holds_in_tags (s : Snapshot) (i j : Nat) (p : Pred Val) (w : Window) (r : List Val) :
-    (Pred.isIn i 3 p j w).holds (Snapshot.enc s) r =
-      match r[i]? with
-      | none => false
-      | some x => (w.apply (s.tags.val.filter (fun y => p.holds (Snapshot.enc s) (Tag.row y)))).any
-          (fun y => decide ((Tag.row y)[j]? = some x)) := by
-  rw [holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 3) (j := j) (p := p) (w := w) (r := r) (f := Tag.row)
-    (l := s.tags.val) (h := rfl)]
-  cases r[i]? <;> rfl
-
-theorem holds_in_favorites (s : Snapshot) (i j : Nat) (p : Pred Val) (w : Window) (r : List Val) :
-    (Pred.isIn i 4 p j w).holds (Snapshot.enc s) r =
-      match r[i]? with
-      | none => false
-      | some x => (w.apply (s.favorites.val.filter (fun y => p.holds (Snapshot.enc s) (Favorite.row y)))).any
-          (fun y => decide ((Favorite.row y)[j]? = some x)) := by
-  rw [holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 4) (j := j) (p := p) (w := w) (r := r) (f := Favorite.row)
-    (l := s.favorites.val) (h := rfl)]
-  cases r[i]? <;> rfl
-
-theorem holds_in_comments (s : Snapshot) (i j : Nat) (p : Pred Val) (w : Window) (r : List Val) :
-    (Pred.isIn i 5 p j w).holds (Snapshot.enc s) r =
-      match r[i]? with
-      | none => false
-      | some x => (w.apply (s.comments.val.filter (fun y => p.holds (Snapshot.enc s) (Comment.row y)))).any
-          (fun y => decide ((Comment.row y)[j]? = some x)) := by
-  rw [holds_isIn (tabs := Snapshot.enc s) (i := i) (t := 5) (j := j) (p := p) (w := w) (r := r) (f := Comment.row)
-    (l := s.comments.val) (h := rfl)]
-  cases r[i]? <;> rfl
-
 /-- Unfolds the predicates of a plan on encoded rows. -/
 macro "holds_simp" : tactic => `(tactic| simp [keepOf, Unwindowed, articlePlan, eqU, eqB, orOpt, andOpt, bySlug, Plan.named,
-  selPred, listNames, holds_in_articles, holds_in_users, holds_in_follows, holds_in_tags, holds_in_favorites,
-  holds_in_comments, User.row, Follow.row, Article.row, Tag.row, Favorite.row, Comment.row, int_u64])
+  selPred, listNames, holds_in_2, holds_in_0, holds_in_1, holds_in_3, holds_in_4,
+  holds_in_5, User.row, Follow.row, Article.row, Tag.row, Favorite.row, Comment.row, int_u64])
 
 /-! ## Helpers on a slice -/
 
@@ -365,34 +304,34 @@ theorem eq_of_specs {α : Type} {m m' : Result α} {R : α} (h : m ⦃ fun r => 
   spec_congr h h' (fun x y hx hy => hx.trans hy.symm)
 
 theorem current_user_frame (u : U64) (plan : List (Read Val)) (hp : plan = [⟨0, eqU 0 u, {}⟩]) :
-    current_user (loadSnap plan s) u = current_user s u := by
+    current_user (Snapshot.load plan s) u = current_user s u := by
   have hw : Unwindowed plan := by subst hp; holds_simp
   have K := keeps hw s
-  have h := current_user_spec (loadSnap plan s) u
+  have h := current_user_spec (Snapshot.load plan s) u
   rw [userById_keep K u (fun x _ hx => by subst hp; holds_simp; exact hx)] at h
   exact eq_of_specs h (current_user_spec s u)
 
 theorem get_profile_frame (u : U64) (n : alloc.vec.Vec U8) (plan : List (Read Val))
     (hp : plan = [⟨0, eqB 1 n, {}⟩, ⟨1, eqU 0 u, {}⟩]) :
-    get_profile (loadSnap plan s) u n = get_profile s u n := by
+    get_profile (Snapshot.load plan s) u n = get_profile s u n := by
   have hw : Unwindowed plan := by subst hp; holds_simp
   have K := keeps hw s
   have hf : ∀ f ∈ (Snapshot.toSt s).follows, f.follower = u → keepOf plan (Snapshot.enc s) 1 Follow.row f :=
     fun f _ hf => by subst hp; holds_simp; exact hf
-  have h := get_profile_spec (loadSnap plan s) u n
+  have h := get_profile_spec (Snapshot.load plan s) u n
   rw [userByName_keep K n (fun x _ hx => by subst hp; holds_simp; exact hx)] at h
   simp only [profileOf_keep K u _ hf] at h
   exact eq_of_specs h (get_profile_spec s u n)
 
 theorem follow_frame (u : U64) (n : alloc.vec.Vec U8) (plan : List (Read Val))
     (hp : plan = [⟨0, .or (eqU 0 u) (eqB 1 n), {}⟩]) :
-    follow (loadSnap plan s) u n = follow s u n ∧ unfollow (loadSnap plan s) u n = unfollow s u n := by
+    follow (Snapshot.load plan s) u n = follow s u n ∧ unfollow (Snapshot.load plan s) u n = unfollow s u n := by
   have hw : Unwindowed plan := by subst hp; holds_simp
   have K := keeps hw s
-  have hU : (loadSnap plan s).users.val.find? (fun x => decide (x.id = u)) =
+  have hU : (Snapshot.load plan s).users.val.find? (fun x => decide (x.id = u)) =
       s.users.val.find? (fun x => decide (x.id = u)) :=
     userById_keep K u (fun x _ hx => by subst hp; holds_simp; simp [hx])
-  have hN : (loadSnap plan s).users.val.find? (fun x => decide (x.username = n)) =
+  have hN : (Snapshot.load plan s).users.val.find? (fun x => decide (x.username = n)) =
       s.users.val.find? (fun x => decide (x.username = n)) :=
     userByName_keep K n (fun x _ hx => by subst hp; holds_simp; simp [hx])
   refine ⟨?_, ?_⟩
@@ -402,18 +341,18 @@ theorem follow_frame (u : U64) (n : alloc.vec.Vec U8) (plan : List (Read Val))
 /-- The plan reads articles `artsOf` keeps by `p`, with no window. -/
 theorem articleBySlug_load (plan : List (Read Val)) (slug : alloc.vec.Vec U8)
     (hA : artsOf plan s = s.articles.val.filter (fun y => (bySlug slug).holds (Snapshot.enc s) (Article.row y))) :
-    articleBySlug (Snapshot.toSt (loadSnap plan s)) slug = articleBySlug (Snapshot.toSt s) slug := by
+    articleBySlug (Snapshot.toSt (Snapshot.load plan s)) slug = articleBySlug (Snapshot.toSt s) slug := by
   simp only [articleBySlug, toSt_articles, hA]
   exact find?_slice _ _ _ (fun y _ hy => by holds_simp; simpa using hy)
 
 theorem get_article_frame (u : U64) (slug : alloc.vec.Vec U8) (plan : List (Read Val))
     (hp : plan = articlePlan u (.Slug slug) {} none) :
-    get_article (loadSnap plan s) u slug false = get_article s u slug false := by
+    get_article (Snapshot.load plan s) u slug false = get_article s u slug false := by
   have hw : Unwindowed plan := by subst hp; holds_simp
   have K := keeps hw s
   have hA : artsOf plan s = s.articles.val.filter (fun y => (bySlug slug).holds (Snapshot.enc s) (Article.row y)) := by
-    subst hp; simp [artsOf, pick, articlePlan, selPred]
-  have h := get_article_spec (loadSnap plan s) u slug false
+    subst hp; simp [artsOf, pickRows, articlePlan, selPred]
+  have h := get_article_spec (Snapshot.load plan s) u slug false
   rw [articleBySlug_load s plan slug hA] at h
   have h' := get_article_spec s u slug false
   cases ha : articleBySlug (Snapshot.toSt s) slug with
@@ -431,24 +370,24 @@ theorem get_article_frame (u : U64) (slug : alloc.vec.Vec U8) (plan : List (Read
 
 theorem favorite_frame (u : U64) (slug : alloc.vec.Vec U8) (plan : List (Read Val))
     (hp : plan = articlePlan u (.Slug slug) {} (some (eqU 0 u))) :
-    favorite (loadSnap plan s) u slug = favorite s u slug ∧
-      unfavorite (loadSnap plan s) u slug false = unfavorite s u slug false := by
+    favorite (Snapshot.load plan s) u slug = favorite s u slug ∧
+      unfavorite (Snapshot.load plan s) u slug false = unfavorite s u slug false := by
   have hw : Unwindowed plan := by subst hp; holds_simp
   have K := keeps hw s
   have hA : artsOf plan s = s.articles.val.filter (fun y => (bySlug slug).holds (Snapshot.enc s) (Article.row y)) := by
-    subst hp; simp [artsOf, pick, articlePlan, selPred]
-  have hU : (loadSnap plan s).users.val.find? (fun x => decide (x.id = u)) =
+    subst hp; simp [artsOf, pickRows, articlePlan, selPred]
+  have hU : (Snapshot.load plan s).users.val.find? (fun x => decide (x.id = u)) =
       s.users.val.find? (fun x => decide (x.id = u)) :=
     userById_keep K u (fun x _ hx => by subst hp; holds_simp; simp [hx])
-  have hS : (loadSnap plan s).articles.val.find? (fun x => decide (x.slug = slug)) =
+  have hS : (Snapshot.load plan s).articles.val.find? (fun x => decide (x.slug = slug)) =
       s.articles.val.find? (fun x => decide (x.slug = slug)) :=
     articleBySlug_load s plan slug hA
   have hrest : ∀ me a, s.users.val.find? (fun x => decide (x.id = u)) = some me →
       s.articles.val.find? (fun x => decide (x.slug = slug)) = some a →
-      is_favorited (loadSnap plan s).favorites a.id me.id = is_favorited s.favorites a.id me.id ∧
-      fav_count (loadSnap plan s).favorites a.id = fav_count s.favorites a.id ∧
-      tags_of (loadSnap plan s).tags a.id = tags_of s.tags a.id ∧
-      author_profile (loadSnap plan s) me.id a.author = author_profile s me.id a.author := by
+      is_favorited (Snapshot.load plan s).favorites a.id me.id = is_favorited s.favorites a.id me.id ∧
+      fav_count (Snapshot.load plan s).favorites a.id = fav_count s.favorites a.id ∧
+      tags_of (Snapshot.load plan s).tags a.id = tags_of s.tags a.id ∧
+      author_profile (Snapshot.load plan s) me.id a.author = author_profile s me.id a.author := by
     intro me a hu ha
     obtain ⟨hmem, hslug⟩ := Theorems.articleBySlug_some (s := Snapshot.toSt s) ha
     obtain ⟨-, hme⟩ := Theorems.userById_some (s := Snapshot.toSt s) hu
@@ -481,10 +420,10 @@ theorem favorite_frame (u : U64) (slug : alloc.vec.Vec U8) (plan : List (Read Va
 
 theorem update_user_frame (u : U64) (e n p b i : Option (alloc.vec.Vec U8)) (plan : List (Read Val))
     (hp : plan = [⟨0, orOpt (orOpt (eqU 0 u) (n.map (eqB 1))) (e.map (eqB 2)), {}⟩]) :
-    update_user (loadSnap plan s) u e n p b i = update_user s u e n p b i := by
+    update_user (Snapshot.load plan s) u e n p b i = update_user s u e n p b i := by
   have hw : Unwindowed plan := by subst hp; holds_simp
   have K := keeps hw s
-  have hU : (loadSnap plan s).users.val.find? (fun x => decide (x.id = u)) =
+  have hU : (Snapshot.load plan s).users.val.find? (fun x => decide (x.id = u)) =
       s.users.val.find? (fun x => decide (x.id = u)) :=
     userById_keep K u (fun x _ hx => by subst hp; cases e <;> cases n <;> holds_simp <;> simp [hx])
   have hN := fun me => name_taken_keep K n me
@@ -497,12 +436,12 @@ theorem update_user_frame (u : U64) (e n p b i : Option (alloc.vec.Vec U8)) (pla
 theorem get_comments_frame (u : U64) (slug : alloc.vec.Vec U8) (plan : List (Read Val))
     (hp : plan = [⟨0, .isIn 0 5 (.isIn 1 2 (bySlug slug) 0 {}) 2 {}, {}⟩, ⟨1, eqU 0 u, {}⟩, ⟨2, bySlug slug, {}⟩,
       ⟨5, .isIn 1 2 (bySlug slug) 0 {}, {}⟩]) :
-    get_comments (loadSnap plan s) u slug = get_comments s u slug := by
+    get_comments (Snapshot.load plan s) u slug = get_comments s u slug := by
   have hw : Unwindowed plan := by subst hp; holds_simp
   have K := keeps hw s
   have hA : artsOf plan s = s.articles.val.filter (fun y => (bySlug slug).holds (Snapshot.enc s) (Article.row y)) := by
-    subst hp; simp [artsOf, pick]
-  have hS : (loadSnap plan s).articles.val.find? (fun x => decide (x.slug = slug)) =
+    subst hp; simp [artsOf, pickRows]
+  have hS : (Snapshot.load plan s).articles.val.find? (fun x => decide (x.slug = slug)) =
       s.articles.val.find? (fun x => decide (x.slug = slug)) :=
     articleBySlug_load s plan slug hA
   unfold get_comments
@@ -519,18 +458,18 @@ theorem get_comments_frame (u : U64) (slug : alloc.vec.Vec U8) (plan : List (Rea
 
 theorem add_comment_frame (u : U64) (slug body : alloc.vec.Vec U8) (now : U64) (plan : List (Read Val))
     (hp : plan = [⟨0, eqU 0 u, {}⟩, ⟨1, eqU 0 u, {}⟩, ⟨2, bySlug slug, {}⟩, ⟨6, .all, {}⟩]) :
-    add_comment (loadSnap plan s) u slug body now = add_comment s u slug body now := by
+    add_comment (Snapshot.load plan s) u slug body now = add_comment s u slug body now := by
   have hw : Unwindowed plan := by subst hp; holds_simp
   have K := keeps hw s
   have hA : artsOf plan s = s.articles.val.filter (fun y => (bySlug slug).holds (Snapshot.enc s) (Article.row y)) := by
-    subst hp; simp [artsOf, pick]
-  have hU : (loadSnap plan s).users.val.find? (fun x => decide (x.id = u)) =
+    subst hp; simp [artsOf, pickRows]
+  have hU : (Snapshot.load plan s).users.val.find? (fun x => decide (x.id = u)) =
       s.users.val.find? (fun x => decide (x.id = u)) :=
     userById_keep K u (fun x _ hx => by subst hp; holds_simp; simp [hx])
-  have hS : (loadSnap plan s).articles.val.find? (fun x => decide (x.slug = slug)) =
+  have hS : (Snapshot.load plan s).articles.val.find? (fun x => decide (x.slug = slug)) =
       s.articles.val.find? (fun x => decide (x.slug = slug)) :=
     articleBySlug_load s plan slug hA
-  have hC : (loadSnap plan s).counter = s.counter := by subst hp; simp [loadSnap, pick]
+  have hC : (Snapshot.load plan s).counter = s.counter := by subst hp; simp [Snapshot.load, pickRows]
   unfold add_comment
   simp only [find_user_eq, find_article_eq, hU, hS, hC, bind_ok]
   split
@@ -541,18 +480,18 @@ theorem add_comment_frame (u : U64) (slug body : alloc.vec.Vec U8) (now : U64) (
 
 theorem delete_comment_frame (u : U64) (slug : alloc.vec.Vec U8) (id : U64) (plan : List (Read Val))
     (hp : plan = [⟨0, eqU 0 u, {}⟩, ⟨2, bySlug slug, {}⟩, ⟨5, eqU 0 id, {}⟩]) :
-    delete_comment (loadSnap plan s) u slug id = delete_comment s u slug id := by
+    delete_comment (Snapshot.load plan s) u slug id = delete_comment s u slug id := by
   have hw : Unwindowed plan := by subst hp; holds_simp
   have K := keeps hw s
   have hA : artsOf plan s = s.articles.val.filter (fun y => (bySlug slug).holds (Snapshot.enc s) (Article.row y)) := by
-    subst hp; simp [artsOf, pick]
-  have hU : (loadSnap plan s).users.val.find? (fun x => decide (x.id = u)) =
+    subst hp; simp [artsOf, pickRows]
+  have hU : (Snapshot.load plan s).users.val.find? (fun x => decide (x.id = u)) =
       s.users.val.find? (fun x => decide (x.id = u)) :=
     userById_keep K u (fun x _ hx => by subst hp; holds_simp; simp [hx])
-  have hS : (loadSnap plan s).articles.val.find? (fun x => decide (x.slug = slug)) =
+  have hS : (Snapshot.load plan s).articles.val.find? (fun x => decide (x.slug = slug)) =
       s.articles.val.find? (fun x => decide (x.slug = slug)) :=
     articleBySlug_load s plan slug hA
-  have hC : (loadSnap plan s).comments.val.find? (fun x => decide (x.id = id)) =
+  have hC : (Snapshot.load plan s).comments.val.find? (fun x => decide (x.id = id)) =
       s.comments.val.find? (fun x => decide (x.id = id)) := by
     have := K.comments
     simp only [Snapshot.toSt] at this
@@ -567,35 +506,35 @@ theorem selPred_feed (u : U64) (y : Article) :
 
 theorem feed_frame (u lim off : U64) (plan : List (Read Val))
     (hp : plan = articlePlan u (.Feed u) (newestW off lim) (some (eqU 0 u))) :
-    feed (loadSnap plan s) u lim off false = feed s u lim off false := by
+    feed (Snapshot.load plan s) u lim off false = feed s u lim off false := by
   have hw : Unwindowed plan := by subst hp; holds_simp
   have K := keeps hw s
   have hF0 : s.articles.val.filter (fun y => (selPred (.Feed u)).holds (Snapshot.enc s) (Article.row y)) =
       (Snapshot.toSt s).articles.filter (fun a => follows (Snapshot.toSt s) u a.author) := by
     apply List.filter_congr; intro y _; rw [selPred_feed]
-  have hA : (Snapshot.toSt (loadSnap plan s)).articles =
+  have hA : (Snapshot.toSt (Snapshot.load plan s)).articles =
       (newestW off lim).apply ((Snapshot.toSt s).articles.filter (fun a => follows (Snapshot.toSt s) u a.author)) := by
-    subst hp; simp only [toSt_articles, artsOf, pick, articlePlan, List.find?]; simp [hF0]
+    subst hp; simp only [toSt_articles, artsOf, pickRows, articlePlan, List.find?]; simp [hF0]
   have hkt : ∀ y ∈ (newestW off lim).apply ((Snapshot.toSt s).articles.filter (fun a => follows (Snapshot.toSt s) u a.author)),
       ∀ t ∈ (Snapshot.toSt s).tags, t.article = y.id → keepOf plan (Snapshot.enc s) 3 Tag.row t := by
     intro y hy t _ ht; subst hp
-    simp [keepOf, articlePlan, holds_in_articles, hF0, Tag.row]
+    simp [keepOf, articlePlan, holds_in_2, hF0, Tag.row]
     exact ⟨y, hy, by simp [Article.row, ht]⟩
   have hkv : ∀ y ∈ (newestW off lim).apply ((Snapshot.toSt s).articles.filter (fun a => follows (Snapshot.toSt s) u a.author)),
       ∀ f ∈ (Snapshot.toSt s).favs, f.article = y.id → keepOf plan (Snapshot.enc s) 4 Favorite.row f := by
     intro y hy f _ hf; subst hp
-    simp [keepOf, articlePlan, holds_in_articles, hF0, Favorite.row]
+    simp [keepOf, articlePlan, holds_in_2, hF0, Favorite.row]
     exact ⟨y, hy, by simp [Article.row, hf]⟩
   have hku : ∀ y ∈ (newestW off lim).apply ((Snapshot.toSt s).articles.filter (fun a => follows (Snapshot.toSt s) u a.author)),
       ∀ x ∈ (Snapshot.toSt s).users, x.id = y.author → keepOf plan (Snapshot.enc s) 0 User.row x := by
     intro y hy x _ hx; subst hp
-    simp [keepOf, articlePlan, orOpt, holds_in_articles, hF0, User.row]
+    simp [keepOf, articlePlan, orOpt, holds_in_2, hF0, User.row]
     exact Or.inl ⟨y, hy, by simp [Article.row, hx]⟩
   have hkf : ∀ f ∈ (Snapshot.toSt s).follows, f.follower = u → keepOf plan (Snapshot.enc s) 1 Follow.row f := by
     intro f _ hf; subst hp; holds_simp; exact hf
-  have hU : userById (Snapshot.toSt (loadSnap plan s)) u = userById (Snapshot.toSt s) u :=
+  have hU : userById (Snapshot.toSt (Snapshot.load plan s)) u = userById (Snapshot.toSt s) u :=
     userById_keep K u (fun x _ hx => by subst hp; simp [keepOf, articlePlan, orOpt, eqU, User.row, hx])
-  have h := feed_spec (loadSnap plan s) u lim off false
+  have h := feed_spec (Snapshot.load plan s) u lim off false
   rw [hU] at h
   have h' := feed_spec s u lim off false
   cases hme : userById (Snapshot.toSt s) u with
@@ -603,7 +542,7 @@ theorem feed_frame (u lim off : U64) (plan : List (Read Val))
   | some me =>
     simp only [hme] at h h'
     obtain ⟨-, hid⟩ := Theorems.userById_some hme
-    have hF : feedWith false (Snapshot.toSt (loadSnap plan s)) me.id lim.val off.val =
+    have hF : feedWith false (Snapshot.toSt (Snapshot.load plan s)) me.id lim.val off.val =
         feedWith false (Snapshot.toSt s) me.id lim.val off.val := by
       simp only [feedWith_false, feedOf, hid]
       exact page_views_keep K u _ _ off lim hA
@@ -670,26 +609,26 @@ theorem selPred_list (hn : ((Snapshot.toSt s).users.map (·.username)).Nodup) (t
 theorem list_articles_frame (hn : ((Snapshot.toSt s).users.map (·.username)).Nodup) (u : U64)
     (tag au fav : Option (alloc.vec.Vec U8)) (lim off : U64) (plan : List (Read Val))
     (hp : plan = articlePlan u (.List tag au fav) (newestW off lim) (listNames au fav)) :
-    list_articles (loadSnap plan s) u tag au fav lim off false = list_articles s u tag au fav lim off false := by
+    list_articles (Snapshot.load plan s) u tag au fav lim off false = list_articles s u tag au fav lim off false := by
   have hw : Unwindowed plan := by subst hp; holds_simp
   have K := keeps hw s
-  have hRa : resolveName (Snapshot.toSt (loadSnap plan s)) au = resolveName (Snapshot.toSt s) au := by
+  have hRa : resolveName (Snapshot.toSt (Snapshot.load plan s)) au = resolveName (Snapshot.toSt s) au := by
     cases au with
     | none => rfl
     | some n =>
       simp only [resolveName]
       rw [userByName_keep K n (fun x _ hx => by
         subst hp; cases fav <;> simp_all [keepOf, articlePlan, listNames, orOpt, eqB, User.row])]
-  have hRf : resolveName (Snapshot.toSt (loadSnap plan s)) fav = resolveName (Snapshot.toSt s) fav := by
+  have hRf : resolveName (Snapshot.toSt (Snapshot.load plan s)) fav = resolveName (Snapshot.toSt s) fav := by
     cases fav with
     | none => rfl
     | some n =>
       simp only [resolveName]
       rw [userByName_keep K n (fun x _ hx => by
         subst hp; cases au <;> simp_all [keepOf, articlePlan, listNames, orOpt, eqB, User.row])]
-  have h := list_articles_spec (loadSnap plan s) u tag au fav lim off false
+  have h := list_articles_spec (Snapshot.load plan s) u tag au fav lim off false
   have h' := list_articles_spec s u tag au fav lim off false
-  have hL : listing (Snapshot.toSt (loadSnap plan s)) u tag au fav lim.val off.val =
+  have hL : listing (Snapshot.toSt (Snapshot.load plan s)) u tag au fav lim.val off.val =
       listing (Snapshot.toSt s) u tag au fav lim.val off.val := by
     unfold listing
     rw [hRa, hRf]
@@ -703,24 +642,24 @@ theorem list_articles_frame (hn : ((Snapshot.toSt s).users.map (·.username)).No
         have hF0 : s.articles.val.filter (fun y => (selPred (.List tag au fav)).holds (Snapshot.enc s) (Article.row y)) =
             (Snapshot.toSt s).articles.filter (listed (Snapshot.toSt s) tag a f) := by
           apply List.filter_congr; intro y _; rw [selPred_list s hn tag au fav a f ha hf]
-        have hA : (Snapshot.toSt (loadSnap plan s)).articles =
+        have hA : (Snapshot.toSt (Snapshot.load plan s)).articles =
             (newestW off lim).apply ((Snapshot.toSt s).articles.filter (listed (Snapshot.toSt s) tag a f)) := by
-          subst hp; simp only [toSt_articles, artsOf, pick, articlePlan, List.find?]; simp [hF0]
+          subst hp; simp only [toSt_articles, artsOf, pickRows, articlePlan, List.find?]; simp [hF0]
         have hkt : ∀ y ∈ (newestW off lim).apply ((Snapshot.toSt s).articles.filter (listed (Snapshot.toSt s) tag a f)),
             ∀ t ∈ (Snapshot.toSt s).tags, t.article = y.id → keepOf plan (Snapshot.enc s) 3 Tag.row t := by
           intro y hy t _ ht; subst hp
-          simp [keepOf, articlePlan, holds_in_articles, hF0, Tag.row]
+          simp [keepOf, articlePlan, holds_in_2, hF0, Tag.row]
           exact ⟨y, hy, by simp [Article.row, ht]⟩
         have hkv : ∀ y ∈ (newestW off lim).apply ((Snapshot.toSt s).articles.filter (listed (Snapshot.toSt s) tag a f)),
             ∀ g ∈ (Snapshot.toSt s).favs, g.article = y.id → keepOf plan (Snapshot.enc s) 4 Favorite.row g := by
           intro y hy g _ hg; subst hp
-          simp [keepOf, articlePlan, holds_in_articles, hF0, Favorite.row]
+          simp [keepOf, articlePlan, holds_in_2, hF0, Favorite.row]
           exact ⟨y, hy, by simp [Article.row, hg]⟩
         have hku : ∀ y ∈ (newestW off lim).apply ((Snapshot.toSt s).articles.filter (listed (Snapshot.toSt s) tag a f)),
             ∀ x ∈ (Snapshot.toSt s).users, x.id = y.author → keepOf plan (Snapshot.enc s) 0 User.row x := by
           intro y hy x _ hx; subst hp
           have : (Pred.isIn 0 2 (selPred (.List tag au fav)) 1 (newestW off lim)).holds (Snapshot.enc s) (User.row x) := by
-            simp [holds_in_articles, hF0, User.row]
+            simp [holds_in_2, hF0, User.row]
             exact ⟨y, hy, by simp [Article.row, hx]⟩
           cases hn : listNames au fav <;> simp [keepOf, articlePlan, orOpt, hn, this]
         have hkf : ∀ g ∈ (Snapshot.toSt s).follows, g.follower = u → keepOf plan (Snapshot.enc s) 1 Follow.row g := by
@@ -755,7 +694,7 @@ end Commands
 whole site. Usernames must be unique (`Inv.usernames`). -/
 theorem frame (a : Principal) (s : Snapshot) (c : Command) (plan : List (Read Val)) (hp : readsA a c = some plan)
     (hn : ((Snapshot.toSt s).users.map (·.username)).Nodup) :
-    transition a (loadSnap plan s) c = transition a s c := by
+    transition a (Snapshot.load plan s) c = transition a s c := by
   cases c <;> simp only [readsA, Option.some.injEq, reduceCtorEq] at hp <;> simp only [transition, step]
   case CurrentUser => exact current_user_frame s _ plan hp.symm
   case UpdateUser e n p b i => exact update_user_frame s _ e n p b i plan hp.symm
@@ -783,7 +722,7 @@ theorem load_for_sound (a : Principal) (s : Snapshot) (c : Command) (v : alloc.v
   rw [hr] at ho
   have ho' := (Result.ok.inj ho).symm
   subst ho'
-  exact ⟨_, decode_load _ s r hrows, frame a s c _ (by rw [← hpl]; rfl) hn⟩
+  exact ⟨_, Schema.decode_load _ s r hrows, frame a s c _ (by rw [← hpl]; rfl) hn⟩
 
 /-- The same for the states the proofs are about: in a state satisfying the
 invariants (every reachable one, `Invariants.reachable_inv`). -/

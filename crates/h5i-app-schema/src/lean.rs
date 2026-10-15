@@ -692,6 +692,92 @@ theorem decode_spec (r : Rows) (E : Tables Val)
             sorted_cases.join("\n")
         );
 
+        // Partial loads: what loading a read plan decodes to (`Store::load_for`).
+        let mut fields_l = Vec::new();
+        let mut steps_l = String::new();
+        let mut eqs_l = String::new();
+        let mut simps_l = String::new();
+        for (f, t) in sfields {
+            let i = table_of(t);
+            if rows[i].3 == 0 {
+                fields_l.push(format!("{f} := (pickRows plan ({sname}.enc s) {i} {t}.row [s.{f}]).headD {t}.zero"));
+                let _ = writeln!(
+                    eqs_l,
+                    "  have e{i} := h {i} (by omega)\n  rw [load_pick plan _ {i} {t}.row [s.{f}] rfl] at e{i}\n  have hl{i} := pickRows_length plan ({sname}.enc s) {i} {t}.row [s.{f}]"
+                );
+                let _ = writeln!(steps_l, "  step with {t}.from_one_spec r.{f} _ hl{i} e{i} as ⟨ o{i}, h{i} ⟩\n  subst h{i}; dsimp only");
+            } else {
+                fields_l.push(format!("{f} := pickVec plan ({sname}.enc s) {i} {t}.row s.{f}"));
+                let _ = writeln!(eqs_l, "  have e{i} := h {i} (by omega)\n  rw [load_pick plan _ {i} {t}.row s.{f}.val rfl] at e{i}");
+                let _ = writeln!(
+                    steps_l,
+                    "  step with {t}.from_rows_spec r.{f} _ e{i} as ⟨ o{i}, v{i}, ho{i}, hv{i} ⟩\n  subst ho{i}; dsimp only"
+                );
+                let _ = writeln!(
+                    simps_l,
+                    "@[simp] theorem {sname}.load_{f} (plan : List (Query.Read Val)) (s : {sname}) :\n    ({sname}.load plan s).{f}.val = pickRows plan ({sname}.enc s) {i} {t}.row s.{f}.val :=\n  alloc.vec.Vec.from_val _ _\n"
+                );
+            }
+        }
+        let mut ins = String::new();
+        for i in 0..n {
+            let (f, t, one) = field_of(i);
+            let l = if one { format!("[s.{f}]") } else { format!("s.{f}.val") };
+            let _ = writeln!(
+                ins,
+                "/-- `IN` a column of a read of table {i}, as a test on the snapshot's rows. -/
+theorem holds_in_{i} (s : {sname}) (i j : Nat) (p : Query.Pred Val) (w : Query.Window) (r : List Val) :
+    (Query.Pred.isIn i {i} p j w).holds ({sname}.enc s) r =
+      match r[i]? with
+      | none => false
+      | some x => (w.apply (({l}).filter (fun y => p.holds ({sname}.enc s) ({t}.row y)))).any
+          (fun y => decide (({t}.row y)[j]? = some x)) := by
+  rw [Query.holds_isIn (tabs := {sname}.enc s) (i := i) (t := {i}) (j := j) (p := p) (w := w) (r := r) (f := {t}.row)
+    (l := {l}) (h := rfl)]
+  cases r[i]? <;> rfl
+"
+            );
+        }
+        let _ = writeln!(
+            s,
+            "
+/-! ## Partial loads
+
+`Store::load_for` may load each table by one declarative read of a plan
+(`schema_load_plan`). `{sname}.load plan s` is what loading `plan` from the
+tables of `s` decodes to (`decode_load`); an app's frame theorem shows
+`transition` gives the same result on it as on `s`. Values compare by
+classical equality, as everywhere in this file. -/
+
+section PartialLoads
+open H5iAppLib.Query
+
+/-- A vector's rows that the plan loads. -/
+noncomputable def pickVec {{α : Type}} (plan : List (Query.Read Val)) (tabs : Tables Val) (t : Nat) (row : α → List Val)
+    (v : alloc.vec.Vec α) : alloc.vec.Vec α :=
+  .from (pickRows plan tabs t row v.val) ((pickRows_length plan tabs t row v.val).trans v.len_ineq)
+
+/-- What loading `plan` from the tables of `s` decodes to: each table's rows its read keeps, none if the plan
+does not read it; a singleton table reads as fresh unless its read keeps its row. -/
+noncomputable def {sname}.load (plan : List (Query.Read Val)) (s : {sname}) : {sname} :=
+  {{ {} }}
+
+{simps_l}
+/-- Rows holding, for each table, what `plan` loads from the tables of `s` decode to `{sname}.load plan s`. -/
+theorem decode_load (plan : List (Query.Read Val)) (s : {sname}) (r : Rows)
+    (h : ∀ t, t < {n} → Rows.tabs r t = load plan ({sname}.enc s) t) :
+    decode r = ok (some ({sname}.load plan s)) := by
+{eqs_l}  simp only [Rows.tabs] at *
+  apply eq_ok_of_spec
+  unfold decode
+{steps_l}  simp only [WP.spec_ok, Option.some.injEq, {sname}.load]
+  congr 1 <;> apply alloc.vec.Vec.ext <;> simp [pickVec, *]
+
+{ins}
+end PartialLoads",
+            fields_l.join(", ")
+        );
+
         let sizes: Vec<String> = sfields
             .iter()
             .filter(|(_, t)| rows[table_of(t)].3 > 0)

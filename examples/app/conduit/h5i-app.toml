@@ -12,7 +12,7 @@ theorems = [
     "conduit_kernel.Storage.db_inv",
     "conduit_kernel.ReadOnly.read_only_sound",
     "conduit_kernel.Plan.reads_abs",
-    "conduit_kernel.Plan.decode_load",
+    "conduit_kernel.Schema.decode_load",
     "conduit_kernel.Frame.frame",
     "conduit_kernel.Frame.load_for_sound_inv",
 ]
