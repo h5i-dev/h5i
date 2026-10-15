@@ -511,6 +511,33 @@ macro_rules! __mapping {
                     ::h5i_app_pg::load_table(tx, tenant, &schema_spec(), table, None).await
                 }
 
+                /// `CREATE INDEX` on `tenant_id` and columns `cols` of table `table`.
+                /// Panics on a bad table or column; add it to `Store::ddl`.
+                #[allow(dead_code)]
+                fn schema_index(table: u32, cols: &[u32]) -> ::std::string::String {
+                    ::h5i_app_pg::create_index(&schema_spec(), table, cols).expect("schema! table and columns exist")
+                }
+
+                /// The rows a declarative read returns, in ascending key order.
+                #[allow(dead_code)]
+                async fn schema_read(
+                    tx: &::h5i_app_pg::Tx<'_>,
+                    tenant: ::h5i_app_core::TenantId,
+                    read: &::h5i_app_pg::sql::Read,
+                ) -> ::std::result::Result<::std::vec::Vec<::std::vec::Vec<::h5i_app_pg::sql::Val>>, ::h5i_app_pg::DbError> {
+                    ::h5i_app_pg::load_read(tx, tenant, &schema_spec(), read).await
+                }
+
+                /// How many rows a declarative read returns.
+                #[allow(dead_code)]
+                async fn schema_count(
+                    tx: &::h5i_app_pg::Tx<'_>,
+                    tenant: ::h5i_app_core::TenantId,
+                    read: &::h5i_app_pg::sql::Read,
+                ) -> ::std::result::Result<u64, ::h5i_app_pg::DbError> {
+                    ::h5i_app_pg::count_read(tx, tenant, &schema_spec(), read).await
+                }
+
                 /// Table names, in `TABLE` order.
                 fn schema_tables() -> ::std::vec::Vec<&'static str> {
                     ::std::vec![ $( <$krate::$name as ::h5i_app_pg::Table<$d app>>::NAME ),* ]
@@ -536,6 +563,22 @@ macro_rules! __mapping_snap {
         ) -> ::std::result::Result<$krate::$snap, ::h5i_app_pg::DbError> {
             let spec = schema_spec();
             let rows = $krate::Rows { $($f: ::h5i_app_pg::load_table(tx, tenant, &spec, $krate::$t::TABLE, None).await?,)* };
+            $krate::decode(&rows).ok_or_else(|| ::h5i_app_pg::DbError::Decode("stored rows do not decode".into()))
+        }
+
+        /// Each table by the plan's read of it, `decode`d; a table the plan
+        /// does not read is empty. `H5iAppLib.Query.load` is its meaning.
+        #[allow(dead_code)]
+        async fn schema_load_plan(
+            tx: &::h5i_app_pg::Tx<'_>,
+            tenant: ::h5i_app_core::TenantId,
+            plan: &::std::vec::Vec<::h5i_app_pg::sql::Read>,
+        ) -> ::std::result::Result<$krate::$snap, ::h5i_app_pg::DbError> {
+            let spec = schema_spec();
+            let rows = $krate::Rows { $($f: match plan.iter().find(|q| q.table == $krate::$t::TABLE) {
+                Some(q) => ::h5i_app_pg::load_read(tx, tenant, &spec, q).await?,
+                None => ::std::vec::Vec::new(),
+            },)* };
             $krate::decode(&rows).ok_or_else(|| ::h5i_app_pg::DbError::Decode("stored rows do not decode".into()))
         }
 

@@ -12,6 +12,7 @@ parser and encoder, the JSON writer, and the storage path:
 | `sql_writes`, generated table operations | store what `apply` computes | `Storage.lean`, `H5iAppLib.Store` |
 | `h5i_app_sql::plan` | computes `planA` | `crates/h5i-app-sql/proofs` |
 | `h5i_app_pgsql::valid`, `create`, `select`, `compile`, `render` | compute `Pg.createA`, `Pg.selectA`, `Pg.compileA` and print `Pg.render`; a quoted name reads back as itself (`Pg.lexName_quote`). Under `H5iAppLib.Pg`, a compiled statement does to the tenant's rows what `H5iAppLib.Sql.exec` says and touches no other tenant or table (`Pg.compile_sound`); a compiled `SELECT` returns the tenant's matching rows once each (`Pg.select_sound`, giving `Lists` and `Sel`) | `crates/h5i-app-pgsql/proofs` |
+| `H5iAppLib.Query` (declarative reads) | meaning of `h5i_app_sql::Read`/`Pred`: filters (column equality, `IN` a column of another read, `and`, `or`) and a key-ordered window (`offset`, `limit`, ascending or descending), over the tenant's tables in key order; lemmas for frame theorems (`find?_slice`, `any_slice`, `filter_slice`, `rows_enc`, `page_of_newest`). Not proved: that `h5i_app_pgsql::compile_read` means the same (differential-tested, below) | `crates/h5i-app-core/proofs/H5iAppLib/Query.lean` |
 | generated `PgServed`, `pg_loaded_inv` | an invariant kept by accepted write sets holds in every state of a multi-tenant database and every snapshot loaded from it | `generated/Schema.lean` |
 
 Each server app applies `pg_loaded_inv` to its extracted `transition`,
@@ -22,11 +23,35 @@ database reached by loading with the compiled `SELECT`s, running a successful
 statements, holds a state satisfying `Inv`, and every later load decodes to a
 snapshot satisfying `Inv`.
 
+### Declarative reads: what is tested, not proved
+
+`h5i_app_pgsql::compile_read` turns a `Read` into one `SELECT` and is not
+extracted. Its meaning is checked in two steps against
+`h5i_app_sql::eval`, a reference evaluator that follows the Lean
+definitions clause by clause:
+
+- `crates/h5i-app-pg/src/reads_test.rs` runs 3,200 random reads (nested
+  `IN`, windows in both directions, `NULL`s, a second tenant's rows as
+  noise) over random tables on PostgreSQL through `load_read` and
+  `count_read`, and compares rows and counts with the evaluator;
+- `crates/h5i-app-sql/tests/query_cases.rs` writes 200 random reads and
+  the evaluator's answers as `#guard`s on `H5iAppLib.Query.Read.rows`
+  (`H5iAppLibTests/QueryCases.lean`), which the Lean build checks.
+
+`compile_read` rejects what the Lean does not describe: `IN` on a column
+that may be `NULL` (SQL's three-valued `IN`), and windows on a table whose
+key has a text or bytes column (collation-dependent order). Results come
+back sorted by key, matching the key order the Lean meaning assumes and
+`load` already relies on. Trusted: PostgreSQL evaluates the compiled
+`SELECT`, `IN`, `ORDER BY ... LIMIT ... OFFSET` as documented, and the
+tests' coverage. `create_index` only adds indexes (`CREATE INDEX IF NOT
+EXISTS` on `tenant_id` and given columns), which change no result.
+
 ## Enforced by structure
 
 | Property | How |
 |---|---|
-| Handlers go through the kernel | App code gets `H5iApp::respond` / `Engine::execute`, never a DB handle. A `Store` gets an opaque `h5i_app_pg::Tx` with only `load_table` and `store_writes` (SQL from `h5i_app_pgsql`); `h5i_app_pg::Pool` is opaque. `cargo deny check bans` (`deny.toml`) rejects database crates outside `h5i-app-pg`. At runtime, `h5i_app_pg::lockdown` gives the tables to a NOLOGIN owner and row access only to the engine's role. A superuser login bypasses all of this. |
+| Handlers go through the kernel | App code gets `H5iApp::respond` / `Engine::execute`, never a DB handle. A `Store` gets an opaque `h5i_app_pg::Tx` with only `load_table`, `load_read`, `count_read` and `store_writes` (SQL from `h5i_app_pgsql`); `h5i_app_pg::Pool` is opaque. `cargo deny check bans` (`deny.toml`) rejects database crates outside `h5i-app-pg`. At runtime, `h5i_app_pg::lockdown` gives the tables to a NOLOGIN owner and row access only to the engine's role. A superuser login bypasses all of this. |
 | Tenant isolation | Every compiled statement filters on or writes its tenant, and `tenant_id` is in every primary key. `Pg.compile_sound` proves other tenants' rows stay as they were. Kernel rows have no tenant id, so the kernel cannot name another tenant. The engine and each `Store` must pass `K::tenant(actor)` consistently. |
 | Every column is persisted | `table!` must list every field to compile. |
 

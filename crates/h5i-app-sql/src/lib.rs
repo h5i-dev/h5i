@@ -230,6 +230,238 @@ pub fn plan(ws: &Vec<Write>) -> Vec<Stmt> {
     out
 }
 
+/// Which part of a read's matching rows it keeps: `offset` rows skipped, then
+/// at most `limit` (all if `None`), counted in ascending key order, or
+/// descending if `desc`. The rows come back in ascending key order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Window {
+    pub desc: bool,
+    pub offset: u64,
+    pub limit: Option<u64>,
+}
+
+/// Every matching row.
+pub fn whole() -> Window {
+    Window { desc: false, offset: 0, limit: None }
+}
+
+/// Which rows of a table a read keeps. `H5iAppLib.Query.Pred` is its meaning.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pred {
+    /// Every row.
+    All,
+    /// Column `col` holds `val` (`IS NOT DISTINCT FROM`).
+    Eq { col: u32, val: Val },
+    /// Column `col` is column `of` of a row the read of `table` by `pred` and
+    /// `window` returns (`IN (SELECT ...)`). Both columns must be `NOT NULL`.
+    In { col: u32, table: u32, pred: Box<Pred>, of: u32, window: Window },
+    And(Box<Pred>, Box<Pred>),
+    Or(Box<Pred>, Box<Pred>),
+}
+
+/// A read of one table of the tenant. `H5iAppLib.Query.Read.rows` is its
+/// meaning; `h5i_app_pgsql::compile_read` its SQL.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Read {
+    pub table: u32,
+    pub pred: Pred,
+    pub window: Window,
+}
+
+/// The whole table.
+pub fn read_all(table: u32) -> Read {
+    Read { table, pred: Pred::All, window: whole() }
+}
+
+/// The rows whose column `col` holds `val`.
+pub fn read_eq(table: u32, col: u32, val: Val) -> Read {
+    Read { table, pred: Pred::Eq { col, val }, window: whole() }
+}
+
+/// Reference evaluator: what `H5iAppLib.Query` says a read returns, over the
+/// tenant's tables (`tabs[t]`, rows in ascending key order). Not extracted;
+/// it mirrors the Lean definitions clause by clause, and the differential
+/// tests compare it with both PostgreSQL and the Lean definitions.
+pub mod eval {
+    use super::{Pred, Read, Val, Window};
+
+    pub fn cut<T: Clone>(offset: u64, limit: Option<u64>, l: &[T]) -> Vec<T> {
+        let start = (offset.min(l.len() as u64)) as usize;
+        let rest = &l[start..];
+        match limit {
+            None => rest.to_vec(),
+            Some(n) => rest[..(n.min(rest.len() as u64) as usize)].to_vec(),
+        }
+    }
+
+    pub fn window<T: Clone>(w: &Window, l: &[T]) -> Vec<T> {
+        if w.desc {
+            let rev: Vec<T> = l.iter().rev().cloned().collect();
+            let mut out = cut(w.offset, w.limit, &rev);
+            out.reverse();
+            out
+        } else {
+            cut(w.offset, w.limit, l)
+        }
+    }
+
+    pub fn holds(tabs: &[Vec<Vec<Val>>], p: &Pred, row: &[Val]) -> bool {
+        match p {
+            Pred::All => true,
+            Pred::Eq { col, val } => row.get(*col as usize) == Some(val),
+            Pred::In { col, table, pred, of, window: w } => match row.get(*col as usize) {
+                None => false,
+                Some(x) => {
+                    let rows = select(tabs, *table, pred, w);
+                    rows.iter().any(|y| y.get(*of as usize) == Some(x))
+                }
+            },
+            Pred::And(a, b) => holds(tabs, a, row) && holds(tabs, b, row),
+            Pred::Or(a, b) => holds(tabs, a, row) || holds(tabs, b, row),
+        }
+    }
+
+    fn select(tabs: &[Vec<Vec<Val>>], table: u32, pred: &Pred, w: &Window) -> Vec<Vec<Val>> {
+        let empty = Vec::new();
+        let t = tabs.get(table as usize).unwrap_or(&empty);
+        let kept: Vec<Vec<Val>> = t.iter().filter(|r| holds(tabs, pred, r)).cloned().collect();
+        window(w, &kept)
+    }
+
+    /// `Read.rows`.
+    pub fn rows(tabs: &[Vec<Vec<Val>>], q: &Read) -> Vec<Vec<Val>> {
+        select(tabs, q.table, &q.pred, &q.window)
+    }
+
+    /// Random reads over a fixed small schema, for the differential tests
+    /// (`h5i-app-pg`'s against PostgreSQL, `H5iAppLibTests/QueryCases.lean`
+    /// against the Lean definitions).
+    pub mod cases {
+        use super::super::{Pred, Read, Val, Window};
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum Kind {
+            Int,
+            Bytes,
+        }
+
+        /// A table: name, columns (name, kind, nullable), key length.
+        pub struct Shape {
+            pub name: &'static str,
+            pub cols: Vec<(&'static str, Kind, bool)>,
+            pub key_len: usize,
+        }
+
+        /// `dt_a` (integer key, a nullable column), `dt_b` (a pair key),
+        /// `dt_c` (a key with bytes, so no windows).
+        pub fn shapes() -> Vec<Shape> {
+            vec![
+                Shape {
+                    name: "dt_a",
+                    cols: vec![("id", Kind::Int, false), ("k", Kind::Int, false), ("s", Kind::Bytes, false), ("n", Kind::Int, true)],
+                    key_len: 1,
+                },
+                Shape { name: "dt_b", cols: vec![("a", Kind::Int, false), ("b", Kind::Int, false)], key_len: 2 },
+                Shape { name: "dt_c", cols: vec![("x", Kind::Int, false), ("y", Kind::Bytes, false), ("z", Kind::Int, false)], key_len: 2 },
+            ]
+        }
+
+        pub struct Rng(pub u64);
+
+        impl Rng {
+            pub fn below(&mut self, n: u64) -> u64 {
+                self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                (self.0 >> 33) % n
+            }
+        }
+
+        fn value(r: &mut Rng, k: Kind, nullable: bool) -> Val {
+            if nullable && r.below(4) == 0 {
+                return Val::Null;
+            }
+            match k {
+                Kind::Int => Val::Int(r.below(6) as i64),
+                Kind::Bytes => Val::Bytes(vec![b'a' + r.below(3) as u8]),
+            }
+        }
+
+        /// Rows of each table, unique keys, in ascending key order.
+        pub fn tables(r: &mut Rng) -> Vec<Vec<Vec<Val>>> {
+            shapes()
+                .iter()
+                .map(|sh| {
+                    let n = r.below(8);
+                    let mut rows: Vec<Vec<Val>> = Vec::new();
+                    for _ in 0..n {
+                        let row: Vec<Val> = sh.cols.iter().map(|c| value(r, c.1, c.2)).collect();
+                        if !rows.iter().any(|x| x[..sh.key_len] == row[..sh.key_len]) {
+                            rows.push(row);
+                        }
+                    }
+                    rows.sort_by(|a, b| key_cmp(&a[..sh.key_len], &b[..sh.key_len]));
+                    rows
+                })
+                .collect()
+        }
+
+        fn key_cmp(a: &[Val], b: &[Val]) -> std::cmp::Ordering {
+            for (x, y) in a.iter().zip(b) {
+                let o = match (x, y) {
+                    (Val::Int(p), Val::Int(q)) => p.cmp(q),
+                    (Val::Bytes(p), Val::Bytes(q)) => p.cmp(q),
+                    _ => std::cmp::Ordering::Equal,
+                };
+                if o != std::cmp::Ordering::Equal {
+                    return o;
+                }
+            }
+            std::cmp::Ordering::Equal
+        }
+
+        fn window(r: &mut Rng, ordered: bool) -> Window {
+            if !ordered || r.below(2) == 0 {
+                return Window { desc: false, offset: 0, limit: None };
+            }
+            let limit = if r.below(3) == 0 { None } else { Some(r.below(4)) };
+            Window { desc: r.below(2) == 0, offset: r.below(3), limit }
+        }
+
+        fn pred(r: &mut Rng, table: usize, depth: u32) -> Pred {
+            let sh = &shapes()[table];
+            let pick = if depth == 0 { r.below(2) } else { r.below(5) };
+            match pick {
+                0 => Pred::All,
+                1 => {
+                    let c = r.below(sh.cols.len() as u64) as usize;
+                    Pred::Eq { col: c as u32, val: value(r, sh.cols[c].1, sh.cols[c].2) }
+                }
+                2 => {
+                    // An integer, never-NULL column against one of another read.
+                    let ints = |s: &Shape| -> Vec<usize> {
+                        (0..s.cols.len()).filter(|&i| s.cols[i].1 == Kind::Int && !s.cols[i].2).collect()
+                    };
+                    let mine = ints(sh);
+                    let t = r.below(3) as usize;
+                    let theirs = ints(&shapes()[t]);
+                    let col = mine[r.below(mine.len() as u64) as usize] as u32;
+                    let of = theirs[r.below(theirs.len() as u64) as usize] as u32;
+                    let w = window(r, t != 2);
+                    Pred::In { col, table: t as u32, pred: Box::new(pred(r, t, depth - 1)), of, window: w }
+                }
+                3 => Pred::And(Box::new(pred(r, table, depth - 1)), Box::new(pred(r, table, depth - 1))),
+                _ => Pred::Or(Box::new(pred(r, table, depth - 1)), Box::new(pred(r, table, depth - 1))),
+            }
+        }
+
+        /// A random read. Windows only on the integer-keyed tables, as
+        /// `compile_read` requires.
+        pub fn read(r: &mut Rng) -> Read {
+            let t = r.below(3) as usize;
+            Read { table: t as u32, pred: pred(r, t, 2), window: window(r, t != 2) }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

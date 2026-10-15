@@ -26,9 +26,11 @@ pub mod migrate;
 pub mod outbox;
 mod roles;
 mod table;
+#[cfg(test)]
+mod reads_test;
 
 pub use roles::{lockdown, lockdown_sql};
-pub use table::{column_of, create_tables, load_table, spec, store_writes, ColumnDef, Kind, PgField, Table, Value};
+pub use table::{column_of, count_read, create_index, create_tables, load_read, load_table, spec, store_writes, ColumnDef, Kind, PgField, Table, Value};
 pub use h5i_app_core::Timestamp;
 pub use h5i_app_sql as sql;
 pub use h5i_app_pgsql as pgsql;
@@ -138,9 +140,16 @@ pub trait Store<K: Kernel>: Send + Sync + 'static {
 
     fn load(tx: &Tx<'_>, tenant: TenantId) -> impl Future<Output = Result<K::Snapshot, DbError>> + Send;
 
-    /// The rows `cmd` reads. Load less than the whole tenant only with a frame theorem.
-    fn load_for(tx: &Tx<'_>, tenant: TenantId, cmd: &K::Command) -> impl Future<Output = Result<K::Snapshot, DbError>> + Send {
-        let _ = cmd;
+    /// The rows `cmd` reads when `actor` runs it. Load less than the whole
+    /// tenant only with a frame theorem: `transition` must give the same
+    /// result on what this returns as on `load`.
+    fn load_for(
+        tx: &Tx<'_>,
+        tenant: TenantId,
+        actor: &K::Principal,
+        cmd: &K::Command,
+    ) -> impl Future<Output = Result<K::Snapshot, DbError>> + Send {
+        let _ = (actor, cmd);
         Self::load(tx, tenant)
     }
 
@@ -324,11 +333,12 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
         Ok(snap)
     }
 
-    /// What `cmd` would read for this tenant, for tests of `Store::load_for`.
-    pub async fn snapshot_for(&self, tenant: TenantId, cmd: &K::Command) -> Result<K::Snapshot, DbError> {
+    /// What `cmd` would read for `actor`, for tests of `Store::load_for`.
+    pub async fn snapshot_for(&self, actor: &K::Principal, cmd: &K::Command) -> Result<K::Snapshot, DbError> {
+        let tenant = K::tenant(actor);
         let mut client = self.pool.0.get().await.map_err(|e| DbError::Pool(e.to_string()))?;
         let tx = client.build_transaction().isolation_level(IsolationLevel::Serializable).read_only(true).deferrable(true).start().await?;
-        let snap = S::load_for(&Tx(&tx), tenant, cmd).await?;
+        let snap = S::load_for(&Tx(&tx), tenant, actor, cmd).await?;
         tx.commit().await?;
         Ok(snap)
     }
@@ -461,7 +471,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
             .start()
             .await?;
         let now = self.read_clock(&tx, tid).await?;
-        let snap = S::load_for(&Tx(&tx), tenant, cmd).await?;
+        let snap = S::load_for(&Tx(&tx), tenant, actor, cmd).await?;
         let mut actor = actor.clone();
         K::stamp(&mut actor, now);
         match K::transition(&actor, &snap, cmd) {
@@ -506,7 +516,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
                 return Ok(Attempt::Replayed(reply));
             }
         }
-        let snap = S::load_for(&Tx(&tx), tenant, cmd).await?;
+        let snap = S::load_for(&Tx(&tx), tenant, actor, cmd).await?;
         let mut actor = actor.clone();
         K::stamp(&mut actor, now);
         let decision = K::transition(&actor, &snap, cmd);

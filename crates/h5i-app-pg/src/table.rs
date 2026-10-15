@@ -233,6 +233,15 @@ pub fn create_tables(schema: &Vec<Spec>) -> Result<Vec<String>, DbError> {
     schema.iter().map(|t| text(&h5i_app_pgsql::create(t))).collect()
 }
 
+/// `CREATE INDEX IF NOT EXISTS` on `tenant_id` and the columns `cols` of
+/// table `table`, for `Store::ddl`. Only speeds up reads that filter on them.
+pub fn create_index(schema: &Vec<Spec>, table: u32, cols: &[u32]) -> Result<String, DbError> {
+    let Some(sql) = h5i_app_pgsql::create_index(schema, table, cols) else {
+        return Err(DbError::Decode(format!("no table {table} or columns {cols:?} to index, or an invalid schema")));
+    };
+    String::from_utf8(sql).map_err(|e| DbError::Decode(e.to_string()))
+}
+
 fn text(sql: &h5i_app_pgsql::Sql) -> Result<String, DbError> {
     String::from_utf8(h5i_app_pgsql::render(sql)).map_err(|e| DbError::Decode(e.to_string()))
 }
@@ -277,6 +286,30 @@ pub async fn load_table(
     let kinds: Vec<Kind> = schema[table as usize].columns.iter().map(|c| c.kind).collect();
     let rows = tx.0.query(&sql, &refs(&vals)).await?;
     rows.iter().map(|r| read_row(&kinds, r)).collect()
+}
+
+/// The tenant's rows `q` returns (`H5iAppLib.Query.Read.rows`), without
+/// `tenant_id`, in ascending key order. The SQL is `h5i_app_pgsql::compile_read`.
+pub async fn load_read(tx: &Tx<'_>, tenant: TenantId, schema: &Vec<Spec>, q: &h5i_app_sql::Read) -> Result<Vec<Vec<Val>>, DbError> {
+    let Some(c) = h5i_app_pgsql::compile_read(schema, tenant_param(tenant)?, q, false) else {
+        return Err(DbError::Decode(format!("read does not fit the schema: {q:?}")));
+    };
+    let sql = String::from_utf8(c.text).map_err(|e| DbError::Decode(e.to_string()))?;
+    let vals = c.params.iter().map(from_val).collect::<Result<Vec<_>, _>>()?;
+    let kinds: Vec<Kind> = schema[q.table as usize].columns.iter().map(|c| c.kind).collect();
+    let rows = tx.0.query(&sql, &refs(&vals)).await?;
+    rows.iter().map(|r| read_row(&kinds, r)).collect()
+}
+
+/// How many rows `q` returns (`H5iAppLib.Query.Read.count`).
+pub async fn count_read(tx: &Tx<'_>, tenant: TenantId, schema: &Vec<Spec>, q: &h5i_app_sql::Read) -> Result<u64, DbError> {
+    let Some(c) = h5i_app_pgsql::compile_read(schema, tenant_param(tenant)?, q, true) else {
+        return Err(DbError::Decode(format!("read does not fit the schema: {q:?}")));
+    };
+    let sql = String::from_utf8(c.text).map_err(|e| DbError::Decode(e.to_string()))?;
+    let vals = c.params.iter().map(from_val).collect::<Result<Vec<_>, _>>()?;
+    let n: i64 = tx.0.query_one(&sql, &refs(&vals)).await?.try_get(0)?;
+    Ok(n.max(0) as u64)
 }
 
 fn read_row(kinds: &[Kind], row: &Row) -> Result<Vec<Val>, DbError> {
