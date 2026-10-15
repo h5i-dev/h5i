@@ -39,6 +39,11 @@ impl Kernel for Conduit {
     fn apply(snap: &k::Snapshot, ws: &Vec<k::Write>) -> k::Snapshot {
         k::apply(snap, ws)
     }
+
+    // `ReadOnly.lean`: `H5iAppLib.ReadOnly.Sound` for `k::read_only`.
+    fn read_only(cmd: &k::Command) -> bool {
+        k::read_only(cmd)
+    }
 }
 
 pub fn principal(org: u64, user: u64) -> k::Principal {

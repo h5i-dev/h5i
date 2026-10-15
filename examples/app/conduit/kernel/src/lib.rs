@@ -1023,6 +1023,23 @@ pub fn transition_upstream(actor: &Principal, s: &Snapshot, cmd: &Command) -> Ou
     step(actor, s, cmd, true)
 }
 
+/// Commands that never write. The server declares them read-only
+/// (`Kernel::read_only`), so the engine runs them on a read-only snapshot
+/// without locks; `ReadOnly.lean` proves an accepted one writes nothing.
+pub fn read_only(cmd: &Command) -> bool {
+    match cmd {
+        Command::Login { .. }
+        | Command::CurrentUser
+        | Command::GetProfile { .. }
+        | Command::ListArticles { .. }
+        | Command::Feed { .. }
+        | Command::GetArticle { .. }
+        | Command::GetComments { .. }
+        | Command::GetTags => true,
+        _ => false,
+    }
+}
+
 /* Apply */
 
 // Column numbers, in `to_row` order, that the cascades delete by.

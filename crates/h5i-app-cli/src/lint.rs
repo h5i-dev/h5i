@@ -6,6 +6,9 @@
 //!   route.
 //! - The kernel's `Command` carries no client-set identity or privilege field:
 //!   identity comes from the `Actor`. Opt out with `h5i-allow: privileged-field`.
+//! - A `Kernel` impl that declares read-only commands (`fn read_only`) comes
+//!   with a proof of `H5iAppLib.ReadOnly.Sound`: the engine skips locks and
+//!   retries for them on the strength of it.
 //! - A report, never a failure: whether the proofs state a universal
 //!   authorization theorem.
 
@@ -20,6 +23,7 @@ use crate::util::Out;
 pub fn lint(p: &Project, out: &Out) -> Result<()> {
     let mut bad = route_coverage(p);
     bad.extend(command_hygiene(p));
+    bad.extend(read_only_proof(p));
     if let Some(note) = authz_coverage(p) {
         out.note(&note);
     }
@@ -166,6 +170,33 @@ fn route_coverage(p: &Project) -> Vec<String> {
     bad
 }
 
+/// Every `impl Kernel` that overrides `read_only` has a `ReadOnly.Sound` proof.
+fn read_only_proof(p: &Project) -> Vec<String> {
+    let mut files = Vec::new();
+    rs_files(&p.root, &mut files);
+    files.sort();
+    let proven = std::fs::read_dir(p.proofs()).into_iter().flatten().flatten().any(|e| {
+        e.path().extension().is_some_and(|x| x == "lean")
+            && std::fs::read_to_string(e.path()).unwrap_or_default().contains("ReadOnly.Sound")
+    });
+    let mut bad = Vec::new();
+    for f in &files {
+        let text = std::fs::read_to_string(f).unwrap_or_default();
+        let Some(at) = text.find("impl Kernel for").or_else(|| text.find("impl h5i_app_core::Kernel for")) else { continue };
+        let Some(brace) = text[at..].find('{') else { continue };
+        let body = balanced_braces(&text[at + brace + 1..]);
+        if body.contains("fn read_only(") && !proven {
+            let line = text[..at].lines().count() + 1;
+            bad.push(format!(
+                "{}:{line}: Kernel::read_only is overridden, but no proof in {} states `H5iAppLib.ReadOnly.Sound`",
+                rel(p, f),
+                p.proofs().display()
+            ));
+        }
+    }
+    bad
+}
+
 /// The kernel's `Command` carries no client-set identity or privilege field.
 fn command_hygiene(p: &Project) -> Vec<String> {
     let Some(krate) = p.krate() else { return Vec::new() };
@@ -285,6 +316,21 @@ mod tests {
         std::fs::write(server.join("src/main.rs"), "// every fn — one\n// fn é\nfn ").unwrap();
         let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
         assert!(route_coverage(&p).is_empty());
+    }
+
+    #[test]
+    fn read_only_needs_a_proof() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("h5i-app.toml"), "").unwrap();
+        let server = d.path().join("server");
+        std::fs::create_dir_all(server.join("src")).unwrap();
+        std::fs::create_dir_all(d.path().join("proofs")).unwrap();
+        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n").unwrap();
+        std::fs::write(server.join("src/lib.rs"), "impl Kernel for K {\n    fn read_only(c: &C) -> bool { k::read_only(c) }\n}\n").unwrap();
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        assert_eq!(read_only_proof(&p).len(), 1);
+        std::fs::write(d.path().join("proofs/ReadOnly.lean"), "theorem ro : H5iAppLib.ReadOnly.Sound k t w := k_sound\n").unwrap();
+        assert!(read_only_proof(&p).is_empty());
     }
 
     #[test]

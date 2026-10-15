@@ -2371,16 +2371,41 @@ def transition_upstream
   := do
   step actor s cmd true
 
+/-- [conduit_kernel::read_only]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1029:0-1041:1
+    Visibility: public -/
+def read_only (cmd : Command) : Result Bool := do
+  match cmd with
+  | Command.Register _ _ _ => ok false
+  | Command.Login _ _ => ok true
+  | Command.CurrentUser => ok true
+  | Command.UpdateUser _ _ _ _ _ => ok false
+  | Command.GetProfile _ => ok true
+  | Command.Follow _ => ok false
+  | Command.Unfollow _ => ok false
+  | Command.ListArticles _ _ _ _ _ => ok true
+  | Command.Feed _ _ => ok true
+  | Command.GetArticle _ => ok true
+  | Command.CreateArticle _ _ _ _ _ _ => ok false
+  | Command.UpdateArticle _ _ _ _ _ _ => ok false
+  | Command.DeleteArticle _ => ok false
+  | Command.Favorite _ => ok false
+  | Command.Unfavorite _ => ok false
+  | Command.GetComments _ => ok true
+  | Command.AddComment _ _ _ => ok false
+  | Command.DeleteComment _ _ => ok false
+  | Command.GetTags => ok true
+
 /-- [conduit_kernel::TAG_ARTICLE]
-    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1029:0-1029:27 -/
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1046:0-1046:27 -/
 @[global_simps, irreducible] def TAG_ARTICLE : Std.U32 := 0#u32
 
 /-- [conduit_kernel::FAVORITE_ARTICLE]
-    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1030:0-1030:32 -/
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1047:0-1047:32 -/
 @[global_simps, irreducible] def FAVORITE_ARTICLE : Std.U32 := 0#u32
 
 /-- [conduit_kernel::COMMENT_ARTICLE]
-    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1031:0-1031:31 -/
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1048:0-1048:31 -/
 @[global_simps, irreducible] def COMMENT_ARTICLE : Std.U32 := 1#u32
 
 /-- [conduit_kernel::{conduit_kernel::Comment}::to_row]:
@@ -3069,7 +3094,7 @@ def User.put
   User.put_loop v x 0#usize
 
 /-- [conduit_kernel::apply_write]:
-    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1035:0-1056:1 -/
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1052:0-1073:1 -/
 def apply_write (s : Snapshot) (w : Write) : Result Snapshot := do
   match w with
   | Write.PutUser x => let v ← User.put s.users x
@@ -3354,7 +3379,7 @@ def User.sql_put (self : User) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.Put User.TABLE User.KEY_LEN v)
 
 /-- [conduit_kernel::sql_write]:
-    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1059:0-1076:1 -/
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1076:0-1093:1 -/
 def sql_write
   (w : Write) (out : alloc.vec.Vec h5i_app_sql.Write) :
   Result (alloc.vec.Vec h5i_app_sql.Write)

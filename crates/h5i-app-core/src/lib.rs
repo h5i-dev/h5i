@@ -100,6 +100,16 @@ pub trait Kernel: Send + Sync + 'static {
     fn stamp(actor: &mut Self::Principal, now: Timestamp) {
         let _ = (actor, now);
     }
+
+    /// `cmd` never writes: whenever `transition` accepts it, the write set is
+    /// empty. Engines may then run it on a read-only snapshot without the
+    /// locks and retries of a write. Override only with a proof of
+    /// `H5iAppLib.ReadOnly.Sound` for the kernel's own `read_only` (`h5i app
+    /// lint` checks for one). The default declares nothing read-only.
+    fn read_only(cmd: &Self::Command) -> bool {
+        let _ = cmd;
+        false
+    }
 }
 
 /// Runs commands one at a time in memory. A real engine must behave like this

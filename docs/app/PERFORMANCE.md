@@ -56,3 +56,33 @@ SERIALIZABLE transaction and loads the whole site.
 Throughput is flat at about 12 requests/s whatever the concurrency (5/s for
 the tag listing, which scans more): one request at a time, ~80 ms each to
 load and decode the whole site.
+
+## Step 1: read-only commands
+
+The kernel declares its eight read commands read-only (`Kernel::read_only`,
+proven by `ReadOnly.read_only_sound`). The engine runs them in `SERIALIZABLE
+READ ONLY DEFERRABLE` transactions without the tenant lock; writes are
+unchanged.
+
+| scenario | conc | req/s | p50 ms | p99 ms | non-2xx | attempts | retries | commits |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| get-article | 1 | 13.1 | 75.32 | 110.46 | 0 | 131 | 0 | 131 |
+| get-article | 16 | 87.6 | 177.84 | 342.66 | 0 | 886 | 0 | 886 |
+| get-article | 64 | 122.2 | 514.22 | 634.76 | 0 | 1278 | 0 | 1278 |
+| list | 1 | 12.3 | 79.88 | 111.66 | 0 | 123 | 0 | 123 |
+| list | 16 | 89.4 | 176.16 | 240.98 | 0 | 909 | 0 | 909 |
+| list | 64 | 124.2 | 506.76 | 615.20 | 0 | 1299 | 0 | 1299 |
+| list-tag | 1 | 5.6 | 179.95 | 207.33 | 0 | 56 | 0 | 56 |
+| list-tag | 16 | 50.7 | 293.89 | 527.53 | 0 | 536 | 0 | 536 |
+| list-tag | 64 | 65.9 | 936.90 | 1198.09 | 0 | 715 | 0 | 715 |
+| feed | 1 | 10.6 | 85.55 | 172.81 | 0 | 107 | 0 | 107 |
+| feed | 16 | 91.2 | 172.28 | 255.57 | 0 | 924 | 0 | 924 |
+| feed | 64 | 120.2 | 523.02 | 666.64 | 0 | 1261 | 0 | 1261 |
+| favorite | 1 | 12.4 | 79.06 | 116.66 | 0 | 125 | 0 | 125 |
+| favorite | 16 | 12.7 | 1209.49 | 1451.40 | 0 | 144 | 0 | 144 |
+| favorite | 64 | 11.3 | 5505.95 | 5859.44 | 0 | 175 | 0 | 175 |
+
+Reads now run in parallel: about 120 requests/s at concurrency 64 (10x),
+bounded by the CPU cost of loading the whole site for each request. A
+single request is as slow as before, and favorites, still serialized on the
+tenant lock, stay at 12/s.

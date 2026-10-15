@@ -6,6 +6,11 @@
 //! key a command runs at most once; without one, a connection lost during
 //! `COMMIT` is reported as [`DbError::CommitUnknown`].
 //!
+//! A command the kernel declares read-only ([`Kernel::read_only`]) runs in a
+//! `SERIALIZABLE READ ONLY DEFERRABLE` transaction instead, without advisory
+//! locks: such a transaction waits for a snapshot that no serialization
+//! failure can invalidate, so it is never retried for one.
+//!
 //! Stores see only an opaque [`Tx`], so app code cannot run its own SQL. Each
 //! attempt reads the [`Clock`] inside its transaction.
 //!
@@ -205,7 +210,8 @@ impl ManualClock {
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
     pub max_attempts: u32,
-    /// Advisory lock per tenant. Only reduces retries; SERIALIZABLE gives correctness.
+    /// Advisory lock per tenant for writes (read-only commands take none).
+    /// Only reduces retries; SERIALIZABLE gives correctness.
     pub tenant_lock: bool,
     /// Where each attempt reads the time.
     pub clock: Clock,
@@ -233,6 +239,8 @@ pub struct EngineStats {
     pub retries: AtomicU64,
     pub commits: AtomicU64,
     pub replays: AtomicU64,
+    /// Requests run on the read-only path (also counted in `attempts`).
+    pub reads: AtomicU64,
 }
 
 pub struct Engine<K: Kernel, S: Store<K>> {
@@ -351,6 +359,10 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
     }
 
     async fn run(&self, actor: &K::Principal, cmd: &K::Command, idem: Option<Idem<'_, K>>) -> Result<Result<K::Reply, K::Error>, DbError> {
+        // With a key the reply is stored, which is a write.
+        if idem.is_none() && K::read_only(cmd) {
+            return self.run_read(actor, cmd).await;
+        }
         let tenant = K::tenant(actor);
         for attempt in 0..self.config.max_attempts {
             self.stats.attempts.fetch_add(1, Ordering::Relaxed);
@@ -403,6 +415,68 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
             && let Ok(tid) = table::tenant_param(tenant)
         {
             let _ = client.execute("SELECT pg_advisory_unlock($1)", &[&tid]).await;
+        }
+    }
+
+    /// A read-only command: no advisory lock, a `SERIALIZABLE READ ONLY
+    /// DEFERRABLE` transaction, retried only when the connection drops.
+    async fn run_read(&self, actor: &K::Principal, cmd: &K::Command) -> Result<Result<K::Reply, K::Error>, DbError> {
+        let tenant = K::tenant(actor);
+        for attempt in 0..self.config.max_attempts {
+            self.stats.attempts.fetch_add(1, Ordering::Relaxed);
+            self.stats.reads.fetch_add(1, Ordering::Relaxed);
+            let mut client = self.pool.0.get().await.map_err(|e| DbError::Pool(e.to_string()))?;
+            match self.read_attempt(&mut client, tenant, actor, cmd).await {
+                Ok(r) => {
+                    if r.is_ok() {
+                        self.stats.commits.fetch_add(1, Ordering::Relaxed);
+                    }
+                    return Ok(r);
+                }
+                // Nothing was written, so rerunning is always safe.
+                Err(e) if e.is_retryable() => {
+                    self.stats.retries.fetch_add(1, Ordering::Relaxed);
+                    tracing::debug!(attempt, error = %e, "retrying read-only transaction");
+                    tokio::time::sleep(backoff(attempt)).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(DbError::RetriesExhausted)
+    }
+
+    async fn read_attempt(
+        &self,
+        client: &mut deadpool_postgres::Object,
+        tenant: TenantId,
+        actor: &K::Principal,
+        cmd: &K::Command,
+    ) -> Result<Result<K::Reply, K::Error>, DbError> {
+        let tid = table::tenant_param(tenant)?;
+        let tx = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .read_only(true)
+            .deferrable(true)
+            .start()
+            .await?;
+        let now = self.read_clock(&tx, tid).await?;
+        let snap = S::load_for(&Tx(&tx), tenant, cmd).await?;
+        let mut actor = actor.clone();
+        K::stamp(&mut actor, now);
+        match K::transition(&actor, &snap, cmd) {
+            Err(refusal) => {
+                tx.rollback().await?;
+                Ok(Err(refusal))
+            }
+            Ok((ws, reply)) => {
+                // Empty by `H5iAppLib.ReadOnly.Sound`. Were it not, PostgreSQL
+                // refuses the write in this READ ONLY transaction and the
+                // request fails rather than losing it.
+                S::write(&Tx(&tx), tenant, &ws).await?;
+                tx.commit().await?;
+                Ok(Ok(reply))
+            }
         }
     }
 

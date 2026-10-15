@@ -56,6 +56,7 @@ snapshot satisfying `Inv`.
 ## Trusted engine contract
 
 - One attempt loads one tenant, calls `transition`, writes and commits in one SERIALIZABLE transaction.
+- A command `Kernel::read_only` declares runs in one `SERIALIZABLE READ ONLY DEFERRABLE` transaction, without advisory locks and without an idempotency key (a keyed request takes the write path, which stores its reply). It is retried only when the connection drops; a deferrable read-only transaction is never cancelled for serialization. Its write set is passed to `Store::write` inside that transaction, so a non-empty one fails the request (PostgreSQL refuses writes in a READ ONLY transaction) instead of being dropped.
 - Each retry opens a new transaction, reloads, reads a new time and reruns `transition`.
 - A refused transition rolls back and writes no app or framework rows.
 - App writes, the idempotency reply, `h5i_clock` and outbox rows commit in the same transaction.
@@ -70,6 +71,24 @@ registry, pool cancellation, and the code implementing the contract.
 If these assumptions hold, each tenant's committed state comes from a serial
 sequence of successful transitions, so `db_inv` applies to it and to every
 later load. Migrations are outside this (see below).
+
+### Read-only commands
+
+A kernel that overrides `Kernel::read_only` proves `H5iAppLib.ReadOnly.Sound`
+for its own extracted `read_only`: for every actor and state, an accepted
+read-only command returns an empty write set (Conduit:
+`ReadOnly.read_only_sound`; `h5i app lint` fails a server that overrides
+`read_only` without such a proof). With that, a read-only request changes
+nothing, so its transaction can sit anywhere in the serial order whose
+prefix its snapshot shows. PostgreSQL guarantees that a `SERIALIZABLE READ
+ONLY DEFERRABLE` transaction sees such a prefix: it waits for a snapshot no
+concurrent read-write transaction can make inconsistent. The reply is then
+`transition` of a state the committed requests reached, which is what the
+reply and authorization theorems are about: they are stated for every
+snapshot (and every reachable one), not for a particular locking scheme.
+Trusted: PostgreSQL's safe-snapshot guarantee, and that `Kernel::read_only`
+delegates to the proven function (the lint checks that a proof exists, not
+the delegation).
 
 ## Not covered yet
 
