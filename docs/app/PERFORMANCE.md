@@ -121,3 +121,49 @@ under SERIALIZABLE each commit conflicts with the others' reads; 675 of 752
 attempts at concurrency 16 were retries, and 13 requests ran out of
 retries. Finer locks only help once a command reads what it needs and no
 more, which is step 3.
+
+## Steps 3 and 5: declarative reads and Conduit's read plans
+
+The engine gains declarative reads (`h5i_app_sql::Read`: filters, `IN`
+sub-reads, key-ordered windows, counts) and Conduit a read plan per command
+(`reads`, see its README), proven by `Frame.frame` to load enough. Reads by
+key go through indexes `ConduitStore::ddl` adds (slug, author, tag name,
+favoriting user, username, email, comment's article). The listing and the
+feed load the newest `offset + limit` matching articles and what their
+views need, nothing else. Writes keep the per-key locks of step 2. This run
+shared the CPUs with a Lean build, so it understates the throughput.
+
+| scenario | conc | req/s | p50 ms | p99 ms | non-2xx | attempts | retries | commits |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| get-article | 1 | 78.1 | 8.53 | 37.01 | 0 | 783 | 0 | 783 |
+| get-article | 16 | 1263.8 | 9.52 | 39.49 | 0 | 12652 | 0 | 12652 |
+| get-article | 64 | 1991.4 | 28.63 | 64.35 | 0 | 20002 | 0 | 20002 |
+| list | 1 | 62.9 | 12.69 | 39.32 | 0 | 630 | 0 | 630 |
+| list | 16 | 838.5 | 18.36 | 49.71 | 0 | 8406 | 0 | 8406 |
+| list | 64 | 1557.1 | 39.21 | 76.32 | 0 | 15675 | 0 | 15675 |
+| list-tag | 1 | 55.2 | 15.21 | 43.14 | 0 | 552 | 0 | 552 |
+| list-tag | 16 | 744.0 | 20.89 | 54.93 | 0 | 7479 | 0 | 7479 |
+| list-tag | 64 | 1519.1 | 40.14 | 75.69 | 0 | 15313 | 0 | 15313 |
+| feed | 1 | 48.1 | 20.96 | 57.90 | 0 | 482 | 0 | 482 |
+| feed | 16 | 747.6 | 20.95 | 56.97 | 0 | 7501 | 0 | 7501 |
+| feed | 64 | 1573.4 | 38.85 | 74.22 | 0 | 15836 | 0 | 15836 |
+| favorite | 1 | 34.9 | 25.90 | 73.03 | 0 | 349 | 0 | 349 |
+| favorite | 16 | 529.6 | 26.58 | 79.15 | 0 | 5449 | 134 | 5315 |
+| favorite | 64 | 991.2 | 60.29 | 143.37 | 0 | 10327 | 320 | 10007 |
+
+| scenario, concurrency 64 | baseline | step 1 | step 2 | steps 3+5 |
+|---|---:|---:|---:|---:|
+| get-article (req/s) | 13.0 | 122.2 | 113.1 | 1991.4 |
+| list | 12.4 | 124.2 | 108.7 | 1557.1 |
+| list-tag | 5.1 | 65.9 | 72.0 | 1519.1 |
+| feed | 13.0 | 120.2 | 108.6 | 1573.4 |
+| favorite | 12.5 | 11.3 | 7.6 | 991.2 |
+| favorite retries / attempts | 0 / 188 | 0 / 175 | 1366 / 1448 | 320 / 10327 |
+
+A single request takes 8-26 ms instead of ~80 ms, and throughput now grows
+with concurrency. Favorites of different articles still retry about 3% of
+the time: PostgreSQL takes SERIALIZABLE predicate locks per index page, so
+two favorites whose reads and writes touch the same page of the favorites
+index can conflict although their rows differ. Read-only commands take no
+predicate locks (a deferrable read-only transaction runs on a safe
+snapshot) and never retry.

@@ -76,6 +76,9 @@ the others hold for every caller, state and command.
 | `feed_only_followed` | The feed contains only articles by authors the caller follows. |
 | `favorite_reply`, `unfavorite_reply`, `create_reply`, `update_reply`, `follow_reply`, `unfollow_reply`, `add_comment_reply` | A write replies with what the same read returns in the state after the write (for `unfavorite_reply` and `create_reply`, in a reachable state). |
 | `apply_spec` | The kernel's `apply` computes `Spec.applyAll`. |
+| `read_only_sound` | Every command `read_only` lists writes nothing when accepted (`H5iAppLib.ReadOnly.Sound`), so the engine may run it on a read-only snapshot. |
+| `reads_abs`, `decode_load` | The extracted read plan `reads` is the plan `readsA` written in `H5iAppLib.Query` terms, and rows holding what each of its reads returns decode to `loadSnap plan s`. |
+| `frame`, `load_for_sound`, `load_for_sound_inv` | For every command with a plan, `transition` on what the plan loads gives exactly its result on the whole site (with unique usernames, true in every reachable state). |
 | `upstream_violates_reply_spec` | With upstream's query, the statement of `get_article_reply` is false. |
 | `favorited_filter` | `?favorited=bob` lists one article in the fixed kernel and two in upstream's. |
 | `s1_reachable` | Six commands lead from an empty site to the scenario state, so the theorems about reachable states apply to it. |
@@ -88,6 +91,30 @@ around it is trusted to decode requests, and `server/tests/postgres.rs`
 checks that the PostgreSQL store agrees with `apply` on random command
 sequences. The listing's order relies on the store loading rows in key
 order, which is id order.
+
+## Loading less than the site
+
+Conduit has one tenant, so loading the whole site for every request costs
+as much as the site is big. `reads` (in the kernel, extracted) gives most
+commands a read plan: one declarative read (`h5i_app_sql::Read`) per table.
+Getting, favoriting and unfavoriting an article read the article by slug,
+its tags and favorites, its author and the caller's follows; profiles,
+follows, account commands and comments read the rows their keys name; the
+listing and the feed read only the newest `offset + limit` matching articles
+(the filters by tag, author name and favoriting user are `IN` sub-reads)
+and what their views need. Sign-up, login, new, edited and deleted articles
+and the tag list still load the whole site. `ConduitStore::load_for` runs
+the plan (`schema_load_plan`), and `ddl` adds indexes for the reads.
+
+`Frame.lean` proves the plans load enough: on what a plan loads,
+`transition` returns what it returns on the whole site. What stays trusted
+is that PostgreSQL returns, for each compiled read, the rows
+`H5iAppLib.Query` says (differential-tested; see docs/app/TRUST.md). The
+random-command test in `server/tests/postgres.rs` runs the real engine,
+partial loads included, against `MemoryEngine`.
+
+Writes lock only what they change (`lock_for`): a slug, a follow pair, a
+user or the id counter.
 
 ## Running the server
 

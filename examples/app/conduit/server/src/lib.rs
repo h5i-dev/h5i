@@ -56,8 +56,20 @@ conduit_kernel::conduit_tables!(Conduit);
 pub struct ConduitStore;
 
 impl Store<Conduit> for ConduitStore {
+    /// The tables, and indexes for the reads of `k::reads`: articles by slug
+    /// and author, tags by name, favorites by user, users by name and email,
+    /// comments by article. They change no result, only speed.
     fn ddl() -> Vec<String> {
-        schema_ddl()
+        use conduit_kernel::conduit_tables as c;
+        let mut out = schema_ddl();
+        out.push(schema_index(k::Article::TABLE, &[c::Article::slug]));
+        out.push(schema_index(k::Article::TABLE, &[c::Article::author, c::Article::id]));
+        out.push(schema_index(k::Tag::TABLE, &[c::Tag::tag]));
+        out.push(schema_index(k::Favorite::TABLE, &[c::Favorite::user]));
+        out.push(schema_index(k::User::TABLE, &[c::User::username]));
+        out.push(schema_index(k::User::TABLE, &[c::User::email]));
+        out.push(schema_index(k::Comment::TABLE, &[c::Comment::article]));
+        out
     }
 
     fn tables() -> Vec<&'static str> {
@@ -68,6 +80,16 @@ impl Store<Conduit> for ConduitStore {
     // `Storage.lean`: stored `sql_writes` load back as what `apply` computes.
     async fn load(tx: &Tx<'_>, t: TenantId) -> Result<k::Snapshot, DbError> {
         schema_load(tx, t).await
+    }
+
+    /// The rows `k::reads` names, each table by one declarative read, or the
+    /// whole site for the commands it leaves out. `Frame.lean`: `transition`
+    /// gives the same result on them as on `load`.
+    async fn load_for(tx: &Tx<'_>, t: TenantId, actor: &k::Principal, cmd: &k::Command) -> Result<k::Snapshot, DbError> {
+        match k::reads(actor, cmd) {
+            None => schema_load(tx, t).await,
+            Some(plan) => schema_load_plan(tx, t, &plan).await,
+        }
     }
 
     /// Writes queue on what they change, not on the whole site: an

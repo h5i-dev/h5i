@@ -171,6 +171,52 @@ inductive h5i_app_sql.Write where
 | Del : Std.U32 → alloc.vec.Vec h5i_app_sql.Val → h5i_app_sql.Write
 | DelWhere : Std.U32 → Std.U32 → h5i_app_sql.Val → h5i_app_sql.Write
 
+/-- [h5i_app_sql::Window]
+    Source: 'crates/h5i-app-sql/src/lib.rs', lines 237:0-237:17
+    Name pattern: [h5i_app_sql::Window]
+    Visibility: public -/
+@[rust_type "h5i_app_sql::Window"]
+structure h5i_app_sql.Window where
+  desc : Bool
+  offset : Std.U64
+  limit : Option Std.U64
+
+/-- [h5i_app_sql::whole]:
+    Source: 'crates/h5i-app-sql/src/lib.rs', lines 244:0-244:24
+    Name pattern: [h5i_app_sql::whole]
+    Visibility: public -/
+@[rust_fun "h5i_app_sql::whole"]
+def h5i_app_sql.whole : Result h5i_app_sql.Window := do
+  ok { desc := false, offset := 0#u64, limit := none }
+
+/-- [h5i_app_sql::Pred]
+    Source: 'crates/h5i-app-sql/src/lib.rs', lines 250:0-250:13
+    Name pattern: [h5i_app_sql::Pred]
+    Visibility: public -/
+@[discriminant isize, rust_type "h5i_app_sql::Pred"]
+inductive h5i_app_sql.Pred where
+| All : h5i_app_sql.Pred
+| Eq : Std.U32 → h5i_app_sql.Val → h5i_app_sql.Pred
+| In :
+  Std.U32 →
+  Std.U32 →
+  h5i_app_sql.Pred →
+  Std.U32 →
+  h5i_app_sql.Window →
+  h5i_app_sql.Pred
+| And : h5i_app_sql.Pred → h5i_app_sql.Pred → h5i_app_sql.Pred
+| Or : h5i_app_sql.Pred → h5i_app_sql.Pred → h5i_app_sql.Pred
+
+/-- [h5i_app_sql::Read]
+    Source: 'crates/h5i-app-sql/src/lib.rs', lines 265:0-265:15
+    Name pattern: [h5i_app_sql::Read]
+    Visibility: public -/
+@[rust_type "h5i_app_sql::Read"]
+structure h5i_app_sql.Read where
+  table : Std.U32
+  pred : h5i_app_sql.Pred
+  window : h5i_app_sql.Window
+
 /-- [conduit_kernel::Principal]
     Source: 'examples/app/conduit/kernel/src/lib.rs', lines 19:0-22:1
     Visibility: public -/
@@ -2396,16 +2442,445 @@ def read_only (cmd : Command) : Result Bool := do
   | Command.DeleteComment _ _ => ok false
   | Command.GetTags => ok true
 
+/-- [conduit_kernel::T_USERS]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1046:0-1046:23 -/
+@[global_simps, irreducible] def T_USERS : Std.U32 := 0#u32
+
+/-- [conduit_kernel::T_FOLLOWS]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1047:0-1047:25 -/
+@[global_simps, irreducible] def T_FOLLOWS : Std.U32 := 1#u32
+
+/-- [conduit_kernel::T_ARTICLES]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1048:0-1048:26 -/
+@[global_simps, irreducible] def T_ARTICLES : Std.U32 := 2#u32
+
+/-- [conduit_kernel::T_TAGS]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1049:0-1049:22 -/
+@[global_simps, irreducible] def T_TAGS : Std.U32 := 3#u32
+
+/-- [conduit_kernel::T_FAVORITES]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1050:0-1050:27 -/
+@[global_simps, irreducible] def T_FAVORITES : Std.U32 := 4#u32
+
+/-- [conduit_kernel::T_COMMENTS]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1051:0-1051:26 -/
+@[global_simps, irreducible] def T_COMMENTS : Std.U32 := 5#u32
+
+/-- [conduit_kernel::T_COUNTER]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1052:0-1052:25 -/
+@[global_simps, irreducible] def T_COUNTER : Std.U32 := 6#u32
+
+/-- [conduit_kernel::USER_ID]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1053:0-1053:23 -/
+@[global_simps, irreducible] def USER_ID : Std.U32 := 0#u32
+
+/-- [conduit_kernel::USER_NAME]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1054:0-1054:25 -/
+@[global_simps, irreducible] def USER_NAME : Std.U32 := 1#u32
+
+/-- [conduit_kernel::USER_EMAIL]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1055:0-1055:26 -/
+@[global_simps, irreducible] def USER_EMAIL : Std.U32 := 2#u32
+
+/-- [conduit_kernel::FOLLOW_FOLLOWER]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1056:0-1056:31 -/
+@[global_simps, irreducible] def FOLLOW_FOLLOWER : Std.U32 := 0#u32
+
+/-- [conduit_kernel::FOLLOW_FOLLOWED]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1057:0-1057:31 -/
+@[global_simps, irreducible] def FOLLOW_FOLLOWED : Std.U32 := 1#u32
+
+/-- [conduit_kernel::ARTICLE_ID]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1058:0-1058:26 -/
+@[global_simps, irreducible] def ARTICLE_ID : Std.U32 := 0#u32
+
+/-- [conduit_kernel::ARTICLE_AUTHOR]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1059:0-1059:30 -/
+@[global_simps, irreducible] def ARTICLE_AUTHOR : Std.U32 := 1#u32
+
+/-- [conduit_kernel::ARTICLE_SLUG]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1060:0-1060:28 -/
+@[global_simps, irreducible] def ARTICLE_SLUG : Std.U32 := 2#u32
+
+/-- [conduit_kernel::TAG_TAG]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1061:0-1061:23 -/
+@[global_simps, irreducible] def TAG_TAG : Std.U32 := 1#u32
+
+/-- [conduit_kernel::FAVORITE_USER]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1062:0-1062:29 -/
+@[global_simps, irreducible] def FAVORITE_USER : Std.U32 := 1#u32
+
+/-- [conduit_kernel::COMMENT_ID]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1063:0-1063:26 -/
+@[global_simps, irreducible] def COMMENT_ID : Std.U32 := 0#u32
+
+/-- [conduit_kernel::COMMENT_AUTHOR]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1064:0-1064:30 -/
+@[global_simps, irreducible] def COMMENT_AUTHOR : Std.U32 := 2#u32
+
+/-- [conduit_kernel::v_int]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1066:0-1068:1 -/
+def v_int (x : Std.U64) : Result h5i_app_sql.Val := do
+  U64.Insts.H5i_app_sqlColumn.to_val x
+
+/-- [conduit_kernel::v_bytes]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1070:0-1072:1 -/
+def v_bytes (t : alloc.vec.Vec Std.U8) : Result h5i_app_sql.Val := do
+  alloc.vec.VecU8.Insts.H5i_app_sqlColumn.to_val t
+
+/-- [conduit_kernel::p_eq]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1074:0-1076:1 -/
+def p_eq (col : Std.U32) (v : h5i_app_sql.Val) : Result h5i_app_sql.Pred := do
+  ok (h5i_app_sql.Pred.Eq col v)
+
+/-- [conduit_kernel::p_or]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1078:0-1080:1 -/
+def p_or
+  (a : h5i_app_sql.Pred) (b : h5i_app_sql.Pred) : Result h5i_app_sql.Pred := do
+  ok (h5i_app_sql.Pred.Or a b)
+
+/-- [conduit_kernel::p_and]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1082:0-1084:1 -/
+def p_and
+  (a : h5i_app_sql.Pred) (b : h5i_app_sql.Pred) : Result h5i_app_sql.Pred := do
+  ok (h5i_app_sql.Pred.And a b)
+
+/-- [conduit_kernel::p_in]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1087:0-1089:1 -/
+def p_in
+  (col : Std.U32) (table : Std.U32) (pred : h5i_app_sql.Pred) (of : Std.U32)
+  (window : h5i_app_sql.Window) :
+  Result h5i_app_sql.Pred
+  := do
+  ok (h5i_app_sql.Pred.In col table pred of window)
+
+/-- [conduit_kernel::rd_where]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1091:0-1093:1 -/
+def rd_where
+  (table : Std.U32) (pred : h5i_app_sql.Pred) : Result h5i_app_sql.Read := do
+  let w ← h5i_app_sql.whole
+  ok { table, pred, window := w }
+
+/-- [conduit_kernel::by_slug]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1096:0-1098:1 -/
+def by_slug (slug : alloc.vec.Vec Std.U8) : Result h5i_app_sql.Pred := do
+  let v ← v_bytes slug
+  p_eq ARTICLE_SLUG v
+
+/-- [conduit_kernel::of_articles]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1101:0-1103:1 -/
+def of_articles
+  (col : Std.U32) (arts : h5i_app_sql.Pred) (w : h5i_app_sql.Window) :
+  Result h5i_app_sql.Pred
+  := do
+  p_in col T_ARTICLES arts ARTICLE_ID w
+
+/-- [conduit_kernel::named]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1106:0-1108:1 -/
+def named
+  (col : Std.U32) («name» : alloc.vec.Vec Std.U8) :
+  Result h5i_app_sql.Pred
+  := do
+  let v ← v_bytes «name»
+  let p ← p_eq USER_NAME v
+  let w ← h5i_app_sql.whole
+  p_in col T_USERS p USER_ID w
+
+/-- [conduit_kernel::or_opt]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1111:0-1116:1 -/
+def or_opt
+  (p : h5i_app_sql.Pred) (q : Option h5i_app_sql.Pred) :
+  Result h5i_app_sql.Pred
+  := do
+  match q with
+  | none => ok p
+  | some q1 => p_or p q1
+
+/-- [conduit_kernel::and_opt]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1119:0-1124:1 -/
+def and_opt
+  (p : h5i_app_sql.Pred) (q : Option h5i_app_sql.Pred) :
+  Result h5i_app_sql.Pred
+  := do
+  match q with
+  | none => ok p
+  | some q1 => p_and p q1
+
+/-- [conduit_kernel::opt_text]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1127:0-1132:1 -/
+def opt_text
+  (o : Option (alloc.vec.Vec Std.U8)) :
+  Result (Option (alloc.vec.Vec Std.U8))
+  := do
+  match o with
+  | none => ok none
+  | some t =>
+    let v ← alloc.vec.CloneVec.clone core.clone.CloneU8 t
+    ok (some v)
+
+/-- [conduit_kernel::newest]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1135:0-1138:1 -/
+def newest
+  (offset : Std.U64) (limit : Std.U64) : Result h5i_app_sql.Window := do
+  let i ← core.num.U64.MAX - offset
+  if limit > i
+  then ok { desc := true, offset := 0#u64, limit := none }
+  else
+    let i1 ← offset + limit
+    ok { desc := true, offset := 0#u64, limit := (some i1) }
+
+/-- [conduit_kernel::Sel]
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1141:0-1148:1 -/
+@[discriminant isize]
+inductive Sel where
+| Slug : alloc.vec.Vec Std.U8 → Sel
+| List :
+  Option (alloc.vec.Vec Std.U8) →
+  Option (alloc.vec.Vec Std.U8) →
+  Option (alloc.vec.Vec Std.U8) →
+  Sel
+| Feed : Std.U64 → Sel
+
+/-- [conduit_kernel::sel_pred]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1152:0-1172:1 -/
+def sel_pred (sel : Sel) : Result h5i_app_sql.Pred := do
+  match sel with
+  | Sel.Slug slug => by_slug slug
+  | Sel.List tag author favorited =>
+    let by_tag ←
+      match tag with
+      | none => ok none
+      | some t =>
+        do
+        let v ← v_bytes t
+        let p ← p_eq TAG_TAG v
+        let w ← h5i_app_sql.whole
+        let p1 ← p_in ARTICLE_ID T_TAGS p 0#u32 w
+        ok (some p1)
+    let by_author ←
+      match author with
+      | none => ok none
+      | some a => do
+                  let p ← named ARTICLE_AUTHOR a
+                  ok (some p)
+    let by_fav ←
+      match favorited with
+      | none => ok none
+      | some f =>
+        do
+        let p ← named FAVORITE_USER f
+        let w ← h5i_app_sql.whole
+        let p1 ← p_in ARTICLE_ID T_FAVORITES p 0#u32 w
+        ok (some p1)
+    let p ← and_opt h5i_app_sql.Pred.All by_tag
+    let p1 ← and_opt p by_author
+    and_opt p1 by_fav
+  | Sel.Feed u =>
+    let v ← v_int u
+    let p ← p_eq FOLLOW_FOLLOWER v
+    let w ← h5i_app_sql.whole
+    p_in ARTICLE_AUTHOR T_FOLLOWS p FOLLOW_FOLLOWED w
+
+/-- [conduit_kernel::article_plan]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1177:0-1185:1 -/
+def article_plan
+  (viewer : Std.U64) (sel : Sel) (w : h5i_app_sql.Window)
+  (extra : Option h5i_app_sql.Pred) :
+  Result (alloc.vec.Vec h5i_app_sql.Read)
+  := do
+  let p ← sel_pred sel
+  let p1 ← p_in USER_ID T_ARTICLES p ARTICLE_AUTHOR w
+  let p2 ← or_opt p1 extra
+  let r ← rd_where T_USERS p2
+  let out ← alloc.vec.Vec.push (alloc.vec.Vec.new h5i_app_sql.Read) r
+  let v ← v_int viewer
+  let p3 ← p_eq FOLLOW_FOLLOWER v
+  let r1 ← rd_where T_FOLLOWS p3
+  let out1 ← alloc.vec.Vec.push out r1
+  let out2 ←
+    alloc.vec.Vec.push out1 ({ table := T_ARTICLES, pred := p, window := w } :
+      h5i_app_sql.Read)
+  let p4 ← of_articles 0#u32 p w
+  let r2 ← rd_where T_TAGS p4
+  let out3 ← alloc.vec.Vec.push out2 r2
+  let p5 ← of_articles 0#u32 p w
+  let r3 ← rd_where T_FAVORITES p5
+  alloc.vec.Vec.push out3 r3
+
+/-- [conduit_kernel::reads]:
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1191:0-1267:1
+    Visibility: public -/
+def reads
+  (actor : Principal) (cmd : Command) :
+  Result (Option (alloc.vec.Vec h5i_app_sql.Read))
+  := do
+  match cmd with
+  | Command.Register _ _ _ => ok none
+  | Command.Login _ _ => ok none
+  | Command.CurrentUser =>
+    let v ← v_int actor.user
+    let p ← p_eq USER_ID v
+    let r ← rd_where T_USERS p
+    let out ← alloc.vec.Vec.push (alloc.vec.Vec.new h5i_app_sql.Read) r
+    ok (some out)
+  | Command.UpdateUser email username _ _ _ =>
+    let by_name ←
+      match username with
+      | none => ok none
+      | some n => do
+                  let v ← v_bytes n
+                  let p ← p_eq USER_NAME v
+                  ok (some p)
+    let by_email ←
+      match email with
+      | none => ok none
+      | some e =>
+        do
+        let v ← v_bytes e
+        let p ← p_eq USER_EMAIL v
+        ok (some p)
+    let v ← v_int actor.user
+    let p ← p_eq USER_ID v
+    let p1 ← or_opt p by_name
+    let p2 ← or_opt p1 by_email
+    let r ← rd_where T_USERS p2
+    let out ← alloc.vec.Vec.push (alloc.vec.Vec.new h5i_app_sql.Read) r
+    ok (some out)
+  | Command.GetProfile username =>
+    let v ← v_bytes username
+    let p ← p_eq USER_NAME v
+    let r ← rd_where T_USERS p
+    let out ← alloc.vec.Vec.push (alloc.vec.Vec.new h5i_app_sql.Read) r
+    let v1 ← v_int actor.user
+    let p1 ← p_eq FOLLOW_FOLLOWER v1
+    let r1 ← rd_where T_FOLLOWS p1
+    let out1 ← alloc.vec.Vec.push out r1
+    ok (some out1)
+  | Command.Follow username =>
+    let v ← v_int actor.user
+    let p ← p_eq USER_ID v
+    let v1 ← v_bytes username
+    let p1 ← p_eq USER_NAME v1
+    let p2 ← p_or p p1
+    let r ← rd_where T_USERS p2
+    let out ← alloc.vec.Vec.push (alloc.vec.Vec.new h5i_app_sql.Read) r
+    ok (some out)
+  | Command.Unfollow username =>
+    let v ← v_int actor.user
+    let p ← p_eq USER_ID v
+    let v1 ← v_bytes username
+    let p1 ← p_eq USER_NAME v1
+    let p2 ← p_or p p1
+    let r ← rd_where T_USERS p2
+    let out ← alloc.vec.Vec.push (alloc.vec.Vec.new h5i_app_sql.Read) r
+    ok (some out)
+  | Command.ListArticles tag author favorited limit offset =>
+    let names ←
+      match author with
+      | none => ok none
+      | some a => do
+                  let v ← v_bytes a
+                  let p ← p_eq USER_NAME v
+                  ok (some p)
+    let names1 ←
+      match favorited with
+      | none => ok names
+      | some f =>
+        do
+        let v ← v_bytes f
+        let p ← p_eq USER_NAME v
+        let p1 ← or_opt p names
+        ok (some p1)
+    let o ← opt_text tag
+    let o1 ← opt_text author
+    let o2 ← opt_text favorited
+    let w ← newest offset limit
+    let v ← article_plan actor.user (Sel.List o o1 o2) w names1
+    ok (some v)
+  | Command.Feed limit offset =>
+    let w ← newest offset limit
+    let v ← v_int actor.user
+    let p ← p_eq USER_ID v
+    let v1 ← article_plan actor.user (Sel.Feed actor.user) w (some p)
+    ok (some v1)
+  | Command.GetArticle slug =>
+    let v ← alloc.vec.CloneVec.clone core.clone.CloneU8 slug
+    let w ← h5i_app_sql.whole
+    let v1 ← article_plan actor.user (Sel.Slug v) w none
+    ok (some v1)
+  | Command.CreateArticle _ _ _ _ _ _ => ok none
+  | Command.UpdateArticle _ _ _ _ _ _ => ok none
+  | Command.DeleteArticle _ => ok none
+  | Command.Favorite slug =>
+    let v ← alloc.vec.CloneVec.clone core.clone.CloneU8 slug
+    let w ← h5i_app_sql.whole
+    let v1 ← v_int actor.user
+    let p ← p_eq USER_ID v1
+    let v2 ← article_plan actor.user (Sel.Slug v) w (some p)
+    ok (some v2)
+  | Command.Unfavorite slug =>
+    let v ← alloc.vec.CloneVec.clone core.clone.CloneU8 slug
+    let w ← h5i_app_sql.whole
+    let v1 ← v_int actor.user
+    let p ← p_eq USER_ID v1
+    let v2 ← article_plan actor.user (Sel.Slug v) w (some p)
+    ok (some v2)
+  | Command.GetComments slug =>
+    let p ← by_slug slug
+    let w ← h5i_app_sql.whole
+    let on ← of_articles 1#u32 p w
+    let p1 ← p_in USER_ID T_COMMENTS on COMMENT_AUTHOR w
+    let r ← rd_where T_USERS p1
+    let out ← alloc.vec.Vec.push (alloc.vec.Vec.new h5i_app_sql.Read) r
+    let v ← v_int actor.user
+    let p2 ← p_eq FOLLOW_FOLLOWER v
+    let r1 ← rd_where T_FOLLOWS p2
+    let out1 ← alloc.vec.Vec.push out r1
+    let r2 ← rd_where T_ARTICLES p
+    let out2 ← alloc.vec.Vec.push out1 r2
+    let p3 ← of_articles 1#u32 p w
+    let r3 ← rd_where T_COMMENTS p3
+    let out3 ← alloc.vec.Vec.push out2 r3
+    ok (some out3)
+  | Command.AddComment slug _ _ =>
+    let v ← v_int actor.user
+    let p ← p_eq USER_ID v
+    let r ← rd_where T_USERS p
+    let out ← alloc.vec.Vec.push (alloc.vec.Vec.new h5i_app_sql.Read) r
+    let p1 ← p_eq FOLLOW_FOLLOWER v
+    let r1 ← rd_where T_FOLLOWS p1
+    let out1 ← alloc.vec.Vec.push out r1
+    let p2 ← by_slug slug
+    let r2 ← rd_where T_ARTICLES p2
+    let out2 ← alloc.vec.Vec.push out1 r2
+    let r3 ← rd_where T_COUNTER h5i_app_sql.Pred.All
+    let out3 ← alloc.vec.Vec.push out2 r3
+    ok (some out3)
+  | Command.DeleteComment slug id =>
+    let v ← v_int actor.user
+    let p ← p_eq USER_ID v
+    let r ← rd_where T_USERS p
+    let out ← alloc.vec.Vec.push (alloc.vec.Vec.new h5i_app_sql.Read) r
+    let p1 ← by_slug slug
+    let r1 ← rd_where T_ARTICLES p1
+    let out1 ← alloc.vec.Vec.push out r1
+    let v1 ← v_int id
+    let p2 ← p_eq COMMENT_ID v1
+    let r2 ← rd_where T_COMMENTS p2
+    let out2 ← alloc.vec.Vec.push out1 r2
+    ok (some out2)
+  | Command.GetTags => ok none
+
 /-- [conduit_kernel::TAG_ARTICLE]
-    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1046:0-1046:27 -/
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1272:0-1272:27 -/
 @[global_simps, irreducible] def TAG_ARTICLE : Std.U32 := 0#u32
 
 /-- [conduit_kernel::FAVORITE_ARTICLE]
-    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1047:0-1047:32 -/
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1273:0-1273:32 -/
 @[global_simps, irreducible] def FAVORITE_ARTICLE : Std.U32 := 0#u32
 
 /-- [conduit_kernel::COMMENT_ARTICLE]
-    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1048:0-1048:31 -/
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1274:0-1274:31 -/
 @[global_simps, irreducible] def COMMENT_ARTICLE : Std.U32 := 1#u32
 
 /-- [conduit_kernel::{conduit_kernel::Comment}::to_row]:
@@ -3094,7 +3569,7 @@ def User.put
   User.put_loop v x 0#usize
 
 /-- [conduit_kernel::apply_write]:
-    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1052:0-1073:1 -/
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1278:0-1299:1 -/
 def apply_write (s : Snapshot) (w : Write) : Result Snapshot := do
   match w with
   | Write.PutUser x => let v ← User.put s.users x
@@ -3379,7 +3854,7 @@ def User.sql_put (self : User) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.Put User.TABLE User.KEY_LEN v)
 
 /-- [conduit_kernel::sql_write]:
-    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1076:0-1093:1 -/
+    Source: 'examples/app/conduit/kernel/src/lib.rs', lines 1302:0-1319:1 -/
 def sql_write
   (w : Write) (out : alloc.vec.Vec h5i_app_sql.Write) :
   Result (alloc.vec.Vec h5i_app_sql.Write)

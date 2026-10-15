@@ -1,14 +1,21 @@
 # Read by `h5i app` (extract, check, prove, mutate, doctor).
 
 [extract]
-start-from = ["transition", "transition_upstream", "read_only"]
+start-from = ["transition", "transition_upstream", "read_only", "reads"]
 schema = true
 include = ["h5i_app_sql"]
 
 [check]
 # Must exist and use only the standard axioms (every theorem in a hand-written
 # module is gated as well).
-theorems = ["conduit_kernel.Storage.db_inv", "conduit_kernel.ReadOnly.read_only_sound"]
+theorems = [
+    "conduit_kernel.Storage.db_inv",
+    "conduit_kernel.ReadOnly.read_only_sound",
+    "conduit_kernel.Plan.reads_abs",
+    "conduit_kernel.Plan.decode_load",
+    "conduit_kernel.Frame.frame",
+    "conduit_kernel.Frame.load_for_sound_inv",
+]
 
 [[mutant]]
 name = "edit_others_article"

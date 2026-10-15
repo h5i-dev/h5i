@@ -1040,6 +1040,232 @@ pub fn read_only(cmd: &Command) -> bool {
     }
 }
 
+/* Read plans */
+
+// Table numbers and columns, in `schema!` order (`conduit_tables`).
+const T_USERS: u32 = 0;
+const T_FOLLOWS: u32 = 1;
+const T_ARTICLES: u32 = 2;
+const T_TAGS: u32 = 3;
+const T_FAVORITES: u32 = 4;
+const T_COMMENTS: u32 = 5;
+const T_COUNTER: u32 = 6;
+const USER_ID: u32 = 0;
+const USER_NAME: u32 = 1;
+const USER_EMAIL: u32 = 2;
+const FOLLOW_FOLLOWER: u32 = 0;
+const FOLLOW_FOLLOWED: u32 = 1;
+const ARTICLE_ID: u32 = 0;
+const ARTICLE_AUTHOR: u32 = 1;
+const ARTICLE_SLUG: u32 = 2;
+const TAG_TAG: u32 = 1;
+const FAVORITE_USER: u32 = 1;
+const COMMENT_ID: u32 = 0;
+const COMMENT_AUTHOR: u32 = 2;
+
+fn v_int(x: u64) -> h5i_app_sql::Val {
+    h5i_app_sql::Column::to_val(&x)
+}
+
+fn v_bytes(t: &Text) -> h5i_app_sql::Val {
+    h5i_app_sql::Column::to_val(t)
+}
+
+fn p_eq(col: u32, v: h5i_app_sql::Val) -> h5i_app_sql::Pred {
+    h5i_app_sql::Pred::Eq { col, val: v }
+}
+
+fn p_or(a: h5i_app_sql::Pred, b: h5i_app_sql::Pred) -> h5i_app_sql::Pred {
+    h5i_app_sql::Pred::Or(Box::new(a), Box::new(b))
+}
+
+fn p_and(a: h5i_app_sql::Pred, b: h5i_app_sql::Pred) -> h5i_app_sql::Pred {
+    h5i_app_sql::Pred::And(Box::new(a), Box::new(b))
+}
+
+/// Column `col` is column `of` of a row of `table` that `pred` and `window` keep.
+fn p_in(col: u32, table: u32, pred: h5i_app_sql::Pred, of: u32, window: h5i_app_sql::Window) -> h5i_app_sql::Pred {
+    h5i_app_sql::Pred::In { col, table, pred: Box::new(pred), of, window }
+}
+
+fn rd_where(table: u32, pred: h5i_app_sql::Pred) -> h5i_app_sql::Read {
+    h5i_app_sql::Read { table, pred, window: h5i_app_sql::whole() }
+}
+
+/// The articles with slug `slug` (at most one in a reachable state).
+fn by_slug(slug: &Text) -> h5i_app_sql::Pred {
+    p_eq(ARTICLE_SLUG, v_bytes(slug))
+}
+
+/// Column `col` is the id of an article `arts` and `w` keep.
+fn of_articles(col: u32, arts: h5i_app_sql::Pred, w: h5i_app_sql::Window) -> h5i_app_sql::Pred {
+    p_in(col, T_ARTICLES, arts, ARTICLE_ID, w)
+}
+
+/// Column `col` is the id of a user named `name`.
+fn named(col: u32, name: &Text) -> h5i_app_sql::Pred {
+    p_in(col, T_USERS, p_eq(USER_NAME, v_bytes(name)), USER_ID, h5i_app_sql::whole())
+}
+
+/// `p`, or `q` if given.
+fn or_opt(p: h5i_app_sql::Pred, q: Option<h5i_app_sql::Pred>) -> h5i_app_sql::Pred {
+    match q {
+        None => p,
+        Some(q) => p_or(p, q),
+    }
+}
+
+/// `p` and `q`, if given.
+fn and_opt(p: h5i_app_sql::Pred, q: Option<h5i_app_sql::Pred>) -> h5i_app_sql::Pred {
+    match q {
+        None => p,
+        Some(q) => p_and(p, q),
+    }
+}
+
+/// A copy of an optional text (`Option::clone` has no Lean model).
+fn opt_text(o: &Option<Text>) -> Option<Text> {
+    match o {
+        None => None,
+        Some(t) => Some(t.clone()),
+    }
+}
+
+/// The newest `offset + limit` rows: enough for `page` (`None`: all of them).
+fn newest(offset: u64, limit: u64) -> h5i_app_sql::Window {
+    let lim = if limit > u64::MAX - offset { None } else { Some(offset + limit) };
+    h5i_app_sql::Window { desc: true, offset: 0, limit: lim }
+}
+
+/// Which articles a read plan views.
+enum Sel {
+    /// The article with this slug.
+    Slug(Text),
+    /// The listing's filters: tag, author name, name of a user who favorited.
+    List(Option<Text>, Option<Text>, Option<Text>),
+    /// Articles by authors this user follows.
+    Feed(u64),
+}
+
+/// The articles `sel` names, as a predicate on articles. Built afresh for
+/// each use (a `Pred` is never cloned).
+fn sel_pred(sel: &Sel) -> h5i_app_sql::Pred {
+    match sel {
+        Sel::Slug(slug) => by_slug(slug),
+        Sel::List(tag, author, favorited) => {
+            let by_tag = match tag {
+                None => None,
+                Some(t) => Some(p_in(ARTICLE_ID, T_TAGS, p_eq(TAG_TAG, v_bytes(t)), 0, h5i_app_sql::whole())),
+            };
+            let by_author = match author {
+                None => None,
+                Some(a) => Some(named(ARTICLE_AUTHOR, a)),
+            };
+            let by_fav = match favorited {
+                None => None,
+                Some(f) => Some(p_in(ARTICLE_ID, T_FAVORITES, named(FAVORITE_USER, f), 0, h5i_app_sql::whole())),
+            };
+            and_opt(and_opt(and_opt(h5i_app_sql::Pred::All, by_tag), by_author), by_fav)
+        }
+        Sel::Feed(u) => p_in(ARTICLE_AUTHOR, T_FOLLOWS, p_eq(FOLLOW_FOLLOWER, v_int(*u)), FOLLOW_FOLLOWED, h5i_app_sql::whole()),
+    }
+}
+
+/// What a view of the articles `sel` and `w` keep reads: the articles, their
+/// authors (and the users `extra` names), the viewer's follows, the
+/// articles' tags and favorites.
+fn article_plan(viewer: u64, sel: &Sel, w: h5i_app_sql::Window, extra: Option<h5i_app_sql::Pred>) -> Vec<h5i_app_sql::Read> {
+    let mut out = Vec::new();
+    out.push(rd_where(T_USERS, or_opt(p_in(USER_ID, T_ARTICLES, sel_pred(sel), ARTICLE_AUTHOR, w), extra)));
+    out.push(rd_where(T_FOLLOWS, p_eq(FOLLOW_FOLLOWER, v_int(viewer))));
+    out.push(h5i_app_sql::Read { table: T_ARTICLES, pred: sel_pred(sel), window: w });
+    out.push(rd_where(T_TAGS, of_articles(0, sel_pred(sel), w)));
+    out.push(rd_where(T_FAVORITES, of_articles(0, sel_pred(sel), w)));
+    out
+}
+
+/// The rows `cmd` reads, one read per table it needs (a table without a
+/// read loads empty), or `None` for the whole tenant. `Frame.lean` proves
+/// `transition` gives the same result on what this plan loads as on the
+/// whole tenant.
+pub fn reads(actor: &Principal, cmd: &Command) -> Option<Vec<h5i_app_sql::Read>> {
+    let u = actor.user;
+    match cmd {
+        Command::CurrentUser => {
+            let mut out = Vec::new();
+            out.push(rd_where(T_USERS, p_eq(USER_ID, v_int(u))));
+            Some(out)
+        }
+        Command::UpdateUser { email, username, password: _, bio: _, image: _ } => {
+            let by_name = match username {
+                None => None,
+                Some(n) => Some(p_eq(USER_NAME, v_bytes(n))),
+            };
+            let by_email = match email {
+                None => None,
+                Some(e) => Some(p_eq(USER_EMAIL, v_bytes(e))),
+            };
+            let mut out = Vec::new();
+            out.push(rd_where(T_USERS, or_opt(or_opt(p_eq(USER_ID, v_int(u)), by_name), by_email)));
+            Some(out)
+        }
+        Command::GetProfile { username } => {
+            let mut out = Vec::new();
+            out.push(rd_where(T_USERS, p_eq(USER_NAME, v_bytes(username))));
+            out.push(rd_where(T_FOLLOWS, p_eq(FOLLOW_FOLLOWER, v_int(u))));
+            Some(out)
+        }
+        Command::Follow { username } | Command::Unfollow { username } => {
+            let mut out = Vec::new();
+            out.push(rd_where(T_USERS, p_or(p_eq(USER_ID, v_int(u)), p_eq(USER_NAME, v_bytes(username)))));
+            Some(out)
+        }
+        Command::GetArticle { slug } => Some(article_plan(u, &Sel::Slug(slug.clone()), h5i_app_sql::whole(), None)),
+        Command::Favorite { slug } | Command::Unfavorite { slug } => {
+            Some(article_plan(u, &Sel::Slug(slug.clone()), h5i_app_sql::whole(), Some(p_eq(USER_ID, v_int(u)))))
+        }
+        Command::ListArticles { tag, author, favorited, limit, offset } => {
+            let names = match author {
+                None => None,
+                Some(a) => Some(p_eq(USER_NAME, v_bytes(a))),
+            };
+            let names = match favorited {
+                None => names,
+                Some(f) => Some(or_opt(p_eq(USER_NAME, v_bytes(f)), names)),
+            };
+            Some(article_plan(u, &Sel::List(opt_text(tag), opt_text(author), opt_text(favorited)), newest(*offset, *limit), names))
+        }
+        Command::Feed { limit, offset } => {
+            Some(article_plan(u, &Sel::Feed(u), newest(*offset, *limit), Some(p_eq(USER_ID, v_int(u)))))
+        }
+        Command::GetComments { slug } => {
+            let mut out = Vec::new();
+            let on = of_articles(1, by_slug(slug), h5i_app_sql::whole());
+            out.push(rd_where(T_USERS, p_in(USER_ID, T_COMMENTS, on, COMMENT_AUTHOR, h5i_app_sql::whole())));
+            out.push(rd_where(T_FOLLOWS, p_eq(FOLLOW_FOLLOWER, v_int(u))));
+            out.push(rd_where(T_ARTICLES, by_slug(slug)));
+            out.push(rd_where(T_COMMENTS, of_articles(1, by_slug(slug), h5i_app_sql::whole())));
+            Some(out)
+        }
+        Command::AddComment { slug, body: _, now: _ } => {
+            let mut out = Vec::new();
+            out.push(rd_where(T_USERS, p_eq(USER_ID, v_int(u))));
+            out.push(rd_where(T_FOLLOWS, p_eq(FOLLOW_FOLLOWER, v_int(u))));
+            out.push(rd_where(T_ARTICLES, by_slug(slug)));
+            out.push(rd_where(T_COUNTER, h5i_app_sql::Pred::All));
+            Some(out)
+        }
+        Command::DeleteComment { slug, id } => {
+            let mut out = Vec::new();
+            out.push(rd_where(T_USERS, p_eq(USER_ID, v_int(u))));
+            out.push(rd_where(T_ARTICLES, by_slug(slug)));
+            out.push(rd_where(T_COMMENTS, p_eq(COMMENT_ID, v_int(*id))));
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
 /* Apply */
 
 // Column numbers, in `to_row` order, that the cascades delete by.

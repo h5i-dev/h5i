@@ -16,4 +16,4 @@ lean_lib Generated where
 
 -- Hand-written specification and proofs.
 @[default_target] lean_lib Proofs where
-  roots := #[`Spec, `Helpers, `Commands, `Apply, `Storage, `Theorems, `Invariants, `Replies, `Counterexample, `Scenario, `ReadOnly]
+  roots := #[`Spec, `Helpers, `Commands, `Apply, `Storage, `Theorems, `Invariants, `Replies, `Counterexample, `Scenario, `ReadOnly, `Plan, `Frame]
