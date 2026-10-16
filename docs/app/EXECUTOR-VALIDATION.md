@@ -7,7 +7,7 @@ used only the disposable `h5i-gpu-pg` PostgreSQL instance on port 5465.
 The original (pre-redirect) `cargo app-verify --full` finished with
 **39 passed, 0 failed, 0 skipped**.
 This includes Rust tests, dependency bans, lint, all ten extraction freshness
-checks, all twelve existing Lean project checks and axiom gates, and all five
+checks, all eleven existing Lean project checks and axiom gates, and all five
 configured mutation gates. Every unchanged mutation baseline passed; every
 mutant was caught, with none surviving or invalid. The first pass encountered
 a stale local JSON Lake configuration; removing only its compiled configuration
@@ -66,3 +66,19 @@ The shared cached `h5i_app_lib` revision differed, so project dependencies remai
 on this checkout's local `crates/h5i-app-core/proofs`, not that cached library.
 Shared sources and other worktrees were not modified. Own artifacts occupy
 approximately 8 GB, below the requested 15 GB budget.
+
+## Final full gate
+
+After the redirect, `cargo app-verify --full` completed with **42 passed,
+0 failed, 0 skipped**: all twelve project lints, Rust tests (including real
+PostgreSQL tests), dependency bans, eleven extraction freshness checks, twelve
+Lean/axiom checks and five mutation gates. Every unmodified mutation baseline
+passed; all five mutants were caught, with none surviving or invalid.
+[Full gate output](measurements/verify-full.txt).
+
+The separate GPU workspace's three CPU tests also pass, including the maximum
+capacity acceptance, oversized capacity/text rejection, trailing-zero rejection,
+schema-row round trip, input order, batch independence and calculator error tags.
+GPU compilation remains blocked as documented; no GPU differential or timing
+result is claimed. The disposable `h5i-gpu-pg` container was stopped after these
+checks; its data remains under `/var/tmp`. No other container was changed.

@@ -62,7 +62,7 @@ mod tests {
 }
 
 // Compile-only marker shim: upstream #[kernel] generates this trait impl even
-// when no host launcher is linked. Runtime builds use the real cuda-host trait.
+// when no host launcher is linked. A launcher would need the real cuda-host trait.
 #[cfg(any(feature = "calculator-probe", feature = "search-probe", feature = "push-probe"))]
 #[allow(dead_code)]
 mod cuda_host {

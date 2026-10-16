@@ -1,0 +1,77 @@
+lint crates/h5i-app-core                     ok         0.0s
+lint crates/h5i-app-json                     ok         0.0s
+lint crates/h5i-app-pgsql                    ok         0.0s
+lint crates/h5i-app-sql                      ok         0.0s
+lint crates/h5i-app-std                      ok         0.0s
+lint crates/h5i-app-token                    ok         0.0s
+lint examples/app/board                      ok         0.0s
+lint examples/app/booking                    ok         0.0s
+lint examples/app/calculator                 ok         0.0s
+lint examples/app/inbox                      ok         0.0s
+lint examples/app/ledger                     ok         0.0s
+lint examples/app/parallel                   ok         0.0s
+
+  authorization coverage: 3/5 kernels with commands
+  examples/app/board                 proven (theorem)
+  examples/app/booking               proven (theorem)
+  examples/app/calculator            no universal authorization theorem (state one with H5iAppLib.Authz)
+  examples/app/inbox                 proven (theorem)
+  examples/app/ledger                no universal authorization theorem (state one with H5iAppLib.Authz)
+
+rust tests                                   ok        23.3s
+cargo deny (bans)                            ok         1.9s
+extract --check crates/h5i-app-json          ok         2.0s
+extract --check crates/h5i-app-pgsql         ok         5.2s
+extract --check crates/h5i-app-sql           ok         2.0s
+extract --check crates/h5i-app-std           ok         4.1s
+extract --check crates/h5i-app-token         ok         2.6s
+extract --check examples/app/board           ok         2.6s
+extract --check examples/app/booking         ok         2.9s
+extract --check examples/app/calculator      ok         2.1s
+extract --check examples/app/inbox           ok         3.0s
+extract --check examples/app/ledger          ok         2.5s
+extract --check examples/app/parallel        ok         6.1s
+check crates/h5i-app-core                    ok        55.3s
+check crates/h5i-app-json                    ok       133.6s
+check crates/h5i-app-pgsql                   ok        53.2s
+check crates/h5i-app-sql                     ok        50.5s
+check crates/h5i-app-std                     ok        50.9s
+check crates/h5i-app-token                   ok        50.9s
+check examples/app/board                     ok        53.1s
+check examples/app/booking                   ok        52.0s
+check examples/app/calculator                ok        51.5s
+check examples/app/inbox                     ok        52.0s
+check examples/app/ledger                    ok        51.1s
+check examples/app/parallel                  ok        53.7s
+mutants examples/app/board                   
+baseline (the unmodified kernel, copied)         ok  32s
+[1/1] remove_last_moderator                    caught  23s
+
+1/1 caught, 0 survived, 0 invalid
+ok        54.8s
+mutants examples/app/booking                 
+baseline (the unmodified kernel, copied)         ok  39s
+[1/1] touching_bookings_overlap                caught  26s
+
+1/1 caught, 0 survived, 0 invalid
+ok        65.2s
+mutants examples/app/calculator              
+baseline (the unmodified kernel, copied)         ok  26s
+[1/1] underflow_boundary                       caught  22s
+
+1/1 caught, 0 survived, 0 invalid
+ok        48.5s
+mutants examples/app/inbox                   
+baseline (the unmodified kernel, copied)         ok  37s
+[1/1] read_others_messages                     caught  37s
+
+1/1 caught, 0 survived, 0 invalid
+ok        73.8s
+mutants examples/app/ledger                  
+baseline (the unmodified kernel, copied)         ok  31s
+[1/1] withdraw_from_others_account             caught  21s
+
+1/1 caught, 0 survived, 0 invalid
+ok        52.4s
+
+42 passed, 0 failed, 0 skipped
