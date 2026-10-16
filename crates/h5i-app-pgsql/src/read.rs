@@ -1,7 +1,7 @@
 //! SQL for the declarative reads of `h5i_app_sql` (`Read`, `Pred`).
 //!
 //! Not extracted to Lean: `compile_read` is checked by differential tests
-//! (`crates/h5i-app-pg/tests/reads.rs`) against `h5i_app_sql::eval`, which
+//! (`crates/h5i-app-pg/src/reads_test.rs`) against `h5i_app_sql::eval`, which
 //! mirrors `H5iAppLib.Query`. The checks below are what makes the SQL mean
 //! what the Lean says: `IN` only between `NOT NULL` columns (so SQL's `NULL`
 //! rules never apply), windows only on tables whose key columns are all

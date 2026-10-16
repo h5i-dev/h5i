@@ -12,7 +12,7 @@ result is still in ascending key order, a sublist of the table.
 
 `h5i-app-pgsql`'s `compile_read` turns a read into one `SELECT`; that
 compilation is differential-tested against `Read.rows` (see
-`crates/h5i-app-pg/tests/reads.rs` and `H5iAppLibTests/QueryCases.lean`),
+`crates/h5i-app-pg/src/reads_test.rs` and `H5iAppLibTests/QueryCases.lean`),
 not proved. The lemmas here are what an app's frame theorem uses to show that
 `transition` gives the same result on the loaded slice as on the whole tenant.
 -/

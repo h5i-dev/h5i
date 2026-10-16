@@ -329,7 +329,7 @@ with a spec function.
 
 Three engine features keep a request from paying for the whole tenant.
 [PERFORMANCE.md](PERFORMANCE.md) measures them on
-[Conduit](https://github.com/Koukyosyumei/h5i-app-cookbook/tree/main/conduit), in the h5i-app cookbook.
+[Conduit](https://github.com/h5i-dev/h5i-app-bench/tree/realworld-bench/realworld/rust-h5i-app), in h5i-app-bench.
 
 - **Read-only commands.** `Kernel::read_only` names commands whose accepted
   runs write nothing (proof obligation `H5iAppLib.ReadOnly.Sound`). They run
@@ -356,7 +356,7 @@ parts are generated or generic:
 | the extracted plan equals a plan written in `H5iAppLib.Query` terms | app (`Plan.reads_abs`: one `simp` per command) |
 | each command gives the same result on the slice | app (`Frame.lean`): rewrite each lookup of the command with the slice lemmas |
 
-Conduit's [`Frame.lean`](https://github.com/Koukyosyumei/h5i-app-cookbook/tree/main/conduit/proofs/Frame.lean) (h5i-app cookbook) is the
+Conduit's [`Frame.lean`](https://github.com/h5i-dev/h5i-app-bench/blob/realworld-bench/realworld/rust-h5i-app/proofs/Frame.lean) (h5i-app-bench) is the
 worked example: key lookups (articles by
 slug, follows, comments), semi-joins (articles by tag, by author name, by a
 user who favorited them) and a paged, newest-first listing that loads only
