@@ -2081,6 +2081,7 @@ dependencies = [
  "psl",
  "reqwest",
  "rustls",
+ "ruzstd",
  "selectors",
  "serde",
  "serde_json",
@@ -4568,6 +4569,12 @@ dependencies = [
  "tempfile",
  "wait-timeout",
 ]
+
+[[package]]
+name = "ruzstd"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7c1c839d570d835527c9a5e4db7cb2198683a988cb9d7293fc8674e6bd58fc8"
 
 [[package]]
 name = "ryu"

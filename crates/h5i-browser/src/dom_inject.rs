@@ -70,6 +70,10 @@ pub fn decode_body(raw: &[u8], content_encoding: Option<&str>) -> Option<Vec<u8>
         "br" => brotli::Decompressor::new(raw, 4096)
             .take(cap + 1)
             .read_to_end(&mut out),
+        "zstd" => match ruzstd::decoding::StreamingDecoder::new(raw) {
+            Ok(decoder) => decoder.take(cap + 1).read_to_end(&mut out),
+            Err(_) => return None,
+        },
         _ => return None,
     };
     read.ok()?;

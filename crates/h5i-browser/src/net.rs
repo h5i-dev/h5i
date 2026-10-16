@@ -474,14 +474,36 @@ impl LocalBroker {
         outcome.error = response.error;
         self.append(&outcome)?;
         if let Some(capture) = &self.capture {
+            // The store holds decoded bodies (`capture::Received::Bytes`), as the
+            // engine's own fetches leave them. Chromium decoded its copy; the
+            // proxy saw the wire bytes, so decode them here under the same cap
+            // and the same decoders. A body that does not decode (an unknown or
+            // stacked encoding, a bomb past the cap) is kept as received.
+            let encoding = response
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-encoding"))
+                .map(|(_, value)| value.trim().to_string())
+                .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("identity"));
+            let decoded = match (&encoding, response.body) {
+                (Some(encoding), crate::capture::Received::Bytes(raw)) => self
+                    .decode_capped(raw, encoding)
+                    .ok()
+                    .map(|body| (body, raw.len() as u64)),
+                _ => None,
+            };
+            let (body, content_encoding, wire_bytes) = match &decoded {
+                Some((body, wire)) => (crate::capture::Received::Bytes(body), encoding, Some(*wire)),
+                None => (response.body, None, None),
+            };
             capture.response(crate::capture::Response {
                 seq: request.seq,
                 url: &request.url,
                 status: response.status,
                 headers: response.headers,
-                content_encoding: None,
-                wire_bytes: None,
-                body: response.body,
+                content_encoding,
+                wire_bytes,
+                body,
                 trailing: &[],
             });
         }
@@ -1757,6 +1779,9 @@ impl LocalBroker {
             "br" => brotli::Decompressor::new(raw, 4096)
                 .take(cap + 1)
                 .read_to_end(&mut out),
+            "zstd" => ruzstd::decoding::StreamingDecoder::new(raw)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+                .and_then(|decoder| decoder.take(cap + 1).read_to_end(&mut out)),
             other => {
                 return Err(H5iError::Metadata(format!(
                     "the response is `{other}`-encoded, which this engine cannot decode. It \
@@ -2202,11 +2227,25 @@ impl crate::broker::Broker for LocalBroker {
             }
         };
 
+        // The stored `Accept-Encoding` is the capturing client's, and on a
+        // proxy-observed request that is Chromium's, which asks for encodings
+        // this engine may not decode. Like on any request this engine sends,
+        // the header is the engine's unless the caller edits it. A raw send
+        // keeps the stored bytes, because it promises exactly those.
+        let mut headers = stored.headers.clone();
+        let edited = edits.iter().any(|edit| {
+            matches!(&edit.target, crate::edits::Target::Header(name)
+                if name.eq_ignore_ascii_case("accept-encoding"))
+        });
+        let raw = plan.raw_request.is_some() || plan.raw_target.is_some() || plan.raw_headers;
+        if !edited && !raw {
+            headers.retain(|(name, _)| !name.eq_ignore_ascii_case("accept-encoding"));
+        }
         self.edit_then_send(
             crate::edits::Editable {
                 method: stored.method.clone(),
                 url,
-                headers: stored.headers.clone(),
+                headers,
                 body,
             },
             edits,
@@ -3126,6 +3165,62 @@ mod tests {
             panic!("proxy response body was not stored: {:?}", stored_response.body);
         };
         assert_eq!(capture.read_body(sha256).unwrap(), br#"{"ok":true}"#);
+    }
+
+    #[test]
+    fn a_proxied_body_is_stored_decoded_like_the_engines_own() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(Capture::open(&dir.path().join("messages")).expect("store"));
+        let broker = LocalBroker::with_limits(
+            Policy::new().allow("example.test"),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture.clone()),
+        )
+        .expect("broker");
+        let observe = |encoding: &str, wire: &[u8]| {
+            let request = broker
+                .observe_proxy_request("GET", "https://example.test/", Vec::new(), &[])
+                .expect("request is recorded");
+            broker
+                .observe_proxy_response(
+                    &request,
+                    ProxyResponse {
+                        status: Some(200),
+                        headers: vec![("content-encoding".into(), encoding.into())],
+                        body: crate::capture::Received::Bytes(wire),
+                        bytes: wire.len() as u64,
+                        duration: Duration::from_millis(1),
+                        error: None,
+                    },
+                )
+                .expect("response is recorded");
+            capture.read_response(request.seq).unwrap()
+        };
+
+        // Chromium decoded its copy; the store gets the same text, and says
+        // what the wire carried.
+        let body = b"<html>flag is not here</html>".repeat(20);
+        let wire = ruzstd::encoding::compress_to_vec(
+            &body[..],
+            ruzstd::encoding::CompressionLevel::Fastest,
+        );
+        let stored = observe("zstd", &wire);
+        assert_eq!(stored.content_encoding.as_deref(), Some("zstd"));
+        assert_eq!(stored.wire_bytes, Some(wire.len() as u64));
+        let Body::Stored { sha256, .. } = &stored.body else {
+            panic!("{:?}", stored.body)
+        };
+        assert_eq!(capture.read_body(sha256).unwrap(), body);
+
+        // An encoding nothing here decodes is kept as it arrived, not dropped.
+        let stored = observe("x-unknown", b"opaque");
+        assert_eq!(stored.content_encoding, None);
+        let Body::Stored { sha256, .. } = &stored.body else {
+            panic!("{:?}", stored.body)
+        };
+        assert_eq!(capture.read_body(sha256).unwrap(), b"opaque");
     }
 
     #[test]
@@ -4948,6 +5043,46 @@ mod cookie_wire_tests {
         );
     }
 
+    /// A stored request carries the capturing client's `Accept-Encoding`
+    /// (Chromium's, through the proxy, which includes zstd). Replaying it asks
+    /// for what this engine decodes, unless the caller edits the header.
+    #[test]
+    fn a_replay_asks_for_the_engines_encodings_not_the_captured_clients() {
+        let (port, seen) = gzip_server(b"replayed", 2);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture =
+            Arc::new(crate::capture::Capture::open(&dir.path().join("messages")).unwrap());
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture),
+        )
+        .expect("broker");
+        let url = format!("http://127.0.0.1:{port}/");
+        let request = broker
+            .observe_proxy_request(
+                "GET",
+                &url,
+                vec![("accept-encoding".into(), "gzip, deflate, br, zstd".into())],
+                &[],
+            )
+            .expect("request is recorded");
+
+        broker
+            .send_edited(request.seq, &[], false, crate::broker::Sends::default())
+            .expect("replay");
+        let edit = crate::edits::parse_set("header.accept-encoding=identity").unwrap();
+        broker
+            .send_edited(request.seq, &[edit], false, crate::broker::Sends::default())
+            .expect("edited replay");
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0], ACCEPT_ENCODING, "the stored header is the capturing client's");
+        assert_eq!(seen[1], "identity", "an edited header is the caller's");
+    }
+
     /// A server that compresses when asked, and reports what it was asked for.
     fn gzip_server(body: &'static [u8], hits: usize) -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
         use flate2::write::GzEncoder;
@@ -5114,6 +5249,14 @@ mod cookie_wire_tests {
             writer.write_all(&body).unwrap();
         }
         assert_eq!(broker.decode_capped(&br, "br").unwrap(), body);
+
+        // Not advertised, but what Chromium asks for and CDNs send it: a replay
+        // of a proxy-captured request, or the proxy's own copy, arrives in it.
+        let zstd = ruzstd::encoding::compress_to_vec(
+            &body[..],
+            ruzstd::encoding::CompressionLevel::Fastest,
+        );
+        assert_eq!(broker.decode_capped(&zstd, "zstd").unwrap(), body);
 
         // A stacked encoding is refused by name. Reading the last one made the
         // engine brotli-decode gzip output and blame brotli for it.

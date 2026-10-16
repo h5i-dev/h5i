@@ -134,6 +134,9 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring",
 # Compression, decoded here rather than by the HTTP client.
 flate2 = "1.1.9"
 brotli = { version = "8.0.4", default-features = false, features = ["std"] }
+# zstd, which Chromium asks for and CDNs answer with: proxy-captured bodies and
+# replays of Chromium's requests arrive in it. Pure Rust, decode only.
+ruzstd = { version = "0.8.3", default-features = false, features = ["std"] }
 
 # The identity digest, which goes in the session record beside the policy's,
 # and the message store's content addressing. The same crate h5i-core digests a
