@@ -1,5 +1,6 @@
 //! Small CPU/device-shared search and push-rule decisions. No allocation in
 //! decisions; bounded flat slices are supplied by the host's schema adapter.
+#[cfg(not(target_arch = "nvptx64"))]
 h5i_app_schema::schema! {
     mapping parallel_tables for parallel_kernel, lean "../proofs/generated/Schema.lean";
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -13,6 +14,7 @@ h5i_app_schema::schema! {
 }
 
 /// Included in extraction so the schema generator can check its clone laws.
+#[cfg(not(target_arch = "nvptx64"))]
 pub fn clone_snapshot(s: &Snapshot) -> Snapshot { s.clone() }
 
 pub fn fold(c: u8) -> u8 { if c >= 65 && c <= 90 { c + 32 } else { c } }

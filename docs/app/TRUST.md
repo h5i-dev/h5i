@@ -125,7 +125,9 @@ the delegation).
 
 [The RAM executor](MEMORY.md) retains PostgreSQL commits for writes and trusts
 single-owner cache coherence, read-only classification, clock restrictions and
-cancellation fallback. It adds no kernel theorem. The [CUDA compilation
-experiment](GPU.md) stopped before a device kernel could run; GPU codegen and
-the driver would be additional trusted components if that path becomes usable.
-No CPU/GPU equivalence or GPU performance claim follows from the existing proofs.
+cancellation fallback. It adds no kernel theorem. The [GPU experiment](GPU.md)
+now runs shared search/push decision source through Rust-CUDA. rustc, the NVVM
+backend, LLVM/libNVVM, PTX JIT, driver, hardware and the launch/layout/bounds
+shell are trusted. Lean establishes properties of extracted Rust decisions;
+it says nothing about GPU execution. CPU/GPU differential checks are empirical,
+not an equivalence proof. cuda-oxide remains a separate, currently blocked probe.

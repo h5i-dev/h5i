@@ -791,7 +791,7 @@ def Rule.put
   Rule.put_loop v x 0#usize
 
 /-- [parallel_kernel::{impl core::clone::Clone for parallel_kernel::Bookmark}::clone]:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 7:13-7:18
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 8:13-8:18
     Visibility: public -/
 def Bookmark.Insts.CoreCloneClone.clone
   (self : Bookmark) : Result Bookmark := do
@@ -850,7 +850,7 @@ def Bookmark.del
   Bookmark.del_loop v id (alloc.vec.Vec.new Bookmark) 0#usize
 
 /-- [parallel_kernel::{impl core::clone::Clone for parallel_kernel::Event}::clone]:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 9:13-9:18
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 10:13-10:18
     Visibility: public -/
 def Event.Insts.CoreCloneClone.clone (self : Event) : Result Event := do
   let i ← lift (core.clone.impls.CloneU64.clone self.id)
@@ -908,7 +908,7 @@ def Event.del
   Event.del_loop v id (alloc.vec.Vec.new Event) 0#usize
 
 /-- [parallel_kernel::{impl core::clone::Clone for parallel_kernel::Rule}::clone]:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 11:13-11:18
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 12:13-12:18
     Visibility: public -/
 def Rule.Insts.CoreCloneClone.clone (self : Rule) : Result Rule := do
   let i ← lift (core.clone.impls.CloneU64.clone self.id)
@@ -1206,28 +1206,28 @@ def decode (r : Rows) : Result (Option Snapshot) := do
       | some x2 => ok (some { bookmarks := x, events := x1, rules := x2 })
 
 /-- Trait implementation: [parallel_kernel::{impl core::clone::Clone for parallel_kernel::Rule}]
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 11:13-11:18 -/
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 12:13-12:18 -/
 @[reducible]
 def Rule.Insts.CoreCloneClone : core.clone.Clone Rule := {
   clone := Rule.Insts.CoreCloneClone.clone
 }
 
 /-- Trait implementation: [parallel_kernel::{impl core::clone::Clone for parallel_kernel::Event}]
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 9:13-9:18 -/
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 10:13-10:18 -/
 @[reducible]
 def Event.Insts.CoreCloneClone : core.clone.Clone Event := {
   clone := Event.Insts.CoreCloneClone.clone
 }
 
 /-- Trait implementation: [parallel_kernel::{impl core::clone::Clone for parallel_kernel::Bookmark}]
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 7:13-7:18 -/
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 8:13-8:18 -/
 @[reducible]
 def Bookmark.Insts.CoreCloneClone : core.clone.Clone Bookmark := {
   clone := Bookmark.Insts.CoreCloneClone.clone
 }
 
 /-- [parallel_kernel::{impl core::clone::Clone for parallel_kernel::Snapshot}::clone]:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 5:13-5:18
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 6:13-6:18
     Visibility: public -/
 def Snapshot.Insts.CoreCloneClone.clone
   (self : Snapshot) : Result Snapshot := do
@@ -1238,13 +1238,13 @@ def Snapshot.Insts.CoreCloneClone.clone
   ok { bookmarks := v, events := v1, rules := v2 }
 
 /-- [parallel_kernel::clone_snapshot]:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 16:0-16:61
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 18:0-18:61
     Visibility: public -/
 def clone_snapshot (s : Snapshot) : Result Snapshot := do
   Snapshot.Insts.CoreCloneClone.clone s
 
 /-- [parallel_kernel::fold]:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 18:0-18:72
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 20:0-20:72
     Visibility: public -/
 def fold (c : Std.U8) : Result Std.U8 := do
   if c >= 65#u8
@@ -1254,7 +1254,7 @@ def fold (c : Std.U8) : Result Std.U8 := do
   else ok c
 
 /-- [parallel_kernel::contains]: loop body 1:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 29:8-32:9
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 31:8-34:9
     Visibility: public -/
 @[rust_loop_body]
 def contains_loop0_loop0.body
@@ -1278,7 +1278,7 @@ def contains_loop0_loop0.body
   else ok (done same)
 
 /-- [parallel_kernel::contains]: loop 1:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 29:8-32:9
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 31:8-34:9
     Visibility: public -/
 @[rust_loop]
 def contains_loop0_loop0
@@ -1292,7 +1292,7 @@ def contains_loop0_loop0
     (j, same)
 
 /-- [parallel_kernel::contains]: loop body 0:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 26:4-37:1
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 28:4-39:1
     Visibility: public -/
 @[rust_loop_body]
 def contains_loop0.body
@@ -1312,7 +1312,7 @@ def contains_loop0.body
   else ok (done false)
 
 /-- [parallel_kernel::contains]: loop 0:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 26:4-37:1
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 28:4-39:1
     Visibility: public -/
 @[rust_loop]
 def contains_loop0
@@ -1325,7 +1325,7 @@ def contains_loop0
     i
 
 /-- [parallel_kernel::contains]:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 22:0-37:1
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 24:0-39:1
     Visibility: public -/
 def contains
   (text : Slice Std.U8) (query : Slice Std.U8) (start : Std.Usize)
@@ -1347,7 +1347,7 @@ def contains
       else contains_loop0 text query start len 0#usize
 
 /-- [parallel_kernel::bookmark_search]: loop body 1:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-49:61
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-51:61
     Visibility: public -/
 @[rust_loop_body]
 def bookmark_search_loop0_loop0.body
@@ -1365,7 +1365,7 @@ def bookmark_search_loop0_loop0.body
   else ok (done len)
 
 /-- [parallel_kernel::bookmark_search]: loop 1:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-49:61
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-51:61
     Visibility: public -/
 @[rust_loop]
 def bookmark_search_loop0_loop0
@@ -1377,7 +1377,7 @@ def bookmark_search_loop0_loop0
     len
 
 /-- [parallel_kernel::bookmark_search]: loop body 0:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-57:1
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-59:1
     Visibility: public -/
 @[rust_loop_body]
 def bookmark_search_loop0.body
@@ -1411,7 +1411,7 @@ def bookmark_search_loop0.body
   else ok (done matched)
 
 /-- [parallel_kernel::bookmark_search]: loop 0:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-57:1
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-59:1
     Visibility: public -/
 @[rust_loop]
 def bookmark_search_loop0
@@ -1425,7 +1425,7 @@ def bookmark_search_loop0
     (matched, t)
 
 /-- [parallel_kernel::bookmark_search]:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 41:0-57:1
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 43:0-59:1
     Visibility: public -/
 def bookmark_search
   (text : Slice Std.U8) (terms : Slice Std.U8) (count : Std.Usize) (any : Bool)
@@ -1445,7 +1445,7 @@ def bookmark_search
       else bookmark_search_loop0 text terms count any negated (¬ any) 0#usize
 
 /-- [parallel_kernel::glob]: loop body 0:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-64:55
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-66:55
     Visibility: public -/
 @[rust_loop_body]
 def glob_loop0.body
@@ -1463,7 +1463,7 @@ def glob_loop0.body
   else ok (done nt)
 
 /-- [parallel_kernel::glob]: loop 0:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-64:55
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-66:55
     Visibility: public -/
 @[rust_loop]
 def glob_loop0 (text : Slice Std.U8) (nt : Std.Usize) : Result Std.Usize := do
@@ -1472,7 +1472,7 @@ def glob_loop0 (text : Slice Std.U8) (nt : Std.Usize) : Result Std.Usize := do
     nt
 
 /-- [parallel_kernel::glob]: loop body 1:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-66:61
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-68:61
     Visibility: public -/
 @[rust_loop_body]
 def glob_loop1.body
@@ -1490,7 +1490,7 @@ def glob_loop1.body
   else ok (done np)
 
 /-- [parallel_kernel::glob]: loop 1:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-66:61
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-68:61
     Visibility: public -/
 @[rust_loop]
 def glob_loop1
@@ -1500,7 +1500,7 @@ def glob_loop1
     np
 
 /-- [parallel_kernel::glob]: loop body 2:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 71:4-74:5
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 73:4-76:5
     Visibility: public -/
 @[rust_loop_body]
 def glob_loop2.body
@@ -1525,7 +1525,7 @@ def glob_loop2.body
   else ok (done prev)
 
 /-- [parallel_kernel::glob]: loop 2:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 71:4-74:5
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 73:4-76:5
     Visibility: public -/
 @[rust_loop]
 def glob_loop2
@@ -1538,7 +1538,7 @@ def glob_loop2
     (prev, p)
 
 /-- [parallel_kernel::glob]: loop body 4:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 79:8-83:9
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 81:8-85:9
     Visibility: public -/
 @[rust_loop_body]
 def glob_loop3_loop0.body
@@ -1582,7 +1582,7 @@ def glob_loop3_loop0.body
   else ok (done next)
 
 /-- [parallel_kernel::glob]: loop 4:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 79:8-83:9
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 81:8-85:9
     Visibility: public -/
 @[rust_loop]
 def glob_loop3_loop0
@@ -1596,7 +1596,7 @@ def glob_loop3_loop0
     (next, p)
 
 /-- [parallel_kernel::glob]: loop body 3:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 76:4-86:5
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 78:4-88:5
     Visibility: public -/
 @[rust_loop_body]
 def glob_loop3.body
@@ -1614,7 +1614,7 @@ def glob_loop3.body
   else ok (done prev)
 
 /-- [parallel_kernel::glob]: loop 3:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 76:4-86:5
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 78:4-88:5
     Visibility: public -/
 @[rust_loop]
 def glob_loop3
@@ -1627,7 +1627,7 @@ def glob_loop3
     (prev, t)
 
 /-- [parallel_kernel::glob]:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 62:0-88:1
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 64:0-90:1
     Visibility: public -/
 def glob (text : Slice Std.U8) (pattern : Slice Std.U8) : Result Bool := do
   let nt ← glob_loop0 text 0#usize
@@ -1642,7 +1642,7 @@ def glob (text : Slice Std.U8) (pattern : Slice Std.U8) : Result Bool := do
     Array.index_usize prev2 np
 
 /-- [parallel_kernel::push_rule]: loop body 0:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-98:64
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-100:64
     Visibility: public -/
 @[rust_loop_body]
 def push_rule_loop.body
@@ -1660,7 +1660,7 @@ def push_rule_loop.body
   else ok (done len)
 
 /-- [parallel_kernel::push_rule]: loop 0:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-98:64
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 1:0-100:64
     Visibility: public -/
 @[rust_loop]
 def push_rule_loop
@@ -1670,7 +1670,7 @@ def push_rule_loop
     len
 
 /-- [parallel_kernel::push_rule]:
-    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 92:0-101:1
+    Source: 'examples/app/parallel/kernel/src/lib.rs', lines 94:0-103:1
     Visibility: public -/
 def push_rule
   (event : Slice Std.U8) (pattern : Slice Std.U8) (display : Slice Std.U8)

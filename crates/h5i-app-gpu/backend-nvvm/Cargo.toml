@@ -1,0 +1,9 @@
+[package]
+name = "h5i-app-gpu-backend-nvvm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[dependencies]
+h5i-app-gpu = { path = ".." }
+parallel-kernel = { path = "../../../examples/app/parallel/kernel" }
+cust = { git = "https://github.com/Rust-GPU/rust-cuda", rev = "3a82c35a7196731fb60eebdac2a40d2b1bf0ba95" }

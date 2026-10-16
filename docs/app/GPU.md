@@ -1,12 +1,103 @@
-# CUDA prototype: blocked in device compilation
+# GPU backends: Rust-CUDA and cuda-oxide
 
-No GPU executor or GPU performance result is claimed. Work stopped at the
-requested compiler feasibility boundary. No CubeCL, translated twin kernel,
-new axiom, or change to existing kernel proofs was introduced.
+Rust-CUDA (`backend-nvvm`) is the active experimental backend. cuda-oxide
+(`backend-oxide`) remains a compile-probe backend for later completion.
+Both are outside the extraction workspace. No production GPU executor is claimed.
 
-The machine had four RTX 3090 GPUs (sm_86), driver 560.35.03 and CUDA 12.6.
-GPU 0 was idle when checked; all CUDA commands selected CUDA_VISIBLE_DEVICES=0.
-No device kernel launched.
+## Rust-CUDA setup
+
+Pinned upstream [Rust-GPU/rust-cuda](https://github.com/Rust-GPU/rust-cuda/tree/3a82c35a7196731fb60eebdac2a40d2b1bf0ba95),
+revision `3a82c35a7196731fb60eebdac2a40d2b1bf0ba95`, nightly-2026-04-02
+with rustc-dev, rust-src and llvm-tools-preview. Device: RTX 3090 (sm_86),
+CUDA toolkit/libNVVM 12.6, driver 560.35.03, GPU 0 only.
+The documented prebuilt route (`USE_PREBUILT_LLVM=1`) downloaded LLVM 7.1.0
+from upstream's rustc_codegen_nvvm-llvm release. No root or Docker was needed.
+
+Reproduction scripts: `crates/h5i-app-gpu/backend-nvvm/setup.sh` and
+`build-device.sh`. Everything builds into `/var/tmp/h5i-gpu-target`; sources,
+Cargo/Rustup homes, downloaded packages and temporary files stay in `/var/tmp`.
+Ubuntu packages libssl-dev/libssl3t64, libncurses-dev/libtinfo6 and
+libxml2-dev/libxml2 were unpacked with dpkg-deb into
+`/var/tmp/h5i-gpu-system-libs`. They supply OpenSSL headers plus terminal/XML
+link libraries. GCC 13's builtin include path is supplied to bindgen;
+OpenSSL's multiarch include path is supplied through CFLAGS.
+The lockfile pins cuda_std's glam to 0.30.10: its unbounded `>=0.22`
+constraint otherwise selected 0.34.1, whose missing root UVec2/UVec3 exports
+broke cuda_std. No upstream compiler source patch was needed.
+
+Both natural slice-based decision wrappers compiled to PTX and ran on GPU 0.
+They import the exact CPU/Aeneas decision source, excluding only schema host
+adapters with target_arch cfg. They do not allocate or return Result; no
+fixed-array fallback or alternate implementation was needed.
+
+## Trust boundary
+
+Lean checks the existing extracted search/push properties and schema laws.
+It does not prove GPU execution or CPU/GPU equivalence. rustc, the NVVM
+codegen backend, LLVM 7, libNVVM, PTX JIT, CUDA driver and hardware are trusted,
+as are the pointer/length ABI, packing, launch geometry, bounds/error shell,
+and timing harness. Differential tests provide evidence for tested inputs only.
+The output columns are u32 values and per-thread errors (0 success, 1 missing
+input row or row beyond the million-row capacity). Semantic query rejection
+remains a zero decision with error 0, matching the shared Rust function.
+
+## GPU differential checks and measurements
+
+The backend-generic suite compares every u32 output/error slot to the Rust CPU
+oracle. It covers deterministic randomized text/tags/permissions/members,
+AND/OR/NOT, valid and rejected queries, wildcards including 64-byte patterns,
+missing columns, 0/1/127/128/129/1025 rows, exact million-row capacity and
+one row beyond it, split-batch independence, and schema Bookmark SoA round trip
+with non-sorted ids. Existing host layout tests cover 512/513-byte text,
+embedded separators and rejected trailing zero. No KeyHash implementation is
+replaced or sorted by the GPU; output indices preserve input order.
+These are empirical tests, not a GPU theorem or exhaustive absence-of-panic proof.
+
+Commands: run setup.sh, build-device.sh, then measure.sh in backend-nvvm.
+Detach long runs and poll logs. `measure PTX --check-only` runs just conformance.
+All builds/tests/measurements used nice 19 and CPUs 64–127; only GPU 0 was used.
+CPU baseline and GPU measurements were sequential, with our proofs/builds paused.
+One warm-up is excluded, followed by three repetitions; table reports medians.
+Module creation/JIT, context setup, CPU fixture generation and SoA packing are
+excluded. Kernel time uses CUDA events; total uses wall clock and includes
+allocation, all H2D input copies, output initialization, launch, synchronization,
+and D2H copies of both output columns. Allocations are fresh per run, using
+ordinary pageable host buffers. It excludes final destruction of the text/output
+device buffers. Inputs are 512 bytes/row plus per-row scalar columns; push also
+has 64-byte pattern and display columns. Production packing/DB work is additional.
+
+| Workload | Rows | Kernel ms | Total ms | CPU 1 thread ms | Total speedup |
+|---|---:|---:|---:|---:|---:|
+| Search | 10,000 | 6.243 | 6.860 | 809.614 | 118.02× |
+| Search | 100,000 | 233.764 | 239.408 | 8112.959 | 33.89× |
+| Search | 1,000,000 | 2932.031 | 3022.202 | 81206.593 | 26.87× |
+| Push | 10,000 | 0.337 | 1.096 | 19.773 | 18.04× |
+| Push | 100,000 | 5.929 | 13.874 | 207.097 | 14.93× |
+| Push | 1,000,000 | 70.183 | 133.406 | 2075.482 | 15.56× |
+
+Raw repetitions/checksums: [parallel-nvvm.csv](measurements/parallel-nvvm.csv).
+CPU is the same decision source on all padded rows, with output/error allocation.
+The earlier cache-hot repeated-row [CPU baseline](measurements/parallel-cpu.csv)
+used 1 and 16 threads; its million-row search was 78.142/4.948 seconds,
+push 2.545/0.176 seconds. Relative to its 16-thread results, the new GPU total
+at 10k/100k/1M is search **10.60× / 2.11× / 1.64×**, push
+**3.98× / 1.26× / 1.32×**. These are cross-run comparisons with slightly different
+host iteration/layout overhead and compiler versions, not a controlled CPU
+parallel scaling study. No application request speedup is inferred from them.
+
+This establishes a useful prototype path for large compute-heavy batches,
+especially search. It does not establish a Conduit speedup: its decision work
+was too small, and SQL, cloning, routing and transfer/packing may dominate real
+requests. Push has much less headroom against parallel CPU than the single-core
+comparison suggests. For h5i-app-bench, only workloads that can expose enough
+independent search/rule work per request (or accept cross-request batching) are
+candidates; a real integration needs its own complete request measurements.
+
+## Historical cuda-oxide feasibility report
+
+The remaining sections describe the earlier cuda-oxide experiment, which
+stopped before device execution. Paths to its probes now start at
+`crates/h5i-app-gpu/backend-oxide/`. These failures do not describe Rust-CUDA.
 
 ## Tested compiler
 

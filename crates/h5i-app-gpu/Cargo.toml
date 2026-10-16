@@ -2,27 +2,9 @@
 name = "h5i-app-gpu"
 version = "0.1.1"
 edition = "2024"
-license = "Apache-2.0"
 publish = false
-description = "Experimental single-source CUDA compiler probes"
-[features]
-default = []
-gpu = ["dep:cuda-device"]
-calculator-probe = ["gpu"]
-search-probe = ["gpu"]
-push-probe = ["gpu"]
 [dependencies]
 parallel-kernel = { path = "../../examples/app/parallel/kernel" }
-calculator-kernel = { path = "../../examples/app/calculator/kernel" }
-cuda-device = { git = "https://github.com/NVIDIA/cuda-rust", rev = "4a56e4220aab8ce5d085a411e7f806cebb647d14", optional = true }
-
-# Separate compiler invocation and toolchain; never part of Charon extraction.
 [workspace]
-
-[[example]]
-name = "result_probe"
-required-features = ["gpu"]
-
-[[example]]
-name = "slice_probe"
-required-features = ["gpu"]
+members = ["backend-nvvm", "backend-nvvm/device"]
+exclude = ["backend-oxide"]
