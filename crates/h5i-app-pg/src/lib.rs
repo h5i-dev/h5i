@@ -335,8 +335,18 @@ struct Idem<'a, K: Kernel> {
     decode: fn(&[u8]) -> Result<K::Reply, String>,
 }
 
+/// Result of a committed command, for single-owner cache maintenance.
+/// `writes` is from the successful transaction attempt, never a recomputation.
+/// A replay must invalidate a cache: an earlier ambiguous COMMIT may have
+/// applied this command before the retry found its durable reply.
+pub struct Committed<K: Kernel> {
+    pub result: Result<K::Reply, K::Error>,
+    pub writes: Option<K::WriteSet>,
+    pub replayed: bool,
+}
+
 enum Attempt<K: Kernel> {
-    Done(Result<K::Reply, K::Error>),
+    Done(Result<K::Reply, K::Error>, Option<K::WriteSet>),
     Replayed(K::Reply),
 }
 
@@ -423,10 +433,26 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
         self.run(actor, cmd, Some(idem)).await
     }
 
+    /// Execute and retain the actual committed write set for a cache owner.
+    pub async fn execute_committed(&self, actor: &K::Principal, cmd: &K::Command) -> Result<Committed<K>, DbError> {
+        self.run_committed(actor, cmd, None).await
+    }
+
+    pub async fn execute_idempotent_committed<C: ReplyCodec<K>>(&self, actor: &K::Principal, key: &str, cmd: &K::Command) -> Result<Committed<K>, DbError> {
+        let scope = C::scope(actor);
+        if scope.contains('/') { return Err(DbError::Decode("scope contains '/'".into())); }
+        let key = format!("{scope}/{key}");
+        self.run_committed(actor, cmd, Some(Idem { key: &key, fingerprint: C::fingerprint(cmd), encode: C::encode, decode: C::decode })).await
+    }
+
     async fn run(&self, actor: &K::Principal, cmd: &K::Command, idem: Option<Idem<'_, K>>) -> Result<Result<K::Reply, K::Error>, DbError> {
+        Ok(self.run_committed(actor, cmd, idem).await?.result)
+    }
+
+    async fn run_committed(&self, actor: &K::Principal, cmd: &K::Command, idem: Option<Idem<'_, K>>) -> Result<Committed<K>, DbError> {
         // With a key the reply is stored, which is a write.
         if idem.is_none() && K::read_only(cmd) {
-            return self.run_read(actor, cmd).await;
+            return Ok(Committed { result: self.run_read(actor, cmd).await?, writes: None, replayed: false });
         }
         let tenant = K::tenant(actor);
         let lock = if self.config.tenant_lock { S::lock_for(actor, cmd) } else { Lock::None };
@@ -445,15 +471,15 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
                 }
             };
             match result {
-                Ok(Attempt::Done(r)) => {
+                Ok(Attempt::Done(r, writes)) => {
                     if r.is_ok() {
                         self.stats.commits.fetch_add(1, Ordering::Relaxed);
                     }
-                    return Ok(r);
+                    return Ok(Committed { result: r, writes, replayed: false });
                 }
                 Ok(Attempt::Replayed(r)) => {
                     self.stats.replays.fetch_add(1, Ordering::Relaxed);
-                    return Ok(Ok(r));
+                    return Ok(Committed { result: Ok(r), writes: None, replayed: true });
                 }
                 // With a key, a retry after an unknown commit replays or reruns safely.
                 Err(e)
@@ -599,7 +625,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
         match decision {
             Err(refusal) => {
                 tx.rollback().await?;
-                Ok(Attempt::Done(Err(refusal)))
+                Ok(Attempt::Done(Err(refusal), None))
             }
             Ok((ws, reply)) => {
                 S::write(&Tx(&tx, &self.pool.1), tenant, &ws).await?;
@@ -619,7 +645,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
                     .await?;
                 }
                 tx.commit().await.map_err(commit_error)?;
-                Ok(Attempt::Done(Ok(reply)))
+                Ok(Attempt::Done(Ok(reply), Some(ws)))
             }
         }
     }

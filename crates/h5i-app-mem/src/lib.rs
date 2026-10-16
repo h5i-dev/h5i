@@ -2,7 +2,7 @@
 //!
 //! All writers must use this instance. Reads use a full tenant snapshot;
 //! writes retain PostgreSQL's transaction/retry/idempotency implementation.
-//! Acknowledgement follows commit; the cache reloads lazily. Invalidation precedes
+//! Acknowledgement follows commit; accepted writes update a warm cache. Disabling precedes
 //! any write await, so cancellation and ambiguous commits cannot leave stale
 //! state readable. See docs/app/MEMORY.md for deployment restrictions.
 use h5i_app_core::{Executor, Kernel, ReplyCodec, TenantId, Timestamp};
@@ -77,14 +77,11 @@ impl<K: Kernel, S: Store<K>> Executor<K> for MemoryPgEngine<K, S> {
             }
         }
         let mut snap = slot.write().await;
-        snap.snapshot = None;
         let was_cacheable = snap.cacheable;
         snap.cacheable = false;
-        let result = self.pg.execute(actor, cmd).await?;
+        let result = self.pg.execute_committed(actor, cmd).await?;
         snap.cacheable = was_cacheable;
-        // Reload lazily on the next read. The lock orders reads after commits;
-        // keeping None also handles cancellation immediately after COMMIT.
-        Ok(result)
+        update::<K>(&mut snap, result)
     }
     async fn execute_idempotent<C: ReplyCodec<K>>(
         &self,
@@ -94,12 +91,11 @@ impl<K: Kernel, S: Store<K>> Executor<K> for MemoryPgEngine<K, S> {
     ) -> Result<Result<K::Reply, K::Error>, DbError> {
         let slot = self.slot(K::tenant(actor));
         let mut snap = slot.write().await;
-        snap.snapshot = None;
         let was_cacheable = snap.cacheable;
         snap.cacheable = false;
-        let result = Executor::execute_idempotent::<C>(&*self.pg, actor, key, cmd).await?;
+        let result = self.pg.execute_idempotent_committed::<C>(actor, key, cmd).await?;
         snap.cacheable = was_cacheable;
-        Ok(result)
+        update::<K>(&mut snap, result)
     }
     async fn snapshot_for(
         &self,
@@ -117,4 +113,19 @@ impl<K: Kernel, S: Store<K>> Executor<K> for MemoryPgEngine<K, S> {
         }
         Ok(snap.snapshot.as_ref().unwrap().clone())
     }
+}
+
+// No await between acknowledged COMMIT and apply. If the await is cancelled or
+// fails, cacheable remains false even though the old snapshot is retained.
+fn update<K: Kernel>(cache: &mut Cached<K::Snapshot>, committed: h5i_app_pg::Committed<K>) -> Result<Result<K::Reply, K::Error>, DbError> {
+    if committed.replayed {
+        cache.snapshot = None;
+    } else if let (Some(snapshot), Some(writes)) = (&cache.snapshot, &committed.writes) {
+        // Leave disabled if a buggy apply unwinds; never expose the old state.
+        let enabled = cache.cacheable;
+        cache.cacheable = false;
+        cache.snapshot = Some(K::apply(snapshot, writes));
+        cache.cacheable = enabled;
+    }
+    Ok(committed.result)
 }
