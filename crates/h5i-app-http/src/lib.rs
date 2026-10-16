@@ -192,8 +192,7 @@ impl<K: Kernel, S: Store<K>, E: Executor<K>> FromRef<H5iApp<K, S, E>> for Auth<K
 }
 
 impl<K: Kernel, S: Store<K>, E: Executor<K>> H5iApp<K, S, E> {
-    pub fn new(engine: Arc<E>,
-    marker: std::marker::PhantomData<S>, auth: impl Authenticator<K>) -> Self {
+    pub fn new(engine: Arc<E>, auth: impl Authenticator<K>) -> Self {
         H5iApp { engine, auth: Auth(Arc::new(auth)), marker: std::marker::PhantomData }
     }
 
