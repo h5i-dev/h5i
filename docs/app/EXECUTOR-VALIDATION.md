@@ -82,3 +82,25 @@ schema-row round trip, input order, batch independence and calculator error tags
 At that stage cuda-oxide compilation remained blocked; no GPU differential or
 timing result was claimed. The subsequent Rust-CUDA results are in GPU.md. The disposable `h5i-gpu-pg` container was stopped after these
 checks; its data remains under `/var/tmp`. No other container was changed.
+
+## Rust-CUDA backend validation (2026-10-16)
+
+After adding the NVVM backend, `cargo app-verify --full` again completed with
+**42 passed, 0 failed, 0 skipped**. All twelve project lints, Rust tests with
+our PostgreSQL container, dependency bans, eleven extraction freshness checks,
+twelve Lean/axiom checks and five mutation gates passed. Every unchanged
+mutation baseline passed; all five mutants were caught, none survived or were
+invalid. [Full gate output](measurements/verify-nvvm-full.txt).
+
+The shared GPU crate's three CPU tests and the preserved oxide backend's
+calculator test passed. Rust-CUDA compiled both slice-based wrappers to PTX.
+The backend-generic GPU differential suite passed, including randomized inputs,
+error columns, batch independence, million-row limits and schema Bookmark/Event
+round trips with a schema Rule. [GPU report, timings and compiler setup](GPU.md).
+The generated Lean change came from extraction and contains only source-line
+updates; no theorem or axiom was added or weakened. Lean does not prove GPU
+execution; rustc/NVVM/libNVVM, the driver and the launch/layout shell are trusted.
+
+All new sources/caches/toolchains remain under `/var/tmp`; our files use about
+11 GB, below the 15 GB budget. GPU 0 is idle after the run. Only our
+`h5i-gpu-pg` container was started for these checks and stopped afterwards.

@@ -96,6 +96,16 @@ comparison suggests. For h5i-app-bench, only workloads that can expose enough
 independent search/rule work per request (or accept cross-request batching) are
 candidates; a real integration needs its own complete request measurements.
 
+## Framework verification
+
+`cargo app-verify --full`: **42 passed, 0 failed, 0 skipped**, including all
+extraction freshness, Lean/axiom and mutation gates. All five mutants were
+caught and every unchanged baseline passed. The shared GPU CPU tests and
+preserved oxide calculator test pass separately. See the
+[validation record](EXECUTOR-VALIDATION.md) and
+[full gate output](measurements/verify-nvvm-full.txt).
+No new axiom, sorry, theorem weakening or manually edited generated Lean was used.
+
 ## Historical cuda-oxide feasibility report
 
 The remaining sections describe the earlier cuda-oxide experiment, which
