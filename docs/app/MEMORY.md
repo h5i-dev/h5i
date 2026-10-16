@@ -37,7 +37,8 @@ can cost more CPU than a proved `Store::load_for` projection. Tenants remain in
 RAM until the executor is dropped; memory capacity is an operator obligation.
 
 The existing kernel proofs are unchanged. The read-only classification requires a soundness proof such as
-`ReadOnly.Sound`, or an explicit trusted adapter (as in the calculator toy).
+`ReadOnly.Sound`. The calculator adapter delegates to its extracted
+`read_only` and now carries this proof too.
 The storage proof must relate the SQL writes to `K::apply` on the full snapshot;
 this is the same obligation required of the underlying PostgreSQL Store. Cache ownership, locking, commit metadata, application of writes, time, Rust codegen
 and the PG storage contract are trusted shell obligations, not Lean theorems.
@@ -150,3 +151,34 @@ List/feed gain at low concurrency, approach parity at c=16, and lose at c=64.
 No end-to-end mixed-workload speedup is established. For h5i-app-bench, a separate
 RAM row is useful for read-heavy scenarios under the documented single-owner
 model, while write-heavy Conduit traffic should retain the PG executor.
+
+## Calculator fixture (no real application in this branch)
+
+`examples/app/calculator/server/examples/executor_load.rs` uses the existing
+small calculator kernel and its proved Get classification. The direct Executor
+load test runs three seconds per cell, 16 Tokio workers, PG pool 32, 64 users per
+tenant, concurrency 1/16/64, CPUs 64–127 at nice 19. Each executor owns a separate
+tenant; no baseline writes touch the RAM-owned tenant. Snapshots are warmed
+before timing. Set includes `snapshot_for` enrichment, and RAM/PG snapshots are
+compared after each RAM cell. No HTTP, JWT parsing or encoding is included.
+
+| Command | Concurrency | PG calls/s | RAM calls/s | RAM / PG |
+|---|---:|---:|---:|---:|
+| get | 1 | 999.5 | 5,492,774.6 | 5495.52× |
+| get | 16 | 9,862.0 | 1,038,500.8 | 105.30× |
+| get | 64 | 17,954.0 | 1,027,234.3 | 57.21× |
+| set+snapshot | 1 | 230.3 | 299.2 | 1.30× |
+| set+snapshot | 16 | 378.2 | 315.7 | 0.83× |
+| set+snapshot | 64 | 369.3 | 303.2 | 0.82× |
+
+[Raw counts and snapshot-load counters](measurements/calculator-executor.txt).
+RAM Get performs no PG loads. PG Set+snapshot loads twice per request; RAM
+loads once for the transaction and updates its warm snapshot without refilling.
+The integration test independently checks that invariant across 100 writes.
+
+These tiny in-process reads mostly expose database avoidance and lock overhead;
+the million-call rates must not be presented as HTTP throughput. Writes still
+commit synchronously and serialize per tenant: avoiding one small snapshot load
+gives 1.30× at c=1 but 0.83×/0.82× at c=16/64 here. Small toy state and large
+Conduit state have very different cloning costs. Both measurements argue for
+selective use of this executor, not a universal throughput improvement.

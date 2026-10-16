@@ -1,4 +1,0 @@
-# Conduit's own Cargo workspace: the kernel (extracted to Lean) and the server.
-[workspace]
-resolver = "3"
-members = ["kernel", "server"]

@@ -213,10 +213,12 @@ dependencies = [
  "h5i-app-core",
  "h5i-app-http",
  "h5i-app-json",
+ "h5i-app-mem",
  "h5i-app-pg",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-postgres",
  "tracing",
  "tracing-subscriber",
 ]
@@ -482,6 +484,15 @@ dependencies = [
 [[package]]
 name = "h5i-app-json"
 version = "0.1.1"
+
+[[package]]
+name = "h5i-app-mem"
+version = "0.1.1"
+dependencies = [
+ "h5i-app-core",
+ "h5i-app-pg",
+ "tokio",
+]
 
 [[package]]
 name = "h5i-app-pg"
