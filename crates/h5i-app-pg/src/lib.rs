@@ -207,15 +207,7 @@ fn key_lock(tenant: TenantId, key: u64) -> i64 {
     (x | (1 << 63)) as i64
 }
 
-/// Needed to replay stored replies for idempotency keys.
-pub trait ReplyCodec<K: Kernel>: Send + Sync + 'static {
-    /// Rejects a key reused for a different command. Leave out the time, since retries arrive later.
-    fn fingerprint(cmd: &K::Command) -> Vec<u8>;
-    /// Owner of a key, so one user cannot replay another's reply. Must not contain `/`.
-    fn scope(actor: &K::Principal) -> String;
-    fn encode(reply: &K::Reply) -> Vec<u8>;
-    fn decode(bytes: &[u8]) -> Result<K::Reply, String>;
-}
+pub use h5i_app_core::ReplyCodec;
 
 /// Advisory lock key held while installing the schema ("h5i\0", 1).
 const SCHEMA_LOCK: (i32, i32) = (0x6935_6800, 1);
@@ -689,4 +681,17 @@ mod lock_tests {
         assert_eq!(Lock::key("article", b"hello"), 0xe58c_2868_5d42_b9e9);
         assert_ne!(Lock::key("article", b"x"), Lock::key("articlex", b""));
     }
+}
+
+impl<K: Kernel, S: Store<K>> h5i_app_core::Executor<K> for Engine<K, S> {
+    type Error = DbError;
+    fn is_idempotency_conflict(e: &DbError) -> bool { matches!(e, DbError::IdempotencyConflict) }
+    async fn execute(&self, actor: &K::Principal, cmd: &K::Command) -> Result<Result<K::Reply, K::Error>, DbError> { self.execute(actor, cmd).await }
+    async fn execute_idempotent<C: ReplyCodec<K>>(&self, actor: &K::Principal, key: &str, cmd: &K::Command) -> Result<Result<K::Reply, K::Error>, DbError> {
+        let scope = C::scope(actor);
+        if scope.contains('/') { return Err(DbError::Decode("scope contains '/'".into())); }
+        let key = format!("{scope}/{key}");
+        self.run(actor, cmd, Some(Idem { key: &key, fingerprint: C::fingerprint(cmd), encode: C::encode, decode: C::decode })).await
+    }
+    async fn snapshot_for(&self, actor: &K::Principal, cmd: &K::Command) -> Result<K::Snapshot, DbError> { self.snapshot_for(actor, cmd).await }
 }
