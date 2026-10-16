@@ -35,6 +35,7 @@ version = "0.1.1"
 dependencies = [
  "calculator-kernel",
  "cuda-device",
+ "parallel-kernel",
 ]
 
 [[package]]
@@ -44,6 +45,14 @@ version = "0.1.1"
 [[package]]
 name = "h5i-app-sql"
 version = "0.1.1"
+
+[[package]]
+name = "parallel-kernel"
+version = "0.1.0"
+dependencies = [
+ "h5i-app-schema",
+ "h5i-app-sql",
+]
 
 [[package]]
 name = "proc-macro2"

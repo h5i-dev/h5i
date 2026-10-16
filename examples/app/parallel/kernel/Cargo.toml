@@ -1,0 +1,8 @@
+[package]
+name = "parallel-kernel"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[dependencies]
+h5i-app-schema = { path = "../../../../crates/h5i-app-schema" }
+h5i-app-sql = { path = "../../../../crates/h5i-app-sql" }

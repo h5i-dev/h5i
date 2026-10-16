@@ -12,7 +12,7 @@ source_dir=/var/tmp/h5i-gpu-cuda-rust
 rev=4a56e4220aab8ce5d085a411e7f806cebb647d14
 if [[ ! -d "$source_dir/.git" ]]; then git clone https://github.com/NVIDIA/cuda-rust "$source_dir"; fi
 git -C "$source_dir" checkout --detach "$rev"
-nice -n 19 taskset -c 64-127 rustup toolchain install nightly-2026-04-03 --profile minimal --component rust-src,rustc-dev,llvm-tools
+nice -n 19 taskset -c 64-127 rustup toolchain install --no-self-update nightly-2026-04-03 --profile minimal --component rust-src,rustc-dev,llvm-tools
 export LIBRARY_PATH=$RUSTUP_HOME/toolchains/nightly-2026-04-03-x86_64-unknown-linux-gnu/lib
 export LD_LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64
 # Backend has a separate workspace. Pin its otherwise floating Pliron dependency.
@@ -22,9 +22,12 @@ export CUDA_OXIDE_LLC=$RUSTUP_HOME/toolchains/nightly-2026-04-03-x86_64-unknown-
 export CUDA_OXIDE_ARCH=sm_86 CUDA_OXIDE_TARGET=sm_86
 export RUSTFLAGS="-Z codegen-backend=$CARGO_TARGET_DIR/release/librustc_codegen_cuda.so -C opt-level=3 -C debug-assertions=off -Z mir-enable-passes=-JumpThreading -Csymbol-mangling-version=v0"
 case "${1:-result}" in
+ slice) args=(--features gpu --example slice_probe);;
  result) args=(--features gpu --example result_probe);;
+ search) args=(--features search-probe --lib);;
+ push) args=(--features push-probe --lib);;
  calculator) args=(--features calculator-probe --lib);;
- *) echo 'Usage: reproduce.sh [result|calculator]' >&2; exit 2;;
+ *) echo 'Usage: reproduce.sh [result|calculator|search|push|slice]' >&2; exit 2;;
 esac
 cd "$repo"
 exec nice -n 19 taskset -c 64-127 cargo +nightly-2026-04-03 build --release --manifest-path crates/h5i-app-gpu/Cargo.toml "${args[@]}"

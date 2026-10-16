@@ -19,7 +19,7 @@ pub fn calculate(op: u32, a: u64, b: u64) -> (u64, u32) {
     }
 }
 
-#[cfg(feature = "calculator-probe")]
+#[cfg(any(feature = "calculator-probe", feature = "search-probe", feature = "push-probe"))]
 use cuda_device::{DisjointSlice, kernel, thread};
 
 /// One command per thread; separate value/error columns. Caller supplies equal lengths.
@@ -63,10 +63,54 @@ mod tests {
 
 // Compile-only marker shim: upstream #[kernel] generates this trait impl even
 // when no host launcher is linked. Runtime builds use the real cuda-host trait.
-#[cfg(feature = "calculator-probe")]
+#[cfg(any(feature = "calculator-probe", feature = "search-probe", feature = "push-probe"))]
 #[allow(dead_code)]
 mod cuda_host {
     pub trait CudaKernel {
         const PTX_NAME: &'static str;
     }
 }
+
+/// Fixed-width flat SoA: 512 bytes per bookmark, one tag mask per row.
+/// Caller supplies equal output/error lengths, one slot per requested row.
+#[cfg(feature = "search-probe")]
+#[kernel]
+pub fn search_batch(rows: &[u8], tags: &[u64], terms: &[u8], count: usize,
+    any: bool, negated: u32, required: u64, mut out: DisjointSlice<u32>, mut errors: DisjointSlice<u32>) {
+    let i = thread::index_1d();
+    if let Some(value) = out.get_mut(i) {
+        if let Some(error) = errors.get_mut(i) {
+            if i.get() >= tags.len() || i.get() >= rows.len() / 512 || i.get() >= 1_000_000 {
+                *value = 0; *error = 1;
+            } else {
+                let start = i.get() * 512;
+                *value = parallel_kernel::bookmark_search(&rows[start..start+512], terms, count, any, negated, tags[i.get()], required) as u32;
+                *error = 0;
+            }
+        }
+    }
+}
+
+/// One flattened (event,rule) pair per thread. Patterns/display names are
+/// bounded to 64 bytes and event content to 512, with zero padding.
+/// Caller supplies equal output/error lengths, one slot per requested pair.
+#[cfg(feature = "push-probe")]
+#[kernel]
+pub fn push_batch(events: &[u8], patterns: &[u8], displays: &[u8], members: &[u64], powers: &[u64],
+    minimum: u64, maximum: u64, required: u64, enabled: bool, require_display: bool,
+    mut out: DisjointSlice<u32>, mut errors: DisjointSlice<u32>) {
+    let i = thread::index_1d();
+    if let Some(value) = out.get_mut(i) {
+        if let Some(error) = errors.get_mut(i) {
+            let n = i.get();
+            if n >= events.len()/512 || n >= patterns.len()/64 || n >= displays.len()/64 || n >= members.len() || n >= powers.len() || n >= 1_000_000 {
+                *value = 0; *error = 1;
+            } else {
+                *value = parallel_kernel::push_rule(&events[n*512..n*512+512], &patterns[n*64..n*64+64], &displays[n*64..n*64+64], members[n], minimum, maximum, powers[n], required, enabled, require_display);
+                *error = 0;
+            }
+        }
+    }
+}
+
+pub mod arena;

@@ -1,0 +1,24 @@
+HEAD is now at 4a56e42 docs: use live workflow badges
+info: syncing channel updates for nightly-2026-04-03-x86_64-unknown-linux-gnu
+info: latest update on 2026-04-03 for version 1.96.0-nightly (55e86c996 2026-04-02)
+info: component llvm-tools is up to date
+info: component rust-src is up to date
+info: component rustc-dev is up to date
+
+  nightly-2026-04-03-x86_64-unknown-linux-gnu unchanged - rustc 1.96.0-nightly (55e86c996 2026-04-02)
+
+    Finished `release` profile [optimized] target(s) in 0.13s
+   Compiling h5i-app-gpu v0.1.1 (/var/tmp/h5i-gpu/crates/h5i-app-gpu)
+warning: trait `CudaKernel` is never used
+ --> examples/slice_probe.rs:3:27
+  |
+3 | mod cuda_host { pub trait CudaKernel { const PTX_NAME: &'static str; } }
+  |                           ^^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+error: [rustc_codegen_cuda] Device codegen failed: PTX generation failed: Translation failed: slice_probe: [name: "Span { id: 38, repr: "/var/tmp/h5i-gpu-rustup/toolchains/nightly-2026-04-03-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:90:5: 90:51" }", loc: (?)] Compilation error: invalid input program.
+       Unsupported construct: Aggregate kind RawPtr(Ty { id: 9, kind: RigidTy(Slice(Ty { id: 10, kind: RigidTy(Uint(U8)) })) }, Not) not yet supported
+
+warning: `h5i-app-gpu` (example "slice_probe") generated 1 warning
+error: could not compile `h5i-app-gpu` (example "slice_probe") due to 1 previous error; 1 warning emitted

@@ -1,0 +1,6 @@
+[extract]
+start-from = ["bookmark_search", "push_rule", "clone_snapshot"]
+schema = true
+include = ["h5i_app_sql"]
+[check]
+theorems = ["parallel_kernel.Proofs.disabled_denies", "parallel_kernel.Proofs.insufficient_power_denies", "parallel_kernel.Proofs.zero_tags_denies", "parallel_kernel.Proofs.too_many_terms_denies"]

@@ -1,0 +1,15 @@
+HEAD is now at 4a56e42 docs: use live workflow badges
+info: syncing channel updates for nightly-2026-04-03-x86_64-unknown-linux-gnu
+info: latest update on 2026-04-03 for version 1.96.0-nightly (55e86c996 2026-04-02)
+info: component llvm-tools is up to date
+info: component rust-src is up to date
+info: component rustc-dev is up to date
+
+  nightly-2026-04-03-x86_64-unknown-linux-gnu unchanged - rustc 1.96.0-nightly (55e86c996 2026-04-02)
+
+    Finished `release` profile [optimized] target(s) in 0.15s
+   Compiling h5i-app-gpu v0.1.1 (/var/tmp/h5i-gpu/crates/h5i-app-gpu)
+error: [rustc_codegen_cuda] Device codegen failed: PTX generation failed: Translation failed: push_batch: [name: "Span { id: 70, repr: "/var/tmp/h5i-gpu-rustup/toolchains/nightly-2026-04-03-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:90:5: 90:51" }", loc: (?)] Compilation error: invalid input program.
+       Unsupported construct: Aggregate kind RawPtr(Ty { id: 10, kind: RigidTy(Slice(Ty { id: 30, kind: RigidTy(Uint(U8)) })) }, Not) not yet supported
+
+error: could not compile `h5i-app-gpu` (lib) due to 1 previous error
