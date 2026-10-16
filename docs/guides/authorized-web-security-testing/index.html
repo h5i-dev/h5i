@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-09",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-16",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -153,7 +153,7 @@ $ h5i browser close</code></pre></div></div>
 <p>Keep three categories distinct in the report: observed HTTP facts, recon state, and the agent's interpretation. Include request identifiers so another reviewer can trace a claim back to a message. Redact captured secrets before sharing any artifact.</p>
 <p><strong>Stopping point:</strong> the session is closed, no new requests can be issued under its identity, and its ending is recorded. Do not leave a captured authenticated session live after the authorization window ends.</p>
 <h2 id="gotchas">What this workflow does not do</h2>
-<ul><li>It does not grant authorization or infer scope from a URL.</li><li>It does not provide a vulnerability scanner, exploit library, payload generator, or built-in wordlist.</li><li>It does not make agent conclusions trustworthy. Message records support observations; severity and exploitability still require review.</li><li>It does not match every browser API. Run Chromium inside an h5i box when compatibility matters more than engine-level capture.</li></ul>
+<ul><li>It does not grant authorization or infer scope from a URL.</li><li>It does not provide a vulnerability scanner, exploit library, payload generator, or built-in wordlist.</li><li>It does not make agent conclusions trustworthy. Message records support observations; severity and exploitability still require review.</li></ul>
 <h2 id="sources">Reference</h2>
 <ul><li><a href="/manual/#h5i-websec">HTTP workbench commands</a></li><li><a href="/manual/#h5i-recon">Recon ledger and endpoint states</a></li><li><a href="/manual/#h5i-browser">Browser session policy and audit</a></li><li><a href="/blog/ai-pentesting-tools/">AI pentesting tools compared</a></li><li><a href="/blog/burp-suite-vs-h5i-for-ai-agents/">Burp Suite vs h5i for AI agents</a></li></ul>
 <h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Can I use h5i for CTFs?</summary><div class="faq-answer">Yes, when the CTF rules permit automation. A target-scoped session, bounded crawl, endpoint ledger, and request replay fit web challenges particularly well.</div></details><details class="faq-item"><summary>Is h5i a vulnerability scanner?</summary><div class="faq-answer">No. It records browsing, discovery, and HTTP experiments. It deliberately ships no scanner, exploit library, payload generator, or wordlist.</div></details><details class="faq-item"><summary>Can h5i enforce a pentest scope?</summary><div class="faq-answer">It can enforce allowed network destinations and request budgets, but it cannot encode every rule of engagement or establish legal authorization.</div></details></div>

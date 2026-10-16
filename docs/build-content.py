@@ -36,9 +36,9 @@ PUBLISHED = "2026-08-21"
 # without its date. Changing a page's content and forgetting the date is a
 # build error, not a silent regression.
 PAGE_HISTORY = {
-    "": ("2026-10-12", "6214ad90508d838e"),
-    "features/": ("2026-10-11", "99298ca08260253b"),
-    "manual/": ("2026-10-11", "5338e6d7b0ea9108"),
+    "": ("2026-10-16", "64313a9163ed0d3f"),
+    "features/": ("2026-10-16", "25ef2d7616a668b8"),
+    "manual/": ("2026-10-16", "51f1f8dcf3b02225"),
     "pitch/": ("2026-10-11", "28b7ae21c919cc84"),
     "demo/": ("2026-10-06", "95e78f7a0b1b6083"),
     "guides/": ("2026-10-11", "f5e147aa895fa4bd"),
@@ -59,7 +59,7 @@ PAGE_HISTORY = {
     "guides/review-a-pull-request/": ("2026-10-11", "489389e95fe33b18"),
     "guides/write-a-box-policy/": ("2026-10-11", "5abc6213614a35e4"),
     "guides/watch-the-browser/": ("2026-10-11", "f49ae383220ebcff"),
-    "guides/authorized-web-security-testing/": ("2026-10-11", "4752c565d846da08"),
+    "guides/authorized-web-security-testing/": ("2026-10-16", "c21e2d661b2da4ff"),
     "blog/the-h5i-loop/": ("2026-10-11", "984b280090c5e2d9"),
     "blog/the-environment-is-the-sandbox/": ("2026-10-11", "fecb1494f328f29a"),
     "blog/choosing-agent-isolation/": ("2026-10-11", "4c83532fde209814"),
@@ -853,7 +853,7 @@ WEB_SECURITY_GUIDE = {
 <p>Keep three categories distinct in the report: observed HTTP facts, recon state, and the agent's interpretation. Include request identifiers so another reviewer can trace a claim back to a message. Redact captured secrets before sharing any artifact.</p>
 <p><strong>Stopping point:</strong> the session is closed, no new requests can be issued under its identity, and its ending is recorded. Do not leave a captured authenticated session live after the authorization window ends.</p>
 <h2 id="gotchas">What this workflow does not do</h2>
-<ul><li>It does not grant authorization or infer scope from a URL.</li><li>It does not provide a vulnerability scanner, exploit library, payload generator, or built-in wordlist.</li><li>It does not make agent conclusions trustworthy. Message records support observations; severity and exploitability still require review.</li><li>It does not match every browser API. Run Chromium inside an h5i box when compatibility matters more than engine-level capture.</li></ul>
+<ul><li>It does not grant authorization or infer scope from a URL.</li><li>It does not provide a vulnerability scanner, exploit library, payload generator, or built-in wordlist.</li><li>It does not make agent conclusions trustworthy. Message records support observations; severity and exploitability still require review.</li></ul>
 <h2 id="sources">Reference</h2>
 <ul><li><a href="/manual/#h5i-websec">HTTP workbench commands</a></li><li><a href="/manual/#h5i-recon">Recon ledger and endpoint states</a></li><li><a href="/manual/#h5i-browser">Browser session policy and audit</a></li><li><a href="/blog/ai-pentesting-tools/">AI pentesting tools compared</a></li><li><a href="/blog/burp-suite-vs-h5i-for-ai-agents/">Burp Suite vs h5i for AI agents</a></li></ul>""",
     "faq": [
@@ -3952,7 +3952,7 @@ Ten articles that walk the 42 runnable labs in h5i-dev/h5i-tutorial, from recon 
 - With the default cross-origin refusal in force h5i cannot act as the victim, so a negative CSRF result means h5i declined, not that the target is safe.
 - A session on the host is not sandboxed and h5i does not claim it is. Containment is the --in flag.
 - The engine is not a complete browser. Of twenty single-page applications measured, eighteen read usefully and one not at all. Tabs, extensions, iframes, Service Workers, Web Workers, WebRTC, and WebGL are absent, and a page that needs a missing API gets it named in the snapshot.
-- For a target the engine cannot read, run Chromium inside a box and accept the tier's boundary in place of engine-level capture.
+- For a target the engine cannot read, h5i browser proxy drives Chromium through a per-session capture proxy, and websec, recon, replay, and audit take that session the same way they take a native one.
 - h5i does not classify page content. It bounds what a persuaded agent can reach rather than detecting persuasion.
 - A boxed session needs a tier that can hold a resident process, and not every tier that enforces egress can.
 - Containment cannot stop source code from being included in an allowed model request.

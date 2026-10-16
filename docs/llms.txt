@@ -132,7 +132,7 @@ Ten articles that walk the 42 runnable labs in h5i-dev/h5i-tutorial, from recon 
 - With the default cross-origin refusal in force h5i cannot act as the victim, so a negative CSRF result means h5i declined, not that the target is safe.
 - A session on the host is not sandboxed and h5i does not claim it is. Containment is the --in flag.
 - The engine is not a complete browser. Of twenty single-page applications measured, eighteen read usefully and one not at all. Tabs, extensions, iframes, Service Workers, Web Workers, WebRTC, and WebGL are absent, and a page that needs a missing API gets it named in the snapshot.
-- For a target the engine cannot read, run Chromium inside a box and accept the tier's boundary in place of engine-level capture.
+- For a target the engine cannot read, h5i browser proxy drives Chromium through a per-session capture proxy, and websec, recon, replay, and audit take that session the same way they take a native one.
 - h5i does not classify page content. It bounds what a persuaded agent can reach rather than detecting persuasion.
 - A boxed session needs a tier that can hold a resident process, and not every tier that enforces egress can.
 - Containment cannot stop source code from being included in an allowed model request.
