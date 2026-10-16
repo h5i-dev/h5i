@@ -45,6 +45,8 @@ interval or isolated-machine claim. Server: 16 Tokio workers; clients: 8;
 PG pool: 32; CPUs 64–127, nice 19 (including the disposable PostgreSQL server).
 Proof builds were paused during measurement. PostgreSQL used its default
 container durability settings, without disabling synchronous commits or WAL.
+Host: dual AMD EPYC 7502 (128 logical CPUs). PostgreSQL 16.15;
+`synchronous_commit`, `fsync` and `full_page_writes` all on.
 Data: 50 users, 10,000 articles, 20,000 tags, 5,000 favorites and 500 follows.
 Scenarios are separate, not a mixed workload. Authentication uses pre-issued
 JWTs; password hashing is outside these scenarios. Both modes use localhost
