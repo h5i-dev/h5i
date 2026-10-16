@@ -101,8 +101,8 @@ later load. Migrations are outside this (see below).
 
 A kernel that overrides `Kernel::read_only` proves `H5iAppLib.ReadOnly.Sound`
 for its own extracted `read_only`: for every actor and state, an accepted
-read-only command returns an empty write set (Conduit:
-`ReadOnly.read_only_sound`; `h5i app lint` fails a server that overrides
+read-only command returns an empty write set ([Conduit](https://github.com/Koukyosyumei/h5i-app-cookbook/tree/main/conduit)
+in the h5i-app cookbook: `ReadOnly.read_only_sound`; `h5i app lint` fails a server that overrides
 `read_only` without such a proof). With that, a read-only request changes
 nothing, so its transaction can sit anywhere in the serial order whose
 prefix its snapshot shows. PostgreSQL guarantees that a `SERIALIZABLE READ

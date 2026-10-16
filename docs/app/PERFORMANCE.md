@@ -1,12 +1,15 @@
 # Performance on Conduit
 
-`examples/app/conduit` is the RealWorld (Conduit) API on an h5i-app kernel.
-All users share one tenant, the worst case for an engine that serializes per
-tenant. This file records how the engine changes behave on it.
+[Conduit](https://github.com/Koukyosyumei/h5i-app-cookbook/tree/main/conduit) is the RealWorld API on an h5i-app kernel. Its code
+(kernel, server, proofs and the load test) lives in the
+[h5i-app cookbook](https://github.com/Koukyosyumei/h5i-app-cookbook); it was in `examples/app/conduit`
+when these numbers were measured. All users share one tenant, the worst case
+for an engine that serializes per tenant. This file records how the engine
+changes behave on it.
 
 ## Method
 
-`examples/app/conduit/server/examples/load.rs` seeds a site with plain SQL
+The cookbook's `conduit/server/examples/load.rs` seeds a site with plain SQL
 (50 users, 10,000 articles, 20,000 tag rows over 100 tag names, 5,000
 favorites, 500 follows), serves the API in-process on a pool of 32
 connections, and drives it over HTTP/1.1 keep-alive connections for 10 s per
@@ -27,6 +30,7 @@ database share CPUs 64-127 of a 128-core machine that other jobs also used,
 so treat differences under ~20% as noise.
 
 ```
+git clone https://github.com/Koukyosyumei/h5i-app-cookbook && cd h5i-app-cookbook/conduit
 DATABASE_URL=postgres://... cargo run --release -p conduit-server --example load -- 10
 ```
 

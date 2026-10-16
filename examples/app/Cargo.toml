@@ -7,8 +7,6 @@ members = [
     "booking/server",
     "calculator/kernel",
     "calculator/server",
-    "conduit/kernel",
-    "conduit/server",
     "inbox/kernel",
     "inbox/server",
     "ledger/kernel",

@@ -19,7 +19,9 @@ commands from there.
 
 ## Further examples
 
-[Conduit](conduit/README.md) is a port of the RealWorld API
-(realworld-axum-sqlx) with proofs about its replies and invariants. All its
-users share one tenant; it is the benchmark of
+Larger applications live in the
+[h5i-app cookbook](https://github.com/Koukyosyumei/h5i-app-cookbook), each with its own Cargo
+workspace and proof project. Its [Conduit](https://github.com/Koukyosyumei/h5i-app-cookbook/tree/main/conduit) entry is a port of the
+RealWorld API (realworld-axum-sqlx) with proofs about its replies and
+invariants. All its users share one tenant; it is the benchmark of
 [docs/app/PERFORMANCE.md](../../docs/app/PERFORMANCE.md).
