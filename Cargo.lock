@@ -1990,6 +1990,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "h5i-app-mem"
+version = "0.1.1"
+dependencies = [
+ "h5i-app-core",
+ "h5i-app-pg",
+ "tokio",
+]
+
+[[package]]
 name = "h5i-app-pg"
 version = "0.1.1"
 dependencies = [
