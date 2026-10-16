@@ -25,11 +25,16 @@ The proxy writes Chromium's decrypted HTTP/S messages into the same receipt and
 message store as the native browser, so `websec`, `recon`, `requests`, `resend`
 and `audit` do not need a separate mode. The lane is `proxy-observed`: h5i saw
 traffic routed through its loopback proxy, but the external Chromium process is
-not confined. Linux trusts only the session CA (`certutil` must be on `PATH`).
-macOS cannot install that CA, so the printed command passes
-`--ignore-https-errors` and Chromium accepts every certificate error for that
-launch. If agent-browser is missing, or `certutil` is missing on Linux, `proxy`
-refuses before creating a session and prints the install command.
+not confined. agent-browser cannot trust a single CA, so the printed command
+passes `--ignore-https-errors` and Chromium accepts every certificate error for
+that launch. If agent-browser is missing, `proxy` refuses before creating a
+session and prints the install command.
+
+Export the printed `env` line before driving agent-browser (or use
+`h5i browser proxy-open <url>`). The `start` line proxies one launch only; when
+agent-browser's daemon restarts, a bare `agent-browser open` starts an
+unproxied browser and capture stops silently. `h5i browser status` warns when
+nothing has been captured for five minutes.
 
 ## Where the session runs
 

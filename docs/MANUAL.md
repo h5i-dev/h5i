@@ -326,26 +326,34 @@ human signing in, uses a proxy session on Linux and macOS.
 
 ```bash
 h5i browser proxy https://app.example --session chrome
-# Linux prints: agent-browser --proxy ... --ca-cert ... open ...
-# macOS prints: agent-browser --proxy ... --ignore-https-errors open ...
+# prints: agent-browser --proxy ... --ignore-https-errors --args ... open ...
+#   and:  export AGENT_BROWSER_PROXY=... AGENT_BROWSER_IGNORE_HTTPS_ERRORS=1 AGENT_BROWSER_ARGS=...
 agent-browser dashboard start
 h5i websec requests --session chrome
 h5i recon extract --session chrome
 ```
 
-`proxy` checks that `agent-browser` runs before it creates a session. On Linux
-it also requires `certutil`. A missing tool stops there, prints the install
-command, and leaves no session behind. The command then starts a loopback
+`proxy` checks that `agent-browser` runs before it creates a session. A
+missing agent-browser stops there, prints the install command, and leaves no
+session behind. The command then starts a loopback
 proxy and writes a per-session CA (`0600`). The proxy uses that CA to decrypt
 HTTPS. Run the printed line. Chromium stays agent-browser's process. h5i
 stores what the proxy decrypted, in the same receipt and message store a
 native session uses.
 
-Linux prints `--ca-cert` and agent-browser installs that CA into an isolated
-store, so hostname checks stay on. macOS cannot install the CA, so the printed
-command passes `--ignore-https-errors`. Chromium then accepts every certificate
-error for that launch. `status` repeats that line, and `session.json` records
-it as `proxy.chromium_tls`: `session-ca` or `ignore-https-errors`.
+agent-browser has no flag that trusts a single CA, so on Linux and macOS the
+printed command passes `--ignore-https-errors`: Chromium accepts every
+certificate error for that launch. The CA file is still written, for anyone who
+installs it instead. `status` repeats that line, and `session.json` records it
+as `proxy.chromium_tls`.
+
+The `start` line proxies one launch. agent-browser's daemon restarts when it
+idles, and a later bare `agent-browser open` then starts a browser that is not
+proxied: the page still works and capture stops without an error. Export the
+printed `env` line first, so every launch from that shell is proxied, or drive
+the browser with `h5i browser proxy-open <url>`, which passes the proxy each
+time. `status` shows when the proxy last let a target request through and warns
+after five quiet minutes.
 
 The lane is `proxy-observed`. `websec`, `recon`, `requests`, `resend` and
 `audit` take the session the same way they take a native one. agent-browser
@@ -1898,10 +1906,9 @@ h5i states these limits explicitly because its claims are security-sensitive.
 - Chromium driving depends on the pinned external `agent-browser` tool.
 - `h5i browser proxy` records what an external Chromium sends through its
   loopback proxy. agent-browser and Chromium run as ordinary host processes.
-  On Linux the printed command trusts only the session CA. On macOS it passes
-  `--ignore-https-errors`, so Chromium accepts every certificate error for
-  that launch. A missing `agent-browser` refuses before a session exists; on
-  Linux a missing `certutil` does too.
+  The printed command passes `--ignore-https-errors`, so Chromium accepts
+  every certificate error for that launch. A missing `agent-browser` refuses
+  before a session exists.
 
 ## Files
 

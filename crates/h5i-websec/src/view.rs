@@ -126,6 +126,19 @@ pub fn replay(answer: &Value) -> Result<String, String> {
         });
     }
     let response = response.expect("checked above");
+    // A replay the session's budget refused has no status and no body. Shown
+    // as one `error` line among the others, it read as a quiet empty answer;
+    // say so on stderr, with the flag that fixes it.
+    if u64_at(response, "status").is_none()
+        && let Some(error) = str_at(response, "error")
+        && error.contains("budget-exceeded")
+    {
+        return Err(format!(
+            "{}. Replays draw on the session's page budget; pass `--reset-budget` to give \
+             this send a fresh one",
+            printable(error.trim_end_matches('.'))
+        ));
+    }
     let samples = answer
         .get("samples")
         .and_then(Value::as_array)
@@ -272,6 +285,21 @@ pub fn replay(answer: &Value) -> Result<String, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_replay_the_budget_refused_is_an_error_naming_the_fix() {
+        let mut answer = one();
+        answer["response"] = json!({
+            "status": null, "url": "http://t/api", "headers": [], "bytes": 0,
+            "error": "budget-exceeded: this page has made 400 requests, and the limit for one page is 400."
+        });
+        let err = replay(&answer).unwrap_err();
+        assert!(err.contains("budget-exceeded"), "{err}");
+        assert!(err.contains("--reset-budget"), "{err}");
+        // Any other failure keeps the ordinary rendering.
+        answer["response"]["error"] = json!("connection refused");
+        assert!(replay(&answer).unwrap().contains("error connection refused"));
+    }
 
     fn one() -> Value {
         json!({
