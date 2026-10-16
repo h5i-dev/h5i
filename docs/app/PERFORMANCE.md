@@ -291,8 +291,31 @@ throughput. Writes and filtered loads have one text per table and column.
 | favorite | 16 | 2522.2 | 6.16 | 12.98 | 0 | 25604 | 367 | 25237 |
 | favorite | 64 | 4705.9 | 13.27 | 26.90 | 0 | 47764 | 641 | 47123 |
 
-Within noise of step 6 (a 256-statement cache holds all of Conduit's few
-dozen shapes, so nothing is evicted here).
+At concurrency 16 and 64 this is within noise of step 6 (a 256-statement
+cache holds all of Conduit's few dozen shapes, so nothing is evicted here).
+At concurrency 1 the single runs above differ from step 6's single runs
+(list-tag 429 vs 294, feed 263 vs 202 requests/s), so both builds were
+then run interleaved, step 6 and step 7 alternately, six times each, at
+concurrency 1 with the same seed data and pinning (1-minute load average
+2.9-5.0 during the runs):
+
+| scenario | build | runs | mean req/s | stdev | median req/s | mean p50 ms | Δ mean vs step 6 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| get-article | step6 | 6 | 697.5 | 10.8 | 699.4 | 1.41 |  |
+| get-article | step7 | 6 | 695.1 | 39.4 | 713.0 | 1.44 | -0.3% |
+| list | step6 | 6 | 263.6 | 34.5 | 254.4 | 3.73 |  |
+| list | step7 | 6 | 263.7 | 42.4 | 238.4 | 3.84 | +0.0% |
+| list-tag | step6 | 6 | 267.5 | 49.4 | 260.0 | 3.84 |  |
+| list-tag | step7 | 6 | 293.8 | 39.0 | 302.1 | 3.35 | +9.8% |
+| feed | step6 | 6 | 240.8 | 28.0 | 230.2 | 4.12 |  |
+| feed | step7 | 6 | 233.1 | 21.1 | 227.1 | 4.25 | -3.2% |
+| favorite | step6 | 6 | 264.9 | 9.0 | 265.5 | 3.77 |  |
+| favorite | step7 | 6 | 266.4 | 6.4 | 267.4 | 3.72 | +0.6% |
+
+Every difference is well inside one standard deviation, list-tag is faster
+on step 7, and single runs at concurrency 1 spread by 10-20% for the
+listings. The earlier gap compared one sample with one sample; the bound
+costs nothing measurable.
 
 ## Done since the first report
 
