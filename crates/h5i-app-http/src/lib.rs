@@ -191,8 +191,16 @@ impl<K: Kernel, S: Store<K>, E: Executor<K>> FromRef<H5iApp<K, S, E>> for Auth<K
     }
 }
 
+impl<K: Kernel, S: Store<K>> H5iApp<K, S> {
+    /// Construct the default PostgreSQL app, retaining store type inference.
+    pub fn new(engine: Arc<Engine<K, S>>, auth: impl Authenticator<K>) -> Self {
+        Self::with_executor(engine, auth)
+    }
+}
+
 impl<K: Kernel, S: Store<K>, E: Executor<K>> H5iApp<K, S, E> {
-    pub fn new(engine: Arc<E>, auth: impl Authenticator<K>) -> Self {
+    /// Opt in to an alternative executor. `new` retains its original signature.
+    pub fn with_executor(engine: Arc<E>, auth: impl Authenticator<K>) -> Self {
         H5iApp { engine, auth: Auth(Arc::new(auth)), marker: std::marker::PhantomData }
     }
 
@@ -280,4 +288,21 @@ pub fn error_body(msg: &str) -> Value {
 /// PostgreSQL router, preserving the original two generic parameters.
 pub fn rpc_router<K: Kernel, S: Store<K> + ReplyCodec<K> + Api<K>>(app: H5iApp<K, S>) -> Router {
     executor_rpc_router(app)
+}
+
+#[cfg(test)]
+mod compatibility {
+    use super::*;
+    // Typechecked without a database. Omitting the turbofish must still infer S
+    // from Engine<K, S>, as it did before Executor was introduced.
+    #[allow(dead_code)]
+    fn constructor_infers_store<K: Kernel, S: Store<K>>(engine: Arc<Engine<K, S>>, auth: impl Authenticator<K>) {
+        let app = H5iApp::new(engine, auth);
+        let _: &Engine<K, S> = app.engine();
+    }
+    #[allow(dead_code)]
+    fn alternative_executor<K: Kernel, S: Store<K>>(engine: Arc<h5i_app_core::MemoryEngine<K>>, auth: impl Authenticator<K>) {
+        let app = H5iApp::<K, S, _>::with_executor(engine, auth);
+        let _: &h5i_app_core::MemoryEngine<K> = app.engine();
+    }
 }
