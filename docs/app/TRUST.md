@@ -120,3 +120,12 @@ the delegation).
 - Refusals are not stored under idempotency keys; a retried refusal runs again on the new state.
 - Migrations are checked, not proven, and do not establish reachability: `Engine::migrate` commits only if every tenant passes the proven-exact checker. Cost grows with data; large tenants need batching.
 - Effects arrive at least once; receivers dedupe by delivery key. The dispatcher (integration-tested), its registry (id to endpoint) and `Deliver` are trusted; endpoint address checks (no private ranges, no redirects) belong there.
+
+## Optional RAM and CUDA experiments
+
+[The RAM executor](MEMORY.md) retains PostgreSQL commits for writes and trusts
+single-owner cache coherence, read-only classification, clock restrictions and
+cancellation fallback. It adds no kernel theorem. The [CUDA compilation
+experiment](GPU.md) stopped before a device kernel could run; GPU codegen and
+the driver would be additional trusted components if that path becomes usable.
+No CPU/GPU equivalence or GPU performance claim follows from the existing proofs.

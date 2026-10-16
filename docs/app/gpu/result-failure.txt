@@ -1,0 +1,8 @@
+error: [rustc_codegen_cuda] Device codegen failed: PTX generation failed: Verification failed for 'result_probe':
+         [name: "Span { id: 11, repr: "examples/result_probe.rs:16:82: 16:83" }", loc: (?)] Compilation error: verification failed.
+       MirEnumPayloadOp operand must be an enum type
+         Failed operation:
+       op74v1_res0 = mir.enum_payload (op73v1_res0) [] [payload_field_index: mir.field_index 0, payload_variant_index: mir.variant_index 0]: <(mir.struct <Failure,[0],[builtin.integer ui64],[0],[0],8>) -> (builtin.integer ui64)> !0
+
+
+error: could not compile `h5i-app-gpu` (example "result_probe") due to 1 previous error

@@ -332,3 +332,7 @@ costs nothing measurable.
   locks, as read-only commands).
 - Favorites retry about 2% of the time under SERIALIZABLE page-level
   predicate locks.
+
+The optional [RAM executor Conduit experiment](MEMORY.md) measures database
+avoidance with PostgreSQL write-through durability. The [CUDA feasibility
+report](GPU.md) records compiler failures; no device speedup is claimed.
