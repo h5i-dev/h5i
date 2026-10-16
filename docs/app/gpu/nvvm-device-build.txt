@@ -1,0 +1,91 @@
+   Compiling glam v0.30.10
+   Compiling cuda_std v0.2.2 (https://github.com/Rust-GPU/rust-cuda?rev=3a82c35a7196731fb60eebdac2a40d2b1bf0ba95#3a82c35a)
+   Compiling h5i-app-gpu-nvvm-device v0.1.0 (/var/tmp/h5i-gpu/crates/h5i-app-gpu/backend-nvvm/device)
+warning: unused attribute
+ --> <crate attribute>:1:1
+  |
+1 | #![no_std]
+  | ^^^^^^^^^^ help: remove this attribute
+  |
+note: attribute also specified here
+ --> backend-nvvm/device/src/lib.rs:2:1
+  |
+2 | #![no_std]
+  | ^^^^^^^^^^
+  = note: `#[warn(unused_attributes)]` (part of `#[warn(unused)]`) on by default
+
+warning: `extern` fn uses type `[u8]`, which is not FFI-safe
+ --> backend-nvvm/device/src/lib.rs:7:34
+  |
+7 | pub unsafe fn search_batch(rows: &[u8], tags: &[u64], terms: &[u8], count: usize,
+  |                                  ^^^^^ not FFI-safe
+  |
+  = help: consider using a raw pointer instead
+  = note: slices have no C equivalent
+  = note: `#[warn(improper_ctypes_definitions)]` on by default
+
+warning: `extern` fn uses type `[u64]`, which is not FFI-safe
+ --> backend-nvvm/device/src/lib.rs:7:47
+  |
+7 | pub unsafe fn search_batch(rows: &[u8], tags: &[u64], terms: &[u8], count: usize,
+  |                                               ^^^^^^ not FFI-safe
+  |
+  = help: consider using a raw pointer instead
+  = note: slices have no C equivalent
+
+warning: `extern` fn uses type `[u8]`, which is not FFI-safe
+ --> backend-nvvm/device/src/lib.rs:7:62
+  |
+7 | pub unsafe fn search_batch(rows: &[u8], tags: &[u64], terms: &[u8], count: usize,
+  |                                                              ^^^^^ not FFI-safe
+  |
+  = help: consider using a raw pointer instead
+  = note: slices have no C equivalent
+
+warning: `extern` fn uses type `[u8]`, which is not FFI-safe
+  --> backend-nvvm/device/src/lib.rs:20:34
+   |
+20 | pub unsafe fn push_batch(events: &[u8], patterns: &[u8], displays: &[u8], members: &[u64], powers: &[u64],
+   |                                  ^^^^^ not FFI-safe
+   |
+   = help: consider using a raw pointer instead
+   = note: slices have no C equivalent
+
+warning: `extern` fn uses type `[u8]`, which is not FFI-safe
+  --> backend-nvvm/device/src/lib.rs:20:51
+   |
+20 | pub unsafe fn push_batch(events: &[u8], patterns: &[u8], displays: &[u8], members: &[u64], powers: &[u64],
+   |                                                   ^^^^^ not FFI-safe
+   |
+   = help: consider using a raw pointer instead
+   = note: slices have no C equivalent
+
+warning: `extern` fn uses type `[u8]`, which is not FFI-safe
+  --> backend-nvvm/device/src/lib.rs:20:68
+   |
+20 | pub unsafe fn push_batch(events: &[u8], patterns: &[u8], displays: &[u8], members: &[u64], powers: &[u64],
+   |                                                                    ^^^^^ not FFI-safe
+   |
+   = help: consider using a raw pointer instead
+   = note: slices have no C equivalent
+
+warning: `extern` fn uses type `[u64]`, which is not FFI-safe
+  --> backend-nvvm/device/src/lib.rs:20:84
+   |
+20 | pub unsafe fn push_batch(events: &[u8], patterns: &[u8], displays: &[u8], members: &[u64], powers: &[u64],
+   |                                                                                    ^^^^^^ not FFI-safe
+   |
+   = help: consider using a raw pointer instead
+   = note: slices have no C equivalent
+
+warning: `extern` fn uses type `[u64]`, which is not FFI-safe
+  --> backend-nvvm/device/src/lib.rs:20:100
+   |
+20 | pub unsafe fn push_batch(events: &[u8], patterns: &[u8], displays: &[u8], members: &[u64], powers: &[u64],
+   |                                                                                                    ^^^^^^ not FFI-safe
+   |
+   = help: consider using a raw pointer instead
+   = note: slices have no C equivalent
+
+warning: `h5i-app-gpu-nvvm-device` (lib) generated 9 warnings (run `cargo fix --lib -p h5i-app-gpu-nvvm-device` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 6.70s

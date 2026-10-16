@@ -100,9 +100,10 @@ RAM footprint and longer steady-state runs remain unmeasured.
 For h5i-app-bench, an explicitly separate `rust-h5i-mem` row can therefore
 show useful read-heavy speedups under this single-owner durability model.
 These numbers do not justify replacing its general PG-backed implementation.
-The [CUDA experiment](GPU.md) produced no runnable GPU kernel and hence no
-measured GPU speedup. Compute-heavy search, ranking or aggregation would need
-a new scenario and a working compiler before a GPU claim is possible.
+The [GPU experiment](GPU.md) now measures compute-heavy search and push-rule
+toys through Rust-CUDA. It does not establish a Conduit request speedup;
+cuda-oxide remains blocked. Transfer-inclusive million-row gains against the
+earlier 16-thread CPU baseline are 1.64× search and 1.32× push rules.
 
 ## Conduit remeasurement after applying committed writes
 

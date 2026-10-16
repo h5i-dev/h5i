@@ -154,6 +154,53 @@ pub fn check<B: Backend>(backend: &mut B) -> Result<(), B::Error> {
     assert_eq!(soa.ids, vec![91, 2]);
     assert!(SearchArena::pack(&rows, 1).is_err());
     assert!(SearchArena::pack(&rows, MAX_ROWS + 1).is_err());
+    let events = vec![
+        parallel_kernel::Event {
+            id: 8,
+            content: b"hello Alice".to_vec(),
+            display: b"Alice".to_vec(),
+            members: 5,
+            power: 50,
+        },
+        parallel_kernel::Event {
+            id: 1,
+            content: vec![b'x'; 512],
+            display: vec![b'x'; 64],
+            members: 1,
+            power: 0,
+        },
+    ];
+    let soa = crate::arena::PushArena::pack(&events, 2).unwrap();
+    assert_eq!(soa.unpack(), events);
+    assert_eq!(soa.ids, vec![8, 1]);
+    assert!(crate::arena::PushArena::pack(&events, 1).is_err());
+    let rule = parallel_kernel::Rule {
+        id: 9,
+        pattern: b"h*".to_vec(),
+        minimum: 1,
+        maximum: 10,
+        required: 20,
+        enabled: true,
+        display: true,
+    };
+    let mut b = fixture(2, false);
+    b.text = soa.content;
+    b.displays = soa.display;
+    b.members = soa.members;
+    b.powers = soa.powers;
+    b.minimum = rule.minimum;
+    b.maximum = rule.maximum;
+    b.required = rule.required;
+    b.enabled = rule.enabled;
+    b.require_display = rule.display;
+    b.patterns.fill(0);
+    for row in b.patterns.chunks_exact_mut(64) {
+        row[..rule.pattern.len()].copy_from_slice(&rule.pattern);
+    }
+    assert_eq!(
+        backend.run(Decision::Push, &b)?,
+        Cpu.run(Decision::Push, &b).unwrap()
+    );
     Ok(())
 }
 #[cfg(test)]

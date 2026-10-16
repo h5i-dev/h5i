@@ -334,5 +334,6 @@ costs nothing measurable.
   predicate locks.
 
 The optional [RAM executor Conduit experiment](MEMORY.md) measures database
-avoidance with PostgreSQL write-through durability. The [CUDA feasibility
-report](GPU.md) records compiler failures; no device speedup is claimed.
+avoidance with PostgreSQL write-through durability. The [GPU report](GPU.md) records Rust-CUDA toy-kernel differential checks and
+transfer-inclusive timings, alongside the preserved cuda-oxide compiler failures.
+These measurements do not establish a complete application request speedup.

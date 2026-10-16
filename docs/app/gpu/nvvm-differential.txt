@@ -1,0 +1,4 @@
+   Compiling h5i-app-gpu v0.1.1 (/var/tmp/h5i-gpu/crates/h5i-app-gpu)
+   Compiling h5i-app-gpu-backend-nvvm v0.1.0 (/var/tmp/h5i-gpu/crates/h5i-app-gpu/backend-nvvm)
+    Finished `release` profile [optimized] target(s) in 0.81s
+random differential, error slots, batch independence, SoA boundaries: passed

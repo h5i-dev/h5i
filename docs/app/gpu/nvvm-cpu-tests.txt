@@ -1,0 +1,17 @@
+   Compiling h5i-app-gpu v0.1.1 (/var/tmp/h5i-gpu/crates/h5i-app-gpu)
+    Finished `release` profile [optimized] target(s) in 0.54s
+     Running unittests src/lib.rs (/var/tmp/h5i-gpu-target/release/deps/h5i_app_gpu-2c67dc62fa28b7f1)
+
+running 3 tests
+test arena::tests::batches_are_independent_on_cpu ... ok
+test arena::tests::capacity_roundtrip_and_input_order ... ok
+test differential::tests::cpu_backend_conformance ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.83s
+
+   Doc-tests h5i_app_gpu
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

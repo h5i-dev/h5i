@@ -47,8 +47,8 @@ The backend-generic suite compares every u32 output/error slot to the Rust CPU
 oracle. It covers deterministic randomized text/tags/permissions/members,
 AND/OR/NOT, valid and rejected queries, wildcards including 64-byte patterns,
 missing columns, 0/1/127/128/129/1025 rows, exact million-row capacity and
-one row beyond it, split-batch independence, and schema Bookmark SoA round trip
-with non-sorted ids. Existing host layout tests cover 512/513-byte text,
+one row beyond it, split-batch independence, and schema Bookmark/Event SoA round trips
+with non-sorted ids, plus a schema Rule driving a GPU push batch. Existing host layout tests cover 512/513-byte text,
 embedded separators and rejected trailing zero. No KeyHash implementation is
 replaced or sorted by the GPU; output indices preserve input order.
 These are empirical tests, not a GPU theorem or exhaustive absence-of-panic proof.
@@ -66,14 +66,17 @@ ordinary pageable host buffers. It excludes final destruction of the text/output
 device buffers. Inputs are 512 bytes/row plus per-row scalar columns; push also
 has 64-byte pattern and display columns. Production packing/DB work is additional.
 
-| Workload | Rows | Kernel ms | Total ms | CPU 1 thread ms | Total speedup |
-|---|---:|---:|---:|---:|---:|
-| Search | 10,000 | 6.243 | 6.860 | 809.614 | 118.02× |
-| Search | 100,000 | 233.764 | 239.408 | 8112.959 | 33.89× |
-| Search | 1,000,000 | 2932.031 | 3022.202 | 81206.593 | 26.87× |
-| Push | 10,000 | 0.337 | 1.096 | 19.773 | 18.04× |
-| Push | 100,000 | 5.929 | 13.874 | 207.097 | 14.93× |
-| Push | 1,000,000 | 70.183 | 133.406 | 2075.482 | 15.56× |
+| Workload | Rows | Kernel ms | Total ms | GPU total rows/s | CPU 1 thread ms | Total speedup |
+|---|---:|---:|---:|---:|---:|---:|
+| Search | 10,000 | 6.243 | 6.860 | 1,457,746 | 809.614 | 118.02× |
+| Search | 100,000 | 233.764 | 239.408 | 417,698 | 8112.959 | 33.89× |
+| Search | 1,000,000 | 2932.031 | 3022.202 | 330,885 | 81206.593 | 26.87× |
+| Push | 10,000 | 0.337 | 1.096 | 9,125,153 | 19.773 | 18.04× |
+| Push | 100,000 | 5.929 | 13.874 | 7,207,690 | 207.097 | 14.93× |
+| Push | 1,000,000 | 70.183 | 133.406 | 7,495,890 | 2075.482 | 15.56× |
+
+Device build and conformance logs: [PTX build](gpu/nvvm-device-build.txt),
+[differential checks](gpu/nvvm-differential.txt).
 
 Raw repetitions/checksums: [parallel-nvvm.csv](measurements/parallel-nvvm.csv).
 CPU is the same decision source on all padded rows, with output/error allocation.
@@ -193,23 +196,23 @@ Unsupported construct: Aggregate kind RawPtr(Ty { ...
 ```
 
 The backtrace names `core/src/slice/index.rs` and the corresponding batch
-wrapper. [`examples/slice_probe.rs`](../../crates/h5i-app-gpu/examples/slice_probe.rs)
+wrapper. [`examples/slice_probe.rs`](../../crates/h5i-app-gpu/backend-oxide/examples/slice_probe.rs)
 reduces this to `decision(&bytes[0..16])`, returning a boolean, with the same
 failure. This does not establish that scalar booleans are unsupported: the
 observed boundary is slice-pointer aggregate lowering in this compiler revision.
 See [search](gpu/search-failure.txt), [push](gpu/push-failure.txt) and
-[minimal slice diagnostic](gpu/slice-failure.txt). No upstream changes, alternate
-backend or handwritten twin kernel were used.
+[minimal slice diagnostic](gpu/slice-failure.txt). No upstream changes, alternate backend or handwritten twin kernel were used
+in that earlier experiment.
 
 Reproduce with `bash crates/h5i-app-gpu/reproduce.sh search` (or `push`, `slice`,
 `result`, `calculator`), detached for long runs as required by this workspace.
 The script installs the pinned nightly and builds the backend in isolated
-`/var/tmp` directories. CPU tests use
-`cargo test --release --manifest-path crates/h5i-app-gpu/Cargo.toml`.
+`/var/tmp` directories. Preserved oxide CPU tests use
+`cargo test --release --manifest-path crates/h5i-app-gpu/backend-oxide/Cargo.toml`.
 
-## Performance and verification boundary
+## Historical cuda-oxide performance and verification boundary
 
-Because neither target compiles, there is **no GPU throughput, kernel-only
+Because neither cuda-oxide target compiles, that backend has **no GPU throughput, kernel-only
 timing, H2D-plus-launch timing, GPU panic validation, or executable CPU/GPU
 differential test** at 10k, 100k or 1M rows. The stopping point is the requested
 minimal compiler reproduction. A successful future device compiler must pass
@@ -228,16 +231,16 @@ condition. Results include checksums. This is a shared EPYC 7502 host, CPUs
 is not evidence of an end-to-end linkding or Matrix speedup. These byte-by-byte
 toy algorithms are not an optimized SIMD/search-library CPU baseline.
 
-For h5i-app-bench, Step 2 provides **zero usable GPU scenarios and no measured
-GPU speedup**. These workloads expose substantial compute compared with the
+For h5i-app-bench, the cuda-oxide backend provides **zero usable GPU scenarios
+and no measured GPU speedup**. Rust-CUDA results are reported above. These workloads expose substantial compute compared with the
 calculator, but a speedup remains unestablished until the compiler works and
 transfer-inclusive tests run. Step 1's measured HTTP results, including write
 regressions after cache maintenance, are in [MEMORY.md](MEMORY.md).
 
 ### CPU reference results (2026-10-16)
 
-Throughput in rows/s; GPU kernel-only and transfer-plus-launch results are
-unavailable for every N because PTX generation failed.
+Historical CPU throughput in rows/s; cuda-oxide GPU timings were unavailable
+because PTX generation failed. Rust-CUDA timings are in the table above.
 
 | N | Search, 1 CPU thread | Search, 16 threads | Push, 1 CPU thread | Push, 16 threads |
 |---:|---:|---:|---:|---:|

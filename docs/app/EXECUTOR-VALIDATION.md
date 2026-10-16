@@ -22,9 +22,9 @@ last test blocks a write in PG, cancels its caller, and checks that subsequent
 reads and later acknowledged commands cannot revive an uncertain cache.
 
 The separate GPU workspace's default CPU test passed against the original
-calculator arithmetic, including its error cases. Device compilation failed;
-it is not a CPU/GPU differential test. See [GPU.md](GPU.md) for the exact
-compiler revisions, diagnostics and the unimplemented GPU validation work.
+calculator arithmetic, including its error cases. In that first cuda-oxide experiment, device compilation failed;
+it was not a CPU/GPU differential test. See [GPU.md](GPU.md) for the exact
+compiler revisions, historical diagnostics and subsequent Rust-CUDA validation.
 
 No existing theorem, axiom policy or generated Lean source was changed.
 The new cache and executor shell have tests and documented trust obligations,
@@ -79,6 +79,6 @@ passed; all five mutants were caught, with none surviving or invalid.
 The separate GPU workspace's three CPU tests also pass, including the maximum
 capacity acceptance, oversized capacity/text rejection, trailing-zero rejection,
 schema-row round trip, input order, batch independence and calculator error tags.
-GPU compilation remains blocked as documented; no GPU differential or timing
-result is claimed. The disposable `h5i-gpu-pg` container was stopped after these
+At that stage cuda-oxide compilation remained blocked; no GPU differential or
+timing result was claimed. The subsequent Rust-CUDA results are in GPU.md. The disposable `h5i-gpu-pg` container was stopped after these
 checks; its data remains under `/var/tmp`. No other container was changed.
