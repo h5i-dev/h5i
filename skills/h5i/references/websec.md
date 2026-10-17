@@ -58,6 +58,28 @@ request and gives back N documents nothing correlates.
 through the terminal; `show --body-to PATH` writes the bytes, and `--body-to -`
 writes them to standard output for a pipe.
 
+**When the answer is not in the response, make an oracle.** A blind finding
+changes something you can measure but not read: the body comes back the same
+whether the condition you injected held or not, so you confirm it by a side
+effect instead. Pick the observable and turn it into a yes/no.
+- *Time.* `replay --repeat 20` sends the request N times inside the engine and
+  reports a median and a median absolute deviation. A condition that makes the
+  server wait or do more work shows up as a median reliably above a control's,
+  where one scheduling hiccup moves neither. Always send a control payload
+  beside the candidate and compare the two medians.
+- *Difference.* `diff res_A res_B` says how two responses differ; `match res_N
+  --status N --contains TEXT --regex RE` exits 0 when it holds and 1 when it does
+  not, so a script branches on the answer. A condition that flips a status, a
+  body length, or a byte of the body is an oracle.
+
+With a yes/no in hand, read the secret one position at a time: `sequence` scripts
+the true/false step with an `expect` clause and binds what one step learns into
+the next, and `--set-each query.q=./candidates.txt` sweeps a file of candidates
+in a single engine run, one correlated sample per line. `--reset-budget` keeps a
+long extraction from stopping partway, where every later send would otherwise
+read as a false negative. None of this composes a payload for you — you write the
+condition; h5i measures, resends and compares.
+
 The engine runs a page's own event handlers when `--script` is on: inline `on*`
 attributes fire, a subresource that did or did not load fires `load` or `error`
 at the element that asked, and `form.submit()` sends a real request. So
