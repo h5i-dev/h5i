@@ -303,7 +303,7 @@ Reproduce with `backend-nvvm/build-device.sh`, then
 `backend-nvvm/measure-linkding.sh` from `crates/h5i-app-gpu`. The latter runs
 independent-original/CPU/GPU comparisons before timing. Checks cover randomized
 Boolean queries and bookmarks, tags and lax mode, quoted terms, keywords,
-parse errors, empty queries, 127/128/129-row splitting, field separation,
+parse errors, empty queries, 128/129-row splitting, field separation,
 embedded zeros, 128/129-byte fields, tag/node/row capacities, malformed ASTs and
 truncated column buffers. CPU unit tests also check exact-width packing and
 case-folded hash/tag-order behavior. All outputs and error slots are compared.
