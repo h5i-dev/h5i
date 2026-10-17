@@ -75,12 +75,10 @@ has 64-byte pattern and display columns. Production packing/DB work is additiona
 | Push | 100,000 | 5.929 | 13.874 | 7,207,690 | 207.097 | 14.93× |
 | Push | 1,000,000 | 70.183 | 133.406 | 7,495,890 | 2075.482 | 15.56× |
 
-Device build and conformance logs: [PTX build](gpu/nvvm-device-build.txt),
-[differential checks](gpu/nvvm-differential.txt).
+differential checks.
 
-Raw repetitions/checksums: [parallel-nvvm.csv](measurements/parallel-nvvm.csv).
 CPU is the same decision source on all padded rows, with output/error allocation.
-The earlier cache-hot repeated-row [CPU baseline](measurements/parallel-cpu.csv)
+The earlier cache-hot repeated-row CPU baseline
 used 1 and 16 threads; its million-row search was 78.142/4.948 seconds,
 push 2.545/0.176 seconds. Relative to its 16-thread results, the new GPU total
 at 10k/100k/1M is search **10.60× / 2.11× / 1.64×**, push
@@ -101,9 +99,7 @@ candidates; a real integration needs its own complete request measurements.
 `cargo app-verify --full`: **42 passed, 0 failed, 0 skipped**, including all
 extraction freshness, Lean/axiom and mutation gates. All five mutants were
 caught and every unchanged baseline passed. The shared GPU CPU tests and
-preserved oxide calculator test pass separately. See the
-[validation record](EXECUTOR-VALIDATION.md) and
-[full gate output](measurements/verify-nvvm-full.txt).
+preserved oxide calculator test pass separately. See the [validation record](EXECUTOR-VALIDATION.md).
 No new axiom, sorry, theorem weakening or manually edited generated Lean was used.
 
 ## Historical cuda-oxide feasibility report
@@ -159,8 +155,7 @@ MirEnumPayloadOp operand must be an enum type
 mir.enum_payload ... mir.struct <Failure,...>
 ```
 
-See [calculator diagnostic](gpu/calculator-failure.txt) and
-[minimal diagnostic](gpu/result-failure.txt). This establishes a failure for
+This establishes a failure for
 these particular programs and revisions, not that every Result or enum is
 unsupported. Vec<u8> was not independently tested after this stopping point.
 A small local CudaKernel marker trait permits compile-only macro expansion;
@@ -210,8 +205,7 @@ wrapper. [`examples/slice_probe.rs`](../../crates/h5i-app-gpu/backend-oxide/exam
 reduces this to `decision(&bytes[0..16])`, returning a boolean, with the same
 failure. This does not establish that scalar booleans are unsupported: the
 observed boundary is slice-pointer aggregate lowering in this compiler revision.
-See [search](gpu/search-failure.txt), [push](gpu/push-failure.txt) and
-[minimal slice diagnostic](gpu/slice-failure.txt). No upstream changes, alternate backend or handwritten twin kernel were used
+No upstream changes, alternate backend or handwritten twin kernel were used
 in that earlier experiment.
 
 Reproduce with `bash crates/h5i-app-gpu/reproduce.sh search` (or `push`, `slice`,
@@ -258,7 +252,6 @@ because PTX generation failed. Rust-CUDA timings are in the table above.
 | 100,000 | 12,750 | 198,224 | 379,241 | 5,734,905 |
 | 1,000,000 | 12,797 | 202,115 | 392,975 | 5,694,935 |
 
-[Raw CPU timings and checksums](measurements/parallel-cpu.csv).
 At 1M rows, search takes 78.14 s on one thread and 4.95 s on 16; push takes
 2.54 s and 0.176 s respectively. CPU parallelism itself helps these models;
 no GPU advantage follows from that observation.

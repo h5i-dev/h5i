@@ -81,9 +81,7 @@ TCP HTTP; payload encoding and reply enrichment are included.
 | favorite | 16 | 1588.7 | 248.6 | 0.16× |
 | favorite | 64 | 2537.0 | 247.1 | 0.10× |
 
-All 24 cells had zero non-2xx replies. Full p50/p99 latency, attempt, retry
-and commit counts: [PG](measurements/conduit-pg.txt),
-[RAM](measurements/conduit-ram.txt). For get-article at c=1, p50 fell from
+All 24 cells had zero non-2xx replies. For get-article at c=1, p50 fell from
 2.03 ms to 0.11 ms; at c=64, from 6.50 ms to 0.51 ms. RAM read scenarios had
 zero PG command attempts (initial snapshot loads are not counted by that
 counter). Favorite still commits every accepted request to PG.
@@ -133,9 +131,7 @@ in PG throughput versus the earlier session to the framework change.
 | favorite | 16 | 2360.4 | 92.5 | 0.04× |
 | favorite | 64 | 4735.6 | 87.2 | 0.02× |
 
-All cells returned zero non-2xx replies. Raw p50/p99 and engine counters:
-[PG](measurements/conduit-committed-pg.txt),
-[RAM](measurements/conduit-committed-ram.txt).
+All cells returned zero non-2xx replies.
 
 This fixes cache maintenance, but **does not fix Conduit write throughput**.
 The generated `K::apply` clones the tenant's vectors (including article text)
@@ -172,7 +168,7 @@ compared after each RAM cell. No HTTP, JWT parsing or encoding is included.
 | set+snapshot | 16 | 378.2 | 315.7 | 0.83× |
 | set+snapshot | 64 | 369.3 | 303.2 | 0.82× |
 
-[Raw counts and snapshot-load counters](measurements/calculator-executor.txt).
+
 RAM Get performs no PG loads. PG Set+snapshot loads twice per request; RAM
 loads once for the transaction and updates its warm snapshot without refilling.
 The integration test independently checks that invariant across 100 writes.

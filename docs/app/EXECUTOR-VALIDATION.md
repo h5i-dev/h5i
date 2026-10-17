@@ -74,7 +74,6 @@ After the redirect, `cargo app-verify --full` completed with **42 passed,
 PostgreSQL tests), dependency bans, eleven extraction freshness checks, twelve
 Lean/axiom checks and five mutation gates. Every unmodified mutation baseline
 passed; all five mutants were caught, with none surviving or invalid.
-[Full gate output](measurements/verify-full.txt).
 
 The separate GPU workspace's three CPU tests also pass, including the maximum
 capacity acceptance, oversized capacity/text rejection, trailing-zero rejection,
@@ -90,7 +89,7 @@ After adding the NVVM backend, `cargo app-verify --full` again completed with
 our PostgreSQL container, dependency bans, eleven extraction freshness checks,
 twelve Lean/axiom checks and five mutation gates passed. Every unchanged
 mutation baseline passed; all five mutants were caught, none survived or were
-invalid. [Full gate output](measurements/verify-nvvm-full.txt).
+invalid.
 
 The shared GPU crate's three CPU tests and the preserved oxide backend's
 calculator test passed. Rust-CUDA compiled both slice-based wrappers to PTX.
