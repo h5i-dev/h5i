@@ -685,6 +685,36 @@ fn backoff(attempt: u32) -> Duration {
     Duration::from_micros(u64::from(nanos) % (cap_ms * 1000) + 100)
 }
 
+impl<K: Kernel, S: Store<K>> h5i_app_core::Executor<K> for Engine<K, S> {
+    type Error = DbError;
+
+    fn is_idempotency_conflict(e: &DbError) -> bool {
+        matches!(e, DbError::IdempotencyConflict)
+    }
+
+    async fn execute(&self, actor: &K::Principal, cmd: &K::Command) -> h5i_app_core::Executed<K, DbError> {
+        self.execute(actor, cmd).await
+    }
+
+    async fn execute_idempotent<C: ReplyCodec<K>>(&self, actor: &K::Principal, key: &str, cmd: &K::Command) -> h5i_app_core::Executed<K, DbError> {
+        let scope = C::scope(actor);
+        if scope.contains('/') {
+            return Err(DbError::Decode("scope contains '/'".into()));
+        }
+        let key = format!("{scope}/{key}");
+        self.run(
+            actor,
+            cmd,
+            Some(Idem { key: &key, fingerprint: C::fingerprint(cmd), encode: C::encode, decode: C::decode }),
+        )
+        .await
+    }
+
+    async fn snapshot_for(&self, actor: &K::Principal, cmd: &K::Command) -> Result<K::Snapshot, DbError> {
+        self.snapshot_for(actor, cmd).await
+    }
+}
+
 #[cfg(test)]
 mod lock_tests {
     use super::*;
@@ -707,17 +737,4 @@ mod lock_tests {
         assert_eq!(Lock::key("article", b"hello"), 0xe58c_2868_5d42_b9e9);
         assert_ne!(Lock::key("article", b"x"), Lock::key("articlex", b""));
     }
-}
-
-impl<K: Kernel, S: Store<K>> h5i_app_core::Executor<K> for Engine<K, S> {
-    type Error = DbError;
-    fn is_idempotency_conflict(e: &DbError) -> bool { matches!(e, DbError::IdempotencyConflict) }
-    async fn execute(&self, actor: &K::Principal, cmd: &K::Command) -> Result<Result<K::Reply, K::Error>, DbError> { self.execute(actor, cmd).await }
-    async fn execute_idempotent<C: ReplyCodec<K>>(&self, actor: &K::Principal, key: &str, cmd: &K::Command) -> Result<Result<K::Reply, K::Error>, DbError> {
-        let scope = C::scope(actor);
-        if scope.contains('/') { return Err(DbError::Decode("scope contains '/'".into())); }
-        let key = format!("{scope}/{key}");
-        self.run(actor, cmd, Some(Idem { key: &key, fingerprint: C::fingerprint(cmd), encode: C::encode, decode: C::decode })).await
-    }
-    async fn snapshot_for(&self, actor: &K::Principal, cmd: &K::Command) -> Result<K::Snapshot, DbError> { self.snapshot_for(actor, cmd).await }
 }

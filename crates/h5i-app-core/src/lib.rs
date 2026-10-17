@@ -114,9 +114,14 @@ pub trait Kernel: Send + Sync + 'static {
 
 /// Runs commands one at a time in memory. A real engine must behave like this
 /// on its committed requests, in some serial order.
+/// Identifies a stored reply: (tenant, reply scope, idempotency key).
+type ReplyKey = (TenantId, String, String);
+/// A stored reply: (command fingerprint, encoded reply bytes).
+type StoredReply = (Vec<u8>, Vec<u8>);
+
 pub struct MemoryEngine<K: Kernel> {
     tenants: Mutex<HashMap<TenantId, Tenant<K>>>,
-    replies: Mutex<HashMap<(TenantId, String, String), (Vec<u8>, Vec<u8>)>>,
+    replies: Mutex<HashMap<ReplyKey, StoredReply>>,
 }
 
 struct Tenant<K: Kernel> {
@@ -244,13 +249,18 @@ pub trait ReplyCodec<K: Kernel>: Send + Sync + 'static {
 }
 
 
+/// A command's outcome: the kernel's own result (a reply or a typed refusal),
+/// wrapped in the executor's infrastructure result (`E`). The inner `Result` is
+/// the application's decision; the outer is whether the executor could run it.
+pub type Executed<K, E> = Result<Result<<K as Kernel>::Reply, <K as Kernel>::Error>, E>;
+
 /// Async execution contract. Infrastructure failures are separate from kernel refusals.
 /// Implementations must publish committed state before acknowledging a write.
 pub trait Executor<K: Kernel>: Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync;
     fn is_idempotency_conflict(error: &Self::Error) -> bool;
-    fn execute(&self, actor: &K::Principal, cmd: &K::Command) -> impl std::future::Future<Output = Result<Result<K::Reply, K::Error>, Self::Error>> + Send;
-    fn execute_idempotent<C: ReplyCodec<K>>(&self, actor: &K::Principal, key: &str, cmd: &K::Command) -> impl std::future::Future<Output = Result<Result<K::Reply, K::Error>, Self::Error>> + Send;
+    fn execute(&self, actor: &K::Principal, cmd: &K::Command) -> impl std::future::Future<Output = Executed<K, Self::Error>> + Send;
+    fn execute_idempotent<C: ReplyCodec<K>>(&self, actor: &K::Principal, key: &str, cmd: &K::Command) -> impl std::future::Future<Output = Executed<K, Self::Error>> + Send;
     fn snapshot_for(&self, actor: &K::Principal, cmd: &K::Command) -> impl std::future::Future<Output = Result<K::Snapshot, Self::Error>> + Send;
 }
 
@@ -263,9 +273,9 @@ impl std::error::Error for MemoryError {}
 impl<K: Kernel> Executor<K> for MemoryEngine<K> {
     type Error = MemoryError;
     fn is_idempotency_conflict(e: &MemoryError) -> bool { matches!(e, MemoryError::IdempotencyConflict) }
-    async fn execute(&self, actor: &K::Principal, cmd: &K::Command) -> Result<Result<K::Reply, K::Error>, MemoryError> { Ok(self.execute(actor, cmd)) }
+    async fn execute(&self, actor: &K::Principal, cmd: &K::Command) -> Executed<K, MemoryError> { Ok(self.execute(actor, cmd)) }
     async fn snapshot_for(&self, actor: &K::Principal, _: &K::Command) -> Result<K::Snapshot, MemoryError> { Ok(self.snapshot(K::tenant(actor))) }
-    async fn execute_idempotent<C: ReplyCodec<K>>(&self, actor: &K::Principal, key: &str, cmd: &K::Command) -> Result<Result<K::Reply, K::Error>, MemoryError> {
+    async fn execute_idempotent<C: ReplyCodec<K>>(&self, actor: &K::Principal, key: &str, cmd: &K::Command) -> Executed<K, MemoryError> {
         let scope = C::scope(actor);
         if scope.contains('/') { return Err(MemoryError::Decode("scope contains '/'".into())); }
         let mut replies = self.replies.lock().unwrap();
