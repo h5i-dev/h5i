@@ -2475,12 +2475,30 @@ fn host_proxy_chromium_tls() -> anyhow::Result<bs::ChromiumTls> {
 /// stops Chromium bypassing the proxy for localhost, which it does by default
 /// and which otherwise hides a dev-server target from capture entirely.
 fn agent_browser_proxy_args(proxy_url: &str) -> Vec<String> {
+    agent_browser_proxy_args_with(proxy_url, std::env::var("AGENT_BROWSER_ARGS").ok().as_deref())
+}
+
+/// Build the agent-browser launch flags for a proxy session. `extra` is what
+/// the caller put in AGENT_BROWSER_ARGS: it is merged into the single `--args`
+/// launch string, since passing `--args` explicitly would otherwise shadow that
+/// env var. This is how a `--no-sandbox` from the sandbox hint reaches a
+/// `proxy-open` launch, while the loopback bypass (so a localhost target is
+/// still captured) is always kept.
+fn agent_browser_proxy_args_with(proxy_url: &str, extra: Option<&str>) -> Vec<String> {
+    let mut launch = String::from("--proxy-bypass-list=<-loopback>");
+    if let Some(extra) = extra {
+        let extra = extra.trim();
+        if !extra.is_empty() {
+            launch.push(',');
+            launch.push_str(extra);
+        }
+    }
     vec![
         "--proxy".into(),
         proxy_url.into(),
         "--ignore-https-errors".into(),
         "--args".into(),
-        "--proxy-bypass-list=<-loopback>".into(),
+        launch,
     ]
 }
 
@@ -2731,6 +2749,23 @@ fn close_proxy_browser(id: &str) {
     }
 }
 
+/// When Chromium fails to start its sandbox — common where there is no root to
+/// make `chrome-sandbox` setuid and the namespace sandbox is unavailable — the
+/// fix is to launch it without the sandbox. h5i does not add `--no-sandbox`
+/// itself (it turns Chromium's sandbox off), so it points the way instead.
+fn sandbox_hint(stderr: &str) -> String {
+    let lower = stderr.to_ascii_lowercase();
+    if lower.contains("no usable sandbox") || lower.contains("sandboxhelper") || lower.contains("setuid sandbox") {
+        "\n\nChromium could not start its sandbox (usual without root). Retry with the sandbox \
+         off: `AGENT_BROWSER_ARGS=--no-sandbox h5i browser proxy-open <url>`, or run agent-browser \
+         yourself with `--args --no-sandbox`. This disables Chromium's sandbox, so use it only for \
+         a target you trust."
+            .to_string()
+    } else {
+        String::new()
+    }
+}
+
 /// Drive the agent-browser Chromium of a proxy session to a URL.
 fn proxy_open(
     root: &Path,
@@ -2759,8 +2794,9 @@ fn proxy_open(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!(
-            "agent-browser could not open {url}: {}",
-            bs::scrub_text(stderr.trim())
+            "agent-browser could not open {url}: {}{}",
+            bs::scrub_text(stderr.trim()),
+            sandbox_hint(&stderr),
         );
     }
     if json_out {
@@ -5915,6 +5951,23 @@ mod tests {
             loading.contains("h5i browser read"),
             "and what to do instead: {loading}"
         );
+    }
+
+    #[test]
+    fn a_sandbox_failure_points_at_no_sandbox_and_proxy_open_honours_it() {
+        assert!(sandbox_hint("[FATAL] No usable sandbox! If you are running on Ubuntu")
+            .contains("--no-sandbox"));
+        assert!(sandbox_hint("some other failure").is_empty());
+        // The AGENT_BROWSER_ARGS value the hint names reaches a proxy-open
+        // launch (it would be shadowed if --args were passed alone), while the
+        // loopback bypass is always kept.
+        let args = agent_browser_proxy_args_with("http://127.0.0.1:9", Some("--no-sandbox"));
+        let launch = args.last().unwrap();
+        assert!(launch.contains("--proxy-bypass-list=<-loopback>"), "{launch}");
+        assert!(launch.contains("--no-sandbox"), "{launch}");
+        // With nothing set, only the loopback bypass is present.
+        let bare = agent_browser_proxy_args_with("http://127.0.0.1:9", None);
+        assert_eq!(bare.last().unwrap(), "--proxy-bypass-list=<-loopback>");
     }
 
     #[test]
