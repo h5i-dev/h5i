@@ -1,0 +1,12 @@
+[package]
+name = "h5i-app-gpu-nvvm-device"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[lib]
+crate-type = ["cdylib"]
+[features]
+default = []
+gpu = []
+[dependencies]
+cuda_std = { git = "https://github.com/Rust-GPU/rust-cuda", rev = "3a82c35a7196731fb60eebdac2a40d2b1bf0ba95" }

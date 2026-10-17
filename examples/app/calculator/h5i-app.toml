@@ -1,14 +1,14 @@
 # Read by `h5i app` (extract, check, prove, mutate, doctor).
 
 [extract]
-start-from = ["transition", "apply", "sql_writes"]
+start-from = ["transition", "apply", "sql_writes", "read_only"]
 schema = true
 include = ["h5i_app_sql"]
 
 [check]
 # Must exist and use only the standard axioms (every theorem in a hand-written
 # module is gated as well).
-theorems = ["calculator_kernel.Storage.pg_stored"]
+theorems = ["calculator_kernel.Storage.pg_stored", "calculator_kernel.ReadOnly.sound"]
 
 [[mutant]]
 name = "underflow_boundary"

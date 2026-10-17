@@ -120,3 +120,15 @@ the delegation).
 - Refusals are not stored under idempotency keys; a retried refusal runs again on the new state.
 - Migrations are checked, not proven, and do not establish reachability: `Engine::migrate` commits only if every tenant passes the proven-exact checker. Cost grows with data; large tenants need batching.
 - Effects arrive at least once; receivers dedupe by delivery key. The dispatcher (integration-tested), its registry (id to endpoint) and `Deliver` are trusted; endpoint address checks (no private ranges, no redirects) belong there.
+
+## Optional RAM and CUDA experiments
+
+[The RAM executor](MEMORY.md) retains PostgreSQL commits for writes and trusts
+single-owner cache coherence, read-only classification, clock restrictions and
+cancellation fallback. It adds no kernel theorem. The [GPU experiment](GPU.md)
+now runs shared search/push decision source through Rust-CUDA. rustc, the NVVM
+backend, LLVM/libNVVM, PTX JIT, driver, hardware and the launch/layout/bounds
+shell are trusted. Lean establishes properties of extracted Rust decisions;
+it says nothing about GPU execution. CPU/GPU differential checks are empirical,
+not an equivalence proof. cuda-oxide remains a separate, currently blocked probe. The real linkding GPU
+benchmark and its trust notes live in h5i-app-bench (performance/linkding/rust-h5i-gpu).

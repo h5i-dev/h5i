@@ -26,8 +26,8 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
-use h5i_app_core::Kernel;
-use h5i_app_pg::{DbError, Engine, ReplyCodec, Store};
+use h5i_app_core::{Kernel, Executor};
+use h5i_app_pg::{Engine, ReplyCodec, Store};
 use h5i_app_json::Value;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -173,29 +173,38 @@ where
 }
 
 /// Engine handle for handlers; the only path to the database, so every route goes through the kernel.
-pub struct H5iApp<K: Kernel, S: Store<K>> {
-    engine: Arc<Engine<K, S>>,
+pub struct H5iApp<K: Kernel, S: Store<K>, E = Engine<K, S>> {
+    engine: Arc<E>,
+    marker: std::marker::PhantomData<S>,
     auth: Auth<K>,
 }
 
-impl<K: Kernel, S: Store<K>> Clone for H5iApp<K, S> {
+impl<K: Kernel, S: Store<K>, E: Executor<K>> Clone for H5iApp<K, S, E> {
     fn clone(&self) -> Self {
-        H5iApp { engine: self.engine.clone(), auth: self.auth.clone() }
+        H5iApp { engine: self.engine.clone(), auth: self.auth.clone(), marker: std::marker::PhantomData }
     }
 }
 
-impl<K: Kernel, S: Store<K>> FromRef<H5iApp<K, S>> for Auth<K> {
-    fn from_ref(i: &H5iApp<K, S>) -> Self {
+impl<K: Kernel, S: Store<K>, E: Executor<K>> FromRef<H5iApp<K, S, E>> for Auth<K> {
+    fn from_ref(i: &H5iApp<K, S, E>) -> Self {
         i.auth.clone()
     }
 }
 
 impl<K: Kernel, S: Store<K>> H5iApp<K, S> {
+    /// Construct the default PostgreSQL app, retaining store type inference.
     pub fn new(engine: Arc<Engine<K, S>>, auth: impl Authenticator<K>) -> Self {
-        H5iApp { engine, auth: Auth(Arc::new(auth)) }
+        Self::with_executor(engine, auth)
+    }
+}
+
+impl<K: Kernel, S: Store<K>, E: Executor<K>> H5iApp<K, S, E> {
+    /// Opt in to an alternative executor. `new` retains its original signature.
+    pub fn with_executor(engine: Arc<E>, auth: impl Authenticator<K>) -> Self {
+        H5iApp { engine, auth: Auth(Arc::new(auth)), marker: std::marker::PhantomData }
     }
 
-    pub fn engine(&self) -> &Engine<K, S> {
+    pub fn engine(&self) -> &E {
         &self.engine
     }
 
@@ -221,7 +230,7 @@ impl<K: Kernel, S: Store<K>> H5iApp<K, S> {
     {
         let key = headers.get("idempotency-key").and_then(|v| v.to_str().ok());
         let result = match key {
-            Some(k) => self.engine.execute_idempotent(actor.principal(), k, &cmd).await,
+            Some(k) => self.engine.execute_idempotent::<S>(actor.principal(), k, &cmd).await,
             None => self.engine.execute(actor.principal(), &cmd).await,
         };
         match result {
@@ -230,7 +239,7 @@ impl<K: Kernel, S: Store<K>> H5iApp<K, S> {
                 let (status, body) = S::encode_error(&refusal);
                 Err(reply(status, body))
             }
-            Err(DbError::IdempotencyConflict) => Err(reply(StatusCode::UNPROCESSABLE_ENTITY, error_body("idempotency key reused"))),
+            Err(ref e) if E::is_idempotency_conflict(e) => Err(reply(StatusCode::UNPROCESSABLE_ENTITY, error_body("idempotency key reused"))),
             Err(e) => {
                 tracing::error!(error = %e, "request failed");
                 Err(reply(StatusCode::SERVICE_UNAVAILABLE, error_body("unavailable")))
@@ -240,22 +249,24 @@ impl<K: Kernel, S: Store<K>> H5iApp<K, S> {
 }
 
 /// Ready-made `POST /rpc` taking a JSON command. Merge or nest it into your router.
-pub fn rpc_router<K, S>(app: H5iApp<K, S>) -> Router
+pub fn executor_rpc_router<K, S, E>(app: H5iApp<K, S, E>) -> Router
 where
     K: Kernel,
+    E: Executor<K>,
     S: Store<K> + ReplyCodec<K> + Api<K>,
 {
-    Router::new().route("/rpc", post(rpc::<K, S>)).with_state(app)
+    Router::new().route("/rpc", post(rpc::<K, S, E>)).with_state(app)
 }
 
-async fn rpc<K, S>(
-    State(app): State<H5iApp<K, S>>,
+async fn rpc<K, S, E>(
+    State(app): State<H5iApp<K, S, E>>,
     actor: Actor<K>,
     headers: HeaderMap,
     body: Json<serde_json::Value>,
 ) -> Response
 where
     K: Kernel,
+    E: Executor<K>,
     S: Store<K> + ReplyCodec<K> + Api<K>,
 {
     match S::decode_command(body.0) {
@@ -272,4 +283,26 @@ pub fn reply(status: StatusCode, body: Value) -> Response {
 /// `{"error": <message>}`.
 pub fn error_body(msg: &str) -> Value {
     Value::obj([("error", Value::str(msg))])
+}
+
+/// PostgreSQL router, preserving the original two generic parameters.
+pub fn rpc_router<K: Kernel, S: Store<K> + ReplyCodec<K> + Api<K>>(app: H5iApp<K, S>) -> Router {
+    executor_rpc_router(app)
+}
+
+#[cfg(test)]
+mod compatibility {
+    use super::*;
+    // Typechecked without a database. Omitting the turbofish must still infer S
+    // from Engine<K, S>, as it did before Executor was introduced.
+    #[allow(dead_code)]
+    fn constructor_infers_store<K: Kernel, S: Store<K>>(engine: Arc<Engine<K, S>>, auth: impl Authenticator<K>) {
+        let app = H5iApp::new(engine, auth);
+        let _: &Engine<K, S> = app.engine();
+    }
+    #[allow(dead_code)]
+    fn alternative_executor<K: Kernel, S: Store<K>>(engine: Arc<h5i_app_core::MemoryEngine<K>>, auth: impl Authenticator<K>) {
+        let app = H5iApp::<K, S, _>::with_executor(engine, auth);
+        let _: &h5i_app_core::MemoryEngine<K> = app.engine();
+    }
 }

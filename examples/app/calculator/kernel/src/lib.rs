@@ -163,3 +163,6 @@ mod tests {
         assert_eq!(run(&s, 1, Command::Apply { op: Op::Sub, arg: 43 }).1, Err(Error::Underflow));
     }
 }
+
+/// Only Get can run without a database write transaction.
+pub fn read_only(cmd: &Command) -> bool { matches!(cmd, Command::Get) }

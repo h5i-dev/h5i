@@ -403,6 +403,15 @@ def sql_writes
     let w1 ← Memory.sql_put m
     alloc.vec.Vec.push (alloc.vec.Vec.new h5i_app_sql.Write) w1
 
+/-- [calculator_kernel::read_only]:
+    Source: 'examples/app/calculator/kernel/src/lib.rs', lines 168:0-168:71
+    Visibility: public -/
+def read_only (cmd : Command) : Result Bool := do
+  match cmd with
+  | Command.Set _ => ok false
+  | Command.Apply _ _ => ok false
+  | Command.Get => ok true
+
 /-- [calculator_kernel::{calculator_kernel::Memory}::from_row]:
     Source: 'crates/h5i-app-schema/src/lib.rs', lines 146:12-167:13
     Visibility: public -/

@@ -139,3 +139,5 @@ impl ReplyCodec<Calc> for CalcStore {
         Ok(k::Reply::Value(u64::from_be_bytes(b)))
     }
 }
+
+pub mod executor_demo;

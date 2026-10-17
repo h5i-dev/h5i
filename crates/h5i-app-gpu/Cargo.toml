@@ -1,0 +1,10 @@
+[package]
+name = "h5i-app-gpu"
+version = "0.1.1"
+edition = "2024"
+publish = false
+[dependencies]
+parallel-kernel = { path = "../../examples/app/parallel/kernel" }
+[workspace]
+members = ["backend-nvvm", "backend-nvvm/device"]
+exclude = ["backend-oxide"]
