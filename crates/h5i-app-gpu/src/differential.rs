@@ -2,18 +2,19 @@
 use crate::{
     arena::{MAX_ROWS, SearchArena},
     batch::*,
+    layout::{MAX_TERMS, ROW_BYTES, RULE_BYTES, TERM_SLOT, TERMS_BYTES},
 };
 use parallel_kernel::Bookmark;
 pub fn fixture(n: usize, random: bool) -> Batch {
     let mut b = Batch {
-        text: vec![0; n * 512],
-        patterns: vec![0; n * 64],
-        displays: vec![0; n * 64],
+        text: vec![0; n * ROW_BYTES],
+        patterns: vec![0; n * RULE_BYTES],
+        displays: vec![0; n * RULE_BYTES],
         tags: vec![3; n],
         members: vec![5; n],
         powers: vec![50; n],
-        terms: vec![0; 128],
-        count: 8,
+        terms: vec![0; TERMS_BYTES],
+        count: MAX_TERMS,
         any: false,
         negated: 0,
         required: 1,
@@ -23,16 +24,16 @@ pub fn fixture(n: usize, random: bool) -> Batch {
         require_display: true,
         n,
     };
-    for t in 0..8 {
-        b.terms[t * 16..t * 16 + 12].copy_from_slice(b"nonmatchword");
+    for t in 0..MAX_TERMS {
+        b.terms[t * TERM_SLOT..t * TERM_SLOT + 12].copy_from_slice(b"nonmatchword");
     }
     let mut seed = 0x123456789abcdefu64;
     for i in 0..n {
-        for j in 0..512 {
+        for j in 0..ROW_BYTES {
             seed ^= seed << 13;
             seed ^= seed >> 7;
             seed ^= seed << 17;
-            b.text[i * 512 + j] = if random {
+            b.text[i * ROW_BYTES + j] = if random {
                 b'a' + (seed % 26) as u8
             } else {
                 b'a' + (j % 23) as u8
@@ -41,17 +42,17 @@ pub fn fixture(n: usize, random: bool) -> Batch {
         if random {
             let text=b"hello Alice, a notification message with enough content to exercise wildcard matching";
             if i % 3 == 0 {
-                b.text[i * 512..(i + 1) * 512].fill(0);
-                b.text[i * 512..i * 512 + text.len()].copy_from_slice(text);
+                b.text[i * ROW_BYTES..(i + 1) * ROW_BYTES].fill(0);
+                b.text[i * ROW_BYTES..i * ROW_BYTES + text.len()].copy_from_slice(text);
             }
             b.tags[i] = seed & 7;
             b.members[i] = seed % 14;
             b.powers[i] = seed % 70;
         }
-        b.patterns[i * 64..i * 64 + 23].copy_from_slice(b"h*notification*matching");
-        b.displays[i * 64..i * 64 + 5].copy_from_slice(b"Alice");
+        b.patterns[i * RULE_BYTES..i * RULE_BYTES + 23].copy_from_slice(b"h*notification*matching");
+        b.displays[i * RULE_BYTES..i * RULE_BYTES + 5].copy_from_slice(b"Alice");
         if random {
-            let pattern = &mut b.patterns[i * 64..i * 64 + 64];
+            let pattern = &mut b.patterns[i * RULE_BYTES..i * RULE_BYTES + RULE_BYTES];
             match i % 6 {
                 0 => pattern.fill(b'*'),
                 1 => pattern.fill(b'?'),
@@ -63,8 +64,8 @@ pub fn fixture(n: usize, random: bool) -> Batch {
                 _ => {}
             }
             if i % 2 == 1 {
-                b.displays[i * 64..i * 64 + 64].fill(0);
-                b.displays[i * 64] = b'a';
+                b.displays[i * RULE_BYTES..i * RULE_BYTES + RULE_BYTES].fill(0);
+                b.displays[i * RULE_BYTES] = b'a';
             }
         }
     }
@@ -75,8 +76,8 @@ pub fn check<B: Backend>(backend: &mut B) -> Result<(), B::Error> {
         let mut b = fixture(n, true);
         b.terms.fill(0);
         b.terms[0] = b'a';
-        b.terms[16] = b'e';
-        b.terms[32] = b'z';
+        b.terms[TERM_SLOT] = b'e';
+        b.terms[2 * TERM_SLOT] = b'z';
         for decision in [Decision::Search, Decision::Push] {
             for k in 0..5 {
                 b.any = k % 2 == 1;
@@ -106,9 +107,9 @@ pub fn check<B: Backend>(backend: &mut B) -> Result<(), B::Error> {
     }
     drop(boundary);
     let mut malformed = fixture(3, true);
-    malformed.terms.truncate(127);
-    malformed.patterns.truncate(65);
-    malformed.displays.truncate(63);
+    malformed.terms.truncate(TERMS_BYTES - 1);
+    malformed.patterns.truncate(RULE_BYTES + 1);
+    malformed.displays.truncate(RULE_BYTES - 1);
     for decision in [Decision::Search, Decision::Push] {
         assert_eq!(
             backend.run(decision, &malformed)?,
@@ -125,9 +126,9 @@ pub fn check<B: Backend>(backend: &mut B) -> Result<(), B::Error> {
         for (start, end) in [(0, 128), (128, 257)] {
             let mut part = b.clone();
             part.n = end - start;
-            part.text = b.text[start * 512..end * 512].to_vec();
-            part.patterns = b.patterns[start * 64..end * 64].to_vec();
-            part.displays = b.displays[start * 64..end * 64].to_vec();
+            part.text = b.text[start * ROW_BYTES..end * ROW_BYTES].to_vec();
+            part.patterns = b.patterns[start * RULE_BYTES..end * RULE_BYTES].to_vec();
+            part.displays = b.displays[start * RULE_BYTES..end * RULE_BYTES].to_vec();
             part.tags = b.tags[start..end].to_vec();
             part.members = b.members[start..end].to_vec();
             part.powers = b.powers[start..end].to_vec();
@@ -140,7 +141,7 @@ pub fn check<B: Backend>(backend: &mut B) -> Result<(), B::Error> {
     let rows = vec![
         Bookmark {
             id: 91,
-            text: vec![b'x'; 512],
+            text: vec![b'x'; ROW_BYTES],
             tags: 7,
         },
         Bookmark {
@@ -164,8 +165,8 @@ pub fn check<B: Backend>(backend: &mut B) -> Result<(), B::Error> {
         },
         parallel_kernel::Event {
             id: 1,
-            content: vec![b'x'; 512],
-            display: vec![b'x'; 64],
+            content: vec![b'x'; ROW_BYTES],
+            display: vec![b'x'; RULE_BYTES],
             members: 1,
             power: 0,
         },
@@ -194,7 +195,7 @@ pub fn check<B: Backend>(backend: &mut B) -> Result<(), B::Error> {
     b.enabled = rule.enabled;
     b.require_display = rule.display;
     b.patterns.fill(0);
-    for row in b.patterns.chunks_exact_mut(64) {
+    for row in b.patterns.chunks_exact_mut(RULE_BYTES) {
         row[..rule.pattern.len()].copy_from_slice(&rule.pattern);
     }
     assert_eq!(

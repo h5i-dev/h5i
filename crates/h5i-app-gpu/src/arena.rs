@@ -1,8 +1,7 @@
 //! Host layout adapter checked against the schema-generated Bookmark row.
 //! Device code imports only pure decisions, never these allocating functions.
+pub use crate::layout::{MAX_ROWS, ROW_BYTES, RULE_BYTES, TERMS_BYTES};
 use parallel_kernel::Bookmark;
-pub const ROW_BYTES: usize = 512;
-pub const MAX_ROWS: usize = 1_000_000;
 #[derive(Debug, PartialEq, Eq)]
 pub enum LayoutError {
     Capacity,
@@ -66,7 +65,7 @@ mod tests {
             },
             Bookmark {
                 id: 1,
-                text: vec![b'a'; 512],
+                text: vec![b'a'; ROW_BYTES],
                 tags: 1,
             },
         ];
@@ -104,11 +103,11 @@ mod tests {
     }
     #[test]
     fn batches_are_independent_on_cpu() {
-        let terms = [b'a'; 128];
+        let terms = [b'a'; TERMS_BYTES];
         let rows = vec![
             Bookmark {
                 id: 4,
-                text: vec![b'a'; 512],
+                text: vec![b'a'; ROW_BYTES],
                 tags: 1,
             },
             Bookmark {
@@ -120,7 +119,7 @@ mod tests {
         let packed = SearchArena::pack(&rows, 2).unwrap();
         let evaluate = |a: &SearchArena| {
             a.text
-                .chunks_exact(512)
+                .chunks_exact(ROW_BYTES)
                 .zip(&a.tags)
                 .map(|(r, t)| parallel_kernel::bookmark_search(r, &terms, 1, false, 0, *t, 1))
                 .collect::<Vec<_>>()
@@ -150,13 +149,13 @@ impl PushArena {
         }
         let mut out = Self {
             ids: Vec::with_capacity(rows.len()),
-            content: vec![0; rows.len() * 512],
-            display: vec![0; rows.len() * 64],
+            content: vec![0; rows.len() * ROW_BYTES],
+            display: vec![0; rows.len() * RULE_BYTES],
             members: Vec::with_capacity(rows.len()),
             powers: Vec::with_capacity(rows.len()),
         };
         for (i, row) in rows.iter().enumerate() {
-            if row.content.len() > 512 || row.display.len() > 64 {
+            if row.content.len() > ROW_BYTES || row.display.len() > RULE_BYTES {
                 return Err(LayoutError::Text);
             }
             if row.content.last() == Some(&0) || row.display.last() == Some(&0) {
@@ -165,8 +164,10 @@ impl PushArena {
             out.ids.push(row.id);
             out.members.push(row.members);
             out.powers.push(row.power);
-            out.content[i * 512..i * 512 + row.content.len()].copy_from_slice(&row.content);
-            out.display[i * 64..i * 64 + row.display.len()].copy_from_slice(&row.display);
+            out.content[i * ROW_BYTES..i * ROW_BYTES + row.content.len()]
+                .copy_from_slice(&row.content);
+            out.display[i * RULE_BYTES..i * RULE_BYTES + row.display.len()]
+                .copy_from_slice(&row.display);
         }
         Ok(out)
     }
@@ -175,8 +176,8 @@ impl PushArena {
             .iter()
             .enumerate()
             .map(|(i, id)| {
-                let content = &self.content[i * 512..i * 512 + 512];
-                let display = &self.display[i * 64..i * 64 + 64];
+                let content = &self.content[i * ROW_BYTES..i * ROW_BYTES + ROW_BYTES];
+                let display = &self.display[i * RULE_BYTES..i * RULE_BYTES + RULE_BYTES];
                 let nc = content.iter().rposition(|b| *b != 0).map_or(0, |j| j + 1);
                 let nd = display.iter().rposition(|b| *b != 0).map_or(0, |j| j + 1);
                 parallel_kernel::Event {

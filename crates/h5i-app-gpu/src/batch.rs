@@ -1,6 +1,6 @@
 //! Backend-independent bounded SoA inputs and CPU oracle. Padding is semantic:
 //! both CPU and GPU evaluate the same fixed-width byte slices.
-use crate::arena::MAX_ROWS;
+use crate::arena::{MAX_ROWS, ROW_BYTES, RULE_BYTES};
 #[derive(Clone)]
 pub struct Batch {
     pub text: Vec<u8>,
@@ -44,12 +44,12 @@ impl Backend for Cpu {
         };
         for i in 0..b.n {
             let valid = i < MAX_ROWS
-                && i < b.text.len() / 512
+                && i < b.text.len() / ROW_BYTES
                 && match decision {
                     Decision::Search => i < b.tags.len(),
                     Decision::Push => {
-                        i < b.patterns.len() / 64
-                            && i < b.displays.len() / 64
+                        i < b.patterns.len() / RULE_BYTES
+                            && i < b.displays.len() / RULE_BYTES
                             && i < b.members.len()
                             && i < b.powers.len()
                     }
@@ -58,15 +58,15 @@ impl Backend for Cpu {
                 out.errors[i] = 1;
                 continue;
             }
-            let row = &b.text[i * 512..i * 512 + 512];
+            let row = &b.text[i * ROW_BYTES..i * ROW_BYTES + ROW_BYTES];
             out.values[i] = match decision {
                 Decision::Search => parallel_kernel::bookmark_search(
                     row, &b.terms, b.count, b.any, b.negated, b.tags[i], b.required,
                 ) as u32,
                 Decision::Push => parallel_kernel::push_rule(
                     row,
-                    &b.patterns[i * 64..i * 64 + 64],
-                    &b.displays[i * 64..i * 64 + 64],
+                    &b.patterns[i * RULE_BYTES..i * RULE_BYTES + RULE_BYTES],
+                    &b.displays[i * RULE_BYTES..i * RULE_BYTES + RULE_BYTES],
                     b.members[i],
                     b.minimum,
                     b.maximum,

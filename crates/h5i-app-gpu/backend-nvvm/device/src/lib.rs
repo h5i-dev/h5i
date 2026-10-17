@@ -3,7 +3,11 @@
 #![no_std]
 #[path = "../../../../../examples/app/parallel/kernel/src/lib.rs"]
 mod shared;
+// The SoA widths are the single source of truth shared with the host crate.
+#[path = "../../../src/layout.rs"]
+mod layout;
 use cuda_std::{kernel, thread};
+use layout::{MAX_ROWS, ROW_BYTES, RULE_BYTES};
 #[kernel]
 pub unsafe fn search_batch(
     rows: &[u8],
@@ -19,12 +23,12 @@ pub unsafe fn search_batch(
 ) {
     let i = thread::index_1d() as usize;
     if i < n {
-        let (value, error) = if i >= 1_000_000 || i >= tags.len() || i >= rows.len() / 512 {
+        let (value, error) = if i >= MAX_ROWS || i >= tags.len() || i >= rows.len() / ROW_BYTES {
             (0, 1)
         } else {
             (
                 shared::bookmark_search(
-                    &rows[i * 512..i * 512 + 512],
+                    &rows[i * ROW_BYTES..i * ROW_BYTES + ROW_BYTES],
                     terms,
                     count,
                     any,
@@ -59,10 +63,10 @@ pub unsafe fn push_batch(
 ) {
     let i = thread::index_1d() as usize;
     if i < n {
-        let (value, error) = if i >= 1_000_000
-            || i >= events.len() / 512
-            || i >= patterns.len() / 64
-            || i >= displays.len() / 64
+        let (value, error) = if i >= MAX_ROWS
+            || i >= events.len() / ROW_BYTES
+            || i >= patterns.len() / RULE_BYTES
+            || i >= displays.len() / RULE_BYTES
             || i >= members.len()
             || i >= powers.len()
         {
@@ -70,9 +74,9 @@ pub unsafe fn push_batch(
         } else {
             (
                 shared::push_rule(
-                    &events[i * 512..i * 512 + 512],
-                    &patterns[i * 64..i * 64 + 64],
-                    &displays[i * 64..i * 64 + 64],
+                    &events[i * ROW_BYTES..i * ROW_BYTES + ROW_BYTES],
+                    &patterns[i * RULE_BYTES..i * RULE_BYTES + RULE_BYTES],
+                    &displays[i * RULE_BYTES..i * RULE_BYTES + RULE_BYTES],
                     members[i],
                     minimum,
                     maximum,
