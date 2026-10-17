@@ -524,6 +524,42 @@ pub enum BrowserCommands {
         json: bool,
     },
 
+    /// Run JavaScript in the browser a proxy session drives, and print the result.
+    ///
+    /// Proxy sessions only. The `proxy-observed` lane (`websec`, `recon`,
+    /// `requests`) sees HTTP; the DOM, JavaScript, console and dialogs live in
+    /// the Chromium this session drives. This reaches that browser — the same
+    /// one `proxy-open` drives — so a reflected or DOM-delivered effect (an XSS
+    /// that fires, a value a script wrote) is confirmed through h5i, not by
+    /// reaching past it to agent-browser. The result is kept in the session's
+    /// artifacts beside the HTTP capture.
+    Eval {
+        /// The JavaScript to evaluate in the current page.
+        #[arg(value_name = "JS")]
+        js: String,
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Print the console log of the browser a proxy session drives.
+    ///
+    /// Proxy sessions only. Console output — including what an injected script
+    /// logs — is a JS-side signal the HTTP capture never sees. Kept in the
+    /// session's artifacts.
+    Console {
+        /// Clear the log after reading it.
+        #[arg(long)]
+        clear: bool,
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Open a WebSocket, send frames, and report what came back.
     ///
     /// The workbench verb for the other protocol. `resend` bends one HTTP
@@ -1457,7 +1493,28 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             // Reading is not mutating, but a `--url` moves the page, and the
             // lock exists so a human at the wheel is not steered from under.
             let moves_the_page = argv.iter().any(|a| a == "--url");
-            verb(&root, session.as_deref(), argv, moves_the_page, json)
+            // A proxy session has no h5i engine to speak to: its browser is the
+            // Chromium h5i drives through agent-browser, so the same read goes
+            // there. A native session keeps the engine lane below.
+            if is_proxy_session(&root, session.as_deref()) {
+                proxy_delegate(&root, session.as_deref(), argv, "snapshot", json)
+            } else {
+                verb(&root, session.as_deref(), argv, moves_the_page, json)
+            }
+        }
+        BrowserCommands::Eval { js, session, json } => {
+            proxy_delegate(&root, session.as_deref(), vec!["eval".into(), js], "eval", json)
+        }
+        BrowserCommands::Console {
+            clear,
+            session,
+            json,
+        } => {
+            let mut argv = vec!["console".to_string()];
+            if clear {
+                argv.push("--clear".into());
+            }
+            proxy_delegate(&root, session.as_deref(), argv, "console", json)
         }
         BrowserCommands::Navigate { session, url, json } => {
             verb(&root, session.as_deref(), vec!["navigate".into(), url], true, json)
@@ -2731,6 +2788,119 @@ fn start_proxy(
 /// The agent-browser session name a proxy session's `proxy-open` drives.
 fn proxy_browser_session(id: &str) -> String {
     format!("h5i-{id}")
+}
+
+/// Whether the selected session is a proxy session, so a read verb goes to the
+/// Chromium it drives rather than to an h5i engine. A gone session answers
+/// `false` and the engine lane reports the gone session the usual way.
+fn is_proxy_session(root: &Path, selector: Option<&str>) -> bool {
+    bs::resolve(root, selector)
+        .map(|s| s.proxy.is_some())
+        .unwrap_or(false)
+}
+
+/// Run a read verb against the Chromium a proxy session drives, by delegating to
+/// the same agent-browser session `proxy-open` uses, and keep the result in the
+/// session's artifacts so the JS-side observation joins the HTTP capture.
+///
+/// Proxy sessions only. A native session speaks to h5i's own engine through
+/// `verb` (with its control lock and receipts); this lane talks to the external
+/// browser h5i does not host, so it is a separate, explicit path. The point is
+/// one observation surface: `websec`/`recon` read the HTTP the proxy captured,
+/// and `eval`/`console`/`snapshot` read the DOM, JavaScript and console of the
+/// same page — both through h5i, for the same session.
+fn proxy_delegate(
+    root: &Path,
+    selector: Option<&str>,
+    ab_argv: Vec<String>,
+    label: &str,
+    json: bool,
+) -> anyhow::Result<()> {
+    let session = match bs::resolve(root, selector) {
+        Ok(s) => s,
+        Err(gone) => {
+            eprintln!("{gone}");
+            std::process::exit(bs::EXIT_SESSION_GONE);
+        }
+    };
+    let Some(proxy) = session.proxy.as_ref() else {
+        anyhow::bail!(
+            "`h5i browser {label}` observes the browser a proxy session drives, but session {} \
+             is not a proxy session. Start one with `h5i browser proxy <url>`, open a page with \
+             `h5i browser proxy-open <url>`, then read it here.",
+            session.id
+        );
+    };
+    let agent_browser = proxy_agent_browser()?;
+    let ab_session = proxy_browser_session(&session.id);
+    // The same `--session` and proxy flags `proxy-open` launches with, so this
+    // attaches to that browser and its open page rather than starting a fresh,
+    // unproxied one that would answer from `about:blank`.
+    let output = Command::new(&agent_browser)
+        .arg("--session")
+        .arg(&ab_session)
+        .args(agent_browser_proxy_args(&proxy.url))
+        .args(&ab_argv)
+        .output()
+        .map_err(|e| anyhow::anyhow!("could not run agent-browser: {e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "agent-browser {label} failed for session {}: {}{}",
+            session.id,
+            bs::scrub_text(stderr.trim()),
+            if stdout.trim().is_empty() {
+                String::new()
+            } else {
+                format!("\n{}", stdout.trim())
+            }
+        );
+    }
+    let recorded = record_browser_observation(root, &session, label, &ab_argv, &stdout);
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "ok": true,
+                "session": session.id,
+                "verb": label,
+                "output": stdout,
+                "artifact": recorded.as_ref().map(|p| p.display().to_string()),
+            }))?
+        );
+    } else {
+        print!("{stdout}");
+        if !stdout.ends_with('\n') {
+            println!();
+        }
+        if let Some(p) = &recorded {
+            eprintln!("  (recorded to {})", p.display());
+        }
+    }
+    Ok(())
+}
+
+/// Keep a DOM/console observation beside the session's HTTP capture, so it is
+/// evidence the session holds rather than output the agent saw once. Best
+/// effort: a failure to write is not a failure to observe.
+fn record_browser_observation(
+    root: &Path,
+    session: &bs::Session,
+    label: &str,
+    ab_argv: &[String],
+    output: &str,
+) -> Option<PathBuf> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let dir = bs::dir(root, &session.id).join("artifacts");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(format!("{label}-{stamp}.txt"));
+    let header = format!("# h5i browser {} ({})\n\n", label, ab_argv.join(" "));
+    std::fs::write(&path, format!("{header}{output}")).ok()?;
+    Some(path)
 }
 
 /// Best-effort shutdown of the agent-browser daemon `proxy-open` started for a
