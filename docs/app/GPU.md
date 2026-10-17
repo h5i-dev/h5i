@@ -334,6 +334,8 @@ output-buffer allocation took 0.905 / 6.409 / 73.670 ms at 10k / 100k / 1M.
 Resident total includes AST/text H2D, launch, synchronization, and full value
 and error arrays D2H (8 bytes/row), with rows and device output buffers reused.
 Upload-each-call includes a fresh upload and output-buffer allocation as well.
+Upload-each-call and CPU-16 measurements also include a host output-equality
+check against the expected vector.
 Context initialization/module JIT, host parsing/packing, and final resource
 teardown are excluded. CPU timings use the same bounded evaluator and include
 output allocation, thread creation/join and partitioning into 1 or 16 chunks.

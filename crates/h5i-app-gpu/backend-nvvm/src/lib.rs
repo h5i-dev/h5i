@@ -98,6 +98,9 @@ pub struct ResidentLinkding {
 impl Nvvm {
     pub fn upload_linkding(&self, r: &Rows) -> Result<ResidentLinkding, Failure> {
         let n = r.len();
+        if n > 1_000_001 {
+            return Err("output arena exceeds probe capacity".into());
+        }
         Ok(ResidentLinkding {
             fields: DeviceBuffer::from_slice(&r.fields)?,
             lengths: DeviceBuffer::from_slice(&r.lengths)?,

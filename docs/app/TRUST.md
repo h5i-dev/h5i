@@ -131,3 +131,11 @@ backend, LLVM/libNVVM, PTX JIT, driver, hardware and the launch/layout/bounds
 shell are trusted. Lean establishes properties of extracted Rust decisions;
 it says nothing about GPU execution. CPU/GPU differential checks are empirical,
 not an equivalence proof. cuda-oxide remains a separate, currently blocked probe.
+The bounded linkding search path has independent-original/CPU/GPU differential
+coverage, but no new Lean correctness theorem. Its host AST serialization,
+field lengths, launch ABI and resident buffers remain trusted. ASCII-folded
+FNV-1a tag hashes can collide and produce false positives; fixed text/tag/node
+capacities reject otherwise valid oversized inputs. The prototype does not
+implement database-to-GPU snapshot coherence or tenant isolation. Its measured
+scan speedups therefore establish a performance opportunity, rather than an
+end-to-end verified GPU executor.

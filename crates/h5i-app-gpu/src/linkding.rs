@@ -89,7 +89,7 @@ impl Rows {
     }
     pub fn cpu(&self, q: &Query, threads: usize) -> Vec<u32> {
         let mut out = vec![0; self.len()];
-        let chunk = self.len().div_ceil(threads).max(1);
+        let chunk = self.len().div_ceil(threads.max(1)).max(1);
         std::thread::scope(|scope| {
             for (part, dst) in out.chunks_mut(chunk).enumerate() {
                 scope.spawn(move || {
