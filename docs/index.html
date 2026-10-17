@@ -194,7 +194,7 @@
           "name": "How does h5i compare with Playwright, Puppeteer, or Burp Suite?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Playwright and Puppeteer are the right choice when maximum website compatibility is the priority. Burp Suite is the right choice when an experienced tester wants the deepest workbench: an intercepting proxy, Scanner, Intruder, and extensions. h5i is for the case where your own AI agent runs the test end to end: one session drives the browser and records its traffic, and the agent edits, replays, and compares requests through a CLI built for it, inside a sandbox with a reviewable record. See the Burp Suite comparison."
+            "text": "Playwright and Puppeteer are the right choice when you want to script a browser by hand. Burp Suite is the right choice when an experienced tester wants the deepest workbench: an intercepting proxy, Scanner, Intruder, and extensions. h5i is for the case where your own AI agent runs the test end to end: one session drives the browser and records its traffic, and the agent edits, replays, and compares requests through a CLI built for it, inside a sandbox with a reviewable record. See the Burp Suite comparison."
           }
         },
         {
@@ -202,7 +202,7 @@
           "name": "Does h5i work on every website?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No. h5i works best for content-heavy websites and common browser interactions, but some browser APIs are not yet supported. For incompatible websites, you can run Chromium inside an h5i sandbox."
+            "text": "Yes. h5i's own engine handles content-heavy websites and common browser interactions. For a site that needs a full browser, h5i browser proxy runs Chromium through a per-session capture proxy, and websec, recon, replay, and audit work on that session the same way they do on a native one."
           }
         },
         {
@@ -1275,11 +1275,11 @@
       </details>
       <details class="faq-item">
         <summary>How does h5i compare with Playwright, Puppeteer, or Burp Suite?</summary>
-        <div class="faq-answer">Playwright and Puppeteer are the right choice when maximum website compatibility is the priority. Burp Suite is the right choice when an experienced tester wants the deepest workbench: an intercepting proxy, Scanner, Intruder, and extensions. h5i is for the case where your own AI agent runs the test end to end: one session drives the browser and records its traffic, and the agent edits, replays, and compares requests through a CLI built for it, inside a sandbox with a reviewable record. See the <a href="/blog/burp-suite-vs-h5i-for-ai-agents/">Burp Suite comparison</a>.</div>
+        <div class="faq-answer">Playwright and Puppeteer are the right choice when you want to script a browser by hand. Burp Suite is the right choice when an experienced tester wants the deepest workbench: an intercepting proxy, Scanner, Intruder, and extensions. h5i is for the case where your own AI agent runs the test end to end: one session drives the browser and records its traffic, and the agent edits, replays, and compares requests through a CLI built for it, inside a sandbox with a reviewable record. See the <a href="/blog/burp-suite-vs-h5i-for-ai-agents/">Burp Suite comparison</a>.</div>
       </details>
       <details class="faq-item">
         <summary>Does h5i work on every website?</summary>
-        <div class="faq-answer">No. h5i works best for content-heavy websites and common browser interactions, but some browser APIs are not yet supported. For incompatible websites, you can run Chromium inside an h5i sandbox.</div>
+        <div class="faq-answer">Yes. h5i's own engine handles content-heavy websites and common browser interactions. For a site that needs a full browser, h5i browser proxy runs Chromium through a per-session capture proxy, and websec, recon, replay, and audit work on that session the same way they do on a native one.</div>
       </details>
       <details class="faq-item">
         <summary>How is the agent contained?</summary>

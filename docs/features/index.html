@@ -157,10 +157,10 @@
         },
         {
           "@type": "Question",
-          "name": "What if h5i cannot render a website correctly?",
+          "name": "What if a website needs a full browser?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Some browser APIs are not supported. You can run Chromium inside an h5i sandbox, but h5i's engine-level traffic capture and browser takeover are not available for that Chromium session."
+            "text": "Run it through h5i browser proxy. Chromium sends its traffic through a per-session capture proxy, so the session stores the same messages h5i's own engine would, and websec, recon, replay, and audit read it the same way. A human can sign in through the agent-browser dashboard."
           }
         }
       ],
@@ -630,8 +630,8 @@
         <div class="faq-answer">No. Configured network and filesystem limits restrict access, but an agent can still take harmful actions on an allowed target. Sandboxing the browser alone does not constrain the agent's other tools.</div>
       </details>
       <details class="faq-item">
-        <summary>What if h5i cannot render a website correctly?</summary>
-        <div class="faq-answer">Some browser APIs are not supported. You can run Chromium inside an h5i sandbox, but h5i's engine-level traffic capture and browser takeover are not available for that Chromium session.</div>
+        <summary>What if a website needs a full browser?</summary>
+        <div class="faq-answer">Run it through h5i browser proxy. Chromium sends its traffic through a per-session capture proxy, so the session stores the same messages h5i's own engine would, and websec, recon, replay, and audit read it the same way. A human can sign in through the agent-browser dashboard.</div>
       </details>
     </div>
   </div>

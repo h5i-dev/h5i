@@ -78,7 +78,9 @@ never upgraded.
 - **Not a complete browser.** Of twenty single-page applications measured,
   eighteen read usefully and one not at all. Tabs, extensions, Service Workers,
   WebRTC and iframes are absent by decision, and a page needing an API the
-  engine lacks gets that API *named* in the snapshot.
+  engine lacks gets that API *named* in the snapshot. Such a page runs in
+  Chromium through [`h5i browser proxy`](#chromium-through-a-proxy), which
+  captures into the same session.
 - **Not a content filter.** h5i does not classify what a page says. It bounds
   what a persuaded agent can reach.
 - **Not a defence against a targeted kernel exploit.** See [Limits](#limits).
