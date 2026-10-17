@@ -105,11 +105,7 @@ All new sources/caches/toolchains remain under `/var/tmp`; our files use about
 11 GB, below the 15 GB budget. GPU 0 is idle after the run. Only our
 `h5i-gpu-pg` container was started for these checks and stopped afterwards.
 
-The bounded linkding NVVM path also passed `cargo app-verify --full`: **42
-passed, 0 failed, 0 skipped**, with all five mutants caught. Existing extraction
-freshness and Lean checks passed unchanged. Separately, all five GPU host crate
-unit tests, the independent-original/CPU/GPU linkding differential suite, and
-the existing search/push GPU differential suite passed. No existing theorem,
-axiom set, or generated Lean file was changed.
-[Full gate output](measurements/verify-linkding-full.txt),
-[linkding differential output](gpu/linkding-differential.txt).
+The toy search/push GPU differential suite and the five GPU host-crate unit
+tests pass; no existing theorem, axiom set, or generated Lean file was changed.
+The real linkding GPU benchmark and its verification live in h5i-app-bench
+(performance/linkding/rust-h5i-gpu).

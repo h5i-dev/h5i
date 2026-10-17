@@ -263,103 +263,11 @@ At 1M rows, search takes 78.14 s on one thread and 4.95 s on 16; push takes
 2.54 s and 0.176 s respectively. CPU parallelism itself helps these models;
 no GPU advantage follows from that observation.
 
-## linkding search (real predicate)
+## Real-application GPU benchmark
 
-The NVVM backend now has a separate `linkding_batch` path. The parser and an
-independent host oracle are copied from h5i-app-bench's
-`performance/linkding/rust-h5i/kernel/src/search.rs` (read-only reference
-`/var/tmp/h5iab-ld-engine`, source revision
-`0d0f736935496770510b7a07e89c5cb6e278bd18`). The original parser runs once per query on the host.
-It serializes postfix nodes into kind/text-offset/text-length/left/right words,
-concatenated text bytes, root, and empty/failed flags. The allocation-free
-[`linkding.rs`](../../examples/app/parallel/kernel/src/linkding.rs) is the same
-plain Rust source compiled for CPU and device. Only the device wrapper has
-`#[kernel]`; it is outside the Charon input. No new Lean theorem or GPU/compiler
-correctness proof is claimed.
-
-This preserves terms, exact case-insensitive tags, lax term-as-tag matching,
-unknown keywords (true), unread/untagged flags, quotes, implicit AND, AND/OR/NOT,
-empty queries (true), and parse failures (false). Like the original, every AST
-node is evaluated; Boolean operators do not skip evaluation of their subtrees.
-There are four separate bounded text fields per row, with explicit lengths;
-terms cannot match across a field boundary. Embedded NUL bytes are preserved.
-The column buffers contain text slots (four 128-byte subslots per row), four
-lengths, eight tag hashes, and unread/untagged/tag-count metadata. Capacity is
-256 AST nodes, 128 bytes per text field, eight tags, and one million rows.
-Over-capacity inputs and malformed layouts return value=0/error=1 per row;
-a legitimate negative match returns value=0/error=0. Packing marks oversized
-bookmarks invalid rather than silently truncating their search semantics.
-
-Tags use ASCII-folded FNV-1a u64 hashes, computed on host for bookmarks and by
-the shared evaluator for query leaves. This deliberately replaces exact tag-byte
-comparison with hash equality: collisions can produce false positives, including
-for lax terms. Tag order does not affect membership. There is no collision
-resolution; applications requiring adversarial collision safety need an exact
-byte comparison or a collision-free host interning protocol before deployment.
-These bounds also exclude some otherwise valid linkding bookmarks. This is a
-bounded scan prototype, not a replacement for the full linkding HTTP service.
-
-Reproduce with `backend-nvvm/build-device.sh`, then
-`backend-nvvm/measure-linkding.sh` from `crates/h5i-app-gpu`. The latter runs
-independent-original/CPU/GPU comparisons before timing. Checks cover randomized
-Boolean queries and bookmarks, tags and lax mode, quoted terms, keywords,
-parse errors, empty queries, 128/129-row splitting, field separation,
-embedded zeros, 128/129-byte fields, tag/node/row capacities, malformed ASTs and
-truncated column buffers. CPU unit tests also check exact-width packing and
-case-folded hash/tag-order behavior. All outputs and error slots are compared.
-[Differential and CPU test log](gpu/linkding-differential.txt);
-[device build log](gpu/linkding-device-build.txt).
-
-Measurements below are medians of three runs on GPU 0 (RTX 3090), with CPU
-work pinned to CPUs 64–127 at nice 19. Rows use the exact searchable fields,
-flags and tag names from linkding `bench/seed.sql`: title `alpha i` every 50th
-row, otherwise `bookmark i`, empty description/notes, URL
-`https://example.com/b/i`, two `tagN` names, unread every seventh row. The same
-seed pattern is extended to 1M. Queries are strict (lax=false): `alpha`, and the
-eight-term query `(alpha or beta) and not (missing or absent) and (gamma or
-delta) and not (unknown and zeta)`. The heavy query deliberately evaluates all
-eight leaves, even though the seeded rows produce no final matches.
-
-| Query | Rows | CPU 1 ms | CPU 16 ms | GPU kernel ms | GPU resident total ms | GPU upload each call ms | Resident M rows/s |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| alpha | 10k | 4.732 | 1.676 | 0.033 | 0.118 | 0.783 | 84.6 |
-| alpha | 100k | 40.334 | 5.347 | 0.167 | 0.391 | 10.052 | 255.5 |
-| alpha | 1M | 349.505 | 35.392 | 1.539 | 7.205 | 75.252 | 138.8 |
-| eight terms | 10k | 24.745 | 4.590 | 0.181 | 0.289 | 1.107 | 34.6 |
-| eight terms | 100k | 268.364 | 28.226 | 5.432 | 5.700 | 17.122 | 17.5 |
-| eight terms | 1M | 2757.438 | 188.831 | 65.819 | 69.965 | 133.420 | 14.3 |
-
-[Raw measurements](measurements/linkding-nvvm.csv). The one-time row upload and
-output-buffer allocation took 0.905 / 6.409 / 73.670 ms at 10k / 100k / 1M.
-Resident total includes AST/text H2D, launch, synchronization, and full value
-and error arrays D2H (8 bytes/row), with rows and device output buffers reused.
-Upload-each-call includes a fresh upload and output-buffer allocation as well.
-Upload-each-call and CPU-16 measurements also include a host output-equality
-check against the expected vector.
-Context initialization/module JIT, host parsing/packing, and final resource
-teardown are excluded. CPU timings use the same bounded evaluator and include
-output allocation, thread creation/join and partitioning into 1 or 16 chunks.
-These are scans, not HTTP latency or end-to-end request throughput.
-
-The supplied same-host historical 100k `alpha` baselines are PostgreSQL ILIKE
-across four columns **213 ms**, and the original resident predicate **89 ms**
-(1 thread), **10.6 ms** (16), **7.1 ms** (32). These historical values were
-provided with this task, not remeasured here. The bounded CPU implementation
-has different allocation/layout costs, so use the new same-data CPU/GPU table
-for the direct comparison. Against the supplied Postgres baseline, residency
-already explains about **20–30×** with the original parallel CPU predicate;
-the new bounded CPU scan reaches **40×**. The resident GPU scan is about
-**545×** that historical Postgres time, and adds **13.7×** over the new
-16-thread CPU scan at 100k. These ratios do not predict a 545× API speedup.
-
-In this measured range resident GPU wins for both query weights: versus the
-same 16-thread CPU path, alpha is **14.2× / 13.7× / 4.9×** faster at
-10k/100k/1M, and eight terms **15.9× / 5.0× / 2.7×**. Uploading every call
-loses to the parallel CPU for alpha at 100k and 1M; the heavy query still wins
-there by about **1.65× / 1.42×**. Thus keeping rows resident is the main
-architectural requirement, with a further measurable GPU advantage for these
-bounded scans. Update/upload maintenance, snapshot consistency, tenant
-isolation, pagination, serialization, concurrent request scheduling and the
-full API remain unmeasured. Rust-CUDA compiled this predicate without a
-construct failure or handwritten alternate algorithm; cuda-oxide remains the
-separate deferred backend.
+The real linkding bookmark-search predicate is an application workload, not part
+of this framework. Its GPU benchmark — the `linkding_batch` kernel, resident
+device buffers, the independent-oracle/CPU/GPU differential suite, and the
+measured numbers — lives in **h5i-app-bench** at
+`performance/linkding/rust-h5i-gpu`, where it imports this crate's launch shell
+(`h5i-app-gpu`). Nothing linkding-specific belongs here.
