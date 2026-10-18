@@ -30,9 +30,78 @@ pub struct Output {
     pub values: Vec<u32>,
     pub errors: Vec<u32>,
 }
-pub trait Backend {
+/// Execution failures are distinct from successful negative decisions.
+#[derive(Debug, PartialEq, Eq)]
+pub enum OutputError {
+    Length {
+        expected: usize,
+        values: usize,
+        errors: usize,
+    },
+    Row {
+        index: usize,
+        code: u32,
+    },
+}
+impl core::fmt::Display for OutputError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Length {
+                expected,
+                values,
+                errors,
+            } => write!(
+                f,
+                "expected {expected} output rows, got {values} values and {errors} errors"
+            ),
+            Self::Row { index, code } => write!(f, "kernel row {index} failed with code {code}"),
+        }
+    }
+}
+impl std::error::Error for OutputError {}
+impl Output {
+    /// Check the complete result before using any decisions. Values retain
+    /// their kernel-specific meaning; every nonzero error invalidates the batch.
+    pub fn validate(&self, expected: usize) -> Result<(), OutputError> {
+        if self.values.len() != expected || self.errors.len() != expected {
+            return Err(OutputError::Length {
+                expected,
+                values: self.values.len(),
+                errors: self.errors.len(),
+            });
+        }
+        if let Some(index) = self.errors.iter().position(|&code| code != 0) {
+            return Err(OutputError::Row {
+                index,
+                code: self.errors[index],
+            });
+        }
+        Ok(())
+    }
+}
+/// A backend owns its execution resources; applications choose their input,
+/// operation and output types. Defaults retain the search/push probe API.
+/// Implementing this trait does not automatically compile a function for CUDA:
+/// the device entry point and launch/ABI shell remain explicit.
+///
+/// ```
+/// use h5i_app_gpu::batch::Backend;
+/// struct Sum;
+/// impl Backend<[u64], (), u64> for Sum {
+///     type Error = core::convert::Infallible;
+///     fn run(&mut self, _: (), rows: &[u64]) -> Result<u64, Self::Error> {
+///         Ok(rows.iter().copied().sum())
+///     }
+/// }
+/// assert_eq!(Sum.run((), &[2, 3]).unwrap(), 5);
+/// ```
+pub trait Backend<Input: ?Sized = Batch, Operation = Decision, Response = Output> {
     type Error;
-    fn run(&mut self, decision: Decision, batch: &Batch) -> Result<Output, Self::Error>;
+    fn run(
+        &mut self,
+        operation: Operation,
+        input: &Input,
+    ) -> core::result::Result<Response, Self::Error>;
 }
 pub struct Cpu;
 impl Backend for Cpu {
@@ -78,5 +147,40 @@ impl Backend for Cpu {
             };
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn negative_decisions_are_successful_but_row_errors_reject_the_batch() {
+        let mut out = Output {
+            values: vec![0, 1],
+            errors: vec![0, 0],
+        };
+        assert_eq!(out.validate(2), Ok(()));
+        out.errors[1] = 7;
+        assert_eq!(out.validate(2), Err(OutputError::Row { index: 1, code: 7 }));
+    }
+
+    #[test]
+    fn output_columns_must_cover_exactly_the_requested_rows() {
+        let mut out = Output {
+            values: vec![1],
+            errors: vec![],
+        };
+        assert!(matches!(out.validate(1), Err(OutputError::Length { .. })));
+        out.errors.push(0);
+        assert!(matches!(out.validate(2), Err(OutputError::Length { .. })));
+        assert_eq!(
+            Output {
+                values: vec![],
+                errors: vec![]
+            }
+            .validate(0),
+            Ok(())
+        );
     }
 }

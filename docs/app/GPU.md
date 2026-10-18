@@ -258,6 +258,18 @@ no GPU advantage follows from that observation.
 
 ## Real-application GPU benchmark
 
+`batch::Backend<Input, Operation, Response>` is the common execution interface.
+Its default types preserve the search/push probes; applications can implement
+it for their own batch, operation and output types without adding application
+variants to the framework's `Decision` enum. This interface does not generate
+device code: device entry points, layouts and launches remain explicit.
+
+For backends returning `batch::Output`, call `output.validate(input_row_count)`
+before consuming decisions. It rejects incomplete columns and every nonzero
+row error; an unsupported row must not silently become a negative decision.
+Values still have kernel-specific semantics. Applications choose their fallback
+policy, and CPU/GPU equivalence remains a separate differential-test obligation.
+
 The real linkding bookmark-search predicate is an application workload, not part
 of this framework. Its GPU benchmark — the `linkding_batch` kernel, resident
 device buffers, the independent-oracle/CPU/GPU differential suite, and the
