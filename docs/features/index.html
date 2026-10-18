@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i Features: Red-Teaming and Formal Verification</title>
-  <meta name="description" content="h5i features: agent browsing, recon, and HTTP capture and replay for red-teaming, sandboxed and audited, plus h5i-app for Lean 4 proofs of app logic.">
+  <title>h5i Features: Build, Verify, and Hack Your Web Apps</title>
+  <meta name="description" content="Explore h5i's verifiable Rust web framework, experimental GPU backend, red-teaming tools, security regression tests, sandboxing, and audit dashboard.">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -19,8 +19,8 @@
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i Features: Red-Teaming and Formal Verification">
-  <meta property="og:description" content="h5i features: agent browsing, recon, and HTTP capture and replay for red-teaming, sandboxed and audited, plus h5i-app for Lean 4 proofs of app logic.">
+  <meta property="og:title" content="h5i Features: Build, Verify, and Hack Your Web Apps">
+  <meta property="og:description" content="Explore h5i's verifiable Rust web framework, experimental GPU backend, red-teaming tools, security regression tests, sandboxing, and audit dashboard.">
   <meta property="og:url" content="https://h5i.dev/features/">
   <meta property="og:image" content="https://h5i.dev/_static/social-card.png">
   <meta property="og:image:width" content="1000">
@@ -29,8 +29,8 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i Features: Red-Teaming and Formal Verification">
-  <meta name="twitter:description" content="h5i features: agent browsing, recon, and HTTP capture and replay for red-teaming, sandboxed and audited, plus h5i-app for Lean 4 proofs of app logic.">
+  <meta name="twitter:title" content="h5i Features: Build, Verify, and Hack Your Web Apps">
+  <meta name="twitter:description" content="Explore h5i's verifiable Rust web framework, experimental GPU backend, red-teaming tools, security regression tests, sandboxing, and audit dashboard.">
   <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
   <meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
 
@@ -60,7 +60,7 @@
       "name": "h5i",
       "alternateName": "high-five",
       "url": "https://h5i.dev/",
-      "description": "h5i is an agent-native web security workspace. Red-team apps with a sandboxed browser and HTTP control, and formally verify Rust logic with h5i-app and Lean 4.",
+      "description": "h5i unifies verifiable Rust web development with agent-friendly red-teaming and security regression testing.",
       "publisher": {
         "@id": "https://h5i.dev/#org"
       },
@@ -72,23 +72,20 @@
       "name": "h5i",
       "alternateName": "high-five",
       "applicationCategory": "DeveloperApplication",
-      "applicationSubCategory": "Web security workspace for AI agents: red-teaming and formal verification",
+      "applicationSubCategory": "Verifiable Rust web framework and web security testing CLI",
       "operatingSystem": "Linux, macOS, Windows (WSL2)",
-      "description": "h5i is an agent-native web security workspace. Red-team apps with a sandboxed browser and HTTP control, and formally verify Rust logic with h5i-app and Lean 4.",
+      "description": "h5i unifies verifiable Rust web development with agent-friendly red-teaming and security regression testing.",
       "featureList": [
-        "Headless browser automation and compact snapshots with @ref handles for AI agents",
-        "HTTP capture, inspection, editing, replay, and response comparison through the websec plugin",
-        "Multi-step test flows that replay findings in CI with your own oracle",
-        "Configurable sandboxing for the browser or the entire agent workflow",
-        "Network policies that restrict destinations and record denied requests",
-        "Auditable browser actions and network requests",
-        "Credential isolation and human takeover for sensitive steps",
-        "Pure Rust, no Chromium or V8",
-        "h5i-app, an Axum-based Rust framework whose application logic is formally verified in Lean 4",
-        "Lean proofs of tenant isolation, authorization, and business state invariants",
-        "About 3x faster reads with about 86% less peak memory than headless Chromium on simple websites in our benchmarks"
+        "h5i-app, an Axum-based Rust framework with composable application kernels",
+        "Lean 4 proofs of authorization, tenant isolation, and business state invariants",
+        "Mutation testing to check proof sensitivity",
+        "Experimental GPU backend for suitable batch workloads",
+        "Browser automation, reconnaissance, and HTTP capture, editing, and replay",
+        "Versioned security regression tests that run in CI/CD",
+        "Configurable sandboxing and network policies for agent workflows",
+        "Auditable browser actions, network requests, and local dashboard"
       ],
-      "keywords": "web security, AI agents, red teaming, penetration testing, bug bounty, headless browser, HTTP interception, security regression testing, CI/CD, formal verification, Lean 4, Axum, Rust, h5i-app, sandboxing",
+      "keywords": "Rust web framework, h5i-app, Axum, Lean 4, formal verification, composable kernels, experimental GPU, red teaming, browser automation, HTTP replay, security regression testing, CI/CD, sandboxing",
       "url": "https://h5i.dev/",
       "downloadUrl": "https://github.com/h5i-dev/h5i",
       "installUrl": "https://h5i.dev/#quickstart",
@@ -117,50 +114,34 @@
       "mainEntity": [
         {
           "@type": "Question",
-          "name": "Do I need h5i-app to use the red-teaming tools?",
+          "name": "How do I start with h5i-app?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No. The browser, HTTP testing tools, and security regression tests work with existing web applications in any language. h5i-app is optional, for teams that want to write their application logic in Rust and prove it in Lean 4."
+            "text": "Add h5i-app to a Rust project with cargo add h5i-app, or run h5i app new to create a project. Extract the application kernel to Lean 4 with h5i app extract and check proofs with h5i app prove."
           }
         },
         {
           "@type": "Question",
-          "name": "Are recon and websec included with the browser?",
+          "name": "Can I red-team an app built with another framework?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "They are optional plugins. The installer accepts --recon and --websec to install them alongside h5i. Recon builds an endpoint inventory; websec inspects and tests HTTP traffic."
+            "text": "Yes. The browser, recon, HTTP testing, and security regression tools work with existing web applications in any stack. You do not need to adopt h5i-app."
           }
         },
         {
           "@type": "Question",
-          "name": "Does a confirmed recon endpoint mean a vulnerability?",
+          "name": "Which security tools are optional plugins?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No. Confirmed means its response differs from the application's missing-page baseline. Recon records endpoints and observations; it does not establish that an endpoint is vulnerable."
+            "text": "The browser is part of the h5i CLI. Recon, websec, and test are optional plugins; the installer accepts --recon, --websec, and --test to include them."
           }
         },
         {
           "@type": "Question",
-          "name": "What happens if the requested isolation is unavailable?",
+          "name": "Does a Lean proof cover the entire app?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "An explicitly requested tier is not silently downgraded: creation fails. Use h5i box probe to check what your machine supports before choosing an isolation tier."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Does sandboxing prevent every unsafe action?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "No. Configured network and filesystem limits restrict access, but an agent can still take harmful actions on an allowed target. Sandboxing the browser alone does not constrain the agent's other tools."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "What if a website needs a full browser?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Run it through h5i browser proxy. Chromium sends its traffic through a per-session capture proxy, so the session stores the same messages h5i's own engine would, and websec, recon, replay, and audit read it the same way. A human can sign in through the agent-browser dashboard."
+            "text": "A proof establishes a stated property of the extracted kernel logic under explicit assumptions. Routes, authentication adapters, dependencies, deployments, and GPU execution still need testing and review."
           }
         }
       ],
@@ -180,8 +161,8 @@
       },
       "primaryImageOfPage": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
-      "name": "h5i Features: Red-Teaming and Formal Verification",
-      "description": "h5i features: agent browsing, recon, and HTTP capture and replay for red-teaming, sandboxed and audited, plus h5i-app for Lean 4 proofs of app logic."
+      "name": "h5i Features: Build, Verify, and Hack Your Web Apps",
+      "description": "Explore h5i's verifiable Rust web framework, experimental GPU backend, red-teaming tools, security regression tests, sandboxing, and audit dashboard."
     }
   ]
 }
@@ -218,42 +199,47 @@
 {
   "@context": "https://schema.org",
   "@type": "ItemList",
-  "name": "h5i features for AI red teaming",
+  "name": "Build, verify, and hack with h5i",
   "itemListElement": [
     {
       "@type": "ListItem",
       "position": 1,
-      "name": "Automated browsing",
-      "url": "https://h5i.dev/features/#browsing"
+      "name": "Verifiable Web Framework",
+      "url": "https://h5i.dev/features/#verify"
     },
     {
       "@type": "ListItem",
       "position": 2,
-      "name": "Application reconnaissance",
-      "url": "https://h5i.dev/features/#recon"
+      "name": "Red-Teaming & Security Testing",
+      "url": "https://h5i.dev/features/#security-testing"
     },
     {
       "@type": "ListItem",
       "position": 3,
-      "name": "Direct HTTP capture and editing",
-      "url": "https://h5i.dev/features/#web-security"
+      "name": "Sandboxing & Audit",
+      "url": "https://h5i.dev/features/#execution-visibility"
     },
     {
       "@type": "ListItem",
       "position": 4,
-      "name": "Restrict the agent's access",
-      "url": "https://h5i.dev/features/#sandbox"
-    },
-    {
-      "@type": "ListItem",
-      "position": 5,
-      "name": "Review what the agent actually did",
-      "url": "https://h5i.dev/features/#dashboard"
+      "name": "Works with Your Existing Tools",
+      "url": "https://h5i.dev/features/#usecases"
     }
   ]
 }
   </script>
   <link rel="stylesheet" href="/_static/highlight.css?v=31b98f34a5">
+  <style>
+    #verify .feat-grid, #sandbox .feat-grid, #dashboard .feat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    body > section.feature-subsection { padding-top: 30px; padding-bottom: 38px; }
+    .feature-subsection .section-tag { color: var(--faint); font-size: 10px; letter-spacing: .16em; }
+    .feature-subsection .section-title { margin-top: 12px; font-size: clamp(24px, 2.3vw, 32px); font-weight: 600; letter-spacing: -.02em; }
+    .feature-subsection .section-sub { margin-top: 12px; font-size: 14.5px; }
+    .feature-subsection .feat-grid { margin-top: 26px; }
+    @media (max-width: 760px) {
+      #verify .feat-grid, #sandbox .feat-grid, #dashboard .feat-grid { grid-template-columns: minmax(0, 1fr); }
+    }
+  </style>
 </head>
 <body>
 
@@ -282,47 +268,61 @@
   <div class="container">
     <div class="section-head reveal">
       <span class="section-tag">Features</span>
-      <h1 class="section-title">Find vulnerabilities. Prove correctness.</h1>
-      <p class="section-sub">Red-team the running app on any stack: automate browsing, discover endpoints with recon, and inspect or edit HTTP traffic with websec,
-        inside sandbox limits you set and audit afterwards. Then prove the rules you can state with h5i-app and Lean 4.</p>
+      <h1 class="section-title">Build, Verify, and Hack.</h1>
+      <p class="section-sub">Explore h5i's unified workflow: build with composable Rust kernels, verify critical logic in Lean 4, and red-team the running app with browser, HTTP, and CI/CD security tools.</p>
       <div class="divider"></div>
     </div>
-    <p class="section-sub">The browser runs on its own; recon and websec are optional plugins, and h5i-app is an optional framework.
-      <a href="/manual/#h5i-plugin">Plugin installation &#8594;</a> &middot; <a href="#verify">Formal verification &#8594;</a></p>
+    <p class="section-sub">The security CLI works with any web stack, including apps that do not use h5i-app.
+      <a href="#verify">Explore the framework &#8594;</a> &middot; <a href="/manual/#h5i-plugin">Plugin installation &#8594;</a></p>
   </div>
 </section>
 
-<section id="browsing">
+<section id="verify">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">Browser</span>
-      <h2 class="section-title">Automated browsing</h2>
-      <p class="section-sub">Read and interact with web applications through one CLI. <a href="/guides/drive-a-browser-session/">Browser guide &#8594;</a></p>
+      <span class="section-tag">01 / Web framework</span>
+      <h2 class="section-title">Verifiable Web Framework</h2>
+      <p class="section-sub">Build on h5i-app, a composable Axum-based Rust framework. Verify critical properties of application kernels in Lean 4, check proof sensitivity with mutations, and explore an experimental GPU backend for suitable batch workloads. <a href="https://github.com/h5i-dev/h5i/blob/main/crates/h5i-app/README.md">Framework guide &#8594;</a></p>
     </div>
     <div class="feat-grid">
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i browser open &lt;url&gt;</span>
-        <h3 class="feat-name">Fast, lightweight sessions</h3>
-        <div class="feat-desc">Pure Rust, no Chromium or V8. In our <a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-browser.md">simple-site benchmarks</a>, ~3&times; faster reads with ~86% less peak memory than headless Chromium.</div>
+        <span class="feat-cmd">h5i app new</span>
+        <h3 class="feat-name">Composable Rust Kernels</h3>
+        <div class="feat-desc">Start an h5i-app project with application logic in pure Rust kernels. Handlers connect that logic to the web app while keeping the decisions ready for verification.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i browser snapshot &#183; click &#183; type</span>
-        <h3 class="feat-name">Pages agents can act on</h3>
-        <div class="feat-desc">Compact snapshots provide <code>@ref</code> handles for clicking, typing, and extracting data. Delta snapshots return changes between actions.</div>
+        <span class="feat-cmd">h5i app extract &#183; prove</span>
+        <h3 class="feat-name">Formal Verification</h3>
+        <div class="feat-desc">Charon and Aeneas translate the Rust kernel into Lean 4. Prove authorization, tenant isolation, and state invariants across requests; the proof gate rejects <code>sorry</code>, <code>native_decide</code>, and stray axioms.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i browser proxy &#183; agent-browser dashboard</span>
-        <h3 class="feat-name">Authenticated testing</h3>
-        <div class="feat-desc">Use full Chromium for authenticated applications. A human signs in through the agent-browser dashboard while h5i captures the traffic for websec and recon.</div>
+        <span class="feat-cmd">h5i app lint &#183; mutate</span>
+        <h3 class="feat-name">Proof Validation</h3>
+        <div class="feat-desc">Lint that every mutating route takes an authenticated actor, then plant bugs in the kernel to check whether the proofs catch them. <a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/TRUST.md">TRUST.md</a> records the assumptions and trust boundary.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i-app-gpu &#183; experimental</span>
+        <h3 class="feat-name">GPU Acceleration</h3>
+        <div class="feat-desc">An experimental Rust-CUDA backend runs shared Rust decision kernels on a GPU for batch workloads. <a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/GPU.md">GPU report &#8594;</a></div>
       </div>
     </div>
   </div>
 </section>
 
-<section id="recon">
+<section id="security-testing">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">Recon plugin</span>
+      <span class="section-tag">02 / Security testing</span>
+      <h2 class="section-title">Red-Teaming &amp; Security Testing</h2>
+      <p class="section-sub">Explore any web application with browser automation and reconnaissance. Capture, edit, and replay HTTP traffic, then turn confirmed findings into repeatable CI/CD tests. Test only applications you own or are authorized to test.</p>
+    </div>
+  </div>
+</section>
+
+<section id="recon" class="feature-subsection">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">02.1 / Recon plugin</span>
       <h2 class="section-title">Application reconnaissance</h2>
       <p class="section-sub">Build an endpoint inventory from the application and its traffic. <a href="/manual/#h5i-recon">Recon reference &#8594;</a></p>
     </div>
@@ -346,11 +346,11 @@
   </div>
 </section>
 
-<section id="web-security">
+<section id="web-security" class="feature-subsection">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">Websec plugin</span>
-      <h2 class="section-title">Direct HTTP capture and editing</h2>
+      <span class="section-tag">02.2 / Websec plugin</span>
+      <h2 class="section-title">HTTP capture and editing</h2>
       <p class="section-sub">Inspect and test browser traffic for authorized web red teaming, pentesting, and CTFs. <a href="/guides/authorized-web-security-testing/">Web security guide &#8594;</a></p>
     </div>
     <div class="feat-grid">
@@ -366,17 +366,49 @@
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i websec match &#183; sequence</span>
-        <h3 class="feat-name">Repeat security tests</h3>
-        <div class="feat-desc">Match response content and combine requests into multi-step flows. Keep the requests and responses available for reviewing and repeating a test.</div>
+        <h3 class="feat-name">Investigate multi-step flows</h3>
+        <div class="feat-desc">Match response content and combine requests into multi-step flows. Keep the requests and responses available for review before writing a regression test.</div>
       </div>
     </div>
   </div>
 </section>
 
-<section id="sandbox">
+<section id="security-regression" class="feature-subsection">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">Sandbox</span>
+      <span class="section-tag">02.3 / Test plugin</span>
+      <h2 class="section-title">Security Regression Testing</h2>
+      <p class="section-sub">Turn a confirmed vulnerability into a versioned YAML test and replay it in CI/CD with an explicit verdict. <a href="/manual/#h5i-test">Test reference &#8594;</a></p>
+    </div>
+    <div class="feat-grid">
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com</span>
+        <h3 class="feat-name">Replay the attack flow</h3>
+        <div class="feat-desc">Run a saved test against staging or CI. Steps can use separate actors and cookie jars to check authorization across identities.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">expect &#183; oracle</span>
+        <h3 class="feat-name">State the security property</h3>
+        <div class="feat-desc">Check response status, headers, or body in the test, or use your own oracle for properties the built-in checks cannot express. An undecidable result is never treated as a pass.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="execution-visibility">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">03 / Execution &amp; visibility</span>
+      <h2 class="section-title">Sandboxing &amp; Audit</h2>
+      <p class="section-sub">Run agents inside explicit filesystem and network limits, then review browser traffic, policy decisions, and proposed changes in the local dashboard.</p>
+    </div>
+  </div>
+</section>
+
+<section id="sandbox" class="feature-subsection">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">03.1 / Sandbox</span>
       <h2 class="section-title">Restrict the agent's access</h2>
       <p class="section-sub">Sandbox the entire red-teaming workflow to constrain tools. <a href="/guides/write-a-box-policy/">Policy guide &#8594;</a></p>
     </div>
@@ -384,7 +416,7 @@
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i box . --profile &lt;profile&gt;</span>
         <h3 class="feat-name">Isolate the workflow</h3>
-        <div class="feat-desc">Place the agent, code, dependencies, development server, and browser in one disposable environment. Choose process, supervised, container, or microVM isolation according to host support.</div>
+        <div class="feat-desc">Place the agent, code, dependencies, development server, and browser in one disposable environment, including a repository or pull request. Choose process, supervised, container, or microVM isolation according to host support.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">.h5i/env.toml &#183; h5i box probe</span>
@@ -396,16 +428,21 @@
         <h3 class="feat-name">Keep credentials outside the agent</h3>
         <div class="feat-desc">Model and service credentials can remain on the host and be inserted into approved requests. The agent can use named browser credentials without reading their values.</div>
       </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i box --pr 1234 &#183; h5i box cache refresh</span>
+        <h3 class="feat-name">Disposable test environments</h3>
+        <div class="feat-desc">Run a repository or pull request in an isolated workspace and reuse dependencies through read-only caches. <a href="/guides/review-a-pull-request/">PR review guide</a> &middot; <a href="/manual/#h5i-box-cache">Cache reference</a></div>
+      </div>
     </div>
   </div>
 </section>
 
-<section id="dashboard">
+<section id="dashboard" class="feature-subsection">
   <span id="dashboard-features" aria-hidden="true"></span>
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">Audit and dashboard</span>
-      <h2 class="section-title">Review what the agent actually did</h2>
+      <span class="section-tag">03.2 / Audit and dashboard</span>
+      <h2 class="section-title">Review what the agent did</h2>
       <p class="section-sub">Review actions and network activity, including blocked requests. The dashboard brings active sessions, isolation settings, and resource usage into one view.</p>
     </div>
     <div class="feat-grid">
@@ -417,12 +454,17 @@
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i ui</span>
         <h3 class="feat-name">Independent observations</h3>
-        <div class="feat-desc">Host records remain outside the sandbox. Records distinguish activity observed at the sandbox boundary from activity reported by the browser or sandbox itself.</div>
+        <div class="feat-desc">Host records remain outside the sandbox and distinguish boundary observations from browser reports. Watch active sessions and take over sensitive steps. <a href="/guides/watch-the-browser/">Browser controls &#8594;</a></div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i box export &lt;name&gt; --out ./review</span>
         <h3 class="feat-name">Reviewable output</h3>
         <div class="feat-desc">Export a proposed patch, report, and execution receipt for review before applying changes. <a href="/guides/ai-code-review-audit/">Audit guide &#8594;</a></div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i box view &#183; h5i ui</span>
+        <h3 class="feat-name">Human review</h3>
+        <div class="feat-desc">Watch browser sessions and take over sensitive steps. <a href="/guides/watch-the-browser/">Browser controls</a> &middot; <a href="/manual/#the-console">Console</a></div>
       </div>
     </div>
     <details class="faq-item">
@@ -548,55 +590,29 @@
   </div>
 </section>
 
-<section id="verify">
-  <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">h5i-app</span>
-      <h2 class="section-title">Prove the application logic</h2>
-      <p class="section-sub">Build the backend on h5i-app, an Axum-based Rust framework, and prove its logic in Lean 4: tenant isolation, authorization, and your own state invariants. <a href="https://github.com/h5i-dev/h5i/blob/main/crates/h5i-app/README.md">Framework guide &#8594;</a></p>
-    </div>
-    <div class="feat-grid">
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i app new &#183; extract</span>
-        <h3 class="feat-name">Logic as a pure Rust kernel</h3>
-        <div class="feat-desc">One function decides what each command does, and handlers never touch the database. Charon and Aeneas translate the kernel to Lean, where theorems about it are ordinary Lean.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i app prove</span>
-        <h3 class="feat-name">Proofs that hold for every request order</h3>
-        <div class="feat-desc">Prove invariants for the rows loaded back from PostgreSQL, and properties across requests for every order in which they commit. The gate rejects <code>sorry</code>, <code>native_decide</code>, and stray axioms.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i app lint &#183; mutate</span>
-        <h3 class="feat-name">Check what the proofs cannot see</h3>
-        <div class="feat-desc">Lint that every mutating route takes an authenticated actor, and plant bugs in the kernel to see whether a proof catches each one. What is proven and what is assumed is written down in <a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/TRUST.md">TRUST.md</a>.</div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <section id="usecases">
   <span id="working" aria-hidden="true"></span>
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">Working with h5i</span>
-      <h2 class="section-title">Use your existing agents and tools.</h2>
+      <span class="section-tag">04 / Integrations</span>
+      <h2 class="section-title">Works with Your Existing Tools</h2>
+      <p class="section-sub">Use h5i from coding agents and CI/CD, and test web applications built with any framework.</p>
     </div>
     <div class="feat-grid">
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i skill install</span>
-        <h3 class="feat-name">Command-line agents</h3>
+        <h3 class="feat-name">CLI for coding agents</h3>
         <div class="feat-desc">Any agent that can run CLI tools can use h5i. Install the bundled skill for its command reference. <a href="/manual/#h5i-skill">Agent setup &#8594;</a></div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i box --pr 1234 &#183; h5i box cache refresh</span>
-        <h3 class="feat-name">Disposable test environments</h3>
-        <div class="feat-desc">Run a repository or pull request in an isolated workspace. Reuse dependencies through read-only caches. <a href="/guides/review-a-pull-request/">PR review guide</a> &middot; <a href="/manual/#h5i-box-cache">Cache reference</a></div>
+        <span class="feat-cmd">h5i browser &#183; recon &#183; websec</span>
+        <h3 class="feat-name">Existing web frameworks</h3>
+        <div class="feat-desc">Red-team apps built with any web stack. Browser, recon, and HTTP testing do not require a migration to h5i-app. <a href="/guides/authorized-web-security-testing/">Security testing guide &#8594;</a></div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i box view &#183; h5i ui</span>
-        <h3 class="feat-name">Human review</h3>
-        <div class="feat-desc">Watch browser sessions and take over sensitive steps. <a href="/guides/watch-the-browser/">Browser controls</a> &middot; <a href="/manual/#the-console">Console</a></div>
+        <span class="feat-cmd">h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com</span>
+        <h3 class="feat-name">CI/CD pipelines</h3>
+        <div class="feat-desc">Commit security tests alongside application code and replay them against staging to catch regressions. Review proposed changes from a disposable <a href="/guides/review-a-pull-request/">PR workspace</a>.</div>
       </div>
     </div>
   </div>
@@ -606,32 +622,24 @@
   <div class="container">
     <div class="section-head reveal">
       <span class="section-tag">FAQ</span>
-      <h2 class="section-title">Plugins, scope, and compatibility.</h2>
+      <h2 class="section-title">Frequently asked questions</h2>
     </div>
     <div class="faq-list">
       <details class="faq-item">
-        <summary>Do I need h5i-app to use the red-teaming tools?</summary>
-        <div class="faq-answer">No. The browser, HTTP testing tools, and security regression tests work with existing web applications in any language. h5i-app is optional, for teams that want to write their application logic in Rust and prove it in Lean 4.</div>
+        <summary>How do I start with h5i-app?</summary>
+        <div class="faq-answer">Add h5i-app to a Rust project with cargo add h5i-app, or run h5i app new to create a project. Extract the application kernel to Lean 4 with h5i app extract and check proofs with h5i app prove.</div>
       </details>
       <details class="faq-item">
-        <summary>Are recon and websec included with the browser?</summary>
-        <div class="faq-answer">They are optional plugins. The installer accepts --recon and --websec to install them alongside h5i. Recon builds an endpoint inventory; websec inspects and tests HTTP traffic.</div>
+        <summary>Can I red-team an app built with another framework?</summary>
+        <div class="faq-answer">Yes. The browser, recon, HTTP testing, and security regression tools work with existing web applications in any stack. You do not need to adopt h5i-app.</div>
       </details>
       <details class="faq-item">
-        <summary>Does a confirmed recon endpoint mean a vulnerability?</summary>
-        <div class="faq-answer">No. Confirmed means its response differs from the application's missing-page baseline. Recon records endpoints and observations; it does not establish that an endpoint is vulnerable.</div>
+        <summary>Which security tools are optional plugins?</summary>
+        <div class="faq-answer">The browser is part of the h5i CLI. Recon, websec, and test are optional plugins; the installer accepts --recon, --websec, and --test to include them.</div>
       </details>
       <details class="faq-item">
-        <summary>What happens if the requested isolation is unavailable?</summary>
-        <div class="faq-answer">An explicitly requested tier is not silently downgraded: creation fails. Use h5i box probe to check what your machine supports before choosing an isolation tier.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Does sandboxing prevent every unsafe action?</summary>
-        <div class="faq-answer">No. Configured network and filesystem limits restrict access, but an agent can still take harmful actions on an allowed target. Sandboxing the browser alone does not constrain the agent's other tools.</div>
-      </details>
-      <details class="faq-item">
-        <summary>What if a website needs a full browser?</summary>
-        <div class="faq-answer">Run it through h5i browser proxy. Chromium sends its traffic through a per-session capture proxy, so the session stores the same messages h5i's own engine would, and websec, recon, replay, and audit read it the same way. A human can sign in through the agent-browser dashboard.</div>
+        <summary>Does a Lean proof cover the entire app?</summary>
+        <div class="faq-answer">A proof establishes a stated property of the extracted kernel logic under explicit assumptions. Routes, authentication adapters, dependencies, deployments, and GPU execution still need testing and review.</div>
       </details>
     </div>
   </div>
@@ -641,10 +649,16 @@
   <div class="cta-glow"></div>
   <div class="container">
     <div class="cta-inner">
-      <h2 class="cta-title">Red-team for bugs. Formally verify properties.</h2>
-      <p class="cta-sub">Install h5i with the recon and websec plugins, and add h5i-app when you want proofs. Local-first, open source, Apache 2.0.</p>
+      <h2 class="cta-title">Build, Verify &amp; Hack</h2>
+      <p class="cta-sub">Start with the Rust web framework, or use the unified CLI to red-team any web application and replay security tests in CI/CD. Local-first, open source, Apache 2.0.</p>
+      <p class="cta-sub">Rust web framework</p>
       <div class="hero-install">
-        <code>curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon</code>
+        <code>cargo add h5i-app</code>
+        <button class="copy-btn" type="button">copy</button>
+      </div>
+      <p class="cta-sub">Unified CLI and security plugins</p>
+      <div class="hero-install">
+        <code>curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test</code>
         <button class="copy-btn" type="button">copy</button>
       </div>
       <div class="hero-actions">
@@ -652,9 +666,6 @@
         <a href="/manual/" class="btn btn-ghost">Read the manual</a>
         <a href="https://crates.io/crates/h5i-app" class="btn btn-ghost">Explore the framework</a>
       </div>
-      <p class="cta-sub">Compare with <a href="/blog/burp-suite-vs-h5i-for-ai-agents/">Burp Suite</a>,
-        <a href="/blog/owasp-zap-vs-h5i-for-ai-agents/">OWASP ZAP</a>, or
-        <a href="/blog/caido-vs-h5i-for-ai-agents/">Caido</a>.</p>
     </div>
   </div>
 </section>
