@@ -9,7 +9,6 @@
 
 **h5i** (pronounced *high-five*) unifies web development, security testing, and formal verification around a composable Rust framework. Its kernel-based architecture enables Lean 4 verification and optional GPU acceleration, while its built-in red-teaming toolkit enables automated vulnerability discovery.
 
-> [!NOTE]
 > h5i's CLI-based red-teaming tools are framework-independent and agent-friendly. They can test any website or web application, including existing projects, without adopting `h5i-app`.
 
 ```bash
