@@ -53,11 +53,9 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 
 ---
 
-## 3. Prove Correctness: Build on h5i-app
+## 2. Build & Verify: h5i-app
 
 [`h5i-app`](crates/h5i-app/README.md) is an Axum-based Rust web framework that makes application logic amenable to Lean 4.
-
-> Red-teaming discovers bugs through testing. Formal verification takes a complementary approach: proving that specified properties hold for all possible inputs and behaviors.
 
 ```toml
 [dependencies]
