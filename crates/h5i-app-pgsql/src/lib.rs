@@ -542,7 +542,7 @@ pub fn render(s: &Sql) -> Vec<u8> {
 
 // Not extracted: the declarative reads' SQL, differential-tested (see `read.rs`).
 mod read;
-pub use read::{compile_read, create_index, ReadQuery};
+pub use read::{compile_read, compile_read_with_mode, create_index, ReadQuery, ReadSqlMode};
 
 #[cfg(test)]
 mod tests {

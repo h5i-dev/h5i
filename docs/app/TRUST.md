@@ -38,12 +38,12 @@ definitions clause by clause:
   the evaluator's answers as `#guard`s on `H5iAppLib.Query.Read.rows`
   (`H5iAppLibTests/QueryCases.lean`), which the Lean build checks.
 
-Membership whose subquery fixes every primary-key column uses scalar `=`
+In opt-in `ScalarWhenUnique` mode, membership whose subquery fixes every primary-key column uses scalar `=`
 instead of `IN`. Tenant scoping plus the primary key guarantees at most one
 row, including after a window. An empty scalar lookup yields SQL UNKNOWN;
 in this positive `AND`/`OR` language it selects the same rows as FALSE.
-This reasoning would need review before adding negation. A further 120
-PostgreSQL cases compare rows and counts for this rewrite, covering empty
+This reasoning would need review before adding negation. A further 120 cases per mode
+on PostgreSQL compare rows and counts for this rewrite, covering empty
 lookups, compound keys, duplicate projections, windows and tenant scoping.
 This remains a differential-tested renderer optimization, not a new proof.
 
@@ -141,3 +141,27 @@ shell are trusted. Lean establishes properties of extracted Rust decisions;
 it says nothing about GPU execution. CPU/GPU differential checks are empirical,
 not an equivalence proof. cuda-oxide remains a separate, currently blocked probe. The real linkding GPU
 benchmark and its trust notes live in h5i-app-bench (performance/linkding/rust-h5i-gpu).
+
+### Selecting read SQL
+
+Declarative reads and exact counts default to `ReadSqlMode::Membership`,
+which retains `IN (SELECT ...)`. An application can opt into the alternate
+renderer before creating/serving its engine:
+
+```rust,ignore
+let pool = h5i_app_pg::pool(&database_url, 32)?;
+pool.set_read_sql_mode(h5i_app_pg::ReadSqlMode::ScalarWhenUnique);
+let engine = h5i_app_pg::Engine::<App, AppStore>::new(pool, config);
+```
+
+The setting is shared by clones of the same pool, affects nested predicates
+in both row and count queries, and can be inspected with `read_sql_mode()`.
+It changes neither the application read/count plan nor isolation, locks,
+schema or results. Configure it before serving requests so a request uses a
+consistent strategy. SQL text keys the existing bounded prepared cache.
+Neither strategy is promised faster for all workloads. Both are checked
+against the same reference evaluator on PostgreSQL, including exact counts,
+empty lookups, windows and compound keys. This adds no new formal guarantee:
+the SQL read renderer remains outside extraction. Existing `compile_read`
+callers keep their signature and use Membership; direct renderer users can
+call `compile_read_with_mode`.

@@ -65,6 +65,24 @@ impl Tx<'_> {
 #[derive(Clone)]
 pub struct Pool(pub(crate) deadpool_postgres::Pool, pub(crate) Arc<statements::Statements>);
 
+/// SQL generation strategy for declarative reads and exact counts.
+pub use h5i_app_pgsql::ReadSqlMode;
+
+impl Pool {
+    /// Select the SQL strategy for this pool and all its clones/engines.
+    /// Defaults to `Membership`. Configure before serving requests for a
+    /// consistent strategy across a request. Changing it does not alter results,
+    /// isolation or locks; existing prepared statements remain cache-bounded.
+    pub fn set_read_sql_mode(&self, mode: ReadSqlMode) {
+        self.1.set_read_sql_mode(mode);
+    }
+
+    /// Current strategy, shared by all clones of this pool.
+    pub fn read_sql_mode(&self) -> ReadSqlMode {
+        self.1.read_sql_mode()
+    }
+}
+
 #[derive(Debug)]
 pub enum DbError {
     Postgres(tokio_postgres::Error),

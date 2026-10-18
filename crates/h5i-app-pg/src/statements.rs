@@ -26,12 +26,25 @@ struct Conn {
 
 pub(crate) struct Statements {
     capacity: AtomicUsize,
+    read_sql_mode: AtomicUsize,
     conns: Mutex<HashMap<usize, Conn>>,
 }
 
 impl Statements {
     pub(crate) fn new(capacity: usize) -> Self {
-        Statements { capacity: AtomicUsize::new(capacity), conns: Mutex::new(HashMap::new()) }
+        Statements { read_sql_mode: AtomicUsize::new(0), capacity: AtomicUsize::new(capacity), conns: Mutex::new(HashMap::new()) }
+    }
+
+    pub(crate) fn read_sql_mode(&self) -> h5i_app_pgsql::ReadSqlMode {
+        if self.read_sql_mode.load(Ordering::Relaxed) == 1 {
+            h5i_app_pgsql::ReadSqlMode::ScalarWhenUnique
+        } else {
+            h5i_app_pgsql::ReadSqlMode::Membership
+        }
+    }
+
+    pub(crate) fn set_read_sql_mode(&self, mode: h5i_app_pgsql::ReadSqlMode) {
+        self.read_sql_mode.store(usize::from(mode == h5i_app_pgsql::ReadSqlMode::ScalarWhenUnique), Ordering::Relaxed);
     }
 
     pub(crate) fn set_capacity(&self, capacity: usize) {
