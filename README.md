@@ -105,9 +105,21 @@ h5i ui    # Open the local dashboard
 
 ## 4. Showcase
 
-- o5s:
-- 
+**Web apps**
 
+- [o5s](https://github.com/h5i-dev/o5s): path-theory based vercion control system using `h5i-app`. core theory and algorithms are verified via lean 4. deployable for Cloudflare workers.
+
+**Benchmarks**
+
+- [h5i-app-bench](https://github.com/h5i-dev/h5i-app-bench): re-implementation of various famous web apps in `h5i-app` and benchmarking their performance of veerification coverage.
+- [h5i-websec-bench](https://github.com/h5i-dev/h5i-websec-bench): ctf-benchmarks for h5i's red-teaming capability.
+
+**Theird-party utilities**
+
+- [h5i-fastapi-starter](https://github.com/SumedhAnupSupe/h5i-fastapi-starter): A small FastAPI application with a simple HTML UI, designed to run inside an h5i box.
+- [h5i-egress-advisor](https://github.com/AniketR10/h5i-egress-advisor): Reads a box's receipts and turns the egress its allowlist refused into `h5i box allow` lines to review.
+- [h5i-git-hooks](https://github.com/VedantMadane/h5i-git-hooks): Git hooks that run your test suite inside an h5i box (pre-commit on the staged tree, pre-push on the tip).
+- [h5i-audit-report](https://github.com/Pewpenguin/h5i-audit-report): Turns `h5i browser audit --json` into a self-contained HTML report for archiving and sharing.
 ---
 
 ## 5. License
