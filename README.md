@@ -71,7 +71,7 @@ isolation, business logics, and more.
   <img src="./docs/_static/calculator-rust-lean-proof.svg" alt="Watching a sandboxed browser session from the host" width="99%" />
 </p>
 
-## Test & Secure
+### Test & Secure
 
 Let AI agents explore, attack, and test web applications using h5i's integrated security toolkit. 
 
