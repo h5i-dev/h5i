@@ -103,23 +103,13 @@ h5i ui    # Open the local dashboard
 
 ---
 
-## 4. Documentation
+## 4. Showcase
 
-- [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
-- [MANUAL.md](docs/MANUAL.md) / `man h5i`: full command reference
-- [CONTRIBUTING.md](CONTRIBUTING.md): we welcome contributions of any kind
-- `curl -fsSL https://h5i.dev/man/man1/h5i.1 -o ~/.local/share/man/man1/h5i.1`: install the man page
+- o5s:
+- 
 
 ---
 
 ## 5. License
 
 h5i is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
-
----
-
-## 6. Contributors
-
-<a href="https://github.com/h5i-dev/h5i/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=h5i-dev/h5i" alt="h5i contributors" />
-</a>
