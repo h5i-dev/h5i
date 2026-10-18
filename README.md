@@ -12,11 +12,6 @@
 > [!NOTE]
 > h5i's CLI-based red-teaming tools are framework-independent and agent-friendly. They can test any website or web application, including existing projects, without adopting `h5i-app`.
 
-- **Find Bugs (Red-Teaming):** Give AI agents a unified toolkit for browser automation, HTTP traffic manipulation, and reconnaissance. Test existing web applications for vulnerabilities, reproduce attacks, and run security regression checks in CI/CD.
-- **Prove Correctness (Formal Verification):** Build applications with `h5i-app`, an Axum-based Rust framework designed for verification with Lean 4. Prove authorization, data isolation, and business logic properties directly against your Rust implementation.
-
-**Build with agents. Red-team for bugs. Formally verify properties.**
-
 ```bash
 # Find bugs in web applications
 h5i browser open https://example.com                    # Open a website in the browser
