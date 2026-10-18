@@ -348,7 +348,7 @@ mod tests {
         }
         // A nonunique lookup must keep IN even in scalar mode.
         let mut multi = q.clone();
-        if let Pred::In { pred, .. } = &mut multi.pred { *pred = Box::new(Pred::All); }
+        if let Pred::In { pred, .. } = &mut multi.pred { **pred = Pred::All; }
         assert_eq!(compile_read(&schema(), 7, &multi, false),
             compile_read_with_mode(&schema(), 7, &multi, false, ReadSqlMode::ScalarWhenUnique));
     }
