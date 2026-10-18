@@ -171,3 +171,64 @@ async fn statement_cache_is_bounded() {
     assert!(tx.statement_cache.size() <= before.max(CAP));
     tx.rollback().await.unwrap();
 }
+
+/// Exercise scalar membership through real SQL, including empty lookups under
+/// OR, duplicate projected values from distinct compound keys, windows, and
+/// another tenant's matching key. These must keep both rows and exact counts.
+#[tokio::test]
+async fn unique_membership_matches_the_reference() {
+    use h5i_app_sql::{whole, Pred, Read, Val, Window};
+    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
+        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+        return;
+    };
+    let url = crate::with_schema(&url, "h5i_unique_read_test").unwrap();
+    let p = pool(&url, 2).unwrap();
+    let schema = schema();
+    let mut client = p.0.get().await.unwrap();
+    let tx = client.transaction().await.unwrap();
+    tx.batch_execute("CREATE SCHEMA IF NOT EXISTS h5i_unique_read_test").await.unwrap();
+    for t in &schema {
+        tx.batch_execute(&format!("DROP TABLE IF EXISTS \"{}\"", String::from_utf8_lossy(&t.name))).await.unwrap();
+    }
+    for ddl in create_tables(&schema).unwrap() { tx.batch_execute(&ddl).await.unwrap(); }
+    let t = Tx(&tx, &p.1);
+    let tabs = vec![
+        vec![vec![Val::Int(1), Val::Int(7), Val::Bytes(b"a".to_vec()), Val::Null],
+             vec![Val::Int(2), Val::Int(8), Val::Bytes(b"b".to_vec()), Val::Int(9)]],
+        vec![vec![Val::Int(1), Val::Int(7)], vec![Val::Int(1), Val::Int(8)], vec![Val::Int(2), Val::Int(7)]],
+        vec![],
+    ];
+    for (tid, data) in [(TenantId(1), &tabs), (TenantId(2), &tabs)] {
+        let mut ws = Vec::new();
+        for (i, tab) in data.iter().enumerate() {
+            for row in tab { ws.push(Write::Put { table: i as u32, key_len: schema[i].key_len, row: row.clone() }); }
+        }
+        store_writes(&t, tid, &schema, &ws).await.unwrap();
+    }
+    let eq = |col, n| Pred::Eq { col, val: Val::Int(n) };
+    let preds = [eq(0, 1), eq(0, 99), eq(1, 7),
+        Pred::And(Box::new(eq(0, 1)), Box::new(eq(1, 7))),
+        Pred::Or(Box::new(eq(0, 1)), Box::new(eq(0, 2)))];
+    let windows = [whole(), Window { desc: true, offset: 0, limit: Some(1) },
+        Window { desc: false, offset: 1, limit: None }, Window { desc: false, offset: 0, limit: Some(0) }];
+    let mut scalars = 0;
+    for table in [0, 1] {
+        for pred in &preds {
+            for window in windows {
+                let member = Pred::In { col: 1, table, pred: Box::new(pred.clone()), of: 1, window };
+                for outer in [member.clone(), Pred::Or(Box::new(member.clone()), Box::new(eq(0, 2))),
+                    Pred::And(Box::new(member.clone()), Box::new(eq(0, 1)))] {
+                    let q = Read { table: 0, pred: outer, window: whole() };
+                    let c = h5i_app_pgsql::compile_read(&schema, 1, &q, false).unwrap();
+                    scalars += usize::from(String::from_utf8_lossy(&c.text).contains(" = (SELECT"));
+                    let want = eval::rows(&tabs, &q);
+                    assert_eq!(load_read(&t, TenantId(1), &schema, &q).await.unwrap(), want, "{q:?}");
+                    assert_eq!(count_read(&t, TenantId(1), &schema, &q).await.unwrap(), want.len() as u64, "{q:?}");
+                }
+            }
+        }
+    }
+    assert!(scalars >= 36, "unique lookups must exercise the scalar path");
+    tx.rollback().await.unwrap();
+}

@@ -38,12 +38,21 @@ definitions clause by clause:
   the evaluator's answers as `#guard`s on `H5iAppLib.Query.Read.rows`
   (`H5iAppLibTests/QueryCases.lean`), which the Lean build checks.
 
+Membership whose subquery fixes every primary-key column uses scalar `=`
+instead of `IN`. Tenant scoping plus the primary key guarantees at most one
+row, including after a window. An empty scalar lookup yields SQL UNKNOWN;
+in this positive `AND`/`OR` language it selects the same rows as FALSE.
+This reasoning would need review before adding negation. A further 120
+PostgreSQL cases compare rows and counts for this rewrite, covering empty
+lookups, compound keys, duplicate projections, windows and tenant scoping.
+This remains a differential-tested renderer optimization, not a new proof.
+
 `compile_read` rejects what the Lean does not describe: `IN` on a column
 that may be `NULL` (SQL's three-valued `IN`), and windows on a table whose
 key has a text or bytes column (collation-dependent order). Results come
 back sorted by key, matching the key order the Lean meaning assumes and
 `load` already relies on. Trusted: PostgreSQL evaluates the compiled
-`SELECT`, `IN`, `ORDER BY ... LIMIT ... OFFSET` as documented, and the
+`SELECT`, `IN`, scalar subqueries, `ORDER BY ... LIMIT ... OFFSET` as documented, and the
 tests' coverage. `create_index` only adds indexes (`CREATE INDEX IF NOT
 EXISTS` on `tenant_id` and given columns), which change no result.
 
