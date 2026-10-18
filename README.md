@@ -1,4 +1,4 @@
-# h5i: Build, Hack, and Verify Web Apps
+# h5i
 
 <p align="left">
   <a href="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml"><img alt="tests" src="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml/badge.svg"></a>
@@ -13,19 +13,24 @@
 
 > h5i's CLI-based red-teaming tools are framework-independent and agent-friendly. They can test any website or web application, including existing projects, without adopting `h5i-app`.
 
+**Build, Hack, and Verify Web Apps**
+
 ```bash
-# Find bugs in web applications
+# Prove correctness of Rust application logic
+h5i app new counter && cd counter                       # Create an h5i-app project
+h5i app extract                                         # Translate Rust logic into Lean 4
+h5i app prove                                           # Build and check formal proofs
+h5i app mutate                                          # Test proof sensitivity with mutations
+
+# Red-team any web application
 h5i browser open https://example.com                    # Open a website in the browser
 h5i browser click @e3                                   # Interact with page elements
 h5i websec requests                                     # Inspect captured HTTP traffic
 h5i websec replay req_42 --set query.id=456             # Modify and replay a request
 h5i recon crawl --max-requests 200                      # Crawl the application for attack surfaces
 
-# Prove correctness of Rust application logic
-h5i app new counter && cd counter                       # Create an h5i-app project
-h5i app extract                                         # Translate Rust logic into Lean 4
-h5i app prove                                           # Build and check formal proofs
-h5i app mutate                                          # Test proof sensitivity with mutations
+# Run security regression tests in CI/CD
+h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com  # Replay a security test
 ```
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a> 
