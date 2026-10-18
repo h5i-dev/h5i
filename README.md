@@ -13,8 +13,6 @@
 
 > h5i's CLI-based red-teaming tools are framework-independent and agent-friendly. They can test any website or web application, including existing projects, without adopting `h5i-app`.
 
-**Build with agents. Red-team for bugs. Formally verify properties.**
-
 ```bash
 # Prove correctness of Rust application logic
 h5i app new counter && cd counter                       # Create an h5i-app project
