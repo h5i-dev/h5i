@@ -36,17 +36,15 @@ h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com  # Repl
 ## 1. Install
 
 ```bash
-curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test         # `websec`, `recon`, and `test` are optional plugins
+# Unified CLI (development, verification, and security testing)
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test　# `websec`, `recon`, and `test` are optional plugins
 # curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh  # if you would rather not add a domain to the chain:
-# cargo install --path .                                                         # build from source
-# h5i plugin list                                                                # says what is installed
-```
 
-The agent-facing interface is a skill, and the binary carries it:
+# Rust web framework
+cargo add h5i-app
 
-```bash
-npx skills add h5i-dev/h5i         # if you do not have the binary yet
-# h5i skill install                # writes it where your runtime looks
+# AI agent integration (optional)
+npx skills add h5i-dev/h5i
 ```
 
 ---
