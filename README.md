@@ -1,17 +1,13 @@
- <p align="center">
-  <a href="https://h5i.dev/" target="_blank">
-    <img src="./docs/_static/logo.png" alt="h5i logo" height="126">
-  </a>
-</p>
+# h5i: Build, Hack, and Verify Web Apps
 
-<p align="center">
+<p align="left">
   <a href="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml"><img alt="tests" src="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml/badge.svg"></a>
   <a href="https://github.com/h5i-dev/h5i/blob/main/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/github/license/h5i-dev/h5i?color=blue"></a>
   <a href="https://github.com/h5i-dev/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/h5i-dev/h5i?style=social"></a>
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-<h1 align="center">Build, Hack, and Verify Web Apps</h1>
+<h1 align="center"></h1>
 
 **h5i** (pronounced *high-five*) is a workspace for securing web applications through two complementary approaches: **finding vulnerabilities** with AI agents and **proving correctness** with formal verification.
 
