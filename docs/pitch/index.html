@@ -82,19 +82,26 @@
 <footer class="folio"><span>h5i-app / web and storage adapters surround the application kernel</span><span>04</span></footer>
 </section>
 
-<section class="slide" id="slide-5" aria-labelledby="title-5">
+<section class="slide " id="slide-5" aria-labelledby="title-5">
 <div class="content">
   <div class="eyebrow">05 / Verify</div>
   <h2 id="title-5">Verify application logic with Lean 4</h2>
-  <p class="slide-intro">Charon and Aeneas extract Rust kernel logic; Lean checks the properties developers state.</p>
   <div class="proof-examples">
-    <div class="rust-example"><div class="editor-bar">Rust / kernel excerpt</div><pre><span class="syntax-keyword">if</span> p.author == user
-    || is_moderator(&amp;s.moderators, user) {
-    Ok((one(Write::DelPost(id)),
-        Reply::Done))
-} <span class="syntax-keyword">else</span> {
-    Err(Error::Forbidden)
-}</pre><div class="source-note">Authorization branch in the same board kernel</div></div>
+    <div class="rust-example"><div class="editor-bar">Rust / kernel/src/lib.rs</div><pre><span class="syntax-keyword">fn</span> delete(user: u64, s: &amp;Snapshot,
+          id: u64) -&gt; Outcome {
+    <span class="syntax-keyword">match</span> find_post(&amp;s.posts, id) {
+        None =&gt; Err(Error::NotFound),
+        Some(p) =&gt; {
+            <span class="syntax-keyword">if</span> p.author == user
+                || is_moderator(&amp;s.moderators, user) {
+                Ok((one(Write::DelPost(id)),
+                    Reply::Done))
+            } <span class="syntax-keyword">else</span> {
+                Err(Error::Forbidden)
+            }
+        }
+    }
+}</pre></div>
     <div class="code-arrow"><span>Charon<br>Aeneas</span><b aria-hidden="true">→</b></div>
     <div class="lean-and-ui">
       <div class="lean-example"><div class="editor-bar">Lean 4 / Theorems.lean · excerpt</div><pre><span class="syntax-keyword">theorem</span> authorized (a : Principal) (s : Snapshot)
@@ -106,16 +113,15 @@
       <div class="app-ui-frame"><iframe src="assets/h5i-app-ui.html" title="Actual h5i ui graph excerpt showing the board authorization guarantee, theorems, and specifications" sandbox tabindex="-1"></iframe></div>
     </div>
   </div>
-  <p class="proof-note">Mutation testing checks whether deliberate kernel bugs break the proofs.</p>
 </div>
-<footer class="folio"><span>Proofs cover stated properties under documented assumptions</span><span>05</span></footer>
+
+<footer class="folio"><span>Proofs apply to stated properties under documented assumptions</span><span>05</span></footer>
 </section>
 
 <section class="slide" id="slide-6" aria-labelledby="title-6">
 <div class="content">
   <div class="eyebrow">06 / Hack</div>
-  <h2 id="title-6">Red-team any web application</h2>
-  <p class="slide-intro">The CLI works with any web stack: the agent explores, replays HTTP requests, and records evidence for review.</p>
+  <h2 id="title-6">Red-team any web app to find vulnerabilities</h2>
   <div class="shell-dashboard">
     <div class="agent-shell"><div class="editor-bar">AI agent / shell</div><pre><span class="prompt">$</span> h5i browser snapshot
 <span class="terminal-result">  @e7 Order 1041</span>
@@ -129,18 +135,17 @@
     <div class="shell-link" aria-label="Same session">↔</div>
     <div class="session-ui-frame"><iframe src="assets/h5i-ui-session.html" title="Actual h5i ui session workspace, static local demonstration" sandbox tabindex="-1"></iframe></div>
   </div>
-  <div class="test-note"><span>CI REGRESSION</span><code>h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com</code></div>
 </div>
 <footer class="folio"><span>Illustrative shell + actual h5i ui / local demo; confirmed findings can become CI tests</span><span>06</span></footer>
 </section>
 
 <section class="slide " id="slide-7" aria-labelledby="title-7">
-<div class="content"><div class="eyebrow">07 / Evidence</div><h2 id="title-7">Open-source adoption and results</h2><div class="metrics"><div><strong>780<span>+</span></strong><span>GITHUB STARS</span></div><div><strong>4.2k<span>+</span></strong><span>GITHUB RELEASE ASSET DOWNLOADS</span></div></div><div class="traction-evidence"><div><span class="index">BUILT WITH H5I-APP</span><p><a href="https://github.com/h5i-dev/o5s">o5s</a> · <a href="https://github.com/Koukyosyumei/h5i-db">h5i-db</a></p></div><div><span class="index">REPORTED SECURITY FINDINGS</span><p><a href="https://github.com/lennart-k/rustical/security/advisories/GHSA-9cp5-7crm-9cf7">rustical advisory</a> · <a href="https://github.com/exograph/exograph/issues/2320">Exograph issue</a></p></div></div><div class="source-line"><span>GitHub API snapshot · October 18, 2026</span><a href="https://github.com/h5i-dev/h5i">Repository ↗</a><a href="https://github.com/h5i-dev/h5i/releases">Releases ↗</a></div></div>
-<footer class="folio"><span>Public interest and reported examples / not customer or revenue metrics</span><span>07</span></footer>
+<div class="content"><div class="eyebrow">07 / Early traction</div><h2 id="title-7">Open-source traction</h2><div class="metrics"><div><strong>1.6k<span>+</span></strong><span>RELEASE DOWNLOADS</span></div><div><strong>700<span>+</span></strong><span>GITHUB STARS</span></div></div><div class="source-line"><span>Maintainer-reported · October 11, 2026</span><a href="https://github.com/h5i-dev/h5i">Repository ↗</a><a href="https://github.com/h5i-dev/h5i/releases">Releases ↗</a></div></div>
+<footer class="folio"><span>Open-source interest / downloads and stars</span><span>07</span></footer>
 </section>
 
 <section class="slide close" id="slide-8" aria-labelledby="title-8">
-<div class="content"><div class="eyebrow">08 / What comes next</div><h2 id="title-8">Find bugs.<br>Prove correctness.<br><em>Build trust.</em></h2><div class="closing"><div class="next-steps"><p class="index">NEXT</p><ul><li>Work with design partners on real applications</li><li>Improve the workflow</li><li>Build toward the first paid pilots</li></ul></div><div class="closing-links"><a class="button primary" href="https://github.com/h5i-dev/h5i/discussions">Start a conversation ↗</a><a class="button" href="https://h5i.dev">Explore h5i ↗</a></div></div></div>
+<div class="content"><div class="eyebrow">08 / What comes next</div><h2 id="title-8">Build, Verify, and Hack</h2><div class="closing"><div class="next-steps"><p class="index">NEXT</p><ul><li>Work with design partners on real applications</li><li>Improve the workflow</li><li>Build toward the first paid pilots</li></ul></div><div class="closing-links"><a class="button primary" href="https://github.com/h5i-dev/h5i/issues">Start a conversation ↗</a><a class="button" href="https://h5i.dev">Explore h5i ↗</a></div></div></div>
 <footer class="folio"><span>h5i.dev / github.com/h5i-dev/h5i</span><span>08</span></footer>
 </section>
 </main>

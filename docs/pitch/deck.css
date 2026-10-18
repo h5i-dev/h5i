@@ -147,6 +147,7 @@ figure { margin:0; }
 .product-map li::marker { color:var(--spot); }
 .product-map .mini-diagram { margin:25px 0 0; border:0; }
 #slide-3 .content { padding-top:84px; padding-bottom:16px; }
+#slide-5 .content { padding-top:71px; padding-bottom:29px; }
 #slide-6 .content { padding-top:84px; padding-bottom:16px; }
 .editor-bar { padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel2,#151513); font:11px var(--mono); color:var(--dim); }
 .shell-dashboard { display:grid; grid-template-columns:360px 50px minmax(0,1fr); margin-top:26px; }
@@ -186,20 +187,12 @@ figure { margin:0; }
 .build-footnote { display:flex; align-items:baseline; gap:28px; margin-top:26px; padding-top:20px; border-top:1px solid var(--line); }
 .build-footnote .index { flex:none; color:var(--spot); }
 .build-footnote p { font-size:20px; line-height:1.4; color:var(--text); }
-.source-note { border-top:1px solid var(--line); padding:12px 14px; font:11px var(--mono); color:var(--dim); }
-.proof-note { margin-top:13px; font-size:16px; color:var(--text); }
 .test-note { display:flex; align-items:center; gap:22px; margin-top:15px; padding:11px 15px; border-left:2px solid var(--spot); background:var(--panel); }
 .test-note span { flex:none; color:var(--spot); font:11px var(--mono); letter-spacing:.1em; }
 .test-note code { font:12px var(--mono); color:var(--ink); overflow-wrap:anywhere; }
-.traction-evidence { display:grid; grid-template-columns:1fr 1fr; gap:30px; margin-top:20px; }
-.traction-evidence>div { border-top:1px solid var(--line); padding-top:15px; }
-.traction-evidence p { margin-top:7px; font-size:18px; }
-.traction-evidence a { color:var(--ink); text-decoration:underline; text-underline-offset:4px; }
-#slide-7 h2 { font-size:57px; }
-#slide-7 .metrics strong { font-size:93px; }
 @media screen and (max-width:700px) {
   .enhanced body { overflow:auto; }
-  #slide-3 .content, #slide-6 .content { padding:30px 0; }
+  #slide-3 .content, #slide-5 .content, #slide-6 .content { padding:30px 0; }
   .shell-dashboard,.proof-examples { grid-template-columns:1fr; gap:16px; }
   .shell-link { transform:rotate(90deg); }
   .code-arrow { flex-direction:row; justify-content:center; padding:0; }
@@ -255,7 +248,7 @@ figure { margin:0; }
   .metrics>div>span { font-size:9px; letter-spacing:0; }
   .traction-bottom { gap:20px; }
   .closing { gap:24px; }
-  .build-flow,.traction-evidence { grid-template-columns:1fr; }
+  .build-flow { grid-template-columns:1fr; }
   .build-flow { gap:8px; margin-top:24px; }
   .build-step { min-height:0; padding:20px; }
   .build-step h3 { margin:8px 0; font-size:24px; }
@@ -264,8 +257,6 @@ figure { margin:0; }
   .build-footnote { display:block; margin-top:24px; padding-top:18px; }
   .build-footnote p { margin-top:8px; font-size:17px; }
   .test-note { align-items:flex-start; flex-direction:column; gap:8px; }
-  #slide-7 h2 { font-size:47px; }
-  #slide-7 .metrics strong { font-size:59px; }
   .folio { height:auto; min-height:43px; font-size:9px; line-height:1.5; padding:12px 0; }
   .enhanced .controls { position:static; padding:0 14px; font-size:11px; gap:10px; }
   .controls>a,.exports button,.exports>a:first-child { display:none; }
