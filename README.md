@@ -49,7 +49,7 @@ npx skills add h5i-dev/h5i
 
 ---
 
-## 2. Build, Verify & Test
+## 2. Build, Verify & Hack
 
 ### Verifiable Web Framework
 
