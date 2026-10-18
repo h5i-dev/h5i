@@ -37,7 +37,8 @@ h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com  # Repl
 
 ```bash
 # Unified CLI (development, verification, and security testing)
-curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test　# `websec`, `recon`, and `test` are optional plugins
+# `websec`, `recon`, and `test` are optional plugins
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test
 
 # Rust web framework
 cargo add h5i-app
