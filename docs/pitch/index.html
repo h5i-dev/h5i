@@ -68,18 +68,37 @@
 <section class="slide" id="slide-4" aria-labelledby="title-4">
 <div class="content">
   <div class="eyebrow">04 / Build</div>
-  <h2 id="title-4">Build around a pure Rust kernel</h2>
-  <p class="slide-intro">h5i-app separates web and database work from the code that makes application decisions.</p>
-  <div class="build-flow" aria-label="How an h5i-app request is handled">
-    <div class="build-step"><span class="index">01 / AXUM</span><h3>Receive the request</h3><p>Handle HTTP and load the current state.</p></div>
-    <span class="build-arrow" aria-hidden="true">→</span>
-    <div class="build-step build-kernel"><span class="index">02 / RUST KERNEL</span><h3>Decide what happens</h3><p>Use a command and snapshot to return planned writes and a reply.</p></div>
-    <span class="build-arrow" aria-hidden="true">→</span>
-    <div class="build-step"><span class="index">03 / STORAGE</span><h3>Apply the result</h3><p>Commit the writes and send the response.</p></div>
+  <h2 id="title-4">Kernel-based design enables<br><em>Lean 4</em> verification and <em>GPU</em> optimization</h2>
+  <div class="kernel-fanout">
+    <div class="rust-example"><div class="editor-bar">Rust / parallel/kernel/src/lib.rs · pure kernel</div><pre><span class="syntax-keyword">pub fn</span> push_rule(event: &amp;[u8], pattern: &amp;[u8],
+    display: &amp;[u8], members: u64,
+    minimum: u64, maximum: u64, power: u64,
+    required: u64, enabled: bool,
+    require_display: bool) -&gt; u32 {
+    <span class="syntax-keyword">if</span> !enabled { <span class="syntax-keyword">return</span> 0; }
+    <span class="syntax-keyword">if</span> power &lt; required { <span class="syntax-keyword">return</span> 0; }
+    <span class="syntax-keyword">if</span> members &lt; minimum
+        || members &gt; maximum { <span class="syntax-keyword">return</span> 0; }
+    <span class="syntax-keyword">if</span> !glob(event, pattern) { <span class="syntax-keyword">return</span> 0; }
+    <span class="code-dim">// display-name check omitted</span>
+    1
+}</pre><div class="kernel-note">No I/O and no allocation: Axum and storage adapters stay outside.</div></div>
+    <span class="fanout-arrow" aria-hidden="true"><small>Charon<br>Aeneas</small><b>→</b></span>
+    <div class="lean-example"><div class="editor-bar">Lean 4 / Proofs.lean · verify</div><pre><span class="syntax-keyword">theorem</span> insufficient_power_denies ...
+    (h : power &lt; required) :
+    push_rule event pattern display members
+      minimum maximum power required true
+      requireDisplay = ok 0#u32 := <span class="syntax-keyword">by</span>
+  simp [push_rule, h]</pre></div>
+    <span class="fanout-arrow" aria-hidden="true"><small>Rust-CUDA<br>PTX</small><b>→</b></span>
+    <div class="gpu-example"><div class="editor-bar">CUDA / device/src/lib.rs · optimize</div><pre><span class="syntax-keyword">#[kernel]</span>
+<span class="syntax-keyword">pub unsafe fn</span> push_batch(...) {
+    <span class="syntax-keyword">let</span> i = thread::index_1d() <span class="syntax-keyword">as</span> usize;
+    ... shared::push_rule(&amp;events[row(i)], ...)
+}</pre><div class="gpu-result"><strong>15.6×</strong><span>1M push-rule rows vs one CPU thread · RTX 3090</span></div></div>
   </div>
-  <div class="build-footnote"><span class="index">WHY THIS DESIGN</span><p>The isolated kernel can be translated into Lean 4 for proofs and run on GPUs for suitable batch workloads.</p></div>
 </div>
-<footer class="folio"><span>h5i-app / web and storage adapters surround the application kernel</span><span>04</span></footer>
+<footer class="folio"><span>Same kernel source on CPU, in Lean, and on GPU / GPU backend is experimental; Lean does not prove CPU/GPU equivalence</span><span>04</span></footer>
 </section>
 
 <section class="slide " id="slide-5" aria-labelledby="title-5">
