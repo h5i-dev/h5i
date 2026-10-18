@@ -53,6 +53,27 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 
 ---
 
+## 3. Prove Correctness: Build on h5i-app
+
+[`h5i-app`](crates/h5i-app/README.md) is an Axum-based Rust web framework that makes application logic amenable to Lean 4.
+
+> Red-teaming discovers bugs through testing. Formal verification takes a complementary approach: proving that specified properties hold for all possible inputs and behaviors.
+
+```toml
+[dependencies]
+h5i-app = { version = "0.1.1", features = ["http", "postgres"] }
+```
+
+We can write web applications in Rust, translate them into Lean 4 via [Aeneas](https://github.com/AeneasVerif/aeneas), and prove various properties like authorization, 
+isolation, business logics, and more.
+
+<p align="center">
+  <img src="./docs/_static/calculator-rust-lean-proof.svg" alt="Watching a sandboxed browser session from the host" width="99%" />
+</p>
+
+
+---
+
 ## 2. Find Bugs: Red-Team with Agents
 
 Let AI agents explore, attack, and test web applications using h5i's integrated security toolkit. 
@@ -72,24 +93,6 @@ Let AI agents explore, attack, and test web applications using h5i's integrated 
 </p>
 
 ---
-
-## 3. Prove Correctness: Build on h5i-app
-
-[`h5i-app`](crates/h5i-app/README.md) is an Axum-based Rust web framework that makes application logic amenable to Lean 4.
-
-> Red-teaming discovers bugs through testing. Formal verification takes a complementary approach: proving that specified properties hold for all possible inputs and behaviors.
-
-```toml
-[dependencies]
-h5i-app = { version = "0.1.1", features = ["http", "postgres"] }
-```
-
-We can write web applications in Rust, translate them into Lean 4 via [Aeneas](https://github.com/AeneasVerif/aeneas), and prove various properties like authorization, 
-isolation, business logics, and more.
-
-<p align="center">
-  <img src="./docs/_static/calculator-rust-lean-proof.svg" alt="Watching a sandboxed browser session from the host" width="99%" />
-</p>
 
 ## 4. Dashboard
 
