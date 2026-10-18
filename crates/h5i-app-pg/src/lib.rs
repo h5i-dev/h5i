@@ -51,9 +51,22 @@ use tokio_postgres::{IsolationLevel, NoTls, Transaction};
 /// The transaction a `Store` works in. Offers only this crate's table operations.
 /// Its statements are prepared once per connection (deadpool's statement
 /// cache), at most `EngineConfig::statement_cache` of them.
-pub struct Tx<'a>(pub(crate) &'a deadpool_postgres::Transaction<'a>, pub(crate) &'a statements::Statements);
+pub struct Tx<'a>(pub(crate) &'a deadpool_postgres::Transaction<'a>, pub(crate) &'a statements::Statements, pub(crate) Option<ReadSqlMode>);
 
 impl Tx<'_> {
+    /// Select an equivalent SQL strategy for reads through this handle only.
+    /// The returned handle uses the same transaction, snapshot and statement
+    /// cache. It does not change the pool or other requests, so a Store can
+    /// choose a strategy per command without racing concurrent requests.
+    pub fn with_read_sql_mode(&self, mode: ReadSqlMode) -> Self {
+        Tx(self.0, self.1, Some(mode))
+    }
+
+    /// This handle's override, or the pool's configured default.
+    pub fn read_sql_mode(&self) -> ReadSqlMode {
+        self.2.unwrap_or_else(|| self.1.read_sql_mode())
+    }
+
     /// Backend process id, so fault tests can kill this connection.
     #[cfg(feature = "testing")]
     pub async fn backend_pid(&self) -> Result<i32, DbError> {
@@ -411,7 +424,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
     pub async fn snapshot(&self, tenant: TenantId) -> Result<K::Snapshot, DbError> {
         let mut client = self.pool.0.get().await.map_err(|e| DbError::Pool(e.to_string()))?;
         let tx = client.build_transaction().isolation_level(IsolationLevel::Serializable).read_only(true).deferrable(true).start().await?;
-        let snap = S::load(&Tx(&tx, &self.pool.1), tenant).await?;
+        let snap = S::load(&Tx(&tx, &self.pool.1, None), tenant).await?;
         tx.commit().await?;
         Ok(snap)
     }
@@ -421,7 +434,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
         let tenant = K::tenant(actor);
         let mut client = self.pool.0.get().await.map_err(|e| DbError::Pool(e.to_string()))?;
         let tx = client.build_transaction().isolation_level(IsolationLevel::Serializable).read_only(true).deferrable(true).start().await?;
-        let snap = S::load_for(&Tx(&tx, &self.pool.1), tenant, actor, cmd).await?;
+        let snap = S::load_for(&Tx(&tx, &self.pool.1, None), tenant, actor, cmd).await?;
         tx.commit().await?;
         Ok(snap)
     }
@@ -586,7 +599,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
             .start()
             .await?;
         let now = self.read_clock(&tx, tid).await?;
-        let snap = S::load_for(&Tx(&tx, &self.pool.1), tenant, actor, cmd).await?;
+        let snap = S::load_for(&Tx(&tx, &self.pool.1, None), tenant, actor, cmd).await?;
         let mut actor = actor.clone();
         K::stamp(&mut actor, now);
         match K::transition(&actor, &snap, cmd) {
@@ -598,7 +611,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
                 // Empty by `H5iAppLib.ReadOnly.Sound`. Were it not, PostgreSQL
                 // refuses the write in this READ ONLY transaction and the
                 // request fails rather than losing it.
-                S::write(&Tx(&tx, &self.pool.1), tenant, &ws).await?;
+                S::write(&Tx(&tx, &self.pool.1, None), tenant, &ws).await?;
                 tx.commit().await?;
                 Ok(Ok(reply))
             }
@@ -631,7 +644,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
                 return Ok(Attempt::Replayed(reply));
             }
         }
-        let snap = S::load_for(&Tx(&tx, &self.pool.1), tenant, actor, cmd).await?;
+        let snap = S::load_for(&Tx(&tx, &self.pool.1, None), tenant, actor, cmd).await?;
         let mut actor = actor.clone();
         K::stamp(&mut actor, now);
         let decision = K::transition(&actor, &snap, cmd);
@@ -646,7 +659,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
                 Ok(Attempt::Done(Err(refusal), None))
             }
             Ok((ws, reply)) => {
-                S::write(&Tx(&tx, &self.pool.1), tenant, &ws).await?;
+                S::write(&Tx(&tx, &self.pool.1, None), tenant, &ws).await?;
                 if let (Some(idem), Some(bytes)) = (idem, &encoded) {
                     tx.execute(
                         "INSERT INTO h5i_idempotency (tenant_id, key, fingerprint, reply) VALUES ($1, $2, $3, $4)",

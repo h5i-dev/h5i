@@ -55,7 +55,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
         };
         for t in &tenants {
             let tenant = TenantId(*t as u64);
-            let snap = S::load(&Tx(&tx, &self.pool.1), tenant).await?;
+            let snap = S::load(&Tx(&tx, &self.pool.1, None), tenant).await?;
             if !check(&snap) {
                 tx.rollback().await?;
                 return Err(DbError::InvariantViolated { tenant: tenant.0, migrations: report.applied.join(", ") });

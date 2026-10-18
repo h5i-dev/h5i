@@ -277,7 +277,7 @@ pub(crate) async fn prepare(tx: &Tx<'_>, sql: &str) -> Result<tokio_postgres::St
 
 /// A compiled read's text, driver values and column kinds.
 fn compiled_read(tx: &Tx<'_>, schema: &Vec<Spec>, tenant: TenantId, q: &h5i_app_sql::Read, count: bool) -> Result<(String, Vec<Value>, Vec<Kind>), DbError> {
-    let Some(c) = h5i_app_pgsql::compile_read_with_mode(schema, tenant_param(tenant)?, q, count, tx.1.read_sql_mode()) else {
+    let Some(c) = h5i_app_pgsql::compile_read_with_mode(schema, tenant_param(tenant)?, q, count, tx.read_sql_mode()) else {
         return Err(DbError::Decode(format!("read does not fit the schema: {q:?}")));
     };
     let sql = String::from_utf8(c.text).map_err(|e| DbError::Decode(e.to_string()))?;

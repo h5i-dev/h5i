@@ -60,7 +60,7 @@ async fn reads_match_the_reference() {
             let tabs = cases::tables(&mut r);
             let noise = cases::tables(&mut r);
             let tx = client.transaction().await.unwrap();
-            let t = Tx(&tx, &p.1);
+            let t = Tx(&tx, &p.1, None);
             // The case's rows, and other rows in the next tenant that must not show.
             for (tid, rows) in [(tenant, &tabs), (TenantId(case + 100_000), &noise)] {
                 let mut ws = Vec::new();
@@ -129,7 +129,7 @@ async fn statement_cache_is_bounded() {
     let mut r = cases::Rng(5);
     let tabs = cases::tables(&mut r);
     let tx = client.transaction().await.unwrap();
-    let t = Tx(&tx, &p.1);
+    let t = Tx(&tx, &p.1, None);
     let tenant = TenantId(1);
     let mut ws = Vec::new();
     for (i, tab) in tabs.iter().enumerate() {
@@ -196,7 +196,7 @@ async fn unique_membership_matches_the_reference() {
         tx.batch_execute(&format!("DROP TABLE IF EXISTS \"{}\"", String::from_utf8_lossy(&t.name))).await.unwrap();
     }
     for ddl in create_tables(&schema).unwrap() { tx.batch_execute(&ddl).await.unwrap(); }
-    let t = Tx(&tx, &p.1);
+    let t = Tx(&tx, &p.1, None);
     let tabs = vec![
         vec![vec![Val::Int(1), Val::Int(7), Val::Bytes(b"a".to_vec()), Val::Null],
              vec![Val::Int(2), Val::Int(8), Val::Bytes(b"b".to_vec()), Val::Int(9)]],
@@ -219,7 +219,11 @@ async fn unique_membership_matches_the_reference() {
     let mut scalars = 0;
     assert_eq!(p.read_sql_mode(), crate::ReadSqlMode::Membership);
     for mode in [crate::ReadSqlMode::Membership, crate::ReadSqlMode::ScalarWhenUnique] {
-        p.set_read_sql_mode(mode);
+        let scoped = t.with_read_sql_mode(mode);
+        assert_eq!(p.read_sql_mode(), crate::ReadSqlMode::Membership);
+        assert_eq!(t.read_sql_mode(), crate::ReadSqlMode::Membership);
+        assert_eq!(scoped.read_sql_mode(), mode);
+        let t = scoped;
         for table in [0, 1] {
             for pred in &preds {
                 for window in windows {
