@@ -91,7 +91,7 @@ Let AI agents explore, attack, and test web applications using h5i's integrated 
 
 ---
 
-## 4. Dashboard
+## 3. Dashboard
 
 While agents access these capabilities through a unified CLI, you can also monitor their activity through the dashboard:
 
@@ -105,7 +105,7 @@ h5i ui    # Open the local dashboard
 
 ---
 
-## 5. Documentation
+## 4. Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
 - [MANUAL.md](docs/MANUAL.md) / `man h5i`: full command reference
@@ -114,13 +114,13 @@ h5i ui    # Open the local dashboard
 
 ---
 
-## 6. License
+## 5. License
 
 h5i is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
 
 ---
 
-## 7. Contributors
+## 6. Contributors
 
 <a href="https://github.com/h5i-dev/h5i/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=h5i-dev/h5i" alt="h5i contributors" />
