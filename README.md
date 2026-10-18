@@ -105,7 +105,7 @@ h5i ui    # Open the local dashboard
 
 ## 4. Showcase
 
-**Web Applications**
+**Web applications**
 - [o5s](https://github.com/h5i-dev/o5s): Patch-based version control for concurrent AI agents, deployable on Cloudflare Workers.
 - [h5i-db](https://github.com/Koukyosyumei/h5i-db): High-performance time-series database and backtesting engine with an `h5i-app`-based web interface.
 
@@ -113,7 +113,7 @@ h5i ui    # Open the local dashboard
 - [h5i-app-bench](https://github.com/h5i-dev/h5i-app-bench): Benchmarks for formal verification coverage and web application performance across languages.
 - [h5i-websec-bench](https://github.com/h5i-dev/h5i-websec-bench): AI-driven penetration testing benchmarks using public CTF challenges.
 
-**Selected Vulnerabilities found by h5i**
+**Selected vulnerabilities found by h5i**
 - [rustical GHSA-9cp5-7crm-9cf7](https://github.com/lennart-k/rustical/security/advisories/GHSA-9cp5-7crm-9cf7): Missing authorization checks allowed cross-user object deletion.
 - [Exograph #2320](https://github.com/exograph/exograph/issues/2320): Access-control bypass when protected fields were omitted during record creation.
 - [OxiCloud #796](https://github.com/AtalayaLabs/OxiCloud/pull/796): IDOR vulnerability exposing other users' file metadata through music playlists.
