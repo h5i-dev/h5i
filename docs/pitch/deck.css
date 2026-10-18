@@ -138,18 +138,14 @@ figure { margin:0; }
 .join-lines span { flex:1; border:solid var(--spot); border-width:0 0 2px 2px; }
 .join-lines span+span { border-width:0 2px 2px 0; }
 .security-outcome { grid-column:1 / -1; justify-self:center; border-top:3px solid var(--spot); padding:18px 35px; font-size:34px; color:var(--ink); }
-/* Two product pillars above their shared human interface and confinement. */
+/* Product capabilities and their shared CLI workflow. */
 .product-title { font-size:60px; }
 .product-map { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:28px; }
 .product-map article { border:1px solid var(--line); padding:24px; min-width:0; background:var(--panel); }
 .product-map h3 { font-size:29px; margin:16px 0; }
-.product-map ul,.shared-capabilities ul { display:grid; grid-template-columns:1fr 1fr; column-gap:35px; row-gap:12px; padding-left:22px; margin:0; font-size:21px; line-height:1.5; color:var(--text); }
-.product-map li::marker,.shared-capabilities li::marker { color:var(--spot); }
+.product-map ul { display:grid; grid-template-columns:1fr 1fr; column-gap:35px; row-gap:12px; padding-left:22px; margin:0; font-size:21px; line-height:1.5; color:var(--text); }
+.product-map li::marker { color:var(--spot); }
 .product-map .mini-diagram { margin:25px 0 0; border:0; }
-.shared-capabilities { margin-top:20px; border:1px solid var(--line); padding:20px 24px; }
-.shared-capabilities h3 { font-size:29px; margin:0; }
-.shared-capabilities ul { margin-top:16px; column-gap:35px; }
-.shared-capabilities p { color:var(--ink); font-size:23px; line-height:1.3; }
 #slide-3 .content { padding-top:84px; padding-bottom:16px; }
 #slide-6 .content { padding-top:84px; padding-bottom:16px; }
 .editor-bar { padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel2,#151513); font:11px var(--mono); color:var(--dim); }
@@ -170,6 +166,37 @@ figure { margin:0; }
 .app-ui-label { font:10px var(--mono); color:var(--dim); margin:14px 0 7px; }
 .app-ui-frame { height:235px; border:1px solid var(--line); overflow:hidden; }
 .app-ui-frame iframe { display:block; width:1440px; height:502px; transform:scale(.467); transform-origin:top left; border:0; pointer-events:none; }
+/* The product story uses the same code and UI surfaces in build → verify → hack order. */
+.product-map { grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.product-map article { padding:20px; }
+.product-map h3 { font-size:27px; margin:15px 0 12px; }
+.product-map p { font-size:17px; line-height:1.45; }
+.product-map .workflow-card { min-width:0; padding:20px; border:1px solid #71332d; border-left:3px solid var(--spot); background:linear-gradient(135deg,#241512,#15100f); }
+.product-map .workflow-card .index { color:var(--spot); }
+.product-map .workflow-card h3 { font-size:25px; margin:15px 0 12px; }
+.product-map .workflow-card p { font-size:17px; line-height:1.45; color:var(--text); }
+.slide-intro { margin-top:15px; font-size:18px; line-height:1.4; }
+.build-flow { display:grid; grid-template-columns:minmax(0,1fr) 42px minmax(0,1.18fr) 42px minmax(0,1fr); align-items:stretch; gap:12px; margin-top:34px; }
+.build-step { min-width:0; min-height:210px; padding:27px 24px; border:1px solid var(--line); background:var(--panel); }
+.build-step h3 { margin:28px 0 12px; font-size:28px; }
+.build-step p { font-size:18px; line-height:1.42; color:var(--text); }
+.build-kernel { border-color:#71332d; border-top:3px solid var(--spot); background:linear-gradient(135deg,#241512,#15100f); }
+.build-kernel .index { color:var(--spot); }
+.build-arrow { align-self:center; text-align:center; color:var(--spot); font:32px var(--mono); }
+.build-footnote { display:flex; align-items:baseline; gap:28px; margin-top:26px; padding-top:20px; border-top:1px solid var(--line); }
+.build-footnote .index { flex:none; color:var(--spot); }
+.build-footnote p { font-size:20px; line-height:1.4; color:var(--text); }
+.source-note { border-top:1px solid var(--line); padding:12px 14px; font:11px var(--mono); color:var(--dim); }
+.proof-note { margin-top:13px; font-size:16px; color:var(--text); }
+.test-note { display:flex; align-items:center; gap:22px; margin-top:15px; padding:11px 15px; border-left:2px solid var(--spot); background:var(--panel); }
+.test-note span { flex:none; color:var(--spot); font:11px var(--mono); letter-spacing:.1em; }
+.test-note code { font:12px var(--mono); color:var(--ink); overflow-wrap:anywhere; }
+.traction-evidence { display:grid; grid-template-columns:1fr 1fr; gap:30px; margin-top:20px; }
+.traction-evidence>div { border-top:1px solid var(--line); padding-top:15px; }
+.traction-evidence p { margin-top:7px; font-size:18px; }
+.traction-evidence a { color:var(--ink); text-decoration:underline; text-underline-offset:4px; }
+#slide-7 h2 { font-size:57px; }
+#slide-7 .metrics strong { font-size:93px; }
 @media screen and (max-width:700px) {
   .enhanced body { overflow:auto; }
   #slide-3 .content, #slide-6 .content { padding:30px 0; }
@@ -182,10 +209,9 @@ figure { margin:0; }
   .app-ui-frame { height:calc((100vw - 48px) * .348611); }
   .session-ui-frame iframe { transform:scale(var(--workspace-scale,.342)); }
   .app-ui-frame iframe { transform:scale(var(--ui-scale,.2375)); }
-  .product-map,.shared-capabilities ul { grid-template-columns:1fr; }
+  .product-map { grid-template-columns:1fr; }
+  .product-title { font-size:47px; }
   .product-map article { padding:20px; }
-  .shared-capabilities { padding:20px; }
-  .shared-capabilities>div { gap:16px; }
   .security-pair,.product-visuals { grid-template-columns:1fr; }
   .security-pair .quantified-heading { font-size:clamp(25px,7.5vw,44px); gap:12px; }
   .security-pair article,.product-visuals article { padding:24px 0; }
@@ -205,7 +231,7 @@ figure { margin:0; }
   .session-link b { transform:rotate(90deg); }
   .agent-pane pre { font-size:13px; }
   .activity-row { grid-template-columns:90px 1fr; font-size:13px; }
-  .deck,.enhanced .deck { position:static; width:100%; transform:none; margin:0 0 64px; }
+  .deck,.enhanced .deck { position:static; width:100%; transform:none; margin:0; }
   .slide { width:100%; height:auto; min-height:calc(100svh - 64px); padding:0 24px; }
   .content,.cover .content { padding:30px 0; justify-content:flex-start; }
   h1 { font-size:76px; }
@@ -229,8 +255,19 @@ figure { margin:0; }
   .metrics>div>span { font-size:9px; letter-spacing:0; }
   .traction-bottom { gap:20px; }
   .closing { gap:24px; }
+  .build-flow,.traction-evidence { grid-template-columns:1fr; }
+  .build-flow { gap:8px; margin-top:24px; }
+  .build-step { min-height:0; padding:20px; }
+  .build-step h3 { margin:8px 0; font-size:24px; }
+  .build-step p { font-size:16px; }
+  .build-arrow { line-height:1; transform:rotate(90deg); }
+  .build-footnote { display:block; margin-top:24px; padding-top:18px; }
+  .build-footnote p { margin-top:8px; font-size:17px; }
+  .test-note { align-items:flex-start; flex-direction:column; gap:8px; }
+  #slide-7 h2 { font-size:47px; }
+  #slide-7 .metrics strong { font-size:59px; }
   .folio { height:auto; min-height:43px; font-size:9px; line-height:1.5; padding:12px 0; }
-  .enhanced .controls { padding:0 14px; font-size:11px; gap:10px; }
+  .enhanced .controls { position:static; padding:0 14px; font-size:11px; gap:10px; }
   .controls>a,.exports button,.exports>a:first-child { display:none; }
   .pager,.exports { gap:12px; }
 }

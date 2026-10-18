@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>h5i Features: Build, Verify, and Hack Your Web Apps</title>
-  <meta name="description" content="Explore h5i's verifiable Rust web framework, experimental GPU backend, red-teaming tools, security regression tests, sandboxing, and audit dashboard.">
+  <meta name="description" content="Explore h5i's verifiable Rust web framework, Rust-CUDA GPU backend, red-teaming tools, security regression tests, sandboxing, and audit dashboard.">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -20,7 +20,7 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
   <meta property="og:title" content="h5i Features: Build, Verify, and Hack Your Web Apps">
-  <meta property="og:description" content="Explore h5i's verifiable Rust web framework, experimental GPU backend, red-teaming tools, security regression tests, sandboxing, and audit dashboard.">
+  <meta property="og:description" content="Explore h5i's verifiable Rust web framework, Rust-CUDA GPU backend, red-teaming tools, security regression tests, sandboxing, and audit dashboard.">
   <meta property="og:url" content="https://h5i.dev/features/">
   <meta property="og:image" content="https://h5i.dev/_static/social-card.png">
   <meta property="og:image:width" content="1000">
@@ -30,7 +30,7 @@
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="h5i Features: Build, Verify, and Hack Your Web Apps">
-  <meta name="twitter:description" content="Explore h5i's verifiable Rust web framework, experimental GPU backend, red-teaming tools, security regression tests, sandboxing, and audit dashboard.">
+  <meta name="twitter:description" content="Explore h5i's verifiable Rust web framework, Rust-CUDA GPU backend, red-teaming tools, security regression tests, sandboxing, and audit dashboard.">
   <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
   <meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
 
@@ -79,13 +79,13 @@
         "h5i-app, an Axum-based Rust framework with composable application kernels",
         "Lean 4 proofs of authorization, tenant isolation, and business state invariants",
         "Mutation testing to check proof sensitivity",
-        "Experimental GPU backend for suitable batch workloads",
+        "Rust-CUDA GPU backend for suitable batch workloads",
         "Browser automation, reconnaissance, and HTTP capture, editing, and replay",
         "Versioned security regression tests that run in CI/CD",
         "Configurable sandboxing and network policies for agent workflows",
         "Auditable browser actions, network requests, and local dashboard"
       ],
-      "keywords": "Rust web framework, h5i-app, Axum, Lean 4, formal verification, composable kernels, experimental GPU, red teaming, browser automation, HTTP replay, security regression testing, CI/CD, sandboxing",
+      "keywords": "Rust web framework, h5i-app, Axum, Lean 4, formal verification, composable kernels, GPU acceleration, red teaming, browser automation, HTTP replay, security regression testing, CI/CD, sandboxing",
       "url": "https://h5i.dev/",
       "downloadUrl": "https://github.com/h5i-dev/h5i",
       "installUrl": "https://h5i.dev/#quickstart",
@@ -162,7 +162,7 @@
       "primaryImageOfPage": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "name": "h5i Features: Build, Verify, and Hack Your Web Apps",
-      "description": "Explore h5i's verifiable Rust web framework, experimental GPU backend, red-teaming tools, security regression tests, sandboxing, and audit dashboard."
+      "description": "Explore h5i's verifiable Rust web framework, Rust-CUDA GPU backend, red-teaming tools, security regression tests, sandboxing, and audit dashboard."
     }
   ]
 }
@@ -282,7 +282,7 @@
     <div class="section-head reveal">
       <span class="section-tag">01 / Web framework</span>
       <h2 class="section-title">Verifiable Web Framework</h2>
-      <p class="section-sub">Build on h5i-app, a composable Axum-based Rust framework. Verify critical properties of application kernels in Lean 4, check proof sensitivity with mutations, and explore an experimental GPU backend for suitable batch workloads. <a href="https://github.com/h5i-dev/h5i/blob/main/crates/h5i-app/README.md">Framework guide &#8594;</a></p>
+      <p class="section-sub">Build on h5i-app, a composable Axum-based Rust framework. Verify critical properties of application kernels in Lean 4, check proof sensitivity with mutations, and run shared kernel logic on GPUs for suitable batch workloads. <a href="https://github.com/h5i-dev/h5i/blob/main/crates/h5i-app/README.md">Framework guide &#8594;</a></p>
     </div>
     <div class="feat-grid">
       <div class="feat-card reveal">
@@ -301,9 +301,9 @@
         <div class="feat-desc">Lint that every mutating route takes an authenticated actor, then plant bugs in the kernel to check whether the proofs catch them. <a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/TRUST.md">TRUST.md</a> records the assumptions and trust boundary.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i-app-gpu &#183; experimental</span>
+        <span class="feat-cmd">h5i-app-gpu &#183; Rust-CUDA</span>
         <h3 class="feat-name">GPU Acceleration</h3>
-        <div class="feat-desc">An experimental Rust-CUDA backend runs shared Rust decision kernels on a GPU for batch workloads. <a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/GPU.md">GPU report &#8594;</a></div>
+        <div class="feat-desc">The Rust-CUDA backend runs shared Rust decision kernels on GPUs for suitable batch workloads. <a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/GPU.md">GPU report &#8594;</a></div>
       </div>
     </div>
   </div>

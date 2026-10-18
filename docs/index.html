@@ -78,7 +78,7 @@
       "featureList": [
         "h5i-app, an Axum-based Rust framework with composable application kernels",
         "Lean 4 proofs of tenant isolation, authorization, and business state invariants",
-        "Experimental GPU backend for suitable batch workloads",
+        "Rust-CUDA GPU backend for suitable batch workloads",
         "Headless browser automation and compact snapshots with @ref handles for AI agents",
         "HTTP capture, inspection, editing, replay, and response comparison through the websec plugin",
         "Multi-step test flows that replay findings in CI with your own oracle",
@@ -171,7 +171,7 @@
           "name": "Can h5i-app kernels run on a GPU?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "An experimental Rust-CUDA backend has run shared Rust decision kernels on a GPU for batch workloads. It is not a production GPU executor. Lean proofs cover extracted kernel logic, not GPU execution or CPU/GPU equivalence. See the GPU report."
+            "text": "Yes. The Rust-CUDA backend runs shared Rust decision kernels on GPUs for suitable batch workloads. Lean proofs cover the extracted kernel logic; CPU/GPU behavior is checked separately with differential tests. See the GPU report."
           }
         },
         {
@@ -779,7 +779,7 @@
     <div class="section-head">
       <span class="section-tag">01 / Build &amp; verify &middot; Rust + Lean 4</span>
       <h2 class="section-title">A Verifiable Web Framework</h2>
-      <p class="section-sub">Build on Axum with composable Rust kernels, extract application logic into Lean 4, and prove the properties that matter. Explore an experimental GPU backend for suitable batch workloads.</p>
+      <p class="section-sub">Build on Axum with composable Rust kernels, extract application logic into Lean 4, and prove the properties that matter. The Rust-CUDA backend also runs shared kernel logic on GPUs for suitable batch workloads.</p>
     </div>
     <figure class="proof-flow">
       <input class="tabpick" type="radio" name="edtab" id="ed-lib" checked>
@@ -1158,7 +1158,7 @@
       </details>
       <details class="faq-item">
         <summary>Can h5i-app kernels run on a GPU?</summary>
-        <div class="faq-answer">An experimental Rust-CUDA backend has run shared Rust decision kernels on a GPU for batch workloads. It is not a production GPU executor. Lean proofs cover extracted kernel logic, not GPU execution or CPU/GPU equivalence. See the <a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/GPU.md">GPU report</a>.</div>
+        <div class="faq-answer">Yes. The Rust-CUDA backend runs shared Rust decision kernels on GPUs for suitable batch workloads. Lean proofs cover the extracted kernel logic; CPU/GPU behavior is checked separately with differential tests. See the <a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/GPU.md">GPU report</a>.</div>
       </details>
       <details class="faq-item">
         <summary>Can I test an existing app without using h5i-app?</summary>

@@ -36,10 +36,10 @@ PUBLISHED = "2026-08-21"
 # without its date. Changing a page's content and forgetting the date is a
 # build error, not a silent regression.
 PAGE_HISTORY = {
-    "": ("2026-10-16", "64313a9163ed0d3f"),
-    "features/": ("2026-10-16", "25ef2d7616a668b8"),
+    "": ("2026-10-18", "79ed147529c9383f"),
+    "features/": ("2026-10-18", "caf66f8ab1284b7b"),
     "manual/": ("2026-10-17", "9d1f0793786ce0eb"),
-    "pitch/": ("2026-10-11", "28b7ae21c919cc84"),
+    "pitch/": ("2026-10-18", "3776f3ebd59b9c7c"),
     "demo/": ("2026-10-06", "95e78f7a0b1b6083"),
     "guides/": ("2026-10-11", "f5e147aa895fa4bd"),
     "blog/": ("2026-10-11", "467efd1f3cb9e97d"),
@@ -3820,51 +3820,46 @@ def build():
 
     (ROOT / "llms.txt").write_text("""# h5i
 
-> h5i ("high-five") is an agent-native web security workspace: build with agents, red-team for bugs, formally verify properties. Red-teaming finds the bugs nobody anticipated in a running app on any stack, and formal verification proves the rules you can state, so you do not need to be a security expert to start.
+> h5i ("high-five") helps you build, verify, and hack your web apps. Its h5i-app framework combines composable Rust application kernels with Lean 4 verification. The framework-independent CLI lets agents red-team any web app and replay security regression tests in CI/CD.
 >
-> On the red-teaming side, your AI agent drives a browser session by id, reads the page as an outline with @ref handles, and then works the traffic that session produced: read a captured message byte for byte, change one field, send it again, compare the answers. The engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused. A request that is not in the log did not happen. Replay travels that same path, so it is not a side channel around scope. Sessions run on the host by default with no containment claimed, and one flag places the same session inside a sandbox, which adds an egress allowlist enforced outside the browser. Use h5i only against systems you own or are explicitly authorized to test.
+> Build on Axum with h5i-app, extract Rust kernel logic to Lean 4 with `h5i app extract`, check proofs with `h5i app prove`, and test proof sensitivity with `h5i app mutate`. The Rust-CUDA backend runs shared decision kernels on GPUs for suitable batch workloads.
 >
-> On the verification side, h5i-app is an Axum-based Rust framework whose application logic is extracted to Lean 4 and proven there, from tenant isolation and authorization to the app's own state invariants. h5i app runs that loop.
+> For security testing, an agent can explore a target in a browser, discover endpoints with recon, inspect and replay captured HTTP traffic with websec, and save confirmed findings as `h5i test` flows. The security CLI works with existing apps in any stack; adopting h5i-app is optional. Use h5i only against systems you own or are explicitly authorized to test.
 
 ## Start here
 
-- [Features](https://h5i.dev/features/): Product overview: automated browsing, reconnaissance, HTTP capture and editing, the limits you place around the agent, the review surface, and h5i-app for Lean 4 proofs.
+- [h5i-app framework](https://github.com/h5i-dev/h5i/blob/main/crates/h5i-app/README.md): Composable Axum-based Rust kernels, Lean 4 extraction and proofs, and the application workflow.
+- [Features](https://h5i.dev/features/): The verifiable Rust web framework first, followed by red-teaming, security regression testing, sandboxing, audit, and integrations.
+- [GPU backend report](https://github.com/h5i-dev/h5i/blob/main/docs/app/GPU.md): Rust-CUDA kernel results, CPU/GPU differential checks, measurements, and trust boundaries.
+- [Manual](https://h5i.dev/manual/): Authoritative command, policy, receipt, and limitation reference, including `h5i app` and `h5i test`.
 - [Run an authorized web security test](https://h5i.dev/guides/authorized-web-security-testing/): Scope a session to one target, inventory its endpoints, replay one request, and close with the evidence intact.
 - [Drive a browser session](https://h5i.dev/guides/drive-a-browser-session/): Open a session, read the page, act on it, and read back what it reached.
 - [AI pentesting tools compared](https://h5i.dev/blog/ai-pentesting-tools/): Burp Suite, OWASP ZAP, Caido, and h5i, chosen by what you delegate to AI.
-- [Manual](https://h5i.dev/manual/): Authoritative command, policy, receipt, and limitation reference.
-- [h5i-app](https://github.com/h5i-dev/h5i/blob/main/crates/h5i-app/README.md): The Axum-based Rust framework whose logic is proven in Lean 4, with the kernel, the server around it, and the proof workflow.
 
-## The web security tutorial
+## Build and verify with h5i-app
 
-Ten articles that walk the 42 runnable labs in h5i-dev/h5i-tutorial, from recon to a complete exploit chain. Part 1 of the series is on Medium; these are the rest.
+- h5i-app is a composable Axum-based Rust web framework. Start a project with `h5i app new`, or add the framework to a Rust project with `cargo add h5i-app`.
+- An application keeps its logic in a kernel crate: one pure Rust function decides what each command does, and handlers never touch the database.
+- Charon and Aeneas translate the kernel to Lean 4, where theorems about it are ordinary Lean.
+- Proofs cover the rows loaded back from PostgreSQL and properties across requests, for every order in which they commit.
+- h5i app new, extract, check, prove, lint, mutate, and doctor run the loop. check rejects sorry, native_decide, and axioms beyond propext, Classical.choice, and Quot.sound.
+- extract --check fails when the generated Lean is not what the kernel extracts to, which is the CI gate.
+- mutate plants bugs in the kernel; one that breaks no proof is behaviour the spec does not pin down.
+- What is proven and what is assumed is written down in [TRUST.md](https://github.com/h5i-dev/h5i/blob/main/docs/app/TRUST.md): PostgreSQL semantics, SERIALIZABLE isolation, the engine contract, and the translation toolchain are assumed.
 
-1. [Recon and IDOR](https://h5i.dev/guides/recon-and-idor/): Discover hidden endpoints, then test object-level authorization and why an unguessable URL is not an access control.
-2. [Broken Access Control](https://h5i.dev/guides/broken-access-control/): Test authorization with the least privileged account you hold, and find the fields a user interface never sends.
-3. [JWT Attacks](https://h5i.dev/guides/jwt-attacks/): alg confusion, a weak HMAC secret, and a key identifier turned into a path traversal.
-4. [SQL Injection](https://h5i.dev/guides/sql-injection/): A union read, then boolean and timing oracles when the application reveals almost nothing.
-5. [Injection Beyond SQL](https://h5i.dev/guides/injection-beyond-sql/): NoSQL operators, shell commands, server-side templates, XML entities, and second-order input.
-6. [The Browser as a Weapon](https://h5i.dev/guides/browser-as-a-weapon/): Reflected and stored XSS, CSRF, CORS misconfiguration, and an OAuth redirect_uri leak.
-7. [SSRF and File Attacks](https://h5i.dev/guides/ssrf-and-file-attacks/): Internal services, filter bypasses, encoded traversal, upload writes, and log poisoning.
-8. [HTTP Protocol Attacks](https://h5i.dev/guides/http-protocol-attacks/): Request smuggling, CRLF injection, host header poisoning, cache poisoning, WebSocket frames.
-9. [Business Logic, Time, and Crypto](https://h5i.dev/guides/logic-time-and-crypto/): Races, coupon stacking, predictable tokens, length extension, MFA state, and a pickled cookie.
-10. [Building Exploit Chains](https://h5i.dev/guides/exploit-chains/): Carry fresh values between requests and turn small findings into one reproducible compromise.
-11. [Cheatsheet](https://h5i.dev/guides/cheatsheet/): The loop, every --set target, the replay flags, probe values by class, and how to read a sweep.
+## GPU kernels
 
-## Tool comparisons
+- The h5i-app-gpu Rust-CUDA backend runs shared Rust decision kernels on GPUs for suitable batch workloads.
+- Lean checks the extracted kernel logic. CPU/GPU differential tests compare backend results for tested inputs; the Lean proofs do not establish GPU execution or CPU/GPU equivalence.
+- See the [GPU report](https://github.com/h5i-dev/h5i/blob/main/docs/app/GPU.md) for supported experiments, measurements, and trust boundaries.
 
-- [AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?](https://h5i.dev/blog/ai-pentesting-tools/): Four tools compared through AI-assisted manual testing, AI-authored scan automation, and agent-led investigation.
-- [Burp Suite vs h5i for AI agents](https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/): A complete web-testing platform versus fully automated penetration testing driven by an external AI agent.
-- [OWASP ZAP vs h5i for AI agents](https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/): Automated DAST and scanner findings versus an AI agent that directs the complete testing loop.
-- [Caido vs h5i for AI agents](https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/): A full proxy workspace and agent API versus an external AI agent driving the investigation end to end.
+## Red-team and regression-test any web app
 
-## Design essays
-
-- [Sandbox the entire workflow: browse, develop, review, apply](https://h5i.dev/blog/the-h5i-loop/): Put the browser, checkout, agent, tools, tests, and dev server in one box, then review the evidence before the patch crosses out.
-- [Why sandbox the entire AI agent workload](https://h5i.dev/blog/the-environment-is-the-sandbox/): Coding tasks execute dependencies, build tools, tests, servers, and pages—not only the agent process.
-- [How to choose an AI agent sandbox](https://h5i.dev/blog/choosing-agent-isolation/): Choose process, supervised, container, or microVM isolation by the failure it must prevent.
-- [Review AI-generated code with execution evidence](https://h5i.dev/blog/evidence-for-agent-work/): Check the diff alongside observed test results, denied actions, browser errors, and explicit gaps in collection.
-- [How to protect a coding agent from prompt injection](https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/): Restrict host files, reusable credentials, network destinations, local sockets, browser state, and writes to the parent repository.
+- The `h5i` browser, recon, websec, and test tools work with existing web applications in any language. You do not need to adopt h5i-app to use them.
+- Recon inventories endpoints; websec captures, edits, replays, and compares HTTP traffic from a browser session. A response difference is evidence to investigate, not a vulnerability verdict.
+- `h5i test` is an optional plugin for versioned YAML or JSON security flows. Each test needs response expectations or a user-supplied oracle. Run a confirmed finding again in CI/CD with `h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com`.
+- Install the CLI and optional security plugins with `curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test`.
+- Browser sessions and test flows must stay within the systems and actions you are authorized to test.
 
 ## The browser session
 
@@ -3931,16 +3926,36 @@ Ten articles that walk the 42 runnable labs in h5i-dev/h5i-tutorial, from recon 
 - h5i box export produces patch.diff, report.md, and receipt.json, and writes browser/<id>.json for each session placed in the box.
 - h5i is local-first, Apache-2.0, and requires no hosted sandbox or SaaS account.
 
-## h5i-app and formal verification
+## The web security tutorial
 
-- h5i-app is optional. The browser, websec, recon, and test work with existing web applications in any language.
-- An application keeps its logic in a kernel crate: one pure Rust function decides what each command does, and handlers never touch the database.
-- Charon and Aeneas translate the kernel to Lean 4, where theorems about it are ordinary Lean.
-- Proofs cover the rows loaded back from PostgreSQL and properties across requests, for every order in which they commit.
-- h5i app new, extract, check, prove, lint, mutate, and doctor run the loop. check rejects sorry, native_decide, and axioms beyond propext, Classical.choice, and Quot.sound.
-- extract --check fails when the generated Lean is not what the kernel extracts to, which is the CI gate.
-- mutate plants bugs in the kernel; one that breaks no proof is behaviour the spec does not pin down.
-- What is proven and what is assumed is written down in docs/app/TRUST.md: PostgreSQL semantics, SERIALIZABLE isolation, the engine contract, and the translation toolchain are assumed.
+Guides and a cheatsheet for the runnable labs in h5i-dev/h5i-tutorial, from recon to a complete exploit chain.
+
+1. [Recon and IDOR](https://h5i.dev/guides/recon-and-idor/): Discover hidden endpoints, then test object-level authorization and why an unguessable URL is not an access control.
+2. [Broken Access Control](https://h5i.dev/guides/broken-access-control/): Test authorization with the least privileged account you hold, and find the fields a user interface never sends.
+3. [JWT Attacks](https://h5i.dev/guides/jwt-attacks/): alg confusion, a weak HMAC secret, and a key identifier turned into a path traversal.
+4. [SQL Injection](https://h5i.dev/guides/sql-injection/): A union read, then boolean and timing oracles when the application reveals almost nothing.
+5. [Injection Beyond SQL](https://h5i.dev/guides/injection-beyond-sql/): NoSQL operators, shell commands, server-side templates, XML entities, and second-order input.
+6. [The Browser as a Weapon](https://h5i.dev/guides/browser-as-a-weapon/): Reflected and stored XSS, CSRF, CORS misconfiguration, and an OAuth redirect_uri leak.
+7. [SSRF and File Attacks](https://h5i.dev/guides/ssrf-and-file-attacks/): Internal services, filter bypasses, encoded traversal, upload writes, and log poisoning.
+8. [HTTP Protocol Attacks](https://h5i.dev/guides/http-protocol-attacks/): Request smuggling, CRLF injection, host header poisoning, cache poisoning, WebSocket frames.
+9. [Business Logic, Time, and Crypto](https://h5i.dev/guides/logic-time-and-crypto/): Races, coupon stacking, predictable tokens, length extension, MFA state, and a pickled cookie.
+10. [Building Exploit Chains](https://h5i.dev/guides/exploit-chains/): Carry fresh values between requests and turn small findings into one reproducible compromise.
+11. [Cheatsheet](https://h5i.dev/guides/cheatsheet/): The loop, every --set target, the replay flags, probe values by class, and how to read a sweep.
+
+## Tool comparisons
+
+- [AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?](https://h5i.dev/blog/ai-pentesting-tools/): Four tools compared through AI-assisted manual testing, AI-authored scan automation, and agent-led investigation.
+- [Burp Suite vs h5i for AI agents](https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/): A complete web-testing platform versus fully automated penetration testing driven by an external AI agent.
+- [OWASP ZAP vs h5i for AI agents](https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/): Automated DAST and scanner findings versus an AI agent that directs the complete testing loop.
+- [Caido vs h5i for AI agents](https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/): A full proxy workspace and agent API versus an external AI agent driving the investigation end to end.
+
+## Design essays
+
+- [Sandbox the entire workflow: browse, develop, review, apply](https://h5i.dev/blog/the-h5i-loop/): Put the browser, checkout, agent, tools, tests, and dev server in one box, then review the evidence before the patch crosses out.
+- [Why sandbox the entire AI agent workload](https://h5i.dev/blog/the-environment-is-the-sandbox/): Coding tasks execute dependencies, build tools, tests, servers, and pages—not only the agent process.
+- [How to choose an AI agent sandbox](https://h5i.dev/blog/choosing-agent-isolation/): Choose process, supervised, container, or microVM isolation by the failure it must prevent.
+- [Review AI-generated code with execution evidence](https://h5i.dev/blog/evidence-for-agent-work/): Check the diff alongside observed test results, denied actions, browser errors, and explicit gaps in collection.
+- [How to protect a coding agent from prompt injection](https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/): Restrict host files, reusable credentials, network destinations, local sockets, browser state, and writes to the parent repository.
 
 ## Honest limits
 
