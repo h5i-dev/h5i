@@ -1,10 +1,8 @@
 /* h5i landing: the hero stage.
  *
- * Two acts, played in a random order. In one, an agent attacks a running shop
- * from the shell on the right while the code that serves it, on the left, lights
- * up line by line until the missing check shows. In the other, a Rust kernel is
- * written, extracted to Lean, its rule stated and proven, then the same bug is
- * put back on purpose and the proof refuses it. The tmux window list switches acts; the stage stops
+ * The Rust kernel is written, extracted to Lean, proven, and then mutated so
+ * the proof refuses a deliberate bug. Next, an agent attacks a running shop;
+ * its code lights up until the missing check shows. The tmux window list switches acts; the stage stops
  * when off screen, when the tab is hidden or when paused, and with reduced
  * motion it shows one act's last frame.
  */
@@ -427,7 +425,7 @@
     };
   })();
 
-  /* ── act 1: find vulnerabilities ────────────────────────── */
+  /* ── security testing: find vulnerabilities ─────────────── */
   // what the lens reads in the first act: the order request, then its replay
   function traffic(id, owner, total) {
     return ['GET /api/order/' + id + ' HTTP/1.1', 'host: shop.example.test', 'cookie: sid=9f2c…  (u_17)', '',
@@ -538,7 +536,7 @@
     await sleep(6000);
   }
 
-  /* ── act 2: prove correctness ───────────────────────────── */
+  /* ── framework: prove correctness ───────────────────────── */
   var RS = [
     'use h5i_app::schema::schema;',
     '',
@@ -713,7 +711,7 @@
 
   /* ── direction ──────────────────────────────────────────── */
   var ACTS = { find: find, prove: prove };
-  var order = Math.random() < 0.5 ? ['find', 'prove'] : ['prove', 'find'];
+  var order = ['prove', 'find'];
   var next = order[0];
   var lines = [].slice.call(document.querySelectorAll('.act-line'));
   function mark(name) {
@@ -750,7 +748,7 @@
   stage.classList.add('live');
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
     fast = true; toggle.hidden = true;
-    mark('find'); find();
+    mark('prove'); prove();
     return;
   }
   start(next);
