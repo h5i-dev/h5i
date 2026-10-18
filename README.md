@@ -53,7 +53,9 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 
 ---
 
-## 2. Build & Verify: h5i-app
+## 2. Build, Verify & Test
+
+### 2.1. ### Build & Verify
 
 [`h5i-app`](crates/h5i-app/README.md) is an Axum-based Rust web framework that makes application logic amenable to Lean 4.
 
@@ -69,10 +71,7 @@ isolation, business logics, and more.
   <img src="./docs/_static/calculator-rust-lean-proof.svg" alt="Watching a sandboxed browser session from the host" width="99%" />
 </p>
 
-
----
-
-## 2. Find Bugs: Red-Team with Agents
+## 2.2. ### Test & Secure
 
 Let AI agents explore, attack, and test web applications using h5i's integrated security toolkit. 
 
