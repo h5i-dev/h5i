@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request};
 use h5i_error::H5iError;
 use url::Url;
 
@@ -12,22 +11,14 @@ use crate::budget::Spender;
 use crate::policy::Policy;
 use crate::receipt::{Initiator, RequestRecord, Sink};
 
-/// The agent string [`crate::identity::native`] presents.
+/// The agent string an h5i-originated request presents.
 pub const USER_AGENT: &str = concat!(
     "Mozilla/5.0 (compatible; h5i-browser/",
     env!("CARGO_PKG_VERSION"),
     "; +https://github.com/h5i-dev/h5i)"
 );
 
-/// What `native` asks for, kept as a constant so the one test that pins the
-/// default's wire bytes has something to pin them against.
-///
-/// Not read when a request is built. The header is derived from
-/// [`crate::identity::Locale::accept_language`], off the same list
-/// `navigator.languages` reports, because the two used to be written separately
-/// and *had already drifted*: this string offered `en` and the script realm's
-/// array did not, so a server that content-negotiates on the header while its
-/// script reads the array saw two different browsers.
+/// The `Accept-Language` an h5i-originated request presents.
 pub const NATIVE_ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9";
 
 /// What this engine will accept compressed, and can decode.
@@ -245,60 +236,14 @@ struct CorsContext {
 pub struct Presented {
     user_agent: String,
     accept_language: String,
-    /// The whole identity, for the renderer to answer `navigator` from.
-    ///
-    /// Only the script realm reads this, and only a build with the feature has
-    /// a realm that can. The wire needs the two fields above and nothing else.
-    #[cfg(feature = "identity")]
-    declared: Arc<crate::identity::Identity>,
 }
 
 impl Presented {
-    /// The honest one: this engine, under its own name.
-    ///
-    /// Built from the constants rather than from `identity::native()` so that a
-    /// build without the feature has one at all. The two agree, and
-    /// `identity::tests::native_is_exactly_what_this_engine_already_sent` is
-    /// what holds them together.
+    /// The honest one: h5i, under its own name.
     pub fn native() -> Result<Self, H5iError> {
-        Self::from_parts(
-            USER_AGENT.to_string(),
-            NATIVE_ACCEPT_LANGUAGE.to_string(),
-            #[cfg(feature = "identity")]
-            Arc::new(crate::identity::native()),
-        )
-    }
-
-    /// The one a session was opened with.
-    #[cfg(feature = "identity")]
-    pub fn declared(identity: Arc<crate::identity::Identity>) -> Result<Self, H5iError> {
-        Self::from_parts(
-            identity.browser.user_agent.clone(),
-            identity.locale.accept_language(),
-            identity.clone(),
-        )
-    }
-
-    fn from_parts(
-        user_agent: String,
-        accept_language: String,
-        #[cfg(feature = "identity")] declared: Arc<crate::identity::Identity>,
-    ) -> Result<Self, H5iError> {
-        // Validated while the session is being built rather than when a page is
-        // waiting on the first request, and the parse is thrown away: what is
-        // kept is the string, because that is what a request wants. A session
-        // whose languages cannot be a header should refuse at its door, and
-        // `Identity::incoherences` already rejects the values that would get
-        // here. This is the belt to that brace, and the only check the
-        // constants ever need.
-        reqwest::header::HeaderValue::from_str(&accept_language).map_err(|e| {
-            H5iError::Metadata(format!("that is not a sendable Accept-Language: {e}"))
-        })?;
         Ok(Self {
-            user_agent,
-            accept_language,
-            #[cfg(feature = "identity")]
-            declared,
+            user_agent: USER_AGENT.to_string(),
+            accept_language: NATIVE_ACCEPT_LANGUAGE.to_string(),
         })
     }
 }
@@ -473,6 +418,21 @@ impl LocalBroker {
         outcome.duration_ms = Some(response.duration.as_millis() as u64);
         outcome.error = response.error;
         self.append(&outcome)?;
+        // The jar keeps what the server set, for requests carried in from
+        // another session (`resend --as`).
+        if request.allowed
+            && response.status.is_some()
+            && let Ok(url) = Url::parse(&request.url)
+        {
+            self.jar.store(
+                &url,
+                response
+                    .headers
+                    .iter()
+                    .filter(|(name, _)| name.eq_ignore_ascii_case("set-cookie"))
+                    .map(|(_, value)| value.as_str()),
+            );
+        }
         if let Some(capture) = &self.capture {
             // The store holds decoded bodies (`capture::Received::Bytes`), as the
             // engine's own fetches leave them. Chromium decoded its copy; the
@@ -696,43 +656,6 @@ impl LocalBroker {
             Presented::native()?,
             capture,
         )
-    }
-
-    /// The same, presenting the identity the session was opened with.
-    ///
-    /// A separate constructor rather than a setter, and that is not ceremony: the
-    /// agent string is handed to the HTTP client when the client is built, and the
-    /// broker is shared as an `Arc` the moment it exists. An identity that could
-    /// be changed afterwards would be one that changed mid-session, which is the
-    /// single thing a coherent identity must never do.
-    #[cfg(feature = "identity")]
-    pub fn with_identity(
-        policy: Policy,
-        sink: Arc<dyn Sink>,
-        proxy: Option<&str>,
-        limits: crate::budget::Limits,
-        identity: Arc<crate::identity::Identity>,
-        capture: Option<Arc<crate::capture::Capture>>,
-    ) -> Result<Arc<Self>, H5iError> {
-        Self::build(
-            policy,
-            sink,
-            proxy,
-            limits,
-            crate::secrets::Secrets::from_env(),
-            Presented::declared(identity)?,
-            capture,
-        )
-    }
-
-    /// Who this session says it is.
-    ///
-    /// Read by the renderer through the broker, so the half that answers
-    /// `navigator` and the half that writes the headers answer from one object
-    /// rather than from two copies of one file.
-    #[cfg(feature = "identity")]
-    pub fn identity(&self) -> &Arc<crate::identity::Identity> {
-        &self.presented.declared
     }
 
     fn build(
@@ -1055,6 +978,7 @@ impl LocalBroker {
         max_redirects: Option<usize>,
         document: Option<&Url>,
         cors: Option<&CorsContext>,
+        use_jar: bool,
     ) -> FetchOutcome {
         let mut current = url.clone();
         // Split once rather than per hop: what the client owns does not depend
@@ -1345,6 +1269,7 @@ impl LocalBroker {
             };
             let mut cookies_sent = 0;
             if may_use_cookies
+                && use_jar
                 // A caller that named `Cookie` itself is testing what that
                 // exact value does, and the jar's copy beside it would make the
                 // request neither what was asked for nor what the session
@@ -2132,11 +2057,6 @@ impl LocalBroker {
 }
 
 impl crate::broker::Broker for LocalBroker {
-    #[cfg(feature = "identity")]
-    fn identity(&self) -> Arc<crate::identity::Identity> {
-        self.presented.declared.clone()
-    }
-
     fn send(&self, fetch: &crate::broker::Fetch) -> FetchOutcome {
         let context = fetch.cors.as_ref().map(|ask| CorsContext {
             document: crate::cors::Origin::of(&ask.document),
@@ -2154,6 +2074,7 @@ impl crate::broker::Broker for LocalBroker {
             fetch.max_redirects,
             fetch.document.as_ref(),
             context.as_ref(),
+            !fetch.without_jar,
         )
     }
 
@@ -2172,8 +2093,8 @@ impl crate::broker::Broker for LocalBroker {
         let Some(store) = &self.capture else {
             return Err(SendError::new(
                 "no-capture",
-                "this session was not opened with `--capture`, so it kept no request to send \
-                 again",
+                "this session keeps no message store, so it has no stored request to send \
+                 again. A session `h5i browser open` or `proxy` started keeps every message",
             ));
         };
         let stored = store.read_request(from).map_err(|_| {
@@ -2241,6 +2162,7 @@ impl crate::broker::Broker for LocalBroker {
         if !edited && !raw {
             headers.retain(|(name, _)| !name.eq_ignore_ascii_case("accept-encoding"));
         }
+        // The stored request's own cookies are its identity: no jar.
         self.edit_then_send(
             crate::edits::Editable {
                 method: stored.method.clone(),
@@ -2251,6 +2173,7 @@ impl crate::broker::Broker for LocalBroker {
             edits,
             create,
             plan,
+            false,
         )
     }
 
@@ -2261,6 +2184,7 @@ impl crate::broker::Broker for LocalBroker {
         create: bool,
         plan: crate::broker::Sends,
     ) -> Result<crate::broker::Edited, crate::broker::SendError> {
+        // A carried request's credentials were dropped: this session's jar.
         self.edit_then_send(
             crate::edits::Editable {
                 method: request.method,
@@ -2271,6 +2195,7 @@ impl crate::broker::Broker for LocalBroker {
             edits,
             create,
             plan,
+            true,
         )
     }
 
@@ -2675,6 +2600,7 @@ impl LocalBroker {
         edits: &[crate::edits::Edit],
         create: bool,
         plan: crate::broker::Sends,
+        use_jar: bool,
     ) -> Result<crate::broker::Edited, crate::broker::SendError> {
         use crate::broker::SendError;
         let applied = crate::edits::apply(&mut editable, edits, create)
@@ -2773,6 +2699,7 @@ impl LocalBroker {
             max_redirects: follow,
             document: None,
             cors: None,
+            without_jar: !use_jar,
         };
 
         // Apply each step's edits after the shared ones.
@@ -3007,102 +2934,12 @@ fn find_crlf_crlf(bytes: &[u8]) -> Option<usize> {
     bytes.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
-/// How every subresource turned out, for the page's `load` and `error` events.
-///
-/// Blitz decides each outcome and throws it away, so nothing in the page could
-/// see the 404 sitting in the request log. Keyed by URL because that is all the
-/// two sides share: Blitz's `Request` does not say which element asked.
-pub type ResourceLog = Arc<std::sync::Mutex<ResourceOutcomes>>;
-
-/// The table behind a [`ResourceLog`].
-#[derive(Debug, Default)]
-pub struct ResourceOutcomes {
-    /// `0` for a request that got no answer: refused, or a failed connection.
-    /// Both are `error` to a page; which it was is in the receipt.
-    by_url: std::collections::HashMap<String, u16>,
-}
-
-impl ResourceOutcomes {
-    /// Under both URLs: a redirected image is `src` in the markup and the final
-    /// URL in the outcome, and the page asks about the first.
-    pub fn record(&mut self, asked: &Url, outcome: &FetchOutcome) {
-        let status = match (outcome.error.as_ref(), outcome.status) {
-            (Some(_), _) | (None, None) => 0,
-            (None, Some(status)) => status,
-        };
-        self.by_url.insert(asked.to_string(), status);
-        self.by_url.insert(outcome.final_url.to_string(), status);
-    }
-
-    /// The status this URL came back with, or `None` if it was never asked for.
-    pub fn status(&self, url: &str) -> Option<u16> {
-        self.by_url.get(url).copied()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.by_url.is_empty()
-    }
-}
-
-/// Adapts the broker to Blitz's [`NetProvider`].
-pub struct BrokerNet {
-    broker: Arc<dyn crate::broker::Broker>,
-    /// The document whose subresources these are.
-    ///
-    /// Load-bearing, not bookkeeping. Every image, stylesheet and font on the
-    /// page arrives through here, and without an origin to attribute them to
-    /// the policy read each one as the agent naming a URL, so
-    /// `<img src="http://127.0.0.1:3000/…">` on a page from the open web reached
-    /// the box's dev server, which is precisely what [`Policy::check_from`]
-    /// exists to refuse. `None` only for a document with no origin of its own.
-    document: Option<Url>,
-    /// Where each subresource's fate is written down for the page to hear.
-    resources: ResourceLog,
-}
-
-impl BrokerNet {
-    pub fn new(broker: Arc<dyn crate::broker::Broker>, document: Option<Url>) -> Self {
-        Self::with_log(broker, document, ResourceLog::default())
-    }
-
-    pub fn with_log(
-        broker: Arc<dyn crate::broker::Broker>,
-        document: Option<Url>,
-        resources: ResourceLog,
-    ) -> Self {
-        Self {
-            broker,
-            document,
-            resources,
-        }
-    }
-}
-
-impl NetProvider for BrokerNet {
-    fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
-        let outcome =
-            self.broker
-                .fetch_from(&request.url, Initiator::Subresource, self.document.as_ref());
-
-        if let Ok(mut log) = self.resources.lock() {
-            log.record(&request.url, &outcome);
-        }
-
-        // The single exit. A denied or failed request completes with an empty
-        // body: Blitz counts the resource as resolved and paints, having
-        // loaded nothing. Returning early here, however tempting for a
-        // request we refused, leaves the document pending forever and blank.
-        handler.bytes(outcome.final_url.to_string(), Bytes::from(outcome.body));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::broker::Broker;
     use crate::capture::{Body, Capture};
     use crate::receipt::{MemorySink, Phase};
-    use std::sync::atomic::AtomicBool;
 
     fn broker_with(policy: Policy, sink: Arc<dyn Sink>) -> Arc<LocalBroker> {
         LocalBroker::new(policy, sink, None).expect("broker builds")
@@ -3165,6 +3002,60 @@ mod tests {
             panic!("proxy response body was not stored: {:?}", stored_response.body);
         };
         assert_eq!(capture.read_body(sha256).unwrap(), br#"{"ok":true}"#);
+    }
+
+    #[test]
+    fn a_cookie_the_server_set_through_the_proxy_is_the_sessions() {
+        let broker = LocalBroker::with_limits(
+            Policy::new().allow("example.test"),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits::default(),
+            None,
+        )
+        .expect("broker");
+        let request = broker
+            .observe_proxy_request("POST", "https://example.test/login", Vec::new(), &[])
+            .expect("request is recorded");
+        broker
+            .observe_proxy_response(
+                &request,
+                ProxyResponse {
+                    status: Some(302),
+                    headers: vec![
+                        ("set-cookie".into(), "sid=alice; Path=/; HttpOnly".into()),
+                        ("set-cookie".into(), "theme=dark; Path=/".into()),
+                    ],
+                    body: crate::capture::Received::Bytes(b""),
+                    bytes: 0,
+                    duration: Duration::from_millis(1),
+                    error: None,
+                },
+            )
+            .expect("response is recorded");
+        assert_eq!(broker.cookie_count(), 2);
+        let (header, _) = broker.jar.header_for(&url("https://example.test/doc")).expect("sent");
+        assert!(header.contains("sid=alice"), "{header}");
+
+        // A refused request has no answer, and so sets nothing.
+        let refused = broker
+            .observe_proxy_request("GET", "https://elsewhere.test/", Vec::new(), &[])
+            .expect("request is recorded");
+        assert!(!refused.allowed);
+        broker
+            .observe_proxy_response(
+                &refused,
+                ProxyResponse {
+                    status: Some(200),
+                    headers: vec![("set-cookie".into(), "planted=1".into())],
+                    body: crate::capture::Received::NotRead,
+                    bytes: 0,
+                    duration: Duration::from_millis(1),
+                    error: None,
+                },
+            )
+            .expect("recorded");
+        assert_eq!(broker.cookie_count(), 2);
     }
 
     #[test]
@@ -3255,69 +3146,6 @@ mod tests {
         }
     }
 
-    /// Records whether Blitz's handler was completed.
-    struct SpyHandler {
-        called: Arc<AtomicBool>,
-        body_len: Arc<AtomicU64>,
-    }
-    impl NetHandler for SpyHandler {
-        fn bytes(self: Box<Self>, _resolved_url: String, bytes: Bytes) {
-            self.body_len.store(bytes.len() as u64, Ordering::SeqCst);
-            self.called.store(true, Ordering::SeqCst);
-        }
-    }
-
-    /// The table the page's `load` and `error` events are read from (#610).
-    #[test]
-    fn a_subresource_outcome_is_recorded_under_both_of_its_urls() {
-        let mut outcomes = ResourceOutcomes::default();
-        assert!(outcomes.is_empty());
-
-        let asked = url("https://cdn.test/a.png");
-        let mut ok = FetchOutcome::failed(url("https://cdn.test/b.png"), String::new());
-        ok.error = None;
-        ok.status = Some(200);
-        outcomes.record(&asked, &ok);
-        assert_eq!(outcomes.status(asked.as_str()), Some(200));
-        assert_eq!(outcomes.status("https://cdn.test/b.png"), Some(200));
-
-        // `None`, not `0`: only "fetched and got nothing" is an `error`.
-        assert_eq!(outcomes.status("https://cdn.test/never.png"), None);
-
-        // A refusal and a failed connection are both `0`.
-        let refused = url("https://blocked.test/x.png");
-        outcomes.record(
-            &refused,
-            &FetchOutcome::refused(refused.clone(), "denied by policy".to_string()),
-        );
-        assert_eq!(outcomes.status(refused.as_str()), Some(0));
-    }
-
-    /// Recorded whether it arrived or not, so a denial is an `error` the page
-    /// hears rather than a silence it cannot tell from success.
-    #[test]
-    fn the_blitz_adapter_records_what_each_subresource_came_back_as() {
-        let sink = Arc::new(MemorySink::new());
-        let broker = broker_with(Policy::new(), sink);
-        let log = ResourceLog::default();
-        let net = BrokerNet::with_log(broker, Some(url("https://denied.test/")), log.clone());
-
-        net.fetch(
-            0,
-            Request::get(url("https://tracker.test/pixel.gif")),
-            Box::new(SpyHandler {
-                called: Arc::new(AtomicBool::new(false)),
-                body_len: Arc::new(AtomicU64::new(0)),
-            }),
-        );
-
-        assert_eq!(
-            log.lock().expect("log").status("https://tracker.test/pixel.gif"),
-            Some(0),
-            "a refused subresource is one the page must be able to hear about"
-        );
-    }
-
     #[test]
     fn a_denied_request_never_reaches_the_wire_and_is_recorded_as_a_pair() {
         let sink = Arc::new(MemorySink::new());
@@ -3353,39 +3181,6 @@ mod tests {
         assert!(
             error.contains("receipt could not be written"),
             "the refusal must name its cause, got: {error}"
-        );
-    }
-
-    #[test]
-    fn blitz_handler_is_always_completed_even_when_the_request_is_denied() {
-        // If this regresses, `paint_scene` silently stops painting: the
-        // document keeps a pending critical resource forever and every
-        // screenshot comes back blank. See the module docs.
-        let sink = Arc::new(MemorySink::new());
-        let broker = broker_with(Policy::new(), sink);
-        let net = BrokerNet::new(broker, Some(url("https://denied.test/")));
-
-        let called = Arc::new(AtomicBool::new(false));
-        let body_len = Arc::new(AtomicU64::new(u64::MAX));
-        let handler = Box::new(SpyHandler {
-            called: called.clone(),
-            body_len: body_len.clone(),
-        });
-
-        net.fetch(
-            0,
-            Request::get(url("https://denied.test/style.css")),
-            handler,
-        );
-
-        assert!(
-            called.load(Ordering::SeqCst),
-            "a denied request must still complete its handler"
-        );
-        assert_eq!(
-            body_len.load(Ordering::SeqCst),
-            0,
-            "completing a denial must hand back no bytes"
         );
     }
 
@@ -3439,24 +3234,6 @@ mod tests {
         );
         assert_eq!(sink.denied_urls().len(), 0);
         assert_eq!(sink.fetched_urls(), vec![dev_server.as_str()]);
-    }
-
-    /// The Blitz adapter is where every image, stylesheet and font arrives, so
-    /// it is the widest of those paths and carries the document explicitly.
-    #[test]
-    fn the_blitz_adapter_attributes_subresources_to_their_document() {
-        let sink = Arc::new(MemorySink::new());
-        let broker = broker_with(Policy::new().allow("docs.test"), sink.clone());
-        let net = BrokerNet::new(broker, Some(url("https://docs.test/page")));
-
-        let handler = Box::new(SpyHandler {
-            called: Arc::new(AtomicBool::new(false)),
-            body_len: Arc::new(AtomicU64::new(u64::MAX)),
-        });
-        net.fetch(0, Request::get(url("http://127.0.0.1:9/secret")), handler);
-
-        assert_eq!(sink.denied_urls(), vec!["http://127.0.0.1:9/secret"]);
-        assert!(sink.fetched_urls().is_empty());
     }
 
     #[test]
@@ -3521,6 +3298,63 @@ mod caller_header_tests {
             }
         });
         (port, seen)
+    }
+
+    /// A replay sends its own cookies only; a carried request takes the jar's.
+    #[test]
+    fn the_jar_fills_a_carried_request_and_never_a_replay_with_its_cookie_removed() {
+        let (port, seen) = head_recorder(2, None);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let capture = Arc::new(crate::capture::Capture::open(&dir.path().join("messages")).unwrap());
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits::default(),
+            Some(capture),
+        )
+        .expect("broker");
+        let url = format!("http://127.0.0.1:{port}/doc");
+        let seen_by_proxy = broker
+            .observe_proxy_request("GET", &url, vec![("cookie".into(), "sid=alice".into())], &[])
+            .expect("recorded");
+        broker
+            .observe_proxy_response(
+                &seen_by_proxy,
+                ProxyResponse {
+                    status: Some(200),
+                    headers: vec![("set-cookie".into(), "sid=alice; Path=/".into())],
+                    body: crate::capture::Received::Bytes(b"ok"),
+                    bytes: 2,
+                    duration: std::time::Duration::from_millis(1),
+                    error: None,
+                },
+            )
+            .expect("recorded");
+        assert_eq!(broker.cookie_count(), 1, "the server's cookie is the session's");
+
+        let unset = [crate::edits::parse_unset("header.cookie").expect("an edit")];
+        broker
+            .send_edited(seen_by_proxy.seq, &unset, false, crate::broker::Sends::once())
+            .expect("sent");
+        broker
+            .send_given(
+                crate::broker::Given {
+                    method: "GET".into(),
+                    url: Url::parse(&url).unwrap(),
+                    headers: Vec::new(),
+                    body: Vec::new(),
+                },
+                &[],
+                false,
+                crate::broker::Sends::once(),
+            )
+            .expect("sent");
+
+        let heads = seen.lock().unwrap().clone();
+        assert_eq!(heads.len(), 2, "{heads:?}");
+        assert_eq!(count(&heads[0], "cookie"), 0, "the removed cookie came back: {}", heads[0]);
+        assert!(heads[1].contains("cookie: sid=alice"), "{}", heads[1]);
     }
 
     fn broker() -> (Arc<MemorySink>, Arc<LocalBroker>) {
@@ -4599,7 +4433,7 @@ mod capture_wire_tests {
         )
         .expect_err("refused");
         assert_eq!(error.code, "no-capture");
-        assert!(error.message.contains("--capture"), "{}", error.message);
+        assert!(error.message.contains("message store"), "{}", error.message);
     }
 
     /// A session without a store is the default, and it writes nothing.

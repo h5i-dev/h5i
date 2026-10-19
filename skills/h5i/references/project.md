@@ -4,7 +4,7 @@ A browser session is disposable, and a session finding goes with it. A project i
 
 ```bash
 h5i project init acme --title "ACME web" --target https://acme.test
-h5i browser open https://acme.test --project acme --capture
+h5i browser open https://acme.test --project acme
 # ... test, write session findings, then keep them:
 h5i project finding promote --all -p acme --session <name>
 ```

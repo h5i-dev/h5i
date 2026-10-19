@@ -2,11 +2,11 @@
 .el .ds Aq '
 .TH h5i 1  "h5i 0.5.0" 
 .SH NAME
-h5i \- The agent\-native web security workspace: red\-team web apps with a browser and direct HTTP control inside limits you set, and prove application logic in Lean 4 with h5i\-app
+h5i \- h5i unifies web development, formal verification with Lean 4, and red\-teaming around a composable Rust framework
 .SH SYNOPSIS
 \fBh5i\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
 .SH DESCRIPTION
-The agent\-native web security workspace: red\-team web apps with a browser and direct HTTP control inside limits you set, and prove application logic in Lean 4 with h5i\-app
+h5i unifies web development, formal verification with Lean 4, and red\-teaming around a composable Rust framework
 .SH OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR
@@ -760,12 +760,51 @@ Browser sessions: open one, drive it, close it
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
-.SH "H5I BROWSER PROXY"
-Capture an external Chromium session through an h5i HTTP/S proxy
+.SH "H5I BROWSER OPEN"
+Open a URL, making a session if there is not one already
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBproxy\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-project\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-expires\-in\fR] [\fB\-\-dom\-instrument\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-project\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-expires\-in\fR] [\fB\-\-dom\-instrument\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Name this session, so several can run at once. A name is reusable once its session ends; the id in `\-\-json` is the durable reference
+.TP
+\fB\-\-new\fR
+Make a new session even if one is already open, rather than navigating it
+.TP
+\fB\-\-project\fR \fI<NAME>\fR
+The engagement this session belongs to. When `~/.config/h5i/projects/<name>.toml` exists it is also the scope: its grants join `\-\-allow` and its deny rules are checked before the wire
+.TP
+\fB\-\-allow\fR \fI<ORIGIN>\fR
+Grant another origin. Repeatable. Without any, nothing remote is reachable except the URL\*(Aqs own origin
+.TP
+\fB\-\-no\-loopback\fR
+Refuse loopback too. It is reachable by default: it is the dev server
+.TP
+\fB\-\-expires\-in\fR \fI<SECONDS>\fR
+End the session automatically after this many seconds. `status` still answers afterwards, and says it expired
+.TP
+\fB\-\-dom\-instrument\fR
+Instrument pages for prototype pollution and DOM\-XSS: inject the DOM instrument into HTML and collect what reaches a sink, for `h5i websec dom scan`
+.TP
+\fB\-\-json\fR
+Print the session record as JSON instead of a summary
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIURL\fR>
+The URL to open
+.SH "H5I BROWSER PROXY"
+Start a capture session: an h5i HTTP/S proxy for a Chromium to go through
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBproxy\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-project\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-expires\-in\fR] [\fB\-\-dom\-instrument\fR] [\fB\-\-no\-browser\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -774,19 +813,22 @@ Capture an external Chromium session through an h5i HTTP/S proxy
 Name this session
 .TP
 \fB\-\-project\fR \fI<NAME>\fR
-The engagement whose scope supplies additional grants and denies
+The engagement this session belongs to. When `~/.config/h5i/projects/<name>.toml` exists it is also the scope: its grants join `\-\-allow` and its deny rules are checked before the wire
 .TP
 \fB\-\-allow\fR \fI<ORIGIN>\fR
-Grant another origin. Repeatable
+Grant another origin. Repeatable. Without any, nothing remote is reachable except the URL\*(Aqs own origin
 .TP
 \fB\-\-no\-loopback\fR
-Refuse loopback too
+Refuse loopback too. It is reachable by default: it is the dev server
 .TP
 \fB\-\-expires\-in\fR \fI<SECONDS>\fR
-End the proxy automatically after this many seconds
+End the session automatically after this many seconds. `status` still answers afterwards, and says it expired
 .TP
 \fB\-\-dom\-instrument\fR
 Instrument pages for prototype pollution and DOM\-XSS: inject the DOM instrument into HTML and collect what reaches a sink, for `h5i websec dom scan`
+.TP
+\fB\-\-no\-browser\fR
+Start without a browser: for a session driven only by `resend` and the plugins, or a browser you point at the proxy yourself
 .TP
 \fB\-\-json\fR
 Print the session record as JSON
@@ -797,7 +839,7 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 <\fIURL\fR>
 The first target, used to seed the origin allowlist
 .SH "H5I BROWSER PROXY-OPEN"
-Open a URL in the Chromium a `proxy` session drives
+Open a URL in the Chromium a session drives. The same as `navigate`
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -807,171 +849,16 @@ Open a URL in the Chromium a `proxy` session drives
 .SS OPTIONS
 .TP
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-The proxy session to drive
+The session to drive
 .TP
 \fB\-\-json\fR
 Print the result as JSON
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Print help
 .TP
 <\fIURL\fR>
 The URL to open
-.SH "H5I BROWSER OPEN"
-Open a URL, making a session if there is not one already
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-project\fR] [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-script\fR] [\fB\-\-permissive\-cors\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-secret\fR] [\fB\-\-identity\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-expires\-in\fR] [\fB\-\-restore\fR] [\fB\-\-cookie\-jar\fR] [\fB\-\-script\-seconds\fR] [\fB\-\-capture\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Name this session, so several can run at once.
-
-A name is not an identity: it can be reused once the session it named has ended. The opaque id in `\-\-json` and in receipts is what cannot be, and is what to keep when you need a durable reference.
-.TP
-\fB\-\-new\fR
-Make a new session even if one is already open.
-
-Without this, `open` navigates the session it finds, because that is what opening a URL means when a browser is already up.
-.TP
-\fB\-\-project\fR \fI<NAME>\fR
-The engagement this session belongs to.
-
-Written on the record, so "every session that touched this target" survives the sessions ending and their names being reused. And when `~/.config/h5i/projects/<name>.toml` exists it is also the scope: its grants join `\-\-allow`, its deny rules are checked before the wire, and its digest goes on the record.
-.TP
-\fB\-\-in\fR \fI<BOX>\fR
-Run the session inside this box instead of on this machine
-.TP
-\fB\-\-allow\fR \fI<ORIGIN>\fR
-Grant an origin. Repeatable. Without any, nothing remote is reachable except the URL\*(Aqs own origin
-.TP
-\fB\-\-no\-loopback\fR
-Refuse loopback too. It is reachable by default: it is the dev server
-.TP
-\fB\-\-script\fR
-Run the page\*(Aqs own JavaScript. Off by default: with script off, page\-borne prompt injection has no delivery channel at all
-.TP
-\fB\-\-permissive\-cors\fR
-Let this session\*(Aqs pages send credentials cross\-origin as a browser does: `mode: "no\-cors"` with `credentials: "include"`.
-
-Refused by default, which is right for containing an agent: an opaque response cannot be read, so nothing can check the server agreed. It is also the classic POST\-CSRF vector, so the refusal stopped h5i acting as the victim in a CSRF test. Fixed at creation, in the policy digest, and named in `h5i browser status`.
-.TP
-\fB\-\-no\-sandbox\fR
-Run the engine unconfined.
-
-By default a session on this machine runs in a process\-tier sandbox: it may read the system and its own directory, write only its own directory, execute nothing, and see only the secrets named with `\-\-secret`. That contains what a parser bug could *do*; it does not contain the network, which needs a boundary outside the engine.
-.TP
-\fB\-\-secret\fR \fI<NAME>\fR
-Let this session substitute `$H5I_SECRET_<NAME>`
-.TP
-\fB\-\-identity\fR \fI<NAME|PATH>\fR [default: native]
-Who this session says it is: a built\-in name, or a path to a TOML file
-.TP
-\fB\-\-width\fR \fI<WIDTH>\fR [default: 1280]
-Viewport width
-.TP
-\fB\-\-height\fR \fI<HEIGHT>\fR [default: 720]
-Viewport height
-.TP
-\fB\-\-expires\-in\fR \fI<SECONDS>\fR
-End the session automatically after this many seconds.
-
-Recorded as an ending on the session\*(Aqs record when it passes, not as a disappearance: `h5i browser status` still answers afterwards, and says it expired.
-.TP
-\fB\-\-restore\fR \fI<SESSION_ID>\fR
-Seed this session\*(Aqs storage from one that has ended.
-
-A restore is a new session with a new id, and the inheritance is written into its record. Nothing resurrects an id: an agent holding a stale one always gets a refusal, never a different session wearing the same name. Takes an id, not a name, because a name can be reused and storage has to come from one definite session.
-.TP
-\fB\-\-cookie\-jar\fR \fI<PATH>\fR
-Seed this session\*(Aqs cookie jar from a file a human pasted a cookie into: `{"version": 1, "cookies": [...]}`.
-
-Read once, before the engine starts, and never written back. A row no server could have set is refused and counted on stderr.
-.TP
-\fB\-\-script\-seconds\fR \fI<SECONDS>\fR
-How long this session\*(Aqs scripts may run, in seconds.
-
-The default bounds a page that never stops; an app that legitimately takes longer needs the bound raised rather than removed. A page cut off here says so, and what it had not finished is what an agent sees as missing rather than as absent.
-.TP
-\fB\-\-capture\fR
-Keep every request and response this session makes: headers and bodies, both directions.
-
-Off by default, and a different thing from the request log, which is always on. The log records decisions in a form that is safe to paste into a bug report; this records the messages, `Authorization` header and session cookie included, which is what an HTTP workbench needs and what an audit trail must not carry. Stored `0700` inside the session directory, bounded, and never copied by `\-\-restore`.
-.TP
-\fB\-\-json\fR
-Print the session record as JSON instead of a summary line
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
-.TP
-<\fIURL\fR>
-A URL, or a path to a local HTML file
-.SH "H5I BROWSER IDENTITY"
-List, show or check a browser identity
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBidentity\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIARGS\fR> 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
-.TP
-<\fIARGS\fR>
-`list`, `show <name>`, or `check <name>`
-.SH "H5I BROWSER READ"
-Read one page, or a batch of them, and leave no session behind
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBread\fR [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-text\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-identity\fR] [\fB\-\-script\-seconds\fR] [\fB\-\-cookie\-jar\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGETS\fR> 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-\-in\fR \fI<BOX>\fR
-Read inside this box
-.TP
-\fB\-\-allow\fR \fI<ORIGIN>\fR
-Grant an origin besides the target\*(Aqs own. Repeatable.
-
-Naming the URL is what grants its origin, and for most reads that is the whole allowlist. A page written in a library served from a CDN is the case where it is not: without the grant the script is refused, and the page an agent reads is the one the library never ran on.
-.TP
-\fB\-\-text\fR
-Print the page\*(Aqs prose instead of its outline
-.TP
-\fB\-\-script\fR
-Run the page\*(Aqs own JavaScript
-.TP
-\fB\-\-no\-sandbox\fR
-Read unconfined
-.TP
-\fB\-\-identity\fR \fI<NAME|PATH>\fR [default: native]
-Who this read says it is: a built\-in name, or a path to a TOML file.
-
-The same identities a session takes, and refused on the same terms: see `h5i browser identity`. It belongs here as much as on a session. A read is a fetch, and a fetch has an agent string.
-.TP
-\fB\-\-script\-seconds\fR \fI<SECONDS>\fR
-How long this read\*(Aqs scripts may run, in seconds. See `open`
-.TP
-\fB\-\-cookie\-jar\fR \fI<PATH>\fR
-Seed this read\*(Aqs cookies from a file a human pasted a cookie into: `{"version": 1, "cookies": [...]}`.
-
-The same file `open` takes, and here for the same reason: a page behind a login is a page, and without this `read` could only ever report the signed\-out one. A copy is what the engine gets, so the file is read and never written back.
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
-.TP
-<\fITARGETS\fR>
-URLs, or paths to local HTML files
 .SH "H5I BROWSER LIST"
 List the browser sessions on this machine
 .ie \n(.g .ds Aq \(aq
@@ -1009,7 +896,7 @@ Which session, when more than one is open. A name from `\-\-session` at open tim
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .SH "H5I BROWSER CLOSE"
-End a session. Its record stays
+End a session: its proxy and its Chromium. Its record stays
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -1025,17 +912,15 @@ Which session, when more than one is open. A name from `\-\-session` at open tim
 End every live session on this machine
 .TP
 \fB\-\-capture\-drop\fR
-Delete the captured messages as well as ending the session.
-
-The store holds whole bodies and `Cookie` and `Authorization` in full. The record and the request log stay either way.
+Delete the captured messages (bodies and credentials in full) as well. The record and the request log stay
 .TP
 \fB\-\-json\fR
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Print help
 .SH "H5I BROWSER RM"
-Erase sessions: their records, logs, jars and stored messages
+Erase sessions: their records, logs and stored messages
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -1057,7 +942,7 @@ Only sessions that ended at least this long ago, in days. On its own it means `\
 Say what would be removed, and remove nothing
 .TP
 \fB\-\-force\fR
-Remove even a session that is still live. Its engine is asked to stop first
+Remove even a session that is still live. Its proxy is asked to stop first
 .TP
 \fB\-\-json\fR
 
@@ -1068,7 +953,7 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 [\fINAMES\fR]
 One or more session names or ids
 .SH "H5I BROWSER GC"
-Reclaim the stored messages of ended sessions, keeping their accounts
+Reclaim the stored messages of ended sessions, keeping their records, request logs and recon ledgers. The bulk form of `close --capture-drop`
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -1087,25 +972,28 @@ Say what would be reclaimed, and reclaim nothing
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Print help
 .SH "H5I BROWSER SNAPSHOT"
-The page as a model should read it: the outline, with `@ref` handles
+The page as a model should read it: the accessibility outline, with `@ref` handles the other page verbs take
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBsnapshot\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-delta\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBsnapshot\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-i\fR|\fB\-\-interactive\fR] [\fB\-\-delta\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+Which session, when more than one is open
+.TP
+\fB\-i\fR, \fB\-\-interactive\fR
+Only the interactive elements: what can be clicked, typed into or chosen
 .TP
 \fB\-\-delta\fR
 Report only what changed since the last snapshot
 .TP
 \fB\-\-url\fR \fI<URL>\fR
-Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent
+Go here first, then read
 .TP
 \fB\-\-json\fR
 
@@ -1113,7 +1001,7 @@ Go here first, then read. One round trip where `navigate` and then this would be
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .SH "H5I BROWSER NAVIGATE"
-Go to a URL, resolved against the current page like a click would be
+Go to a URL in this session's Chromium
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -1123,7 +1011,7 @@ Go to a URL, resolved against the current page like a click would be
 .SS OPTIONS
 .TP
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+Which session, when more than one is open
 .TP
 \fB\-\-json\fR
 
@@ -1133,23 +1021,42 @@ Print help
 .TP
 <\fIURL\fR>
 
-.SH "H5I BROWSER SCREENSHOT"
-Write a PNG of the page this session is on
+.SH "H5I BROWSER RELOAD"
+Load the current page again
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBscreenshot\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-out\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBreload\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER SCREENSHOT"
+Write a PNG of the page this session is on
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBscreenshot\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-out\fR] [\fB\-\-full\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
 .TP
 \fB\-\-out\fR \fI<PATH>\fR
-Where to write it, on *this* machine. Defaults to a host\-named file in the session\*(Aqs own artifacts directory.
-
-The engine paints into a directory it is allowed to write and h5i moves the file here afterwards, so this is any path you can write, not a path the confined engine can. For a session in a box that means the file is carried out of the box, which needs a tier whose `/tmp` this machine shares, and says so when it does not.
+Where to write it. Defaults to a file h5i names in the session\*(Aqs own artifacts directory
+.TP
+\fB\-\-full\fR
+The whole page, not only the viewport
 .TP
 \fB\-\-url\fR \fI<URL>\fR
 Go here first, then paint
@@ -1158,9 +1065,199 @@ Go here first, then paint
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER CLICK"
+Click an element: `@e3` from a snapshot, or a CSS selector
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBclick\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGET\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITARGET\fR>
+`@e3` from a `snapshot`, or a CSS selector
+.SH "H5I BROWSER TYPE"
+Put text into a field, replacing what was there
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBtype\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGET\fR> <\fITEXT\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fITARGET\fR>
+`@e3` from a `snapshot`, or a CSS selector
+.TP
+<\fITEXT\fR>
+The text
+.SH "H5I BROWSER PRESS"
+Press a key that *does* something: Enter, Escape, Tab. To enter text use `type`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpress\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIKEY\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIKEY\fR>
+The key, as `Enter`, `Tab` or `Control+a`
+.SH "H5I BROWSER SELECT"
+Choose an option in a `<select>`, by its value
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBselect\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGET\fR> <\fIOPTION\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITARGET\fR>
+`@e3` from a `snapshot`, or a CSS selector
+.TP
+<\fIOPTION\fR>
+The option\*(Aqs value
+.SH "H5I BROWSER SET-CHECKED"
+Set a checkbox or radio to a state, rather than toggling it with a click
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBset\-checked\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGET\fR> <\fICHECKED\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITARGET\fR>
+`@e3` from a `snapshot`, or a CSS selector
+.TP
+<\fICHECKED\fR>
+`true` or `false`
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+true
+.IP \(bu 2
+false
+.RE
+.SH "H5I BROWSER SCROLL"
+Scroll the page by this many pixels. Negative scrolls up
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBscroll\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBY\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIBY\fR>
+
+.SH "H5I BROWSER WAIT-FOR"
+Wait until an element, or some text, is on the page
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBwait\-for\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-text\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-selector\fR \fI<CSS>\fR
+A CSS selector or `@ref` to wait for
+.TP
+\fB\-\-text\fR \fI<TEXT>\fR
+Text to wait for
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER WAIT-FOR-SCRIPT"
+Wait until a page expression is true
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBwait\-for\-script\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIEXPR\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIEXPR\fR>
+The JavaScript expression
 .SH "H5I BROWSER EVAL"
-Run JavaScript in the browser a proxy session drives, and print the result
+Run JavaScript in the page this session's Chromium is on, and print the result. How a DOM-side effect (an XSS that fires) is confirmed; the result is kept in the session's artifacts
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -1176,12 +1273,12 @@ Which session, when more than one is open
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Print help
 .TP
 <\fIJS\fR>
 The JavaScript to evaluate in the current page
 .SH "H5I BROWSER CONSOLE"
-Print the console log of the browser a proxy session drives
+Print the console log of this session's Chromium. Kept in the session's artifacts
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -1200,7 +1297,7 @@ Which session, when more than one is open
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Print help
 .SH "H5I BROWSER SOCKET"
 Open a WebSocket, send frames, and report what came back
 .ie \n(.g .ds Aq \(aq
@@ -1215,9 +1312,7 @@ Open a WebSocket, send frames, and report what came back
 A text frame to send. Repeatable, and sent in the order given
 .TP
 \fB\-\-wait\-ms\fR \fI<MS>\fR [default: 5000]
-How long to listen for replies, in milliseconds.
-
-A server that answers by doing something first \(em running a command, say \(em answers late, and a socket that says nothing at all is a result rather than an error.
+How long to listen for replies, in milliseconds
 .TP
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open
@@ -1231,7 +1326,7 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 <\fIURL\fR>
 The `ws://` or `wss://` endpoint to open
 .SH "H5I BROWSER GRPC"
-Make one gRPC call over HTTP/2, reported through the same policy, budget and receipts as `resend`
+Make one gRPC call over HTTP/2, through the same policy, budget and receipts as `resend`. Framed bytes in and out; `h5i websec grpc` speaks JSON
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -1265,243 +1360,16 @@ Which session, when more than one is open
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Print help
 .TP
 <\fIURL\fR>
 The http(s) endpoint, e.g. `http://host:50051`
-.SH "H5I BROWSER RELOAD"
-Fetch the current URL again
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBreload\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
-.SH "H5I BROWSER CLICK"
-Follow a `@ref` from the last snapshot
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBclick\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREFERENCE\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-selector\fR \fI<CSS>\fR
-A CSS selector instead, which survives a navigation where a `@ref` does not
-.TP
-\fB\-\-role\fR \fI<ROLE>\fR
-Find it by what it is called, the way a person would say it: `\-\-role button \-\-name "Sign in"`
-.TP
-\fB\-\-name\fR \fI<TEXT>\fR
-
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
-.TP
-[\fIREFERENCE\fR]
-`e3` or `@e3`, from a `snapshot`. Omit when using `\-\-selector` or `\-\-role`
-.SH "H5I BROWSER TYPE"
-Put text into a field, replacing what was there
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBtype\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREF|TEXT\fR] [\fITEXT\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-selector\fR \fI<CSS>\fR
-A CSS selector instead.
-
-No conflict with the positional, unlike `click`\*(Aqs: with a locator given, the one positional left is the *text*, and the engine shifts it (`two_positionals`). Declaring a conflict here made `type \-\-selector \*(Aq#password\*(Aq hunter2` a usage error, which is the obvious way to type it.
-.TP
-\fB\-\-role\fR \fI<ROLE>\fR
-Find the field by what it is called: `\-\-role textbox \-\-name Email`
-.TP
-\fB\-\-name\fR \fI<TEXT>\fR
-
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
-.TP
-[\fIREF|TEXT\fR]
-`e3` or `@e3`, from a `snapshot`. Omit when using `\-\-selector` or `\-\-role`, and give the text alone
-.TP
-[\fITEXT\fR]
-What to type
-.SH "H5I BROWSER SUBMIT"
-Submit the form containing a `@ref`
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBsubmit\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREFERENCE\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-selector\fR \fI<CSS>\fR
-A CSS selector instead
-.TP
-\fB\-\-role\fR \fI<ROLE>\fR
-Find a control in the form by what it is called
-.TP
-\fB\-\-name\fR \fI<TEXT>\fR
-
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
-.TP
-[\fIREFERENCE\fR]
-`e3` or `@e3`, from a `snapshot`. Omit when using `\-\-selector` or `\-\-role`
-.SH "H5I BROWSER SCROLL"
-Scroll the page. Negative scrolls up
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBscroll\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBY\fR> 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
-.TP
-<\fIBY\fR>
-
-.SH "H5I BROWSER WAIT-FOR"
-Wait until something is on the page, or until nothing can put it there
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBwait\-for\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-text\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-selector\fR \fI<CSS>\fR
-
-.TP
-\fB\-\-text\fR \fI<TEXT>\fR
-
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
-.SH "H5I BROWSER WAIT-FOR-SCRIPT"
-Wait until a page expression is true. Needs `open --script`
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBwait\-for\-script\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIEXPR\fR> 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
-.TP
-<\fIEXPR\fR>
-
-.SH "H5I BROWSER EXTRACT"
-Pull structured data out of the page by selector
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBextract\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISCHEMA\fR> 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-url\fR \fI<URL>\fR
-Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
-.TP
-<\fISCHEMA\fR>
-The schema, as JSON
-.SH "H5I BROWSER MARKDOWN"
-The page as markdown: what a reader would read, without the handles
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBmarkdown\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-max\-bytes\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-max\-bytes\fR \fI<BYTES>\fR
-
-.TP
-\fB\-\-url\fR \fI<URL>\fR
-Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
 .SH "H5I BROWSER AUDIT"
-Everything recorded about this session, in one ordered timeline
+Everything recorded about this session, in one ordered timeline: verbs, requests, who was driving, and how it ended
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBaudit\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-no\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBaudit\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1509,220 +1377,13 @@ Everything recorded about this session, in one ordered timeline
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
 .TP
-\fB\-\-no\-session\fR
-The helper runs that belong to no session.
-
-`h5i browser transcript \-\-via yt\-dlp \-\-url <URL>` needs no page and so opens no session; the run is still recorded, and this is where. Kept out of a session\*(Aqs own timeline on purpose: a run that was not part of a session must not appear inside it.
-.TP
 \fB\-\-json\fR
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
-.SH "H5I BROWSER STRUCTURED"
-What the page publishes *about itself*: JSON-LD, OpenGraph, `<meta>`, `<link rel>`
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBstructured\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-url\fR \fI<URL>\fR
-Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
-.SH "H5I BROWSER TRANSCRIPT"
-What the page's media *says*: `<track>` captions, fetched and parsed
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBtranscript\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-url\fR] [\fB\-\-lang\fR] [\fB\-\-max\-bytes\fR] [\fB\-\-via\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-url\fR \fI<URL>\fR
-Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent
-.TP
-\fB\-\-lang\fR \fI<LANG>\fR
-Prefer this language, for the words and for the outline alike.
-
-Prefix\-matched against `srclang`, so `en` finds `en\-GB`. Falls back to the track the page marked `default`, then to the first. Every track is listed either way.
-.TP
-\fB\-\-max\-bytes\fR \fI<BYTES>\fR
-The ceiling on caption text carried out of *one* track.
-
-Per track rather than per reply, so a media element with both words and an outline can carry up to twice this.
-.TP
-\fB\-\-via\fR \fI<HELPER>\fR
-Read it with an outside program instead of from the page\*(Aqs markup
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
-.SH "H5I BROWSER SET-CHECKED"
-Set a checkbox or radio to a state, rather than toggling it
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBset\-checked\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREF|STATE\fR] [\fISTATE\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-selector\fR \fI<CSS>\fR
-
-.TP
-\fB\-\-role\fR \fI<ROLE>\fR
-Find the control by what it is called, the way a person would
-.TP
-\fB\-\-name\fR \fI<TEXT>\fR
-
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
-.TP
-[\fIREF|STATE\fR]
-`e3` or `@e3`, from a `snapshot`. Omit when using `\-\-selector` or `\-\-role`, and give the state alone
-.TP
-[\fISTATE\fR]
-`true` or `false`
-.SH "H5I BROWSER SELECT"
-Choose an option in a `<select>`, by its value or by the text it shows
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBselect\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREF|OPTION\fR] [\fIOPTION\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-selector\fR \fI<CSS>\fR
-
-.TP
-\fB\-\-role\fR \fI<ROLE>\fR
-
-.TP
-\fB\-\-name\fR \fI<TEXT>\fR
-
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
-.TP
-[\fIREF|OPTION\fR]
-`e3` or `@e3`. Omit when using `\-\-selector` or `\-\-role`
-.TP
-[\fIOPTION\fR]
-The option\*(Aqs value, or the text it shows, in that order
-.SH "H5I BROWSER PRESS"
-Press a key that *does* something: Enter, Escape, Tab, ArrowDown
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBpress\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREF|KEY\fR] [\fIKEY\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-selector\fR \fI<CSS>\fR
-
-.TP
-\fB\-\-role\fR \fI<ROLE>\fR
-
-.TP
-\fB\-\-name\fR \fI<TEXT>\fR
-
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
-.TP
-[\fIREF|KEY\fR]
-`e3` or `@e3`. Omit when using `\-\-selector` or `\-\-role`
-.TP
-[\fIKEY\fR]
-The key name
-.SH "H5I BROWSER FIND"
-Find an element by what it is called, rather than by where it sits
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBfind\fR [\fB\-s\fR|\fB\-\-session\fR] <\fB\-\-role\fR> [\fB\-\-name\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-role\fR \fI<ROLE>\fR
-`button`, `link`, `textbox`, `checkbox`, ...
-.TP
-\fB\-\-name\fR \fI<TEXT>\fR
-The accessible name, matched whole: case is ignored and whitespace collapsed, but half a name finds nothing
-.TP
-\fB\-\-url\fR \fI<URL>\fR
-Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
-.SH "H5I BROWSER SCRIPT"
-Record what this session did as a replayable script
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBscript\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-save\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-save\fR \fI<PATH>\fR
-Write the script here instead of printing it
-.TP
-\fB\-\-json\fR
-
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Print help
 .SH "H5I BROWSER REQUESTS"
-The request log: what this session asked for, and what was refused
+The request log: what this session sent, and what was refused. Written before the bytes moved
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -1747,7 +1408,7 @@ Only rows whose URL contains this
 Only responses with this status
 .TP
 \fB\-\-initiator\fR \fI<KIND>\fR
-Only `navigation`, `subresource`, `frame`, `redirect` or `replay`
+Only `subresource` (what the browser sent through the proxy), `redirect`, or `replay` (what h5i sent)
 .TP
 \fB\-\-denied\-only\fR
 Only what policy refused
@@ -1762,7 +1423,7 @@ At most this many rows, newest last
 Emit the human\-readable view (the default)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Print help
 .SH "H5I BROWSER SEQUENCE"
 Run a multi-step flow: send, extract, send again with what was found
 .ie \n(.g .ds Aq \(aq
@@ -1801,67 +1462,39 @@ Send one of this session's own requests again, with changes
 .SS OPTIONS
 .TP
 \fB\-\-set\fR \fI<TARGET=VALUE>\fR
-Change one part of it: `query.id=456`, `header.X\-Real\-IP=127.0.0.1`, `cookie.session=forged`, `json.role=admin`, `form.user=admin`, `path=/admin`, `method=POST`, `body.raw=<bytes>`. Repeatable, and applied in the order given.
+Change one part of it: `query.id=456`, `header.X\-Real\-IP=127.0.0.1`, `cookie.session=forged`, `json.role=admin`, `form.user=admin`, `path=/admin`, `method=POST`, `body.raw=<bytes>`. Repeatable, in order; the value is everything after the first `=`.
 
-The value is everything after the first `=`, so a payload full of `=` needs no escaping.
-
-A `json.` value is typed the way it reads: `json.id=99` is a number, `json.active=true` a boolean, `json.role=admin` a string. Quote it to insist on a string \(em `json.password="0e830400451993494058024219903391"` sends a magic hash rather than the number zero.
+A `json.` value is typed the way it reads (`json.id=99` is a number); quote it to insist on a string.
 .TP
 \fB\-\-set\-file\fR \fI<TARGET=PATH>\fR
-Set one part of it from a file: `multipart.userfile=./payload.jpg`.
-
-The value is the file\*(Aqs bytes, unaltered. `\-\-set` cannot carry them: a command line is text and a JPEG begins `ff d8`, which is not text in any encoding. A magic\-number check is a filter worth testing, so there has to be a way to send a real one.
-
-Applied after every `\-\-set`, in the order given.
+Set one part of it to a file\*(Aqs bytes: `multipart.userfile=./payload.jpg`. Applied after every `\-\-set`
 .TP
 \fB\-\-unset\fR \fI<TARGET>\fR
 Remove one part of it, by the same names
 .TP
 \fB\-\-create\fR
-Add a target that is not there rather than refusing.
-
-Off by default: a parameter that does not exist is usually a typo, and a typo that silently succeeds costs a whole turn spent reading a response that was never going to differ.
+Add a target that is not there rather than refusing it as a typo
 .TP
 \fB\-\-repeat\fR \fI<N>\fR [default: 1]
-Send it this many times and report the clock, for a timing test.
-
-Repeated inside the engine rather than by a shell loop: the thing being measured is milliseconds and starting a process costs tens of them, so a loop out here would measure the loop. The reply carries every sample plus a median and a median absolute deviation, which is the pair that survives one scheduling hiccup where a mean does not.
+Send it this many times and report every sample, with a median and a median absolute deviation, for a timing test
 .TP
 \fB\-\-race\fR
-Release the repeated sends together, for a race.
-
-The test for check\-then\-act: an application that reads a balance, decides, and writes it back has a window between the read and the write, and `\-\-repeat 20 \-\-race` is what finds out how wide it is.
-
-A burst, and named as one: the sends leave from twenty threads that meet at a barrier first. It is not a single\-packet attack, which needs each request split across two writes with the last byte held back. Ordinary check\-then\-act windows do not need that.
-
-Every send is a receipt and a stored message like any other, so a race that reproduces is a race somebody else can read afterwards.
+Release the repeated sends together, for a check\-then\-act race. A burst from threads that meet at a barrier, not a single\-packet attack
 .TP
 \fB\-\-no\-follow\fR
-Stop at the first redirect and report it, rather than following it.
-
-A browser follows a `Location`; a test usually wants the 302 itself. It is where an authentication flow says who you are, where an open redirect proves it accepts anything, and where the `Set\-Cookie` that logs you in actually rides. The reply carries the status and the headers with nothing followed.
+Stop at the first redirect and report it, rather than following it
 .TP
 \fB\-\-reset\-budget\fR
-Start this page\*(Aqs network allowance again before sending.
-
-The budget exists to bound *page* code: a script in a loop is the untrusted thing it stops. A blind extraction is the opposite, an agent deliberately sending hundreds of requests it composed, and without this it stops partway through with "this page has spent its allowance" and every later answer reads as a negative result.
-
-Grants nothing new: navigating resets the same allowance, so this is the same act without throwing away the page.
+Start this session\*(Aqs request allowance again before sending, for a long walk that would otherwise stop partway
 .TP
 \fB\-\-as\fR \fI<SESSION>\fR
-Send it from another session instead of this one.
-
-The authorization test, in one flag: take the request one logged\-in session made and send it from a different logged\-in session. The message comes from `\-\-session`; the cookies, identity, policy and receipts are the named session\*(Aqs.
-
-The source session\*(Aqs own credentials are dropped, because carrying them would send a request that is neither user\*(Aqs and whose answer means nothing. `\-\-keep\-credentials` sends them anyway, for the test where that is the question.
+Send it from another session instead: the authorization test. The message comes from `\-\-session`, with its credentials dropped; the cookies, policy and receipts are the named session\*(Aqs
 .TP
 \fB\-\-keep\-credentials\fR
 Carry the source session\*(Aqs `Cookie` and `Authorization` headers into the other session. Only meaningful with `\-\-as`
 .TP
 \fB\-\-raw\-target\fR \fI<TARGET>\fR
-Send this request\-target unchanged, without URL normalization.
-
-Policy, budget, and receipt checks still apply. The sender computes `Host` and `Content\-Length`; use `\-\-raw\-request` to control framing.
+Send this request\-target unchanged, without URL normalization
 .TP
 \fB\-\-raw\-headers\fR
 Preserve header\-name casing while retaining edits and cookies
@@ -1875,14 +1508,10 @@ Send a complete request unchanged from this file; `\-` reads stdin.
 The stored URL supplies the authority for policy checks and dialing.
 .TP
 \fB\-\-walk\fR \fI<PATH>\fR
-Walk a list of sends from this file; `\-` reads stdin.
-
-`{"steps":[{"label":"alice/admin","set":["query.user=alice", "json.role=admin"]},...]}`: the general form of `\-\-set\-each`, where one send sets more than one target. The combinations come from the caller, as the values do; nothing here generates them.
+Walk a list of sends from this file (`\-` reads stdin): `{"steps":[{"label":"a","set":["query.user=alice"]},...]}`
 .TP
 \fB\-\-rate\fR \fI<PER_SECOND>\fR
-Send at most this many requests per second.
-
-A walk of a thousand values is the one thing here that looks like an attack to whoever is watching the target, and an authorised engagement usually comes with a number.
+Send at most this many requests per second
 .TP
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open
@@ -1896,7 +1525,7 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 <\fISEQ\fR>
 The sequence number to send again, as `requests` lists them
 .SH "H5I BROWSER RPC"
-Speak one request per line, and answer one per line: the same verbs without paying process startup for each (design-websec.md W10)
+Speak one request per line, and answer one per line, without a process per verb. Each line carries an `id` and a `verb`; the reply has the `id`
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -1912,7 +1541,7 @@ Read requests from stdin and write replies to stdout
 Which session, when more than one is open
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Print help
 .SH "H5I BROWSER ENV"
 Which credentials this session can use, by name. Never their values
 .ie \n(.g .ds Aq \(aq
@@ -1961,35 +1590,6 @@ Which session, when more than one is open
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
-.SH "H5I BROWSER VIEW"
-Watch this session's page, and take the controls
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBview\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-web\fR] [\fB\-\-port\fR] [\fB\-\-fps\fR] [\fB\-\-assume\-graphics\fR] [\fB\-h\fR|\fB\-\-help\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
-Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
-.TP
-\fB\-\-web\fR
-Serve the page to a browser over loopback instead of drawing it here.
-
-For a terminal that cannot draw images, and for a page the keyboard cannot reach.
-.TP
-\fB\-\-port\fR \fI<PORT>\fR [default: 0]
-Port for `\-\-web`. 0 picks a free one
-.TP
-\fB\-\-fps\fR \fI<N>\fR [default: 10]
-Frame\-rate ceiling asked of the session
-.TP
-\fB\-\-assume\-graphics\fR
-Skip the graphics probe and render anyway, for a terminal the probe gets wrong
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH "H5I BROWSER URL"
 Print the loopback viewer URL for a box, token included. `h5i box view` is what actually serves it; this is for pasting into a browser when a forward is already running
 .ie \n(.g .ds Aq \(aq

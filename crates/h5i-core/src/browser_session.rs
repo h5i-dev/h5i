@@ -966,7 +966,7 @@ fn open_it(root: &Path, session: Session) -> Result<Session, SessionGone> {
         // Seen dead now, so record it now: the next reader should not have to
         // re-derive it, and a receipt that says "died" needs a time.
         let mut dead = session.clone();
-        end(root, &mut dead, State::Died, "the engine stopped answering");
+        end(root, &mut dead, State::Died, "the session's proxy stopped answering");
         return Err(SessionGone::Ended {
             state: State::Died,
             reason: dead.end_reason.clone(),
@@ -985,8 +985,8 @@ pub enum SessionGone {
     Ended {
         state: State,
         reason: Option<String>,
-        /// The opaque id, which is what `--restore` takes: a name can be reused
-        /// and so cannot carry storage forward unambiguously.
+        /// The opaque id, because a name can be reused and so cannot say which
+        /// session ended.
         id: String,
     },
 }
@@ -1003,8 +1003,7 @@ impl std::fmt::Display for SessionGone {
                 write!(
                     f,
                     ". It will not be restarted automatically. \
-                     Open a new one with `h5i browser open <url>`, or carry this one's \
-                     storage forward with `h5i browser open <url> --restore {id}`."
+                     Open a new one with `h5i browser open <url>`."
                 )
             }
         }

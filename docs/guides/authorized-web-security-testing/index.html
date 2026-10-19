@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-09",
-      "dateModified": "2026-10-16",
+      "dateModified": "2026-10-19",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -115,11 +115,11 @@
 <div class="terminal-body"><pre><code>$ curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon
 $ h5i plugin list</code></pre></div></div>
 <p><strong>Check:</strong> the list identifies <code>websec</code> as the HTTP workbench and <code>recon</code> as the endpoint ledger. They are optional plugins, so a default h5i install does not imply they are present.</p>
-<h2 id="session">2. Open a captured, target-scoped session</h2>
+<h2 id="session">2. Open a target-scoped session</h2>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
-<div class="terminal-body"><pre><code>$ h5i browser open https://target.example --capture --allow target.example
+<div class="terminal-body"><pre><code>$ h5i browser open https://target.example --allow target.example
 $ h5i browser status</code></pre></div></div>
-<p><code>--capture</code> keeps request and response bodies because replay needs the exact message. That store can contain credentials and personal data. Treat it as sensitive test evidence and do not export it casually.</p>
+<p>The session keeps request and response bodies because replay needs the exact message. That store can contain credentials and personal data. Treat it as sensitive test evidence and do not export it casually.</p>
 <p><strong>Check:</strong> status names the intended target and the request log. If the application legitimately uses another origin, add that origin explicitly after confirming it is in scope; do not replace the allowlist with unrestricted egress.</p>
 <h2 id="observe">3. Observe before you enumerate</h2>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>

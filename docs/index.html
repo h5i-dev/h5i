@@ -79,15 +79,14 @@
         "h5i-app, an Axum-based Rust framework with composable application kernels",
         "Lean 4 proofs of tenant isolation, authorization, and business state invariants",
         "Rust-CUDA GPU backend for suitable batch workloads",
-        "Headless browser automation and compact snapshots with @ref handles for AI agents",
+        "Chromium automation through a per-session capture proxy, with @ref snapshots for AI agents",
         "HTTP capture, inspection, editing, replay, and response comparison through the websec plugin",
         "Multi-step test flows that replay findings in CI with your own oracle",
         "Configurable sandboxing for the browser or the entire agent workflow",
         "Network policies that restrict destinations and record denied requests",
         "Auditable browser actions and network requests",
         "Credential isolation and human takeover for sensitive steps",
-        "Pure Rust, no Chromium or V8",
-        "About 3x faster reads with about 86% less peak memory than headless Chromium on simple websites in our benchmarks"
+        "Every browser request policy-checked and recorded before it moves"
       ],
       "keywords": "web security, AI agents, red teaming, penetration testing, bug bounty, headless browser, HTTP interception, security regression testing, CI/CD, formal verification, Lean 4, Axum, Rust, h5i-app, sandboxing",
       "url": "https://h5i.dev/",
@@ -957,7 +956,7 @@
                     </div>
                     <div class="cm-sub">
                       <span class="mono">https://shop.example.test/checkout?order=1042</span>
-                      <span>h5i-light</span><span>engine-claimed</span><span>alice</span><span>live for 2m</span>
+                      <span>chromium</span><span>proxy-observed</span><span>alice</span><span>live for 2m</span>
                     </div>
                     <div class="cm-tabs">
                       <label class="cm-tab" for="cmt-history">History <span class="n">128</span></label>
@@ -1067,10 +1066,10 @@
                   </div>
                   <div class="cm-pane cm-pane-about">
                     <div class="cm-about">
-                      <div class="cm-note">Engine-claimed: the request log is the engine&#8217;s own account of what it fetched. It is fail-closed, so a fetch that is not in it did not happen, but nothing outside the engine vouches for it.</div>
+                      <div class="cm-note">Proxy-observed: every request the browser sent went through the session&#8217;s capture proxy, which wrote it down before forwarding it. It is fail-closed, so a request that is not in it did not go through the session, but the browser process itself is not confined.</div>
                       <table class="cm-facts">
                         <tr><th>state</th><td>live</td></tr>
-                        <tr><th>engine</th><td>h5i-light</td></tr>
+                        <tr><th>engine</th><td>chromium</td></tr>
                         <tr><th>identity</th><td>alice</td></tr>
                         <tr><th>policy</th><td><code>a1f4c9e70b32</code></td></tr>
                         <tr><th>capture</th><td>on: 128 messages stored, owner-only</td></tr>

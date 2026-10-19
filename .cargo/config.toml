@@ -1,7 +1,7 @@
 [alias]
-# Run h5i-app's CI checks locally (crates/h5i-app-xtask). `--release` because
-# a dev build of this workspace is very large; see CLAUDE.md.
+# Run h5i-app's CI checks locally (crates/h5i-app-xtask). `--release`, so a
+# checkout guarded against dev builds (scripts/no-debug-guard.sh) can run it.
 app-verify = "run -q --release -p h5i-app-xtask -- verify"
-# `h5i app <verb>` without building the h5i binary and its browser engine.
+# `h5i app <verb>` without building the h5i binary.
 # Run it from the repository root: examples/app is a workspace of its own.
 app = "run -q --release -p h5i-app-xtask --"

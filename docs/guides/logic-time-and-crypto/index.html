@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-15",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-19",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -82,7 +82,7 @@
 <p>Alice has 100 credits. The transfer endpoint reads the balance, waits briefly, and subtracts later. Multiple requests can therefore observe the same original balance before any one updates it.</p>
 <pre><code class="language-bash">$ ./run.sh 35
 $ h5i browser open 'http://127.0.0.1:9350/' \
-  --session lab35 --new --capture
+  --session lab35 --new
 </code></pre>
 <p>The homepage prints Alice’s bearer token. Read it out of the captured response:</p>
 <pre><code class="language-bash">$ h5i websec show res_0 --session lab35 --raw
@@ -106,7 +106,7 @@ $ h5i websec replay req_0 --session lab35 --create \
 <p>The checkout API carefully validates every item and coupon. It forgets one business rule: the same coupon should apply only once.</p>
 <pre><code class="language-bash">$ ./run.sh 36
 $ h5i browser open 'http://127.0.0.1:9360/' \
-  --session lab36 --new --capture
+  --session lab36 --new
 
 $ h5i websec replay req_0 --session lab36 --create \
   --set method=POST --set path=/api/checkout \
@@ -121,7 +121,7 @@ $ h5i websec replay req_0 --session lab36 --create \
 <p>Security tokens must be generated with a cryptographically secure random number generator. This lab uses Python’s Mersenne Twister seeded with the current Unix second.</p>
 <pre><code class="language-bash">$ ./run.sh 37
 $ h5i browser open 'http://127.0.0.1:9370/' \
-  --session lab37 --new --capture
+  --session lab37 --new
 </code></pre>
 <p>Request a token for an address you control. The lab reveals it:</p>
 <pre><code class="language-bash">$ h5i websec replay req_0 --session lab37 --create \
@@ -186,7 +186,7 @@ SEED
 <p>Start the lab:</p>
 <pre><code class="language-bash">$ ./run.sh 38
 $ h5i browser open 'http://127.0.0.1:9380/' \
-  --session lab38 --new --capture
+  --session lab38 --new
 </code></pre>
 <p>The homepage prints a sample signed request. Read it and copy the 64-character <code>sig</code>:</p>
 <pre><code class="language-bash">$ h5i websec show res_0 --session lab38 --raw
@@ -209,7 +209,7 @@ $ read -r NEWDATA NEWSIG &lt;&lt;&lt;&quot;$(python3 labs/38-length-extension/ex
 <p>MFA is a flow, not merely a screen. After password verification, this lab issues a temporary token intended only for the second step. Other endpoints mistakenly accept it as a full session.</p>
 <pre><code class="language-bash">$ ./run.sh 39
 $ h5i browser open 'http://127.0.0.1:9390/' \
-  --session lab39 --new --capture
+  --session lab39 --new
 </code></pre>
 <p>Log in with the known password:</p>
 <pre><code class="language-bash">$ h5i websec replay req_0 --session lab39 --create \
@@ -230,7 +230,7 @@ $ h5i websec replay req_0 --session lab39 --create \
 <p>The final lab stores preferences in a Python pickle inside a cookie. The cookie has a valid HMAC, but the signing key is the sample value printed on the homepage.</p>
 <pre><code class="language-bash">$ ./run.sh 40
 $ h5i browser open 'http://127.0.0.1:9400/' \
-  --session lab40 --new --capture
+  --session lab40 --new
 </code></pre>
 <p>Python pickle is not a passive data format. Its reconstruction instructions can call functions. Create an object that runs <code>printenv FLAG</code>, then sign it with the exposed key:</p>
 <pre><code class="language-bash">$ COOKIE=$(python3 - &lt;&lt;'PY'

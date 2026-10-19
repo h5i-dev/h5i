@@ -19,7 +19,7 @@ h5i app prove                                           # Build and check formal
 h5i app mutate                                          # Test proof sensitivity with mutations
 
 # Red-team any web application
-h5i browser open https://example.com                    # Open a website in the browser
+h5i browser open https://example.com                    # Open a website in Chromium, captured by h5i
 h5i browser click @e3                                   # Interact with page elements
 h5i websec requests                                     # Inspect captured HTTP traffic
 h5i websec replay req_42 --set query.id=456             # Modify and replay a request
@@ -42,6 +42,9 @@ curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test
 
 # Rust web framework
 cargo add h5i-app
+
+# The browser `h5i browser` drives (Chromium, via agent-browser)
+npm install -g agent-browser && agent-browser install
 
 # AI agent integration (optional)
 npx skills add h5i-dev/h5i
@@ -73,7 +76,7 @@ Let AI agents explore, attack, and test web applications using h5i's integrated 
 
 > `h5i` CLI works with any web services regardless of their framework, and no migration to `h5i-app` is required.
 
-- **Browser automation:** Navigate applications, interact with forms, and test authenticated workflows.
+- **Browser automation:** Drive Chromium through h5i's capture proxy: navigate, fill forms, and test authenticated workflows, with every request policy-checked and recorded.
 - **HTTP security testing:** Capture, modify, replay, and compare HTTP requests to investigate vulnerabilities.
 - **Recon:** Discover endpoints, parameters, and hidden attack surfaces through crawling and JavaScript analysis.
 - **CI/CD:** Save confirmed attack flows and replay them in CI/CD to catch security regressions.

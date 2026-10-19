@@ -41,9 +41,9 @@ fn store_dir(root: &Path, selector: Option<&str>) -> anyhow::Result<(bs::Session
             bs::Placement::Host => String::new(),
         };
         anyhow::bail!(
-            "session {} kept no messages: it was opened without `--capture`, so only the \
-             request log exists. `h5i browser requests` shows what it sent; \
-             `h5i browser open <url> --capture` starts one that also keeps the messages.{placed}",
+            "session {} kept no messages: it was opened by an h5i that kept them only on \
+             request, so only the request log exists. `h5i browser requests` shows what it \
+             sent; `h5i browser open <url>` starts one that keeps the messages.{placed}",
             session.id
         );
     }

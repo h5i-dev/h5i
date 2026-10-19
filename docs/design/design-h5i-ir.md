@@ -1,5 +1,9 @@
 # Design: the Read IR
 
+> **Status: superseded 2026-10-19.** The engine this IR sat inside was removed;
+> snapshots now come from Chromium through agent-browser. Kept for its history.
+> See `docs/MANUAL.md`, "h5i browser".
+
 > A compact, read-only semantic tree between the Blitz DOM and everything an
 > agent reads, so the cost of a step tracks what the step changed rather than
 > how big the page is.

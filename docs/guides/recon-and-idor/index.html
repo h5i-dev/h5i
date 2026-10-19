@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-13",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-19",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -106,8 +106,8 @@ $ h5i websec --help
 </code></pre>
 <p>It prints <code>http://127.0.0.1:9050</code>. Open the homepage and record its traffic:</p>
 <pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9050/' \
-  --session lab05 --new --capture
-$ h5i browser markdown --session lab05
+  --session lab05 --new
+$ h5i browser snapshot --session lab05
 </code></pre>
 <p>The rendered page contains links to <code>/docs</code> and <code>/api/v3/whoami</code>. The API answers with <code>401 Unauthorized</code> because we do not have a bearer token.</p>
 <p>It would be easy to stop there. Instead, read both the rendered page and the original HTTP response:</p>
@@ -175,7 +175,7 @@ $ h5i websec requests --session lab05
 <p>The homepage tells us that we are account <code>77</code> and that our latest invoice is <code>1041</code>. Open that invoice:</p>
 <pre><code class="language-bash">$ h5i browser open \
   'http://127.0.0.1:9060/api/invoice?id=1041' \
-  --session lab06 --new --capture
+  --session lab06 --new
 $ h5i websec show res_0 --session lab06 --raw
 </code></pre>
 <p>The response includes both the invoice ID and its account:</p>
@@ -234,7 +234,7 @@ if not row or row[&quot;account&quot;] != session.account:
 <p>We belong to the <code>acme</code> tenant. Open the search endpoint:</p>
 <pre><code class="language-bash">$ h5i browser open \
   'http://127.0.0.1:9070/api/search?q=report' \
-  --session lab07 --new --capture
+  --session lab07 --new
 $ h5i websec show res_0 --session lab07 --raw
 </code></pre>
 <p>The response contains a result from a different tenant:</p>

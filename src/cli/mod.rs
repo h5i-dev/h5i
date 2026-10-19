@@ -23,10 +23,6 @@ pub mod websec;
 // `browser`, because `open` is the only thing that reads one.
 #[cfg(feature = "browser")]
 pub mod scope;
-// The helper lane behind `h5i browser transcript --via yt-dlp`: an outside program, run
-// deliberately, recorded as one.
-#[cfg(feature = "ytdlp")]
-pub mod helper;
 pub mod completion;
 // `h5i project`: the durable engagement — notes, findings, evidence, checklists
 // and reports that outlive a session. Not feature-gated: it reads the shapes

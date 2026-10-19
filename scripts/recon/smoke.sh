@@ -6,7 +6,10 @@
 # session's first request was dropped from the ledger, and a probe built from
 # the newest stored request inherited a POST and asked for robots.txt with a
 # body. Unit tests cover the readers; this covers the seams between the plugin,
-# the CLI, the engine and the store.
+# the CLI, the capture proxy, a real Chromium and the store.
+#
+# Needs agent-browser and a Chromium it can launch (`npm install -g
+# agent-browser && agent-browser install`).
 #
 #   ./scripts/recon/smoke.sh [path-to-h5i] [path-to-h5i-recon]
 #
@@ -17,6 +20,7 @@ H5I="${1:-target/release/h5i}"
 RECON="${2:-target/release/h5i-recon}"
 [ -x "$H5I" ] || { echo "no h5i at $H5I — cargo build --release"; exit 2; }
 [ -x "$RECON" ] || { echo "no h5i-recon at $RECON — cargo build --release -p h5i-recon"; exit 2; }
+command -v agent-browser >/dev/null || { echo "no agent-browser on PATH — npm install -g agent-browser && agent-browser install"; exit 2; }
 export H5I_BIN="$(cd "$(dirname "$H5I")" && pwd)/$(basename "$H5I")"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PORT=$((20000 + RANDOM % 10000))
@@ -45,7 +49,7 @@ has() { case "$2" in *"$3"*) ok "$1";; *) bad "$1 (got '$2')";; esac; }
 py()  { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
 
 echo "── the ledger starts from the session's own log ─────────────────────"
-"$H5I" browser open "http://127.0.0.1:$PORT/site/" --session "$SESSION" --capture --script --json >/dev/null 2>&1
+"$H5I" browser open "http://127.0.0.1:$PORT/site/" --session "$SESSION" --json >/dev/null 2>&1
 LEDGER=$("$RECON" endpoints --session "$SESSION" --json)
 is "the navigation itself is in the ledger (receipts start at seq 0)" \
    "$(echo "$LEDGER" | py "len([e for e in d['endpoints'] if e['path'] == '/site/'])")" "1"
@@ -60,7 +64,7 @@ is "a path the bundle builds is reported, not stored" \
 is "and no endpoint was invented for it" \
    "$("$RECON" endpoints --session "$SESSION" --json | py "len([e for e in d['endpoints'] if 'item' in e['path']])")" "0"
 
-echo "── known files are asked for, through the engine ────────────────────"
+echo "── known files are asked for, through the session ───────────────────"
 OUT=$("$RECON" known --session "$SESSION" --json)
 is "robots.txt answered" "$(echo "$OUT" | py "[a['status'] for a in d['asked'] if a['path'] == '/robots.txt'][0]")" "200"
 has "and what it disallows is a candidate" "$("$RECON" endpoints --session "$SESSION" --json)" "/site/admin/"
@@ -113,7 +117,7 @@ is "an unknown format is refused" \
 echo "── the inventory outlives the session ───────────────────────────────"
 is "export writes one endpoint per line" \
    "$("$RECON" export --session "$SESSION" | wc -l | tr -d ' ' | awk '{print ($1 > 0) ? "yes" : "no"}')" "yes"
-"$H5I" browser open "http://127.0.0.1:$PORT/site/one" --session "${SESSION}-b" --capture --json >/dev/null 2>&1
+"$H5I" browser open "http://127.0.0.1:$PORT/site/one" --session "${SESSION}-b" --new --json >/dev/null 2>&1
 OUT=$("$RECON" merge --session "${SESSION}-b" --from "$SESSION" --json)
 is "merging carries the other session's endpoints" "$(echo "$OUT" | py "d['written'] > 0")" "True"
 is "and their evidence keeps the session it belongs to" \

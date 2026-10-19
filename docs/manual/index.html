@@ -111,7 +111,7 @@
       <p class="crumbs"><a href="/">h5i</a><i>/</i><a href="/guides/">docs</a><i>/</i><span>manual</span></p>
       <p class="post-eyebrow">CLI reference</p>
       <h1>h5i Manual</h1>
-      <p class="manual-meta"><span>Updated <time datetime="2026-10-19">2026-10-19</time></span><i>|</i><span>63 min read</span><i>|</i><span class="ok">21 chapters</span></p>
+      <p class="manual-meta"><span>Updated <time datetime="2026-10-19">2026-10-19</time></span><i>|</i><span>55 min read</span><i>|</i><span class="ok">21 chapters</span></p>
       <details class="manual-mobile-toc"><summary>Chapters</summary>
 <div class="mn-group"><p class="mn-head">Start here</p>
 <a href="#what-h5i-is"><span class="mn-n">01</span><span>What h5i is</span></a>
@@ -154,28 +154,30 @@ what the commands are <em>for</em>.</p>
 <blockquote>
 <p>Build. Verify. Hack.</p>
 </blockquote>
-<p><em>h5i</em> (pronounced <em>high-five</em>) brings web development, formal verification
-with Lean 4, and red-teaming together around a composable Rust framework.
+<p><em>h5i</em> (pronounced <em>high-five</em>) unifies web development, formal verification
+with Lean 4, and red-teaming around a composable Rust framework.
 Build an application with h5i-app, keep its critical logic in a Rust kernel,
 and use <a href="#h5i-app"><code>h5i app</code></a> to extract and prove properties of that logic in
 Lean 4. Then test the running app for bugs the proofs did not cover. The
 red-teaming tools also work with applications built on any stack. Most of this
 manual covers those tools because they have the most commands.</p>
-<p>On the red-teaming side, every request is policy-checked and written down
-before the bytes move, and the fetch is refused when the record cannot be
-written. An agent drives a session by name, reads the page as an outline with <code>@ref</code> handles, and
-works on the traffic that page produced: inspect it, change one field, send it
-again, compare what came back. The page and its traffic are one session, because
-the engine <em>is</em> the HTTP client.</p>
+<p>On the red-teaming side, a session is Chromium, driven through
+<a href="https://github.com/vercel-labs/agent-browser">agent-browser</a> and pointed at a
+capture proxy h5i runs for that session. Every request is policy-checked and
+written down before the bytes move, and the request is refused when the record
+cannot be written. An agent drives a session by name, reads the page as an
+accessibility outline with <code>@ref</code> handles, and works on the traffic that page
+produced: inspect it, change one field, send it again, compare what came back.
+The page and its traffic are one session, because every byte the browser sends
+goes through the proxy that keeps the session's record.</p>
 <p>No other tool has both ends. Playwright and Puppeteer drive a browser and cannot
-say what it reached. Burp owns the traffic and not the browser, so it needs
-interception, a proxy setting and usually a CA certificate, and it cannot say
-<em>why</em> a request happened. h5i writes the decision before the bytes move, so a
-request that is not in the log did not happen.</p>
-<p>One Rust binary, engine included. A native session needs no proxy, certificate,
-server, daemon, or SaaS. On Linux and macOS, <code>h5i browser proxy</code> adds a
-per-session capture proxy so full Chromium can use the same session; see
-<a href="#chromium-through-a-proxy">Chromium through a proxy</a>.</p>
+say what it reached. Burp owns the traffic and not the browser, so a person has
+to wire the two together and keep them in step. h5i starts the proxy, launches
+the browser pointed at it, and writes the decision before the bytes move, so a
+request that is not in the log did not go through the session.</p>
+<p>One Rust binary for h5i's half. The browser half is agent-browser and the
+Chromium it installs (<code>npm install -g agent-browser &amp;&amp; agent-browser install</code>);
+<code>h5i browser open</code> refuses, and leaves nothing behind, when it is missing.</p>
 <h3 id="the-division-of-labour">The division of labour</h3>
 <p>h5i does the deterministic work; the agent does the judging.</p>
 <table>
@@ -217,26 +219,22 @@ and checks that the ids it cites exist.</p>
   safe to paste into a bug report: <code>requests.jsonl</code>, <code>actions.jsonl</code>, the
   receipts, the endpoint ledger.</li>
 <li><strong>The evidence.</strong> The messages themselves, <code>Authorization</code> and cookies
-  included. Owner-only, opt-in with <code>--capture</code>, in no export unless named.</li>
+  included. Owner-only, kept for every session, in no export unless named.</li>
 </ul>
-<p>The two are never merged. Every row also says which lane saw it:
-<code>engine-claimed</code> is the engine's account of itself, <code>host-observed</code> is something
-outside the engine seeing it too, and <code>proxy-observed</code> is an h5i loopback proxy
-that stored the HTTP exchange an external Chromium sent through it. A lane is
-never upgraded.</p>
+<p>The two are never merged. Every row also says which lane saw it. A session's
+lane is <code>proxy-observed</code>: h5i's loopback proxy stored the HTTP exchange the
+session's Chromium sent through it. Records written by an older h5i, which had
+its own engine, can also say <code>engine-claimed</code> (the engine's account of itself)
+or <code>host-observed</code> (something outside the engine seeing it too); they are still
+read, and a lane is never upgraded.</p>
 <h3 id="what-it-is-not">What it is not</h3>
 <ul>
 <li><strong>Not a scanner.</strong> No crawl-and-flag mode, no payload generation, no severity
   score.</li>
-<li><strong>Not a sandbox by default.</strong> A session with no <code>--in</code> runs like any other
-  headless browser, and <code>h5i browser status</code> says so. Containment is a placement
-  you ask for.</li>
-<li><strong>Not a complete browser.</strong> Of twenty single-page applications measured,
-  eighteen read usefully and one not at all. Tabs, extensions, Service Workers,
-  WebRTC and iframes are absent by decision, and a page needing an API the
-  engine lacks gets that API <em>named</em> in the snapshot. Such a page runs in
-  Chromium through <a href="#chromium-through-a-proxy"><code>h5i browser proxy</code></a>, which
-  captures into the same session.</li>
+<li><strong>Not a sandbox by default.</strong> A session's Chromium runs as an ordinary host
+  process, and <code>h5i browser status</code> says so. Containment is a box you ask for.</li>
+<li><strong>Not a browser.</strong> The browser is Chromium. h5i owns what goes through its
+  proxy: the policy, the record, and the messages.</li>
 <li><strong>Not a content filter.</strong> h5i does not classify what a page says. It bounds
   what a persuaded agent can reach.</li>
 <li><strong>Not a defence against a targeted kernel exploit.</strong> See <a href="#limits">Limits</a>.</li>
@@ -256,7 +254,7 @@ between phases is the message id.</p>
 <tbody>
 <tr>
 <td>Scope</td>
-<td>Say what is in bounds, and make the engine enforce it</td>
+<td>Say what is in bounds, and make the proxy enforce it</td>
 <td><a href="#scope-and-identity">Scope and identity</a></td>
 </tr>
 <tr>
@@ -286,7 +284,7 @@ between phases is the message id.</p>
 </tr>
 </tbody>
 </table>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser open https://target.example --project acme --capture --script
+<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser open https://target.example --project acme
 h5i recon extract                            # what the pages and bundles disclosed
 h5i recon known                              # robots.txt, sitemap.xml, security.txt
 h5i recon crawl --max-requests 200 --rate 4  # walk it under this session's login
@@ -300,13 +298,10 @@ h5i websec finding create --title '...' --evidence req_42,res_43
 enter at any phase.</p>
 <h3 id="where-a-box-fits">Where a box fits</h3>
 <p>A box is a disposable, confined environment, and nothing above needs one. Reach
-for a box when the code under test is untrusted, when a target's response might
-be, or when you want the network decision made outside the engine:</p>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser open https://target.example --in mybox
-</code></pre></div>
-<p>Same session, same verbs, same record. What changes is who saw the network,
-which is why a boxed session can earn the <code>host-observed</code> lane and a host
-session cannot. See <a href="#containment-optional">Containment</a>.</p>
+for a box when the code under test is untrusted or agent-written, or when you
+want the browser itself confined and its network decided outside it: a box's
+<code>browser</code> profile runs Chromium under the box's tier and egress. See
+<a href="#containment-optional">Containment</a>.</p>
 <hr />
 <h2 id="install" data-n="03">Install</h2>
 <div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">curl -fsSL https://h5i.dev/install.sh | sh                      # prebuilt binary
@@ -407,7 +402,7 @@ release.</p>
 <tr>
 <td>Identity</td>
 <td>Who the session says it is</td>
-<td><code>--identity</code>, and a cookie jar</td>
+<td>the account signed in to its browser</td>
 </tr>
 </tbody>
 </table>
@@ -429,51 +424,15 @@ has to ship a verb for.</p>
 as the session's engagement scope. See <a href="#scope-the-engagement-kind">Scope</a>.</p>
 <p>The name is also the durable project <a href="#h5i-project"><code>h5i project</code></a> keeps: the
 findings, evidence and reports that outlive any one session under it.</p>
-<h3 id="browser-identities">Browser identities</h3>
-<p>A session uses one identity for HTTP headers, JavaScript, screen geometry, locale,
-and time zone. The identity is fixed when the session opens and recorded in its
-audit data.</p>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser identity list
-h5i browser identity check firefox-143-linux --script
-h5i browser open https://example.com --script --identity privacy
-</code></pre></div>
-<table>
-<thead>
-<tr>
-<th>mode</th>
-<th>behavior</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>native</code></td>
-<td>Truthfully identifies h5i. This is the default.</td>
-</tr>
-<tr>
-<td><code>privacy</code></td>
-<td>Uses stable h5i values so installations reveal fewer local differences.</td>
-</tr>
-<tr>
-<td><code>compatible</code></td>
-<td>Coherently presents another supported browser identity.</td>
-</tr>
-</tbody>
-</table>
-<p>Use <code>identity show &lt;name&gt;</code> to print an identity as TOML, or pass a TOML file to
-<code>--identity</code>. Contradictory identities and identities requiring unsupported
-features are refused rather than partially applied. Currently,
-<code>firefox-143-linux</code> is supported; Chrome identities require client hints and
-WebGL capabilities this engine does not provide.</p>
-<p>Identity consistency is not anonymity. TLS and HTTP/2 fingerprints, installed
-fonts, network location, and input timing remain outside this feature.</p>
 <h3 id="what-a-refusal-looks-like">What a refusal looks like</h3>
 <p>Out of scope is a recorded decision, not a tooling error:</p>
 <div class="codeblock"><div class="codeblock-head"><span>text</span><button class="copy-btn" type="button">Copy</button></div><pre><code>$ h5i browser navigate https://blog.acme.com/ --session acme1
-Error: denied by policy: `blog.acme.com` is refused by the deny rule
-`blog.acme.com`.
+$ h5i browser requests --denied-only --session acme1
+—          DENIED GET https://blog.acme.com/ — `blog.acme.com` is refused by the deny rule `blog.acme.com`
 </code></pre></div>
 <p>The request gets an <code>allowed: false</code> row in <code>requests.jsonl</code>, a response record
-describing the refusal, and no bytes between them. Change scope only with
+describing the refusal, and no bytes between them. The browser is answered
+<code>403</code> with the same reason, so the page shows why it did not load. Change scope only with
 authorisation, and never from inside a box.</p>
 <hr />
 <h2 id="h5i-recon" data-n="06">h5i recon</h2>
@@ -535,55 +494,139 @@ keeps what it found.</p>
 <h2 id="h5i-browser" data-n="07">h5i browser</h2>
 <p>A <em>session</em> is the whole agent-facing surface. <code>h5i browser open</code> makes one,
 every verb that follows acts on it, and <code>h5i browser close</code> ends it. Nothing
-else is a concept an agent has to learn: not the process that renders the page,
-not the port it listens on, not whether it is running inside a box, and not, in
-the ordinary case, the session itself.</p>
+else is a concept an agent has to learn: not the proxy, not the port it listens
+on, not the Chromium process, and not, in the ordinary case, the session itself.</p>
 <div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser open https://example.com
 h5i browser snapshot            # the page as a model should read it
 h5i browser click @e3
 h5i browser screenshot          # a PNG of the page, into the session's artifacts
-h5i browser reload              # re-fetch where the session actually is
+h5i browser reload
 h5i browser requests            # what it asked for, and what was refused
 h5i browser close
 </code></pre></div>
-<p><code>screenshot</code> writes into the session's own artifacts directory under a name <em>h5i
-chooses</em>; the engine picks only the bytes. <code>--out</code> names a file instead.</p>
-<h3 id="chromium-through-a-proxy">Chromium through a proxy</h3>
-<p><code>h5i browser open</code> drives h5i's own engine. A page that needs Chromium, or a
-human signing in, uses a proxy session on Linux and macOS.</p>
+<h3 id="what-a-session-is">What a session is</h3>
+<p>Two processes under one record. h5i's half is a capture proxy
+(<code>h5i __capture-proxy</code>) with the session's control channel beside it. The
+browser half is Chromium, run by agent-browser and pointed at that proxy:</p>
+<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">npm install -g agent-browser &amp;&amp; agent-browser install   # once per machine
+</code></pre></div>
+<p><code>open</code> checks that agent-browser runs before it creates anything. A missing one
+stops there, prints the install command, and leaves no session behind. The
+proxy writes a per-session CA (<code>0600</code>) and uses it to decrypt HTTPS. agent-browser
+is launched with <code>--ignore-https-errors</code>, so Chromium accepts the proxy's
+certificates for that session; the CA file is still written for anyone who
+installs it instead. <code>status</code> repeats that line, and <code>session.json</code> records it
+as <code>proxy.chromium_tls</code>.</p>
+<p>Every request the browser sends goes through the proxy, which checks it against
+the session's policy and writes it down <em>before</em> it is forwarded, and refuses it
+when the record cannot be written. Every message is kept, both directions,
+headers and bodies, in the session's owner-only store. A request that is not in
+<code>h5i browser requests</code> did not go through the session.</p>
+<div class="codeblock"><div class="codeblock-head"><span>text</span><button class="copy-btn" type="button">Copy</button></div><pre><code>requests : proxy-observed (captured at h5i's proxy; the external browser itself is not confined)
+</code></pre></div>
+<p>The lane is <code>proxy-observed</code>, and the line says what it does not cover:
+agent-browser and Chromium run as ordinary host processes. For a browser that is
+itself confined, use a box (see <a href="#containment-optional">Containment</a>).</p>
+<p>The server's <code>Set-Cookie</code> answers also land in the session's own jar. A replay
+of a request the browser sent carries that request's own <code>Cookie</code>; a request
+carried in from another session (<code>resend --as</code>) has its credentials dropped,
+and the jar is where this session's come from.</p>
+<p>Where Chromium's own sandbox cannot start, which is common without root, set
+<code>AGENT_BROWSER_ARGS=--no-sandbox</code> in the environment h5i runs in. It turns that
+sandbox off, so use it only for a target you trust.</p>
+<h3 id="page-verbs-and-workbench-verbs">Page verbs and workbench verbs</h3>
+<p>The page verbs go to the session's Chromium through agent-browser, with the
+proxy flags on every call, so a relaunched browser is still captured:</p>
+<table>
+<thead>
+<tr>
+<th>verb</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>snapshot [-i] [--delta] [--url U]</code></td>
+<td>the accessibility outline, with <code>@ref</code> handles</td>
+</tr>
+<tr>
+<td><code>navigate &lt;url&gt;</code></td>
+<td>go there (<code>proxy-open</code> is the same verb)</td>
+</tr>
+<tr>
+<td><code>reload</code></td>
+<td>load the current page again</td>
+</tr>
+<tr>
+<td><code>click &lt;@ref\|css&gt;</code></td>
+<td>click it</td>
+</tr>
+<tr>
+<td><code>type &lt;target&gt; &lt;text&gt;</code></td>
+<td>clear the field and fill it</td>
+</tr>
+<tr>
+<td><code>press &lt;key&gt;</code></td>
+<td><code>Enter</code>, <code>Tab</code>, <code>Control+a</code></td>
+</tr>
+<tr>
+<td><code>select &lt;target&gt; &lt;value&gt;</code></td>
+<td>choose an option by its value</td>
+</tr>
+<tr>
+<td><code>set-checked &lt;target&gt; &lt;true\|false&gt;</code></td>
+<td>a state, not a toggle</td>
+</tr>
+<tr>
+<td><code>scroll &lt;px&gt;</code></td>
+<td>negative scrolls up</td>
+</tr>
+<tr>
+<td><code>wait-for --selector S</code> / <code>--text T</code></td>
+<td>until it is on the page</td>
+</tr>
+<tr>
+<td><code>wait-for-script &lt;expr&gt;</code></td>
+<td>until a page expression is true</td>
+</tr>
+<tr>
+<td><code>eval &lt;js&gt;</code></td>
+<td>run JavaScript in the page and print the result</td>
+</tr>
+<tr>
+<td><code>console [--clear]</code></td>
+<td>what the page logged</td>
+</tr>
+<tr>
+<td><code>screenshot [--out P] [--full] [--url U]</code></td>
+<td>a PNG</td>
+</tr>
+</tbody>
+</table>
+<p>Each is recorded in the session's action log, and its output is kept under the
+session's <code>artifacts/</code>, so a DOM or console observation is evidence the session
+holds rather than something the agent saw once. <code>screenshot</code> writes into
+<code>artifacts/</code> under a name <em>h5i chooses</em>; <code>--out</code> names a file instead.</p>
+<p>The workbench verbs go to the proxy's control channel and act on its network
+layer: <code>requests</code>, <code>resend</code>, <code>sequence</code>, <code>socket</code>, <code>grpc</code>, <code>env</code> and
+<code>rpc --stdio</code>. See <a href="#h5i-websec"><code>h5i websec</code></a> for what they are for.</p>
+<p>Driving agent-browser yourself works too, and is where capture can silently
+stop: its daemon restarts when idle, and a later bare <code>agent-browser open</code>
+starts a browser that is not proxied. <code>h5i browser proxy</code> prints the line and
+the <code>env</code> to export so every launch from that shell is proxied. <code>status</code> shows
+when the proxy last let a target request through and warns after five quiet
+minutes.</p>
+<h3 id="proxy-a-session-without-opening-a-page"><code>proxy</code>: a session without opening a page</h3>
 <div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser proxy https://app.example --session chrome
 # prints: agent-browser --proxy ... --ignore-https-errors --args ... open ...
 #   and:  export AGENT_BROWSER_PROXY=... AGENT_BROWSER_IGNORE_HTTPS_ERRORS=1 AGENT_BROWSER_ARGS=...
-agent-browser dashboard start
-h5i websec requests --session chrome
-h5i recon extract --session chrome
+agent-browser dashboard start          # a human signs in
+h5i browser proxy https://api.example --no-browser --session api
 </code></pre></div>
-<p><code>proxy</code> checks that <code>agent-browser</code> runs before it creates a session. A
-missing agent-browser stops there, prints the install command, and leaves no
-session behind. The command then starts a loopback
-proxy and writes a per-session CA (<code>0600</code>). The proxy uses that CA to decrypt
-HTTPS. Run the printed line. Chromium stays agent-browser's process. h5i
-stores what the proxy decrypted, in the same receipt and message store a
-native session uses.</p>
-<p>agent-browser has no flag that trusts a single CA, so on Linux and macOS the
-printed command passes <code>--ignore-https-errors</code>: Chromium accepts every
-certificate error for that launch. The CA file is still written, for anyone who
-installs it instead. <code>status</code> repeats that line, and <code>session.json</code> records it
-as <code>proxy.chromium_tls</code>.</p>
-<p>The <code>start</code> line proxies one launch. agent-browser's daemon restarts when it
-idles, and a later bare <code>agent-browser open</code> then starts a browser that is not
-proxied: the page still works and capture stops without an error. Export the
-printed <code>env</code> line first, so every launch from that shell is proxied, or drive
-the browser with <code>h5i browser proxy-open &lt;url&gt;</code>, which passes the proxy each
-time. <code>status</code> shows when the proxy last let a target request through and warns
-after five quiet minutes.</p>
-<p>The lane is <code>proxy-observed</code>. <code>websec</code>, <code>recon</code>, <code>requests</code>, <code>resend</code> and
-<code>audit</code> take the session the same way they take a native one. agent-browser
-and Chromium run as ordinary host processes, so this lane records traffic that
-went through the proxy. <code>--allow</code> grants further origins, the same way it does
-on <code>open</code>.</p>
-<p>A human signs in with <code>agent-browser dashboard start</code>. <code>--cookie-jar</code> remains
-the way to seed a native session from a jar you already exported.</p>
+<p><code>proxy</code> starts the session and prints how to point a browser at it.
+<code>--no-browser</code> skips the agent-browser check: the proxy and its control channel,
+for a session driven only by <code>resend</code>, <code>sequence</code> and the plugins (<code>h5i test</code>
+starts its actors this way), or one whose browser you point at it yourself.</p>
 <h3 id="which-session-a-verb-acts-on">Which session a verb acts on</h3>
 <p>Every session has an opaque id (<code>br_7k2xqa</code>), and it is in the record, in
 <code>--json</code> and in the receipts, because a durable reference has to be something no
@@ -602,197 +645,50 @@ h5i browser list                       # the default is the row marked `*`
 </code></pre></div>
 <p>A name is comfortable to type precisely because it is not an identity: it can be
 reused once the session it named has ended. The id cannot, which is why the id
-is what gets written down, and why <code>--restore</code> takes one.</p>
+is what gets written down.</p>
 <h3 id="open-navigates-a-session-that-is-already-there"><code>open</code> navigates a session that is already there</h3>
 <p>Opening a URL in a browser that is already up means <em>go there</em>. So <code>open</code>
 navigates the session it finds, and <code>--new</code> is how you say you meant a second
-one. The flags that only make sense at creation (<code>--allow</code>, <code>--project</code>, <code>--in</code>,
-<code>--script</code>, <code>--no-loopback</code>, <code>--permissive-cors</code>, <code>--expires-in</code>, <code>--restore</code>,
-<code>--cookie-jar</code>, <code>--capture</code>) are <em>refused</em>
-rather than ignored when a session is reused: a session's policy is fixed when its engine starts, so
-accepting a grant and doing nothing with it would be a grant the caller believes
-it made.</p>
-<h3 id="defaults">Defaults</h3>
-<p>With no flags a session runs on this machine in your ordinary process space,
-like any other headless browser. There is no sandbox and h5i does not claim one.</p>
-<p>What it adds is the record. The engine is the HTTP client, so every request is
-checked against the session's policy and written down <em>before</em> the bytes move,
-and the fetch is refused when the record cannot be written. A request that is
-not in <code>h5i browser requests</code> did not happen. That holds whether or not there is
-a box:</p>
-<div class="codeblock"><div class="codeblock-head"><span>text</span><button class="copy-btn" type="button">Copy</button></div><pre><code>requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
-</code></pre></div>
+one. The flags that only make sense at creation (<code>--allow</code>, <code>--project</code>,
+<code>--no-loopback</code>, <code>--expires-in</code>, <code>--dom-instrument</code>) are <em>refused</em> rather than
+ignored when a session is reused: a session's policy is fixed when its proxy
+starts, so accepting a grant and doing nothing with it would be a grant the
+caller believes it made.</p>
 <h4 id="the-page-grants-itself">The page grants itself</h4>
 <p>A session reaches the URL it was opened on and nothing else remote. <code>--allow</code> is
 for origins beyond it: an API the page calls, a CDN it pulls from. Loopback is
 reachable by default because it is the dev server; <code>--no-loopback</code> takes that
-back.</p>
-<h4 id="cross-site-credentials">Cross-site credentials</h4>
-<p>By default a page here may not send this session's credentials to another origin
-on a request whose answer nobody can read: <code>mode: "no-cors"</code> with
-<code>credentials: "include"</code> is refused, because an opaque response cannot be
-checked.</p>
-<p>That is right for containing an agent and wrong for testing a target, since the
-refused shape is the classic POST-based CSRF. With it in force h5i cannot act as
-the <em>victim</em>, so a negative result means "h5i declined", not "the target is
-safe". <code>--permissive-cors</code> lifts it for one session:</p>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser open https://attacker.example --script --permissive-cors
+back. What the browser asks for beyond that is refused at the proxy with a
+<code>403</code>, and the refusal is a row in the log.</p>
+<h4 id="logging-in">Logging in</h4>
+<p>The best login is a human's: <code>agent-browser dashboard start</code>, then sign in in
+the session's browser. For an agent login, name the credential rather than
+typing it:</p>
+<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">export H5I_SECRET_ACME_PASS=…
+h5i browser env                                        # names only, never values
+h5i browser type '#password' '$H5I_SECRET_ACME_PASS'
 </code></pre></div>
-<p>It is in that session's policy digest and named on the <code>open</code> banner and in
-<code>h5i browser status</code>, so no finding gathered under it can be mistaken for one
-gathered without it. A cross-origin <code>cors</code> read still needs the server's
-permission, and <code>mode: "same-origin"</code> still refuses to cross.</p>
-<p>It puts no credential where there was not one. The jar holds only what the
-loaded page could itself send: a <code>Domain=</code> cookie keeps its scope, everything
-else is dropped on navigation, so a cross-host attack page has nothing of the
-target's to send. Two ports on one host are two origins and one jar.</p>
-<h3 id="read-one-page-no-session"><code>read</code>: one page, no session</h3>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser read https://example.com
-h5i browser read url1 url2 url3 --json
-</code></pre></div>
-<div class="codeblock"><div class="codeblock-head"><span>text</span><button class="copy-btn" type="button">Copy</button></div><pre><code>confined : process (files and environment; the origin allowlist is the engine's)
-</code></pre></div>
-<p>For the shape a crawl has: fetch, read, move on. No cookies carried between
-verbs, no <code>@ref</code> to click, nothing resident afterwards. The targets grant
-themselves and only themselves, so a page pulling a script from a third-party
-CDN, or redirecting to another host, is refused and says so in the log.</p>
-<p><code>--allow ORIGIN</code>, repeatable, is for when that refusal is the problem rather
-than the point: a page written in a library served from a CDN, read without the
-grant, is the page the library never ran on. Inside a box it can only narrow,
-because the box's egress list is enforced outside the engine.</p>
-<p>Several targets share one browser, one connection pool, one cookie jar and one
-font set, and a page that fails does not stop the ones after it. <code>--json</code>
-returns the page, its request log, and what was holding the engine together.</p>
-<h4 id="--in-box-an-allowlist-a-tier-enforces"><code>--in &lt;box&gt;</code>: an allowlist a tier enforces</h4>
-<p>An allowlist that is not simply "what I asked for" belongs in a file. Write it
-in <code>.h5i/env.toml</code>:</p>
-<div class="codeblock"><div class="codeblock-head"><span>toml</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-toml">[profile.docs]
-isolation = &quot;supervised&quot;
-
-[profile.docs.net]
-mode   = &quot;host&quot;
-egress = [&quot;docs.rs&quot;, &quot;*.rust-lang.org&quot;]
-</code></pre></div>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser read https://docs.rs/serde --in docs --json
-</code></pre></div>
-<div class="codeblock"><div class="codeblock-head"><span>text</span><button class="copy-btn" type="button">Copy</button></div><pre><code>confined : box docs, policy 6bca3b30c268
-</code></pre></div>
-<p>The tier resolves the pinned policy, enforces egress at a network namespace
-boundary outside the engine, and writes a receipt. The digest on that line is
-the policy actually enforced, which an allowlist assembled from command-line
-arguments could never hand back.</p>
-<p>A read can have this and a session cannot. A session is resident by design, and
-the supervised tier cannot hold a resident process yet: its seccomp-notify gate
-is served by a thread inside the <code>h5i</code> process that started the run, so when
-that command exits every filtered syscall blocks. A read runs to completion
-inside that command.</p>
-<p>Aim a read at <code>localhost</code> and use no box: under a tier with its own network
-namespace the loopback is the sandbox's, not your dev server's.</p>
-<h3 id="reading-and-acting-beyond-snapshot-and-click">Reading and acting, beyond <code>snapshot</code> and <code>click</code></h3>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser structured                          # what the page says about itself
-h5i browser transcript                          # what its media says, from `&lt;track&gt;`
-h5i browser markdown --url https://example.com  # go there and read, in one trip
-h5i browser find  --role button --name 'Sign in'
-h5i browser click --role button --name 'Sign in'
-h5i browser set-checked @e4 true
-h5i browser select @e5 'Express shipping'
-h5i browser press  @e1 Enter
-h5i browser script --save flow.json
-</code></pre></div>
-<p><code>structured</code> is the cheapest read: JSON-LD, OpenGraph, <code>&lt;meta&gt;</code>, <code>&lt;link rel&gt;</code>, a
-few hundred bytes where a snapshot is a few hundred lines. A page with no
-metadata answers <code>empty</code>, which is a fact about the page rather than a failed
-read. Every read verb takes <code>--url</code>, which goes there first and then reads: one
-round trip where <code>navigate</code> and then the read would be two, and the reply still
-names the URL it ended up on so a redirect is not silent.</p>
-<p><code>transcript</code> reads the hole the other verbs leave. A <code>snapshot</code> names a
-<code>&lt;video&gt;</code> and <code>markdown</code> skips it, so a page whose substance is a forty-minute
-talk reads as a title and a play button. Most players ship a <code>&lt;track&gt;</code>, and a
-caption file is prose with timestamps: the shape a model reads well, and the one
-audio is not.</p>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-console">$ h5i browser transcript --url https://example.com/talk
-url: https://example.com/talk
-media: 1 element(s), 1 with timed text, 412 cue(s) read
---- BEGIN UNTRUSTED PAGE CONTENT ---
-…
---- END UNTRUSTED PAGE CONTENT ---
-</code></pre></div>
-<h3 id="when-the-page-acts-on-its-own">When the page acts on its own</h3>
-<p>With <code>--script</code>, a page can move the ground under a verb, and both ways it can
-are reported rather than left to be inferred.</p>
-<p><strong>A form the page submits itself.</strong> <code>form.submit()</code> from a handler, or a form
-that submits on load, produces a real request. It is not sent from inside the
-page, because this engine drives navigation through its own verbs so that an
-agent and a receipt both see it. It goes out at the verb boundary instead,
-through the broker and into the request log like any other. The reply carries
-<code>page_submitted</code> with where it went, and the session has landed on the answer by
-then, so take a new <code>snapshot</code>: every <code>@ref</code> you hold describes the page that is
-gone.</p>
-<p><strong><code>load</code> and <code>error</code> on subresources.</strong> An <code>&lt;img&gt;</code>, <code>&lt;script&gt;</code>, <code>&lt;link&gt;</code> or
-<code>&lt;iframe&gt;</code> that did or did not arrive fires at the element that asked for it, so
-<code>&lt;img src=x onerror=…&gt;</code> and <code>&lt;svg onload=…&gt;</code> behave the way they do in a
-browser. An element whose only interactivity is a handler attribute, such as
-<code>&lt;div onclick=…&gt;</code>, reads as role <code>clickable</code> and takes a <code>@ref</code>, which is how
-you fire one.</p>
-<h3 id="video-transcripts">Video transcripts</h3>
-<p><code>snapshot</code> and <code>markdown</code> describe a media element but do not decode its
-audio. Use <code>transcript</code> to read caption tracks declared by the page:</p>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser transcript --url https://example.com/talk
-h5i browser transcript --url https://example.com/talk --lang en
-</code></pre></div>
-<p>Caption files are fetched through the browser broker, so normal origin policy
-and receipts apply. h5i reads at most one language track plus a chapters track.
-Media without captions is reported explicitly.</p>
-<p>Some sites expose captions only through player APIs. The optional yt-dlp helper
-handles those sites:</p>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser transcript --via yt-dlp   --url https://www.youtube.com/watch?v=…
-</code></pre></div>
-<p>This helper is never an implicit fallback. It opens its own connections, so its
-traffic cannot appear in the engine request log; instead, the exact helper
-command and its host-observed result appear in the audit. It runs in the
-session's placement, receives no browser credentials, ignores user yt-dlp
-configuration, and has a two-minute default budget. Set
-<code>H5I_HELPER_BUDGET_SECS</code> to override that budget.</p>
-<p>Use an exact language tag such as <code>--lang en</code>, or an intentional pattern such
-as <code>--lang 'ja.*'</code>. Automatic captions are labeled as such. The <code>ytdlp</code>
-build feature, enabled by default, controls whether this helper path exists.</p>
-<h3 id="h5i-browser-view">h5i browser view</h3>
-<p>Watch the page and take the controls, without a box.</p>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser view                      # draw it in this terminal
-h5i browser view --web                # serve it to your browser instead
-h5i browser view --session auth       # when more than one is open
-</code></pre></div>
-<p><code>h5i box view</code> reaches the same viewer for a session in a box. The difference
-that shows on screen is what the status line can claim: a boxed session's egress
-is enforced outside the engine, while a host session's rests on the engine's own
-word, so it reads <code>engine-claimed</code> rather than naming a box. Watching changes
-neither; <code>--in</code> is what makes the claim checkable.</p>
-<p>The keys are the ones under <a href="#h5i-box-view">h5i box view</a>.</p>
+<p>The placeholder is resolved from the environment h5i runs in on the way to the
+browser. The reply, the artifact and the action log carry the placeholder; a
+placeholder whose variable is not set is refused rather than typed as written.</p>
 <h3 id="the-control-lock">The control lock</h3>
-<p>Two clients can drive one page: the agent, and a human at the live view.</p>
+<p>Two parties can drive one page: the agent, and a human.</p>
 <ul>
 <li>The agent holds control by default. A session exists to let an agent work; it
   should not have to ask.</li>
-<li>A human takes control, never asks for it: <code>h5i browser take &lt;session&gt;</code>, or by
-  reaching for the controls at either live view, which takes it for you. The
-  agent's mutating verbs are refused with a typed message rather than fighting
-  for the pointer; read-only verbs keep working, because watching never
-  collides.</li>
-<li>Handing control back invalidates what the agent knew. The page moved, so every
-  <code>@ref</code> from its last snapshot may point somewhere else. It must re-snapshot
-  before acting, and acting first is refused rather than mis-clicked.</li>
+<li>A human takes control with <code>h5i browser take &lt;session&gt;</code>. The agent's mutating
+  verbs are refused with a typed message rather than fighting for the pointer;
+  read-only verbs keep working, because watching never collides.</li>
+<li>Handing control back with <code>release</code> invalidates what the agent knew. The page
+  moved, so every <code>@ref</code> from its last snapshot may point somewhere else. It
+  must re-snapshot before acting, and acting first is refused rather than
+  mis-clicked.</li>
 </ul>
-<p><code>take</code> says which kind of pause it just created, because the two are genuinely
-different:</p>
-<ul>
-<li>In a box: enforced. Every verb is carried in from the host, and none of them
-  is now.</li>
-<li>On this machine: advisory. It pauses <code>h5i browser</code> and nothing else. An agent
-  that drives the engine binary directly is not stopped by it.</li>
-</ul>
+<p>On this machine the lock is advisory: it pauses <code>h5i browser</code> and nothing else.</p>
 <h3 id="sessions-end-and-endings-are-recorded">Sessions end, and endings are recorded</h3>
-<p>Closing a session writes the ending into its record instead of deleting it, so
-"how did this end" stays answerable and the id can never be reused.</p>
+<p>Closing a session stops its proxy and its Chromium and writes the ending into
+its record instead of deleting it, so "how did this end" stays answerable and
+the id can never be reused.</p>
 <table>
 <thead>
 <tr>
@@ -803,7 +699,7 @@ different:</p>
 <tbody>
 <tr>
 <td><code>live</code></td>
-<td>started, and the engine answered the last time anyone looked</td>
+<td>started, and the proxy answered the last time anyone looked</td>
 </tr>
 <tr>
 <td><code>closed</code></td>
@@ -811,7 +707,7 @@ different:</p>
 </tr>
 <tr>
 <td><code>died</code></td>
-<td>the engine stopped without being asked; the record has a gap and says so</td>
+<td>the proxy stopped without being asked; the record has a gap and says so</td>
 </tr>
 <tr>
 <td><code>expired</code></td>
@@ -825,44 +721,29 @@ different:</p>
 </table>
 <p>A verb sent to a session that is not live is refused with exit code 69
 (<code>EX_UNAVAILABLE</code>), never silently restarted:</p>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-console">$ h5i browser snapshot
+<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-console">$ h5i browser requests
 browser session `br_7k2xqa` was closed: closed by the user. It will not be
-restarted automatically. Start a new one with `h5i browser open &lt;url&gt;`, or
-carry this one's storage forward with `h5i browser open &lt;url&gt; --restore br_7k2xqa`.
+restarted automatically. Start a new one with `h5i browser open &lt;url&gt;`.
 $ echo $?
 69
 </code></pre></div>
 <p>The distinct code matters: an agent whose retry cannot tell "the session is
 gone" from "the click did not work" starts a second browser and loses both the
 page and the record of how it lost it.</p>
-<p><code>--restore</code> is an inheritance, not a resurrection. It produces a new id, writes
-<code>restored_from</code> into the new record, and carries the <em>cookie jar</em> and nothing
-else. The jar is mirrored into the session directory whenever it changes, so a
-jar seeded at startup survives:</p>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser open https://example.com/login --session auth --cookie-jar ./jar.json
-h5i browser close --session auth
-
-h5i browser open https://example.com/app --restore br_7k2xqa   # still signed in
-</code></pre></div>
-<p>No verb returns a cookie value: the file is handed to the next engine, never to
-a model. A session that left no jar is refused by name rather than silently
-seeding nothing.</p>
-<p><code>--cookie-jar &lt;path&gt;</code> seeds the same jar from a file. Prefer a Chromium proxy
-session and <code>agent-browser dashboard start</code> for interactive login; cookie import
-remains available for native sessions as <code>{"version": 1, "cookies": [...]}</code>. Both flags write
-before the engine starts. A row no server could have set, such as a <code>__Host-</code>
-name without the flags that name means, is refused and counted on stderr, so the
-<code>restored N cookie(s)</code> line is the check that the login carried.</p>
+<p>Records written by an older h5i, whose sessions ran its own engine, are still
+read by <code>status</code>, <code>audit</code> and the plugins. A verb that needs that engine running
+refuses on them and says so.</p>
 <h3 id="everything-a-session-returns-is-untrusted">Everything a session returns is untrusted</h3>
-<p>The page composed the title, the link text, the error message and the URL; the
-engine only carried them. So every answer h5i relays is scrubbed before it
-reaches a terminal or a model: escape sequences never survive, other control
-characters are removed, and strings, arrays and nesting are capped with the
-truncation stated in the value rather than performed quietly.</p>
+<p>The page composed the title, the link text, the error message and the URL;
+Chromium and the proxy only carried them. So every answer h5i relays is
+scrubbed before it reaches a terminal or a model: escape sequences never
+survive, other control characters are removed, and strings, arrays and nesting
+are capped with the truncation stated in the value rather than performed
+quietly.</p>
 <p>Escape sequences matter most. <code>ESC</code> in a relayed string is a page rewriting the
 terminal it is printed into: moving the cursor over the line above, hiding what
 it just did, repainting a prompt. Nothing a browser has to say needs <code>ESC</code>.</p>
-<p>Files a session produces are named by the host, never by the session, and land
+<p>Files a session produces are named by the host, never by the page, and land
 under the session's own <code>artifacts/</code> directory.</p>
 <h3 id="where-sessions-live">Where sessions live</h3>
 <p><code>$H5I_BROWSER_HOME</code>, else the box's own <code>/tmp</code> when h5i is running inside one,
@@ -870,10 +751,6 @@ else <code>$XDG_STATE_HOME/h5i/browser</code>, else <code>~/.local/state/h5i/bro
 <p>Deliberately <em>not</em> under a git repository: every other noun in h5i stores its
 state under the enclosing repo because every other noun is about a repo, and a
 browser is not. <code>h5i browser open</code> in an empty directory is the ordinary case.</p>
-<p>The box case is not a preference. Inside a box <code>$HOME</code> is the host's path over a
-sealed overlay and <code>~/.local/state</code> is not writable, so a session there would
-fail to start; the box's <code>/tmp</code> is private to it and lives exactly as long as
-its sessions can.</p>
 <p>The default session is per registry, so two agents sharing a <code>$HOME</code> share it.
 Give each its own with <code>$H5I_BROWSER_HOME</code>, or give each session a <code>--session
 &lt;name&gt;</code>.</p>
@@ -894,82 +771,39 @@ Give each its own with <code>$H5I_BROWSER_HOME</code>, or give each session a <c
 <td>which session a verb acts on, when <code>--session</code> is not given</td>
 </tr>
 <tr>
-<td><code>H5I_BROWSER_ENGINE</code></td>
-<td>the engine binary on this machine</td>
-</tr>
-<tr>
-<td><code>H5I_BROWSER_ENGINE_IN_BOX</code></td>
-<td>the engine command inside a box, when the box's <code>PATH</code> is not where it is</td>
+<td><code>AGENT_BROWSER_ARGS</code></td>
+<td>extra Chromium launch flags, merged into every launch (<code>--no-sandbox</code>, say)</td>
 </tr>
 </tbody>
 </table>
-<p>The last two are separate on purpose. Mixing them points one side at a path the
-other cannot see.</p>
-<h3 id="choosing-the-engine">Choosing the engine</h3>
-<p><code>--engine</code> selects the browser engine and records that choice in the policy
-digest.</p>
-<table>
-<thead>
-<tr>
-<th>engine</th>
-<th>use</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>chromium</code></td>
-<td>Default; broadest web compatibility.</td>
-</tr>
-<tr>
-<td><code>lightpanda</code></td>
-<td>Third-party lightweight headless engine.</td>
-</tr>
-<tr>
-<td><code>h5i</code></td>
-<td>Built-in, auditable engine optimized for agent reading and actions.</td>
-</tr>
-</tbody>
-</table>
-<p>The h5i engine is smaller than Chromium but slower on script-heavy pages. It
-supports JavaScript, redirects, cookies, policy-checked subrequests, page
-outlines, screenshots, forms, and common agent actions. It is intentionally not
-a complete browser: unsupported APIs are named in snapshots and console errors
-rather than silently approximated.</p>
-<p>Use <code>--script</code> only when the page needs JavaScript. For maximum compatibility,
-choose Chromium. Chromium runs with an isolated profile and the box's policy,
-but its internal requests are not the built-in engine's broker receipts; inspect
-the box-level network evidence instead. <code>h5i browser proxy</code> is the separate
-Linux and macOS path that stores Chromium's HTTP exchanges in the session
-itself; see <a href="#chromium-through-a-proxy">Chromium through a proxy</a>.</p>
 <h3 id="audit-the-whole-session-in-one-timeline"><code>audit</code>: the whole session, in one timeline</h3>
 <p><code>requests</code> is the network layer on its own, and it is the verb to reach for in a
 loop. <code>h5i browser audit</code> is the one to read afterwards: what the agent asked
-for, what the engine decided about every fetch, who was driving, and how the
+for, what the proxy decided about every request, who was driving, and how the
 session ended, merged and ordered.</p>
 <div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-console">$ h5i browser audit
   sources  : actions read · requests read · control read
-  note     engine rows are ordered by the engine's own clock, which h5i cannot verify
+  note     session rows are ordered by the clock of the process that wrote them
 
-  host    session opened  (http://localhost:3000/ — on this machine, no containment…)
-  engine  #0 GET http://localhost:3000/
-  engine  #0 200  153 bytes
-  engine  verb   snapshot
+  host    session opened  (http://localhost:3000/ — on this machine, unconfined…)
+  proxy   verb   navigate http://localhost:3000/
+  proxy   #0 GET http://localhost:3000/
+  proxy   #0 200  153 bytes
+  proxy   verb   snapshot
   host    control -&gt; human  (taken by a human)
   host    control -&gt; agent  (handed back; the agent must re-snapshot)
-  engine  verb   snapshot
-  engine  #1 DENIED GET https://tracker.example/px  (origin is not in the allowlist)
-  engine  verb ! click @e1 — denied by policy
+  proxy   verb   snapshot
+  proxy   #1 DENIED GET https://tracker.example/px  (origin is not in the allowlist)
+  proxy   verb   resend
   host    session closed  (closed by the user)
 </code></pre></div>
 <p>Three things this does that neither log does alone:</p>
 <ul>
-<li><strong>The two lanes stay apart.</strong> Action and request rows are the engine's account
-  of itself; handovers and lifecycle are h5i's, written from outside. Every row
-  says which.</li>
-<li><strong>It orders across sources.</strong> "Was a human at the controls when that form was
-  submitted" is a question about two logs at once. The engine stamps its own
-  rows, h5i stamps its own, and the output says the engine's clock is the
-  engine's claim.</li>
+<li><strong>The two lanes stay apart.</strong> Action and request rows are the session's own
+  account, written by its proxy and its verbs; handovers and lifecycle are
+  h5i's, written from outside. Every row says which.</li>
+<li><strong>It orders across sources.</strong> "Was a human at the controls when that request
+  was sent" is a question about two logs at once.</li>
 <li><strong>It says what it could not read.</strong> <code>sources</code> reports each log as <code>read</code>,
   <code>empty</code> or <em><code>unavailable</code></em>. An empty timeline over a log h5i cannot see looks
   exactly like a session that did nothing, and those are different findings.</li>
@@ -977,12 +811,11 @@ session ended, merged and ordered.</p>
 <p>Rows carry <code>caused_by</code> where the source recorded the link. Nothing infers a link
 from timing: a request that merely happened near a verb is not one that verb
 caused.</p>
-<p><code>--json</code> gives the whole thing, including the session record. It is the same
-structure <code>h5i box export</code> writes for each session placed in a box.</p>
+<p><code>--json</code> gives the whole thing, including the session record.</p>
 <h2 id="h5i-websec" data-n="08">h5i websec</h2>
 <p>The HTTP workbench: read what a session sent, change a part of it, send it
 again, and compare the answers. Design: <code>docs/design/design-websec.md</code>.</p>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser open https://target.example --capture
+<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser open https://target.example
 h5i websec requests                              # captured messages
 h5i websec show req_42                           # one message, body bounded
 h5i websec show req_42 --raw                     # one message, exactly
@@ -1013,9 +846,9 @@ are the same either way.</p>
 <p><code>--body</code> prints the decoded, untruncated response body to stdout (the <code>curl</code>
 view); <code>--raw</code> prints the status line, headers, and body (the <code>curl -i</code> view,
 for when the answer is in a header). Both also work with <code>--set-each</code>/<code>--repeat</code>,
-printing each send's response. Capture is opt-in (<code>--capture</code>) because the
-message store holds bodies and credentials in full. It is never included in an
-export unless it is named.</p>
+printing each send's response. The message store holds bodies and credentials
+in full, which is why it is owner-only and never included in an export unless
+it is named.</p>
 <h3 id="experiments">Experiments</h3>
 <p>One request sent many ways, with the answers folded into clusters. The plan
 names what varies; the values are yours, and nothing here generates one.</p>
@@ -1035,9 +868,9 @@ five hundred sends come back as a handful of rows, each naming every message it
 folded. <code>"as": "other-session"</code> sends under another identity, and the results
 are read from that session's store.</p>
 <p>The report counts <code>planned</code>, <code>answered</code> and <code>read</code> separately, and <code>ok</code> is true
-only when all three agree. A step with no answer is a request the engine did
-not make, and the usual reason is the page's allowance of 500 requests per
-navigation: add <code>"reset_budget": true</code>, or split the plan. A walk cut short
+only when all three agree. A step with no answer is a request the session did
+not make, and the usual reason is the session's allowance of 500 requests h5i
+sends itself: add <code>"reset_budget": true</code>, or split the plan. A walk cut short
 reads exactly like a walk that found nothing, so it says so instead.</p>
 <p>The ceiling is 1000 sends per experiment, and <code>--rate</code> is a ceiling on what the
 target sees, between one an hour and as fast as the wire allows. Both are also
@@ -1079,7 +912,7 @@ they rest on, the checklists you were asked to cover, and the reports issued
 from them. It lives under <code>~/.local/share/h5i/projects</code>, owner-only, and nothing
 under <code>h5i browser rm</code> touches it.</p>
 <div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i project init acme --title &quot;ACME web&quot; --target https://acme.test
-h5i browser open https://acme.test --project acme --capture
+h5i browser open https://acme.test --project acme
 # ... find something, write a session finding, then keep it:
 h5i project finding promote --all -p acme --session &lt;name&gt;
 </code></pre></div>
@@ -1260,56 +1093,26 @@ are never uploaded.</p>
 <p>Nothing above this line needs a box. Requiring one up front would fail
 hello-world on CI, under AppArmor, on macOS and in a container, for nothing the
 record does not already give.</p>
-<p>Reach for a box when:</p>
+<p>A session's Chromium runs on this machine as an ordinary process, and its
+status line says so:</p>
+<div class="codeblock"><div class="codeblock-head"><span>text</span><button class="copy-btn" type="button">Copy</button></div><pre><code>placed : on this machine, unconfined — agent-browser and Chromium run as ordinary host processes
+</code></pre></div>
+<p>The proxy decides what the browser may reach and writes every decision down,
+but the browser itself is not confined. Reach for a box when:</p>
 <ul>
 <li>The code under test is untrusted, or an agent wrote it.</li>
 <li>A target's response might be, and a parser bug should land somewhere
   disposable.</li>
-<li>You want the network decision made <em>outside</em> the engine. Only this one changes
-  what the record is worth: a boxed session can earn the <code>host-observed</code> lane.</li>
+<li>You want the browser confined and its network decided outside it. A box's
+  <code>browser</code> profile runs Chromium through agent-browser under the box's tier and
+  egress allowlist (see <a href="#choosing-the-engine">Choosing the engine</a>).</li>
 </ul>
-<p><code>h5i box run -- h5i browser open</code> is ordinary composition and <code>--in</code> is sugar
-over the same placement. The box is a separate surface, not the browser's
-implementation detail.</p>
-<h3 id="the-default-sandbox">The default sandbox</h3>
-<p>A local session runs in a process-tier sandbox that confines files, environment,
-syscalls, and resources. It does not enforce the browser origin allowlist at the
-network boundary; the engine enforces and records that policy itself.</p>
-<div class="codeblock"><div class="codeblock-head"><span>text</span><button class="copy-btn" type="button">Copy</button></div><pre><code>placed : on this machine, in a process-tier sandbox
-         (files and environment; not its network)
-</code></pre></div>
-<p>The browser broker owns policy, credentials, cookies, budgets, and receipts. A
-separate renderer parses and executes page content. The renderer receives only
-the responses the broker has authorized, and a renderer crash ends the session.</p>
-<h3 id="--in-box-the-same-session-inside-a-box"><code>--in &lt;box&gt;</code>: the same session, inside a box</h3>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i browser open http://localhost:3000 --in mybox
-</code></pre></div>
-<p>This places the resident browser in the named box and records the box policy
-digest. On Linux, resident sessions currently require a tier that can keep the
-engine alive; use <code>browser read --in</code> when you need a one-shot read behind the
-supervised tier's network allowlist. A microVM can provide both residence and a
-network boundary.</p>
-<p>Inside a network namespace, <code>localhost</code> means the box, not the host. Ensure the
-engine binary is installed inside the box or configure
-<code>H5I_BROWSER_ENGINE_IN_BOX</code>.</p>
-<h3 id="opening-a-session-from-inside-a-box">Opening a session from inside a box</h3>
-<p>An agent already in a box cannot use <code>--in</code>: it means "put this session in a box
-I am outside of", which is what lets it promise an enforced takeover and a lane
-the engine did not claim for itself. From inside neither is true, so it is
-refused rather than quietly doing something weaker.</p>
-<p>Open it without the flag. It runs beside the agent, in the same box:</p>
-<div class="codeblock"><div class="codeblock-head"><span>text</span><button class="copy-btn" type="button">Copy</button></div><pre><code>placed   : this machine, which is box env/human/web (its policy is not readable from in here)
-requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
-</code></pre></div>
-<p>The box is <em>named</em>, because a session there is not uncontained. Nothing is
-claimed about what the box enforces, because the policy is host-side and sealed:
-from in there h5i cannot read its own boundary.</p>
-<p>The control channel inside a box is a Unix socket, not a loopback port: a box's
-netns may have no usable loopback at all, and every <code>h5i box run</code> gets a fresh
-one.</p>
+<p>The box is a separate surface, not the browser's implementation detail. An agent
+inside one opens a session the ordinary way, and it runs beside the agent, in
+the same box.</p>
 <h3 id="boxes">Boxes</h3>
 <p>A box is a disposable environment holding a checkout, a toolchain, a dev server
-and, on request, the browser session itself. Nothing of your machine is inside
+and, with the <code>browser</code> profile, a Chromium. Nothing of your machine is inside
 it, egress is an allowlist enforced at its boundary, and the only way out is the
 <a href="#h5i-box-export">output gate</a>.</p>
 <h3 id="making-a-box">Making a box</h3>
@@ -1335,7 +1138,7 @@ already spelled it as a flag.</p>
 <h3 id="h5i-box-create">h5i box create</h3>
 <div class="codeblock"><div class="codeblock-head"><span>text</span><button class="copy-btn" type="button">Copy</button></div><pre><code>h5i box create &lt;NAME&gt; [--from &lt;rev&gt;] [--pr &lt;n&gt;] [--clone &lt;url&gt;] [--new]
                       [--profile &lt;p&gt;] [--isolation &lt;tier&gt;] [--image &lt;img&gt;]
-                      [--engine &lt;chromium|lightpanda|h5i&gt;]
+                      [--engine &lt;chromium|lightpanda&gt;]
 </code></pre></div>
 <p>The base revision is frozen at creation and pinned immutably. The policy is
 resolved, digested and stored <em>before</em> any state is created on disk, so an
@@ -1378,7 +1181,7 @@ unsatisfiable request fails closed rather than leaving half a box behind.</p>
 </tr>
 <tr>
 <td><code>--engine &lt;e&gt;</code></td>
-<td>Browser engine for the <code>browser</code> profile: <code>chromium</code> (default), <code>lightpanda</code>, or <code>h5i</code>. Pinned in the digest; never falls back. See <a href="#choosing-the-engine">Choosing the engine</a>.</td>
+<td>Browser engine for the <code>browser</code> profile: <code>chromium</code> (default) or <code>lightpanda</code>. Pinned in the digest; never falls back. See <a href="#choosing-the-engine">Choosing the engine</a>.</td>
 </tr>
 </tbody>
 </table>
@@ -1537,7 +1340,7 @@ does not infer causal links that are absent from the event stream.</p>
 </tr>
 <tr>
 <td><code>i</code></td>
-<td>Hand the keyboard to the page, where an engine can use it</td>
+<td>Hand the keyboard to the page</td>
 </tr>
 <tr>
 <td><code>Esc</code></td>
@@ -1557,15 +1360,37 @@ does not infer causal links that are absent from the event stream.</p>
 </tr>
 </tbody>
 </table>
+<p>The labelling keys (<code>f</code>, <code>F</code>, <code>yf</code>, <code>gi</code>) and <code>H</code> <code>L</code> are bound only when the
+stream advertises hints and history; a Chromium screencast advertises neither,
+so they stay unbound rather than doing nothing.</p>
 <p>A viewer attaches read-only. It does not weaken the box policy, publish the
 browser port, or become part of the agent's session.</p>
-<h3 id="where-the-engine-lives">Where the engine lives</h3>
-<p>The engine is part of the <code>h5i</code> binary, run as a separate process by execing
-itself. Its own CLI is reachable but hidden, and bypasses session names,
-placement, the control lock and the audit:</p>
-<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i __engine open https://docs.rs/ --allow docs.rs   # one-shot render, then exit
-h5i __engine doctor                                  # what fonts it found
-</code></pre></div>
+<h3 id="choosing-the-engine">Choosing the engine</h3>
+<p><code>--engine</code> selects the browser engine for a box's <code>browser</code> profile and records
+that choice in the policy digest. Both are driven by agent-browser.</p>
+<table>
+<thead>
+<tr>
+<th>engine</th>
+<th>use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>chromium</code></td>
+<td>Default; broadest web compatibility.</td>
+</tr>
+<tr>
+<td><code>lightpanda</code></td>
+<td>Third-party lightweight headless engine; still runs script.</td>
+</tr>
+</tbody>
+</table>
+<p>Chromium runs with an isolated profile and the box's policy. Its requests are
+seen at the box's boundary and by h5i's mediator on the agent-browser socket,
+not by a session's capture proxy: inspect the box-level network evidence. An
+older profile that pins <code>--engine h5i</code> is refused with that name, because h5i's
+own engine has been removed.</p>
 <h3 id="inspecting-what-happened">Inspecting what happened</h3>
 <div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i box probe                       # what this host can enforce at all
 h5i box capabilities &lt;name&gt; --json  # what this box actually got
@@ -1579,18 +1404,11 @@ h5i box watch &lt;name&gt; --deny-only    # only what was refused
 <p><code>h5i box watch</code> is the tail of the receipt, not a viewer: no viewport, no panes,
 no control lock. Pipe it, grep it, leave it in a second pane. Every row names
 the lane that observed it and the grade of that evidence, in words, never by
-colour alone:</p>
-<div class="codeblock"><div class="codeblock-head"><span>text</span><button class="copy-btn" type="button">Copy</button></div><pre><code>09:14:02  box  fail-closed  request   allow  GET https://docs.rs/blitz/  #41 subresource
-09:14:02  box  fail-closed  response  200    #41 12.0 KB, 84ms
-09:14:03  box  fail-closed  request   DENY   GET https://telemetry.example.com/collect  #43
-09:14:03  box  fail-closed  policy           telemetry.example.com: not in net.egress   (&lt;- #43)
-</code></pre></div>
-<p><code>--deny-only</code> keeps a refusal's <em>pair</em>: the request row carries the method and
-URL, the verdict row the reason. <code>--json</code> emits the same event envelope the
-console reads, one object per line.</p>
-<p>Only h5i's own engine writes a live request log, and an image-backed tier keeps
-it out of the host's reach. <code>watch</code> says so in its header rather than leaving an
-empty screen.</p>
+colour alone. Its sources are the mediator's record of the agent's browser
+actions and the evidence in each run's receipt; its header names which it is
+reading rather than leaving an empty screen.</p>
+<p><code>--deny-only</code> keeps only what was refused. <code>--json</code> emits the same event
+envelope the console reads, one object per line.</p>
 <h3 id="lifecycle">Lifecycle</h3>
 <div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i box rebase &lt;name&gt;       # re-pin onto the parent branch's current tip
 h5i box abort &lt;name&gt;        # stop; manifest and workspace preserved for forensics
@@ -1710,7 +1528,7 @@ produced it rather than a score:</p>
 </tr>
 <tr>
 <td><code>unclassified</code></td>
-<td>The record says live and the engine's control file is gone.</td>
+<td>The record says live and the session's control file is gone.</td>
 </tr>
 </tbody>
 </table>
@@ -1804,7 +1622,7 @@ h5i plugin remove recon
 directory rather than on <code>$PATH</code>, so <code>h5i plugin list</code> is the whole truth about
 what <code>h5i &lt;name&gt;</code> can become. A plugin holds no privilege of its own: it reaches
 a session through the same verbs a person types, so its requests are the
-engine's, checked by the engine's policy and written into the engine's receipts.</p>
+session's, checked by its policy and written into its receipts.</p>
 <p>A build without a plugin still knows the name. <code>h5i recon</code> on a plain install
 says what the capability is and how to get it rather than "unknown command".</p>
 <hr />
@@ -1999,16 +1817,15 @@ deny_paths = [&quot;/admin/*&quot;, &quot;/account/*/delete&quot;]
 exemption and the instrument mode, and nothing can grant past them. An unknown
 key is an error, not ignored configuration.</p>
 <div class="codeblock"><div class="codeblock-head"><span>text</span><button class="copy-btn" type="button">Copy</button></div><pre><code>$ h5i browser navigate https://blog.acme.com/ --session acme1
-Error: denied by policy: `blog.acme.com` is refused by the deny rule
-`blog.acme.com`.
+$ h5i browser requests --denied-only --session acme1
+—          DENIED GET https://blog.acme.com/ — `blog.acme.com` is refused by the deny rule `blog.acme.com`
 </code></pre></div>
 <p>That is an <code>allowed: false</code> row in <code>requests.jsonl</code> with no bytes behind it. A
 <code>jq</code> pass over the log afterwards could also tell you a request was out of
 scope, but by then it had been sent.</p>
 <p>Where the file lives matters three ways. <code>~/.config/h5i</code> is in every profile's
-<code>fs.deny</code>, so a box cannot widen the scope confining it. The engine never reads
-it: the host resolves it and passes the rules as arguments, which is the only
-arrangement that works for a boxed session. And it works outside a repository,
+<code>fs.deny</code>, so a box cannot widen the scope confining it. The capture proxy never
+reads it: <code>h5i browser</code> resolves it and passes the rules as arguments. And it works outside a repository,
 because an engagement is not a checkout.</p>
 <p>The digest goes on the session record as <code>scope_digest</code>, beside <code>policy_digest</code>.
 One of them moving tells a reviewer which document changed. A project with no
@@ -2101,11 +1918,14 @@ not claim more than that.</p>
   or the desktop.</li>
 <li>Chrome consumes substantial memory and CPU. Browser support is opt-in per box.</li>
 <li>Chromium driving depends on the pinned external <code>agent-browser</code> tool.</li>
-<li><code>h5i browser proxy</code> records what an external Chromium sends through its
-  loopback proxy. agent-browser and Chromium run as ordinary host processes.
-  The printed command passes <code>--ignore-https-errors</code>, so Chromium accepts
-  every certificate error for that launch. A missing <code>agent-browser</code> refuses
-  before a session exists.</li>
+<li>A browser session records what its Chromium sends through the session's
+  loopback proxy. agent-browser and Chromium run as ordinary host processes,
+  and they are launched with <code>--ignore-https-errors</code>, so Chromium accepts every
+  certificate error for that session. A missing <code>agent-browser</code> refuses before
+  a session exists.</li>
+<li>A request the browser sends without the proxy (a Chromium relaunched by hand
+  without the proxy settings) is not in the session's record. <code>status</code> warns
+  after five minutes with nothing captured.</li>
 </ul>
 <h2 id="files" data-n="19">Files</h2>
 <table>
@@ -2166,19 +1986,11 @@ requests.</p>
 </tr>
 <tr>
 <td><code>sessions/&lt;id&gt;/actions.jsonl</code></td>
-<td>The verbs the agent asked for. Joined to the log by sequence.</td>
-</tr>
-<tr>
-<td><code>sessions/&lt;id&gt;/helpers.jsonl</code></td>
-<td>Outside programs h5i ran on the session's behalf, when any did.</td>
-</tr>
-<tr>
-<td><code>sessions/&lt;id&gt;/cookies.json</code></td>
-<td>The cookie jar. Credential material, <code>0600</code>, the one file <code>--restore</code> copies.</td>
+<td>The verbs the agent asked for, page verbs and workbench verbs both.</td>
 </tr>
 <tr>
 <td><code>sessions/&lt;id&gt;/messages/</code></td>
-<td>The capture store: headers and bodies both directions, <code>--capture</code> only. <code>0700</code>, and evidence rather than account.</td>
+<td>The capture store: headers and bodies both directions. <code>0700</code>, and evidence rather than account.</td>
 </tr>
 <tr>
 <td><code>sessions/&lt;id&gt;/findings/findings.jsonl</code></td>
@@ -2194,15 +2006,19 @@ requests.</p>
 </tr>
 <tr>
 <td><code>sessions/&lt;id&gt;/artifacts/</code></td>
-<td>Files the session produced.</td>
+<td>Files the session produced: screenshots, and the output of every page verb.</td>
+</tr>
+<tr>
+<td><code>sessions/&lt;id&gt;/dom-report.jsonl</code></td>
+<td>What the DOM instrument reported, for a session opened with <code>--dom-instrument</code>.</td>
 </tr>
 <tr>
 <td><code>sessions/&lt;id&gt;/control</code>, <code>control.jsonl</code></td>
-<td>Where the engine listens, and the handover journal.</td>
+<td>Where the session's control channel listens, and the handover journal.</td>
 </tr>
 <tr>
 <td><code>sessions/&lt;id&gt;/proxy</code></td>
-<td>Loopback proxy URL for a Chromium capture session.</td>
+<td>The session's loopback proxy URL.</td>
 </tr>
 <tr>
 <td><code>sessions/&lt;id&gt;/proxy-ca.pem</code>, <code>proxy-ca-key.pem</code></td>
@@ -2245,7 +2061,15 @@ once that session has ended, so group by <code>project</code> or <code>id</code>
 </tr>
 <tr>
 <td><code>H5I_SECRET_&lt;NAME&gt;</code></td>
-<td>Default source for a secret grant <code>&lt;NAME&gt;</code>. Injected for one run, redacted from evidence, audited by fingerprint.</td>
+<td>Default source for a secret grant <code>&lt;NAME&gt;</code>. Injected for one run, redacted from evidence, audited by fingerprint. For a browser session, the value <code>h5i browser type</code> puts in place of <code>$H5I_SECRET_&lt;NAME&gt;</code>.</td>
+</tr>
+<tr>
+<td><code>H5I_BROWSER_HOME</code>, <code>H5I_BROWSER_SESSION</code></td>
+<td>Where browser sessions live, and which one a verb acts on. See <a href="#where-sessions-live">Where sessions live</a>.</td>
+</tr>
+<tr>
+<td><code>AGENT_BROWSER_ARGS</code></td>
+<td>Extra launch flags for a browser session's Chromium, such as <code>--no-sandbox</code> where its sandbox cannot start.</td>
 </tr>
 <tr>
 <td><code>H5I_SKILL_DIR</code></td>
@@ -2357,26 +2181,20 @@ once that session has ended, so group by <code>project</code> or <code>id</code>
 </div>
 <div class="ma-sec" data-sec="scope-and-identity"><a href="#scope-and-identity">Scope and identity</a>
 <a class="t3" href="#--project-grouping-sessions-by-engagement">--project: grouping sessions by engagement</a>
-<a class="t3" href="#browser-identities">Browser identities</a>
 <a class="t3" href="#what-a-refusal-looks-like">What a refusal looks like</a>
 </div>
 <div class="ma-sec" data-sec="h5i-recon"><a href="#h5i-recon">h5i recon</a>
 </div>
 <div class="ma-sec" data-sec="h5i-browser"><a href="#h5i-browser">h5i browser</a>
-<a class="t3" href="#chromium-through-a-proxy">Chromium through a proxy</a>
+<a class="t3" href="#what-a-session-is">What a session is</a>
+<a class="t3" href="#page-verbs-and-workbench-verbs">Page verbs and workbench verbs</a>
+<a class="t3" href="#proxy-a-session-without-opening-a-page">proxy: a session without opening a page</a>
 <a class="t3" href="#which-session-a-verb-acts-on">Which session a verb acts on</a>
 <a class="t3" href="#open-navigates-a-session-that-is-already-there">open navigates a session that is already there</a>
-<a class="t3" href="#defaults">Defaults</a>
-<a class="t3" href="#read-one-page-no-session">read: one page, no session</a>
-<a class="t3" href="#reading-and-acting-beyond-snapshot-and-click">Reading and acting, beyond snapshot and click</a>
-<a class="t3" href="#when-the-page-acts-on-its-own">When the page acts on its own</a>
-<a class="t3" href="#video-transcripts">Video transcripts</a>
-<a class="t3" href="#h5i-browser-view">h5i browser view</a>
 <a class="t3" href="#the-control-lock">The control lock</a>
 <a class="t3" href="#sessions-end-and-endings-are-recorded">Sessions end, and endings are recorded</a>
 <a class="t3" href="#everything-a-session-returns-is-untrusted">Everything a session returns is untrusted</a>
 <a class="t3" href="#where-sessions-live">Where sessions live</a>
-<a class="t3" href="#choosing-the-engine">Choosing the engine</a>
 <a class="t3" href="#audit-the-whole-session-in-one-timeline">audit: the whole session, in one timeline</a>
 </div>
 <div class="ma-sec" data-sec="h5i-websec"><a href="#h5i-websec">h5i websec</a>
@@ -2395,9 +2213,6 @@ once that session has ended, so group by <code>project</code> or <code>id</code>
 <a class="t3" href="#coverage-and-what-it-counts">Coverage, and what it counts</a>
 </div>
 <div class="ma-sec" data-sec="containment-optional"><a href="#containment-optional">Containment (optional)</a>
-<a class="t3" href="#the-default-sandbox">The default sandbox</a>
-<a class="t3" href="#--in-box-the-same-session-inside-a-box">--in &lt;box&gt;: the same session, inside a box</a>
-<a class="t3" href="#opening-a-session-from-inside-a-box">Opening a session from inside a box</a>
 <a class="t3" href="#boxes">Boxes</a>
 <a class="t3" href="#making-a-box">Making a box</a>
 <a class="t3" href="#h5i-box-create">h5i box create</a>
@@ -2406,7 +2221,7 @@ once that session has ended, so group by <code>project</code> or <code>id</code>
 <a class="t3" href="#h5i-box-export">h5i box export</a>
 <a class="t3" href="#h5i-box-cache">h5i box cache</a>
 <a class="t3" href="#h5i-box-view">h5i box view</a>
-<a class="t3" href="#where-the-engine-lives">Where the engine lives</a>
+<a class="t3" href="#choosing-the-engine">Choosing the engine</a>
 <a class="t3" href="#inspecting-what-happened">Inspecting what happened</a>
 <a class="t3" href="#lifecycle">Lifecycle</a>
 <a class="t3" href="#h5i-box-allow">h5i box allow</a>
@@ -2452,7 +2267,7 @@ once that session has ended, so group by <code>project</code> or <code>id</code>
     <dl class="ma-meta">
       <div><dt>Updated</dt><dd>2026-10-19</dd></div>
       <div><dt>Chapters</dt><dd>21</dd></div>
-      <div><dt>Reading</dt><dd>63 min</dd></div>
+      <div><dt>Reading</dt><dd>55 min</dd></div>
       <div><dt>Flags</dt><dd><code>--help</code></dd></div>
       <div><dt>Source</dt><dd><a href="https://github.com/h5i-dev/h5i/blob/main/docs/MANUAL.md">MANUAL.md &#8599;</a></dd></div>
     </dl>

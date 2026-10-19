@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-15",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-19",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -113,7 +113,7 @@ $ h5i websec --help
 <p>Open a normal product search:</p>
 <pre><code class="language-bash">$ h5i browser open \
   'http://127.0.0.1:9120/api/products?q=compass' \
-  --session lab12 --new --capture
+  --session lab12 --new
 $ h5i websec show res_0 --session lab12 --raw
 </code></pre>
 <p>The response contains two products whose names include “compass.” Before trying a full payload, send one quote:</p>
@@ -194,7 +194,7 @@ rows = db().execute(sql).fetchall()
 <p>Its endpoint answers only whether an email address is on the list:</p>
 <pre><code class="language-bash">$ h5i browser open \
   'http://127.0.0.1:9130/api/check?email=ada@example.test' \
-  --session lab13 --new --capture
+  --session lab13 --new
 $ h5i websec show res_0 --session lab13 --raw
 </code></pre>
 <pre><code class="language-json">{&quot;on_list&quot;: true}
@@ -279,7 +279,7 @@ return js({&quot;on_list&quot;: found})
 <p>Open the coupon endpoint:</p>
 <pre><code class="language-bash">$ h5i browser open \
   'http://127.0.0.1:9140/api/coupon?code=SPRING10' \
-  --session lab14 --new --capture
+  --session lab14 --new
 </code></pre>
 <p>Whatever coupon we send, the response is always:</p>
 <pre><code class="language-json">{&quot;checked&quot;: true}

@@ -926,15 +926,16 @@ impl TestContext<'_> {
         let nonce = SESSION_NONCE.fetch_add(1, Ordering::Relaxed);
         let name = format!("h5i-test-{}-{nonce}", std::process::id());
         let output = Command::new(self.h5i)
+            // A capture session with no browser: every step of a flow is a
+            // composed request `resend` sends, so the proxy's policy, jar and
+            // message store are all an actor needs.
             .args([
                 "browser",
-                "open",
+                "proxy",
                 self.target_text,
                 "--session",
                 &name,
-                "--new",
-                "--capture",
-                "--no-sandbox",
+                "--no-browser",
                 "--json",
             ])
             .output()

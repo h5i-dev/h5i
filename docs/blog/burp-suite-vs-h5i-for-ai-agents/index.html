@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-09",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-19",
       "image": "https://h5i.dev/_static/burp-vs-h5i.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -120,7 +120,7 @@
 <h2 id="h5i">h5i gives an external agent the complete testing loop</h2>
 <p>h5i's browser is directly controlled by the agent. The same session that opens, reads, clicks, and fills a page also records the HTTP messages. The agent can address a captured request by ID, edit a structured field, resend it, and compare the response:</p>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">browser and HTTP traffic in one session</span></div>
-<div class="terminal-body"><pre><code>$ h5i browser open https://target.example --capture --allow target.example
+<div class="terminal-body"><pre><code>$ h5i browser open https://target.example --allow target.example
 $ h5i browser snapshot
 $ h5i browser click @e3
 $ h5i browser requests

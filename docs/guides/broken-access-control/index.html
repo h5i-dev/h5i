@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-15",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-19",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -96,7 +96,7 @@ $ h5i websec --help
 </code></pre>
 <p>Open a session for Bob, the account that decides whether there is a finding, and sign him in:</p>
 <pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9080/' \
-  --session bob --new --capture
+  --session bob --new
 
 $ h5i websec replay req_0 --session bob --create \
   --set method=POST \
@@ -153,7 +153,7 @@ if USERS[user] != &quot;manager&quot;:
 <pre><code class="language-bash">$ ./run.sh 09
 
 $ h5i browser open 'http://127.0.0.1:9090/' \
-  --session lab09 --new --capture
+  --session lab09 --new
 </code></pre>
 <p>The page documents a registration endpoint taking <code>username</code>, <code>email</code>, and <code>password</code>. Create a normal account:</p>
 <pre><code class="language-bash">$ h5i websec replay req_0 --session lab09 --create \

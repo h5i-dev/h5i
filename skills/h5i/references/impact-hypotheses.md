@@ -151,9 +151,9 @@ High-value questions:
 - Does a self-controlled browser primitive reach a server-side feature with a
   stronger effect?
 
-Keep cache experiments on unique owned paths and markers. For POST-CSRF,
-`--permissive-cors` is required for a faithful h5i victim session and must be
-authorized; without it, h5i's refusal is not evidence that the target is safe.
+Keep cache experiments on unique owned paths and markers. For POST-CSRF, drive
+the victim session's browser to an attacker page whose origin was granted with
+`--allow`, and only where the program authorizes it.
 
 ## Shared infrastructure and fan-out
 

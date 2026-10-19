@@ -1,10 +1,12 @@
 # Contributing to h5i
 
-h5i is an agent-native web security workspace with two halves. The red-teaming
-half gives an agent a browser and direct HTTP control over a running app, with
-every request policy-checked and written to the session log before the bytes
-move; a fetch that cannot be recorded is refused, and a box is a second
-boundary, taken on request with `--in <box>`. The formal verification half is
+h5i unifies web development, formal verification with Lean 4, and red-teaming
+around a composable Rust framework. The red-teaming half gives an agent a
+Chromium (driven through agent-browser) and direct HTTP control over a running
+app, with every request going through a per-session capture proxy that checks
+it against policy and writes it to the session log before the bytes move; a
+request that cannot be recorded is refused, and a box is a second boundary,
+taken on request. The formal verification half is
 h5i-app, an Axum-based Rust framework whose application logic is proven in
 Lean 4. One finds the bugs nobody anticipated, the other proves the rules you
 can state.
@@ -19,10 +21,10 @@ does the obvious thing, and the libraries are under `crates/`:
 | crate | what it holds |
 | --- | --- |
 | `h5i-error` | the shared error type. Depends on nothing else here |
-| `h5i-wire` | receipt rows and stored HTTP messages, without the engine that produces them |
+| `h5i-wire` | receipt rows and stored HTTP messages, without the proxy that produces them |
 | `h5i-sandbox` | policy and enforcement. `sandbox_policy.rs` resolves `.h5i/env.toml`; `seccomp_notify.rs`, `supervisor.rs`, `container.rs`, `microvm.rs`, `seatbelt.rs` are the per-tier backends; `secrets*.rs` and `auth_proxy.rs` the credential paths |
 | `h5i-core` | sessions, boxes and evidence: `browser_session.rs`, `env.rs`, `receipt.rs`, `redact.rs`, `export.rs`, `server.rs`, `ui.rs` |
-| `h5i-browser` | the engine: fetch path, policy, cookies, CORS, snapshot, verbs |
+| `h5i-browser` | the network layer under the capture proxy: policy, receipts, cookies, budget, message store, resend, and the session control channel (`control.rs`) |
 | `h5i-websec`, `h5i-recon`, `h5i-test` | plugin binaries, installed with `h5i plugin install <name>` |
 | `h5i-app`, `h5i-app-*` | the verifiable application framework, published on its own; `h5i-app-cli` is `h5i app`, and `h5i-app-xtask` is `cargo app` and `cargo app-verify` |
 
@@ -36,8 +38,8 @@ few remaining scripts are in `scripts/app`, their design notes in
 `docs/app`, and `.github/workflows/app.yaml` is their CI.
 
 Dependencies run one way: `h5i-error` under `h5i-wire` and `h5i-sandbox`,
-those under `h5i-core`, and `h5i-core` under the engine, the plugins
-and the binary. Prefer an existing module boundary over a new abstraction.
+those under `h5i-core`, and `h5i-core` under the network layer, the
+plugins and the binary. Prefer an existing module boundary over a new abstraction.
 
 ## Build and test
 
@@ -74,17 +76,17 @@ Narrower suites while iterating:
 
 ```bash
 cargo test --workspace --lib            # fast
-cargo test --test browser_session_cli   # the session verbs, through the binary
+cargo test --test browser_session_cli   # the session verbs, through the binary (a stub agent-browser)
 cargo test --test env_integration       # box lifecycle on real repos, Linux only
 cargo test --test console_api           # spawns the binary, speaks HTTP to it
-./scripts/websec/smoke.sh target/release/h5i target/release/h5i-websec
+./scripts/websec/smoke.sh target/release/h5i target/release/h5i-websec   # needs agent-browser and its Chromium
 ```
 
 For h5i-app, which also needs PostgreSQL, Lean 4 (via elan), and Charon and
 Aeneas at the commit pinned in `crates/h5i-app-cli/src/pins.rs` (`h5i app
 doctor` checks them). Each proof project is driven by `h5i app` and its
 `h5i-app.toml`. In this repository, `cargo app <verb>` runs the same code
-without building the h5i binary and its browser engine; run it from the
+without building the h5i binary; run it from the
 repository root, since `examples/app` is a workspace of its own.
 
 ```bash
@@ -94,17 +96,16 @@ cargo app-verify            # CI's checks over every project; a missing tool is 
 cargo app-verify --full     # adds every project's mutants
 ```
 
-Four more CI jobs sit behind that first one. `smoke` drives the plugin binaries
-against a real server, `macos` runs `--lib` and checks Seatbelt is present,
+Four more CI jobs sit behind that first one. `smoke` installs agent-browser and
+its Chromium and drives the plugin binaries against a real server, `macos` runs `--lib` and checks Seatbelt is present,
 `docs` diffs the generated manuals, and `cross-check` compile-checks the four
 release targets.
 
 There is no fmt gate, because the repository is not fmt-clean. Do not send
 formatting-only churn.
 
-A debug build of this workspace carries a browser engine and a JavaScript engine
-and runs to tens of gigabytes, so build release if your disk is small
-(`scripts/no-debug-guard.sh` makes that stick). On a small-memory machine the
+A debug build of this workspace runs to several gigabytes, so build release if
+your disk is small (`scripts/no-debug-guard.sh` makes that stick). On a small-memory machine the
 test binaries are what blow up, not the library: build them single-job with
 debug info off.
 
@@ -121,7 +122,7 @@ boxes have to be skipped.
   stops. It never downgrades quietly.
 - Never claim a boundary you did not enforce. When a guarantee holds only at
   some tiers or on one platform, the code and the docs both name which.
-- Keep the evidence lanes apart. `engine-claimed`, `host-observed` and
+- Keep the evidence lanes apart. `proxy-observed`, `host-observed` and
   `box-claimed` are never merged or averaged into a score.
 - Treat what comes out of a box or off a page as attacker-composed: command
   output, receipts, paths, branch names, page text, and any policy read back

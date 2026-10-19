@@ -459,28 +459,19 @@ pub struct Profile {
 
 /// The browser engines a `browser` box can be pinned to.
 ///
-/// Two are Chromium-shaped and one is not, which is why the choice is named in
-/// policy: `Chromium` runs the full engine through agent-browser and can do
-/// everything a browser does; `H5iLight` runs our own engine, with no script,
-/// video or WebGL, making it the safer place to read the untrusted web and the
-/// wrong place to verify a React app (roadmap-history.md 7.1).
+/// Both are driven by agent-browser, and the choice is named in policy because
+/// it changes what the box runs: `Chromium` is the full engine and can do
+/// everything a browser does; `Lightpanda` is lighter and still runs script.
+// Read through `parse`, so a policy an older h5i resolved with the removed `h5i`
+// engine says so, rather than failing on an unknown variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", try_from = "String")]
 pub enum BrowserEngine {
     /// Chromium driven by agent-browser. The fidelity path; today's default.
     Chromium,
     /// Lightpanda, driven by agent-browser over CDP. Lighter than Chromium,
     /// still runs script.
     Lightpanda,
-    /// h5i's own engine, part of the h5i binary. Script is opt-in, and every
-    /// request is policy-checked and receipted before the wire.
-    ///
-    /// Spelled `h5i`. It was `h5i-light` while the engine was a separate
-    /// `h5i-browser-light` binary, which is gone. `alias` rather than silent
-    /// acceptance, so an older `policy.resolved.toml` still parses and the box
-    /// fails on the digest check ("recreate it") rather than on a TOML error.
-    #[serde(rename = "h5i", alias = "h5i-light")]
-    H5iLight,
 }
 
 /// Browser actions, and action families, a profile may name in `[profile.X.browser] deny`.
@@ -623,11 +614,14 @@ pub fn validate_browser_deny(entry: &str) -> Result<(), String> {
 /// variant and forgetting it here is a one-line diff to spot in review: the
 /// callers that walk it pick a *fallback* engine for a host, and an engine
 /// missing from the walk is one the tool silently claims the host cannot run.
-pub const BROWSER_ENGINES: [BrowserEngine; 3] = [
-    BrowserEngine::Chromium,
-    BrowserEngine::Lightpanda,
-    BrowserEngine::H5iLight,
-];
+pub const BROWSER_ENGINES: [BrowserEngine; 2] = [BrowserEngine::Chromium, BrowserEngine::Lightpanda];
+
+impl TryFrom<String> for BrowserEngine {
+    type Error = String;
+    fn try_from(name: String) -> Result<Self, String> {
+        BrowserEngine::parse(&name)
+    }
+}
 
 impl BrowserEngine {
     /// The spelling used in `.h5i/env.toml` and on `--engine`.
@@ -635,7 +629,6 @@ impl BrowserEngine {
         match self {
             BrowserEngine::Chromium => "chromium",
             BrowserEngine::Lightpanda => "lightpanda",
-            BrowserEngine::H5iLight => "h5i",
         }
     }
 
@@ -646,24 +639,18 @@ impl BrowserEngine {
         match input.trim() {
             "chromium" | "chrome" => Ok(BrowserEngine::Chromium),
             "lightpanda" => Ok(BrowserEngine::Lightpanda),
-            // The old spellings stay accepted as *input*. A profile or a habit
-            // that still says `h5i-light` costs nothing to honour, and what it
-            // resolves to is written out under the current name.
-            "h5i" | "h5i-light" | "h5i_light" => Ok(BrowserEngine::H5iLight),
+            // Named rather than lumped in with typos: a profile written against
+            // an older h5i says this, and its author needs to know the engine
+            // went away, not that they misspelled it.
+            "h5i" | "h5i-light" | "h5i_light" => Err(
+                "the `h5i` browser engine has been removed: h5i drives Chromium through \
+                 agent-browser and captures it at its own proxy. Pin `chromium` (or \
+                 `lightpanda`) instead (fail-closed)"
+                    .to_string(),
+            ),
             other => Err(format!(
-                "unknown browser engine `{other}` — expected one of: chromium, lightpanda, h5i (fail-closed)"
+                "unknown browser engine `{other}` — expected one of: chromium, lightpanda (fail-closed)"
             )),
-        }
-    }
-
-    /// Whether agent-browser drives this engine.
-    /// The h5i engine does not speak CDP, so h5i runs it itself. Getting this
-    /// backwards would inject `AGENT_BROWSER_*` variables for an engine that
-    /// never reads them, which reviews as enforcement while enforcing nothing.
-    pub fn driven_by_agent_browser(&self) -> bool {
-        match self {
-            BrowserEngine::Chromium | BrowserEngine::Lightpanda => true,
-            BrowserEngine::H5iLight => false,
         }
     }
 
@@ -678,10 +665,6 @@ impl BrowserEngine {
             BrowserEngine::Lightpanda => (
                 &["the `lightpanda` binary", "the `agent-browser` binary"],
                 "npm install -g agent-browser  # and install lightpanda from https://lightpanda.io",
-            ),
-            BrowserEngine::H5iLight => (
-                &["the `h5i-browser-light` binary"],
-                "cargo install --path crates/h5i-browser",
             ),
         }
     }
@@ -1020,15 +1003,6 @@ const LIGHTPANDA_CANDIDATES: &[&str] = &[
     "/opt/homebrew/bin/lightpanda",
 ];
 
-/// Where our own engine lands.
-const BROWSER_LIGHT_CANDIDATES: &[&str] = &[
-    "~/.cargo/bin/h5i-browser-light",
-    "~/.local/bin/h5i-browser-light",
-    "/usr/local/bin/h5i-browser-light",
-    "/usr/bin/h5i-browser-light",
-    "/opt/homebrew/bin/h5i-browser-light",
-];
-
 /// Font and rendering support Chrome needs to start at all.
 const BROWSER_SUPPORT_PATHS: &[&str] = &[
     "/usr/share/fonts",
@@ -1072,7 +1046,6 @@ pub fn browser_read_grants() -> Vec<String> {
         // the digest depend on which engine a box happened to pick while buying
         // nothing. The engine is enforced by what h5i launches.
         .chain(LIGHTPANDA_CANDIDATES)
-        .chain(BROWSER_LIGHT_CANDIDATES)
         .chain(BROWSER_SUPPORT_PATHS)
         .filter(|c| expand_home(c).map(|p| p.exists()).unwrap_or(false))
         .map(|c| c.to_string())
@@ -1233,24 +1206,8 @@ pub fn engine_tooling_missing(engine: BrowserEngine) -> Vec<&'static str> {
                 missing.push("a Chrome/Chromium build (h5i's launch shim still starts Chrome)");
             }
         }
-        // Ours drives itself: agent-browser cannot speak to it, so requiring
-        // agent-browser here would refuse a box that would have worked.
-        BrowserEngine::H5iLight => {
-            if !any(BROWSER_LIGHT_CANDIDATES) {
-                missing.push("the `h5i-browser-light` binary");
-            }
-        }
     }
     missing
-}
-
-/// The `h5i-browser-light` binary on this host, if there is one.
-pub fn browser_light_binary() -> Option<String> {
-    BROWSER_LIGHT_CANDIDATES
-        .iter()
-        .filter_map(|c| expand_home(c))
-        .find(|p| p.exists())
-        .map(|p| p.display().to_string())
 }
 
 pub fn browser_tooling_present() -> (bool, bool) {
@@ -1353,12 +1310,25 @@ mod browser_discovery_tests {
         let mut a = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
         let mut b = a.clone();
         a.engine = Some(BrowserEngine::Chromium);
-        b.engine = Some(BrowserEngine::H5iLight);
+        b.engine = Some(BrowserEngine::Lightpanda);
         assert_ne!(
             toml::to_string(&a).expect("a"),
             toml::to_string(&b).expect("b"),
             "engine must be part of what gets hashed"
         );
+    }
+
+    #[test]
+    fn a_policy_pinned_to_the_removed_engine_says_so_when_read() {
+        #[derive(serde::Deserialize, Debug)]
+        struct Pinned {
+            #[allow(dead_code)]
+            engine: BrowserEngine,
+        }
+        let err = toml::from_str::<Pinned>("engine = \"h5i\"").expect_err("refused");
+        assert!(err.to_string().contains("removed"), "{err}");
+        let ok: Pinned = toml::from_str("engine = \"chromium\"").expect("reads");
+        assert_eq!(ok.engine, BrowserEngine::Chromium);
     }
 
     #[test]
@@ -1370,21 +1340,12 @@ mod browser_discovery_tests {
 
         // Spellings a person actually types.
         assert_eq!(BrowserEngine::parse("chrome").unwrap(), BrowserEngine::Chromium);
-        assert_eq!(BrowserEngine::parse(" h5i ").unwrap(), BrowserEngine::H5iLight);
-        // The name it had while the engine was a second binary, still accepted
-        // as input so a profile written against an older h5i keeps resolving.
-        assert_eq!(BrowserEngine::parse("h5i-light").unwrap(), BrowserEngine::H5iLight);
-        assert_eq!(BrowserEngine::parse("h5i_light").unwrap(), BrowserEngine::H5iLight);
-    }
-
-    #[test]
-    fn only_chromium_shaped_engines_are_driven_by_agent_browser() {
-        // Getting this wrong means injecting AGENT_BROWSER_* variables for an
-        // engine that never reads them, which reviews as enforcement while
-        // enforcing nothing.
-        assert!(BrowserEngine::Chromium.driven_by_agent_browser());
-        assert!(BrowserEngine::Lightpanda.driven_by_agent_browser());
-        assert!(!BrowserEngine::H5iLight.driven_by_agent_browser());
+        assert_eq!(BrowserEngine::parse(" lightpanda ").unwrap(), BrowserEngine::Lightpanda);
+        // The engine that was removed is refused by name, with the way forward.
+        for gone in ["h5i", "h5i-light", "h5i_light"] {
+            let err = BrowserEngine::parse(gone).expect_err("the h5i engine is gone");
+            assert!(err.contains("removed") && err.contains("chromium"), "{err}");
+        }
     }
 
     #[test]
@@ -1404,17 +1365,6 @@ mod browser_discovery_tests {
                 "lightpanda must not pass create on a host with no Chrome: {missing:?}"
             );
         }
-    }
-
-    #[test]
-    fn our_own_engine_does_not_require_agent_browser_to_be_installed() {
-        // It drives itself, so demanding agent-browser would refuse a box that
-        // would have worked.
-        let missing = engine_tooling_missing(BrowserEngine::H5iLight);
-        assert!(
-            !missing.iter().any(|m| m.contains("agent-browser")),
-            "the h5i engine must not demand agent-browser: {missing:?}"
-        );
     }
 
     /// Path-segment-aware prefix: `/usr/bin/chromium` covers

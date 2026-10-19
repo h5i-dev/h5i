@@ -881,8 +881,8 @@ fn crawl(
     let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
     let Some((from, origin)) = seed(&store, None) else {
         anyhow::bail!(
-            "this session has no stored request to walk from. `h5i browser open <url> \
-             --capture` first: a crawl is a series of edits of a real request, so it \
+            "this session has no stored request to walk from. `h5i browser open <url>` \
+             first: a crawl is a series of edits of a real request, so it \
              carries that request's authority and cookies rather than inventing them"
         );
     };
@@ -1391,8 +1391,8 @@ fn paths(root: &Path, selector: Option<&str>, run: PathRun<'_>, json_out: bool) 
     let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
     let Some((from, origin)) = seed(&store, run.origin) else {
         anyhow::bail!(
-            "this session has no stored request to ask from. `h5i browser open <url> \
-             --capture` first"
+            "this session has no stored request to ask from. `h5i browser open <url>` \
+             first"
         );
     };
     let identity = identity_of(&session).to_string();
@@ -1609,8 +1609,8 @@ fn known(
     let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
     let Some((from, origin)) = seed(&store, origin) else {
         anyhow::bail!(
-            "this session has no stored request to send again. `h5i browser open <url> \
-             --capture` first: a probe is an edit of a real request, so it carries that \
+            "this session has no stored request to send again. `h5i browser open <url>` \
+             first: a probe is an edit of a real request, so it carries that \
              request's authority and cookies rather than inventing them"
         );
     };
@@ -2101,7 +2101,7 @@ fn extract(
         anyhow::bail!(
             "session {} kept no messages, so there is nothing to read. Extraction reads \
              stored bytes rather than fetching them again: open a session with \
-             `h5i browser open <url> --capture` and the store is there to scan",
+             `h5i browser open <url>` and the store is there to scan",
             session.id
         );
     }

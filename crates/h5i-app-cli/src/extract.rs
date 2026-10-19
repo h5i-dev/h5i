@@ -165,7 +165,7 @@ fn extract_into(p: &Project, dest: &Path, schema_lean: bool, out: &Out) -> Resul
 /// (`Schema.lean` by convention). Only the kernel's own test knows that text,
 /// so run it with `H5I_APP_BLESS=1`. Without a `lean` path the test does not
 /// exist and nothing is written. Release, so a checkout that guards against
-/// debug builds (CLAUDE.md) can run it.
+/// debug builds (scripts/no-debug-guard.sh) can run it.
 fn bless_schema(krate: &Path, out: &Out) -> Result<()> {
     util::run(
         Command::new("cargo")

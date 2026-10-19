@@ -26,7 +26,7 @@ case "${1:-on}" in
     mkdir -p target
     printf '%s\n' \
       "Not a directory, on purpose: this checkout is release-only." \
-      "Everything here is built with --release. See CLAUDE.md." \
+      "Everything here is built with --release. See scripts/no-debug-guard.sh." \
       "Maintainer escape hatch: scripts/no-debug-guard.sh off" > "$guard"
     echo "guard on: dev-profile cargo builds now fail immediately"
     ;;

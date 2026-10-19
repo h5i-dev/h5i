@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-15",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-19",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -83,7 +83,7 @@
 <p>Start the lab:</p>
 <pre><code class="language-bash">$ ./run.sh 30
 $ h5i browser open 'http://127.0.0.1:9300/health' \
-  --session lab30 --new --capture
+  --session lab30 --new
 $ WORK=$(mktemp -d)
 </code></pre>
 <p>The edge blocks <code>/admin/*</code>. We will make it see one permitted <code>POST</code>, while the backend sees the end of that request followed by a second request to <code>/admin/flag</code>.</p>
@@ -127,7 +127,7 @@ PY
 <p>Start the report lab:</p>
 <pre><code class="language-bash">$ ./run.sh 31
 $ h5i browser open 'http://127.0.0.1:9310/' \
-  --session lab31 --new --capture
+  --session lab31 --new
 </code></pre>
 <p>The front end sends a report name to an internal service and appends <code>X-Role: guest</code>. Insert a new header and end the header block before the application’s own role:</p>
 <pre><code class="language-bash">$ h5i websec replay req_0 --session lab31 --create \
@@ -142,7 +142,7 @@ $ h5i browser open 'http://127.0.0.1:9310/' \
 <p>Start the lab:</p>
 <pre><code class="language-bash">$ ./run.sh 32
 $ h5i browser open 'http://127.0.0.1:9320/' \
-  --session lab32 --new --capture --allow 127.0.0.1
+  --session lab32 --new --allow 127.0.0.1
 </code></pre>
 <p>Ask for an admin reset while changing the host to the lab’s collector:</p>
 <pre><code class="language-bash">$ h5i websec replay req_0 --session lab32 --create \
@@ -169,7 +169,7 @@ $ h5i websec replay req_0 --session lab32 --create \
 <p>Start the newsroom lab:</p>
 <pre><code class="language-bash">$ ./run.sh 33
 $ h5i browser open 'http://127.0.0.1:9330/' \
-  --session lab33 --new --capture
+  --session lab33 --new
 $ ID=&quot;drop$$&quot;
 </code></pre>
 <p>The origin reflects <code>X-Forwarded-Host</code> into the homepage, but the cache keys only on the URL. Create an XSS payload:</p>
@@ -206,7 +206,7 @@ $ h5i websec replay req_0 --session lab33 --create \
 <p>Start the lab:</p>
 <pre><code class="language-bash">$ ./run.sh 34
 $ h5i browser open 'http://127.0.0.1:9340/' \
-  --session lab34 --new --capture --allow 127.0.0.1
+  --session lab34 --new --allow 127.0.0.1
 </code></pre>
 <p>Learn the frame format with a normal action:</p>
 <pre><code class="language-bash">$ h5i websec socket ws://127.0.0.1:9341/control \

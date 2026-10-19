@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-08-21",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-19",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -63,18 +63,10 @@
       "mainEntity": [
         {
           "@type": "Question",
-          "name": "Does --in create the box?",
+          "name": "How does the browser get into the box?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No. Create the box first, then pass its name to h5i browser open --in. The browser session runs inside that existing box and uses its resolved policy."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Can an agent already inside the box use --in?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "No. It opens the browser without --in because it is already inside the boundary. The --in flag is for a host-side command placing a browser into a named box."
+            "text": "Create the box with --profile browser. Its Chromium, driven by agent-browser, runs inside the box under its resolved policy; drive it with h5i box run <box> -- agent-browser ..., or from inside a box shell."
           }
         },
         {
@@ -117,7 +109,7 @@
 <h2 id="box">1. Start with one boundary</h2>
 <p>Create a named box from the repository before opening the browser or starting the agent. The <code>browser</code> profile supplies a fresh browser identity and the control path needed to operate it inside the box.</p>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">repository root</span></div>
-<div class="terminal-body"><pre><code>$ h5i box --profile browser --engine h5i --isolation process --name fix-auth
+<div class="terminal-body"><pre><code>$ h5i box --profile browser --isolation process --name fix-auth
 $ h5i box status fix-auth</code></pre></div></div>
 <p>Creation freezes the base revision and resolves the policy before the workspace exists. <code>status</code> tells you which isolation tier the host actually provided, which paths are writable, how network access is scoped, and the digest that later receipts carry. If the requested policy cannot be enforced, creation fails instead of quietly substituting a weaker tier.</p>
 <p>The source determines the output path. A box made from the current repository is a worktree on its own branch, so an accepted result can later be applied locally. A URL, pull request, or <code>--new</code> produces a detached box. Detached work can be exported as a patch, but <code>apply</code> and <code>rebase</code> refuse because that box has no authority over the parent repository.</p>
@@ -133,20 +125,16 @@ $ h5i box status fix-auth</code></pre></div></div>
 </tbody>
 </table>
 </div>
-<p>The example names <code>process</code> because it can hold a resident browser without a heavyweight runtime. The tier changes what “inside” proves. A process-tier browser is confined for files and environment, but its request log remains the engine's own account. A tier with egress enforcement outside the browser can add host-observed network evidence. Resident browser sessions also need a tier that can keep the engine alive; on Linux today, a microVM is the tier that provides both residence and a network boundary. Read <code>status</code> rather than inferring guarantees from the word sandbox.</p>
+<p>The example names <code>process</code> because it can hold a resident browser without a heavyweight runtime. The tier changes what “inside” proves. A process-tier browser is confined for files and environment; a tier with egress enforcement outside the browser also decides what it may reach. Read <code>status</code> rather than inferring guarantees from the word sandbox.</p>
 <h2 id="browse">2. Put browsing inside the same box</h2>
-<p>This flag connects the two workflows:</p>
+<p>The <code>browser</code> profile puts a Chromium, driven by agent-browser, inside the box:</p>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
-<div class="terminal-body"><pre><code>$ h5i browser open https://docs.rs/ --allow docs.rs --in fix-auth
-ok  browser session br_7k2xqa
-   placed   : box fix-auth
-
-$ h5i browser snapshot
-$ h5i browser click @e3
-$ h5i browser requests</code></pre></div></div>
-<p><code>--in fix-auth</code> places the browser engine and its fresh profile in the named box. Later browser verbs address the same resident session, so the page state, cookies, downloads, and requests stay with the development environment instead of appearing in a host browser profile.</p>
+<div class="terminal-body"><pre><code>$ h5i box run fix-auth -- agent-browser open https://docs.rs/
+$ h5i box run fix-auth -- agent-browser snapshot
+$ h5i box run fix-auth -- agent-browser click @e3</code></pre></div></div>
+<p>The browser and its fresh profile live in the named box, so the page state, cookies, downloads, and requests stay with the development environment instead of appearing in a host browser profile. h5i mediates the agent-browser socket from outside the box, so every action is recorded where the box cannot rewrite it.</p>
 <p>The distinction matters in both directions. External documentation can contain instructions that influence the agent, so it should not gain more filesystem or network authority than the coding task. Later, when the browser opens <code>http://localhost:3000</code>, loopback should mean the dev server inside the box—not some unrelated service on the developer's machine.</p>
-<p>The browser still checks its origin policy before every request and records the decision before bytes move. Denied requests and refused redirects remain in the log. When the box tier enforces egress outside the engine, h5i can label that traffic <code>host-observed</code>. Without an outside network observer, it remains <code>engine-claimed</code>. Placement and evidence strength are related, but they are not the same claim.</p>
+<p>What the browser may reach is the box's egress allowlist, enforced at the box's boundary. Placement and evidence strength are related, but they are not the same claim: read the receipt's lanes rather than assuming one.</p>
 <h2 id="work">3. Develop and verify without crossing the boundary</h2>
 <p>Enter the same named box for the coding session:</p>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">inside fix-auth</span></div>
@@ -158,11 +146,10 @@ box$ npm run dev &amp;</code></pre></div></div>
 <p><code>shell</code> inherits stdio, and every descendant stays inside the resolved policy. The agent does not have to remember to wrap package-manager hooks, compiler workers, test processes, or the dev server separately. They are contained because they are children of the box session.</p>
 <p>Now point the already-contained browser at the application. From a second host terminal:</p>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">browser in the same box</span></div>
-<div class="terminal-body"><pre><code>$ h5i browser open http://localhost:3000 --in fix-auth --session app --new
-$ h5i browser snapshot --session app
-$ h5i browser requests --session app</code></pre></div></div>
+<div class="terminal-body"><pre><code>$ h5i box run fix-auth -- agent-browser open http://localhost:3000
+$ h5i box run fix-auth -- agent-browser snapshot</code></pre></div></div>
 <p>The browser and server meet on the box's loopback. The useful loop is now continuous: the agent edits, tests, starts the app, reads the page, inspects failed requests or console errors, fixes the code, and tests again. There is no host-browser detour in the middle.</p>
-<p>If the agent invokes the browser from inside an existing <code>box shell</code>, it opens the session without <code>--in</code>; it is already in the box. The flag is for a host-side command that places a browser into a box the caller stands outside. h5i refuses <code>--in</code> from inside rather than pretending to add a second boundary.</p>
+<p>From inside an existing <code>box shell</code>, the agent runs <code>agent-browser</code> directly; it is already in the box.</p>
 <p>Model API keys remain on the host. A reverse proxy injects the right key into outbound model requests and scopes it to the runtime, so a Claude box cannot obtain the OpenAI credential. The box gets a copy of the agent's HOME state with credential-shaped entries removed.</p>
 <p>The human can observe the page without moving the browser back onto the host:</p>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">watch</span></div>
@@ -225,7 +212,7 @@ $ h5i box cache ls            # which are stale, and therefore unused</code></pr
 <li><a href="/guides/watch-the-browser/">Watch the browser</a>, for dev-server loopback and human control transfer.</li>
 <li><a href="/manual/#the-loop">The manual</a>, for every flag named above.</li>
 </ul>
-<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Does --in create the box?</summary><div class="faq-answer">No. Create the box first, then pass its name to h5i browser open --in. The browser session runs inside that existing box and uses its resolved policy.</div></details><details class="faq-item"><summary>Can an agent already inside the box use --in?</summary><div class="faq-answer">No. It opens the browser without --in because it is already inside the boundary. The --in flag is for a host-side command placing a browser into a named box.</div></details><details class="faq-item"><summary>What is the difference between export and apply?</summary><div class="faq-answer">export writes patch.diff, report.md and receipt.json to a directory and touches nothing else, so you decide what happens next. apply lands the work directly on the parent repository and is only available when the box came from that repository. On a detached box, created from a URL, a pull request or --new, apply refuses and points at export.</div></details></div>
+<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>How does the browser get into the box?</summary><div class="faq-answer">Create the box with --profile browser. Its Chromium, driven by agent-browser, runs inside the box under its resolved policy; drive it with h5i box run <box> -- agent-browser ..., or from inside a box shell.</div></details><details class="faq-item"><summary>What is the difference between export and apply?</summary><div class="faq-answer">export writes patch.diff, report.md and receipt.json to a directory and touches nothing else, so you decide what happens next. apply lands the work directly on the parent repository and is only available when the box came from that repository. On a detached box, created from a URL, a pull request or --new, apply refuses and points at export.</div></details></div>
 <a class="next-up" href="/blog/the-environment-is-the-sandbox/"><span class="label">Why sandbox it</span><h3>Why sandbox the entire AI agent workload</h3><p>See why dependencies, tools, tests, servers, and browsers need one boundary.</p></a>
 <div class="post-cta"><h3>Start with one box</h3><p>Run h5i box probe, create a box, and inspect what the host actually enforced.</p>
 <div class="hero-actions"><a class="btn btn-primary" href="/guides/first-box/">Follow the first-box guide</a></div></div>

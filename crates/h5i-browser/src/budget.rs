@@ -29,7 +29,7 @@ pub struct Limits {
     /// The one ceiling the others could not give. A page whose cost is parsing,
     /// layout and fonts rather than waiting is inside every limit above and can
     /// still load for two minutes; the engine then has no answer except
-    /// [`HardStop`], which is not an answer at all because it discards the page
+    /// a hard stop, which is not an answer at all because it discards the page
     /// instead of reporting it unfinished.
     ///
     /// Checked for [`Spender::Page`] alone. See there for why.
@@ -349,80 +349,9 @@ impl Deadline {
     }
 }
 
-/// The stop of last resort, for the half of this engine no deadline reaches.
-pub struct HardStop {
-    done: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
-}
-
-/// How far past its budget a navigation may go before the process stops.
-const HARD_STOP_MARGIN: Duration = Duration::from_secs(60);
-
-impl HardStop {
-    pub fn arm(budget: Duration) -> Self {
-        let done = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
-        let watching = done.clone();
-        let ceiling = budget + HARD_STOP_MARGIN;
-        let _ = std::thread::Builder::new()
-            .name("h5i-navigation-stop".to_string())
-            .spawn(move || {
-                let (lock, wake) = &*watching;
-                let mut finished = lock.lock().unwrap_or_else(|e| e.into_inner());
-                let deadline = Instant::now() + ceiling;
-                while !*finished {
-                    let Some(left) = deadline.checked_duration_since(Instant::now()) else {
-                        break;
-                    };
-                    let (guard, _) = wake
-                        .wait_timeout(finished, left)
-                        .unwrap_or_else(|e| e.into_inner());
-                    finished = guard;
-                }
-                if *finished {
-                    return;
-                }
-                eprintln!(
-                    "h5i-browser: this page has been loading for {ceiling:?} without \
-                     finishing, which is past anything a slow page does. The engine is stopping \
-                     rather than holding a core indefinitely. This is a bug in the engine: a \
-                     page that takes too long is supposed to be reported as unfinished, not to \
-                     become one that never returns."
-                );
-                crate::ipc::stop_now(71);
-            });
-        Self { done }
-    }
-}
-
-impl Drop for HardStop {
-    /// The navigation finished, however it finished.
-    fn drop(&mut self) {
-        let (lock, wake) = &*self.done;
-        *lock.lock().unwrap_or_else(|e| e.into_inner()) = true;
-        wake.notify_all();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_navigation_that_finishes_disarms_its_hard_stop() {
-        // The half of `HardStop` that can be tested in process. The other half ends
-        // the process, so it is verified by running one: a navigation held open past
-        // its ceiling exits 71 and says why.
-        //
-        // What this pins is the part that would be catastrophic to get wrong in the
-        // opposite direction. A guard that fired on a page which had already
-        // finished would take down a working engine, rarely enough to be blamed on
-        // anything else.
-        for _ in 0..64 {
-            drop(HardStop::arm(Duration::from_millis(1)));
-        }
-        // The margin is what makes the above safe: an armed stop that outlived
-        // its navigation by 1 ms would have fired sixty-four times by now.
-        std::thread::sleep(Duration::from_millis(50));
-    }
 
     fn tight() -> Budget {
         Budget::new(Limits {
@@ -434,9 +363,7 @@ mod tests {
         })
     }
 
-    /// The ceiling the per-phase budgets could not give. Without it a page
-    /// whose cost is not the network has no stop but `HardStop`, which reports
-    /// nothing because it ends the process.
+    /// The ceiling the per-phase budgets could not give.
     #[test]
     fn a_page_that_loads_for_too_long_is_refused_the_next_fetch() {
         let budget = Budget::new(Limits {

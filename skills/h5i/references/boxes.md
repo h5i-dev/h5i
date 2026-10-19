@@ -9,8 +9,7 @@ h5i box export review
 ```
 
 Outside a box you create, drive, inspect and export them. Inside one
-(`$H5I_ENV_ID` is set) you work normally: do not create another box, and do not
-pass `--in` to a browser command.
+(`$H5I_ENV_ID` is set) you work normally: do not create another box.
 
 `h5i box probe` says what this host can enforce and `h5i box capabilities <name>
 --json` what a box actually received. Never infer the tier. h5i fails closed

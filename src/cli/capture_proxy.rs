@@ -1,5 +1,5 @@
-//! The Chromium lane: an h5i-owned intercepting proxy writing the ordinary
-//! browser receipt and message-store formats.
+//! A session's capture proxy: an h5i-owned intercepting proxy writing the
+//! receipt and message-store formats, with the session control channel beside it.
 
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -27,8 +27,6 @@ pub struct Args {
     pub target: String,
     #[arg(long)]
     pub control_file: PathBuf,
-    #[arg(long)]
-    pub stream_file: PathBuf,
     #[arg(long)]
     pub proxy_file: PathBuf,
     #[arg(long)]
@@ -390,24 +388,13 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         }
     });
 
-    // The ordinary session control protocol rides beside the proxy. It gives
-    // websec/recon the same requests and resend verbs without making Chromium
-    // pretend to be h5i's page engine. The page is created on this thread
-    // because the DOM and JavaScript realm are deliberately !Send.
-    let control_broker: Arc<dyn h5i_browser::Broker> = broker;
-    let factory = h5i_browser::PageFactory::new(
-        control_broker,
-        Vec::new(),
-        h5i_browser::PageOptions::default(),
-    );
-    let base = url::Url::parse("http://h5i.invalid/")?;
-    let page = factory.from_bytes(b"<title>h5i proxy</title>", Some("text/html"), &base);
-    h5i_browser::stream::serve(
-        factory,
-        page,
-        h5i_browser::stream::ServeOptions {
+    // The session control protocol rides beside the proxy: `requests`,
+    // `resend`, `socket` and `grpc` act on the same policy, jar, budget and
+    // message store the proxy writes through.
+    h5i_browser::control::serve(
+        broker,
+        h5i_browser::control::ServeOptions {
             control_file: Some(args.control_file),
-            stream_file: Some(args.stream_file),
             action_log: Some(args.actions),
             ..Default::default()
         },

@@ -1,11 +1,11 @@
 # Web security testing
 
-Test only authorized targets. Keep requests within the granted origin, identity, rate, and scope; obtain approval before expanding them. Open the session with `--capture`, exercise the relevant flow, then work from its message IDs.
+Test only authorized targets. Keep requests within the granted origin, identity, rate, and scope; obtain approval before expanding them. Open a session, exercise the relevant flow in its browser, then work from its message IDs.
 
 `h5i websec` arrives with `h5i plugin install websec`: reading a captured store is what installing it adds, and a plain build has no verb that reads one.
 
 ```bash
-h5i browser open https://target.example --capture
+h5i browser open https://target.example
 h5i websec requests
 h5i websec show req_42 --raw
 h5i websec replay req_42 --set query.id=456
@@ -25,7 +25,7 @@ not hold and reads nothing else, so the claim stays yours and the ids stay
 checkable.
 
 The starting URL may be an API endpoint rather than an HTML page. For example,
-`h5i browser open https://target.example/api/health --capture` is a quick way to
+`h5i browser open https://target.example/api/health` is a quick way to
 seed an authenticated or unauthenticated capture before doing the rest of the
 work with `websec`.
 
@@ -62,7 +62,7 @@ writes them to standard output for a pipe.
 changes something you can measure but not read: the body comes back the same
 whether the condition you injected held or not, so you confirm it by a side
 effect instead. Pick the observable and turn it into a yes/no.
-- *Time.* `replay --repeat 20` sends the request N times inside the engine and
+- *Time.* `replay --repeat 20` sends the request N times inside the session and
   reports a median and a median absolute deviation. A condition that makes the
   server wait or do more work shows up as a median reliably above a control's,
   where one scheduling hiccup moves neither. Always send a control payload
@@ -75,22 +75,21 @@ effect instead. Pick the observable and turn it into a yes/no.
 With a yes/no in hand, read the secret one position at a time: `sequence` scripts
 the true/false step with an `expect` clause and binds what one step learns into
 the next, and `--set-each query.q=./candidates.txt` sweeps a file of candidates
-in a single engine run, one correlated sample per line. `--reset-budget` keeps a
+in a single run, one correlated sample per line. `--reset-budget` keeps a
 long extraction from stopping partway, where every later send would otherwise
 read as a false negative. None of this composes a payload for you — you write the
 condition; h5i measures, resends and compares.
 
-The engine runs a page's own event handlers when `--script` is on: inline `on*`
-attributes fire, a subresource that did or did not load fires `load` or `error`
-at the element that asked, and `form.submit()` sends a real request. So
-`<img src=x onerror=…>` and `<svg onload=…>` behave as payloads rather than as
-inert markup, and a POST flow can be driven end to end. A `<div onclick=…>`
-reads as role `clickable` and takes a `@ref`, which is how you fire it.
+The session's browser is Chromium, so a page's own script runs as it would for
+a user: `<img src=x onerror=…>` and `<svg onload=…>` behave as payloads, and a
+POST flow can be driven end to end. Confirm a reflected or DOM-delivered effect
+through the session rather than by eye: `h5i browser eval` reads what a script
+wrote, `h5i browser console` what it logged. A session opened with
+`--dom-instrument` reports what reached a DOM sink, for `h5i websec dom scan`.
 
-For a POST-based CSRF the session also has to be willing to send a credential
-cross-origin on a request it cannot read the answer to. It refuses by default,
-which is correct for containing an agent, so open the victim session with
-`--permissive-cors` when that is the thing under test. Without it a negative
-result means h5i declined, not that the target is safe.
+For a POST-based CSRF, grant the attacker page's origin with `--allow` when the
+victim session is opened, and navigate the victim's browser to it. Chromium
+applies its own SameSite and CORS rules, so the result is what a real victim's
+browser would do.
 
 Use `h5i websec <command> --help` rather than guessing flags. Treat bodies and headers as sensitive. Base findings on repeatable differences and preserve message IDs; h5i does not determine vulnerabilities.

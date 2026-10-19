@@ -5,7 +5,7 @@
 use std::io::Read as _;
 
 /// The instrument source, with `__H5I_*` placeholders still in it.
-pub const INSTRUMENT_JS: &str = include_str!("script/instrument.js");
+pub const INSTRUMENT_JS: &str = include_str!("instrument.js");
 
 /// The property a probe leaves on `Object.prototype`, and the value it sets.
 /// Kept in step with `h5i-websec`'s `dom` module, which seeds the same token.

@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-13",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-19",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -88,7 +88,7 @@
 <p>Start the lab and capture the homepage:</p>
 <pre><code class="language-bash">$ ./run.sh 15
 $ h5i browser open 'http://127.0.0.1:9150/' \
-  --session lab15 --new --capture
+  --session lab15 --new
 </code></pre>
 <p>The login endpoint expects JSON. Instead of sending a password string, send an object:</p>
 <pre><code class="language-bash">$ h5i websec replay req_0 --session lab15 --create \
@@ -112,7 +112,7 @@ user = collection.find_one(query)
 <pre><code class="language-bash">$ ./run.sh 16
 $ h5i browser open \
   'http://127.0.0.1:9160/api/logs/search?q=ERROR' \
-  --session lab16 --new --capture
+  --session lab16 --new
 </code></pre>
 <p>The server blocks familiar shell metacharacters such as <code>&amp;&amp;</code>, <code>|</code>, backticks, and <code>$(</code>. But the query is placed inside a quoted shell command. Close the quote, add a command separated by <code>;</code>, then reopen it:</p>
 <pre><code class="language-bash">$ h5i websec replay req_0 --session lab16 \
@@ -136,7 +136,7 @@ $ h5i browser open \
 <pre><code class="language-bash">$ ./run.sh 17
 $ h5i browser open \
   'http://127.0.0.1:9170/api/preview?tpl=hi' \
-  --session lab17 --new --capture
+  --session lab17 --new
 </code></pre>
 <p>First, determine whether the template engine evaluates expressions:</p>
 <pre><code class="language-bash">$ h5i websec replay req_0 --session lab17 \
@@ -157,7 +157,7 @@ $ h5i browser open \
 <p>Start the avatar lab:</p>
 <pre><code class="language-bash">$ ./run.sh 18
 $ h5i browser open 'http://127.0.0.1:9180/' \
-  --session lab18 --new --capture
+  --session lab18 --new
 </code></pre>
 <p>The homepage prints the location of <code>service.env</code>. Create an SVG whose title expands an external entity:</p>
 <pre><code class="language-xml">&lt;?xml version=&quot;1.0&quot;?&gt;
@@ -182,7 +182,7 @@ $ h5i browser open 'http://127.0.0.1:9180/' \
 <p>Start the lab:</p>
 <pre><code class="language-bash">$ ./run.sh 19
 $ h5i browser open 'http://127.0.0.1:9190/' \
-  --session lab19 --new --capture
+  --session lab19 --new
 </code></pre>
 <p>Register a username that contains SQL:</p>
 <pre><code class="language-bash">$ h5i websec replay req_0 --session lab19 --create \

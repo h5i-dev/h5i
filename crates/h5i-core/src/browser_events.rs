@@ -726,10 +726,6 @@ pub struct BoxStream {
     /// reads, so a half-written line is the ordinary case and re-reading it next
     /// poll is how it gets picked up whole.
     actions_at: u64,
-    /// The light engine's own action log, which is a different file in a
-    /// different lane from the mediator's.
-    light_actions_at: u64,
-    requests_at: u64,
     /// Receipt ids already folded in. Receipts are immutable once written, so
     /// identity is enough and no offset is needed.
     receipts_seen: std::collections::HashSet<String>,
@@ -740,8 +736,6 @@ impl BoxStream {
         Self {
             log: EventLog::new(capacity),
             actions_at: 0,
-            light_actions_at: 0,
-            requests_at: 0,
             receipts_seen: std::collections::HashSet::new(),
         }
     }
@@ -755,36 +749,12 @@ impl BoxStream {
         let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
         let env_dir = m.dir(h5i_root);
 
-        // Filled by the engine's action log and read by its request log, in
-        // that order. See the read-order note above: this is why it is fixed.
-        let mut caused: std::collections::BTreeMap<u64, u64> = std::collections::BTreeMap::new();
-
         let actions = crate::browser_proxy::actions_log(&env_dir);
         if let Some(growth) = grown(&actions, &mut self.actions_at) {
             if growth.restarted {
                 self.log.extend(reset_draft("mediated actions"), &at);
             }
             self.log.extend(ingest_actions_log(&growth.text), &at);
-        }
-
-        if let Some(path) = crate::env::browser_action_log(h5i_root, m)
-            && let Some(growth) = grown(&path, &mut self.light_actions_at)
-        {
-            if growth.restarted {
-                self.log.extend(reset_draft("the engine's action log"), &at);
-            }
-                self.log
-                .extend(ingest_light_actions_with(&growth.text, &mut caused), &at);
-        }
-
-        if let Some(path) = crate::env::browser_request_log(h5i_root, m)
-            && let Some(growth) = grown(&path, &mut self.requests_at)
-        {
-            if growth.restarted {
-                self.log.extend(reset_draft("the engine's request log"), &at);
-            }
-            self.log
-                .extend(ingest_request_log_with(&growth.text, &caused), &at);
         }
 
         for record in crate::receipt::list(&env_dir).unwrap_or_default() {

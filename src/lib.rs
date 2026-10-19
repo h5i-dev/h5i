@@ -19,9 +19,8 @@ pub mod cli;
     name = "h5i",
     // What the product is now. It read "The red-teaming browser for AI agents"
     // until 2026-10-05, before h5i-app joined the workspace (docs/ROADMAP.md).
-    about = "The agent-native web security workspace: red-team web apps with a browser and \
-             direct HTTP control inside limits you set, and prove application logic in Lean 4 \
-             with h5i-app",
+    about = "h5i unifies web development, formal verification with Lean 4, and red-teaming \
+             around a composable Rust framework",
     version
 )]
 pub struct Cli {
@@ -67,22 +66,7 @@ pub enum Commands {
         open: bool,
     },
 
-    /// The rendering engine's own command line.
-    ///
-    /// Hidden because it is not the interface: `h5i browser` is, and it is what
-    /// knows about session names, placement, the control lock and the audit. This
-    /// is what `h5i browser` execs itself as to render a page, and it is
-    /// documented so that anyone who genuinely wants the engine on its own can
-    /// reach it without a second binary to install.
-    #[command(name = "__engine", hide = true, disable_help_flag = true)]
-    #[cfg(feature = "browser")]
-    Engine {
-        /// Everything after `__engine`, handed to the engine unchanged.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<std::ffi::OsString>,
-    },
-
-    /// The Chromium interception proxy's resident process.
+    /// A session's capture proxy: its resident process.
     #[command(name = "__capture-proxy", hide = true)]
     #[cfg(feature = "browser")]
     CaptureProxy(cli::capture_proxy::Args),
@@ -292,14 +276,6 @@ pub fn run() -> anyhow::Result<()> {
         Commands::Env { action } => cli::boxes::run(action)?,
         #[cfg(feature = "web")]
         Commands::Ui { port, open } => cli::ui::run(port, open)?,
-        #[cfg(feature = "browser")]
-        Commands::Engine { args } => {
-            // Never returns: the engine's CLI owns the exit code, and a page
-            // that failed to load has to be able to say so with a status the
-            // caller can read.
-            let argv = std::iter::once(std::ffi::OsString::from("h5i __engine")).chain(args);
-            h5i_browser::cli::main(argv);
-        }
         #[cfg(feature = "browser")]
         Commands::CaptureProxy(args) => cli::capture_proxy::run(args)?,
         #[cfg(feature = "browser")]

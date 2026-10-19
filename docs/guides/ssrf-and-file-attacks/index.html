@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-13",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-19",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -86,7 +86,7 @@
 <pre><code class="language-bash">$ ./run.sh 25
 $ h5i browser open \
   'http://127.0.0.1:9250/api/preview?url=http://127.0.0.1:9251/' \
-  --session lab25 --new --capture --allow 127.0.0.1
+  --session lab25 --new --allow 127.0.0.1
 </code></pre>
 <p>Port 9251 represents a cloud instance-metadata service. Walk its path:</p>
 <pre><code class="language-bash">$ h5i websec replay req_0 --session lab25 \
@@ -101,7 +101,7 @@ $ h5i websec replay req_0 --session lab25 \
 <p>The next lab blocks strings including <code>localhost</code> and <code>127.0.0.1</code>:</p>
 <pre><code class="language-bash">$ ./run.sh 26
 $ h5i browser open 'http://127.0.0.1:9260/' \
-  --session lab26 --new --capture
+  --session lab26 --new
 </code></pre>
 <p>The resolver accepts other textual forms of the same loopback address. For example, <code>2130706433</code> is the integer representation of <code>127.0.0.1</code>.</p>
 <pre><code class="language-bash">$ h5i websec replay req_0 --session lab26 --create \
@@ -124,7 +124,7 @@ $ h5i browser open 'http://127.0.0.1:9260/' \
 <pre><code class="language-bash">$ ./run.sh 27
 $ h5i browser open \
   'http://127.0.0.1:9270/download?file=welcome.md' \
-  --session lab27 --new --capture
+  --session lab27 --new
 </code></pre>
 <p>The application strips <code>../</code>, but decoding happens in multiple layers. Double-encode the traversal:</p>
 <pre><code class="language-bash">$ UP='%252e%252e%252f'
@@ -144,7 +144,7 @@ $ h5i browser open \
 <p>The avatar service checks that uploaded bytes start with the JPEG magic number, but trusts the supplied filename.</p>
 <pre><code class="language-bash">$ ./run.sh 28
 $ h5i browser open 'http://127.0.0.1:9280/' \
-  --session lab28 --new --capture
+  --session lab28 --new
 $ WORK=$(mktemp -d)
 $ KEY=&quot;k-pwn-$$&quot;
 </code></pre>
@@ -175,7 +175,7 @@ PY
 <pre><code class="language-bash">$ ./run.sh 29
 $ h5i browser open \
   'http://127.0.0.1:9290/view?page=home.md' \
-  --session lab29 --new --capture
+  --session lab29 --new
 </code></pre>
 <p>Request a missing page. Its error reveals that <code>access.log</code> sits next to the page directory:</p>
 <pre><code class="language-bash">$ h5i websec replay req_0 --session lab29 \

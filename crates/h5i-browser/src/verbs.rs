@@ -1,128 +1,38 @@
-//! The verb table, and the failures a verb can answer with.
-//!
-//! The verb set used to be written out three times, in the clap enum, the JSON
-//! payload it built, and a `match verb` over string literals in
-//! [`crate::stream`], with nothing making the three agree. Forgetting one
-//! produced a verb the CLI could send and the session did not know.
-//!
-//! One enum now, with every per-verb property an exhaustive `match`, so a new
-//! verb is a compile error until each question has been answered for it.
-//!
+//! The control channel's verbs, and the failures a verb can answer with.
 use serde_json::{json, Value};
 
-/// Everything the resident session can be asked to do.
-///
-/// The wire name is [`Verb::name`] and it is the only spelling: the CLI builds
-/// its request from it and the session dispatches on it, so the two cannot
-/// drift apart.
+/// Everything the control channel can be asked to do. Page verbs are not here:
+/// the CLI sends those to the session's Chromium through agent-browser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verb {
-    /// What the session is on right now.
+    /// What the session is, for a client that just connected.
     Status,
-    /// The page as a model should read it.
-    Snapshot,
-    /// Go to a URL.
-    Navigate,
-    /// Scroll the page.
-    Scroll,
-    /// Put text into a field.
-    Type,
-    /// Submit the form containing a ref.
-    Submit,
-    /// Follow or activate a ref.
-    Click,
-    /// The request log, as the engine wrote it.
+    /// The request log, as the proxy wrote it.
     Requests,
     /// Send a stored request again, with changes.
     Resend,
-    /// Wait until something is on the page, or until nothing can put it there.
-    WaitFor,
-    /// Wait until a page expression is true.
-    WaitForScript,
-    /// Pull structured data out of the page by selector.
-    Extract,
-    /// The page as markdown.
-    Markdown,
     /// Which credentials this session could substitute, by name.
     Env,
-    /// What this session did, as something that can be run again.
-    Script,
-    /// What the page publishes about itself: JSON-LD, OpenGraph, meta.
-    Structured,
-    /// What the page's media *says*: `<track>` captions, fetched and parsed.
-    Transcript,
-    /// Set a checkbox or radio to a state, rather than toggling it.
-    SetChecked,
-    /// Choose an option in a `<select>`.
-    Select,
-    /// Send a key that does something: Enter, Escape, Tab.
-    Press,
-    /// Locate elements by role and name, the way the outline names them.
-    Find,
-    /// A PNG of the page as it is right now.
-    ///
-    /// The one thing an agent driving a session could not do: `open` has
-    /// `--screenshot` and a resident session had only the live view, which is
-    /// aimed at a human. An agent that has just clicked something and wants to
-    /// know what happened had no way to look.
-    Screenshot,
-    /// Fetch the current URL again.
-    ///
-    /// The cheap half of history. `navigate` to the URL the session is already
-    /// on does the same fetch, but the agent has to hold the URL and re-derive
-    /// it after a redirect; this needs neither.
-    Reload,
     /// Open a WebSocket, send frames, and report what came back.
     ///
-    /// The engine has had a WebSocket client since it had a browser, and until
-    /// now the only thing that could reach it was page JavaScript. That is a
-    /// gap with a shape: an application whose commands travel over a socket is
-    /// one this workbench could read the handshake of and never say anything
-    /// to. `resend` is the same idea for HTTP.
+    /// `resend` is the same idea for HTTP: an application whose commands
+    /// travel over a socket is one this workbench can speak to, not only watch.
     Socket,
     /// Make one gRPC call over HTTP/2 and report its frames and status.
     ///
-    /// The engine speaks HTTP for `resend` and WebSocket for `socket`; a gRPC
-    /// service was one this workbench could see the framing of and never speak
-    /// to. The plugin frames the bytes; this puts them on the wire under the
+    /// The plugin frames the bytes; this puts them on the wire under the
     /// session's policy and records the exchange.
     Grpc,
 }
 
 impl Verb {
-    /// Every verb, for the help text and for tests that must cover all of them.
-    /// Every verb, and the only place that knows the whole set.
-    ///
-    /// A variant missing from here still compiles: `name()` is a match and the
-    /// classification functions are matches, so the compiler is satisfied, and
-    /// the verb simply does not exist on the wire. [`Verb::from_name`] never
-    /// resolves it and [`Verb::known`] never lists it, so a session answers
-    /// `unknown-verb` for something the binary plainly implements. Add new
-    /// verbs here first.
+    /// Every verb. A variant missing here compiles and does not exist on the
+    /// wire, so add new verbs here first.
     pub const ALL: &'static [Verb] = &[
         Verb::Status,
-        Verb::Snapshot,
-        Verb::Navigate,
-        Verb::Scroll,
-        Verb::Type,
-        Verb::Submit,
-        Verb::Click,
         Verb::Requests,
         Verb::Resend,
-        Verb::WaitFor,
-        Verb::WaitForScript,
-        Verb::Extract,
-        Verb::Markdown,
         Verb::Env,
-        Verb::Script,
-        Verb::Structured,
-        Verb::Transcript,
-        Verb::SetChecked,
-        Verb::Select,
-        Verb::Press,
-        Verb::Find,
-        Verb::Screenshot,
-        Verb::Reload,
         Verb::Socket,
         Verb::Grpc,
     ];
@@ -131,28 +41,9 @@ impl Verb {
     pub fn name(self) -> &'static str {
         match self {
             Verb::Status => "status",
-            Verb::Snapshot => "snapshot",
-            Verb::Navigate => "navigate",
-            Verb::Scroll => "scroll",
-            Verb::Type => "type",
-            Verb::Submit => "submit",
-            Verb::Click => "click",
             Verb::Requests => "requests",
             Verb::Resend => "resend",
-            Verb::WaitFor => "wait_for",
-            Verb::WaitForScript => "wait_for_script",
-            Verb::Extract => "extract",
-            Verb::Markdown => "markdown",
             Verb::Env => "env",
-            Verb::Script => "script",
-            Verb::Structured => "structured",
-            Verb::Transcript => "transcript",
-            Verb::SetChecked => "set_checked",
-            Verb::Select => "select",
-            Verb::Press => "press",
-            Verb::Find => "find",
-            Verb::Screenshot => "screenshot",
-            Verb::Reload => "reload",
             Verb::Socket => "socket",
             Verb::Grpc => "grpc",
         }
@@ -161,238 +52,6 @@ impl Verb {
     /// Resolve a wire name.
     pub fn from_name(name: &str) -> Option<Verb> {
         Verb::ALL.iter().copied().find(|v| v.name() == name)
-    }
-
-    /// Whether this verb acts on a `@ref` from a snapshot.
-    ///
-    /// This is what drives the staleness check in [`crate::stream`]: a verb
-    /// that names a ref is a verb whose caller read a snapshot, and the session
-    /// checks that the snapshot it read still describes the page before acting
-    /// on it. Answering `true` here is what buys that, so a new ref-taking verb
-    /// gets the check by existing rather than by remembering.
-    pub fn needs_ref(self) -> bool {
-        match self {
-            Verb::Type
-            | Verb::Submit
-            | Verb::Click
-            | Verb::SetChecked
-            | Verb::Select
-            | Verb::Press => true,
-
-            Verb::Status
-            | Verb::Snapshot
-            | Verb::Navigate
-            | Verb::Scroll
-            | Verb::Requests
-            | Verb::Resend
-            | Verb::WaitFor
-            | Verb::WaitForScript
-            | Verb::Extract
-            | Verb::Markdown
-            | Verb::Env
-            | Verb::Script
-            | Verb::Structured
-            | Verb::Transcript
-            // It produces handles rather than consuming one.
-            | Verb::Find
-            | Verb::Screenshot
-            | Verb::Reload
-            | Verb::Socket
-            | Verb::Grpc => false,
-        }
-    }
-
-    /// Whether a `$H5I_SECRET_*` placeholder in this verb's arguments is
-    /// resolved on the way to the page.
-    ///
-    /// Only where a value is being handed to the page as *content*. Resolving
-    /// one into a selector, a URL or a wait condition would put a credential
-    /// somewhere it can be read back (out of the DOM, out of the request log,
-    /// out of an error message) which is the whole thing the indirection
-    /// exists to prevent.
-    pub fn substitutes_secrets(self) -> bool {
-        match self {
-            Verb::Type => true,
-
-            Verb::Status
-            | Verb::Snapshot
-            | Verb::Navigate
-            | Verb::Scroll
-            | Verb::Submit
-            | Verb::Click
-            | Verb::WaitFor
-            | Verb::WaitForScript
-            | Verb::Requests
-            | Verb::Resend
-            | Verb::Extract
-            | Verb::Markdown
-            | Verb::Env
-            | Verb::Script
-            | Verb::Structured
-            | Verb::Transcript
-            | Verb::SetChecked
-            | Verb::Select
-            | Verb::Press
-            | Verb::Find
-            | Verb::Screenshot
-            | Verb::Reload
-            // A frame is content the caller hands to a server, so a secret
-            // could reasonably be substituted into one. Not yet: the reply is
-            // returned verbatim, and a credential that goes out in a frame and
-            // comes back in the echo is a credential in the message store.
-            | Verb::Socket
-            | Verb::Grpc => false,
-        }
-    }
-
-    /// Whether this verb needs a script realm to mean anything.
-    ///
-    /// Reported rather than discovered. `wait_for_script` on a session started
-    /// without `--script` is a question with no engine to answer it, and
-    /// silence there reads as a condition that never came true, which is a
-    /// different fact and would send an agent down the wrong branch.
-    pub fn needs_script(self) -> bool {
-        match self {
-            Verb::WaitForScript => true,
-
-            Verb::Status
-            | Verb::Snapshot
-            | Verb::Navigate
-            | Verb::Scroll
-            | Verb::Type
-            | Verb::Submit
-            | Verb::Click
-            | Verb::Requests
-            | Verb::Resend
-            // `wait_for` reads the DOM, which exists either way. On a page with
-            // no script it answers immediately rather than waiting, because
-            // nothing can change the answer.
-            | Verb::WaitFor
-            | Verb::Extract
-            | Verb::Markdown
-            | Verb::Env
-            // Named `script` for what it produces, not for the JS realm; it
-            // needs no realm to report what the session did.
-            | Verb::Script
-            | Verb::Structured
-            // `<track>` is markup, and the caption file behind it is a URL the
-            // markup names. A player that only mounts its tracks from script
-            // will have none to find here, which is a fact about that page and
-            // is reported as media with no text lane.
-            | Verb::Transcript
-            // These act on the DOM, which exists either way. A page with no
-            // script simply has nothing listening for the events they fire.
-            | Verb::SetChecked
-            | Verb::Select
-            | Verb::Press
-            | Verb::Find
-            // It paints whatever is there. A page with no script renders as
-            // the server sent it, which is a picture of something real.
-            | Verb::Screenshot
-            | Verb::Reload
-            // The socket is the engine's, not a realm's. That is the point:
-            // it works on a session opened without `--script`, where a page
-            // that speaks over one cannot be driven at all.
-            | Verb::Socket
-            | Verb::Grpc => false,
-        }
-    }
-
-    /// Whether this verb belongs in a replay.
-    pub fn is_recorded(self) -> bool {
-        match self {
-            Verb::Navigate
-            | Verb::Scroll
-            | Verb::Type
-            | Verb::Submit
-            | Verb::Click
-            // `set_checked` especially: it is the *reason* it exists beside
-            // `click`. A click on a checkbox is a toggle and replays to a
-            // different state; setting one is idempotent and replays to the
-            // same one.
-            | Verb::SetChecked
-            | Verb::Select
-            | Verb::Press
-            // A navigation, and a state change: a reload re-runs the page's
-            // script and discards whatever was typed into it. A replay that
-            // skipped it would carry form state the recorded session did not
-            // have at that point.
-            | Verb::Reload => true,
-
-            Verb::Status
-            | Verb::Snapshot
-            // A replay reaches a state; it does not produce artifacts. A
-            // recorded screenshot would write a file on every replay, at a
-            // path the recording chose, which is a side effect a script the
-            // reader skimmed should not have.
-            | Verb::Screenshot
-            | Verb::Requests
-            | Verb::Resend
-            | Verb::WaitFor
-            | Verb::WaitForScript
-            | Verb::Extract
-            | Verb::Markdown
-            | Verb::Env
-            | Verb::Script
-            | Verb::Structured
-            | Verb::Transcript
-            | Verb::Find
-            // Handing the page to a human is the one step a replay must never
-            // reproduce: there is nobody there to take it.
-            // Like `resend`: a message the agent composed, not a step in the
-            // page-level story a replay retells.
-            | Verb::Socket
-            | Verb::Grpc => false,
-        }
-    }
-
-    /// Whether this verb accepts an optional `url` and goes there before it reads.
-    pub fn navigates_first(self) -> bool {
-        match self {
-            Verb::Snapshot
-            | Verb::Markdown
-            | Verb::Extract
-            | Verb::Structured
-            | Verb::Transcript
-            | Verb::Find
-            // "Go here and show me" in one round trip, for the same reason
-            // `snapshot` has it: the intervening reply is a turn through a
-            // model that reads it only to send the next request.
-            | Verb::Screenshot => true,
-
-            // Already a navigation; a second URL would be ambiguous. For
-            // `reload` doubly so: a reload that took a URL would be `navigate`
-            // wearing a name that says it is not going anywhere.
-            Verb::Navigate
-            | Verb::Reload
-            // Acts on a ref, which must come from a reading the caller has
-            // actually seen.
-            | Verb::Type
-            | Verb::Submit
-            | Verb::Click
-            | Verb::SetChecked
-            | Verb::Select
-            | Verb::Press
-            // Reads the session rather than the page, so there would be
-            // nothing for a navigation to change.
-            | Verb::Status
-            | Verb::Requests
-            | Verb::Resend
-            | Verb::Env
-            | Verb::Script
-            | Verb::Scroll
-            // A wait fused with a navigation reads as "go here, then tell me
-            // when this appears", which is a useful verb and a different one:
-            // the settle it would have to run belongs to the navigation, so
-            // the reported outcome would describe the load rather than the
-            // wait. Left out until something asks for it by name.
-            | Verb::WaitFor
-            | Verb::WaitForScript
-            // It takes a URL of its own, and that URL is a socket rather than
-            // a page: navigating to `ws://` is not a thing a session does.
-            | Verb::Socket
-            | Verb::Grpc => false,
-        }
     }
 
     /// The verb list, for a caller that named something else.
@@ -419,23 +78,9 @@ pub enum Code {
     UnknownVerb,
     /// A required argument is missing, or is the wrong shape.
     BadRequest,
-    /// No snapshot has been served, so a `@ref` names nothing yet.
-    NoSnapshot,
-    /// The ref is not on this page at all.
-    NoSuchRef,
-    /// The ref exists, but the page moved since the snapshot that minted it.
-    StaleRef,
-    /// The ref is on the page and is the wrong kind of thing for this verb.
-    WrongRole,
     /// The policy refused it.
     Refused,
-    /// The verb needs a script realm and this session has none.
-    NoScript,
-    /// A wait ran out of budget.
-    Timeout,
-    /// A selector matched nothing.
-    NoMatch,
-    /// The engine failed at something that is not the caller's fault.
+    /// The session failed at something that is not the caller's fault.
     Internal,
 }
 
@@ -444,40 +89,16 @@ impl Code {
         match self {
             Code::UnknownVerb => "unknown-verb",
             Code::BadRequest => "bad-request",
-            Code::NoSnapshot => "no-snapshot",
-            Code::NoSuchRef => "no-such-ref",
-            Code::StaleRef => "stale-ref",
-            Code::WrongRole => "wrong-role",
             Code::Refused => "refused",
-            Code::NoScript => "no-script",
-            Code::Timeout => "timeout",
-            Code::NoMatch => "no-match",
             Code::Internal => "internal",
         }
     }
 
-    /// Whether this is the caller's mistake to fix.
-    ///
-    /// The split both reference engines make, and it matters for the agent
-    /// loop: a selector that matched nothing is something a model can correct
-    /// on its next turn, while a policy refusal is not, and reporting the first
-    /// the way the second is reported ends the self-correction rather than
-    /// prompting it. Callers use this to decide whether a retry is worth
-    /// anything.
+    /// Whether this is the caller's mistake to fix, so a retry can help.
     pub fn caller_can_fix(self) -> bool {
         match self {
-            Code::BadRequest
-            | Code::NoSnapshot
-            | Code::NoSuchRef
-            | Code::StaleRef
-            | Code::WrongRole
-            | Code::NoMatch
-            | Code::UnknownVerb => true,
-
-            Code::Refused
-            | Code::NoScript
-            | Code::Timeout
-            | Code::Internal => false,
+            Code::BadRequest | Code::UnknownVerb => true,
+            Code::Refused | Code::Internal => false,
         }
     }
 }
@@ -504,7 +125,9 @@ impl VerbError {
         VerbError::new(
             Code::UnknownVerb,
             format!(
-                "`{name}` is not a verb this session has. It knows: {}.",
+                "`{name}` is not a verb this session has. It knows: {}. The page itself is \
+                 the Chromium this session's proxy captures; `h5i browser snapshot`, `eval` and \
+                 the other page verbs reach it through agent-browser.",
                 Verb::known()
             ),
         )
@@ -514,214 +137,41 @@ impl VerbError {
         VerbError::new(Code::BadRequest, message)
     }
 
-    /// A `@ref` that named nothing, and what to do about it.
-    pub fn no_such_ref(reference: &str) -> Self {
-        VerbError::new(
-            Code::NoSuchRef,
-            format!(
-                "`{reference}` is not on this page. Take a `snapshot` to get the refs this \
-                 page actually has — they are minted per snapshot and a page that changed \
-                 has different ones."
-            ),
-        )
-    }
-
-    /// No snapshot has been served yet.
-    pub fn no_snapshot(reference: &str) -> Self {
-        VerbError::new(
-            Code::NoSnapshot,
-            format!(
-                "this session has not served a snapshot, so `{reference}` names nothing. \
-                 Take a `snapshot` first and act on a ref it gave you."
-            ),
-        )
-    }
-
-    /// The ref is stale: the page moved under it.
-    ///
-    /// The message names what the ref points at *now*, because that is what
-    /// tells the reader whether the page merely re-rendered or genuinely
-    /// changed, and it is the one piece of evidence the session has that the
-    /// agent does not.
-    pub fn stale_ref(reference: &str, now: &str) -> Self {
-        VerbError::new(
-            Code::StaleRef,
-            format!(
-                "`{reference}` came from a snapshot this page has moved on from: it now names \
-                 {now}. Refs are numbered by position in the snapshot that minted them, so \
-                 acting on this one would act on a different element than the one you read. \
-                 Take a fresh `snapshot` and use its refs."
-            ),
-        )
-    }
-
-    pub fn wrong_role(reference: &str, role: &str, wanted: &str) -> Self {
-        VerbError::new(
-            Code::WrongRole,
-            format!("`{reference}` is a {role}, not {wanted}."),
-        )
-    }
-
-    /// This verb needs a realm and there is none.
-    ///
-    /// Named as a routing answer, not as a failure: the caller's next move is
-    /// to ask `capabilities` or use the Chromium path, not to retry.
-    pub fn no_script(verb: Verb) -> Self {
-        VerbError::new(
-            Code::NoScript,
-            format!(
-                "`{}` needs a script realm and this session has none. Start `serve` with \
-                 `--script`, or route this page to the chromium engine — `capabilities` \
-                 reports which this invocation is.",
-                verb.name()
-            ),
-        )
-    }
-
-    /// A selector that matched nothing on the page.
-    ///
-    /// In-band rather than protocol: a selector the caller can correct is a
-    /// different failure from a policy refusal, and reporting the first the way
-    /// the second is reported ends a self-correction loop instead of prompting
-    /// one.
-    pub fn no_match(message: impl Into<String>) -> Self {
-        VerbError::new(Code::NoMatch, message)
-    }
-
     pub fn refused(message: impl Into<String>) -> Self {
         VerbError::new(Code::Refused, message)
     }
-
 }
 
 #[cfg(test)]
 mod tests {
-    /// Every verb this engine implements is a verb it will answer to.
-    ///
-    /// The failure this catches is silent and confusing: a verb wired through
-    /// the CLI, the dispatch and the broker, refused at the session with
-    /// "`resend` is not a verb this session has", because the one hand-written
-    /// table it also had to be in was missed. Nothing about that fails to
-    /// compile.
-    #[test]
-    fn every_implemented_verb_resolves_from_its_name() {
-        for verb in super::Verb::ALL {
-            assert_eq!(
-                super::Verb::from_name(verb.name()),
-                Some(*verb),
-                "`{}` is in ALL but does not resolve from its own name",
-                verb.name()
-            );
-            assert!(
-                super::Verb::known().contains(verb.name()),
-                "`{}` is not in the list a refusal offers",
-                verb.name()
-            );
-        }
-        // The one the trap caught, named so a regression is legible.
-        assert_eq!(
-            super::Verb::from_name("resend"),
-            Some(super::Verb::Resend),
-            "the workbench verb has to be reachable from the wire"
-        );
-        // And its counterpart for the other protocol, which is a verb the CLI
-        // exposes and which would silently not exist if it were left out of
-        // `ALL`.
-        assert_eq!(
-            super::Verb::from_name("socket"),
-            Some(super::Verb::Socket),
-            "the workbench verb for WebSockets has to be reachable from the wire"
-        );
-    }
-
     use super::*;
 
+    /// Every verb this session implements is a verb it will answer to.
     #[test]
     fn every_name_round_trips_and_none_collide() {
         let mut seen = std::collections::HashSet::new();
         for verb in Verb::ALL {
-            assert!(
-                seen.insert(verb.name()),
-                "two verbs answer to {:?}",
-                verb.name()
-            );
+            assert!(seen.insert(verb.name()), "two verbs answer to {:?}", verb.name());
             assert_eq!(Verb::from_name(verb.name()), Some(*verb));
+            assert!(Verb::known().contains(verb.name()));
         }
-        assert_eq!(Verb::from_name("typewrite"), None);
-    }
-
-    #[test]
-    fn only_verbs_that_name_a_ref_ask_for_one() {
-        let refs: Vec<&str> = Verb::ALL
-            .iter()
-            .filter(|v| v.needs_ref())
-            .map(|v| v.name())
-            .collect();
-        assert_eq!(
-            refs,
-            vec!["type", "submit", "click", "set_checked", "select", "press"]
-        );
-    }
-
-    #[test]
-    fn a_secret_is_resolved_only_where_it_is_handed_to_the_page() {
-        // Anywhere else and the value can be read back: a selector lands in an
-        // error, a URL lands in the request log, a wait condition lands in a
-        // reply. `type` is the one place it goes into the page and stops.
-        let substituting: Vec<&str> = Verb::ALL
-            .iter()
-            .filter(|v| v.substitutes_secrets())
-            .map(|v| v.name())
-            .collect();
-        assert_eq!(substituting, vec!["type"]);
-    }
-
-    #[test]
-    fn a_failure_carries_a_code_and_says_what_to_do_next() {
-        let e = VerbError::stale_ref("@e5", "a link \"Sign out\"");
-        let reply = e.reply();
-        assert_eq!(reply["ok"], false);
-        assert_eq!(reply["code"], "stale-ref");
-        assert_eq!(reply["retryable"], true);
-        let text = reply["error"].as_str().unwrap();
-        assert!(text.contains("snapshot"), "no recovery in {text:?}");
-        assert!(text.contains("Sign out"), "does not say what it names now");
+        assert_eq!(Verb::from_name("resend"), Some(Verb::Resend));
+        assert_eq!(Verb::from_name("socket"), Some(Verb::Socket));
+        assert_eq!(Verb::from_name("snapshot"), None);
     }
 
     #[test]
     fn a_policy_refusal_is_not_offered_as_retryable() {
-        // The split that keeps a self-correction loop from spinning: a model
-        // can fix a selector, and cannot fix an allowlist.
         assert!(!Code::Refused.caller_can_fix());
-        assert!(Code::NoMatch.caller_can_fix());
-        assert!(Code::StaleRef.caller_can_fix());
-    }
-
-    #[test]
-    fn every_code_has_a_distinct_string() {
-        let codes = [
-            Code::UnknownVerb,
-            Code::BadRequest,
-            Code::NoSnapshot,
-            Code::NoSuchRef,
-            Code::StaleRef,
-            Code::WrongRole,
-            Code::Refused,
-            Code::NoScript,
-            Code::Timeout,
-            Code::NoMatch,
-            Code::Internal,
-        ];
-        let mut seen = std::collections::HashSet::new();
-        for code in codes {
-            assert!(seen.insert(code.as_str()), "duplicate {:?}", code.as_str());
-        }
+        assert!(Code::BadRequest.caller_can_fix());
+        let reply = VerbError::refused("no").reply();
+        assert_eq!(reply["code"], "refused");
+        assert_eq!(reply["retryable"], false);
     }
 
     #[test]
     fn the_unknown_verb_message_lists_what_is_known() {
-        let e = VerbError::unknown_verb("typewrite");
-        let text = e.message;
+        let text = VerbError::unknown_verb("typewrite").message;
         assert!(text.contains("typewrite"));
         for verb in Verb::ALL {
             assert!(text.contains(verb.name()), "{} missing", verb.name());

@@ -20,7 +20,7 @@ use crate::error::H5iError;
 // imports them from `sandbox_policy` directly, breaking the
 // `sandbox → container → sandbox` dispatch cycle.
 pub use crate::sandbox_policy::{
-    agent_browser_binary, browser_light_binary, browser_read_grants, browser_tooling_present,
+    agent_browser_binary, browser_read_grants, browser_tooling_present,
     chrome_binary, chrome_exec_patterns, engine_tooling_missing, AgentRuntime, AuditCapture,
     BrowserEngine, BROWSER_ENGINES,
     AuditPolicy, BackgroundHandle,

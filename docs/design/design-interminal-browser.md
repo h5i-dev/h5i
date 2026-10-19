@@ -1,5 +1,11 @@
 # Design: the in-terminal browser
 
+> **Status: partly superseded 2026-10-19.** h5i's own engine, and with it
+> `h5i browser view` for host sessions, was removed. The viewer remains for box
+> browsers (`h5i box view`); the hint and history keys apply only to a stream
+> that advertises them, which a Chromium screencast does not. See
+> `docs/MANUAL.md`, "h5i box view".
+
 The engine renders a page; this is the half a human looks at and drives. Two
 viewers share one keymap: the terminal viewer (`h5i browser view`,
 `h5i box view --term`) and the loopback viewer served to a browser. Sections V1

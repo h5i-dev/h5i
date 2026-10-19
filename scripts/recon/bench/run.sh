@@ -42,7 +42,7 @@ for shape in $SHAPES; do
     SESSION="bench-$shape"
 
     "$H5I" browser close --session "$SESSION" >/dev/null 2>&1
-    "$H5I" browser open "$ORIGIN/" --session "$SESSION" --capture --script --json >/dev/null 2>&1
+    "$H5I" browser open "$ORIGIN/" --session "$SESSION" --json >/dev/null 2>&1
 
     # The pipeline an agent would run, in the order that spends the fewest
     # requests: read what is already there, ask for the published files, walk,

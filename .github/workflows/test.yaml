@@ -80,14 +80,6 @@ jobs:
       # `--locked` throughout: Cargo.lock is committed and the release build
       # uses it, so a manifest change that never updated the lockfile has to
       # fail on a PR rather than surface at tag time.
-      # h5i-browser depends on boa by git revision because no published
-      # version can coexist with blitz's parley. That is a thing to undo, not to keep,
-      # and "it is on the list" is how a temporary patch becomes permanent — so
-      # the question is asked here rather than remembered. Fails the day a
-      # usable release exists, and is quiet until then.
-      - name: A published boa would still not work (so the patch stays)
-        run: ./scripts/check_boa_release.sh
-
       - name: cargo clippy (deny warnings)
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
@@ -109,9 +101,7 @@ jobs:
 
   # The smoke suites, driven against a real server by real binaries.
   #
-  # Its own job because it needs release binaries: a debug build of this
-  # workspace carries a browser engine and a JavaScript engine, and a suite that
-  # drove one would spend the runner's half hour rendering pages. Built lean
+  # Its own job because it needs release binaries, built lean
   # (`--no-default-features --features browser`), so no Node and no console.
   #
   # These suites exist for the bugs unit tests cannot see: a verb wired
@@ -130,6 +120,19 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # A session's browser is Chromium, driven by agent-browser and pointed at
+      # the session's capture proxy, so the suites need both to be real.
+      # Pinned: a new agent-browser is a change to what these suites test, and
+      # it should arrive as a diff here rather than as a red run nobody caused.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Install agent-browser and its Chromium
+        run: |
+          npm install -g agent-browser@0.39.1
+          agent-browser install --with-deps
+
       - name: Build the binaries the suites drive
         env:
           H5I_SKIP_WEB_BUILD: "1"
@@ -137,10 +140,17 @@ jobs:
           cargo build --release --locked --no-default-features
           --features browser -p h5i -p h5i-websec -p h5i-recon -p h5i-test
 
+      # The runner's AppArmor policy refuses the unprivileged user namespaces
+      # Chromium's sandbox needs, so it runs without one here, on a throwaway
+      # VM against a server this job started.
       - name: websec smoke
+        env:
+          AGENT_BROWSER_ARGS: --no-sandbox
         run: ./scripts/websec/smoke.sh target/release/h5i target/release/h5i-websec
 
       - name: recon smoke
+        env:
+          AGENT_BROWSER_ARGS: --no-sandbox
         run: ./scripts/recon/smoke.sh target/release/h5i target/release/h5i-recon
 
       - name: security regression test smoke
@@ -327,13 +337,11 @@ jobs:
   # `cargo check` (not a full build) is enough: every such failure is a
   # front-end compile/type/cfg error. Keep this matrix in sync with
   # `release.yaml`'s build matrix — and check every product it ships, because
-  # this job checked only `h5i` while the release built the engine too, and so
-  # let two separate engine-only failures through to the v0.3.5 tag.
+  # this job once checked only `h5i` while the release built more, and so let
+  # two separate failures through to the v0.3.5 tag.
   cross-check:
     name: cross-check ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
-    # 45 rather than 30: the engine pulls stylo, blitz and boa, and the first
-    # run on a cold cache checks all three from source.
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -368,8 +376,8 @@ jobs:
       # Compile-only, so the console bundle is irrelevant: skip the npm build
       # (the build script stubs web/dist so `rust-embed` still resolves) rather
       # than put Node on four more runners.
-      # The engine is checked a second time on its own, even though the root
-      # check now compiles it as a dependency. `-p h5i-browser` resolves
+      # The network layer is checked a second time on its own, even though the
+      # root check compiles it as a dependency. `-p h5i-browser` resolves
       # features over that crate's graph alone, and the workspace's unified
       # resolution can quietly supply a feature the crate never asked for — so
       # the standalone check is what keeps the crate self-contained, which its

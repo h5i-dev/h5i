@@ -1,5 +1,11 @@
 # Design: the browser
 
+> **Status: superseded 2026-10-19.** h5i's own browser engine was removed. A
+> session is now Chromium, driven through agent-browser and captured by a
+> per-session h5i proxy; the network half described here (policy, receipts,
+> jar, budget, message store, resend) lives on in `crates/h5i-browser` under
+> that proxy. Kept for its history. See `docs/MANUAL.md`, "h5i browser".
+
 > A pure-Rust browser that lives inside the agent's own sandbox, renders on
 > demand, and can prove what it did.
 

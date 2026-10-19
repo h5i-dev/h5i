@@ -60,16 +60,16 @@ identity:
 
 ```bash
 h5i project init acme --title "ACME bounty" --target https://target.example
-h5i browser open https://target.example --session user-a --new --project acme --capture --script
-h5i browser open https://target.example --session user-b --new --project acme --capture --script
+h5i browser open https://target.example --session user-a --new --project acme
+h5i browser open https://target.example --session user-b --new --project acme
 ```
 
-Use a human-provided cookie jar when the site's login cannot be driven. A session
+Have a human sign in with `agent-browser dashboard start` when the site's login cannot be driven. A session
 name is not proof of identity; verify the signed-in account in the application
 and retain the opaque session id from receipts.
 
-Do not widen `--allow`, change identity, reset a request budget, enable
-`--permissive-cors`, or test an origin IP merely because a hypothesis needs it.
+Do not widen `--allow`, change identity, reset a request budget, or test an
+origin IP merely because a hypothesis needs it.
 Those actions require the program to authorize the corresponding target and
 behavior.
 

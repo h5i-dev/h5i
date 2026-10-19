@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-13",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-19",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -108,7 +108,7 @@ $ h5i websec --help
 </code></pre>
 <p>Open the token endpoint:</p>
 <pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9100/api/token' \
-  --session lab10 --new --capture
+  --session lab10 --new
 $ h5i websec show res_0 --session lab10 --raw
 </code></pre>
 <p>The response contains a guest JWT. Copy the token into a shell variable:</p>
@@ -272,7 +272,7 @@ PY
 </code></pre>
 <p>Open its token endpoint and inspect the returned JWT:</p>
 <pre><code class="language-bash">$ h5i browser open 'http://127.0.0.1:9110/api/token' \
-  --session lab11 --new --capture
+  --session lab11 --new
 $ h5i websec show res_0 --session lab11 --raw
 </code></pre>
 <p>Decode the token as before. This header contains an additional field:</p>

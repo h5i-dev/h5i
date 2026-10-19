@@ -22,12 +22,9 @@ main() {
   INSTALL_DIR="${H5I_INSTALL_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}"
 
   # ── what to install ────────────────────────────────────────────────────────
-  # One binary by default. The rendering engine used to ship as a second file
-  # (`h5i-browser-light`) and is now linked into `h5i`, which execs itself to
-  # become it. That removed three things at once: a default install that left
-  # `h5i browser open` with nothing to render a page, a version skew between two
-  # halves of one protocol with no handshake between them, and a box that could
-  # read the engine without being allowed to exec it.
+  # One binary by default. `h5i browser` drives Chromium through agent-browser,
+  # which is installed on its own (`npm install -g agent-browser`); h5i's half,
+  # the capture proxy, is inside this binary.
   # `h5i` first, always: `--websec` registers its plugin by running the h5i
   # this loop has just installed, so the order is a dependency, not a
   # preference.
@@ -286,6 +283,14 @@ main() {
     echo
     echo "!  \`h5i\` on your PATH is ${found}, not ${INSTALL_DIR}/h5i." >&2
     echo "   Remove the older one, or put ${INSTALL_DIR} first on your PATH." >&2
+  fi
+
+  # A browser session is Chromium driven by agent-browser, which h5i does not
+  # ship. Said here, once, rather than discovered at the first `browser open`.
+  if ! command -v agent-browser >/dev/null 2>&1; then
+    echo
+    echo "!  \`h5i browser\` drives Chromium through agent-browser, which is not installed:" >&2
+    echo "     npm install -g agent-browser && agent-browser install" >&2
   fi
 }
 

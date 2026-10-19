@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-09-15",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-19",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -101,7 +101,7 @@ The labs it refers to are 42 deliberately vulnerable applications you run on you
 in <a href="https://github.com/h5i-dev/h5i-tutorial">h5i-dev/h5i-tutorial</a>.
 Use h5i only against systems you own or are explicitly authorized to test.</div>
 <h2 id="the-loop">The loop</h2>
-<pre><code class="language-bash">h5i browser open URL --session s --new --capture     # 1. capture
+<pre><code class="language-bash">h5i browser open URL --session s --new     # 1. capture
 h5i websec requests --session s                      # 2. read the record
 h5i websec show res_0 --session s --raw              #    read one message
 h5i websec replay req_0 --session s --set TARGET=V   # 3. change one thing
@@ -252,7 +252,7 @@ a loop goes quiet          →  --reset-budget
 a value became a string    →  it did not parse as JSON — check the quoting
 % got re-encoded           →  --raw-target
 framing headers rewritten  →  --raw-request
-a page script did nothing  →  --script on the session
+a page script did nothing  →  h5i browser console        (did it throw?)
 a socket said nothing      →  raise --wait-ms
 </code></pre>
 <h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>How is a --set value parsed?</summary><div class="faq-answer">The value is everything after the first =, so a payload full of = needs no escaping. A value that parses as JSON is sent as JSON, so json.admin=true is a boolean and json.admin="true" is the string.</div></details><details class="faq-item"><summary>Which flag do loops forget?</summary><div class="faq-answer">--reset-budget. Each page has a bounded network allowance, and without it a long loop stops partway while every later probe reads as a negative result.</div></details></div>

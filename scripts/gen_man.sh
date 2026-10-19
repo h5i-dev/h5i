@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 # `--locked`: the committed page has to be reproducible from the committed
 # lockfile, which is the claim the CI freshness gate makes. Resolving a newer
 # clap here could change the rendering and turn the gate into noise.
-# `--release`: dev-profile builds are guarded off locally (see CLAUDE.md). CI
+# `--release`: dev-profile builds may be guarded off locally (scripts/no-debug-guard.sh). CI
 # has no such guard and no warm release cache, so it sets H5I_MAN_DEV_PROFILE=1.
 if [ "${H5I_MAN_DEV_PROFILE:-0}" = 1 ]; then profile=(); else profile=(--release); fi
 cargo run --quiet --locked "${profile[@]}" --example gen_man > docs/man/man1/h5i.1

@@ -102,12 +102,6 @@ fn header(h5i_root: &std::path::Path, m: &h5i_core::env::EnvManifest, deny_only:
 
     let env_dir = m.dir(h5i_root);
     let mut sources: Vec<&str> = Vec::new();
-    if h5i_core::env::browser_request_log(h5i_root, m).is_some() {
-        sources.push("the engine's request log (box-claimed, fail-closed)");
-    }
-    if h5i_core::env::browser_action_log(h5i_root, m).is_some() {
-        sources.push("the engine's action log (box-claimed, best-effort)");
-    }
     if h5i_core::browser_proxy::actions_log(&env_dir).exists() {
         sources.push("the mediator's actions (host-observed, best-effort)");
     }

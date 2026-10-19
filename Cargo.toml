@@ -41,7 +41,7 @@ h5i-app-token = { path = "crates/h5i-app-token", version = "0.1.1" }
 name = "h5i"
 version = "0.5.0"
 edition = "2024"
-description = "h5i: the agent-native web security workspace. Red-team web apps with a browser and HTTP control, and prove application logic in Lean 4 (CLI)."
+description = "h5i unifies web development, formal verification with Lean 4, and red-teaming around a composable Rust framework (CLI)."
 
 [lib]
 name = "h5i"
@@ -55,54 +55,27 @@ path = "src/main.rs"
 # `web` adds the `h5i ui` box console and, through h5i-core, the axum server
 # and the embedded React bundle it serves. On by default; drop it with
 # `--no-default-features` for a build that needs no Node toolchain.
-default = ["web", "browser", "ytdlp", "identity"]
+default = ["web", "browser"]
 web = ["h5i-core/web"]
-# `browser` links the rendering engine into this binary, which is what `h5i browser` execs
-# itself to become (`h5i __engine`).
-# `url` with it: the workbench's readers parse a stored URL, and they are
-# gated with `browser` rather than with `ytdlp`, which is where the dependency
-# used to arrive by accident.
+# `browser` adds `h5i browser`: the capture proxy a session's Chromium is
+# pointed at, its control channel, and the verbs that drive both.
+# `url` with it: the workbench's readers parse a stored URL.
 browser = ["dep:h5i-browser", "dep:url", "dep:hudsucker", "dep:http-body-util", "dep:tokio"]
-# `identity` adds `--identity` and `h5i browser identity`: one coherent browser
-# identity, read by the header layer and the script realm from the same object.
-# See `crates/h5i-browser/src/identity.rs`.
-#
-# On by default and gated anyway, for the reason `ytdlp` is. `--identity native`
-# is the default and costs nothing at run time. Without the feature there is no
-# `--identity` to type, no identity module in the binary, and the engine sends
-# the one agent string it has always sent. It implies `browser`, because the
-# thing being given an identity is the engine.
-identity = ["browser", "h5i-browser/identity"]
-# `ytdlp` adds the helper lane: `h5i browser transcript --via yt-dlp`, which runs yt-dlp to
-# reach the transcripts that are not in a page's markup at all — YouTube's above all, whose
-# captions live behind the player's own API.
-ytdlp = ["browser", "dep:url"]
 
 [dependencies]
 # `default-features = false` so this package's own `web` flag is the single
 # switch: without it, h5i-core is built lean rather than pulling axum in
 # through its own defaults.
 h5i-core = { path = "crates/h5i-core", default-features = false }
-# The rendering engine, linked so `h5i` can exec itself as one. It was a second
-# shipped binary until the pivot; see the crate's own Cargo.toml for why one
-# file is right now and two were right before.
-# `default-features = false` so the root's own `identity` feature is what turns
-# identities on, rather than them arriving through the dependency's defaults and
-# making the root switch cosmetic. The engine crate's only default feature is
-# `identity`, so this leaves the engine itself whole.
-h5i-browser = { path = "crates/h5i-browser", optional = true, default-features = false }
+# The network layer under the capture proxy: policy, receipts, jar, budget,
+# message store and the session control channel.
+h5i-browser = { path = "crates/h5i-browser", optional = true }
 # The store's types and readers, engine-free, shared with the plugins.
 h5i-wire = { path = "crates/h5i-wire" }
 # `h5i app`: extract an h5i-app kernel to Lean, gate its proofs, mutate it.
 # Drives Charon, Aeneas and Lake as subprocesses, so it links none of them.
 h5i-app-cli = { path = "crates/h5i-app-cli" }
-# A scratch directory: the workspace `h5i browser transcript --via` gives its
-# helper.
-tempfile = "3.8"
-# For one job, in the helper lane: refusing a URL whose scheme is not http(s)
-# before it reaches a program that takes URLs. Already in the tree through
-# h5i-browser, so this adds a name to the manifest and no code to the
-# build, and hand-rolling the check would mean hand-rolling a URL parser.
+# Parsing a stored or given URL. Already in the tree through h5i-browser.
 url = { version = "2.5", optional = true }
 git2 = { workspace = true }
 serde_json = { workspace = true }
@@ -140,6 +113,7 @@ hudsucker = { version = "0.25", default-features = false, features = ["rcgen-ca"
 http-body-util = { version = "0.1", optional = true }
 
 [dev-dependencies]
+tempfile = "3.8"
 # Renders docs/man/man1/h5i.1 in examples/gen_man.rs. A dev-dependency because the
 # page is build output: nothing in the shipped binary prints roff.
 clap_mangen = "0.2"
@@ -150,9 +124,3 @@ serde_json = { workspace = true }
 
 [profile.dev]
 debug = false
-
-# Pinned fork providing `Script::bind_to_realm`; return to crates.io when the
-# upstream change lands. Patch `boa_gc` too to avoid incompatible duplicate types.
-[patch.crates-io]
-boa_engine = { git = "https://github.com/h5i-dev/boa", rev = "f3d34b44" }
-boa_gc = { git = "https://github.com/h5i-dev/boa", rev = "f3d34b44" }

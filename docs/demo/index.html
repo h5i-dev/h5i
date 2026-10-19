@@ -560,7 +560,7 @@ const term = [
   {at:T.verify+2.1, cmd:'h5i app mutate examples/app/board', cps:70},
   {at:T.verify+3.5, out:[`<span class="ok">1/1</span> configured kernel mutation caught by proofs`]},
   {at:T.hack+.3, clear:true},
-  {at:F+.5, cmd:'h5i browser open http://board.local/posts --capture', cps:74},
+  {at:F+.5, cmd:'h5i browser open http://board.local/posts', cps:74},
   {at:F+1.7, out:[`<span class="ok">✔</span> session <span class="ref">audit-42</span> · signed in as Alice`]},
   {at:F+3.0, cmd:'h5i browser click @e7', cps:40},
   {at:F+4.1, out:[`<span class="ref">req_108</span> GET /api/posts/41 <span class="ok">200</span> · Alice's post`]},

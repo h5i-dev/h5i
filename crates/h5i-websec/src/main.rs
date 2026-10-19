@@ -864,8 +864,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         let seqs = read::seqs_after(&root, session.as_deref(), pre_seq).unwrap_or_default();
         if seqs.is_empty() {
             eprintln!(
-                "  note     : nothing to print — the session kept no messages \
-                 (open it with `--capture`)"
+                "  note     : nothing to print — the session kept no messages"
             );
         }
         // More than one send (a sweep): label each so stdout can be split.

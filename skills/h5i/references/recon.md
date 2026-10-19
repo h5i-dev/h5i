@@ -5,7 +5,7 @@ Test only authorized targets. Recon discovers and records; it never decides that
 `h5i recon` arrives with `h5i plugin install recon`. It sends nothing of its own: every request it makes is an `h5i browser resend` through the session's policy, budget, and receipts.
 
 ```bash
-h5i browser open https://target.example --capture --script
+h5i browser open https://target.example
 h5i recon extract                            # what the pages and bundles disclosed
 h5i recon known                              # robots.txt, sitemap.xml, security.txt
 h5i recon crawl --max-requests 200 --rate 4  # walk it, under this session's login
