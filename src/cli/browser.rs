@@ -1180,13 +1180,47 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         BrowserCommands::MovedMatch { .. } => moved("match", "match"),
         BrowserCommands::MovedSitemap { .. } => moved("sitemap", "sitemap"),
         BrowserCommands::Rpc { stdio, session } => rpc(&root, session.as_deref(), stdio),
-        BrowserCommands::Env { session, json } => {
-            verb(&root, session.as_deref(), json!({"verb": "env"}), false, json)
-        }
+        BrowserCommands::Env { session, json } => env(&root, session.as_deref(), json),
         BrowserCommands::Take { session } => take(&root, session.as_deref()),
         BrowserCommands::Release { session } => release(&root, session.as_deref()),
         BrowserCommands::Url { name, port } => viewer_url(&name, port),
     }
+}
+
+/// The credentials `type` can resolve, by name. Answered from this
+/// environment, which is where `type` resolves them, not the one the
+/// session's proxy was started in.
+fn env(root: &Path, selector: Option<&str>, json_out: bool) -> anyhow::Result<()> {
+    let _ = live_session(root, selector);
+    let secrets = h5i_browser::secrets::Secrets::from_env();
+    let names: Vec<&str> = secrets.names();
+    let prefix = h5i_browser::secrets::PREFIX;
+    let message = if names.is_empty() {
+        format!(
+            "no credentials are available. Set one in the environment you run h5i in, named \
+             `{prefix}<SITE>_<FIELD>`, and type it into a field as `${prefix}<SITE>_<FIELD>`."
+        )
+    } else {
+        format!(
+            "{} credential(s). Names only — no verb returns a value. Use one by typing its \
+             placeholder into a field.",
+            names.len()
+        )
+    };
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "ok": true, "names": names, "prefix": prefix, "message": message,
+            }))?
+        );
+    } else {
+        for name in &names {
+            println!("{name}");
+        }
+        println!("{message}");
+    }
+    Ok(())
 }
 
 /// End every session whose time has passed: the processes, then the record.
@@ -1943,18 +1977,25 @@ fn close_proxy_browser(session: &bs::Session) {
     if session.proxy.is_none() {
         return;
     }
-    if let Some(agent_browser) = find_agent_browser() {
-        let _ = Command::new(agent_browser)
-            .arg("--session")
-            .arg(proxy_browser_session(&session.id))
-            .args(session_browser_args(session))
-            .arg("close")
-            .env("NO_COLOR", "1")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+    let Some(agent_browser) = find_agent_browser() else {
+        return;
+    };
+    // Only a session agent-browser has: `close` on one it does not know starts
+    // a daemon to say so, and a session with no browser would leave one behind.
+    let name = proxy_browser_session(&session.id);
+    if !agent_browser_sessions(&agent_browser).contains(&name) {
+        return;
     }
+    let _ = Command::new(agent_browser)
+        .arg("--session")
+        .arg(name)
+        .args(session_browser_args(session))
+        .arg("close")
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 /// Where a session keeps the agent-browser launch flags it started with.
@@ -1979,6 +2020,23 @@ fn session_browser_args(session: &bs::Session) -> Vec<String> {
         .unwrap_or_else(|| agent_browser_proxy_args(&proxy.url))
 }
 
+/// The sessions agent-browser has running, by name. Listing starts nothing.
+fn agent_browser_sessions(agent_browser: &Path) -> Vec<String> {
+    let Ok(output) = Command::new(agent_browser)
+        .args(["session", "list", "--json"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return Vec::new();
+    };
+    let listed: Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
+    listed["data"]["sessions"]
+        .as_array()
+        .map(|names| names.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
 /// Close every h5i Chromium whose session in this registry has ended: one left
 /// by a proxy that died, or a session another tool expired. A session this
 /// registry has no record of may be another registry's, and is left alone.
@@ -1986,17 +2044,8 @@ fn close_orphaned_browsers(root: &Path) {
     let Some(agent_browser) = find_agent_browser() else {
         return;
     };
-    let Ok(output) = Command::new(agent_browser)
-        .args(["session", "list", "--json"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-    else {
-        return;
-    };
-    let listed: Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
-    let names = listed["data"]["sessions"].as_array().cloned().unwrap_or_default();
-    for name in names.iter().filter_map(Value::as_str) {
+    for name in agent_browser_sessions(&agent_browser) {
+        let name = name.as_str();
         let Some(id) = name.strip_prefix("h5i-") else {
             continue;
         };
@@ -2024,7 +2073,18 @@ fn sandbox_hint(stderr: &str) -> String {
 }
 
 /// Drive a session's Chromium to a URL.
+///
+/// Only `http(s)`, and `about:blank`: a `file:`, `javascript:` or `data:` URL
+/// never passes the session's proxy, so it would be neither checked nor
+/// recorded, and `file:` reads this machine's files into the page.
 fn drive_to(root: &Path, session: &bs::Session, url: &str) -> anyhow::Result<()> {
+    if !is_web_url(url) && !url.trim().eq_ignore_ascii_case("about:blank") {
+        anyhow::bail!(
+            "a session goes to http:// and https:// URLs, not {url:?}: anything else never \
+             passes its proxy, so it would be neither checked against the session's policy nor \
+             recorded"
+        );
+    }
     let dir = bs::dir(root, &session.id);
     if let Some(explanation) = h5i_core::control::check(&dir, true).explain() {
         anyhow::bail!("{explanation}");

@@ -330,12 +330,14 @@ sandbox off, so use it only for a target you trust.
 ### Page verbs and workbench verbs
 
 The page verbs go to the session's Chromium through agent-browser, with the
-proxy flags on every call, so a relaunched browser is still captured:
+launch flags the session started with on every call, so a relaunched browser is
+still captured. Each command is handed over on stdin, never in argv, so a value
+shaped like a flag stays a value and a credential is not in the process table:
 
 | verb | what it does |
 |---|---|
 | `snapshot [-i] [--delta] [--url U]` | the accessibility outline, with `@ref` handles |
-| `navigate <url>` | go there (`proxy-open` is the same verb) |
+| `navigate <url>` | go there, `http(s)` or `about:blank` only (`proxy-open` is the same verb) |
 | `reload` | load the current page again |
 | `click <@ref\|css>` | click it |
 | `type <target> <text>` | clear the field and fill it |
@@ -355,8 +357,9 @@ holds rather than something the agent saw once. `screenshot` writes into
 `artifacts/` under a name *h5i chooses*; `--out` names a file instead.
 
 The workbench verbs go to the proxy's control channel and act on its network
-layer: `requests`, `resend`, `sequence`, `socket`, `grpc`, `env` and
-`rpc --stdio`. See [`h5i websec`](#h5i-websec) for what they are for.
+layer: `requests`, `resend`, `sequence`, `socket`, `grpc` and `rpc --stdio`.
+See [`h5i websec`](#h5i-websec) for what they are for. `env` lists, by name,
+the credentials `type` can resolve from the environment h5i runs in.
 
 Driving agent-browser yourself works too, and is where capture can silently
 stop: its daemon restarts when idle, and a later bare `agent-browser open`

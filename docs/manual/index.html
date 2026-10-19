@@ -537,7 +537,9 @@ and the jar is where this session's come from.</p>
 sandbox off, so use it only for a target you trust.</p>
 <h3 id="page-verbs-and-workbench-verbs">Page verbs and workbench verbs</h3>
 <p>The page verbs go to the session's Chromium through agent-browser, with the
-proxy flags on every call, so a relaunched browser is still captured:</p>
+launch flags the session started with on every call, so a relaunched browser is
+still captured. Each command is handed over on stdin, never in argv, so a value
+shaped like a flag stays a value and a credential is not in the process table:</p>
 <table>
 <thead>
 <tr>
@@ -552,7 +554,7 @@ proxy flags on every call, so a relaunched browser is still captured:</p>
 </tr>
 <tr>
 <td><code>navigate &lt;url&gt;</code></td>
-<td>go there (<code>proxy-open</code> is the same verb)</td>
+<td>go there, <code>http(s)</code> or <code>about:blank</code> only (<code>proxy-open</code> is the same verb)</td>
 </tr>
 <tr>
 <td><code>reload</code></td>
@@ -609,8 +611,9 @@ session's <code>artifacts/</code>, so a DOM or console observation is evidence t
 holds rather than something the agent saw once. <code>screenshot</code> writes into
 <code>artifacts/</code> under a name <em>h5i chooses</em>; <code>--out</code> names a file instead.</p>
 <p>The workbench verbs go to the proxy's control channel and act on its network
-layer: <code>requests</code>, <code>resend</code>, <code>sequence</code>, <code>socket</code>, <code>grpc</code>, <code>env</code> and
-<code>rpc --stdio</code>. See <a href="#h5i-websec"><code>h5i websec</code></a> for what they are for.</p>
+layer: <code>requests</code>, <code>resend</code>, <code>sequence</code>, <code>socket</code>, <code>grpc</code> and <code>rpc --stdio</code>.
+See <a href="#h5i-websec"><code>h5i websec</code></a> for what they are for. <code>env</code> lists, by name,
+the credentials <code>type</code> can resolve from the environment h5i runs in.</p>
 <p>Driving agent-browser yourself works too, and is where capture can silently
 stop: its daemon restarts when idle, and a later bare <code>agent-browser open</code>
 starts a browser that is not proxied. <code>h5i browser proxy</code> prints the line and

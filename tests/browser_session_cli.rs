@@ -91,6 +91,14 @@ with open(log, "a") as f:
 if args == ["--version"]:
     print("agent-browser 0.39.1")
     sys.exit(0)
+if args == ["session", "list", "--json"]:
+    seen = []
+    for line in open(log).read().split("\n"):
+        words = line.split(" ")
+        if len(words) > 1 and words[0] == "--session" and words[1] not in seen:
+            seen.append(words[1])
+    print(json.dumps({"success": True, "data": {"sessions": seen}}))
+    sys.exit(0)
 proxy, i = None, 0
 while i < len(args):
     if args[i] in ("--session", "--args"):
@@ -108,7 +116,7 @@ for command in commands:
         f.write(" ".join(command) + "\n")
     verb, values = command[0], command[1:]
     if verb == "open":
-        if proxy and shutil.which("curl"):
+        if proxy and values[0].startswith("http") and shutil.which("curl"):
             subprocess.run(["curl", "-s", "-o", "/dev/null", "--proxy", proxy, values[0]], check=True)
         print("\u2713 opened " + values[0])
     elif verb == "snapshot":
@@ -320,7 +328,7 @@ fn page_verbs_drive_the_sessions_chromium_through_its_proxy() {
         "--session h5i-{id} --proxy {proxy} --ignore-https-errors --args --proxy-bypass-list=<-loopback> batch --bail"
     );
     let page_calls: Vec<String> =
-        fx.ab_calls().into_iter().filter(|c| !c.starts_with("--version")).collect();
+        fx.ab_calls().into_iter().filter(|c| c.starts_with("--session")).collect();
     assert!(page_calls.iter().all(|c| c == &fixed), "{page_calls:#?}");
     let commands = fx.ab_commands();
     for expected in [
@@ -363,13 +371,35 @@ fn the_browser_keeps_the_flags_it_was_launched_with() {
     assert!(fx.run_with(&["browser", "open", &url], &[("AGENT_BROWSER_ARGS", "--no-sandbox")]).status.success());
     assert!(fx.run(&["browser", "click", "@e1"]).status.success());
     assert!(fx.run(&["browser", "close"]).status.success());
-    let calls: Vec<String> =
-        fx.ab_calls().into_iter().filter(|c| !c.starts_with("--version")).collect();
+    let calls: Vec<String> = fx
+        .ab_calls()
+        .into_iter()
+        .filter(|c| c.starts_with("--session"))
+        .collect();
     assert!(calls.len() >= 3, "{calls:#?}");
     assert!(
         calls.iter().all(|c| c.contains("--proxy-bypass-list=<-loopback>,--no-sandbox")),
         "{calls:#?}"
     );
+}
+
+/// A URL that would not pass the proxy is refused before the browser sees it.
+#[test]
+fn a_session_goes_only_where_its_proxy_can_see() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = fx.site.base.clone();
+    assert!(fx.run(&["browser", "open", &url]).status.success());
+    let before = fx.ab_commands().len();
+    for target in ["file:///etc/passwd", "javascript:alert(1)", "data:text/html,x"] {
+        let out = fx.run(&["browser", "navigate", target]);
+        assert!(!out.status.success(), "{target} was opened");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("http"), "{target}");
+    }
+    assert_eq!(fx.ab_commands().len(), before, "the browser was handed one");
+    assert!(fx.run(&["browser", "navigate", "about:blank"]).status.success());
+    let _ = fx.run(&["browser", "close"]);
 }
 
 /// A browser that is not there leaves no half-made session behind.

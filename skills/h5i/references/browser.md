@@ -79,6 +79,9 @@ h5i browser reload
 Refs come from agent-browser's snapshot. Take a fresh snapshot after a
 navigation or anything that re-renders, and act on the refs it gave you.
 
+A session goes only to `http(s)` URLs (and `about:blank`). `file:`,
+`javascript:` and `data:` are refused, because they would never pass its proxy.
+
 ## Logging in
 
 The best login is a human's: `agent-browser dashboard start`, then sign in in
