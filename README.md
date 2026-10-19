@@ -26,12 +26,12 @@ h5i websec replay req_42 --set query.id=456             # Modify and replay a re
 h5i recon crawl --max-requests 200                      # Crawl the application for attack surfaces
 
 # Run security regression tests in CI/CD
-h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com  # Replay a security test
+h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com                # Replay a security test
 h5i test --target https://staging.example.com --openapi openapi.yaml --min-coverage 80  # Fail CI when API coverage drops
 
 # Develop and red-team inside a disposable sandbox
-h5i box --name lab --profile browser && h5i box shell lab -- claude      # Confine an agent's files, network and secrets
-h5i box export lab                                      # Review its changes before they reach your repository
+h5i box --name lab --profile browser && h5i box shell lab -- claude   # Confine an agent's files, network and secrets
+h5i box export lab                                                    # Review its changes before they reach your repository
 ```
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a> 
