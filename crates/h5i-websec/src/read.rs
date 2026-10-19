@@ -937,6 +937,123 @@ pub fn matches(
     }
 }
 
+/// Ask the same question of every stored response, and list those that hold.
+///
+/// This is the "grep across the capture" shape agents reach for — `--all
+/// --regex 'FLAG\{[^}]+\}'` to find where a token landed without naming the
+/// message first. Exit 0 when at least one response matched, 1 when none did,
+/// 2 when the question itself could not be asked (a pattern that will not
+/// compile, or no store).
+pub fn matches_all(
+    root: &Path,
+    selector: Option<&str>,
+    conditions: &[Condition],
+    json_out: bool,
+) -> anyhow::Result<()> {
+    match look_all(root, selector, conditions, json_out) {
+        Ok(true) => Ok(()),
+        Ok(false) => std::process::exit(EXIT_NO_MATCH),
+        Err(why) => {
+            eprintln!("{why}");
+            std::process::exit(EXIT_CANNOT_LOOK)
+        }
+    }
+}
+
+/// Whether a response is a hit for `--all`: every condition both matched and
+/// was answerable. A condition that could not be answered (a non-text body a
+/// regex could not search, a pattern that will not compile) is never a "yes",
+/// so one of those keeps the response off the list rather than onto it.
+fn all_hold(found: &[Found]) -> bool {
+    found.iter().all(|f| f.matched && f.conclusive)
+}
+
+fn look_all(
+    root: &Path,
+    selector: Option<&str>,
+    conditions: &[Condition],
+    json_out: bool,
+) -> anyhow::Result<bool> {
+    if conditions.is_empty() {
+        anyhow::bail!(
+            "match needs something to look for: --regex, --contains, --json, --header, \
+             --status, --longer-than or --shorter-than"
+        );
+    }
+    // A pattern that will not compile is "could not look", once, up front —
+    // not silently no-matched against every response in the store.
+    for condition in conditions {
+        if let Condition::Regex(pattern) = condition {
+            regex::Regex::new(pattern)
+                .map_err(|e| anyhow::anyhow!("--regex {pattern}: not a regular expression: {e}"))?;
+        }
+    }
+    let (_session, dir) = store_dir(root, selector)?;
+    let mut hits: Vec<(u64, StoredResponse, Vec<Found>)> = Vec::new();
+    let mut scanned = 0u64;
+    for seq in sequences(&dir) {
+        let path = dir.join(format!("{seq}.response.json"));
+        if !path.exists() {
+            continue;
+        }
+        let Ok(stored): Result<StoredResponse, _> = read_json(&path) else {
+            continue;
+        };
+        scanned += 1;
+        let body = body_text(&dir, &stored.body);
+        let found: Vec<Found> = conditions
+            .iter()
+            .map(|condition| evaluate(condition, &stored, &body))
+            .collect();
+        // A response counts only when every condition was both answerable and
+        // true for it; a non-text body that could not be searched is skipped,
+        // not reported as a match.
+        if all_hold(&found) {
+            hits.push((seq, stored, found));
+        }
+    }
+
+    if json_out {
+        let matches: Vec<Value> = hits
+            .iter()
+            .map(|(seq, stored, found)| {
+                json!({
+                    "seq": seq,
+                    "id": format!("res_{seq}"),
+                    "status": stored.status,
+                    "url": stored.url,
+                    "conditions": found,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "all": true,
+                "scanned": scanned,
+                "matched": hits.len(),
+                "matches": matches,
+            }))?
+        );
+    } else if hits.is_empty() {
+        eprintln!("no response matched ({scanned} scanned)");
+    } else {
+        for (seq, stored, found) in &hits {
+            println!(
+                "res_{seq}  {} {}",
+                stored.status.map(|s| s.to_string()).unwrap_or_else(|| "—".into()),
+                stored.url
+            );
+            for one in found {
+                for capture in &one.captures {
+                    println!("      {}", preview_line(capture));
+                }
+            }
+        }
+    }
+    Ok(!hits.is_empty())
+}
+
 fn look(
     root: &Path,
     selector: Option<&str>,
@@ -1246,6 +1363,34 @@ mod tests {
             response(200, "application/json"),
             Text::Utf8(body.to_string()),
         )
+    }
+
+    /// `--all` lists a response only when every condition held *and* could be
+    /// answered: a regex over a non-text body is "could not look", never a
+    /// silent match, so it keeps the response off the list.
+    #[test]
+    fn all_lists_only_responses_where_every_condition_held_and_was_answerable() {
+        let (stored, text) = json_response(r#"{"flag":"FLAG{abc}"}"#);
+        let hit = evaluate(&Condition::Regex(r"FLAG\{[^}]+\}".into()), &stored, &text);
+        assert!(all_hold(std::slice::from_ref(&hit)), "a plain regex hit is a match");
+
+        let miss = evaluate(&Condition::Contains("nowhere".into()), &stored, &text);
+        assert!(!all_hold(&[hit.clone(), miss]), "one unmatched condition drops it");
+
+        let binary = Text::Binary {
+            bytes: 5_000_000,
+            sha256: "c".repeat(64),
+            text: "x".repeat(64 * 1024),
+        };
+        let unanswerable = evaluate(&Condition::Regex("FLAG".into()), &stored, &binary);
+        assert!(
+            !unanswerable.conclusive,
+            "a regex over a non-text body cannot be answered"
+        );
+        assert!(
+            !all_hold(&[hit, unanswerable]),
+            "a could-not-look condition keeps the response off the list"
+        );
     }
 
     /// An unstored body reads as the empty string, so two of them compared as

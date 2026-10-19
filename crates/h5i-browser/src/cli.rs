@@ -1782,7 +1782,9 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             for spec in set_file {
                 let (target, path) = spec.split_once('=').ok_or_else(|| {
                     H5iError::Metadata(format!(
-                        "`--set-file {spec}` is `target=path`, and this has no `=`"
+                        "`--set-file {spec}` needs `target=path` — the field to set, then the \
+                         file to read it from, joined by `=` (for example \
+                         `--set-file body.raw=./payload.bin`). This has no `=`"
                     ))
                 })?;
                 let bytes = read_a_payload(target, path)?;

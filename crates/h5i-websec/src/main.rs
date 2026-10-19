@@ -198,9 +198,20 @@ enum Verb {
 
     /// Ask a stored response a question. Exits 0 when it holds, 1 when it does
     /// not, 2 when it could not be asked.
+    ///
+    /// One response by id, or every stored response with `--all` — which prints
+    /// each `res_N` that holds, with its captures, so a regex like
+    /// `--all --regex 'FLAG\{[^}]+\}'` finds where a token landed without
+    /// naming the message first. With `--all`, exit 0 means at least one
+    /// response matched, 1 means none did.
     Match {
-        #[arg(value_name = "ID")]
-        id: String,
+        /// The response to ask, as `res_42`, `req_42` or `42`. Omit it with
+        /// `--all` to ask every stored response.
+        #[arg(value_name = "ID", required_unless_present = "all")]
+        id: Option<String>,
+        /// Ask every stored response instead of one, and list those that hold.
+        #[arg(long, conflicts_with = "id")]
+        all: bool,
         #[arg(long, value_name = "PATTERN")]
         regex: Option<String>,
         #[arg(long, value_name = "TEXT")]
@@ -549,6 +560,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Verb::Match {
             id,
+            all,
             regex,
             contains,
             json_path,
@@ -588,6 +600,23 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
             if let Some(bytes) = shorter_than {
                 conditions.push(read::Condition::ShorterThan(*bytes));
+            }
+            if *all {
+                return read::matches_all(&root, session.as_deref(), &conditions, json_out);
+            }
+            // `required_unless_present = "all"` guarantees an id here.
+            let id = id.as_deref().expect("match needs an id without --all");
+            // The reach for "ask every response" is to name a set where an id
+            // goes. Point it at the flag that does it rather than report the
+            // word as a bad id.
+            if matches!(
+                id.to_ascii_lowercase().as_str(),
+                "all" | "any" | "every" | "each" | "responses" | "res" | "*"
+            ) {
+                anyhow::bail!(
+                    "`{id}` is not a message id. To ask every stored response, use `--all` \
+                     (for example `match --all --regex '…'`); for one, name it as `res_42`"
+                );
             }
             return read::matches(
                 &root,
