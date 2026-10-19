@@ -632,6 +632,25 @@ fn the_control_lock_pauses_a_mutating_verb_and_lets_a_read_through() {
     let _ = fx.run(&["browser", "close"]);
 }
 
+/// After a handover, the re-snapshot rule is about page refs. It does not hold
+/// up a resend, which a session with no browser could never clear it for.
+#[test]
+fn a_handover_does_not_strand_a_browserless_session() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let id = fx.proxy(&[]);
+    fx.fetch(&id, &format!("{}/echo/z", fx.site.base));
+    let seq = fx.requests()["requests"][0]["seq"].as_u64().unwrap().to_string();
+    assert!(fx.run(&["browser", "take"]).status.success());
+    let held = fx.run(&["browser", "resend", &seq]);
+    assert!(String::from_utf8_lossy(&held.stderr).contains("held by a human"));
+    assert!(fx.run(&["browser", "release"]).status.success());
+    let out = fx.run(&["browser", "resend", &seq, "--json"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let _ = fx.run(&["browser", "close"]);
+}
+
 #[test]
 fn list_keeps_endings_and_hides_them_by_default() {
     let Some(fx) = Fixture::new() else {

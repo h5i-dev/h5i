@@ -448,8 +448,9 @@ Two parties can drive one page: the agent, and a human.
   read-only verbs keep working, because watching never collides.
 - Handing control back with `release` invalidates what the agent knew. The page
   moved, so every `@ref` from its last snapshot may point somewhere else. It
-  must re-snapshot before acting, and acting first is refused rather than
-  mis-clicked.
+  must re-snapshot before its next page action, and acting first is refused
+  rather than mis-clicked. Workbench verbs (`resend`, `socket`, `grpc`) carry no
+  `@ref` and are not held up by it.
 
 On this machine the lock is advisory: it pauses `h5i browser` and nothing else.
 

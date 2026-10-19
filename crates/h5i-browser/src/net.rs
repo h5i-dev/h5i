@@ -434,7 +434,12 @@ impl LocalBroker {
             .filter_map(|pair| pair.split_once('='))
             .map(|(name, value)| (name.trim(), value.trim()))
             .filter(|(name, _)| !name.is_empty() && !held.iter().any(|h| h == name));
-        let set: Vec<String> = sent.map(|(name, value)| format!("{name}={value}; Path=/")).collect();
+        // `Secure` on https, which is where the browser could have sent it, and
+        // what a `__Host-` or `__Secure-` name needs to be kept at all.
+        let secure = if url.scheme() == "https" { "; Secure" } else { "" };
+        let set: Vec<String> = sent
+            .map(|(name, value)| format!("{name}={value}; Path=/{secure}"))
+            .collect();
         if !set.is_empty() {
             self.jar.store(url, set.iter().map(String::as_str));
         }
@@ -3142,6 +3147,17 @@ mod tests {
         assert!(header.contains("sid=server"), "{header}");
         assert!(!header.contains("sid=stale"), "{header}");
         assert!(header.contains("token=from-script"), "{header}");
+
+        broker
+            .observe_proxy_request(
+                "GET",
+                "https://example.test/x",
+                vec![("cookie".into(), "__Host-sid=prefixed".into())],
+                &[],
+            )
+            .expect("recorded");
+        let (header, _) = broker.jar.header_for(&url("https://example.test/x")).expect("sent");
+        assert!(header.contains("__Host-sid=prefixed"), "{header}");
     }
 
     #[test]

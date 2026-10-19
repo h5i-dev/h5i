@@ -318,7 +318,7 @@ fn recorded_verb(session: &mut Session, request: &Value) -> Value {
         );
     }
     let t_finish = outer.elapsed();
-    // Redacted after the action log is written, so the log keeps the engine's
+    // Redacted after the action log is written, so the log keeps the session's
     // own account and only what leaves for the agent is scrubbed.
     let mut out = redact_reply(session.broker.as_ref(), answer);
     if timing_wanted()
@@ -355,7 +355,7 @@ fn collect_strings(value: &Value, out: &mut Vec<String>) {
     match value {
         Value::String(text) => out.push(text.clone()),
         Value::Array(items) => items.iter().for_each(|item| collect_strings(item, out)),
-        // Values, not keys: a field *name* is this engine's own vocabulary, and
+        // Values, not keys: a field *name* is this channel's own vocabulary, and
         // a secret that happened to look like one would be a stranger thing
         // than a leak.
         Value::Object(fields) => fields.values().for_each(|item| collect_strings(item, out)),
@@ -888,7 +888,7 @@ fn control_verb_inner(session: &mut Session, request: &Value, verb: Verb) -> (Va
         }
 
         // One gRPC call. The plugin frames the request and reads the reply; the
-        // engine only carries the bytes, under the session's policy.
+        // session only carries the bytes, under its policy.
         Verb::Grpc => {
             let Some(url) = request.get("url").and_then(Value::as_str) else {
                 return (
@@ -1128,15 +1128,15 @@ fn control_verb_inner(session: &mut Session, request: &Value, verb: Verb) -> (Va
                     "message": if names.is_empty() {
                         format!(
                             "no credentials are available to this session. Set one in the \
-                             environment `serve` was started in, named `{}<SITE>_<FIELD>`, and \
-                             type it into a field as `${}<SITE>_<FIELD>`.",
+                             environment you open the session from, named `{}<SITE>_<FIELD>`, \
+                             and type it into a field as `${}<SITE>_<FIELD>`.",
                             crate::secrets::PREFIX,
                             crate::secrets::PREFIX
                         )
                     } else {
                         format!(
-                            "{} credential(s). Names only — no verb in this engine returns a \
-                             value. Use one by typing its placeholder into a field.",
+                            "{} credential(s). Names only — no verb returns a value. Use one \
+                             by typing its placeholder into a field.",
                             names.len()
                         )
                     },

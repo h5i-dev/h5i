@@ -1390,9 +1390,14 @@ fn executable_on_path(name: &str) -> Option<PathBuf> {
 }
 
 /// The agent-browser this machine has, checked by running it.
-fn proxy_agent_browser() -> anyhow::Result<PathBuf> {
-    let path = executable_on_path("agent-browser")
+/// Where agent-browser is: on `PATH`, or where its installers put it.
+fn find_agent_browser() -> Option<PathBuf> {
+    executable_on_path("agent-browser")
         .or_else(|| h5i_core::sandbox::agent_browser_binary().map(PathBuf::from))
+}
+
+fn proxy_agent_browser() -> anyhow::Result<PathBuf> {
+    let path = find_agent_browser()
         .ok_or_else(|| anyhow::anyhow!(
             "`h5i browser` drives Chromium through agent-browser, which is not installed.\n\n  \
              Install it (it needs Node.js), then retry:\n    \
@@ -1689,7 +1694,7 @@ fn print_started(session: &bs::Session, url: &str, with_browser: bool) {
     );
     println!();
     if with_browser {
-        let agent_browser = executable_on_path("agent-browser")
+        let agent_browser = find_agent_browser()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| "agent-browser".into());
         println!("  drive    : h5i browser navigate <url> (passes the proxy on every launch)");
@@ -1911,7 +1916,7 @@ fn record_browser_observation(
 /// else reaps it, so closing the h5i session must, or a scan leaves a headless
 /// Chromium resident.
 fn close_proxy_browser(id: &str) {
-    if let Some(agent_browser) = executable_on_path("agent-browser") {
+    if let Some(agent_browser) = find_agent_browser() {
         let _ = Command::new(agent_browser)
             .arg("--session")
             .arg(proxy_browser_session(id))
@@ -1923,10 +1928,11 @@ fn close_proxy_browser(id: &str) {
     }
 }
 
-/// Close every h5i Chromium whose session is no longer live: one left by a
-/// proxy that died, or a session another tool expired.
+/// Close every h5i Chromium whose session in this registry has ended: one left
+/// by a proxy that died, or a session another tool expired. A session this
+/// registry has no record of may be another registry's, and is left alone.
 fn close_orphaned_browsers(root: &Path) {
-    let Some(agent_browser) = executable_on_path("agent-browser") else {
+    let Some(agent_browser) = find_agent_browser() else {
         return;
     };
     let Ok(output) = Command::new(agent_browser)
@@ -1943,8 +1949,7 @@ fn close_orphaned_browsers(root: &Path) {
         let Some(id) = name.strip_prefix("h5i-") else {
             continue;
         };
-        let live = bs::read(root, id).is_ok_and(|s| s.state.is_live());
-        if !live {
+        if bs::read(root, id).is_ok_and(|s| !s.state.is_live()) {
             close_proxy_browser(id);
         }
     }
@@ -2210,7 +2215,13 @@ pub(crate) fn ask_session(
 ) -> anyhow::Result<Value> {
     let session = live_session(root, selector);
     let dir = bs::dir(root, &session.id);
-    if let Some(explanation) = h5i_core::control::check(&dir, mutating).explain() {
+    // Only a human at the controls pauses these. The re-snapshot rule after a
+    // handover is about `@refs` on a page that moved; a stored request has
+    // none, and a session with no browser could never snapshot to clear it.
+    let verdict = h5i_core::control::check(&dir, mutating);
+    if verdict == h5i_core::control::Verdict::HeldByHuman
+        && let Some(explanation) = verdict.explain()
+    {
         anyhow::bail!("{explanation}");
     }
     let mut answer = deliver(&session, &dir, &request)?;
@@ -2404,10 +2415,10 @@ fn rm(
             }));
             continue;
         }
-        if session.state.is_live() {
-            // Ask the engine to stop before the directory goes: removing it
-            // underneath a running engine leaves a process writing into a path
-            // that no longer exists.
+        // Stop what is left before the directory goes, ended sessions too: a
+        // dead proxy can leave its Chromium up, and once the record is gone
+        // nothing would know to close it.
+        if session.state.is_live() || session.proxy.is_some() {
             let _ = stop_engine(&session);
         }
         match bs::remove(root, &session.id) {

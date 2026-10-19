@@ -143,8 +143,9 @@ h5i box view <box>              # serves a box's viewer on loopback (`--term` dr
 ```
 
 While a human holds it, your mutating verbs are refused, so wait rather than
-retry. After it comes back, snapshot before acting: the lock refuses an action
-until you have. On this machine the lock is advisory; it pauses `h5i browser`
+retry. After it comes back, snapshot before the next page action: the lock
+refuses one until you have. `resend` and the other workbench verbs carry no
+`@ref` and are not held up. On this machine the lock is advisory; it pauses `h5i browser`
 and nothing else.
 
 ## What lands in the receipt

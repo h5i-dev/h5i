@@ -681,8 +681,9 @@ placeholder whose variable is not set is refused rather than typed as written.</
   read-only verbs keep working, because watching never collides.</li>
 <li>Handing control back with <code>release</code> invalidates what the agent knew. The page
   moved, so every <code>@ref</code> from its last snapshot may point somewhere else. It
-  must re-snapshot before acting, and acting first is refused rather than
-  mis-clicked.</li>
+  must re-snapshot before its next page action, and acting first is refused
+  rather than mis-clicked. Workbench verbs (<code>resend</code>, <code>socket</code>, <code>grpc</code>) carry no
+  <code>@ref</code> and are not held up by it.</li>
 </ul>
 <p>On this machine the lock is advisory: it pauses <code>h5i browser</code> and nothing else.</p>
 <h3 id="sessions-end-and-endings-are-recorded">Sessions end, and endings are recorded</h3>
