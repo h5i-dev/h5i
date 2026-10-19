@@ -1270,11 +1270,21 @@ fn open(
     }
     let session = start_proxy(root, &url, name, &grants, true)?;
     if let Err(error) = drive_to(root, &session, &url) {
-        // Nothing half-made is left running: the proxy goes with the browser
-        // that could not use it.
+        // Nothing half-made is left running. A session that sent nothing has
+        // no evidence to keep, so its record goes too; one that did is kept.
         let mut session = session;
         let _ = stop_engine(&session);
-        bs::end(root, &mut session, bs::State::Died, "the browser could not open the page");
+        let sent = session
+            .logs
+            .requests
+            .as_ref()
+            .and_then(|path| std::fs::metadata(path).ok())
+            .is_some_and(|meta| meta.len() > 0);
+        if sent {
+            bs::end(root, &mut session, bs::State::Died, "the browser could not open the page");
+        } else {
+            let _ = bs::remove(root, &session.id);
+        }
         return Err(error);
     }
     if json_out {
@@ -1406,13 +1416,14 @@ fn proxy_agent_browser() -> anyhow::Result<PathBuf> {
     let path = executable_on_path("agent-browser")
         .or_else(|| h5i_core::sandbox::agent_browser_binary().map(PathBuf::from))
         .ok_or_else(|| anyhow::anyhow!(
-            "an h5i browser session drives Chromium through agent-browser, but `agent-browser` \
-             was not found.\n\n  \
-             Install it and its Chromium/CA dependencies, then retry:\n    \
+            "`h5i browser` drives Chromium through agent-browser, which is not installed.\n\n  \
+             Install it (it needs Node.js), then retry:\n    \
              npm install -g agent-browser\n    \
-             agent-browser install --with-deps\n\n  \
+             agent-browser install            # downloads Chromium\n\n  \
+             On Linux, `agent-browser install --with-deps` also installs the system libraries \
+             Chromium needs.\n\n  \
              Nothing was started. `h5i browser proxy <url> --no-browser` starts a session \
-             without one, for `resend` and the plugins."
+             without a browser, for `resend` and the plugins."
         ))?;
     let version = Command::new(&path).arg("--version").output().map_err(|e| {
         anyhow::anyhow!(
@@ -1423,6 +1434,14 @@ fn proxy_agent_browser() -> anyhow::Result<PathBuf> {
     })?;
     if !version.status.success() {
         let detail = String::from_utf8_lossy(&version.stderr);
+        // agent-browser is a Node script; a missing `node` is the usual reason.
+        if detail.contains("node") && detail.contains("No such file") {
+            anyhow::bail!(
+                "agent-browser is installed at {}, but Node.js is not on PATH, so it cannot \
+                 run.\n\n  Install Node.js (or add it to PATH), then retry. Nothing was started.",
+                path.display()
+            );
+        }
         anyhow::bail!(
             "found agent-browser at {}, but `agent-browser --version` exited with {}: {}\n\n  \
              Repair or reinstall it, then retry. Nothing was started.",

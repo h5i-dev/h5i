@@ -48,9 +48,6 @@ curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test
 # Rust web framework
 cargo add h5i-app
 
-# The browser `h5i browser` drives (Chromium, via agent-browser)
-npm install -g agent-browser && agent-browser install
-
 # AI agent integration (optional)
 npx skills add h5i-dev/h5i
 ```
