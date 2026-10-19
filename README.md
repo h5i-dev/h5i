@@ -27,6 +27,7 @@ h5i recon crawl --max-requests 200                      # Crawl the application 
 
 # Run security regression tests in CI/CD
 h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com  # Replay a security test
+h5i test --target https://staging.example.com --openapi openapi.yaml --min-coverage 80  # Fail CI when API coverage drops
 
 # Develop and red-team inside a disposable sandbox
 h5i box --name lab --profile browser && h5i box shell lab -- claude      # Confine an agent's files, network and secrets
