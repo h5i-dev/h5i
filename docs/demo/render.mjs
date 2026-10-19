@@ -56,6 +56,7 @@ const opt = (name, dflt) => {
 };
 const FPS = Number(opt('fps', 30));
 const CRF = Number(opt('crf', 16));
+const PRESET = opt('preset', 'slow');
 // Supersampling: capture the fixed 1920x1080 stage at SCALEx device pixels
 // (2 -> 3840x2160) for crisp text, then optionally downscale to OUT_HEIGHT.
 const SCALE = Number(opt('scale', 2));
@@ -115,7 +116,7 @@ console.log(
 const vf = OUT_HEIGHT && OUT_HEIGHT < capH ? ['-vf', `scale=-2:${OUT_HEIGHT}:flags=lanczos`] : [];
 const ff = spawn('ffmpeg', [
   '-y', '-f', 'image2pipe', '-framerate', String(FPS), '-i', '-',
-  '-c:v', 'libx264', '-preset', 'slow', '-crf', String(CRF),
+  '-c:v', 'libx264', '-preset', PRESET, '-crf', String(CRF),
   ...vf,
   '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outFile,
 ], { stdio: ['pipe', 'inherit', 'inherit'] });

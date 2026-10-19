@@ -1,0 +1,26 @@
+version: h5i.test/v1
+id: board-adapter-visibility
+name: Alice cannot read Bob's private board post
+
+actors:
+  alice: {}
+
+requests:
+  own_post:
+    path: /api/posts/41
+    headers:
+      authorization: Bearer ${env.BOARD_ALICE_TOKEN}
+  other_post:
+    path: /api/posts/42
+    headers:
+      authorization: Bearer ${env.BOARD_ALICE_TOKEN}
+
+flow:
+  - send: own_post
+    as: alice
+    expect:
+      status: 200
+  - send: other_post
+    as: alice
+    expect:
+      status: 403
