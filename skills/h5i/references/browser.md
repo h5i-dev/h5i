@@ -13,8 +13,9 @@ h5i browser requests                   # what the browser sent, by id
 h5i browser close                      # the proxy and the Chromium both end
 ```
 
-agent-browser has to be installed (`npm install -g agent-browser && agent-browser
-install`). Without it `open` refuses before creating anything and says so.
+agent-browser 0.25 or newer has to be installed (`npm install -g agent-browser &&
+agent-browser install`). Without it `open` refuses before creating anything and
+says so.
 Where Chromium's sandbox cannot start (common without root), set
 `AGENT_BROWSER_ARGS=--no-sandbox`, and only for a target you trust.
 

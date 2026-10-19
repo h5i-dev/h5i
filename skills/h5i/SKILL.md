@@ -73,7 +73,7 @@ policy from inside a box. For common failures, read
 
 A session is Chromium, driven through agent-browser and pointed at h5i's
 capture proxy, which holds the policy, the cookies the server set, and the
-request log. It needs no box. agent-browser must be installed
+request log. It needs no box. agent-browser 0.25 or newer must be installed
 (`npm install -g agent-browser && agent-browser install`).
 
 ```bash

@@ -37,9 +37,10 @@ to wire the two together and keep them in step. h5i starts the proxy, launches
 the browser pointed at it, and writes the decision before the bytes move, so a
 request that is not in the log did not go through the session.
 
-One Rust binary for h5i's half. The browser half is agent-browser and the
-Chromium it installs (`npm install -g agent-browser && agent-browser install`);
-`h5i browser open` refuses, and leaves nothing behind, when it is missing.
+One Rust binary for h5i's half. The browser half is agent-browser (0.25 or
+newer) and the Chromium it installs (`npm install -g agent-browser &&
+agent-browser install`); `h5i browser open` refuses, and leaves nothing behind,
+when it is missing or too old.
 
 ### The division of labour
 

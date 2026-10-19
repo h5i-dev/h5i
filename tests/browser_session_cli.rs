@@ -78,34 +78,43 @@ impl Site {
     }
 }
 
-/// A stand-in for agent-browser: records every argv, one line each, and answers
-/// the verbs h5i sends in their shape. `open` fetches the URL through the proxy
+/// A stand-in for agent-browser. Records every argv, one line each, and every
+/// command it was handed (in argv or as a stdin batch), one line each, then
+/// answers in agent-browser's shape. `open` fetches the URL through the proxy
 /// it was handed, which is what the real one does.
-const FAKE_AGENT_BROWSER: &str = r#"#!/bin/sh
-printf '%s\n' "$*" >> "$H5I_TEST_AB_LOG"
-if [ "$1" = "--version" ]; then echo "agent-browser 0.27.0"; exit 0; fi
-proxy=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --session|--args) shift 2 ;;
-    --proxy) proxy="$2"; shift 2 ;;
-    --ignore-https-errors) shift ;;
-    *) break ;;
-  esac
-done
-verb="$1"; shift
-case "$verb" in
-  open)
-    if [ -n "$proxy" ] && command -v curl >/dev/null 2>&1; then
-      curl -s -o /dev/null --proxy "$proxy" "$1" || exit 1
-    fi
-    echo "✓ opened $1" ;;
-  snapshot) printf -- '- heading "hello\033[2K" [ref=e1]\n' ;;
-  fill) echo "✓ filled $1 with $2" ;;
-  batch) cat >> "$H5I_TEST_AB_LOG.stdin"; echo "✓ Done" ;;
-  fail) echo "boom" >&2; exit 3 ;;
-  *) echo "✓ $verb $*" ;;
-esac
+const FAKE_AGENT_BROWSER: &str = r#"#!/usr/bin/env python3
+import json, os, shutil, subprocess, sys
+log = os.environ["H5I_TEST_AB_LOG"]
+args = sys.argv[1:]
+with open(log, "a") as f:
+    f.write(" ".join(args) + "\n")
+if args == ["--version"]:
+    print("agent-browser 0.39.1")
+    sys.exit(0)
+proxy, i = None, 0
+while i < len(args):
+    if args[i] in ("--session", "--args"):
+        i += 2
+    elif args[i] == "--proxy":
+        proxy, i = args[i + 1], i + 2
+    elif args[i] == "--ignore-https-errors":
+        i += 1
+    else:
+        break
+rest = args[i:]
+commands = json.load(sys.stdin) if rest[:1] == ["batch"] else [rest]
+for command in commands:
+    with open(log + ".commands", "a") as f:
+        f.write(" ".join(command) + "\n")
+    verb, values = command[0], command[1:]
+    if verb == "open":
+        if proxy and shutil.which("curl"):
+            subprocess.run(["curl", "-s", "-o", "/dev/null", "--proxy", proxy, values[0]], check=True)
+        print("\u2713 opened " + values[0])
+    elif verb == "snapshot":
+        print('- heading "hello\x1b[2K" [ref=e1]')
+    else:
+        print("\u2713 " + " ".join(command))
 "#;
 
 struct Fixture {
@@ -222,6 +231,15 @@ impl Fixture {
             .collect()
     }
 
+    /// The commands the browser was handed, whichever way they came.
+    fn ab_commands(&self) -> Vec<String> {
+        std::fs::read_to_string(self.ab_log.with_extension("log.commands"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
     fn requests(&self) -> serde_json::Value {
         let out = self.run(&["browser", "requests", "--json"]);
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -289,22 +307,26 @@ fn page_verbs_drive_the_sessions_chromium_through_its_proxy() {
         vec!["browser", "wait-for", "--text", "done"],
         vec!["browser", "eval", "document.title"],
         vec!["browser", "reload"],
+        vec!["browser", "click", "--", "--session other"],
     ] {
         let out = fx.run(&args);
         assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
     }
 
-    let calls = fx.ab_calls();
-    let session_flag = format!("--session h5i-{id} --proxy {proxy} --ignore-https-errors");
-    let page_calls: Vec<&String> = calls.iter().filter(|c| !c.starts_with("--version")).collect();
-    assert!(
-        page_calls.iter().all(|c| c.starts_with(&session_flag)),
-        "every call is the session's browser, proxied: {page_calls:#?}"
+    // Every call is the session's browser, proxied, with nothing the caller
+    // wrote in its argv: agent-browser reads flags anywhere in argv, so the
+    // command goes on stdin.
+    let fixed = format!(
+        "--session h5i-{id} --proxy {proxy} --ignore-https-errors --args --proxy-bypass-list=<-loopback> batch --bail"
     );
+    let page_calls: Vec<String> =
+        fx.ab_calls().into_iter().filter(|c| !c.starts_with("--version")).collect();
+    assert!(page_calls.iter().all(|c| c == &fixed), "{page_calls:#?}");
+    let commands = fx.ab_commands();
     for expected in [
         format!("open {url}"),
         "click @e1".into(),
-        "batch --bail".into(),
+        "fill #q needle".into(),
         "press Enter".into(),
         "select @e2 blue".into(),
         "uncheck @e3".into(),
@@ -312,16 +334,11 @@ fn page_verbs_drive_the_sessions_chromium_through_its_proxy() {
         "wait --text done".into(),
         "eval document.title".into(),
         "reload".into(),
+        // A value shaped like a flag is still a value.
+        "click --session other".into(),
     ] {
-        assert!(
-            page_calls.iter().any(|c| c.ends_with(&expected)),
-            "no `{expected}` in {page_calls:#?}"
-        );
+        assert!(commands.contains(&expected), "no `{expected}` in {commands:#?}");
     }
-
-    // `type` goes on stdin, as a batch.
-    let stdin = std::fs::read_to_string(fx.ab_log.with_extension("log.stdin")).unwrap_or_default();
-    assert!(stdin.contains(r##"["fill","#q","needle"]"##), "{stdin}");
 
     // Each is in the action log, beside the proxy's own rows.
     let actions = std::fs::read_to_string(fx.dir(&id).join("actions.jsonl")).unwrap();
@@ -332,6 +349,27 @@ fn page_verbs_drive_the_sessions_chromium_through_its_proxy() {
         );
     }
     let _ = fx.run(&["browser", "close"]);
+}
+
+/// The launch flags are fixed when the session opens. agent-browser treats a
+/// call with different ones as a different browser, so a changed
+/// `AGENT_BROWSER_ARGS` mid-session must not reach it.
+#[test]
+fn the_browser_keeps_the_flags_it_was_launched_with() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = fx.site.base.clone();
+    assert!(fx.run_with(&["browser", "open", &url], &[("AGENT_BROWSER_ARGS", "--no-sandbox")]).status.success());
+    assert!(fx.run(&["browser", "click", "@e1"]).status.success());
+    assert!(fx.run(&["browser", "close"]).status.success());
+    let calls: Vec<String> =
+        fx.ab_calls().into_iter().filter(|c| !c.starts_with("--version")).collect();
+    assert!(calls.len() >= 3, "{calls:#?}");
+    assert!(
+        calls.iter().all(|c| c.contains("--proxy-bypass-list=<-loopback>,--no-sandbox")),
+        "{calls:#?}"
+    );
 }
 
 /// A browser that is not there leaves no half-made session behind.
@@ -841,10 +879,10 @@ fn a_typed_credential_reaches_the_browser_and_never_a_reply() {
 
     // The browser got the value on stdin, never in an argv another process
     // could read; nothing h5i kept has it.
-    let stdin = std::fs::read_to_string(fx.ab_log.with_extension("log.stdin")).unwrap_or_default();
     assert!(
-        stdin.contains(r##"["fill","#pass","hunter2-from-the-test"]"##),
-        "{stdin}"
+        fx.ab_commands().iter().any(|c| c == "fill #pass hunter2-from-the-test"),
+        "{:#?}",
+        fx.ab_commands()
     );
     assert!(
         fx.ab_calls().iter().all(|c| !c.contains("hunter2-from-the-test")),
@@ -957,11 +995,11 @@ fn a_screenshot_goes_where_the_caller_asked() {
     let answer: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(answer["path"], out_path.to_str().unwrap());
     assert!(
-        fx.ab_calls()
+        fx.ab_commands()
             .iter()
-            .any(|c| c.ends_with(&format!("screenshot {}", out_path.display()))),
+            .any(|c| c == &format!("screenshot {}", out_path.display())),
         "{:#?}",
-        fx.ab_calls()
+        fx.ab_commands()
     );
 
     // Without `--out`, h5i names the file in the session's artifacts.

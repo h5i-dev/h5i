@@ -812,14 +812,12 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             session,
             json,
         } => {
-            // Resolved here and handed to agent-browser on stdin, never in an
-            // argv another process could read. What is kept and printed has
-            // the placeholder.
+            // Resolved here; what is kept and printed has the placeholder.
             let resolved = substitute_secrets(&text)?;
             page_with(
                 &root,
                 session.as_deref(),
-                Run::Stdin(json!([["fill", target, resolved]])),
+                vec!["fill".into(), target.clone(), resolved],
                 vec!["fill".into(), target, text],
                 "type",
                 true,
@@ -1348,7 +1346,7 @@ fn screenshot(
     }
     let target = path.display().to_string();
     begin_page_action(&session, "screenshot", Some(&target))?;
-    let outcome = run_agent_browser(&session, &argv, None);
+    let outcome = run_agent_browser(&session, &argv);
     record_page_action(&session, "screenshot", Some(&target), outcome.as_ref().err());
     let output = outcome?;
     if json {
@@ -1433,7 +1431,34 @@ fn proxy_agent_browser() -> anyhow::Result<PathBuf> {
             bs::scrub_text(detail.trim())
         );
     }
+    let reported = String::from_utf8_lossy(&version.stdout);
+    if let Some(found) = agent_browser_version(&reported)
+        && found < MIN_AGENT_BROWSER
+    {
+        let (major, minor, patch) = found;
+        anyhow::bail!(
+            "agent-browser {major}.{minor}.{patch} is installed at {}, and h5i needs {}.{}.0 or \
+             newer (it hands every command over as a stdin batch).\n\n  \
+             Upgrade it, then retry. Nothing was started:\n    \
+             npm install -g agent-browser@latest",
+            path.display(),
+            MIN_AGENT_BROWSER.0,
+            MIN_AGENT_BROWSER.1,
+        );
+    }
     Ok(path)
+}
+
+/// The oldest agent-browser whose `batch` reads a JSON array of commands from
+/// stdin, which is how every command is handed over.
+const MIN_AGENT_BROWSER: (u32, u32, u32) = (0, 25, 0);
+
+/// `agent-browser 0.39.1` as numbers. `None` for a shape this does not know,
+/// which is not refused: a version it cannot read is not one it knows is old.
+fn agent_browser_version(reported: &str) -> Option<(u32, u32, u32)> {
+    let word = reported.split_whitespace().find(|w| w.chars().next().is_some_and(|c| c.is_ascii_digit()))?;
+    let mut parts = word.split(['.', '-']).map(|p| p.parse::<u32>());
+    Some((parts.next()?.ok()?, parts.next()?.ok()?, parts.next().and_then(Result::ok).unwrap_or(0)))
 }
 
 fn shell_word(value: &str) -> String {
@@ -1633,6 +1658,11 @@ fn start_proxy(
         std::thread::sleep(Duration::from_millis(25));
     }
     let proxy_url = std::fs::read_to_string(&proxy_file)?.trim().to_string();
+    // Fixed now, for every later call: see `session_browser_args`.
+    std::fs::write(
+        dir.join(BROWSER_ARGS_FILE),
+        serde_json::to_vec(&agent_browser_proxy_args(&proxy_url))?,
+    )?;
     let session = bs::Session {
         id: id.clone(),
         name,
@@ -1719,38 +1749,45 @@ fn proxy_browser_session(id: &str) -> String {
     format!("h5i-{id}")
 }
 
-/// Run agent-browser against a session's Chromium and hand back its stdout.
-/// The proxy flags go on every call, so a relaunch is proxied too.
-fn run_agent_browser(
-    session: &bs::Session,
-    ab_argv: &[String],
-    stdin: Option<&Value>,
-) -> anyhow::Result<String> {
-    let Some(proxy) = session.proxy.as_ref() else {
+/// Run one agent-browser command against a session's Chromium and hand back its
+/// stdout. The proxy flags go on every call, so a relaunch is proxied too.
+///
+/// The command goes as a `batch` on stdin, never in argv: agent-browser reads
+/// flags anywhere in its argv, so a selector or a script that looks like
+/// `--proxy` would be taken as one, and a credential there is readable by any
+/// local process. In a batch every element is an argument.
+fn run_agent_browser(session: &bs::Session, command_argv: &[String]) -> anyhow::Result<String> {
+    if session.proxy.is_none() {
         anyhow::bail!(
             "session {} was opened by an h5i that had its own browser engine, and that engine \
              is gone. Its record, requests and messages are still readable; open a new session \
              with `h5i browser open <url>` to drive a page.",
             session.id
         );
-    };
+    }
     let agent_browser = proxy_agent_browser()?;
     let mut command = Command::new(&agent_browser);
     command
         .arg("--session")
         .arg(proxy_browser_session(&session.id))
-        .args(agent_browser_proxy_args(&proxy.url))
-        .args(ab_argv)
-        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        .args(session_browser_args(session))
+        .args(["batch", "--bail"])
+        // Its own colours would reach the scrub as control characters.
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = command
         .spawn()
         .map_err(|e| anyhow::anyhow!("could not run agent-browser: {e}"))?;
-    if let (Some(body), Some(mut pipe)) = (stdin, child.stdin.take()) {
+    if let Some(mut pipe) = child.stdin.take() {
         use std::io::Write as _;
-        pipe.write_all(body.to_string().as_bytes())
-            .map_err(|e| anyhow::anyhow!("could not hand agent-browser its command: {e}"))?;
+        // Dropped at the end of this block, which is the end of the batch.
+        if let Err(e) = pipe.write_all(json!([command_argv]).to_string().as_bytes()) {
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!("could not hand agent-browser its command: {e}");
+        }
     }
     let output = child
         .wait_with_output()
@@ -1762,7 +1799,7 @@ fn run_agent_browser(
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!(
             "agent-browser {} failed for session {}: {}{}{}",
-            ab_argv.first().map(String::as_str).unwrap_or(""),
+            command_argv.first().map(String::as_str).unwrap_or(""),
             session.id,
             bs::scrub_text(stderr.trim()),
             if stdout.trim().is_empty() {
@@ -1786,15 +1823,7 @@ fn page(
     json: bool,
 ) -> anyhow::Result<()> {
     let shown = ab_argv.clone();
-    page_with(root, selector, Run::Argv(ab_argv), shown, label, mutating, json)
-}
-
-/// How a page verb reaches agent-browser.
-enum Run {
-    /// As its argv.
-    Argv(Vec<String>),
-    /// As a `batch` read from stdin, for a command carrying a credential.
-    Stdin(Value),
+    page_with(root, selector, ab_argv, shown, label, mutating, json)
 }
 
 /// The same, given how to run it and the argv to record (`shown`, which has
@@ -1804,7 +1833,7 @@ enum Run {
 fn page_with(
     root: &Path,
     selector: Option<&str>,
-    run: Run,
+    run: Vec<String>,
     shown: Vec<String>,
     label: &str,
     mutating: bool,
@@ -1820,13 +1849,8 @@ fn page_with(
     let target = (shown.len() > 1).then(|| shown[1..].join(" "));
     begin_page_action(&session, label, target.as_deref())?;
     let secrets = h5i_browser::secrets::Secrets::from_env();
-    let outcome = match &run {
-        Run::Argv(argv) => run_agent_browser(&session, argv, None),
-        Run::Stdin(batch) => {
-            run_agent_browser(&session, &["batch".into(), "--bail".into()], Some(batch))
-        }
-    }
-    .map(|stdout| secrets.redact(&stdout))
+    let outcome = run_agent_browser(&session, &run)
+        .map(|stdout| secrets.redact(&stdout))
     .map_err(|e| anyhow::anyhow!("{}", secrets.redact(&e.to_string())));
     record_page_action(&session, label, target.as_deref(), outcome.as_ref().err());
     let stdout = outcome?;
@@ -1915,17 +1939,44 @@ fn record_browser_observation(
 /// Best-effort shutdown of the agent-browser daemon a session started. Nothing
 /// else reaps it, so closing the h5i session must, or a scan leaves a headless
 /// Chromium resident.
-fn close_proxy_browser(id: &str) {
+fn close_proxy_browser(session: &bs::Session) {
+    if session.proxy.is_none() {
+        return;
+    }
     if let Some(agent_browser) = find_agent_browser() {
         let _ = Command::new(agent_browser)
             .arg("--session")
-            .arg(proxy_browser_session(id))
+            .arg(proxy_browser_session(&session.id))
+            .args(session_browser_args(session))
             .arg("close")
+            .env("NO_COLOR", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
     }
+}
+
+/// Where a session keeps the agent-browser launch flags it started with.
+const BROWSER_ARGS_FILE: &str = "agent-browser.args";
+
+/// The agent-browser flags this session's browser was launched with, the same
+/// on every later call. agent-browser treats a call whose launch options
+/// differ from its daemon's as a different browser and starts a fresh one,
+/// so recomputing them from a changed `AGENT_BROWSER_ARGS` would drop the
+/// page mid-session, and a `close` would start a browser to close.
+fn session_browser_args(session: &bs::Session) -> Vec<String> {
+    let Some(proxy) = &session.proxy else {
+        return Vec::new();
+    };
+    session
+        .control
+        .file
+        .as_ref()
+        .and_then(|control| control.parent())
+        .and_then(|dir| std::fs::read(dir.join(BROWSER_ARGS_FILE)).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_else(|| agent_browser_proxy_args(&proxy.url))
 }
 
 /// Close every h5i Chromium whose session in this registry has ended: one left
@@ -1949,8 +2000,10 @@ fn close_orphaned_browsers(root: &Path) {
         let Some(id) = name.strip_prefix("h5i-") else {
             continue;
         };
-        if bs::read(root, id).is_ok_and(|s| !s.state.is_live()) {
-            close_proxy_browser(id);
+        if let Ok(session) = bs::read(root, id)
+            && !session.state.is_live()
+        {
+            close_proxy_browser(&session);
         }
     }
 }
@@ -1977,7 +2030,7 @@ fn drive_to(root: &Path, session: &bs::Session, url: &str) -> anyhow::Result<()>
         anyhow::bail!("{explanation}");
     }
     begin_page_action(session, "navigate", Some(url))?;
-    let outcome = run_agent_browser(session, &["open".to_string(), url.to_string()], None);
+    let outcome = run_agent_browser(session, &["open".to_string(), url.to_string()]);
     record_page_action(session, "navigate", Some(url), outcome.as_ref().err());
     outcome.map(|_| ())
 }
@@ -2926,7 +2979,7 @@ fn close(
         } else if session.proxy.is_some() {
             // Ended without a close: its proxy died or its time ran out, and
             // the browser may still be up. Closing one that is not is a no-op.
-            close_proxy_browser(&session.id);
+            close_proxy_browser(&session);
         }
         // After the engine has stopped, so nothing is still writing there.
         if capture_drop {
@@ -3143,9 +3196,7 @@ fn stop_engine(session: &bs::Session) -> anyhow::Result<()> {
             {
                 kill(pid);
             }
-            if session.proxy.is_some() {
-                close_proxy_browser(&session.id);
-            }
+            close_proxy_browser(session);
             Ok(())
         }
         bs::Placement::Box { name } => {
@@ -3316,6 +3367,15 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_browser_version_is_read_and_compared() {
+        assert_eq!(agent_browser_version("agent-browser 0.39.1\n"), Some((0, 39, 1)));
+        assert_eq!(agent_browser_version("0.24.0"), Some((0, 24, 0)));
+        assert!(agent_browser_version("agent-browser 0.24.1").unwrap() < MIN_AGENT_BROWSER);
+        assert!(agent_browser_version("agent-browser 1.0.0-beta.2").unwrap() >= MIN_AGENT_BROWSER);
+        assert_eq!(agent_browser_version("agent-browser dev"), None);
+    }
+
+    #[test]
     fn the_printed_environment_keeps_a_relaunched_agent_browser_proxied() {
         let env = agent_browser_proxy_env("http://127.0.0.1:9");
         assert_eq!(
@@ -3352,7 +3412,8 @@ mod tests {
             line,
             "/usr/bin/agent-browser --proxy http://127.0.0.1:9 --ignore-https-errors --args '--proxy-bypass-list=<-loopback>' open 'https://app.example/a b'"
         );
-        // agent-browser 0.27 has no CA-trust flag; it must never be handed one.
+        // h5i accepts the proxy's certificates with --ignore-https-errors and passes no
+        // --ca-cert; changing that is a decision, not a side effect.
         assert!(!line.contains("ca-cert"), "{line}");
     }
 

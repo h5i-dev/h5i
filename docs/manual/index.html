@@ -175,9 +175,10 @@ say what it reached. Burp owns the traffic and not the browser, so a person has
 to wire the two together and keep them in step. h5i starts the proxy, launches
 the browser pointed at it, and writes the decision before the bytes move, so a
 request that is not in the log did not go through the session.</p>
-<p>One Rust binary for h5i's half. The browser half is agent-browser and the
-Chromium it installs (<code>npm install -g agent-browser &amp;&amp; agent-browser install</code>);
-<code>h5i browser open</code> refuses, and leaves nothing behind, when it is missing.</p>
+<p>One Rust binary for h5i's half. The browser half is agent-browser (0.25 or
+newer) and the Chromium it installs (<code>npm install -g agent-browser &amp;&amp;
+agent-browser install</code>); <code>h5i browser open</code> refuses, and leaves nothing behind,
+when it is missing or too old.</p>
 <h3 id="the-division-of-labour">The division of labour</h3>
 <p>h5i does the deterministic work; the agent does the judging.</p>
 <table>
