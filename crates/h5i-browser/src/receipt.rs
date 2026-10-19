@@ -349,7 +349,8 @@ impl ActionLog {
             .file
             .lock()
             .map_err(|_| H5iError::Internal("action log lock was poisoned".to_string()))?;
-        writeln!(file, "{line}").map_err(H5iError::Io)?;
+        // One write: page verbs append to this file from the CLI as well.
+        file.write_all(format!("{line}\n").as_bytes()).map_err(H5iError::Io)?;
         file.flush().map_err(H5iError::Io)?;
         Ok(())
     }

@@ -432,6 +432,12 @@ pub trait Broker: Send + Sync {
     }
 
     /// Sequence numbers recorded after `mark`, deduplicated and in order.
+    /// The receipts after `mark` that a verb caused: [`Self::since`], less
+    /// whatever arrived beside it rather than because of it.
+    fn caused_since(&self, mark: Option<u64>) -> Vec<u64> {
+        self.since(mark)
+    }
+
     fn since(&self, mark: Option<u64>) -> Vec<u64> {
         let mut seen: Vec<u64> = self
             .records()

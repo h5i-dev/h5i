@@ -1052,9 +1052,12 @@ pub fn evict_box(root: &Path, box_name: &str) -> Result<usize, H5iError> {
 /// one, and it is recorded rather than enacted by deletion for the reason the
 /// whole module exists: an ending nobody wrote down is indistinguishable from a
 /// session that never ran.
-pub fn expire_due(root: &Path) -> Result<usize, H5iError> {
+///
+/// Returns the sessions it ended, so a caller that can stop their processes
+/// stops exactly these.
+pub fn expire_due(root: &Path) -> Result<Vec<Session>, H5iError> {
     let now_ts = now();
-    let mut n = 0;
+    let mut ended = Vec::new();
     for mut session in list(root)? {
         if !session.state.is_live() {
             continue;
@@ -1068,10 +1071,10 @@ pub fn expire_due(root: &Path) -> Result<usize, H5iError> {
                 State::Expired,
                 &format!("the session's time limit ({expires}) passed"),
             );
-            n += 1;
+            ended.push(session);
         }
     }
-    Ok(n)
+    Ok(ended)
 }
 
 /// Where a named artifact goes.
@@ -2067,7 +2070,7 @@ mod tests {
         s.expires_at = Some("2000-01-01T00:00:00Z".into());
         write(root, &s).unwrap();
 
-        assert_eq!(expire_due(root).unwrap(), 1);
+        assert_eq!(expire_due(root).unwrap().len(), 1);
         let after = read(root, &id).unwrap();
         assert_eq!(after.state, State::Expired);
         assert!(after.ended_at.is_some());

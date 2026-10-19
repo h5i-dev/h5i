@@ -120,9 +120,7 @@ fn bind_control_socket(path: &Path) -> Result<UnixListener, H5iError> {
     }
     let _ = std::fs::remove_file(path);
     let listener = UnixListener::bind(path).map_err(|e| H5iError::with_path(e, path))?;
-    // Whoever can connect to this socket *is* the agent: they can navigate, evaluate script in
-    // the page, and `type $H5I_SECRET_…`, which resolves a credential into the DOM they can
-    // then read back with `snapshot`.
+    // Whoever can connect to this socket can send requests as this session.
     restrict_to_owner(path)?;
     Ok(listener)
 }
@@ -300,8 +298,12 @@ fn recorded_verb(session: &mut Session, request: &Value) -> Value {
 
     let ok = answer.get("ok").and_then(Value::as_bool).unwrap_or(false);
     let url = answer.get("url").and_then(Value::as_str);
-    let error = answer.get("error").and_then(Value::as_str);
-    let caused = session.broker.since(mark);
+    // `resend`'s refusals carry their reason as `message`.
+    let error = answer
+        .get("error")
+        .or_else(|| answer.get("message"))
+        .and_then(Value::as_str);
+    let caused = session.broker.caused_since(mark);
     if let Some(log) = &session.actions {
         log.finish(
             seq,
@@ -405,13 +407,11 @@ fn control_verb(session: &mut Session, request: &Value) -> Value {
         // Counted before it is refused. A name nobody has is a request somebody
         // expected to work, and the count is the only record of that which does
         // not depend on them saying so.
+        let key = one_line(name);
         if session.unknown_verbs.len() < MAX_UNKNOWN_VERBS
-            || session.unknown_verbs.contains_key(name)
+            || session.unknown_verbs.contains_key(&key)
         {
-            *session
-                .unknown_verbs
-                .entry(one_line(name))
-                .or_insert(0) += 1;
+            *session.unknown_verbs.entry(key).or_insert(0) += 1;
         }
         return VerbError::unknown_verb(name).reply();
     };
@@ -456,7 +456,8 @@ fn control_verb_inner(session: &mut Session, request: &Value, verb: Verb) -> (Va
                     json!({
                         "ok": false,
                         "code": "bad-request",
-                        "message": "resend needs `from`: the sequence number of a stored                                     request, as `requests` lists them",
+                        "message": "resend needs `from`: the sequence number of a stored request, as \
+                                    `requests` lists them",
                     }),
                     false,
                 );

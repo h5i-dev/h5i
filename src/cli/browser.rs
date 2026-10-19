@@ -812,18 +812,15 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             session,
             json,
         } => {
-            // Resolved here and never echoed or recorded: the artifact keeps
-            // the argv as the caller wrote it, placeholder and all, and the
-            // value is masked back out of anything agent-browser says.
-            let (resolved, secrets) = substitute_secrets(&text)?;
+            // Resolved here and handed to agent-browser on stdin, never in an
+            // argv another process could read. What is kept and printed has
+            // the placeholder.
+            let resolved = substitute_secrets(&text)?;
             page_with(
                 &root,
                 session.as_deref(),
-                vec!["fill".into(), target.clone(), resolved],
-                PageRecord {
-                    shown: vec!["fill".into(), target, text],
-                    secrets,
-                },
+                Run::Stdin(json!([["fill", target, resolved]])),
+                vec!["fill".into(), target, text],
                 "type",
                 true,
                 json,
@@ -1196,17 +1193,9 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
 
 /// End every session whose time has passed: the processes, then the record.
 fn expire_and_stop(root: &Path) {
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
-    for session in bs::list(root).unwrap_or_default() {
-        let due = session
-            .expires_at
-            .as_deref()
-            .is_some_and(|expires| expires <= now.as_str());
-        if session.state.is_live() && due && session.probe() {
-            let _ = stop_engine(&session);
-        }
+    for session in bs::expire_due(root).unwrap_or_default() {
+        let _ = stop_engine(&session);
     }
-    let _ = bs::expire_due(root);
 }
 
 /// Most a `--set-file` payload may be. Generous, because a large upload is a
@@ -1268,6 +1257,7 @@ fn open(
             return proxy_open(root, &url, Some(&existing.id), json_out);
         }
     }
+    let previous_default = bs::read_default(root);
     let session = start_proxy(root, &url, name, &grants, true)?;
     if let Err(error) = drive_to(root, &session, &url) {
         // Nothing half-made is left running. A session that sent nothing has
@@ -1284,6 +1274,10 @@ fn open(
             bs::end(root, &mut session, bs::State::Died, "the browser could not open the page");
         } else {
             let _ = bs::remove(root, &session.id);
+        }
+        // The session that was the default before this one still is.
+        if let Some(previous) = previous_default.filter(|id| bs::read(root, id).is_ok()) {
+            let _ = bs::set_default(root, &previous);
         }
         return Err(error);
     }
@@ -1316,35 +1310,15 @@ fn live_session(root: &Path, selector: Option<&str>) -> bs::Session {
 
 /// `$H5I_SECRET_<NAME>` placeholders, resolved from this environment. An unset
 /// one is refused rather than typed as written.
-fn substitute_secrets(text: &str) -> anyhow::Result<(String, Vec<(String, String)>)> {
-    let prefix = format!("${}", h5i_browser::secrets::PREFIX);
-    let mut secrets = Vec::new();
-    if !text.contains(&prefix) {
-        return Ok((text.to_string(), secrets));
+fn substitute_secrets(text: &str) -> anyhow::Result<String> {
+    let resolved = h5i_browser::secrets::Secrets::from_env().substitute(text);
+    if let Some(name) = resolved.missing.first() {
+        anyhow::bail!(
+            "`${name}` names a credential that is not set in this environment. Set `{name}` \
+             where h5i runs, or type the text without it."
+        );
     }
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find(&prefix) {
-        out.push_str(&rest[..at]);
-        let after = &rest[at + 1..];
-        let len = after
-            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .unwrap_or(after.len());
-        let name = &after[..len];
-        let value = std::env::var(name).map_err(|_| {
-            anyhow::anyhow!(
-                "`${name}` names a credential that is not set in this environment. Set `{name}` \
-                 where h5i runs, or type the text without it."
-            )
-        })?;
-        out.push_str(&value);
-        if !value.is_empty() {
-            secrets.push((value, format!("${name}")));
-        }
-        rest = &after[len..];
-    }
-    out.push_str(rest);
-    Ok((out, secrets))
+    Ok(resolved.text)
 }
 
 /// A PNG of the page, written where h5i chooses unless `--out` says otherwise.
@@ -1372,7 +1346,11 @@ fn screenshot(
     if full {
         argv.push("--full".into());
     }
-    let output = run_agent_browser(&session, &argv)?;
+    let target = path.display().to_string();
+    begin_page_action(&session, "screenshot", Some(&target))?;
+    let outcome = run_agent_browser(&session, &argv, None);
+    record_page_action(&session, "screenshot", Some(&target), outcome.as_ref().err());
+    let output = outcome?;
     if json {
         println!(
             "{}",
@@ -1580,6 +1558,11 @@ fn start_proxy(
     if !allow.iter().any(|origin| origin == url) {
         allow.insert(0, url.to_string());
     }
+    let now = chrono::Utc::now();
+    let expires_at = grants.expires_in.map(|secs| {
+        (now + chrono::Duration::seconds(secs as i64))
+            .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+    });
 
     let mut command = Command::new(std::env::current_exe()?);
     command
@@ -1612,6 +1595,9 @@ fn start_proxy(
     if grants.dom_instrument {
         command.arg("--dom-report").arg(dir.join("dom-report.jsonl"));
     }
+    if let Some(at) = &expires_at {
+        command.arg("--expires-at").arg(at);
+    }
     let log = std::fs::File::create(&log_path)?;
     command
         .stdin(Stdio::null())
@@ -1642,7 +1628,6 @@ fn start_proxy(
         std::thread::sleep(Duration::from_millis(25));
     }
     let proxy_url = std::fs::read_to_string(&proxy_file)?.trim().to_string();
-    let now = chrono::Utc::now();
     let session = bs::Session {
         id: id.clone(),
         name,
@@ -1652,10 +1637,7 @@ fn start_proxy(
         lane: bs::Lane::ProxyObserved,
         url: url.to_string(),
         started_at: now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
-        expires_at: grants.expires_in.map(|secs| {
-            (now + chrono::Duration::seconds(secs as i64))
-                .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
-        }),
+        expires_at,
         storage: bs::Storage::Ephemeral,
         policy_digest: host_policy_digest(&allow, grants.no_loopback, scope.as_ref()),
         scope_digest: scope.as_ref().map(|s| s.digest.clone()).unwrap_or_default(),
@@ -1734,7 +1716,11 @@ fn proxy_browser_session(id: &str) -> String {
 
 /// Run agent-browser against a session's Chromium and hand back its stdout.
 /// The proxy flags go on every call, so a relaunch is proxied too.
-fn run_agent_browser(session: &bs::Session, ab_argv: &[String]) -> anyhow::Result<String> {
+fn run_agent_browser(
+    session: &bs::Session,
+    ab_argv: &[String],
+    stdin: Option<&Value>,
+) -> anyhow::Result<String> {
     let Some(proxy) = session.proxy.as_ref() else {
         anyhow::bail!(
             "session {} was opened by an h5i that had its own browser engine, and that engine \
@@ -1744,13 +1730,25 @@ fn run_agent_browser(session: &bs::Session, ab_argv: &[String]) -> anyhow::Resul
         );
     };
     let agent_browser = proxy_agent_browser()?;
-    let output = Command::new(&agent_browser)
+    let mut command = Command::new(&agent_browser);
+    command
         .arg("--session")
         .arg(proxy_browser_session(&session.id))
         .args(agent_browser_proxy_args(&proxy.url))
         .args(ab_argv)
-        .stdin(Stdio::null())
-        .output()
+        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("could not run agent-browser: {e}"))?;
+    if let (Some(body), Some(mut pipe)) = (stdin, child.stdin.take()) {
+        use std::io::Write as _;
+        pipe.write_all(body.to_string().as_bytes())
+            .map_err(|e| anyhow::anyhow!("could not hand agent-browser its command: {e}"))?;
+    }
+    let output = child
+        .wait_with_output()
         .map_err(|e| anyhow::anyhow!("could not run agent-browser: {e}"))?;
     // What a page composed, on its way to a terminal and a model: escapes and
     // control characters go, the same as from every other reply.
@@ -1782,39 +1780,27 @@ fn page(
     mutating: bool,
     json: bool,
 ) -> anyhow::Result<()> {
-    let record = PageRecord {
-        shown: ab_argv.clone(),
-        secrets: Vec::new(),
-    };
-    page_with(root, selector, ab_argv, record, label, mutating, json)
+    let shown = ab_argv.clone();
+    page_with(root, selector, Run::Argv(ab_argv), shown, label, mutating, json)
 }
 
-/// How a page verb is written down when that differs from what is run: a
-/// `type` whose text held a credential placeholder is recorded with the
-/// placeholder, never with what it resolved to.
-struct PageRecord {
-    /// The argv as the caller wrote it.
-    shown: Vec<String>,
-    /// Each resolved credential, and the placeholder that stands for it in
-    /// anything that is printed or kept.
-    secrets: Vec<(String, String)>,
+/// How a page verb reaches agent-browser.
+enum Run {
+    /// As its argv.
+    Argv(Vec<String>),
+    /// As a `batch` read from stdin, for a command carrying a credential.
+    Stdin(Value),
 }
 
-impl PageRecord {
-    fn mask(&self, text: &str) -> String {
-        self.secrets
-            .iter()
-            .fold(text.to_string(), |text, (value, placeholder)| text.replace(value, placeholder))
-    }
-}
-
-/// The same, with a [`PageRecord`]. Checks the control lock, writes the action
-/// log, and keeps the output in the session's artifacts.
+/// The same, given how to run it and the argv to record (`shown`, which has
+/// placeholders where the run has credentials). Checks the control lock,
+/// records the verb before it acts, masks every session credential out of
+/// what comes back, and keeps the output in the session's artifacts.
 fn page_with(
     root: &Path,
     selector: Option<&str>,
-    ab_argv: Vec<String>,
-    record: PageRecord,
+    run: Run,
+    shown: Vec<String>,
     label: &str,
     mutating: bool,
     json: bool,
@@ -1825,14 +1811,21 @@ fn page_with(
         anyhow::bail!("{explanation}");
     }
     // Everything after the verb, so the audit reads `scroll down 200` rather
-    // than `scroll down`. Placeholders, never resolved credentials.
-    let target = (record.shown.len() > 1).then(|| record.shown[1..].join(" "));
-    let outcome = run_agent_browser(&session, &ab_argv)
-        .map(|stdout| record.mask(&stdout))
-        .map_err(|e| anyhow::anyhow!("{}", record.mask(&e.to_string())));
+    // than `scroll down`.
+    let target = (shown.len() > 1).then(|| shown[1..].join(" "));
+    begin_page_action(&session, label, target.as_deref())?;
+    let secrets = h5i_browser::secrets::Secrets::from_env();
+    let outcome = match &run {
+        Run::Argv(argv) => run_agent_browser(&session, argv, None),
+        Run::Stdin(batch) => {
+            run_agent_browser(&session, &["batch".into(), "--bail".into()], Some(batch))
+        }
+    }
+    .map(|stdout| secrets.redact(&stdout))
+    .map_err(|e| anyhow::anyhow!("{}", secrets.redact(&e.to_string())));
     record_page_action(&session, label, target.as_deref(), outcome.as_ref().err());
     let stdout = outcome?;
-    let recorded = record_browser_observation(root, &session, label, &record.shown, &stdout);
+    let recorded = record_browser_observation(root, &session, label, &shown, &stdout);
     if json {
         println!(
             "{}",
@@ -1856,19 +1849,23 @@ fn page_with(
     Ok(())
 }
 
-/// One action-log row for a page verb, in the proxy's own shape. No `seq`:
-/// those are the proxy's. Best effort.
+/// The action-log row a page verb writes before it acts. No record, no action,
+/// as on the control channel.
+fn begin_page_action(session: &bs::Session, verb: &str, target: Option<&str>) -> anyhow::Result<()> {
+    let row = json!({"phase": "request", "verb": verb, "target": target, "via": "agent-browser"});
+    append_action_row(session, row).map_err(|e| {
+        anyhow::anyhow!("refusing to act: the action could not be recorded: {e}")
+    })
+}
+
+/// The row after it acted. Best effort: the browser has already acted.
 fn record_page_action(
     session: &bs::Session,
     verb: &str,
     target: Option<&str>,
     error: Option<&anyhow::Error>,
 ) {
-    let Some(path) = &session.logs.actions else {
-        return;
-    };
     let row = json!({
-        "at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
         "phase": "result",
         "verb": verb,
         "target": target,
@@ -1876,10 +1873,20 @@ fn record_page_action(
         "error": error.map(|e| bs::scrub_text(&e.to_string())),
         "via": "agent-browser",
     });
+    let _ = append_action_row(session, row);
+}
+
+/// One row in the session's action log, in the proxy's own shape. No `seq`:
+/// those are the proxy's. One write, because the proxy appends to the same
+/// file.
+fn append_action_row(session: &bs::Session, mut row: Value) -> std::io::Result<()> {
     use std::io::Write as _;
-    if let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(path) {
-        let _ = writeln!(file, "{row}");
-    }
+    let Some(path) = &session.logs.actions else {
+        return Ok(());
+    };
+    row["at"] = json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true));
+    let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
+    file.write_all(format!("{row}\n").as_bytes())
 }
 
 /// Keep a DOM/console observation beside the session's HTTP capture, so it is
@@ -1916,6 +1923,33 @@ fn close_proxy_browser(id: &str) {
     }
 }
 
+/// Close every h5i Chromium whose session is no longer live: one left by a
+/// proxy that died, or a session another tool expired.
+fn close_orphaned_browsers(root: &Path) {
+    let Some(agent_browser) = executable_on_path("agent-browser") else {
+        return;
+    };
+    let Ok(output) = Command::new(agent_browser)
+        .args(["session", "list", "--json"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return;
+    };
+    let listed: Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
+    let names = listed["data"]["sessions"].as_array().cloned().unwrap_or_default();
+    for name in names.iter().filter_map(Value::as_str) {
+        let Some(id) = name.strip_prefix("h5i-") else {
+            continue;
+        };
+        let live = bs::read(root, id).is_ok_and(|s| s.state.is_live());
+        if !live {
+            close_proxy_browser(id);
+        }
+    }
+}
+
 /// The way out when Chromium cannot start its sandbox. h5i never adds
 /// `--no-sandbox` itself.
 fn sandbox_hint(stderr: &str) -> String {
@@ -1937,7 +1971,8 @@ fn drive_to(root: &Path, session: &bs::Session, url: &str) -> anyhow::Result<()>
     if let Some(explanation) = h5i_core::control::check(&dir, true).explain() {
         anyhow::bail!("{explanation}");
     }
-    let outcome = run_agent_browser(session, &["open".to_string(), url.to_string()]);
+    begin_page_action(session, "navigate", Some(url))?;
+    let outcome = run_agent_browser(session, &["open".to_string(), url.to_string()], None);
     record_page_action(session, "navigate", Some(url), outcome.as_ref().err());
     outcome.map(|_| ())
 }
@@ -2868,6 +2903,9 @@ fn close(
         return Ok(());
     }
 
+    if all {
+        close_orphaned_browsers(root);
+    }
     let mut closed = Vec::new();
     let mut dropped: Vec<String> = Vec::new();
     for mut session in targets {
@@ -3089,7 +3127,9 @@ const BROWSER_SERVICE: &str = "h5i-browser";
 fn stop_engine(session: &bs::Session) -> anyhow::Result<()> {
     match &session.placement {
         bs::Placement::Host => {
-            if let Some(pid) = session.control.pid {
+            if let Some(pid) = session.control.pid
+                && process_is_ours(pid)
+            {
                 kill(pid);
             }
             if session.proxy.is_some() {
@@ -3206,6 +3246,19 @@ fn detach(command: &mut Command) {
 
 #[cfg(not(unix))]
 fn detach(_command: &mut Command) {}
+
+/// Whether a recorded pid is still an h5i session process, not one the system
+/// reused the number for after it ended. Linux can say; elsewhere it is
+/// assumed, as before.
+fn process_is_ours(pid: u32) -> bool {
+    match std::fs::read(format!("/proc/{pid}/cmdline")) {
+        Ok(cmdline) => {
+            let cmdline = String::from_utf8_lossy(&cmdline);
+            cmdline.contains("__capture-proxy") || cmdline.contains("__engine")
+        }
+        Err(_) => !cfg!(target_os = "linux"),
+    }
+}
 
 #[cfg(unix)]
 fn kill(pid: u32) {

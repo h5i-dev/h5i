@@ -102,6 +102,7 @@ case "$verb" in
     echo "✓ opened $1" ;;
   snapshot) printf -- '- heading "hello\033[2K" [ref=e1]\n' ;;
   fill) echo "✓ filled $1 with $2" ;;
+  batch) cat >> "$H5I_TEST_AB_LOG.stdin"; echo "✓ Done" ;;
   fail) echo "boom" >&2; exit 3 ;;
   *) echo "✓ $verb $*" ;;
 esac
@@ -303,7 +304,7 @@ fn page_verbs_drive_the_sessions_chromium_through_its_proxy() {
     for expected in [
         format!("open {url}"),
         "click @e1".into(),
-        "fill #q needle".into(),
+        "batch --bail".into(),
         "press Enter".into(),
         "select @e2 blue".into(),
         "uncheck @e3".into(),
@@ -317,6 +318,10 @@ fn page_verbs_drive_the_sessions_chromium_through_its_proxy() {
             "no `{expected}` in {page_calls:#?}"
         );
     }
+
+    // `type` goes on stdin, as a batch.
+    let stdin = std::fs::read_to_string(fx.ab_log.with_extension("log.stdin")).unwrap_or_default();
+    assert!(stdin.contains(r##"["fill","#q","needle"]"##), "{stdin}");
 
     // Each is in the action log, beside the proxy's own rows.
     let actions = std::fs::read_to_string(fx.dir(&id).join("actions.jsonl")).unwrap();
@@ -809,13 +814,21 @@ fn a_typed_credential_reaches_the_browser_and_never_a_reply() {
 
     let typed = fx.run_with(&["browser", "type", "#pass", "$H5I_SECRET_ACME_PASS", "--json"], &env);
     assert!(typed.status.success(), "{}", String::from_utf8_lossy(&typed.stderr));
-    let reply = String::from_utf8_lossy(&typed.stdout);
-    assert!(reply.contains("$H5I_SECRET_ACME_PASS"), "{reply}");
-    assert!(!reply.contains("hunter2-from-the-test"), "the value came back: {reply}");
+    let reply: serde_json::Value = serde_json::from_slice(&typed.stdout).unwrap();
+    assert!(!reply.to_string().contains("hunter2-from-the-test"), "the value came back: {reply}");
+    // What is kept names the placeholder.
+    let artifact = std::fs::read_to_string(reply["artifact"].as_str().unwrap()).unwrap();
+    assert!(artifact.contains("$H5I_SECRET_ACME_PASS"), "{artifact}");
 
-    // The browser got the value; nothing h5i kept did.
+    // The browser got the value on stdin, never in an argv another process
+    // could read; nothing h5i kept has it.
+    let stdin = std::fs::read_to_string(fx.ab_log.with_extension("log.stdin")).unwrap_or_default();
     assert!(
-        fx.ab_calls().iter().any(|c| c.ends_with("fill #pass hunter2-from-the-test")),
+        stdin.contains(r##"["fill","#pass","hunter2-from-the-test"]"##),
+        "{stdin}"
+    );
+    assert!(
+        fx.ab_calls().iter().all(|c| !c.contains("hunter2-from-the-test")),
         "{:#?}",
         fx.ab_calls()
     );
@@ -834,6 +847,69 @@ fn a_typed_credential_reaches_the_browser_and_never_a_reply() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("H5I_SECRET_NOT_SET_ANYWHERE"));
     let _ = fx.run(&["browser", "close"]);
+}
+
+/// A credential that comes back from any page verb is masked, not only from
+/// the `type` that used it.
+#[test]
+fn a_credential_the_page_echoes_is_masked_in_every_page_verb() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = fx.site.base.clone();
+    let env = [("H5I_SECRET_ACME_PASS", "hunter2-from-the-test")];
+    assert!(fx.run_with(&["browser", "open", &url], &env).status.success());
+    // The stub echoes its arguments, so `eval` of the value comes back with it.
+    let out = fx.run_with(&["browser", "eval", "hunter2-from-the-test", "--json"], &env);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let reply = String::from_utf8_lossy(&out.stdout);
+    assert!(!reply.contains("hunter2-from-the-test"), "{reply}");
+    assert!(reply.contains("$H5I_SECRET_ACME_PASS"), "{reply}");
+    let _ = fx.run(&["browser", "close"]);
+}
+
+/// No record, no action: a page verb whose action log cannot be written is
+/// refused before the browser is touched.
+#[cfg(unix)]
+#[test]
+fn a_page_verb_that_cannot_be_recorded_does_not_happen() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = fx.site.base.clone();
+    assert!(fx.run(&["browser", "open", &url]).status.success());
+    let id = fx.record_of_default();
+    let log = fx.dir(&id).join("actions.jsonl");
+    std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o400)).unwrap();
+    let before = fx.ab_calls().len();
+    let out = fx.run(&["browser", "click", "@e1"]);
+    std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("could not be recorded"));
+    assert_eq!(fx.ab_calls().len(), before, "the browser was driven anyway");
+    let _ = fx.run(&["browser", "close"]);
+}
+
+/// A failed `open --new` leaves the session that was the default the default.
+#[test]
+fn a_failed_open_keeps_the_previous_default() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let first = fx.proxy(&["--session", "kept"]);
+    std::fs::write(
+        fx.bin.join("agent-browser"),
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 0.39; exit 0; fi\necho boom >&2\nexit 3\n",
+    )
+    .unwrap();
+    let url = fx.site.base.clone();
+    assert!(!fx.run(&["browser", "open", &url, "--new"]).status.success());
+    assert_eq!(fx.record_of_default(), first);
+    let listed = fx.run(&["browser", "list", "--json"]);
+    let listed: Vec<serde_json::Value> = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(listed.len(), 1, "the failed session left a record: {listed:?}");
+    let _ = fx.run(&["browser", "close", "--all"]);
 }
 
 fn walk(dir: &Path) -> Vec<PathBuf> {

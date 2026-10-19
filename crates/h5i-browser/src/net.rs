@@ -279,6 +279,9 @@ pub struct LocalBroker {
     secrets: crate::secrets::Secrets,
     client: reqwest::blocking::Client,
     seq: AtomicU64,
+    /// Sequence numbers the capture proxy observed. They run beside the
+    /// control verbs rather than under them, so no verb caused them.
+    from_the_proxy: std::sync::Mutex<std::collections::BTreeSet<u64>>,
     /// The session's cookies. Attached here rather than by the HTTP client so
     /// that sending one is a decision this broker makes and records, like every
     /// other thing it does with the wire. `reqwest`'s own cookie store would
@@ -386,12 +389,16 @@ impl LocalBroker {
             H5iError::Metadata(format!("the proxy received an unusable URL {url:?}: {e}"))
         })?;
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut seen) = self.from_the_proxy.lock() {
+            seen.insert(seq);
+        }
         let mut record = RequestRecord::request(seq, Initiator::Subresource, method, url);
         if let Some(reason) = self.policy.check(&parsed).reason() {
             record = record.denied(reason);
         }
         self.append(&record)?;
         if record.allowed {
+            self.learn_sent_cookies(&parsed, &headers);
             if let Some(capture) = &self.capture {
                 let content_type = headers
                     .iter()
@@ -403,6 +410,34 @@ impl LocalBroker {
             self.append(&record.response())?;
         }
         Ok(record)
+    }
+
+    /// Keep the cookies the browser sent that the jar does not hold: ones page
+    /// script set, or the browser had before this proxy saw a `Set-Cookie`.
+    /// Only names the jar has nothing for, as host-only, so a cookie the server
+    /// set keeps its own attributes.
+    fn learn_sent_cookies(&self, url: &Url, headers: &[(String, String)]) {
+        let held: Vec<String> = self
+            .jar
+            .header_for(url)
+            .map(|(header, _)| {
+                header
+                    .split(';')
+                    .filter_map(|pair| pair.split_once('=').map(|(name, _)| name.trim().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let sent = headers
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("cookie"))
+            .flat_map(|(_, value)| value.split(';'))
+            .filter_map(|pair| pair.split_once('='))
+            .map(|(name, value)| (name.trim(), value.trim()))
+            .filter(|(name, _)| !name.is_empty() && !held.iter().any(|h| h == name));
+        let set: Vec<String> = sent.map(|(name, value)| format!("{name}={value}; Path=/")).collect();
+        if !set.is_empty() {
+            self.jar.store(url, set.iter().map(String::as_str));
+        }
     }
 
     /// Finish a proxy-observed request in the same receipt and capture shapes
@@ -717,6 +752,7 @@ impl LocalBroker {
             jar: crate::cookies::Jar::new(),
             proxied,
             capture,
+            from_the_proxy: std::sync::Mutex::new(std::collections::BTreeSet::new()),
         }))
     }
 
@@ -2057,6 +2093,14 @@ impl LocalBroker {
 }
 
 impl crate::broker::Broker for LocalBroker {
+    fn caused_since(&self, mark: Option<u64>) -> Vec<u64> {
+        let since = self.since(mark);
+        let Ok(from_the_proxy) = self.from_the_proxy.lock() else {
+            return since;
+        };
+        since.into_iter().filter(|seq| !from_the_proxy.contains(seq)).collect()
+    }
+
     fn send(&self, fetch: &crate::broker::Fetch) -> FetchOutcome {
         let context = fetch.cors.as_ref().map(|ask| CorsContext {
             document: crate::cors::Origin::of(&ask.document),
@@ -3056,6 +3100,48 @@ mod tests {
             )
             .expect("recorded");
         assert_eq!(broker.cookie_count(), 2);
+    }
+
+    #[test]
+    fn a_cookie_the_browser_sent_that_no_server_set_is_learned_without_replacing_one() {
+        let broker = LocalBroker::with_limits(
+            Policy::new().allow("example.test"),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits::default(),
+            None,
+        )
+        .expect("broker");
+        let first = broker
+            .observe_proxy_request("GET", "https://example.test/", Vec::new(), &[])
+            .expect("recorded");
+        broker
+            .observe_proxy_response(
+                &first,
+                ProxyResponse {
+                    status: Some(200),
+                    headers: vec![("set-cookie".into(), "sid=server; Path=/; HttpOnly".into())],
+                    body: crate::capture::Received::Bytes(b""),
+                    bytes: 0,
+                    duration: Duration::from_millis(1),
+                    error: None,
+                },
+            )
+            .expect("recorded");
+        // The browser sends the server's cookie with another value, and one
+        // page script set.
+        broker
+            .observe_proxy_request(
+                "GET",
+                "https://example.test/api",
+                vec![("cookie".into(), "sid=stale; token=from-script".into())],
+                &[],
+            )
+            .expect("recorded");
+        let (header, _) = broker.jar.header_for(&url("https://example.test/api")).expect("sent");
+        assert!(header.contains("sid=server"), "{header}");
+        assert!(!header.contains("sid=stale"), "{header}");
+        assert!(header.contains("token=from-script"), "{header}");
     }
 
     #[test]

@@ -51,6 +51,10 @@ pub struct Args {
     /// and append the reports it beacons back to this file, one JSON per line.
     #[arg(long = "dom-report", value_name = "PATH")]
     pub dom_report: Option<PathBuf>,
+    /// Exit at this RFC 3339 time: the session's `--expires-in`, kept by the
+    /// proxy itself so it ends whoever marks the record.
+    #[arg(long = "expires-at", value_name = "TIME")]
+    pub expires_at: Option<String>,
 }
 
 #[derive(Clone)]
@@ -312,6 +316,17 @@ fn make_ca(cert_path: &PathBuf, key_path: &PathBuf) -> anyhow::Result<Issuer<'st
 }
 
 pub fn run(args: Args) -> anyhow::Result<()> {
+    if let Some(at) = &args.expires_at {
+        let at = chrono::DateTime::parse_from_rfc3339(at)
+            .map_err(|e| anyhow::anyhow!("--expires-at {at:?} is not an RFC 3339 time: {e}"))?;
+        let left = (at.with_timezone(&chrono::Utc) - chrono::Utc::now())
+            .to_std()
+            .unwrap_or_default();
+        std::thread::spawn(move || {
+            std::thread::sleep(left);
+            std::process::exit(0);
+        });
+    }
     let capture = Arc::new(Capture::open(&args.messages)?);
     let sink = Arc::new(JsonlSink::create(&args.receipts)?);
     let policy = h5i_browser::Policy::new()
