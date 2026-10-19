@@ -11,14 +11,15 @@ what the commands are *for*.
 
 ## What h5i is
 
-> Build with agents. Red-team for bugs. Formally verify properties.
+> Build. Verify. Hack.
 
-*h5i* (pronounced *high-five*) is an agent-native web security workspace with
-two halves. Red-teaming finds the bugs nobody anticipated, in a running app on
-any stack. Formal verification proves the rules you can state: an application
-built on h5i-app keeps its logic in a Rust kernel that is proven in Lean 4, and
-[`h5i app`](#h5i-app) runs that loop. Most of this manual is the red-teaming
-half, because that is where the commands are.
+*h5i* (pronounced *high-five*) brings web development, formal verification
+with Lean 4, and red-teaming together around a composable Rust framework.
+Build an application with h5i-app, keep its critical logic in a Rust kernel,
+and use [`h5i app`](#h5i-app) to extract and prove properties of that logic in
+Lean 4. Then test the running app for bugs the proofs did not cover. The
+red-teaming tools also work with applications built on any stack. Most of this
+manual covers those tools because they have the most commands.
 
 On the red-teaming side, every request is policy-checked and written down
 before the bytes move, and the fetch is refused when the record cannot be

@@ -7,23 +7,24 @@ the two superseded positionings are kept in
 [`docs/roadmap-history.md`](roadmap-history.md) because both describe
 machinery that is still shipped and tested.
 
-> h5i is an agent-native web security workspace. Build with agents, red-team
-> for bugs, formally verify properties: find the vulnerabilities nobody
-> anticipated, and prove the rules you can state.
+> h5i unifies web development, formal verification with Lean 4, and
+> red-teaming around a composable Rust framework. Build. Verify. Hack.
 
-The two halves are two sides of one coin.
+These three parts work together:
 
+- **Build** with h5i-app, an Axum-based Rust framework that keeps critical
+  application logic in composable kernels.
+- **Formal verification** extracts that kernel logic to Lean 4 and proves
+  stated properties, from tenant isolation and authorization to the app's own
+  state invariants. Its scope and assumption ledger live in
+  [`docs/app/ROADMAP.md`](app/ROADMAP.md) and
+  [`docs/app/TRUST.md`](app/TRUST.md); `h5i app` is the CLI over it.
 - **Red-teaming** works on any stack. An agent drives a browser and works the
   HTTP traffic directly, inside limits you set. Every request is policy-checked
   and written down before the bytes move, and the fetch is refused when the
   record cannot be written. Playwright and Puppeteer drive a browser and cannot
   tell you what it reached, because neither *is* the HTTP client. That is the
   piece with no equivalent elsewhere.
-- **Formal verification** is h5i-app, an Axum-based Rust framework whose
-  application logic is extracted to Lean 4 and proven there, from tenant
-  isolation and authorization to the app's own state invariants. Its scope and
-  its assumption ledger live in [`docs/app/ROADMAP.md`](app/ROADMAP.md) and
-  [`docs/app/TRUST.md`](app/TRUST.md); `h5i app` is the CLI over it.
 
 Nothing was thrown away to get here: the engine, the broker, the egress proxy,
 the receipt lanes, the control lock and the box tiers were all built for the
@@ -42,7 +43,7 @@ environment story and all are essential to this one.
 | security regression tests | MVP built 2026-09-13: portable flows, external oracles, JSON/JUnit, OpenAPI coverage and an optional gate. `h5i plugin install test` | [`docs/design/design-test.md`](design/design-test.md) |
 | h5i-app | 0.1 published; `h5i app` new, extract, check, prove, lint, mutate, doctor. | [`docs/app/DESIGN.md`](app/DESIGN.md), [`docs/app/ROADMAP.md`](app/ROADMAP.md) |
 
-## The three decisions the red-teaming half rests on
+## The three decisions the red-teaming workflow rests on
 
 1. The sandbox is opt-in. `h5i browser open` runs on the host like any other
    headless browser and says so on the placement line. Requiring a box up front

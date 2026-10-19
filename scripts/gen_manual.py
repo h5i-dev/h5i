@@ -171,8 +171,8 @@ HEAD = '''<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i manual: CLI reference for the web security workspace</title>
-  <meta name="description" content="Every h5i command: browser sessions, recon and websec, the five isolation tiers, the env.toml policy, h5i app for Lean 4 proofs, and the honest limits.">
+  <title>h5i manual: build, verify, and hack web apps</title>
+  <meta name="description" content="h5i CLI reference for building Rust web apps, verifying kernel logic with Lean 4, and red-teaming running apps with browser, recon, websec, and test commands.">
   <meta name="keywords" content="h5i manual, h5i cli reference, h5i browser, h5i browser open, h5i browser snapshot, h5i browser audit, agent browser cli, h5i box, isolation tiers, env.toml policy, egress allowlist, credential broker, execution receipt, h5i app, h5i-app, lean 4, claude code, codex">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
@@ -184,23 +184,23 @@ HEAD = '''<!DOCTYPE html>
   <link rel="apple-touch-icon" href="/_static/logo.png">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i manual: CLI reference for the web security workspace">
-  <meta property="og:description" content="Every h5i command: browser sessions, recon and websec, the five isolation tiers, the env.toml policy, h5i app for Lean 4 proofs, and the honest limits.">
+  <meta property="og:title" content="h5i manual: build, verify, and hack web apps">
+  <meta property="og:description" content="h5i CLI reference for building Rust web apps, verifying kernel logic with Lean 4, and red-teaming running apps with browser, recon, websec, and test commands.">
   <meta property="og:url" content="https://h5i.dev/manual/">
   <meta property="og:image" content="https://h5i.dev/_static/social-card.png">
   <meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
   <meta property="og:locale" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i manual: CLI reference for the web security workspace">
-  <meta name="twitter:description" content="Every h5i command: browser sessions, recon and websec, the five isolation tiers, the env.toml policy, h5i app for Lean 4 proofs, and the honest limits.">
+  <meta name="twitter:title" content="h5i manual: build, verify, and hack web apps">
+  <meta name="twitter:description" content="h5i CLI reference for building Rust web apps, verifying kernel logic with Lean 4, and red-teaming running apps with browser, recon, websec, and test commands.">
   <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
   <meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
 
   <script type="application/ld+json">
   {"@context":"https://schema.org","@graph":[
     {"@type":"TechArticle","@id":"https://h5i.dev/manual/#article",
-     "headline":"h5i manual: CLI reference for the web security workspace",
-     "description":"Every h5i command: browser sessions, recon and websec, the five isolation tiers, the env.toml policy, h5i app for Lean 4 proofs, and the honest limits.",
+     "headline":"h5i manual: build, verify, and hack web apps",
+     "description":"h5i CLI reference for building Rust web apps, verifying kernel logic with Lean 4, and red-teaming running apps with browser, recon, websec, and test commands.",
      "url":"https://h5i.dev/manual/",
      "inLanguage":"en",
      "isPartOf":{"@type":"WebSite","name":"h5i","url":"https://h5i.dev/"},

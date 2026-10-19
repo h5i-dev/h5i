@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i manual: CLI reference for the web security workspace</title>
-  <meta name="description" content="Every h5i command: browser sessions, recon and websec, the five isolation tiers, the env.toml policy, h5i app for Lean 4 proofs, and the honest limits.">
+  <title>h5i manual: build, verify, and hack web apps</title>
+  <meta name="description" content="h5i CLI reference for building Rust web apps, verifying kernel logic with Lean 4, and red-teaming running apps with browser, recon, websec, and test commands.">
   <meta name="keywords" content="h5i manual, h5i cli reference, h5i browser, h5i browser open, h5i browser snapshot, h5i browser audit, agent browser cli, h5i box, isolation tiers, env.toml policy, egress allowlist, credential broker, execution receipt, h5i app, h5i-app, lean 4, claude code, codex">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
@@ -16,23 +16,23 @@
   <link rel="apple-touch-icon" href="/_static/logo.png">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i manual: CLI reference for the web security workspace">
-  <meta property="og:description" content="Every h5i command: browser sessions, recon and websec, the five isolation tiers, the env.toml policy, h5i app for Lean 4 proofs, and the honest limits.">
+  <meta property="og:title" content="h5i manual: build, verify, and hack web apps">
+  <meta property="og:description" content="h5i CLI reference for building Rust web apps, verifying kernel logic with Lean 4, and red-teaming running apps with browser, recon, websec, and test commands.">
   <meta property="og:url" content="https://h5i.dev/manual/">
   <meta property="og:image" content="https://h5i.dev/_static/social-card.png">
   <meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
   <meta property="og:locale" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i manual: CLI reference for the web security workspace">
-  <meta name="twitter:description" content="Every h5i command: browser sessions, recon and websec, the five isolation tiers, the env.toml policy, h5i app for Lean 4 proofs, and the honest limits.">
+  <meta name="twitter:title" content="h5i manual: build, verify, and hack web apps">
+  <meta name="twitter:description" content="h5i CLI reference for building Rust web apps, verifying kernel logic with Lean 4, and red-teaming running apps with browser, recon, websec, and test commands.">
   <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
   <meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
 
   <script type="application/ld+json">
   {"@context":"https://schema.org","@graph":[
     {"@type":"TechArticle","@id":"https://h5i.dev/manual/#article",
-     "headline":"h5i manual: CLI reference for the web security workspace",
-     "description":"Every h5i command: browser sessions, recon and websec, the five isolation tiers, the env.toml policy, h5i app for Lean 4 proofs, and the honest limits.",
+     "headline":"h5i manual: build, verify, and hack web apps",
+     "description":"h5i CLI reference for building Rust web apps, verifying kernel logic with Lean 4, and red-teaming running apps with browser, recon, websec, and test commands.",
      "url":"https://h5i.dev/manual/",
      "inLanguage":"en",
      "isPartOf":{"@type":"WebSite","name":"h5i","url":"https://h5i.dev/"},
@@ -152,14 +152,15 @@ what the commands are <em>for</em>.</p>
 <hr />
 <h2 id="what-h5i-is" data-n="01">What h5i is</h2>
 <blockquote>
-<p>Build with agents. Red-team for bugs. Formally verify properties.</p>
+<p>Build. Verify. Hack.</p>
 </blockquote>
-<p><em>h5i</em> (pronounced <em>high-five</em>) is an agent-native web security workspace with
-two halves. Red-teaming finds the bugs nobody anticipated, in a running app on
-any stack. Formal verification proves the rules you can state: an application
-built on h5i-app keeps its logic in a Rust kernel that is proven in Lean 4, and
-<a href="#h5i-app"><code>h5i app</code></a> runs that loop. Most of this manual is the red-teaming
-half, because that is where the commands are.</p>
+<p><em>h5i</em> (pronounced <em>high-five</em>) brings web development, formal verification
+with Lean 4, and red-teaming together around a composable Rust framework.
+Build an application with h5i-app, keep its critical logic in a Rust kernel,
+and use <a href="#h5i-app"><code>h5i app</code></a> to extract and prove properties of that logic in
+Lean 4. Then test the running app for bugs the proofs did not cover. The
+red-teaming tools also work with applications built on any stack. Most of this
+manual covers those tools because they have the most commands.</p>
 <p>On the red-teaming side, every request is policy-checked and written down
 before the bytes move, and the fetch is refused when the record cannot be
 written. An agent drives a session by name, reads the page as an outline with <code>@ref</code> handles, and
