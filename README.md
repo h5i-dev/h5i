@@ -62,7 +62,7 @@ npx skills add h5i-dev/h5i
 
 ```toml
 [dependencies]
-h5i-app = { version = "0.1.1", features = ["http", "postgres"] }
+h5i-app = { version = "0.1.2", features = ["http", "postgres"] }
 ```
 
 We can write web applications in Rust, translate them into Lean 4 via [Aeneas](https://github.com/AeneasVerif/aeneas), and prove various properties like authorization, 

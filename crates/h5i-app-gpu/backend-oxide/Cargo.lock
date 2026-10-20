@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-gpu-backend-oxide"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "calculator-kernel",
  "cuda-device",
@@ -40,11 +40,11 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-schema"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "h5i-app-sql"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "parallel-kernel"
