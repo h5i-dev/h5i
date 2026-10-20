@@ -52,13 +52,16 @@ h5i-app = { version = "0.1.2", features = ["http", "postgres"] }
 
 h5i provides a unified CLI for developing, debugging, and security-testing web applications with AI agents.
 
-> `h5i` CLI works with any web services regardless of their framework, and no migration to `h5i-app` is required.
+For example, you can run professional red-teaming by just opening your favorite agent harness and saying *"Audit `https://<your-target>.com` with h5i."*
 
-- **Browser automation:** Drive Chromium through h5i's capture proxy: navigate, fill forms, and test authenticated workflows, with every request policy-checked and recorded.
-- **HTTP security testing:** Capture, modify, replay, and compare HTTP requests to investigate vulnerabilities.
-- **Recon:** Discover endpoints, parameters, and hidden attack surfaces through crawling and JavaScript analysis.
-- **CI/CD:** Save confirmed attack flows and replay them in CI/CD to catch security regressions.
-- **Sandboxed workflow**: Run agents in isolated environments with configurable filesystem and network restrictions.
+<p align="center">
+  <img src="./docs/_static/agent-audit-target.svg" alt="A coding agent auditing target.com with h5i commands while the browser captures its traffic" width="99%" />
+</p>
+
+
+> Most of `h5i` CLI commands work with any web services regardless of their framework, and no migration to `h5i-app` is required.
+
+**Project template**
 
 ```bash
 # Build and verify a Rust web application
@@ -66,33 +69,47 @@ h5i app new counter && cd counter                       # Create an h5i-app proj
 h5i app extract                                         # Translate Rust logic into Lean 4
 h5i app prove                                           # Build and check formal proofs
 h5i app mutate                                          # Test proof sensitivity with mutations
-
-# Red-team any web application
-h5i browser open https://example.com                    # Open a website in Chromium, captured by h5i
-h5i browser click @e3                                   # Interact with page elements
-h5i websec requests                                     # Inspect captured HTTP traffic
-h5i websec replay req_42 --set query.id=456             # Modify and replay a request
-h5i recon crawl --max-requests 200                      # Crawl the application for attack surfaces
-
-# Run security regression tests in CI/CD
-h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com                # Replay a security test
-h5i test --target https://staging.example.com --openapi openapi.yaml --min-coverage 80  # Fail CI when API coverage drops
-
-# Develop and red-team inside a disposable sandbox
-h5i box --name lab --profile browser && h5i box shell lab -- claude   # Confine an agent's files, network and secrets
-h5i box export lab                                                    # Review its changes before they reach your repository
-
-# Open the local dashboard
-h5i ui    
 ```
 
-For example, you can run professional red-teaming by just opening your favorite agent harness and saying *"Audit `https://<your-target>.com` with h5i."*
+**Browser automation:** Drive Chromium through h5i's capture proxy: navigate, fill forms, and test authenticated workflows, with every request policy-checked and recorded.
 
-<p align="center">
-  <img src="./docs/_static/agent-audit-target.svg" alt="A coding agent auditing target.com with h5i commands while the browser captures its traffic" width="99%" />
-</p>
+```bash
+h5i browser open https://example.com                    # Open a website in Chromium, captured by h5i
+h5i browser click @e3                                   # Interact with page elements
+```
 
-While agents access these capabilities through a unified CLI, you can also monitor their activity through the dashboard:
+**HTTP security testing:** Capture, modify, replay, and compare HTTP requests to investigate vulnerabilities.
+
+```bash
+h5i websec requests                                     # Inspect captured HTTP traffic
+h5i websec replay req_42 --set query.id=456             # Modify and replay a request
+```
+
+**Recon:** Discover endpoints, parameters, and hidden attack surfaces through crawling and JavaScript analysis.
+
+```bash
+h5i recon crawl --max-requests 200                      # Crawl the application for attack surfaces
+```
+
+**CI/CD:** Save confirmed attack flows and replay them in CI/CD to catch security regressions.
+
+```bash
+h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com                # Replay a security test
+h5i test --target https://staging.example.com --openapi openapi.yaml --min-coverage 80  # Fail CI when API coverage drops
+```
+
+**Sandboxed workflow:** Run agents in isolated environments with configurable filesystem and network restrictions.
+
+```bash
+h5i box --name lab --profile browser && h5i box shell lab -- claude   # Confine an agent's files, network and secrets
+h5i box export lab                                                    # Review its changes before they reach your repository
+```
+
+**Intuitive dashboard:** While agents access these capabilities through a unified CLI, you can also monitor their activity through the dashboard.
+
+```bash
+h5i ui  # Open the local dashboard   
+```
 
 <p align="center">
   <img src="./docs/_static/sandbox-ui-demo.png" alt="h5i local dashboard showing browser and session activity" width="99%" />
