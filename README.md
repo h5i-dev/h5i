@@ -46,6 +46,11 @@ h5i-app = { version = "0.1.2", features = ["http", "postgres"] }
 - **Formal verification**: Translate Rust application logic into Lean 4 using [Aeneas](https://github.com/AeneasVerif/aeneas) and prove their properties.
 - **Optional GPU acceleration**: Execute supported application kernels on GPUs while retaining CPU execution.
 
+**Showcases**
+- [o5s](https://github.com/h5i-dev/o5s): Patch-based version control for concurrent AI agents, deployable on Cloudflare Workers.
+- [h5i-db](https://github.com/Koukyosyumei/h5i-db): High-performance time-series database and backtesting engine with an `h5i-app`-based web interface.
+- [h5i-app-bench](https://github.com/h5i-dev/h5i-app-bench): Benchmarks for formal verification coverage and web application performance across languages.
+
 ## 3. Development Infrastructure
 
 h5i provides a unified CLI for building, verifying, debugging, and security-testing web applications with AI agents. For example, you can run professional red-teaming simply by opening your favorite AI agent harness and saying "Audit `https://<your-target>.com` with h5i." 
