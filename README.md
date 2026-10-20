@@ -42,7 +42,7 @@ npx skills add h5i-dev/h5i
 h5i-app = { version = "0.1.2", features = ["http", "postgres"] }
 ```
 
-- **Kernel-based architecture**: Separate application logic from infrastructure to verify and optimize core behavior easily.
+- **Kernel-based architecture**: Separate application logic from infrastructure to verify and optimize core behavior.
 - **Formal verification**: Translate Rust application logic into Lean 4 using [Aeneas](https://github.com/AeneasVerif/aeneas) and prove their properties.
 - **Optional GPU acceleration**: Execute supported application kernels on GPUs while retaining CPU execution.
 
@@ -63,7 +63,7 @@ Just open your favorite agent harness and say *"Audit `https://<your-target>.com
 - **HTTP security testing:** Capture, modify, replay, and compare HTTP requests.
 - **Reconnaissance:** Discover endpoints, parameters, and hidden attack surfaces.
 - **CI/CD:** Replay security tests and enforce API coverage requirements.
-- **Sandboxed agents:** Run isolated workflows with filesystem and network restrictions.
+- **Sandboxed environment:** Run isolated workflows with filesystem and network restrictions.
 - **Dashboard:** Monitor browser sessions and agent activity through a local web interface.
 
 **CLI Examples**
@@ -86,7 +86,7 @@ h5i recon crawl --max-requests 200
 h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com
 h5i test --target https://staging.example.com --openapi openapi.yaml --min-coverage 80
 
-# Sandboxed agents
+# Sandboxed environment
 h5i box --name lab --profile browser
 h5i box shell lab -- claude
 h5i box export lab
