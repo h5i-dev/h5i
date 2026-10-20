@@ -42,8 +42,8 @@ npx skills add h5i-dev/h5i
 h5i-app = { version = "0.1.2", features = ["http", "postgres"] }
 ```
 
-- **Kernel-based architecture**: Separate application logic from infrastructure to make core behavior easier to verify and optimize.
-- **Formal verification**: Translate Rust application logic into Lean 4 using [Aeneas](https://github.com/AeneasVerif/aeneas) and prove properties such as authorization, data isolation, and business logic correctness.
+- **Kernel-based architecture**: Separate application logic from infrastructure to verify and optimize core behavior easily.
+- **Formal verification**: Translate Rust application logic into Lean 4 using [Aeneas](https://github.com/AeneasVerif/aeneas) and prove their properties.
 - **Optional GPU acceleration**: Execute supported application kernels on GPUs while retaining CPU execution.
 
 ## 3. Development Infrastructure
