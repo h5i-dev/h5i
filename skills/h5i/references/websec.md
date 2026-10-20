@@ -29,7 +29,7 @@ The starting URL may be an API endpoint rather than an HTML page. For example,
 seed an authenticated or unauthenticated capture before doing the rest of the
 work with `websec`.
 
-Four things about `replay` that are easier to know than to discover.
+Five things about `replay` that are easier to know than to discover.
 
 **A `json.` value is typed the way it reads.** `json.id=99` is a number,
 `json.active=true` a boolean, `json.role=admin` a string. Quote it to insist on
@@ -57,6 +57,18 @@ request and gives back N documents nothing correlates.
 `[85 bytes, not text — sha256 …]` rather than mangling a PNG or a git object
 through the terminal; `show --body-to PATH` writes the bytes, and `--body-to -`
 writes them to standard output for a pipe.
+
+**`replay` sends the stored request's own cookies, not the session's.** It
+re-sends the bytes as they were captured; it does not reach into the session's
+cookie jar. So after you log in with one replay, a second replay of a request
+captured *before* that login goes out unauthenticated — the login's cookie is in
+the jar, not in the stored request. To act as the logged-in session, add `--as
+<this-session>` (it sends this session's `Cookie`/`Authorization`); `--as other`
+borrows another session's identity, the IDOR "do it as user B" move. h5i prints a
+`note:` pointing at `--as` when a replay goes out with no `Cookie` though the jar
+holds one. Do *not* add `--as` on a step that sets a credential itself (a forged
+`alg=none` token in `--set cookie.auth_token=...`): it would re-inject the real
+one and overwrite the forgery.
 
 **When the answer is not in the response, make an oracle.** A blind finding
 changes something you can measure but not read: the body comes back the same

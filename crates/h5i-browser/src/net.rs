@@ -2733,6 +2733,7 @@ impl LocalBroker {
                 sent,
                 samples: Vec::new(),
                 outcome,
+                hint: None,
             });
         }
 
@@ -2789,8 +2790,30 @@ impl LocalBroker {
                 sent,
                 samples,
                 outcome,
+                hint: None,
             });
         }
+
+        // A replay that carried no Cookie while this session's jar holds cookies
+        // for the target origin almost always meant to be authenticated: `replay`
+        // sends the stored request's own bytes and does not reach into the jar.
+        // Nudge toward `--as`, which does. (Not when the caller set a Cookie
+        // themselves, e.g. a forged token — that is deliberate.)
+        let hint = (!use_jar
+            && !editable
+                .headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("cookie"))
+            && self.jar.header_for(&editable.url).is_some())
+        .then(|| {
+            format!(
+                "this replay sent no Cookie, but this session's jar has cookies for {}. \
+                 `replay` sends the stored request's own bytes and does not use the jar; \
+                 add `--as <session>` to send this session's cookies (or set one with \
+                 `--set cookie.NAME=...`).",
+                editable.url.origin().ascii_serialization()
+            )
+        });
 
         let fetch = to_fetch(&editable);
         let sent = crate::broker::Sent {
@@ -2826,6 +2849,7 @@ impl LocalBroker {
             sent,
             samples,
             outcome,
+            hint,
         })
     }
 }

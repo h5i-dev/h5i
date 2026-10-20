@@ -767,6 +767,7 @@ fn control_verb_inner(session: &mut Session, request: &Value, verb: Verb) -> (Va
                             "applied": edited.applied,
                             "sent": edited.sent,
                             "samples": samples,
+                            "hint": edited.hint,
                             "response": {
                                 "status": outcome.status,
                                 "url": outcome.final_url.to_string(),

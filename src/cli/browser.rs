@@ -1171,6 +1171,11 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 if !dropped.is_empty() {
                     answer["credentials_dropped"] = serde_json::json!(dropped);
                 }
+                // Nudge toward `--as` when the replay looks unintentionally
+                // unauthenticated. On stderr: stdout is the answer the caller reads.
+                if let Some(hint) = answer.get("hint").and_then(Value::as_str) {
+                    eprintln!("note: {hint}");
+                }
                 Ok(())
             })
         }

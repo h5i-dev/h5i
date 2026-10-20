@@ -125,6 +125,11 @@ pub struct Edited {
     /// in the store, which is the artifact that is allowed to hold them.
     pub sent: Sent,
     pub outcome: FetchOutcome,
+    /// A one-line nudge surfaced to the caller when the send looks like it meant
+    /// to be authenticated but was not: a replay that carried no `Cookie` while
+    /// the session jar holds cookies for the target origin. Points at `--as`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 /// A request handed to a session that never made it: another session's

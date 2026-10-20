@@ -854,6 +854,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         std::io::stdout().write_all(&out.stdout)?;
         std::process::exit(code);
     };
+    // The `--as` nudge, when the send looks unintentionally unauthenticated, is
+    // printed to stderr by `h5i browser resend` itself (whose stderr this
+    // inherits), so it is not repeated here.
     if replay_body {
         if !out.status.success() {
             if let Err(why) = view::replay(&answer) {
